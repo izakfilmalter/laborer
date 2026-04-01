@@ -39,9 +39,12 @@ import type {
 
 /** Serialized prompt input model from the headless terminal. */
 interface SerializedPromptInputModel {
+  readonly commandStartX: number
   readonly continuationPrompt?: string | undefined
   readonly cursorIndex: number
+  readonly ghostTextIndex: number
   readonly lastPromptLine?: string | undefined
+  readonly lastUserInput: string
   readonly value: string
 }
 

@@ -363,8 +363,11 @@ describe('ShellIntegrationAddon', () => {
       addon.deserialize(
         createCommandState([], {
           promptInputModel: {
-            value: 'git status',
+            commandStartX: 2,
             cursorIndex: 10,
+            ghostTextIndex: -1,
+            lastUserInput: 'git status',
+            value: 'git status',
           },
         })
       )
@@ -373,6 +376,9 @@ describe('ShellIntegrationAddon', () => {
       expect(model).toBeDefined()
       expect(model?.value).toBe('git status')
       expect(model?.cursorIndex).toBe(10)
+      expect(model?.commandStartX).toBe(2)
+      expect(model?.ghostTextIndex).toBe(-1)
+      expect(model?.lastUserInput).toBe('git status')
     })
 
     it('restores capability store state', () => {

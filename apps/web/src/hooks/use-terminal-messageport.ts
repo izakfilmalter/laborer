@@ -47,7 +47,10 @@ interface ReplayEventFrame {
 }
 
 interface SerializedPromptInputModel {
+  readonly commandStartX: number
   readonly cursorIndex: number
+  readonly ghostTextIndex: number
+  readonly lastUserInput: string
   readonly value: string
 }
 
@@ -233,7 +236,10 @@ function isSerializedPromptInputModel(
 
   const candidate = value as Record<string, unknown>
   return (
+    typeof candidate.commandStartX === 'number' &&
     typeof candidate.cursorIndex === 'number' &&
+    typeof candidate.ghostTextIndex === 'number' &&
+    typeof candidate.lastUserInput === 'string' &&
     typeof candidate.value === 'string'
   )
 }

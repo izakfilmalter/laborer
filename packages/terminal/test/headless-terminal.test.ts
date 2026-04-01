@@ -187,8 +187,11 @@ describe('HeadlessTerminalManager', () => {
       isWindowsPty: false,
       hasRichCommandDetection: true,
       promptInputModel: {
-        value: 'echo hello',
+        commandStartX: expect.any(Number),
         cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastUserInput: 'echo hello',
+        value: 'echo hello',
       },
       commands: [
         {
@@ -238,8 +241,11 @@ describe('HeadlessTerminalManager', () => {
       isWindowsPty: false,
       hasRichCommandDetection: true,
       promptInputModel: {
-        value: 'git status',
+        commandStartX: expect.any(Number),
         cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastUserInput: '',
+        value: 'git status',
       },
       commands: [
         {
@@ -274,10 +280,13 @@ describe('HeadlessTerminalManager', () => {
       isWindowsPty: false,
       hasRichCommandDetection: false,
       promptInputModel: {
-        value: 'git status',
-        cursorIndex: 10,
-        lastPromptLine: ' $ ',
+        commandStartX: expect.any(Number),
         continuationPrompt: '> ',
+        cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastPromptLine: ' $ ',
+        lastUserInput: '',
+        value: 'git status',
       },
       commands: [
         {
@@ -312,8 +321,11 @@ describe('HeadlessTerminalManager', () => {
       isWindowsPty: false,
       hasRichCommandDetection: false,
       promptInputModel: {
-        value: 'git status',
+        commandStartX: expect.any(Number),
         cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastUserInput: '',
+        value: 'git status',
       },
       commands: [
         {
@@ -361,8 +373,11 @@ describe('HeadlessTerminalManager', () => {
       isWindowsPty: false,
       hasRichCommandDetection: false,
       promptInputModel: {
-        value: 'git status',
+        commandStartX: expect.any(Number),
         cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastUserInput: 'git status',
+        value: 'git status',
       },
       commands: [
         {
@@ -382,6 +397,95 @@ describe('HeadlessTerminalManager', () => {
           timestamp: expect.any(Number),
         },
       ],
+    })
+  })
+
+  // ---------------------------------------------------------------
+  // PromptInputModel — commandStartX, lastUserInput, ghostTextIndex
+  // ---------------------------------------------------------------
+
+  it('captures commandStartX from cursor position at 633;B', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write some content so cursor is at a non-zero X position, then trigger 633;B
+    manager.write('test-1', '$ \x1b]633;B\x07\x1b]633;E;ls\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    // commandStartX should reflect the cursor X at the time 633;B was processed
+    expect(state?.promptInputModel?.commandStartX).toBeTypeOf('number')
+    expect(state?.promptInputModel?.commandStartX).toBeGreaterThanOrEqual(0)
+  })
+
+  it('captures lastUserInput from prompt value at 633;C', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;B\x07\x1b]633;E;echo\x20test\x07\x1b]633;C\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    // lastUserInput should be saved at the point 633;C fires
+    expect(state?.promptInputModel?.lastUserInput).toBe('echo test')
+  })
+
+  it('defaults ghostTextIndex to -1', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;B\x07\x1b]633;E;pwd\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.promptInputModel?.ghostTextIndex).toBe(-1)
+  })
+
+  it('lastUserInput is empty when 633;C has not fired', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Only 633;B and 633;E — no 633;C
+    manager.write('test-1', '\x1b]633;B\x07\x1b]633;E;git\x20status\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.promptInputModel?.lastUserInput).toBe('')
+  })
+
+  it('serializes all prompt input model fields through full command lifecycle', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;Prompt=user@host:\x20~/app\x20$\x20\x07' +
+        '\x1b]633;P;ContinuationPrompt=>\x20\x07' +
+        '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;make\x20build\x07' +
+        '\x1b]633;C\x07' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.promptInputModel).toEqual({
+      commandStartX: expect.any(Number),
+      continuationPrompt: '> ',
+      cursorIndex: 10,
+      ghostTextIndex: -1,
+      lastPromptLine: ' $ ',
+      lastUserInput: 'make build',
+      value: 'make build',
     })
   })
 

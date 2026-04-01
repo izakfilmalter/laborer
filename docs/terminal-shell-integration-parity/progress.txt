@@ -347,3 +347,71 @@ when `replayStatus` transitions to `'complete'`.
 - Future UI consumers (decoration addons, command history panel) can now
   subscribe to `onCommandStarted`/`onCommandFinished` events
 - Capability store state is available for renderer UI (cwd display, etc.)
+
+## Issue 2: Complete PromptInputModel — COMPLETED
+
+### Summary
+Expanded the `PromptInputModel` serialization to match VS Code's full
+`ISerializedPromptInputModel` interface by adding three new fields:
+`commandStartX`, `lastUserInput`, and `ghostTextIndex`. These fields enable
+accurate prompt input prediction and ghost text positioning after recovery.
+
+The serialized state version was bumped from 2 to 3 to reflect the expanded
+schema. All type definitions were updated across three layers: headless
+terminal (runtime), persistence (serialized), and renderer (local copy).
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Extended `HeadlessCommandState.promptInputModel` inline type with
+    `commandStartX: number`, `ghostTextIndex: number`, `lastUserInput: string`
+  - Updated `updatePromptInputModel()` to handle new fields with defaults
+    (`commandStartX: 0`, `ghostTextIndex: -1`, `lastUserInput: ''`)
+  - Updated `serializePromptInputModel()` to include new fields in output
+  - OSC 633;B handler: captures `commandStartX` from `buffer.active.cursorX`
+  - OSC 633;C handler: saves current prompt input value as `lastUserInput`
+
+- `packages/terminal/src/services/terminal-session-persistence.ts`:
+  - Extended `SerializedPromptInputModel` with `commandStartX: number`,
+    `ghostTextIndex: number`, `lastUserInput: string`
+  - Bumped `SerializedState.version` from `2` to `3`
+  - Updated `serializeState()` to write `version: 3`
+  - Updated `loadPersistedState()` to validate `version === 3`
+
+- `apps/web/src/lib/shell-integration-addon.ts`:
+  - Updated renderer-side `SerializedPromptInputModel` copy with new fields
+
+- `apps/web/src/hooks/use-terminal-messageport.ts`:
+  - Updated `SerializedPromptInputModel` type with new fields
+  - Updated `isSerializedPromptInputModel()` type guard to validate new fields
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Updated 5 existing test assertions to include new prompt input model fields
+  - Added 5 new tests:
+    - `commandStartX` captured from cursor position at 633;B
+    - `lastUserInput` captured from prompt value at 633;C
+    - `ghostTextIndex` defaults to -1
+    - `lastUserInput` is empty when 633;C has not fired
+    - All prompt input model fields serialize through full command lifecycle
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Updated 4 tests: version assertions (2→3) and prompt input model assertions
+  - Updated 3 version: 2 → version: 3 in constructed SerializedState objects
+
+- `packages/terminal/test/terminal-data-channel.test.ts`:
+  - Updated 2 test assertions for prompt input model with new fields
+  - Updated 2 inline type assertions for prompt input model shape
+
+- `packages/terminal/test/terminal-manager.test.ts`:
+  - Updated 1 test to use individual assertions for new prompt input model fields
+
+- `apps/web/test/shell-integration-addon.test.ts`:
+  - Updated 1 test with full prompt input model including new fields
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 9 modified files
+- Tests: 53/53 headless-terminal tests pass (5 new)
+- Tests: 39/39 persistence tests pass
+- Tests: 20/20 shell-integration-addon tests pass
+- Pre-existing failures unchanged (messageport DOM tests, data channel infra)

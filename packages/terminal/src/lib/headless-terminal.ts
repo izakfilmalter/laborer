@@ -82,9 +82,12 @@ interface HeadlessCommandState {
   pendingPromptStartLine?: number | undefined
   promptInputModel?:
     | {
+        commandStartX: number
         continuationPrompt?: string | undefined
         cursorIndex: number
+        ghostTextIndex: number
         lastPromptLine?: string | undefined
+        lastUserInput: string
         value: string
       }
     | undefined
@@ -185,14 +188,26 @@ const updatePromptInputModel = (
   updates: Partial<NonNullable<HeadlessCommandState['promptInputModel']>>
 ): void => {
   commandState.promptInputModel = {
-    value: updates.value ?? commandState.promptInputModel?.value ?? '',
-    cursorIndex:
-      updates.cursorIndex ?? commandState.promptInputModel?.cursorIndex ?? 0,
+    commandStartX:
+      updates.commandStartX ??
+      commandState.promptInputModel?.commandStartX ??
+      0,
     continuationPrompt:
       updates.continuationPrompt ??
       commandState.promptInputModel?.continuationPrompt,
+    cursorIndex:
+      updates.cursorIndex ?? commandState.promptInputModel?.cursorIndex ?? 0,
+    ghostTextIndex:
+      updates.ghostTextIndex ??
+      commandState.promptInputModel?.ghostTextIndex ??
+      -1,
     lastPromptLine:
       updates.lastPromptLine ?? commandState.promptInputModel?.lastPromptLine,
+    lastUserInput:
+      updates.lastUserInput ??
+      commandState.promptInputModel?.lastUserInput ??
+      '',
+    value: updates.value ?? commandState.promptInputModel?.value ?? '',
   }
 }
 
@@ -204,8 +219,11 @@ const serializePromptInputModel = (
   }
 
   return {
-    value: promptInputModel.value,
+    commandStartX: promptInputModel.commandStartX,
     cursorIndex: promptInputModel.cursorIndex,
+    ghostTextIndex: promptInputModel.ghostTextIndex,
+    lastUserInput: promptInputModel.lastUserInput,
+    value: promptInputModel.value,
     ...(promptInputModel.continuationPrompt === undefined
       ? {}
       : { continuationPrompt: promptInputModel.continuationPrompt }),
@@ -383,6 +401,7 @@ const handleVsCodeOscSequence = (
       const lineContent = getBufferLineContent(terminal, cursorLine)
 
       updatePromptInputModel(commandState, {
+        commandStartX: cursorX,
         value: '',
         cursorIndex: 0,
       })
@@ -410,6 +429,10 @@ const handleVsCodeOscSequence = (
         currentCommand.executedLine = getAbsoluteCursorLine(terminal)
         currentCommand.executedX = terminal.buffer.active.cursorX
       }
+      // Save the current prompt input value as lastUserInput before execution
+      updatePromptInputModel(commandState, {
+        lastUserInput: commandState.promptInputModel?.value ?? '',
+      })
       return
     }
 

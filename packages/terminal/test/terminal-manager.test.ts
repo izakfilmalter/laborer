@@ -287,10 +287,14 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     assert.isDefined(commandState)
     assert.strictEqual(commandState?.isWindowsPty, false)
     assert.strictEqual(commandState?.hasRichCommandDetection, false)
-    assert.deepStrictEqual(commandState?.promptInputModel, {
-      value: 'git status',
-      cursorIndex: 10,
-    })
+    assert.isNumber(commandState?.promptInputModel?.commandStartX)
+    assert.strictEqual(commandState?.promptInputModel?.cursorIndex, 10)
+    assert.strictEqual(commandState?.promptInputModel?.ghostTextIndex, -1)
+    assert.strictEqual(
+      commandState?.promptInputModel?.lastUserInput,
+      'git status'
+    )
+    assert.strictEqual(commandState?.promptInputModel?.value, 'git status')
     assert.strictEqual(commandState?.commands.length, 1)
     assert.strictEqual(commandState?.commands[0]?.command, 'git status')
     assert.strictEqual(commandState?.commands[0]?.commandLineConfidence, 'high')

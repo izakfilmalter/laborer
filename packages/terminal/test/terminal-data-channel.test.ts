@@ -458,8 +458,11 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
             isWindowsPty: false,
             hasRichCommandDetection: false,
             promptInputModel: {
-              value: 'git status',
+              commandStartX: 0,
               cursorIndex: 10,
+              ghostTextIndex: -1,
+              lastUserInput: '',
+              value: 'git status',
             },
             commands: [
               {
@@ -511,7 +514,10 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
         hasRichCommandDetection: boolean
         isWindowsPty: boolean
         promptInputModel?: {
+          commandStartX: number
           cursorIndex: number
+          ghostTextIndex: number
+          lastUserInput: string
           value: string
         }
       }
@@ -531,8 +537,11 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       isWindowsPty: false,
       hasRichCommandDetection: false,
       promptInputModel: {
-        value: 'git status',
+        commandStartX: 0,
         cursorIndex: 10,
+        ghostTextIndex: -1,
+        lastUserInput: '',
+        value: 'git status',
       },
       commands: [
         {
@@ -619,7 +628,10 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
         hasRichCommandDetection: boolean
         isWindowsPty: boolean
         promptInputModel?: {
+          commandStartX: number
           cursorIndex: number
+          ghostTextIndex: number
+          lastUserInput: string
           value: string
         }
       }
@@ -630,10 +642,26 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     assert.strictEqual(replayMessage.type, 'replay')
     assert.strictEqual(replayMessage.commands?.isWindowsPty, false)
     assert.strictEqual(replayMessage.commands?.hasRichCommandDetection, false)
-    assert.deepEqual(replayMessage.commands?.promptInputModel, {
-      value: 'git status',
-      cursorIndex: 10,
-    })
+    assert.strictEqual(
+      typeof replayMessage.commands?.promptInputModel?.commandStartX,
+      'number'
+    )
+    assert.strictEqual(
+      replayMessage.commands?.promptInputModel?.cursorIndex,
+      10
+    )
+    assert.strictEqual(
+      replayMessage.commands?.promptInputModel?.ghostTextIndex,
+      -1
+    )
+    assert.strictEqual(
+      replayMessage.commands?.promptInputModel?.lastUserInput,
+      'git status'
+    )
+    assert.strictEqual(
+      replayMessage.commands?.promptInputModel?.value,
+      'git status'
+    )
     expect(replayMessage.commands?.commands).toEqual([
       expect.objectContaining({
         command: 'git status',

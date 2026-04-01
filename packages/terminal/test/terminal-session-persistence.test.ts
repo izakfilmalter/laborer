@@ -230,7 +230,7 @@ describe('createTerminalSessionPersistence', () => {
       expect(existsSync(stateFilePath)).toBe(true)
       const raw = readFileSync(stateFilePath, 'utf-8')
       const state = JSON.parse(raw) as SerializedState
-      expect(state.version).toBe(2)
+      expect(state.version).toBe(3)
       expect(state.terminals).toHaveLength(1)
       const first = state.terminals[0]
       expect(first).toBeDefined()
@@ -385,10 +385,13 @@ describe('createTerminalSessionPersistence', () => {
         isWindowsPty: false,
         hasRichCommandDetection: true,
         promptInputModel: {
-          value: 'pwd',
-          cursorIndex: 3,
-          lastPromptLine: ' $ ',
+          commandStartX: expect.any(Number),
           continuationPrompt: '> ',
+          cursorIndex: 3,
+          ghostTextIndex: -1,
+          lastPromptLine: ' $ ',
+          lastUserInput: 'pwd',
+          value: 'pwd',
         },
         commands: [
           expect.objectContaining({
@@ -443,8 +446,11 @@ describe('createTerminalSessionPersistence', () => {
         isWindowsPty: false,
         hasRichCommandDetection: false,
         promptInputModel: {
-          value: 'git status',
+          commandStartX: expect.any(Number),
           cursorIndex: 10,
+          ghostTextIndex: -1,
+          lastUserInput: '',
+          value: 'git status',
         },
         commands: [
           {
@@ -507,8 +513,11 @@ describe('createTerminalSessionPersistence', () => {
         isWindowsPty: false,
         hasRichCommandDetection: false,
         promptInputModel: {
-          value: 'git status',
+          commandStartX: expect.any(Number),
           cursorIndex: 10,
+          ghostTextIndex: -1,
+          lastUserInput: 'git status',
+          value: 'git status',
         },
         commands: [
           expect.objectContaining({
@@ -542,7 +551,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('loads valid state and deletes the file', () => {
       const state: SerializedState = {
-        version: 2,
+        version: 3,
         timestamp: Date.now(),
         terminals: [
           {
@@ -586,7 +595,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('rejects stale state files', () => {
       const state: SerializedState = {
-        version: 2,
+        version: 3,
         timestamp: Date.now() - MAX_STATE_AGE_MS - 1000,
         terminals: [
           {
@@ -641,7 +650,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('rejects empty terminal arrays', () => {
       const state: SerializedState = {
-        version: 2,
+        version: 3,
         timestamp: Date.now(),
         terminals: [],
       }

@@ -7,7 +7,7 @@
 | # | Title | Blocked by | Status |
 |---|-------|------------|--------|
 | 1 | Positional metadata on commands (OSC 633;A + 633;C) | None | Done |
-| 2 | Complete PromptInputModel | 1 | Ready |
+| 2 | Complete PromptInputModel | 1 | Done |
 | 3 | FinalTerm 133 command detection fallback | 1 | Ready |
 | 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Ready |
 | 5 | Capability store + CwdDetection | None | Done |
@@ -93,15 +93,15 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] `PromptInputModel` internal state includes `commandStartX`, `lastUserInput`, and `ghostTextIndex`
-- [ ] `commandStartX` is set from `buffer.active.cursorX` when OSC 633;B fires
-- [ ] `lastUserInput` is set from the current prompt input value when OSC 633;C fires
-- [ ] `ghostTextIndex` defaults to `-1`
-- [ ] `SerializedPromptInputModel` type includes `commandStartX: number`, `lastUserInput: string`, and `ghostTextIndex: number`
-- [ ] Serialized state version bumped from 2 to 3
-- [ ] `loadPersistedState()` validates `version === 3`
-- [ ] Tests verify the new fields serialize and restore correctly
-- [ ] Tests verify `commandStartX` is captured at 633;B and `lastUserInput` at 633;C
+- [x] `PromptInputModel` internal state includes `commandStartX`, `lastUserInput`, and `ghostTextIndex`
+- [x] `commandStartX` is set from `buffer.active.cursorX` when OSC 633;B fires
+- [x] `lastUserInput` is set from the current prompt input value when OSC 633;C fires
+- [x] `ghostTextIndex` defaults to `-1`
+- [x] `SerializedPromptInputModel` type includes `commandStartX: number`, `lastUserInput: string`, and `ghostTextIndex: number`
+- [x] Serialized state version bumped from 2 to 3
+- [x] `loadPersistedState()` validates `version === 3`
+- [x] Tests verify the new fields serialize and restore correctly
+- [x] Tests verify `commandStartX` is captured at 633;B and `lastUserInput` at 633;C
 
 ### Blocked by
 

@@ -312,9 +312,12 @@ interface SerializedTerminalCommand {
 }
 
 interface SerializedPromptInputModel {
+  readonly commandStartX: number
   readonly continuationPrompt?: string | undefined
   readonly cursorIndex: number
+  readonly ghostTextIndex: number
   readonly lastPromptLine?: string | undefined
+  readonly lastUserInput: string
   readonly value: string
 }
 
@@ -337,7 +340,7 @@ interface SerializedReplayFrame {
 interface SerializedState {
   readonly terminals: readonly SerializedTerminal[]
   readonly timestamp: number
-  readonly version: 2
+  readonly version: 3
 }
 
 /**
@@ -605,7 +608,7 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
       }
 
       const serialized: SerializedState = {
-        version: 2,
+        version: 3,
         timestamp: Date.now(),
         terminals: runningTerminals.map((t) => {
           const dims = dimensions.get(t.id)
@@ -676,7 +679,7 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
         const state = JSON.parse(raw) as SerializedState
 
         // Validate version
-        if (state.version !== 2) {
+        if (state.version !== 3) {
           console.log(
             `[terminal-persistence] Unsupported state version: ${String(state.version)}`
           )

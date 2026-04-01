@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
+import type { ReplayControlMessage } from '../src/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '../src/hooks/use-terminal-messageport'
 
 const acquireTerminalDataPortMock =
@@ -181,5 +181,80 @@ describe('useTerminalMessagePort', () => {
       'replay-start:ls:91x27:revived-output\r\n|120x40:$ ',
       'replay-complete',
     ])
+  })
+
+  it('passes capabilities alongside commands in replay message', async () => {
+    const { port1, port2 } = new MessageChannel()
+    acquireTerminalDataPortMock.mockResolvedValue(port1)
+
+    let receivedReplayEvent: ReplayControlMessage | undefined
+
+    const { result } = renderHook(() =>
+      useTerminalMessagePort({
+        terminalId: 'terminal-capabilities',
+        onData: () => {
+          // Intentionally empty
+        },
+        onReplayStart: (replayEvent) => {
+          receivedReplayEvent = replayEvent
+        },
+        onReplayComplete: () => {
+          // Intentionally empty
+        },
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('connected')
+    })
+
+    act(() => {
+      port2.postMessage(JSON.stringify({ type: 'status', status: 'running' }))
+      port2.postMessage(
+        JSON.stringify({
+          type: 'replay',
+          commands: {
+            isWindowsPty: false,
+            hasRichCommandDetection: true,
+            commands: [
+              {
+                command: 'cd /tmp',
+                commandLineConfidence: 'high',
+                isTrusted: true,
+                timestamp: 100,
+                duration: 10,
+                exitCode: 0,
+                promptStartLine: 0,
+                startLine: 1,
+                executedLine: 1,
+                endLine: 2,
+              },
+            ],
+          },
+          capabilities: {
+            cwdDetection: {
+              cwd: '/tmp',
+              history: [{ cwd: '/home/user' }, { cwd: '/tmp', line: 2 }],
+            },
+          },
+          events: [{ cols: 80, rows: 24, data: '$ cd /tmp\r\n' }],
+        })
+      )
+    })
+
+    await waitFor(() => {
+      expect(result.current.replayStatus).toBe('replaying')
+    })
+
+    expect(receivedReplayEvent).toBeDefined()
+    expect(receivedReplayEvent?.capabilities).toBeDefined()
+    expect(receivedReplayEvent?.capabilities?.cwdDetection?.cwd).toBe('/tmp')
+    expect(
+      receivedReplayEvent?.capabilities?.cwdDetection?.history
+    ).toHaveLength(2)
+    expect(receivedReplayEvent?.commands?.commands[0]?.promptStartLine).toBe(0)
+
+    port1.close()
+    port2.close()
   })
 })

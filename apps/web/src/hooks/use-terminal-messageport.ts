@@ -84,7 +84,22 @@ interface SerializedCommandDetectionCapability {
   readonly promptInputModel?: SerializedPromptInputModel | undefined
 }
 
+interface SerializedCwdDetectionEntry {
+  readonly cwd: string
+  readonly line?: number | undefined
+}
+
+interface SerializedCwdDetection {
+  readonly cwd: string
+  readonly history: readonly SerializedCwdDetectionEntry[]
+}
+
+interface SerializedCapabilityStore {
+  readonly cwdDetection?: SerializedCwdDetection | undefined
+}
+
 interface ReplayControlMessage {
+  readonly capabilities?: SerializedCapabilityStore | undefined
   readonly commands?: SerializedCommandDetectionCapability | undefined
   readonly events: readonly [ReplayEventFrame, ...ReplayEventFrame[]]
   readonly type: 'replay'
@@ -167,6 +182,9 @@ function parseControlMessage(data: string): ControlMessage | undefined {
     ) {
       return {
         type: 'replay',
+        capabilities: isSerializedCapabilityStore(parsed.capabilities)
+          ? parsed.capabilities
+          : undefined,
         commands: isSerializedCommandDetectionCapability(parsed.commands)
           ? parsed.commands
           : undefined,
@@ -237,6 +255,33 @@ function isSerializedTerminalCommand(
     typeof candidate.timestamp === 'number' &&
     typeof candidate.duration === 'number'
   )
+}
+
+function isSerializedCapabilityStore(
+  value: unknown
+): value is SerializedCapabilityStore {
+  if (value === undefined || value === null) {
+    return false
+  }
+  if (typeof value !== 'object') {
+    return false
+  }
+  // The capability store is a bag of optional fields — any object is valid.
+  // Validate cwdDetection shape if present.
+  const candidate = value as Record<string, unknown>
+  if (candidate.cwdDetection !== undefined) {
+    if (
+      typeof candidate.cwdDetection !== 'object' ||
+      candidate.cwdDetection === null
+    ) {
+      return false
+    }
+    const cwd = candidate.cwdDetection as Record<string, unknown>
+    if (typeof cwd.cwd !== 'string' || !Array.isArray(cwd.history)) {
+      return false
+    }
+  }
+  return true
 }
 
 interface UseTerminalMessagePortOptions {
@@ -490,6 +535,8 @@ export type {
   ReplayControlMessage,
   ReplayEventFrame,
   ReplayStatus,
+  SerializedCapabilityStore,
+  SerializedCommandDetectionCapability,
   TerminalStatus,
   UseTerminalMessagePortResult,
 }

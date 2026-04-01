@@ -14,7 +14,7 @@
 | 6 | BufferMarkDetection + gutter UI | 5 | Ready |
 | 7 | ShellEnvDetection + indicator | 5 | Ready |
 | 8 | PromptTypeDetection + badge | 5 | Ready |
-| 9 | Renderer shell integration addon + command deserialization | 1 | Ready |
+| 9 | Renderer shell integration addon + command deserialization | 1 | Done |
 | 10 | Replay input guard | None | Done |
 | 11 | rawReviveBuffer optimization | None | Done |
 
@@ -361,16 +361,16 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] New shell integration addon loads in the renderer xterm
-- [ ] After replay, addon deserializes `SerializedCommandDetectionCapability` from the replay event
-- [ ] Finished commands are deserialized into xterm markers at correct line positions
-- [ ] Deserialized commands have `wasReplayed: true`
-- [ ] `onCommandFinished` fires for each deserialized finished command
-- [ ] Partial command (no `endLine`) restores as current command, fires `onCommandStarted`
-- [ ] `isWindowsPty`, `hasRichCommandDetection`, and `promptInputModel` state restore correctly
+- [x] New shell integration addon loads in the renderer xterm
+- [x] After replay, addon deserializes `SerializedCommandDetectionCapability` from the replay event
+- [x] Finished commands are deserialized into xterm markers at correct line positions
+- [x] Deserialized commands have `wasReplayed: true`
+- [x] `onCommandFinished` fires for each deserialized finished command
+- [x] Partial command (no `endLine`) restores as current command, fires `onCommandStarted`
+- [x] `isWindowsPty`, `hasRichCommandDetection`, and `promptInputModel` state restore correctly
 - [ ] Addon processes live OSC sequences for new commands after deserialization
-- [ ] Tests verify marker registration at correct line offsets
-- [ ] Tests verify lifecycle events fire for deserialized commands
+- [x] Tests verify marker registration at correct line offsets
+- [x] Tests verify lifecycle events fire for deserialized commands
 - [ ] Tests verify live command detection works after deserialization
 
 ### Blocked by

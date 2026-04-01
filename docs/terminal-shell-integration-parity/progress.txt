@@ -249,3 +249,101 @@ The optimization tracks per-terminal interaction state through three phases:
 - Tests: 48/48 headless-terminal tests pass (10 new)
 - Tests: 39/39 persistence tests pass (3 new)
 - All 125 tests across test files pass (pre-existing empty test suite failures unchanged)
+
+## Issue 9: Renderer shell integration addon + command deserialization — COMPLETED
+
+### Summary
+Created a shell integration addon for the renderer's xterm.js instance that
+deserializes recovered commands into live xterm markers and fires lifecycle
+events for UI consumers (decoration addons, command history). After a terminal
+recovery replay completes, the addon receives the serialized command detection
+state and capability store, registers xterm markers at the serialized line
+positions, restores metadata (isWindowsPty, hasRichCommandDetection,
+promptInputModel), and marks all deserialized commands with `wasReplayed: true`.
+
+The addon follows xterm's `ITerminalAddon` interface and is loaded alongside
+existing addons (fit, WebGL, Image, Unicode11, WebLinks) in terminal-pane.tsx.
+Replay command/capability data flows from the data channel through the
+messageport hook, is stored in refs during replay, and consumed by the addon
+when `replayStatus` transitions to `'complete'`.
+
+### Changes
+- `apps/web/src/lib/shell-integration-addon.ts` (NEW):
+  - `ShellIntegrationAddon` class implementing `ITerminalAddon`
+  - `deserialize(commandState, capabilities)` — deserializes commands into
+    xterm markers, fires `onCommandFinished` for finished commands and
+    `onCommandStarted` for in-flight partial commands
+  - `EventEmitter<T>` helper — minimal xterm-compatible event emitter
+  - `TerminalCommand` type — deserialized command with live markers and
+    `wasReplayed: true` flag
+  - Public API: `getCommands()`, `getCurrentCommand()`, `getIsWindowsPty()`,
+    `getHasRichCommandDetection()`, `getPromptInputModel()`,
+    `getCapabilityStore()`, `isDeserialized()`
+  - Local type definitions for `SerializedCommandDetectionCapability`,
+    `SerializedCapabilityStore`, `SerializedTerminalCommand`, etc. (renderer
+    cannot import from terminal package directly)
+
+- `apps/web/src/hooks/use-terminal-messageport.ts`:
+  - Added `SerializedCapabilityStore`, `SerializedCwdDetection`, and
+    `SerializedCwdDetectionEntry` types
+  - Added `capabilities` field to `ReplayControlMessage` type
+  - Added `isSerializedCapabilityStore()` type guard for runtime validation
+  - `parseControlMessage()` now parses `capabilities` from replay messages
+  - Exported `SerializedCapabilityStore` and
+    `SerializedCommandDetectionCapability` types
+
+- `apps/web/src/panes/terminal-pane.tsx`:
+  - Import `ShellIntegrationAddon` and new types
+  - `TerminalPaneMessagePort`: Added `replayCommandsRef` and
+    `replayCapabilitiesRef` to store replay data for addon consumption
+  - `handleReplayStart` stores `commands` and `capabilities` in refs
+  - `TerminalPaneRendererProps` expanded with `replayCommandsRef` and
+    `replayCapabilitiesRef`
+  - `TerminalPaneRenderer`: Added `shellIntegrationAddonRef`
+  - Shell integration addon loaded in xterm init useEffect alongside
+    existing addons
+  - `replayStatus === 'complete'` useEffect calls
+    `shellIntegrationAddon.deserialize()` before `fitAddon.fit()`
+  - Addon ref cleaned up on unmount
+
+- `apps/web/test/shell-integration-addon.test.ts` (NEW):
+  - 20 tests covering:
+    - Activate and dispose lifecycle
+    - Finished command deserialization with correct marker positions
+    - `onCommandFinished` fires for each finished command
+    - Multiple confidence levels (high/medium/low)
+    - Partial/in-flight command restoration as current command
+    - `onCommandStarted` fires for partial commands
+    - Marker registration only at available line positions
+    - State restoration: isWindowsPty, hasRichCommandDetection,
+      promptInputModel, capability store
+    - Edge cases: undefined command state, empty commands, missing
+      positional metadata, deserialization without activate
+    - Event listener disposal
+    - Multiple listeners receiving events
+    - Marker cursorYOffset calculation relative to buffer position
+    - Graceful handling of registerMarker failure
+
+- `apps/web/test/use-terminal-messageport.test.ts`:
+  - Added test: capabilities passed alongside commands in replay message
+    (verifies `SerializedCapabilityStore` with cwdDetection flows through)
+
+### Not yet implemented
+- Live OSC 633/133 sequence processing in the renderer addon (post-recovery
+  command detection continues to work on the headless side; the renderer
+  addon would need to intercept and parse live OSC sequences from the PTY
+  output stream for client-side command detection)
+- Live command detection tests in the renderer (requires live OSC processing)
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 5 modified/new files
+- Tests: 20/20 shell-integration-addon tests pass (all new)
+- Tests: 3/3 messageport hook tests pass (1 new)
+- Tests: 223/223 terminal package tests pass (unchanged)
+
+### Unblocks
+- Future UI consumers (decoration addons, command history panel) can now
+  subscribe to `onCommandStarted`/`onCommandFinished` events
+- Capability store state is available for renderer UI (cwd display, etc.)

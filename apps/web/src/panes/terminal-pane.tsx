@@ -54,12 +54,15 @@ import { Spinner } from '@/components/ui/spinner'
 import type {
   ReplayControlMessage,
   ReplayStatus,
+  SerializedCapabilityStore,
+  SerializedCommandDetectionCapability,
   TerminalStatus,
 } from '@/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { openExternalUrl } from '@/lib/desktop'
 import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
+import { ShellIntegrationAddon } from '@/lib/shell-integration-addon'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
@@ -295,6 +298,19 @@ function TerminalPaneMessagePort({
   const terminalRef = useRef<Terminal | null>(null)
   const [replayEpoch, setReplayEpoch] = useState(0)
 
+  /**
+   * Refs to hold the latest replay command/capability state for the
+   * shell integration addon to deserialize after replay completes.
+   * Using refs because the data is consumed once (in the replayComplete
+   * effect) and does not need to trigger re-renders.
+   */
+  const replayCommandsRef = useRef<
+    SerializedCommandDetectionCapability | undefined
+  >(undefined)
+  const replayCapabilitiesRef = useRef<SerializedCapabilityStore | undefined>(
+    undefined
+  )
+
   const handleTerminalData = useCallback((data: string) => {
     terminalRef.current?.write(data)
   }, [])
@@ -304,6 +320,10 @@ function TerminalPaneMessagePort({
     if (!terminal) {
       return
     }
+
+    // Store command/capability state for deserialization after replay.
+    replayCommandsRef.current = replayEvent.commands
+    replayCapabilitiesRef.current = replayEvent.capabilities
 
     terminal.reset()
     setReplayEpoch((current) => current + 1)
@@ -351,6 +371,8 @@ function TerminalPaneMessagePort({
     <TerminalPaneRenderer
       connection={connection}
       onTitleChange={onTitleChange}
+      replayCapabilitiesRef={replayCapabilitiesRef}
+      replayCommandsRef={replayCommandsRef}
       replayEpoch={replayEpoch}
       terminalId={terminalId}
       terminalRef={terminalRef}
@@ -362,6 +384,14 @@ function TerminalPaneMessagePort({
 interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
   readonly onTitleChange?: ((title: string) => void) | undefined
+  /** Ref holding serialized capability store from the latest replay event. */
+  readonly replayCapabilitiesRef: React.RefObject<
+    SerializedCapabilityStore | undefined
+  >
+  /** Ref holding serialized command detection state from the latest replay event. */
+  readonly replayCommandsRef: React.RefObject<
+    SerializedCommandDetectionCapability | undefined
+  >
   readonly replayEpoch: number
   readonly terminalId: string
   readonly terminalRef: React.RefObject<Terminal | null>
@@ -383,6 +413,8 @@ function TerminalPaneRenderer({
   terminalId,
   onTitleChange,
   connection,
+  replayCommandsRef,
+  replayCapabilitiesRef,
   replayEpoch,
   terminalRef,
 }: TerminalPaneRendererProps) {
@@ -395,6 +427,7 @@ function TerminalPaneRenderer({
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const shellIntegrationAddonRef = useRef<ShellIntegrationAddon | null>(null)
 
   /**
    * Ref to hold the latest resizeTerminal function so the ResizeObserver
@@ -462,6 +495,27 @@ function TerminalPaneRenderer({
       return
     }
 
+    // Deserialize recovered command detection state into the shell
+    // integration addon. This registers xterm markers at the serialized
+    // line positions and fires lifecycle events for UI consumers.
+    // Must happen before fit() so markers are registered while the
+    // buffer state matches the replay.
+    const shellIntegrationAddon = shellIntegrationAddonRef.current
+    if (shellIntegrationAddon !== null) {
+      try {
+        shellIntegrationAddon.deserialize(
+          replayCommandsRef.current,
+          replayCapabilitiesRef.current
+        )
+      } catch {
+        // Deserialization failure is non-fatal — command detection
+        // is a progressive enhancement.
+      }
+      // Clear refs after consumption to avoid stale data on re-replay.
+      replayCommandsRef.current = undefined
+      replayCapabilitiesRef.current = undefined
+    }
+
     try {
       fitAddon.fit()
       if (terminal.cols > 0 && terminal.rows > 0) {
@@ -472,7 +526,13 @@ function TerminalPaneRenderer({
     } catch {
       // Ignore layout races during replay completion.
     }
-  }, [replayStatus, terminalId, terminalRef])
+  }, [
+    replayStatus,
+    terminalId,
+    terminalRef,
+    replayCommandsRef,
+    replayCapabilitiesRef,
+  ])
 
   /**
    * Initialize xterm.js instance.
@@ -594,6 +654,17 @@ function TerminalPaneRenderer({
       // Web Links addon failed to load — URLs remain plain text
     }
 
+    // Load Shell Integration addon for command detection after recovery.
+    // Deserializes recovered commands into live xterm markers and fires
+    // lifecycle events for UI consumers (decorations, command history).
+    try {
+      const shellIntegrationAddon = new ShellIntegrationAddon()
+      terminal.loadAddon(shellIntegrationAddon)
+      shellIntegrationAddonRef.current = shellIntegrationAddon
+    } catch {
+      // Shell integration addon failed to load — command detection unavailable
+    }
+
     // Initial fit — also send dimensions to server PTY so it starts
     // with the correct size (or re-syncs on reconnection).
     try {
@@ -697,6 +768,7 @@ function TerminalPaneRenderer({
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      shellIntegrationAddonRef.current = null
       // Clear prefix mode timeout to prevent stale state updates
       if (prefixTimeoutRef.current !== null) {
         clearTimeout(prefixTimeoutRef.current)

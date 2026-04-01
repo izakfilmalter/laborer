@@ -36,6 +36,10 @@ import { BranchStateTracker } from './branch-state-tracker.js'
 import { ConfigService } from './config-service.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
+import {
+  REPO_WATCH_DEBOUNCE_MS,
+  REPO_WATCH_RECOVERY_MS,
+} from './polling-intervals.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
 
@@ -81,9 +85,7 @@ interface WatchTarget {
   readonly repoPath: string
 }
 
-const DEBOUNCE_MS = 500
-const RECOVERY_RETRY_MS = 1000
-const RECOVERY_RETRY_LABEL = `${RECOVERY_RETRY_MS}ms`
+const RECOVERY_RETRY_LABEL = `${REPO_WATCH_RECOVERY_MS}ms`
 
 const formatWatcherWarning = (
   summary: string,
@@ -367,7 +369,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           runPromise(
             reconcileWithWarning(state.projectId, state.repoPath, reason)
           ).catch(() => undefined)
-        }, DEBOUNCE_MS)
+        }, REPO_WATCH_DEBOUNCE_MS)
       }
 
       const scheduleBranchRefresh = (
@@ -389,7 +391,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           runPromise(refreshBranchesWithWarning(state.projectId, reason)).catch(
             () => undefined
           )
-        }, DEBOUNCE_MS)
+        }, REPO_WATCH_DEBOUNCE_MS)
       }
 
       const scheduleRecovery = (
@@ -428,7 +430,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               )
             )
           ).catch(() => undefined)
-        }, RECOVERY_RETRY_MS)
+        }, REPO_WATCH_RECOVERY_MS)
       }
 
       // ── Event handler for file-watcher service events ────────

@@ -6,21 +6,29 @@
  * automatic polling on a configurable interval, and event-driven
  * invalidation from the RepositoryEventBus.
  *
+ * Key design choices (performance):
+ * - Polling is gated by panel visibility: only workspaces with an
+ *   open panel are polled. Workspaces without a panel can still be
+ *   diffed on-demand via `getDiff`.
+ * - Merge-base resolution is cached per workspace and only recomputed
+ *   when the workspace's baseSha changes or the cache is cleared.
+ * - Event-driven refreshes are debounced at 1000ms (matching VS Code)
+ *   with a 5s cooldown after each triggered refresh to prevent
+ *   overwhelming git during heavy churn.
+ * - In-flight `getDiff` calls are deduplicated per workspace: if a
+ *   diff is already running, concurrent callers share the result.
+ * - Git subprocesses use `-c core.fsmonitor=false` for consistent
+ *   behavior with the rest of the repo-watching stack.
+ *
  * Responsibilities:
  * - Run `git diff` in a workspace's worktree directory
  * - Run `git diff --staged` to include staged changes
  * - Return raw diff output string
  * - Commit DiffUpdated events to LiveStore
- * - Poll on interval (default 2s) for active workspaces
+ * - Poll on interval (default 5s) for visible workspaces
  * - Start/stop polling per workspace
  * - Subscribe to RepositoryEventBus for event-driven diff refresh
  *   when file changes are detected, reducing latency vs pure polling
- *
- * The event-driven path triggers a debounced diff refresh for all
- * actively-polled workspaces belonging to the project that emitted
- * the file event. This supplements polling — it does not replace it —
- * so diffs remain up to date even if the watcher is temporarily
- * degraded.
  *
  * Usage:
  * ```ts
@@ -29,18 +37,13 @@
  *   const result = yield* diffService.getDiff("workspace-id")
  *   // result.diffContent === "diff --git a/file.ts ..."
  *
- *   // Start polling every 2 seconds
+ *   // Start polling every 5 seconds (only if workspace has open panel)
  *   yield* diffService.startPolling("workspace-id")
  *
  *   // Stop polling when workspace is destroyed
  *   yield* diffService.stopPolling("workspace-id")
  * })
  * ```
- *
- * Issue #82: getDiff method — run `git diff` for a workspace
- * Issue #83: startPolling/stopPolling — poll on interval
- * Issue #84: deduplicate unchanged diffs — only commit DiffUpdated when content changes
- * Issue #85: start/stop polling on workspace lifecycle — integrated via RPC handlers
  */
 
 import { RpcError, type WatchFileEvent } from '@laborer/shared/rpc'
@@ -60,6 +63,13 @@ import {
 import { spawn } from '../lib/spawn.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
+import {
+  DIFF_EVENT_COOLDOWN_MS,
+  DIFF_EVENT_DEBOUNCE_MS,
+  DIFF_POLL_INTERVAL_MS,
+} from './polling-intervals.js'
+import { withFsmonitorDisabled } from './repo-watching-git.js'
+import { getVisibleWorkspaceIds } from './visible-workspaces.js'
 
 /**
  * Shape of a diff result returned by the service.
@@ -72,31 +82,15 @@ interface DiffResult {
 }
 
 /**
- * Default polling interval in milliseconds.
- * The PRD specifies 1-2 seconds; we default to 2 seconds.
- */
-const DEFAULT_POLL_INTERVAL_MS = 2000
-
-/**
- * Debounce interval for event-driven diff invalidation.
- *
- * When the RepositoryEventBus publishes file events, the DiffService
- * coalesces rapid changes per-project before running `getDiff` for
- * affected workspaces. This prevents overwhelming git during heavy
- * churn (e.g. branch switch, dependency install) while still being
- * more responsive than the 2-second polling interval.
- */
-const EVENT_DEBOUNCE_MS = 300
-
-/**
  * Helper: spawn a git command in a worktree and capture stdout/stderr.
- * Returns exit code, stdout text, and stderr text.
+ * Uses `-c core.fsmonitor=false` for consistent behavior with the
+ * rest of the repo-watching stack.
  */
 const spawnGit = async (
   args: readonly string[],
   cwd: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-  const proc = spawn(['git', ...args], {
+  const proc = spawn(['git', ...withFsmonitorDisabled(args)], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -113,10 +107,12 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
     /**
      * Get the current git diff for a workspace.
      *
-     * Runs `git diff` (unstaged) and `git diff --staged` (staged)
-     * in the workspace's worktree directory and combines the output.
+     * Runs `git diff` in the workspace's worktree directory.
      * Only commits a DiffUpdated event to LiveStore when the diff
      * content has changed compared to the previous call (Issue #84).
+     *
+     * If a getDiff call is already in-flight for this workspace,
+     * the caller shares the existing result (deduplication).
      *
      * @param workspaceId - ID of the workspace to diff
      * @returns DiffResult with the combined diff content and timestamp
@@ -128,16 +124,16 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
     /**
      * Start polling git diff for a workspace on an interval.
      *
-     * Runs `getDiff` every `intervalMs` milliseconds (default 2000ms).
-     * The polling fiber runs in the background and commits DiffUpdated
-     * events to LiveStore on each poll. Errors during individual polls
-     * are logged but do not stop the polling loop.
+     * Runs `getDiff` every `intervalMs` milliseconds (default 5000ms).
+     * Polling is gated by panel visibility: on each tick, the service
+     * checks if the workspace has an open panel. If not, the poll is
+     * skipped (the workspace's diff can still be fetched on-demand).
      *
      * Calling `startPolling` on a workspace that is already being polled
      * is a no-op.
      *
      * @param workspaceId - ID of the workspace to poll
-     * @param intervalMs - Polling interval in milliseconds (default 2000)
+     * @param intervalMs - Polling interval in milliseconds (default 5000)
      */
     readonly startPolling: (
       workspaceId: string,
@@ -180,31 +176,74 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
       const runPromise = Runtime.runPromise(runtime)
 
       // Track active polling fibers per workspace.
-      // Uses Ref for fiber-safe concurrent access.
       const pollingFibers = yield* Ref.make<
         Map<string, Fiber.RuntimeFiber<void, never>>
       >(new Map())
 
       // Cache of previous diff content per workspace for deduplication (Issue #84).
-      // Only commit DiffUpdated events when content actually changes.
       const previousDiffs = yield* Ref.make<Map<string, string>>(new Map())
 
-      // Resolve the merge-base commit for diffing.
-      // Uses baseSha if available, otherwise tries well-known branch names.
+      // ── Merge-base cache ───────────────────────────────────
+      // Cache resolved merge-base per workspace to avoid spawning
+      // up to 12 git subprocesses on every poll cycle.
+      const mergeBaseCache = yield* Ref.make<Map<string, string | undefined>>(
+        new Map()
+      )
+
+      // Track the baseSha that was used to compute the cached merge-base.
+      const mergeBaseShaSnapshot = yield* Ref.make<
+        Map<string, string | undefined | null>
+      >(new Map())
+
+      // ── In-flight deduplication ────────────────────────────
+      // If getDiff is already running for a workspace, concurrent
+      // callers share the same Promise (VS Code @throttle pattern).
+      const inFlightDiffs = new Map<string, Promise<DiffResult>>()
+
+      // Resolve the merge-base commit for diffing (cached).
       const resolveMergeBase = Effect.fn('DiffService.resolveMergeBase')(
-        function* (baseSha: string | undefined | null, worktreePath: string) {
+        function* (
+          workspaceId: string,
+          baseSha: string | undefined | null,
+          worktreePath: string
+        ) {
+          // Check cache: if baseSha hasn't changed, reuse cached result
+          const cachedSha = yield* Ref.get(mergeBaseShaSnapshot)
+          const previousBaseSha = cachedSha.get(workspaceId)
+          if (previousBaseSha === baseSha) {
+            const cached = yield* Ref.get(mergeBaseCache)
+            if (cached.has(workspaceId)) {
+              const cachedResult = cached.get(workspaceId)
+              yield* Effect.logDebug(
+                `[DiffService.resolveMergeBase] workspace=${workspaceId} using cached mergeBase=${cachedResult?.slice(0, 8) ?? 'undefined'}`
+              )
+              return cachedResult
+            }
+          }
+
+          // Cache miss or baseSha changed — recompute
           if (baseSha) {
             yield* Effect.logDebug(
-              `[DiffService.resolveMergeBase] using provided baseSha=${baseSha.slice(0, 8)} (worktreePath=${worktreePath})`
+              `[DiffService.resolveMergeBase] using provided baseSha=${baseSha.slice(0, 8)}`
             )
+            yield* Ref.update(mergeBaseCache, (cache) => {
+              const next = new Map(cache)
+              next.set(workspaceId, baseSha)
+              return next
+            })
+            yield* Ref.update(mergeBaseShaSnapshot, (cache) => {
+              const next = new Map(cache)
+              next.set(workspaceId, baseSha)
+              return next
+            })
             return baseSha
           }
 
           yield* Effect.logDebug(
-            `[DiffService.resolveMergeBase] no baseSha provided, trying merge-base candidates (worktreePath=${worktreePath})`
+            '[DiffService.resolveMergeBase] no baseSha provided, trying merge-base candidates'
           )
 
-          return yield* Effect.tryPromise({
+          const result = yield* Effect.tryPromise({
             try: async () => {
               for (const candidate of [
                 'main',
@@ -218,27 +257,9 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
                   worktreePath
                 )
                 if (res.exitCode === 0) {
-                  const mergeBase = res.stdout.trim()
-                  // Check if merge-base equals HEAD — this happens when we're
-                  // ON the candidate branch (e.g., on main, merge-base main HEAD = HEAD).
-                  // In that case, git diff <HEAD> would show nothing meaningful.
-                  const headRes = await spawnGit(
-                    ['rev-parse', 'HEAD'],
-                    worktreePath
-                  )
-                  const headSha =
-                    headRes.exitCode === 0 ? headRes.stdout.trim() : ''
-
-                  console.log(
-                    `[DiffService.resolveMergeBase] candidate=${candidate} mergeBase=${mergeBase.slice(0, 8)} HEAD=${headSha.slice(0, 8)} sameAsHead=${mergeBase === headSha}`
-                  )
-
-                  return mergeBase
+                  return res.stdout.trim()
                 }
               }
-              console.log(
-                '[DiffService.resolveMergeBase] no candidate matched — returning undefined'
-              )
               return undefined
             },
             catch: () =>
@@ -247,11 +268,24 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
                 code: 'GIT_DIFF_FAILED',
               }),
           })
+
+          // Cache the result
+          yield* Ref.update(mergeBaseCache, (cache) => {
+            const next = new Map(cache)
+            next.set(workspaceId, result)
+            return next
+          })
+          yield* Ref.update(mergeBaseShaSnapshot, (cache) => {
+            const next = new Map(cache)
+            next.set(workspaceId, baseSha)
+            return next
+          })
+
+          return result
         }
       )
 
-      // Compute the diff using unstaged + staged as a fallback
-      // when no merge-base is available.
+      // Compute the diff using unstaged + staged as a fallback.
       const computeFallbackDiff = Effect.fn('DiffService.computeFallbackDiff')(
         function* (workspaceId: string, worktreePath: string) {
           yield* Effect.logDebug(
@@ -294,187 +328,178 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
             .filter((s) => s.length > 0)
             .join('\n')
 
-          yield* Effect.logDebug(
-            `[DiffService] workspace=${workspaceId} fallback diffLen=${combinedDiff.length}`
-          )
-
           return combinedDiff
         }
       )
 
-      const getDiff = Effect.fn('DiffService.getDiff')(function* (
-        workspaceId: string
-      ) {
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] START workspace=${workspaceId}`
-        )
-
-        // 1. Look up the workspace in LiveStore to get the worktree path
-        const allWorkspaces = store.query(tables.workspaces)
-
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] workspace=${workspaceId} totalWorkspacesInStore=${allWorkspaces.length}`
-        )
-
-        const workspaceOpt = pipe(
-          allWorkspaces,
-          Arr.findFirst((w) => w.id === workspaceId)
-        )
-
-        if (workspaceOpt._tag === 'None') {
-          yield* Effect.logWarning(
-            `[DiffService.getDiff] workspace=${workspaceId} NOT FOUND in store. Available IDs: ${allWorkspaces.map((w) => `${w.id.slice(0, 8)}(${w.status})`).join(', ')}`
+      /** Internal getDiff (no deduplication). */
+      const getDiffInternal = Effect.fn('DiffService.getDiffInternal')(
+        function* (workspaceId: string) {
+          // 1. Look up the workspace in LiveStore
+          const workspaceOpt = pipe(
+            store.query(tables.workspaces),
+            Arr.findFirst((w) => w.id === workspaceId)
           )
-          return yield* new RpcError({
-            message: `Workspace not found: ${workspaceId}`,
-            code: 'NOT_FOUND',
-          })
-        }
 
-        const workspace = workspaceOpt.value
-
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] workspace=${workspaceId} status=${workspace.status} branch=${workspace.branchName} worktreePath=${workspace.worktreePath} baseSha=${workspace.baseSha ?? 'null'}`
-        )
-
-        // 2. Validate workspace is not destroyed
-        if (workspace.status === 'destroyed') {
-          yield* Effect.logWarning(
-            `[DiffService.getDiff] REJECTED workspace=${workspaceId} — status="destroyed". Diff computation skipped.`
-          )
-          return yield* new RpcError({
-            message: `Workspace ${workspaceId} has been destroyed`,
-            code: 'INVALID_STATE',
-          })
-        }
-
-        // 3. Determine the base commit to diff against.
-        //
-        // Priority:
-        // a) Use workspace.baseSha — the exact commit recorded when the
-        //    worktree was created. This gives the most accurate diff, showing
-        //    only changes made in this worktree.
-        // b) Fall back to computing a merge-base against well-known default
-        //    branches. This handles legacy workspaces created before baseSha
-        //    was tracked.
-        //
-        // `git diff <base>` compares the base commit against the current
-        // working tree, which captures committed + staged + unstaged changes
-        // in a single command. This is critical because AI agents (like
-        // opencode) typically commit their changes, making `git diff`
-        // (working tree vs index) and `git diff --staged` (index vs HEAD)
-        // both return empty output.
-        const baseSha = workspace.baseSha
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] workspace=${workspaceId} resolving merge-base (baseSha=${baseSha ?? 'null'}, worktreePath=${workspace.worktreePath})`
-        )
-        const mergeBase = yield* resolveMergeBase(
-          baseSha,
-          workspace.worktreePath
-        )
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] workspace=${workspaceId} mergeBase=${mergeBase ?? 'null'}`
-        )
-
-        let combinedDiff: string
-
-        if (mergeBase) {
-          // 4a. Diff the working tree against the merge-base.
-          // This single command captures ALL changes on the branch:
-          // committed changes + staged changes + unstaged changes.
-          const fullDiffResult = yield* Effect.tryPromise({
-            try: () => spawnGit(['diff', mergeBase], workspace.worktreePath),
-            catch: (error) =>
-              new RpcError({
-                message: `Failed to spawn git diff ${mergeBase}: ${String(error)}`,
-                code: 'GIT_DIFF_FAILED',
-              }),
-          })
-
-          if (fullDiffResult.exitCode !== 0) {
+          if (workspaceOpt._tag === 'None') {
+            yield* Effect.logWarning(
+              `[DiffService.getDiff] workspace=${workspaceId} NOT FOUND`
+            )
             return yield* new RpcError({
-              message: `git diff ${mergeBase} failed (exit ${fullDiffResult.exitCode}): ${fullDiffResult.stderr.trim()}`,
-              code: 'GIT_DIFF_FAILED',
+              message: `Workspace not found: ${workspaceId}`,
+              code: 'NOT_FOUND',
             })
           }
 
-          combinedDiff = fullDiffResult.stdout
+          const workspace = workspaceOpt.value
 
-          yield* Effect.logDebug(
-            `[DiffService] workspace=${workspaceId} base=${mergeBase.slice(0, 8)}${baseSha ? ' (baseSha)' : ' (merge-base fallback)'} diffLen=${combinedDiff.length}`
-          )
-        } else {
-          combinedDiff = yield* computeFallbackDiff(
+          // 2. Validate workspace is not destroyed
+          if (workspace.status === 'destroyed') {
+            return yield* new RpcError({
+              message: `Workspace ${workspaceId} has been destroyed`,
+              code: 'INVALID_STATE',
+            })
+          }
+
+          // 3. Determine the base commit to diff against (cached).
+          const baseSha = workspace.baseSha
+          const mergeBase = yield* resolveMergeBase(
             workspaceId,
+            baseSha,
             workspace.worktreePath
           )
-        }
 
-        const lastUpdated = new Date().toISOString()
+          let combinedDiff: string
 
-        // 5. Deduplicate: only commit DiffUpdated if content changed (Issue #84)
-        const previousContent = yield* Ref.modify(previousDiffs, (cache) => {
-          const prev = cache.get(workspaceId)
-          const next = new Map(cache)
-          next.set(workspaceId, combinedDiff)
-          return [prev, next] as const
-        })
-
-        if (previousContent !== combinedDiff) {
-          yield* Effect.log(
-            `[DiffService.getDiff] workspace=${workspaceId} COMMITTING DiffUpdated (diffLen=${combinedDiff.length}, previousLen=${previousContent?.length ?? 'none'})`
-          )
-          store.commit(
-            events.diffUpdated({
-              workspaceId,
-              diffContent: combinedDiff,
-              lastUpdated,
+          if (mergeBase) {
+            // 4a. Diff the working tree against the merge-base.
+            const fullDiffResult = yield* Effect.tryPromise({
+              try: () => spawnGit(['diff', mergeBase], workspace.worktreePath),
+              catch: (error) =>
+                new RpcError({
+                  message: `Failed to spawn git diff ${mergeBase}: ${String(error)}`,
+                  code: 'GIT_DIFF_FAILED',
+                }),
             })
-          )
-        } else {
+
+            if (fullDiffResult.exitCode !== 0) {
+              return yield* new RpcError({
+                message: `git diff ${mergeBase} failed (exit ${fullDiffResult.exitCode}): ${fullDiffResult.stderr.trim()}`,
+                code: 'GIT_DIFF_FAILED',
+              })
+            }
+
+            combinedDiff = fullDiffResult.stdout
+          } else {
+            combinedDiff = yield* computeFallbackDiff(
+              workspaceId,
+              workspace.worktreePath
+            )
+          }
+
+          const lastUpdated = new Date().toISOString()
+
+          // 5. Deduplicate: only commit DiffUpdated if content changed
+          const previousContent = yield* Ref.modify(previousDiffs, (cache) => {
+            const prev = cache.get(workspaceId)
+            const next = new Map(cache)
+            next.set(workspaceId, combinedDiff)
+            return [prev, next] as const
+          })
+
+          if (previousContent !== combinedDiff) {
+            yield* Effect.log(
+              `[DiffService.getDiff] workspace=${workspaceId} COMMITTING DiffUpdated (diffLen=${combinedDiff.length}, previousLen=${previousContent?.length ?? 'none'})`
+            )
+            store.commit(
+              events.diffUpdated({
+                workspaceId,
+                diffContent: combinedDiff,
+                lastUpdated,
+              })
+            )
+          }
+
+          return {
+            workspaceId,
+            diffContent: combinedDiff,
+            lastUpdated,
+          } satisfies DiffResult
+        }
+      )
+
+      /**
+       * Public getDiff with in-flight deduplication.
+       *
+       * If a getDiff call is already running for this workspace,
+       * the caller shares the existing Promise. This prevents the
+       * polling fiber and event-driven refresh from racing and
+       * spawning duplicate git processes.
+       */
+      const getDiff = Effect.fn('DiffService.getDiff')(function* (
+        workspaceId: string
+      ) {
+        const existing = inFlightDiffs.get(workspaceId)
+        if (existing !== undefined) {
           yield* Effect.logDebug(
-            `[DiffService.getDiff] workspace=${workspaceId} SKIPPED — diff unchanged (len=${combinedDiff.length})`
+            `[DiffService.getDiff] workspace=${workspaceId} joining in-flight diff`
           )
+          return yield* Effect.tryPromise({
+            try: () => existing,
+            catch: (error) =>
+              new RpcError({
+                message: `In-flight diff failed: ${String(error)}`,
+                code: 'GIT_DIFF_FAILED',
+              }),
+          })
         }
 
-        yield* Effect.logDebug(
-          `[DiffService.getDiff] DONE workspace=${workspaceId} diffLen=${combinedDiff.length}`
-        )
+        const promise = runPromise(getDiffInternal(workspaceId))
+        inFlightDiffs.set(workspaceId, promise)
 
-        return {
-          workspaceId,
-          diffContent: combinedDiff,
-          lastUpdated,
-        } satisfies DiffResult
+        try {
+          return yield* Effect.tryPromise({
+            try: () => promise,
+            catch: (error) =>
+              new RpcError({
+                message: `getDiff failed: ${String(error)}`,
+                code: 'GIT_DIFF_FAILED',
+              }),
+          })
+        } finally {
+          inFlightDiffs.delete(workspaceId)
+        }
       })
 
       const startPolling = Effect.fn('DiffService.startPolling')(function* (
         workspaceId: string,
         intervalMs?: number
       ) {
-        // Check if already polling this workspace
         const currentFibers = yield* Ref.get(pollingFibers)
         if (currentFibers.has(workspaceId)) {
-          yield* Effect.logDebug(
-            `[DiffService.startPolling] workspace=${workspaceId} ALREADY POLLING — no-op`
-          )
           return
         }
 
-        const interval = intervalMs ?? DEFAULT_POLL_INTERVAL_MS
+        const interval = intervalMs ?? DIFF_POLL_INTERVAL_MS
 
         yield* Effect.log(
           `[DiffService.startPolling] workspace=${workspaceId} starting polling fiber (interval=${interval}ms)`
         )
 
-        // Create a polling effect that runs getDiff on a schedule.
-        // Errors during individual polls are logged but do not stop the loop.
+        // Each tick checks panel visibility — if the workspace has no
+        // open panel, the poll is skipped.
         let pollCount = 0
         const pollEffect = Effect.gen(function* () {
           pollCount += 1
-          yield* Effect.logDebug(
-            `[DiffService.poll] workspace=${workspaceId} poll #${pollCount}`
-          )
+
+          const visibleWorkspaces = getVisibleWorkspaceIds(store)
+          if (!visibleWorkspaces.has(workspaceId)) {
+            yield* Effect.logDebug(
+              `[DiffService.poll] workspace=${workspaceId} poll #${pollCount} SKIPPED — no open panel`
+            )
+            return
+          }
+
           yield* getDiff(workspaceId)
         }).pipe(
           Effect.catchAll((error) =>
@@ -486,10 +511,8 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
           Effect.asVoid
         )
 
-        // Fork the polling as a daemon fiber so it runs in the background
         const fiber = yield* Effect.forkDaemon(pollEffect)
 
-        // Track the fiber
         yield* Ref.update(pollingFibers, (fibers) => {
           const next = new Map(fibers)
           next.set(workspaceId, fiber)
@@ -504,11 +527,6 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
       const stopPolling = Effect.fn('DiffService.stopPolling')(function* (
         workspaceId: string
       ) {
-        yield* Effect.logDebug(
-          `[DiffService.stopPolling] workspace=${workspaceId} requested`
-        )
-
-        // Atomically remove the fiber from the map
         const fiber = yield* Ref.modify(pollingFibers, (fibers) => {
           const existing = fibers.get(workspaceId)
           if (existing === undefined) {
@@ -520,17 +538,23 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
         })
 
         if (fiber === undefined) {
-          yield* Effect.logDebug(
-            `[DiffService.stopPolling] workspace=${workspaceId} NOT POLLING — no-op`
-          )
           return
         }
 
-        // Interrupt the polling fiber
         yield* Fiber.interrupt(fiber)
 
-        // Clear the cached diff content for this workspace (Issue #84)
+        // Clear caches for this workspace
         yield* Ref.update(previousDiffs, (cache) => {
+          const next = new Map(cache)
+          next.delete(workspaceId)
+          return next
+        })
+        yield* Ref.update(mergeBaseCache, (cache) => {
+          const next = new Map(cache)
+          next.delete(workspaceId)
+          return next
+        })
+        yield* Ref.update(mergeBaseShaSnapshot, (cache) => {
           const next = new Map(cache)
           next.delete(workspaceId)
           return next
@@ -551,8 +575,9 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
             { discard: true }
           )
 
-          // Clear all cached diff content (Issue #84)
           yield* Ref.set(previousDiffs, new Map())
+          yield* Ref.set(mergeBaseCache, new Map())
+          yield* Ref.set(mergeBaseShaSnapshot, new Map())
 
           yield* Effect.log(
             `DiffService: stopped all polling (${fibers.size} workspaces)`
@@ -569,33 +594,17 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
 
       // ── Event-driven diff invalidation ─────────────────────
       //
-      // Subscribe to the RepositoryEventBus so file changes
-      // trigger an immediate (debounced) diff refresh for any
-      // actively-polled workspaces belonging to the affected
-      // project. This supplements polling — it does not
-      // replace it — so diffs remain fresh even if the watcher
-      // is temporarily degraded.
+      // VS Code approach: 1000ms debounce + 5s cooldown.
+      // Only refreshes visible workspaces.
 
-      /** Pending per-project debounce timers for event-driven refresh. */
       const eventDebounceTimers = new Map<
         string,
         ReturnType<typeof setTimeout>
       >()
 
-      /**
-       * Handle a file event from the FileWatcherClient.
-       * Debounces per-subscription to coalesce rapid changes.
-       *
-       * Since events from the file-watcher service carry a
-       * subscriptionId rather than a projectId, we need to
-       * resolve the projectId by checking which workspaces
-       * have repo roots matching the event's absolutePath.
-       * We debounce by subscription ID to coalesce rapid
-       * changes from the same watched directory, then refresh
-       * all actively-polled workspaces.
-       */
+      let lastEventRefreshAt = 0
+
       const handleFileEvent = (event: WatchFileEvent): void => {
-        // Debounce by subscription ID
         const existing = eventDebounceTimers.get(event.subscriptionId)
         if (existing !== undefined) {
           clearTimeout(existing)
@@ -605,49 +614,63 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
           event.subscriptionId,
           setTimeout(() => {
             eventDebounceTimers.delete(event.subscriptionId)
-            // Refresh all actively-polled workspaces (the event affects
-            // at least one project). The polling map naturally filters
-            // to only active workspaces.
-            refreshAllPolledDiffs()
-          }, EVENT_DEBOUNCE_MS)
+
+            // Enforce cooldown
+            const now = Date.now()
+            if (now - lastEventRefreshAt < DIFF_EVENT_COOLDOWN_MS) {
+              return
+            }
+
+            refreshVisiblePolledDiffs()
+          }, DIFF_EVENT_DEBOUNCE_MS)
         )
       }
 
-      /**
-       * Refresh diffs for all actively-polled workspaces regardless
-       * of project. Used when we receive file events but can't easily
-       * map subscription IDs to project IDs.
-       */
-      const refreshAllPolledDiffs = (): void => {
+      const refreshVisiblePolledDiffs = (): void => {
+        const visibleWorkspaces = getVisibleWorkspaceIds(store)
+
         runPromise(Ref.get(pollingFibers))
-          .then((fibers: Map<string, Fiber.RuntimeFiber<void, never>>) => {
+          .then((fibers) => {
+            const targetIds = [...fibers.keys()].filter((id) =>
+              visibleWorkspaces.has(id)
+            )
+
+            if (targetIds.length === 0) {
+              return
+            }
+
             runPromise(
               Effect.log(
-                `[DiffService.refreshAllPolledDiffs] triggering refresh for ${fibers.size} polled workspaces: ${[...fibers.keys()].map((id) => id.slice(0, 8)).join(', ')}`
+                `[DiffService.refreshVisiblePolledDiffs] triggering refresh for ${targetIds.length} visible workspace(s): ${targetIds.map((id) => id.slice(0, 8)).join(', ')}`
               )
             ).catch(() => undefined)
-            for (const workspaceId of fibers.keys()) {
-              runPromise(
-                getDiff(workspaceId).pipe(
-                  Effect.catchAll((error) =>
-                    Effect.logWarning(
-                      `[DiffService.refreshAllPolledDiffs] workspace=${workspaceId} ERROR: ${error.message}`
+
+            const promises: Promise<unknown>[] = []
+            for (const workspaceId of targetIds) {
+              promises.push(
+                runPromise(
+                  getDiff(workspaceId).pipe(
+                    Effect.catchAll((error) =>
+                      Effect.logWarning(
+                        `[DiffService.refreshVisiblePolledDiffs] workspace=${workspaceId} ERROR: ${error.message}`
+                      )
                     )
                   )
-                )
-              ).catch(() => undefined)
+                ).catch(() => undefined)
+              )
             }
+
+            Promise.all(promises)
+              .then(() => {
+                lastEventRefreshAt = Date.now()
+              })
+              .catch(() => undefined)
           })
           .catch(() => undefined)
       }
 
-      // Wire the subscription to the FileWatcherClient.
-      // The handler is synchronous and non-blocking — the actual git
-      // work runs in the background via runPromise.
       const subscription = fileWatcherClient.onFileEvent(handleFileEvent)
 
-      // Clean up the subscription when the service scope closes.
-      // Also clear any pending debounce timers.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           subscription.unsubscribe()
@@ -658,45 +681,27 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
         })
       )
 
-      // ── Bootstrap polling for existing workspaces ──────────
-      //
-      // On startup, resume diff polling for any workspaces that are
-      // already in "running" or "creating" state. This mirrors the
-      // bootstrap logic in PrWatcher and WorkspaceSyncService.
-      // Without this, workspaces created before a server restart
-      // (or externally detected workspaces that transition to
-      // "running") would never have their diffs polled.
+      // ── Bootstrap polling ──────────────────────────────────
       const bootstrapPolling = Effect.fn('DiffService.bootstrapPolling')(
         function* () {
           const allWorkspaces = store.query(tables.workspaces)
-          const nonDestroyed = allWorkspaces.filter(
+          const activeWorkspaces = allWorkspaces.filter(
             (w) => w.status !== 'destroyed'
           )
-
-          // All non-destroyed workspaces are active — the 'stopped' status
-          // only indicates the workspace was externally detected, not that it
-          // should be excluded from diff polling.
-          const activeWorkspaces = nonDestroyed
 
           yield* Effect.log(
             `[DiffService.bootstrapPolling] found ${allWorkspaces.length} total workspaces, ${activeWorkspaces.length} active. Active: ${activeWorkspaces.map((w) => `${w.id.slice(0, 8)}(${w.status}/${w.branchName})`).join(', ') || 'none'}`
           )
 
-          // Start continuous polling for active workspaces
           yield* Effect.forEach(
             activeWorkspaces,
             (workspace) => startPolling(workspace.id),
             { discard: true }
           )
-
-          // All non-destroyed workspaces are now polled continuously —
-          // no separate one-time diff pass needed.
         }
       )
 
       yield* bootstrapPolling()
-
-      // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())
 
       return DiffService.of({

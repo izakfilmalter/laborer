@@ -71,6 +71,28 @@ interface CwdDetectionState {
 }
 
 /**
+ * Tracks shell environment detection capability state per terminal.
+ * Fed by OSC 633 EnvJson and EnvSingle* sequences.
+ *
+ * Mirrors VS Code's `ShellEnvDetectionCapability`:
+ * - `setEnvironment()` replaces the entire env from an EnvJson payload
+ * - `startEnvironmentSingleVar()` begins a transaction for individual vars
+ * - `setEnvironmentSingleVar()` / `deleteEnvironmentSingleVar()` modify the transaction
+ * - `endEnvironmentSingleVar()` commits the transaction
+ *
+ * Trust uses logical AND: if any operation in a batch is untrusted,
+ * the entire batch becomes untrusted.
+ */
+interface ShellEnvDetectionState {
+  /** Current environment variable map. */
+  env: Map<string, string>
+  /** Whether the current environment is trusted (nonce-verified). */
+  isTrusted: boolean
+  /** Pending transaction for EnvSingle* operations. */
+  pendingEnv?: { env: Map<string, string>; isTrusted: boolean } | undefined
+}
+
+/**
  * A buffer mark entry tracked by the BufferMarkDetection capability.
  * Fed by OSC 633 SetMark, OSC 633;P Task, and OSC 1337 SetMark.
  */
@@ -143,6 +165,11 @@ interface HeadlessCommandState {
    * cleared by OSC 633;I.
    */
   rightPromptStartLine?: number | undefined
+  /**
+   * Shell environment detection state. Tracks env vars from OSC 633
+   * EnvJson and EnvSingle* sequences with nonce-verified trust.
+   */
+  shellEnvDetection?: ShellEnvDetectionState | undefined
   /** Tracks whether VS Code 633 or FinalTerm 133 sequences are active. */
   shellIntegrationStatus: ShellIntegrationStatus
 }
@@ -636,6 +663,164 @@ const parseMarkSequence = (
   return { id, hidden }
 }
 
+/**
+ * Get or create the ShellEnvDetectionState for a command state.
+ * Lazily initializes with an empty env and trusted flag.
+ */
+const getOrCreateShellEnvDetection = (
+  commandState: HeadlessCommandState
+): ShellEnvDetectionState => {
+  if (commandState.shellEnvDetection === undefined) {
+    commandState.shellEnvDetection = {
+      env: new Map(),
+      isTrusted: true,
+    }
+  }
+  return commandState.shellEnvDetection
+}
+
+/**
+ * Handle OSC 633;EnvJson — set the entire shell environment from a JSON payload.
+ * Format: `OSC 633 ; EnvJson ; <JSON> ; <Nonce> ST`
+ *
+ * The JSON payload contains `{ "KEY": "value", ... }`. The nonce must match
+ * the shell integration nonce for the env to be trusted.
+ */
+const handleEnvJson = (
+  commandState: HeadlessCommandState,
+  args: readonly string[],
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const [jsonRaw, nonce] = args
+  if (jsonRaw === undefined) {
+    return
+  }
+  try {
+    const parsed = JSON.parse(deserializeVsCodeOscValue(jsonRaw)) as Record<
+      string,
+      string | undefined
+    >
+    const envState = getOrCreateShellEnvDetection(commandState)
+    envState.env.clear()
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value !== undefined) {
+        envState.env.set(key, value)
+      }
+    }
+    envState.isTrusted =
+      shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+  } catch {
+    // Invalid JSON — ignore
+  }
+}
+
+/**
+ * Handle OSC 633;EnvSingleStart — begin a transaction for individual env var updates.
+ * Format: `OSC 633 ; EnvSingleStart ; <Clear> [; <Nonce>] ST`
+ *
+ * If Clear is '1', the pending env starts empty. Otherwise, it copies the current env.
+ * Trust carries forward from the current state ANDed with the nonce check.
+ */
+const handleEnvSingleStart = (
+  commandState: HeadlessCommandState,
+  args: readonly string[],
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const [clearFlag, nonce] = args
+  const clear = clearFlag === '1'
+  const isTrusted =
+    shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+  const envState = getOrCreateShellEnvDetection(commandState)
+
+  if (clear) {
+    envState.pendingEnv = {
+      env: new Map(),
+      isTrusted,
+    }
+  } else {
+    envState.pendingEnv = {
+      env: new Map(envState.env),
+      isTrusted: envState.isTrusted && isTrusted,
+    }
+  }
+}
+
+/**
+ * Handle OSC 633;EnvSingleEntry — set a single env var in the pending transaction.
+ * Format: `OSC 633 ; EnvSingleEntry ; <Key> ; <Value> [; <Nonce>] ST`
+ */
+const handleEnvSingleEntry = (
+  commandState: HeadlessCommandState,
+  args: readonly string[],
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const envState = commandState.shellEnvDetection
+  if (envState?.pendingEnv === undefined) {
+    return
+  }
+  const [key, valueRaw, nonce] = args
+  if (key === undefined || valueRaw === undefined) {
+    return
+  }
+  const value = deserializeVsCodeOscValue(valueRaw)
+  const isTrusted =
+    shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+  envState.pendingEnv.env.set(key, value)
+  envState.pendingEnv.isTrusted &&= isTrusted
+}
+
+/**
+ * Handle OSC 633;EnvSingleDelete — delete a single env var in the pending transaction.
+ * Format: `OSC 633 ; EnvSingleDelete ; <Key> ; <Value> [; <Nonce>] ST`
+ *
+ * Note: VS Code passes both key and value but only uses key for deletion.
+ * We follow the same pattern — both must be present but value is unused.
+ */
+const handleEnvSingleDelete = (
+  commandState: HeadlessCommandState,
+  args: readonly string[],
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const envState = commandState.shellEnvDetection
+  if (envState?.pendingEnv === undefined) {
+    return
+  }
+  const [key, value, nonce] = args
+  if (key === undefined || value === undefined) {
+    return
+  }
+  const isTrusted =
+    shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+  envState.pendingEnv.env.delete(key)
+  envState.pendingEnv.isTrusted &&= isTrusted
+}
+
+/**
+ * Handle OSC 633;EnvSingleEnd — commit the pending transaction.
+ * Format: `OSC 633 ; EnvSingleEnd [; <Nonce>] ST`
+ *
+ * The pending env replaces the current env. Trust uses logical AND
+ * across all operations in the transaction.
+ */
+const handleEnvSingleEnd = (
+  commandState: HeadlessCommandState,
+  args: readonly string[],
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const envState = commandState.shellEnvDetection
+  if (envState?.pendingEnv === undefined) {
+    return
+  }
+  const [nonce] = args
+  const isTrusted =
+    shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+  envState.pendingEnv.isTrusted &&= isTrusted
+  // Commit the transaction
+  envState.env = envState.pendingEnv.env
+  envState.isTrusted = envState.pendingEnv.isTrusted
+  envState.pendingEnv = undefined
+}
+
 const handleVsCodeOscSequence = (
   commandState: HeadlessCommandState,
   terminal: InstanceType<typeof Terminal>,
@@ -729,6 +914,31 @@ const handleVsCodeOscSequence = (
         cursorIndex: currentCommand.command.length,
       })
       commandState.currentCommand = currentCommand
+      return
+    }
+
+    case 'EnvJson': {
+      handleEnvJson(commandState, args, shellIntegrationNonce)
+      return
+    }
+
+    case 'EnvSingleStart': {
+      handleEnvSingleStart(commandState, args, shellIntegrationNonce)
+      return
+    }
+
+    case 'EnvSingleEntry': {
+      handleEnvSingleEntry(commandState, args, shellIntegrationNonce)
+      return
+    }
+
+    case 'EnvSingleDelete': {
+      handleEnvSingleDelete(commandState, args, shellIntegrationNonce)
+      return
+    }
+
+    case 'EnvSingleEnd': {
+      handleEnvSingleEnd(commandState, args, shellIntegrationNonce)
       return
     }
 
@@ -1232,13 +1442,16 @@ const createHeadlessTerminalManager = (
       return undefined
     }
 
-    const { bufferMarks, cwdDetection, promptType } = state.commandState
+    const { bufferMarks, cwdDetection, promptType, shellEnvDetection } =
+      state.commandState
     const hasCwd =
       cwdDetection.cwd !== undefined || cwdDetection.history.length > 0
     const hasPromptType = promptType !== undefined
     const hasBufferMarks = bufferMarks.length > 0
+    const hasShellEnv =
+      shellEnvDetection !== undefined && shellEnvDetection.env.size > 0
 
-    if (!(hasCwd || hasPromptType || hasBufferMarks)) {
+    if (!(hasCwd || hasPromptType || hasBufferMarks || hasShellEnv)) {
       return undefined
     }
 
@@ -1264,6 +1477,14 @@ const createHeadlessTerminalManager = (
           }
         : {}),
       ...(hasPromptType ? { promptType } : {}),
+      ...(hasShellEnv
+        ? {
+            shellEnvDetection: {
+              env: Object.fromEntries(shellEnvDetection.env),
+              isTrusted: shellEnvDetection.isTrusted,
+            },
+          }
+        : {}),
     }
   }
 

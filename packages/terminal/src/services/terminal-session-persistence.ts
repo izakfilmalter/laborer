@@ -281,10 +281,16 @@ interface SerializedBufferMarkEntry {
   readonly line: number
 }
 
+interface SerializedShellEnvDetection {
+  readonly env: Record<string, string>
+  readonly isTrusted: boolean
+}
+
 interface SerializedCapabilityStore {
   readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
+  readonly shellEnvDetection?: SerializedShellEnvDetection | undefined
 }
 
 interface SerializedReplayEvent {
@@ -755,6 +761,7 @@ export type {
   SerializedPromptInputModel,
   SerializedReplayEvent,
   SerializedReplayFrame,
+  SerializedShellEnvDetection,
   SerializedState,
   SerializedTerminal,
   SerializedTerminalCommand,

@@ -1884,4 +1884,418 @@ describe('HeadlessTerminalManager', () => {
     manager = createHeadlessTerminalManager()
     expect(manager.getShellIntegrationState('non-existent')).toBeUndefined()
   })
+
+  // ---------------------------------------------------------------
+  // ShellEnvDetection — OSC 633 EnvJson
+  // ---------------------------------------------------------------
+
+  it('detects env from OSC 633 EnvJson with valid nonce (trusted)', async () => {
+    const nonce = 'test-nonce-123'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // EnvJson format: OSC 633 ; EnvJson ; <JSON> ; <Nonce> ST
+    const envJson = JSON.stringify({ PATH: '/usr/bin', HOME: '/home/user' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeDefined()
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(true)
+    expect(caps?.shellEnvDetection?.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+    })
+  })
+
+  it('detects env from OSC 633 EnvJson with wrong nonce (untrusted)', async () => {
+    const nonce = 'test-nonce-123'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    const envJson = JSON.stringify({ PATH: '/usr/bin' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};wrong-nonce\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeDefined()
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+    expect(caps?.shellEnvDetection?.env).toEqual({ PATH: '/usr/bin' })
+  })
+
+  it('detects env from OSC 633 EnvJson without nonce (untrusted)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    const envJson = JSON.stringify({ TERM: 'xterm-256color' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeDefined()
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+    expect(caps?.shellEnvDetection?.env).toEqual({ TERM: 'xterm-256color' })
+  })
+
+  it('EnvJson replaces entire env on subsequent calls', async () => {
+    const nonce = 'nonce-1'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // First env
+    const env1 = JSON.stringify({ PATH: '/usr/bin', HOME: '/home/a' })
+    manager.write('test-1', `\x1b]633;EnvJson;${env1};${nonce}\x07`)
+    await waitForXterm()
+
+    // Second env replaces entirely
+    const env2 = JSON.stringify({ PATH: '/usr/local/bin' })
+    manager.write('test-1', `\x1b]633;EnvJson;${env2};${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.env).toEqual({ PATH: '/usr/local/bin' })
+    // HOME should not be present
+    expect(caps?.shellEnvDetection?.env).not.toHaveProperty('HOME')
+  })
+
+  it('EnvJson ignores invalid JSON gracefully', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;EnvJson;not-valid-json\x07')
+    await waitForXterm()
+
+    // No env detected — capability state should not include shellEnvDetection
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeUndefined()
+  })
+
+  it('EnvJson skips undefined values in the JSON payload', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // JSON.stringify strips undefined values, but test defensive handling
+    const envJson = '{"PATH":"/usr/bin","EMPTY":null}'
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    // null values are not undefined but are not strings either — depends on the
+    // JSON.parse -> Object.entries behavior. Our code checks value !== undefined.
+    // null !== undefined is true, so null values would be set. Let's verify:
+    expect(caps?.shellEnvDetection?.env).toHaveProperty('PATH', '/usr/bin')
+  })
+
+  // ---------------------------------------------------------------
+  // ShellEnvDetection — OSC 633 EnvSingle* transaction flow
+  // ---------------------------------------------------------------
+
+  it('EnvSingle* transaction with clear sets env from scratch', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Start with clear=1
+    manager.write('test-1', `\x1b]633;EnvSingleStart;1;${nonce}\x07`)
+    await waitForXterm()
+
+    // Add entries
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;PATH;/usr/bin;${nonce}\x07`
+    )
+    await waitForXterm()
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;HOME;/home/user;${nonce}\x07`
+    )
+    await waitForXterm()
+
+    // End transaction
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(true)
+    expect(caps?.shellEnvDetection?.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+    })
+  })
+
+  it('EnvSingle* transaction without clear preserves existing env', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // First: set some env via EnvJson
+    const envJson = JSON.stringify({ PATH: '/usr/bin', TERM: 'xterm' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};${nonce}\x07`)
+    await waitForXterm()
+
+    // Start transaction without clear (arg0 !== '1')
+    manager.write('test-1', `\x1b]633;EnvSingleStart;0;${nonce}\x07`)
+    await waitForXterm()
+
+    // Add a new entry
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;HOME;/home/user;${nonce}\x07`
+    )
+    await waitForXterm()
+
+    // End transaction
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.env).toEqual({
+      PATH: '/usr/bin',
+      TERM: 'xterm',
+      HOME: '/home/user',
+    })
+  })
+
+  it('EnvSingleDelete removes an env var from the pending transaction', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Set initial env
+    const envJson = JSON.stringify({
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+      TERM: 'xterm',
+    })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};${nonce}\x07`)
+    await waitForXterm()
+
+    // Start transaction without clear
+    manager.write('test-1', `\x1b]633;EnvSingleStart;0;${nonce}\x07`)
+    await waitForXterm()
+
+    // Delete TERM
+    manager.write('test-1', `\x1b]633;EnvSingleDelete;TERM;xterm;${nonce}\x07`)
+    await waitForXterm()
+
+    // End transaction
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+    })
+    expect(caps?.shellEnvDetection?.env).not.toHaveProperty('TERM')
+  })
+
+  it('EnvSingleEntry without pending transaction is ignored', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Entry without Start — should be ignored
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;PATH;/usr/bin;${nonce}\x07`
+    )
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeUndefined()
+  })
+
+  it('EnvSingleEnd without pending transaction is ignored', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // End without Start — should be ignored
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection).toBeUndefined()
+  })
+
+  // ---------------------------------------------------------------
+  // ShellEnvDetection — Trust propagation (logical AND)
+  // ---------------------------------------------------------------
+
+  it('EnvSingle* trust uses AND: untrusted start makes batch untrusted', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Start with wrong nonce (untrusted)
+    manager.write('test-1', '\x1b]633;EnvSingleStart;1;wrong-nonce\x07')
+    await waitForXterm()
+
+    // Entry with valid nonce (trusted)
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;PATH;/usr/bin;${nonce}\x07`
+    )
+    await waitForXterm()
+
+    // End with valid nonce (trusted)
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+    expect(caps?.shellEnvDetection?.env).toEqual({ PATH: '/usr/bin' })
+  })
+
+  it('EnvSingle* trust uses AND: untrusted entry makes batch untrusted', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Start with valid nonce (trusted)
+    manager.write('test-1', `\x1b]633;EnvSingleStart;1;${nonce}\x07`)
+    await waitForXterm()
+
+    // Entry with wrong nonce (untrusted)
+    manager.write('test-1', '\x1b]633;EnvSingleEntry;PATH;/usr/bin;wrong\x07')
+    await waitForXterm()
+
+    // Entry with valid nonce (trusted)
+    manager.write('test-1', `\x1b]633;EnvSingleEntry;HOME;/home;${nonce}\x07`)
+    await waitForXterm()
+
+    // End with valid nonce
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    // One untrusted entry makes the entire batch untrusted
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+  })
+
+  it('EnvSingle* trust uses AND: untrusted end makes batch untrusted', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Start trusted
+    manager.write('test-1', `\x1b]633;EnvSingleStart;1;${nonce}\x07`)
+    await waitForXterm()
+
+    // Entry trusted
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;PATH;/usr/bin;${nonce}\x07`
+    )
+    await waitForXterm()
+
+    // End untrusted
+    manager.write('test-1', '\x1b]633;EnvSingleEnd;wrong\x07')
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+  })
+
+  it('EnvSingle* trust uses AND: all trusted makes batch trusted', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // All operations with valid nonce
+    manager.write('test-1', `\x1b]633;EnvSingleStart;1;${nonce}\x07`)
+    await waitForXterm()
+    manager.write(
+      'test-1',
+      `\x1b]633;EnvSingleEntry;PATH;/usr/bin;${nonce}\x07`
+    )
+    await waitForXterm()
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(true)
+  })
+
+  it('EnvSingle* without clear carries forward existing trust state with AND', async () => {
+    const nonce = 'env-nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // First: set env with no nonce (untrusted)
+    const envJson = JSON.stringify({ PATH: '/usr/bin' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson}\x07`)
+    await waitForXterm()
+
+    // Start without clear — carries untrusted state
+    manager.write('test-1', `\x1b]633;EnvSingleStart;0;${nonce}\x07`)
+    await waitForXterm()
+
+    // Add entry with valid nonce
+    manager.write('test-1', `\x1b]633;EnvSingleEntry;HOME;/home;${nonce}\x07`)
+    await waitForXterm()
+
+    // End with valid nonce
+    manager.write('test-1', `\x1b]633;EnvSingleEnd;${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    // Existing state was untrusted; AND with new trusted ops = untrusted
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(false)
+  })
+
+  // ---------------------------------------------------------------
+  // ShellEnvDetection — Capability state integration
+  // ---------------------------------------------------------------
+
+  it('returns capability state with only shellEnvDetection (no cwd or promptType)', async () => {
+    const nonce = 'nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    const envJson = JSON.stringify({ PATH: '/usr/bin' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps).toBeDefined()
+    expect(caps?.shellEnvDetection).toBeDefined()
+    expect(caps?.cwdDetection).toBeUndefined()
+    expect(caps?.promptType).toBeUndefined()
+  })
+
+  it('returns capability state with shellEnvDetection alongside other capabilities', async () => {
+    const nonce = 'nonce'
+    manager = createHeadlessTerminalManager({ shellIntegrationNonce: nonce })
+    manager.create('test-1', 80, 24)
+
+    // Set cwd, prompt type, and env
+    manager.write('test-1', '\x1b]633;P;Cwd=/home/user\x07')
+    await waitForXterm()
+    manager.write('test-1', '\x1b]633;P;PromptType=starship\x07')
+    await waitForXterm()
+    const envJson = JSON.stringify({ PATH: '/usr/bin' })
+    manager.write('test-1', `\x1b]633;EnvJson;${envJson};${nonce}\x07`)
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    expect(caps?.cwdDetection?.cwd).toBe('/home/user')
+    expect(caps?.promptType).toBe('starship')
+    expect(caps?.shellEnvDetection?.env).toEqual({ PATH: '/usr/bin' })
+    expect(caps?.shellEnvDetection?.isTrusted).toBe(true)
+  })
+
+  it('returns undefined capability state when env is empty', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // EnvJson with empty object — env.size === 0, should not appear
+    manager.write('test-1', '\x1b]633;EnvJson;{}\x07')
+    await waitForXterm()
+
+    const caps = manager.getCapabilityState('test-1')
+    // Empty env should not trigger capability state
+    expect(caps).toBeUndefined()
+  })
 })

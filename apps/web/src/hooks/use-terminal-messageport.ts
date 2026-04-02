@@ -103,10 +103,16 @@ interface SerializedBufferMarkEntry {
   readonly line: number
 }
 
+interface SerializedShellEnvDetection {
+  readonly env: Record<string, string>
+  readonly isTrusted: boolean
+}
+
 interface SerializedCapabilityStore {
   readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
+  readonly shellEnvDetection?: SerializedShellEnvDetection | undefined
 }
 
 interface ReplayControlMessage {
@@ -287,6 +293,18 @@ function isSerializedCwdDetection(value: unknown): boolean {
   return typeof cwd.cwd === 'string' && Array.isArray(cwd.history)
 }
 
+function isSerializedShellEnvDetection(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.env === 'object' &&
+    candidate.env !== null &&
+    typeof candidate.isTrusted === 'boolean'
+  )
+}
+
 function isSerializedCapabilityStore(
   value: unknown
 ): value is SerializedCapabilityStore {
@@ -316,6 +334,12 @@ function isSerializedCapabilityStore(
     if (!candidate.bufferMarks.every(isSerializedBufferMarkEntry)) {
       return false
     }
+  }
+  if (
+    candidate.shellEnvDetection !== undefined &&
+    !isSerializedShellEnvDetection(candidate.shellEnvDetection)
+  ) {
+    return false
   }
   return true
 }

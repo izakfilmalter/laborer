@@ -665,3 +665,100 @@ rendered by the gutter UI).
 - Tests: 89/89 headless-terminal tests pass (12 new, 1 fixed)
 - Tests: 47/47 persistence tests pass (4 new)
 - Tests: 20/20 shell-integration-addon tests pass (unchanged)
+
+## Issue 7: ShellEnvDetection + indicator — COMPLETED
+
+### Summary
+Added `ShellEnvDetection` capability to the capability store with nonce-verified
+trust tracking. The implementation mirrors VS Code's `ShellEnvDetectionCapability`
+class, supporting two modes of environment reporting:
+
+1. **OSC 633;EnvJson** — Replaces the entire environment from a single JSON
+   payload with a mandatory nonce for trust verification.
+2. **OSC 633;EnvSingle*** — Transaction-based individual variable operations:
+   - `EnvSingleStart` begins a transaction (optionally clearing existing env)
+   - `EnvSingleEntry` adds a key-value pair to the pending transaction
+   - `EnvSingleDelete` removes a key from the pending transaction
+   - `EnvSingleEnd` commits the transaction
+
+Trust uses logical AND across all operations in a batch — if any operation
+in a transaction is untrusted (nonce mismatch or missing), the entire batch
+becomes untrusted. This matches VS Code's trust propagation semantics.
+
+The environment state serializes into `SerializedCapabilityStore.shellEnvDetection`
+as `{ env: Record<string, string>, isTrusted: boolean }` and flows through all
+layers: headless terminal tracking, persistence serialization, data channel
+replay, and renderer-side types.
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `ShellEnvDetectionState` interface with `env: Map<string, string>`,
+    `isTrusted: boolean`, and `pendingEnv` for transactions
+  - Added `shellEnvDetection` field to `HeadlessCommandState`
+  - Added `getOrCreateShellEnvDetection()` lazy initializer
+  - Added `handleEnvJson()` — parses JSON env, verifies nonce, replaces env
+  - Added `handleEnvSingleStart()` — begins transaction with optional clear
+  - Added `handleEnvSingleEntry()` — adds key-value pair to pending transaction
+  - Added `handleEnvSingleDelete()` — removes key from pending transaction
+  - Added `handleEnvSingleEnd()` — commits transaction with AND trust
+  - Added cases for `EnvJson`, `EnvSingleStart`, `EnvSingleEntry`,
+    `EnvSingleDelete`, `EnvSingleEnd` in `handleVsCodeOscSequence()`
+  - Updated `getCapabilityState()` to include `shellEnvDetection` and return
+    non-undefined when env has entries
+
+- `packages/terminal/src/services/terminal-session-persistence.ts`:
+  - Added `SerializedShellEnvDetection` interface
+  - Added optional `shellEnvDetection` field to `SerializedCapabilityStore`
+  - Exported `SerializedShellEnvDetection` type
+
+- `apps/web/src/hooks/use-terminal-messageport.ts`:
+  - Added `SerializedShellEnvDetection` interface (renderer-side copy)
+  - Added `shellEnvDetection` field to renderer `SerializedCapabilityStore`
+  - Added `isSerializedShellEnvDetection()` type guard
+  - Updated `isSerializedCapabilityStore()` to validate `shellEnvDetection`
+
+- `apps/web/src/lib/shell-integration-addon.ts`:
+  - Added `SerializedShellEnvDetection` interface (renderer-side copy)
+  - Added `shellEnvDetection` field to renderer `SerializedCapabilityStore`
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 19 new tests:
+    - EnvJson with valid nonce (trusted)
+    - EnvJson with wrong nonce (untrusted)
+    - EnvJson without nonce (untrusted)
+    - EnvJson replaces entire env on subsequent calls
+    - EnvJson ignores invalid JSON gracefully
+    - EnvJson skips undefined values
+    - EnvSingle* transaction with clear sets env from scratch
+    - EnvSingle* transaction without clear preserves existing env
+    - EnvSingleDelete removes env var from pending transaction
+    - EnvSingleEntry without pending transaction is ignored
+    - EnvSingleEnd without pending transaction is ignored
+    - Trust AND: untrusted start makes batch untrusted
+    - Trust AND: untrusted entry makes batch untrusted
+    - Trust AND: untrusted end makes batch untrusted
+    - Trust AND: all trusted makes batch trusted
+    - Trust AND: without clear carries forward existing trust
+    - Capability state with only shellEnvDetection
+    - Capability state with shellEnvDetection alongside other capabilities
+    - Empty env does not trigger capability state
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Added 4 new tests:
+    - Serializes shell env detection from OSC 633 EnvJson
+    - Serializes untrusted shell env detection
+    - Preserves restored shell env detection when serializing again
+    - Serializes shell env detection alongside cwd, prompt type, and buffer marks
+
+### Not yet implemented
+- Renderer UI indicator showing env detection is active (requires design
+  decisions about visual treatment and component placement)
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 6 modified files
+- Tests: 108/108 headless-terminal tests pass (19 new)
+- Tests: 51/51 persistence tests pass (4 new)
+- Tests: 20/20 shell-integration-addon tests pass (unchanged)
+- Pre-existing empty test suite failures unchanged

@@ -103,11 +103,18 @@ interface SerializedBufferMarkEntry {
   readonly line: number
 }
 
+/** Serialized shell environment detection state. */
+interface SerializedShellEnvDetection {
+  readonly env: Record<string, string>
+  readonly isTrusted: boolean
+}
+
 /** Serialized capability store from the headless terminal. */
 interface SerializedCapabilityStore {
   readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
+  readonly shellEnvDetection?: SerializedShellEnvDetection | undefined
 }
 
 // ---------------------------------------------------------------------------

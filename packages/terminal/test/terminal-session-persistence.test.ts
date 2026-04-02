@@ -1291,6 +1291,199 @@ describe('createTerminalSessionPersistence', () => {
   })
 
   // ---------------------------------------------------------------
+  // ShellEnvDetection serialization
+  // ---------------------------------------------------------------
+
+  describe('ShellEnvDetection serialization', () => {
+    it('serializes shell env detection from OSC 633 EnvJson', async () => {
+      const nonce = 'test-nonce'
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager({
+        shellIntegrationNonce: nonce,
+      })
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      const envJson = JSON.stringify({ PATH: '/usr/bin', HOME: '/home/user' })
+      headlessManager.write(
+        'term-1',
+        `\x1b]633;EnvJson;${envJson};${nonce}\x07`
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.shellEnvDetection
+      ).toEqual({
+        env: { PATH: '/usr/bin', HOME: '/home/user' },
+        isTrusted: true,
+      })
+
+      headlessManager.disposeAll()
+    })
+
+    it('serializes untrusted shell env detection', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      const envJson = JSON.stringify({ TERM: 'xterm' })
+      headlessManager.write('term-1', `\x1b]633;EnvJson;${envJson}\x07`)
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.shellEnvDetection
+          ?.isTrusted
+      ).toBe(false)
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.shellEnvDetection?.env
+      ).toEqual({ TERM: 'xterm' })
+
+      headlessManager.disposeAll()
+    })
+
+    it('preserves restored shell env detection when serializing again', () => {
+      const persistence = createTerminalSessionPersistence()
+      persistence.registerTerminal('term-1', 80, 24)
+      persistence.restoreReplayEvent('term-1', {
+        capabilities: {
+          shellEnvDetection: {
+            env: { PATH: '/usr/bin', HOME: '/home/user' },
+            isTrusted: true,
+          },
+        },
+        events: [
+          {
+            cols: 80,
+            rows: 24,
+            data: 'restored output\r\n',
+          },
+        ],
+      })
+
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => ''
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.shellEnvDetection
+      ).toEqual({
+        env: { PATH: '/usr/bin', HOME: '/home/user' },
+        isTrusted: true,
+      })
+    })
+
+    it('serializes shell env detection alongside cwd, prompt type, and buffer marks', async () => {
+      const nonce = 'test-nonce'
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager({
+        shellIntegrationNonce: nonce,
+      })
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;P;Cwd=/workspace\x07')
+      headlessManager.write('term-1', '\x1b]633;P;PromptType=starship\x07')
+      headlessManager.write('term-1', '\x1b]633;SetMark;Id=build\x07')
+      const envJson = JSON.stringify({ PATH: '/usr/bin' })
+      headlessManager.write(
+        'term-1',
+        `\x1b]633;EnvJson;${envJson};${nonce}\x07`
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      const caps = state.terminals[0]?.replayEvent.capabilities
+      expect(caps?.cwdDetection?.cwd).toBe('/workspace')
+      expect(caps?.promptType).toBe('starship')
+      expect(caps?.bufferMarks).toHaveLength(1)
+      expect(caps?.shellEnvDetection?.env).toEqual({ PATH: '/usr/bin' })
+      expect(caps?.shellEnvDetection?.isTrusted).toBe(true)
+
+      headlessManager.disposeAll()
+    })
+  })
+
+  // ---------------------------------------------------------------
   // rawReviveBuffer optimization
   // ---------------------------------------------------------------
 

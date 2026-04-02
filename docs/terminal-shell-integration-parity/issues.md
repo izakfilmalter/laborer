@@ -12,7 +12,7 @@
 | 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Done |
 | 5 | Capability store + CwdDetection | None | Done |
 | 6 | BufferMarkDetection + gutter UI | 5 | Done |
-| 7 | ShellEnvDetection + indicator | 5 | Ready |
+| 7 | ShellEnvDetection + indicator | 5 | Done |
 | 8 | PromptTypeDetection + badge | 5 | Done |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Done |
 | 10 | Replay input guard | None | Done |
@@ -286,18 +286,18 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] `ShellEnvDetection` capability tracks env vars as `Map<string, string>` with `isTrusted` flag
-- [ ] OSC 633 EnvJson handler parses JSON env, verifies nonce, stores env with trust
-- [ ] OSC 633 EnvSingleStart handler begins a transaction (with optional clear flag)
-- [ ] OSC 633 EnvSingleEntry handler adds a key-value pair to the pending transaction
-- [ ] OSC 633 EnvSingleEnd handler commits the transaction, fires change event
-- [ ] OSC 633 EnvSingleDelete handler removes a single env var
-- [ ] Trust uses logical AND across batch operations — any untrusted operation makes the batch untrusted
-- [ ] Env serializes in `SerializedCapabilityStore.shellEnvDetection` as `{ env, isTrusted }`
+- [x] `ShellEnvDetection` capability tracks env vars as `Map<string, string>` with `isTrusted` flag
+- [x] OSC 633 EnvJson handler parses JSON env, verifies nonce, stores env with trust
+- [x] OSC 633 EnvSingleStart handler begins a transaction (with optional clear flag)
+- [x] OSC 633 EnvSingleEntry handler adds a key-value pair to the pending transaction
+- [x] OSC 633 EnvSingleEnd handler commits the transaction, fires change event
+- [x] OSC 633 EnvSingleDelete handler removes a single env var
+- [x] Trust uses logical AND across batch operations — any untrusted operation makes the batch untrusted
+- [x] Env serializes in `SerializedCapabilityStore.shellEnvDetection` as `{ env, isTrusted }`
 - [ ] Renderer shows an active indicator when env detection is present
-- [ ] Tests verify trusted and untrusted env detection via EnvJson
-- [ ] Tests verify EnvSingle* transaction flow
-- [ ] Tests verify trust propagation (AND logic)
+- [x] Tests verify trusted and untrusted env detection via EnvJson
+- [x] Tests verify EnvSingle* transaction flow
+- [x] Tests verify trust propagation (AND logic)
 
 ### Blocked by
 

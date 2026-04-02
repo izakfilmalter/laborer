@@ -169,6 +169,90 @@ export function getWorkspaceWindowRegistry(): WorkspaceWindowRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Renderer port registry — tracks MessagePort pairs for proactive cleanup
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks `MessagePortMain` objects created for renderer-to-utility connections.
+ *
+ * When a utility process exits (crash or intentional), the main process must
+ * close the renderer-side ports so the renderer's `MessagePort.onclose` fires
+ * and the RPC client transport can synthesize a Defect to unblock pending
+ * requests. Without this, the renderer's port stays "alive" with no way to
+ * detect the dead channel — the `onclose` event on Web `MessagePort` is
+ * unreliable when the remote process dies.
+ *
+ * @see VS Code's `PersistentProtocol.beginAcceptReconnection` for similar
+ *      port invalidation on disconnect.
+ */
+class RendererPortRegistry {
+  /**
+   * Map from service name to the set of renderer-side `MessagePortMain`
+   * objects currently held by renderer windows.
+   */
+  readonly #ports = new Map<
+    SidecarName,
+    Set<import('electron').MessagePortMain>
+  >()
+
+  /** Register a renderer-side port for a service. */
+  track(
+    serviceName: SidecarName,
+    port: import('electron').MessagePortMain
+  ): void {
+    let set = this.#ports.get(serviceName)
+    if (!set) {
+      set = new Set()
+      this.#ports.set(serviceName, set)
+    }
+    set.add(port)
+
+    // Auto-remove when the port is closed normally (e.g., renderer
+    // navigates away or atom layer is disposed).
+    port.on('close', () => {
+      set?.delete(port)
+    })
+  }
+
+  /**
+   * Close and remove all renderer-side ports for a service.
+   *
+   * Called when the utility process exits — this triggers the renderer's
+   * `MessagePort.onclose` event, which the RPC client transport uses to
+   * synthesize a Defect and unblock all pending requests.
+   */
+  closeAll(serviceName: SidecarName): void {
+    const set = this.#ports.get(serviceName)
+    if (!set || set.size === 0) {
+      return
+    }
+
+    console.log(`[ipc] Closing ${set.size} renderer port(s) for ${serviceName}`)
+    for (const port of set) {
+      try {
+        port.close()
+      } catch {
+        // Port may already be closed — ignore.
+      }
+    }
+    set.clear()
+  }
+}
+
+const rendererPortRegistry = new RendererPortRegistry()
+
+/**
+ * Close all renderer-side ports for a service.
+ *
+ * Called by the lifecycle monitor or utility process manager when a sidecar
+ * exits so that the renderer's `onclose` handler fires and RPC clients can
+ * detect the dead channel.
+ */
+export function closeRendererPortsForService(serviceName: SidecarName): void {
+  rendererPortRegistry.closeAll(serviceName)
+}
+
+// ---------------------------------------------------------------------------
 // Callbacks — set by main.ts to wire IPC handlers to the app's state
 // ---------------------------------------------------------------------------
 
@@ -646,6 +730,7 @@ export function registerIpcHandlers(
       `[ipc] acquireServicePort: name=${serviceName} nonce=${nonce} — creating MessageChannelMain pair`
     )
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+    rendererPortRegistry.track(serviceName, rendererPort)
     utilityProcess.postMessage({ type: 'port' }, [utilityPort])
     console.log(
       `[ipc] acquireServicePort: sent utilityPort to ${serviceName}, sending rendererPort to renderer via ${SERVICE_PORT_RESPONSE_CHANNEL}`
@@ -690,6 +775,7 @@ export function registerIpcHandlers(
     }
 
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+    rendererPortRegistry.track('terminal', rendererPort)
     utilityProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
       utilityPort,
     ])
@@ -721,6 +807,7 @@ export function registerIpcHandlers(
     }
 
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+    rendererPortRegistry.track('server', rendererPort)
     utilityProcess.postMessage({ type: 'sync-port' }, [utilityPort])
     event.sender.postMessage(SYNC_PORT_RESPONSE_CHANNEL, nonce, [rendererPort])
   })

@@ -41,6 +41,7 @@ const fromWebContentsMock = vi.fn()
 
 const mockPort = () => ({
   close: vi.fn(),
+  on: vi.fn(),
   start: vi.fn(),
   postMessage: vi.fn(),
 })

@@ -31,6 +31,39 @@ import type { FromServerEncoded } from '@effect/rpc/RpcMessage'
 import { Effect, Layer, Queue, Scope } from 'effect'
 
 import type { RpcMessagePort } from './rpc-transport-messageport.js'
+import { PING_MESSAGE, PONG_MESSAGE } from './rpc-transport-messageport.js'
+
+// ---------------------------------------------------------------------------
+// Heartbeat constants
+// ---------------------------------------------------------------------------
+
+/**
+ * How often the client sends a ping to the server (ms).
+ * Follows the VS Code KeepAlive pattern — frequent enough to detect
+ * dead channels within a reasonable window.
+ */
+const HEARTBEAT_INTERVAL_MS = 5000
+
+/**
+ * How long to wait for a pong before declaring the port dead (ms).
+ * Set to 3× the ping interval so transient delays (GC pauses, CPU
+ * contention) don't cause false positives.
+ *
+ * @see .reference/vscode/src/vs/base/parts/ipc/common/ipc.net.ts —
+ *      VS Code's `ProtocolConstants.TimeoutTime` for similar timeout logic.
+ */
+const HEARTBEAT_TIMEOUT_MS = 15_000
+
+/**
+ * Custom DOM event name dispatched when a MessagePort is detected as dead
+ * (close event, heartbeat timeout, or send failure). The renderer's
+ * `SidecarRuntimeBoundary` listens for this to trigger a generation bump
+ * and rebuild all RPC clients with fresh ports.
+ *
+ * This bridges the gap between the transport layer (which detects dead
+ * channels) and the React tree (which needs to remount to acquire new ports).
+ */
+export const RPC_PORT_DEAD_EVENT = 'laborer:rpc-port-dead'
 
 // ---------------------------------------------------------------------------
 // Protocol factory
@@ -50,9 +83,15 @@ import type { RpcMessagePort } from './rpc-transport-messageport.js'
  * listener. A forked fiber drains the queue and calls `writeResponse` for
  * each message, bridging the sync event world to the Effect runtime.
  *
- * **Port close detection:** Unlike the original implementation, this version
- * listens for `close` events on the MessagePort. When the port closes (e.g.,
- * the utility process crashes or restarts), a synthetic `Defect` message is
+ * **Port close detection:** This version uses three mechanisms to detect a
+ * dead channel:
+ * 1. Listens for `close` events on the MessagePort (unreliable in Web API).
+ * 2. Application-level heartbeat: pings the server every 5s and expects a
+ *    pong within 15s. If no pong arrives, the port is considered dead.
+ * 3. Main process port tracking: proactively closes renderer ports when
+ *    the utility process exits (handled externally by ipc.ts).
+ *
+ * When any mechanism detects a dead port, a synthetic `Defect` message is
  * injected into the response queue. The Effect RPC client treats `Defect`
  * messages by clearing all pending entries, which resolves (with failure)
  * any in-flight `Effect.async` calls — preventing modals and other UI
@@ -74,6 +113,10 @@ export const makeClientProtocolMessagePort = (
       // end. Used in `send()` to fail fast instead of posting into a dead port.
       const portState = { closed: false }
 
+      // Heartbeat tracking — timestamp of last pong (or message) received.
+      let lastPongTimestamp = Date.now()
+      let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
         Effect.flatMap((data) => writeResponse(data)),
@@ -83,22 +126,64 @@ export const makeClientProtocolMessagePort = (
 
       // Sync event handlers push to the queue.
       const messageHandler = (data: unknown): void => {
+        // Intercept pong messages from the heartbeat echo.
+        if (data === PONG_MESSAGE) {
+          lastPongTimestamp = Date.now()
+          return
+        }
+        // Any real message also counts as proof of liveness (like
+        // Mux's "inbound frame tracking" pattern).
+        lastPongTimestamp = Date.now()
         Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
       }
 
-      // When the port closes, synthesize a Defect response to unblock
-      // all pending RPC requests. The Effect RPC client treats "Defect"
-      // messages by clearing all entries, which resolves (with failure)
-      // any in-flight Effect.async calls.
+      // When the port closes (or is detected as dead), synthesize a
+      // Defect response to unblock all pending RPC requests.
       const closeHandler = (): void => {
+        if (portState.closed) {
+          return
+        }
         console.warn(
           '[rpc-client-transport] Port closed by remote end — synthesizing Defect to unblock pending requests'
         )
         portState.closed = true
+
+        // Stop heartbeat timer.
+        if (heartbeatInterval !== null) {
+          clearInterval(heartbeatInterval)
+          heartbeatInterval = null
+        }
+
         Queue.unsafeOffer(messageQueue, {
           _tag: 'Defect',
           defect: 'MessagePort closed unexpectedly',
         } as unknown as FromServerEncoded)
+
+        // Notify the renderer's SidecarRuntimeBoundary that a port died
+        // so it can trigger a generation bump and rebuild all RPC clients.
+        // This handles the case where the sidecar is still healthy but
+        // the individual MessagePort channel is dead (e.g., heartbeat
+        // timeout, half-open connection).
+        //
+        // Guard for browser environment — the shared package tsconfig
+        // does not include the `dom` lib.
+        try {
+          const win = globalThis as unknown as
+            | { dispatchEvent?: (event: Event) => boolean }
+            | undefined
+          if (typeof win?.dispatchEvent === 'function') {
+            const EventCtor = globalThis.Event as
+              | (new (
+                  type: string
+                ) => Event)
+              | undefined
+            if (EventCtor) {
+              win.dispatchEvent(new EventCtor(RPC_PORT_DEAD_EVENT))
+            }
+          }
+        } catch {
+          // Not in a browser environment — ignore.
+        }
       }
 
       // Attach listeners based on the port's API style.
@@ -130,10 +215,40 @@ export const makeClientProtocolMessagePort = (
       port.start?.()
       console.log('[rpc-client-transport] port.start() called successfully')
 
+      // Start the application-level heartbeat timer.
+      // Sends a ping every HEARTBEAT_INTERVAL_MS and checks whether a pong
+      // (or any message) was received within HEARTBEAT_TIMEOUT_MS.
+      heartbeatInterval = setInterval(() => {
+        if (portState.closed) {
+          return
+        }
+
+        const elapsed = Date.now() - lastPongTimestamp
+        if (elapsed > HEARTBEAT_TIMEOUT_MS) {
+          console.warn(
+            `[rpc-client-transport] No pong received in ${elapsed}ms — declaring port dead`
+          )
+          closeHandler()
+          return
+        }
+
+        // Send ping. If the port is dead, postMessage will throw —
+        // catch and trigger close.
+        try {
+          port.postMessage(PING_MESSAGE)
+        } catch {
+          closeHandler()
+        }
+      }, HEARTBEAT_INTERVAL_MS)
+
       // Clean up listeners when the scope is finalized.
       yield* Scope.addFinalizer(
         scope,
         Effect.sync(() => {
+          if (heartbeatInterval !== null) {
+            clearInterval(heartbeatInterval)
+            heartbeatInterval = null
+          }
           if (typeof port.off === 'function') {
             port.off('message', messageHandler)
             port.off('close', closeHandler)

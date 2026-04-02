@@ -19,9 +19,13 @@ import { MessageChannel } from 'node:worker_threads'
 
 import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
 import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { RpcMessagePort } from '../src/rpc-transport-messageport.js'
-import { layerProtocolMessagePort } from '../src/rpc-transport-messageport.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  layerProtocolMessagePort,
+  PING_MESSAGE,
+  PONG_MESSAGE,
+  type RpcMessagePort,
+} from '../src/rpc-transport-messageport.js'
 import { makeClientProtocolMessagePort } from '../src/rpc-transport-messageport-client.js'
 
 // ---------------------------------------------------------------------------
@@ -284,5 +288,176 @@ describe('makeClientProtocolMessagePort', () => {
 
     // Close server scope
     await Effect.runPromise(Scope.close(cleanupServerScope, Exit.void))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Heartbeat protocol tests
+// ---------------------------------------------------------------------------
+
+describe('heartbeat ping/pong protocol', () => {
+  it('server echoes ping messages as pong', async () => {
+    const { port1: serverNodePort, port2: clientNodePort } =
+      new MessageChannel()
+
+    // Build the server — the server transport should echo pings.
+    const serverScope = Effect.runSync(Scope.make())
+    const serverLayer = RpcServer.layer(TestRpcs).pipe(
+      Layer.provide(layerProtocolMessagePort(toRpcPort(serverNodePort))),
+      Layer.provide(TestRpcsLive)
+    )
+    await Effect.runPromise(
+      Layer.buildWithScope(serverLayer, serverScope).pipe(Effect.asVoid)
+    )
+
+    // Send a raw ping on the client port and expect pong back.
+    const pongReceived = new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        clientNodePort.off('message', handler)
+        resolve(false)
+      }, 2000)
+
+      const handler = (data: unknown): void => {
+        if (data === PONG_MESSAGE) {
+          clearTimeout(timeout)
+          clientNodePort.off('message', handler)
+          resolve(true)
+        }
+      }
+
+      clientNodePort.on('message', handler)
+    })
+
+    clientNodePort.postMessage(PING_MESSAGE)
+    const gotPong = await pongReceived
+
+    expect(gotPong).toBe(true)
+
+    await Effect.runPromise(Scope.close(serverScope, Exit.void))
+    clientNodePort.close()
+  })
+
+  it('ping messages are not forwarded to the RPC handler', async () => {
+    const { port1: serverNodePort, port2: clientNodePort } =
+      new MessageChannel()
+
+    const serverScope = Effect.runSync(Scope.make())
+    const serverLayer = RpcServer.layer(TestRpcs).pipe(
+      Layer.provide(layerProtocolMessagePort(toRpcPort(serverNodePort))),
+      Layer.provide(TestRpcsLive)
+    )
+    await Effect.runPromise(
+      Layer.buildWithScope(serverLayer, serverScope).pipe(Effect.asVoid)
+    )
+
+    // Send a ping — should get a pong but NOT an RPC error/defect.
+    const messages: unknown[] = []
+    const collectPromise = new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => resolve(), 500)
+      clientNodePort.on('message', (data: unknown) => {
+        messages.push(data)
+        // Reset timeout on each message.
+        clearTimeout(timeout)
+        setTimeout(() => resolve(), 200)
+      })
+    })
+
+    clientNodePort.postMessage(PING_MESSAGE)
+    await collectPromise
+
+    // Should have exactly one pong and no RPC error responses.
+    expect(messages).toEqual([PONG_MESSAGE])
+
+    await Effect.runPromise(Scope.close(serverScope, Exit.void))
+    clientNodePort.close()
+  })
+
+  it('RPC still works alongside heartbeat pings', async () => {
+    const pair = await buildServerAndClient()
+
+    // Normal RPC should work fine — heartbeat is transparent.
+    const result = await Effect.runPromise(
+      pair.client.echo({ input: 'heartbeat test' })
+    )
+    expect(result).toBe('heartbeat test')
+
+    await pair.cleanup()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Heartbeat timeout detection tests
+// ---------------------------------------------------------------------------
+
+describe('heartbeat timeout detection', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('detects dead port when no pong arrives within timeout', async () => {
+    // Create a "deaf" port pair where the server side never responds.
+    // Simulate by just creating raw ports with no server.
+    const { port1: serverNodePort, port2: clientNodePort } =
+      new MessageChannel()
+
+    // Swallow messages on server side (no echo, no pong).
+    serverNodePort.on('message', () => {
+      // intentionally ignore — simulating a dead channel
+    })
+
+    const clientScope = Effect.runSync(Scope.make())
+    const protocol = await Effect.runPromise(
+      makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
+        Scope.extend(clientScope)
+      )
+    )
+
+    const rpcClient: any = await Effect.runPromise(
+      RpcClient.make(TestRpcs).pipe(
+        Effect.provideService(RpcClient.Protocol, protocol),
+        Scope.extend(clientScope)
+      )
+    )
+
+    // Send a request — it will hang because nobody responds.
+    let requestFailed = false
+    const requestPromise = Effect.runPromise(
+      rpcClient.echo({ input: 'will timeout' })
+    ).catch(() => {
+      requestFailed = true
+    })
+
+    // Advance past heartbeat timeout (15s) + one interval (5s).
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    // The request should have failed due to the synthetic Defect.
+    await requestPromise
+    expect(requestFailed).toBe(true)
+
+    // Cleanup
+    await Effect.runPromise(Scope.close(clientScope, Exit.void)).catch(() => {
+      // Scope may already be partially closed.
+    })
+    serverNodePort.close()
+  })
+
+  it('does not trigger timeout when server responds to pings', async () => {
+    const pair = await buildServerAndClient()
+
+    // Advance time well past timeout — with a real server, pongs
+    // keep the heartbeat alive.
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    // RPC should still work.
+    const result = await Effect.runPromise(
+      pair.client.echo({ input: 'still alive' })
+    )
+    expect(result).toBe('still alive')
+
+    await pair.cleanup()
   })
 })

@@ -6,11 +6,11 @@ Issues: docs/lazy-file-service/issues.md
 ## Issue Status
 
 - [x] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [DONE]
-- [ ] Issue 2: file.list — Gitignore marking                                  [READY]
+- [x] Issue 2: file.list — Gitignore marking                                  [DONE]
 - [x] Issue 3: file.read — On-demand file content with per-file diff          [DONE]
 - [x] Issue 4: file.status — Workspace-level changed file summary             [DONE]
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
-- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2]
+- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [READY]
 - [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [READY]
 - [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
 - [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
@@ -124,3 +124,23 @@ Phase 4:             Issue 9
   - `parseDeletedOutput()` — parse deleted files
   - `deduplicateStatusResults()` — remove deleted files from modified list
 - All 24 file-service tests pass, format check clean, no type errors in modified files
+
+### Issue 2: file.list — Gitignore marking — DONE
+
+**Dependencies added:**
+- `ignore@7.0.5` — gitignore pattern parsing (same package used by OpenCode)
+
+**Files modified:**
+- `packages/server/src/services/file-service.ts` — Added `loadIgnorePatterns()` helper and `isIgnored` parameter to `readAndBuildNodes()`, imported `ignore` package
+- `packages/server/test/file-service.test.ts` — Added 5 integration tests for gitignore marking
+- `packages/server/package.json` — Added `ignore` dependency
+
+**Implementation details:**
+- `loadIgnorePatterns(worktreeRoot)` reads `.gitignore` and `.ignore` from the worktree root, parses them with the `ignore` npm package, and returns an `ignores()` function
+- Missing `.gitignore` or `.ignore` files are silently skipped (no error, all entries get `ignored: false`)
+- For directories, the relative path is tested with a trailing `/` to match gitignore directory semantics (e.g., `output/` matches a `output/` pattern)
+- For files, the bare relative path is tested
+- Entries are still returned (not filtered) — `ignored` is a flag, not a filter
+- The ignore checker is loaded once per `list()` call and passed to `readAndBuildNodes()`
+- Follows OpenCode's pattern from `.reference/opencode/packages/opencode/src/file/index.ts`
+- All 29 file-service tests pass (24 existing + 5 new), format check clean, no type errors

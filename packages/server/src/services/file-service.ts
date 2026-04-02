@@ -38,6 +38,7 @@ import {
   pipe,
   Stream,
 } from 'effect'
+import ignore from 'ignore'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
@@ -264,9 +265,58 @@ const validatePathContainment = (
   })
 
 /**
- * Read directory entries and build FileNode array, filtering ignored entries.
+ * Load gitignore and ignore patterns from the worktree root.
+ *
+ * Reads `.gitignore` and `.ignore` files from the worktree root,
+ * parses them with the `ignore` npm package, and returns a function
+ * that tests whether a given relative path should be marked as ignored.
+ *
+ * If either file is missing, it is silently skipped. If neither exists,
+ * the returned function always returns `false`.
+ *
+ * For directories, the caller should append a trailing `/` before
+ * testing (matching gitignore directory semantics).
  */
-const readAndBuildNodes = (targetDir: string, worktreeRoot: string) =>
+const loadIgnorePatterns = (
+  worktreeRoot: string
+): Effect.Effect<(relativePath: string) => boolean, never> =>
+  Effect.gen(function* () {
+    const ig = ignore()
+
+    const gitignorePath = join(worktreeRoot, '.gitignore')
+    const gitignoreText = yield* Effect.tryPromise({
+      try: () => readFile(gitignorePath, 'utf-8'),
+      catch: () => null,
+    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+    if (gitignoreText !== null) {
+      ig.add(gitignoreText)
+    }
+
+    const ignorePath = join(worktreeRoot, '.ignore')
+    const ignoreText = yield* Effect.tryPromise({
+      try: () => readFile(ignorePath, 'utf-8'),
+      catch: () => null,
+    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+    if (ignoreText !== null) {
+      ig.add(ignoreText)
+    }
+
+    return ig.ignores.bind(ig)
+  })
+
+/**
+ * Read directory entries and build FileNode array, filtering ignored entries.
+ *
+ * @param isIgnored — function that returns true if a relative path is
+ *   gitignored. For directories, the path is tested with a trailing `/`.
+ */
+const readAndBuildNodes = (
+  targetDir: string,
+  worktreeRoot: string,
+  isIgnored: (relativePath: string) => boolean
+) =>
   Effect.gen(function* () {
     const rawEntries = yield* Effect.tryPromise({
       try: () => readdir(targetDir, { withFileTypes: true }),
@@ -287,24 +337,26 @@ const readAndBuildNodes = (targetDir: string, worktreeRoot: string) =>
           continue
         }
         const absolute = join(targetDir, name)
+        const relPath = relative(worktreeRoot, absolute)
         nodes.push({
           name,
-          path: relative(worktreeRoot, absolute),
+          path: relPath,
           absolute,
           type: 'directory',
-          ignored: false, // Issue 2 adds gitignore marking
+          ignored: isIgnored(`${relPath}/`),
         })
       } else if (entry.isFile() || entry.isSymbolicLink()) {
         if (IGNORED_FILES.has(name)) {
           continue
         }
         const absolute = join(targetDir, name)
+        const relPath = relative(worktreeRoot, absolute)
         nodes.push({
           name,
-          path: relative(worktreeRoot, absolute),
+          path: relPath,
           absolute,
           type: 'file',
-          ignored: false, // Issue 2 adds gitignore marking
+          ignored: isIgnored(relPath),
         })
       }
     }
@@ -675,7 +727,9 @@ class FileService extends Context.Tag('@laborer/FileService')<
 
           yield* validatePathContainment(targetDir, worktreeRoot, dir)
 
-          return yield* readAndBuildNodes(targetDir, worktreeRoot)
+          const isIgnored = yield* loadIgnorePatterns(worktreeRoot)
+
+          return yield* readAndBuildNodes(targetDir, worktreeRoot, isIgnored)
         })
 
       const read = (

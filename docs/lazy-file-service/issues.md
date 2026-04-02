@@ -79,13 +79,13 @@ For directories, the path is tested with a trailing `/` (matching gitignore sema
 
 ### Acceptance criteria
 
-- [ ] `.gitignore` from worktree root is parsed and applied to entries
-- [ ] `.ignore` from worktree root is parsed and applied to entries
-- [ ] Directory paths are tested with trailing `/` per gitignore semantics
-- [ ] Missing gitignore/ignore files are handled gracefully (no error, all entries `ignored: false`)
-- [ ] Non-git workspaces return all entries with `ignored: false`
-- [ ] Entries are still returned (not filtered) — `ignored` is a flag, not a filter
-- [ ] All tests pass
+- [x] `.gitignore` from worktree root is parsed and applied to entries
+- [x] `.ignore` from worktree root is parsed and applied to entries
+- [x] Directory paths are tested with trailing `/` per gitignore semantics
+- [x] Missing gitignore/ignore files are handled gracefully (no error, all entries `ignored: false`)
+- [x] Non-git workspaces return all entries with `ignored: false`
+- [x] Entries are still returned (not filtered) — `ignored` is a flag, not a filter
+- [x] All tests pass
 
 ### Blocked by
 
@@ -479,11 +479,11 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | file.list — Lazy per-directory listing (tracer bullet) | None | **Done** |
-| 2 | file.list — Gitignore marking | ~~Issue 1~~ | Ready |
+| 2 | file.list — Gitignore marking | ~~Issue 1~~ | **Done** |
 | 3 | file.read — On-demand file content with per-file diff | ~~Issue 1~~ | **Done** |
 | 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | **Done** |
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
-| 6 | Client tree pane — Lazy per-directory fetching | Issues 2, ~~5~~ | Blocked |
+| 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | Ready |
 | 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, ~~4~~, ~~5~~ | Ready |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | Ready |
 | 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, 8 | Blocked |

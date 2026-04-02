@@ -754,4 +754,179 @@ describe('FileService', () => {
       assert.strictEqual(result.code, 'NOT_FOUND')
     }).pipe(Effect.provide(TestFileServiceLayer))
   )
+
+  // =================================================================
+  // FileService.list() — Gitignore marking tests — Issue 2
+  // =================================================================
+
+  // --- Behavior 25: File matching .gitignore pattern gets ignored: true ---
+  it.scoped('list marks files matching .gitignore patterns as ignored', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-gitignore-file', tempRoots)
+      writeFileSync(join(repoPath, '.gitignore'), '*.log\n')
+      writeFileSync(join(repoPath, 'app.log'), 'log data\n')
+      writeFileSync(join(repoPath, 'main.ts'), 'code\n')
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const nodes = yield* fileService.list(workspaceId)
+
+      const logNode = nodes.find((n) => n.name === 'app.log')
+      assert.isDefined(logNode, 'Expected app.log in listing')
+      assert.strictEqual(
+        logNode?.ignored,
+        true,
+        'app.log should be marked as ignored'
+      )
+
+      const tsNode = nodes.find((n) => n.name === 'main.ts')
+      assert.isDefined(tsNode, 'Expected main.ts in listing')
+      assert.strictEqual(
+        tsNode?.ignored,
+        false,
+        'main.ts should not be ignored'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 26: Directory matching .gitignore pattern gets ignored: true ---
+  it.scoped(
+    'list marks directories matching .gitignore patterns as ignored (trailing / semantics)',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-svc-gitignore-dir', tempRoots)
+        writeFileSync(join(repoPath, '.gitignore'), 'output/\n')
+        mkdirSync(join(repoPath, 'output'), { recursive: true })
+        writeFileSync(join(repoPath, 'output/bundle.js'), 'bundle\n')
+        mkdirSync(join(repoPath, 'src'), { recursive: true })
+
+        const { store } = yield* LaborerStore
+        const workspaceId = seedWorkspace(store, repoPath)
+
+        const fileService = yield* FileService
+        const nodes = yield* fileService.list(workspaceId)
+
+        const outputNode = nodes.find((n) => n.name === 'output')
+        assert.isDefined(outputNode, 'Expected output directory in listing')
+        assert.strictEqual(
+          outputNode?.ignored,
+          true,
+          'output/ should be marked as ignored'
+        )
+
+        const srcNode = nodes.find((n) => n.name === 'src')
+        assert.isDefined(srcNode, 'Expected src directory in listing')
+        assert.strictEqual(
+          srcNode?.ignored,
+          false,
+          'src/ should not be ignored'
+        )
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 27: .ignore file patterns are also applied ---
+  it.scoped('list applies .ignore file patterns alongside .gitignore', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-dotignore', tempRoots)
+      writeFileSync(join(repoPath, '.gitignore'), '*.log\n')
+      writeFileSync(join(repoPath, '.ignore'), '*.tmp\n')
+      writeFileSync(join(repoPath, 'app.log'), 'log\n')
+      writeFileSync(join(repoPath, 'cache.tmp'), 'tmp\n')
+      writeFileSync(join(repoPath, 'main.ts'), 'code\n')
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const nodes = yield* fileService.list(workspaceId)
+
+      const logNode = nodes.find((n) => n.name === 'app.log')
+      assert.isDefined(logNode, 'Expected app.log')
+      assert.strictEqual(logNode?.ignored, true, 'app.log should be ignored')
+
+      const tmpNode = nodes.find((n) => n.name === 'cache.tmp')
+      assert.isDefined(tmpNode, 'Expected cache.tmp')
+      assert.strictEqual(tmpNode?.ignored, true, 'cache.tmp should be ignored')
+
+      const tsNode = nodes.find((n) => n.name === 'main.ts')
+      assert.isDefined(tsNode, 'Expected main.ts')
+      assert.strictEqual(
+        tsNode?.ignored,
+        false,
+        'main.ts should not be ignored'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 28: Entries not matching any pattern get ignored: false ---
+  it.scoped(
+    'list returns ignored: false for entries not matching any ignore pattern',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-svc-no-match', tempRoots)
+        writeFileSync(join(repoPath, '.gitignore'), '*.log\n')
+        writeFileSync(join(repoPath, 'index.ts'), 'code\n')
+        mkdirSync(join(repoPath, 'lib'), { recursive: true })
+
+        const { store } = yield* LaborerStore
+        const workspaceId = seedWorkspace(store, repoPath)
+
+        const fileService = yield* FileService
+        const nodes = yield* fileService.list(workspaceId)
+
+        const indexNode = nodes.find((n) => n.name === 'index.ts')
+        assert.isDefined(indexNode, 'Expected index.ts')
+        assert.strictEqual(
+          indexNode?.ignored,
+          false,
+          'index.ts should not be ignored'
+        )
+
+        const libNode = nodes.find((n) => n.name === 'lib')
+        assert.isDefined(libNode, 'Expected lib directory')
+        assert.strictEqual(
+          libNode?.ignored,
+          false,
+          'lib/ should not be ignored'
+        )
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 29: Missing .gitignore/.ignore files handled gracefully ---
+  it.scoped(
+    'list returns all entries with ignored: false when no gitignore/ignore files exist',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-svc-no-gitignore', tempRoots)
+        // initRepo creates README.md but no .gitignore or .ignore
+        writeFileSync(join(repoPath, 'app.ts'), 'code\n')
+        mkdirSync(join(repoPath, 'lib'), { recursive: true })
+
+        const { store } = yield* LaborerStore
+        const workspaceId = seedWorkspace(store, repoPath)
+
+        const fileService = yield* FileService
+        const nodes = yield* fileService.list(workspaceId)
+
+        for (const node of nodes) {
+          assert.strictEqual(
+            node.ignored,
+            false,
+            `${node.name} should have ignored: false when no gitignore files exist`
+          )
+        }
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
 })

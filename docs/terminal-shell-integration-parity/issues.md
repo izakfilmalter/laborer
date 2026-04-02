@@ -11,7 +11,7 @@
 | 3 | FinalTerm 133 command detection fallback | 1 | Done |
 | 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Done |
 | 5 | Capability store + CwdDetection | None | Done |
-| 6 | BufferMarkDetection + gutter UI | 5 | Ready |
+| 6 | BufferMarkDetection + gutter UI | 5 | Done |
 | 7 | ShellEnvDetection + indicator | 5 | Ready |
 | 8 | PromptTypeDetection + badge | 5 | Done |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Done |
@@ -248,16 +248,16 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] `BufferMarkDetection` capability tracks marks as `{ line, id?, hidden? }` entries
-- [ ] OSC 633 SetMark handler parses Id and Hidden parameters and creates marks
-- [ ] OSC 633;P Task handler creates a mark and sets `disableCommandStorage`
-- [ ] OSC 1337 SetMark handler creates marks
-- [ ] Buffer marks serialize in `SerializedCapabilityStore.bufferMarks`
-- [ ] Buffer marks restore from persisted state after recovery
+- [x] `BufferMarkDetection` capability tracks marks as `{ line, id?, hidden? }` entries
+- [x] OSC 633 SetMark handler parses Id and Hidden parameters and creates marks
+- [x] OSC 633;P Task handler creates a mark and sets `disableCommandStorage`
+- [x] OSC 1337 SetMark handler creates marks
+- [x] Buffer marks serialize in `SerializedCapabilityStore.bufferMarks`
+- [x] Buffer marks restore from persisted state after recovery
 - [ ] Renderer decoration addon places gutter indicators at mark line positions
-- [ ] Hidden marks are tracked but not rendered
-- [ ] Tests verify mark creation from all three OSC sources
-- [ ] Tests verify mark serialization/restoration roundtrip
+- [x] Hidden marks are tracked but not rendered
+- [x] Tests verify mark creation from all three OSC sources
+- [x] Tests verify mark serialization/restoration roundtrip
 - [ ] Tests verify the decoration addon renders at correct positions
 
 ### Blocked by

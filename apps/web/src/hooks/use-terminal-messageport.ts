@@ -97,7 +97,14 @@ interface SerializedCwdDetection {
   readonly history: readonly SerializedCwdDetectionEntry[]
 }
 
+interface SerializedBufferMarkEntry {
+  readonly hidden?: boolean | undefined
+  readonly id?: string | undefined
+  readonly line: number
+}
+
 interface SerializedCapabilityStore {
+  readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
 }
@@ -264,6 +271,22 @@ function isSerializedTerminalCommand(
   )
 }
 
+function isSerializedBufferMarkEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const m = value as Record<string, unknown>
+  return typeof m.line === 'number'
+}
+
+function isSerializedCwdDetection(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const cwd = value as Record<string, unknown>
+  return typeof cwd.cwd === 'string' && Array.isArray(cwd.history)
+}
+
 function isSerializedCapabilityStore(
   value: unknown
 ): value is SerializedCapabilityStore {
@@ -273,27 +296,26 @@ function isSerializedCapabilityStore(
   if (typeof value !== 'object') {
     return false
   }
-  // The capability store is a bag of optional fields — any object is valid.
-  // Validate cwdDetection shape if present.
   const candidate = value as Record<string, unknown>
-  if (candidate.cwdDetection !== undefined) {
-    if (
-      typeof candidate.cwdDetection !== 'object' ||
-      candidate.cwdDetection === null
-    ) {
-      return false
-    }
-    const cwd = candidate.cwdDetection as Record<string, unknown>
-    if (typeof cwd.cwd !== 'string' || !Array.isArray(cwd.history)) {
-      return false
-    }
+  if (
+    candidate.cwdDetection !== undefined &&
+    !isSerializedCwdDetection(candidate.cwdDetection)
+  ) {
+    return false
   }
-  // Validate promptType shape if present.
   if (
     candidate.promptType !== undefined &&
     typeof candidate.promptType !== 'string'
   ) {
     return false
+  }
+  if (candidate.bufferMarks !== undefined) {
+    if (!Array.isArray(candidate.bufferMarks)) {
+      return false
+    }
+    if (!candidate.bufferMarks.every(isSerializedBufferMarkEntry)) {
+      return false
+    }
   }
   return true
 }

@@ -96,8 +96,16 @@ interface SerializedCwdDetection {
   readonly history: readonly SerializedCwdDetectionEntry[]
 }
 
+/** Serialized buffer mark entry. */
+interface SerializedBufferMarkEntry {
+  readonly hidden?: boolean | undefined
+  readonly id?: string | undefined
+  readonly line: number
+}
+
 /** Serialized capability store from the headless terminal. */
 interface SerializedCapabilityStore {
+  readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
 }

@@ -71,6 +71,19 @@ interface CwdDetectionState {
 }
 
 /**
+ * A buffer mark entry tracked by the BufferMarkDetection capability.
+ * Fed by OSC 633 SetMark, OSC 633;P Task, and OSC 1337 SetMark.
+ */
+interface BufferMarkEntry {
+  /** Whether the mark should not be rendered (tracked but invisible). */
+  hidden?: boolean | undefined
+  /** Optional identifier for the mark. */
+  id?: string | undefined
+  /** Absolute line number in the terminal buffer where the mark was placed. */
+  line: number
+}
+
+/**
  * Tracks whether VS Code OSC 633 sequences have been seen for this terminal.
  * Once any 633 sequence is seen, FinalTerm 133;B/D stop creating commands
  * (the 633 handlers take over). 133;A and 133;C continue to fire prompt
@@ -83,11 +96,18 @@ interface CwdDetectionState {
 type ShellIntegrationStatus = 'finalterm' | 'none' | 'vscode'
 
 interface HeadlessCommandState {
+  /** Buffer marks tracked by the BufferMarkDetection capability. */
+  bufferMarks: BufferMarkEntry[]
   commands: SerializedTerminalCommand[]
   currentCommand?: InFlightCommand | undefined
   cwd?: string | undefined
   /** Cwd detection capability state, fed by multiple OSC sources. */
   cwdDetection: CwdDetectionState
+  /**
+   * Whether command storage is disabled for this terminal.
+   * Set by OSC 633;P Task for task terminals.
+   */
+  disableCommandStorage: boolean
   hasRichCommandDetection: boolean
   /**
    * Whether the current command input spans multiple lines with
@@ -165,8 +185,10 @@ const deserializeVsCodeOscValue = (value: string): string =>
   })
 
 const createEmptyCommandState = (): HeadlessCommandState => ({
+  bufferMarks: [],
   commands: [],
   cwdDetection: { history: [] },
+  disableCommandStorage: false,
   hasRichCommandDetection: false,
   inContinuation: false,
   inRightPrompt: false,
@@ -577,9 +599,41 @@ const handlePropertySequence = (
       return
     }
 
+    case 'Task': {
+      // Task property creates a buffer mark and disables command storage.
+      // This is used for VS Code task terminals.
+      commandState.bufferMarks.push({
+        line: getAbsoluteCursorLine(terminal),
+      })
+      commandState.disableCommandStorage = true
+      return
+    }
+
     default:
       return
   }
+}
+
+/**
+ * Parse a SetMark sequence's args for Id and Hidden parameters.
+ * Format: `OSC 633;SetMark;[Id=<string>];[Hidden] ST`
+ *
+ * Follows VS Code's `parseMarkSequence()` in shellIntegrationAddon.ts.
+ */
+const parseMarkSequence = (
+  args: readonly string[]
+): { hidden: boolean; id?: string | undefined } => {
+  let id: string | undefined
+  let hidden = false
+  for (const arg of args) {
+    if (arg === 'Hidden') {
+      hidden = true
+    }
+    if (arg.startsWith('Id=')) {
+      id = arg.slice(3)
+    }
+  }
+  return { id, hidden }
 }
 
 const handleVsCodeOscSequence = (
@@ -708,6 +762,17 @@ const handleVsCodeOscSequence = (
 
     case 'P': {
       handlePropertySequence(commandState, terminal, args)
+      return
+    }
+
+    case 'SetMark': {
+      // OSC 633;SetMark;[Id=<string>];[Hidden] ST
+      const markProps = parseMarkSequence(args)
+      commandState.bufferMarks.push({
+        line: getAbsoluteCursorLine(terminal),
+        ...(markProps.id !== undefined ? { id: markProps.id } : {}),
+        ...(markProps.hidden ? { hidden: true } : {}),
+      })
       return
     }
 
@@ -1067,8 +1132,9 @@ const createHeadlessTerminalManager = (
     )
 
     // OSC 1337: iTerm2 proprietary sequences.
-    // Handles CurrentDir for cwd detection.
+    // Handles CurrentDir for cwd detection and SetMark for buffer marks.
     // Format: OSC 1337 ; CurrentDir=path ST
+    // Format: OSC 1337 ; SetMark ST
     oscDisposables.push(
       terminal.parser.registerOscHandler(1337, (data: string): boolean => {
         if (data.startsWith('CurrentDir=')) {
@@ -1076,6 +1142,11 @@ const createHeadlessTerminalManager = (
           if (path.length > 0) {
             recordCwdChange(commandState, path, getAbsoluteCursorLine(terminal))
           }
+        } else if (data === 'SetMark') {
+          // iTerm2 SetMark — simple mark with no parameters.
+          commandState.bufferMarks.push({
+            line: getAbsoluteCursorLine(terminal),
+          })
         }
         return false
       })
@@ -1161,12 +1232,13 @@ const createHeadlessTerminalManager = (
       return undefined
     }
 
-    const { cwdDetection, promptType } = state.commandState
+    const { bufferMarks, cwdDetection, promptType } = state.commandState
     const hasCwd =
       cwdDetection.cwd !== undefined || cwdDetection.history.length > 0
     const hasPromptType = promptType !== undefined
+    const hasBufferMarks = bufferMarks.length > 0
 
-    if (!(hasCwd || hasPromptType)) {
+    if (!(hasCwd || hasPromptType || hasBufferMarks)) {
       return undefined
     }
 
@@ -1182,6 +1254,15 @@ const createHeadlessTerminalManager = (
         cwdDetection.cwd !== undefined
           ? { cwd: cwdDetection.cwd, history }
           : undefined,
+      ...(hasBufferMarks
+        ? {
+            bufferMarks: bufferMarks.map((mark) => ({
+              line: mark.line,
+              ...(mark.id !== undefined ? { id: mark.id } : {}),
+              ...(mark.hidden ? { hidden: true } : {}),
+            })),
+          }
+        : {}),
       ...(hasPromptType ? { promptType } : {}),
     }
   }

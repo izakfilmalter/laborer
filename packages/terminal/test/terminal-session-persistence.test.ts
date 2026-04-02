@@ -1070,6 +1070,183 @@ describe('createTerminalSessionPersistence', () => {
       })
     })
 
+    it('serializes buffer marks from OSC 633 SetMark', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;SetMark;Id=build-start\x07')
+      headlessManager.write('term-1', '\x1b]633;SetMark;Hidden\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'some output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities?.bufferMarks).toEqual(
+        [
+          {
+            line: expect.any(Number),
+            id: 'build-start',
+          },
+          {
+            line: expect.any(Number),
+            hidden: true,
+          },
+        ]
+      )
+
+      headlessManager.disposeAll()
+    })
+
+    it('serializes buffer marks from OSC 1337 SetMark and 633;P Task', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]1337;SetMark\x07')
+      headlessManager.write('term-1', '\x1b]633;P;Task=deploy\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'some output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.bufferMarks
+      ).toHaveLength(2)
+      // Both marks should have line numbers
+      for (const mark of state.terminals[0]?.replayEvent.capabilities
+        ?.bufferMarks ?? []) {
+        expect(mark.line).toBeTypeOf('number')
+      }
+
+      headlessManager.disposeAll()
+    })
+
+    it('preserves restored buffer marks when serializing again', () => {
+      const persistence = createTerminalSessionPersistence()
+      persistence.registerTerminal('term-1', 80, 24)
+      persistence.restoreReplayEvent('term-1', {
+        capabilities: {
+          bufferMarks: [
+            { line: 5, id: 'mark-1' },
+            { line: 10, hidden: true },
+            { line: 15 },
+          ],
+        },
+        events: [
+          {
+            cols: 80,
+            rows: 24,
+            data: 'restored output\r\n',
+          },
+        ],
+      })
+
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => ''
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities?.bufferMarks).toEqual(
+        [{ line: 5, id: 'mark-1' }, { line: 10, hidden: true }, { line: 15 }]
+      )
+    })
+
+    it('serializes buffer marks alongside cwd detection and prompt type', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;P;Cwd=/workspace\x07')
+      headlessManager.write('term-1', '\x1b]633;P;PromptType=p10k\x07')
+      headlessManager.write('term-1', '\x1b]633;SetMark;Id=test\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      const caps = state.terminals[0]?.replayEvent.capabilities
+      expect(caps?.cwdDetection?.cwd).toBe('/workspace')
+      expect(caps?.promptType).toBe('p10k')
+      expect(caps?.bufferMarks).toHaveLength(1)
+      expect(caps?.bufferMarks?.[0]?.id).toBe('test')
+
+      headlessManager.disposeAll()
+    })
+
     it('serializes both cwd detection and prompt type together', async () => {
       const persistence = createTerminalSessionPersistence()
       const headlessManager = createHeadlessTerminalManager()

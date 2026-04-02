@@ -275,7 +275,14 @@ interface SerializedCwdDetection {
   readonly history: readonly SerializedCwdDetectionEntry[]
 }
 
+interface SerializedBufferMarkEntry {
+  readonly hidden?: boolean | undefined
+  readonly id?: string | undefined
+  readonly line: number
+}
+
 interface SerializedCapabilityStore {
+  readonly bufferMarks?: readonly SerializedBufferMarkEntry[] | undefined
   readonly cwdDetection?: SerializedCwdDetection | undefined
   readonly promptType?: string | undefined
 }
@@ -739,6 +746,7 @@ export {
   STATE_FILE,
 }
 export type {
+  SerializedBufferMarkEntry,
   SerializedCapabilityStore,
   SerializedCommandDetectionCapability,
   SerializedCwdDetection,

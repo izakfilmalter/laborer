@@ -970,11 +970,28 @@ describe('HeadlessTerminalManager', () => {
     expect(state).toBeUndefined()
   })
 
-  it('ignores OSC 1337 with non-CurrentDir payload', async () => {
+  it('OSC 1337 SetMark creates a buffer mark in capability state', async () => {
     manager = createHeadlessTerminalManager()
     manager.create('test-1', 80, 24)
 
     manager.write('test-1', '\x1b]1337;SetMark\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.line).toBeTypeOf('number')
+    // iTerm SetMark has no id or hidden flag
+    expect(state?.bufferMarks?.[0]?.id).toBeUndefined()
+    expect(state?.bufferMarks?.[0]?.hidden).toBeUndefined()
+  })
+
+  it('ignores OSC 1337 with non-CurrentDir and non-SetMark payload', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]1337;SomeOtherProperty=value\x07')
 
     await waitForXterm()
 
@@ -1063,6 +1080,212 @@ describe('HeadlessTerminalManager', () => {
 
     const state = manager.getCapabilityState('test-1')
     expect(state).toBeUndefined()
+  })
+
+  // ---------------------------------------------------------------
+  // Capability store: BufferMarkDetection from multiple OSC sources
+  // ---------------------------------------------------------------
+
+  it('OSC 633 SetMark creates a buffer mark with no parameters', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;SetMark\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.line).toBeTypeOf('number')
+    expect(state?.bufferMarks?.[0]?.id).toBeUndefined()
+    expect(state?.bufferMarks?.[0]?.hidden).toBeUndefined()
+  })
+
+  it('OSC 633 SetMark parses Id parameter', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;SetMark;Id=build-start\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.id).toBe('build-start')
+    expect(state?.bufferMarks?.[0]?.hidden).toBeUndefined()
+  })
+
+  it('OSC 633 SetMark parses Hidden parameter', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;SetMark;Hidden\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.hidden).toBe(true)
+    expect(state?.bufferMarks?.[0]?.id).toBeUndefined()
+  })
+
+  it('OSC 633 SetMark parses both Id and Hidden parameters', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;SetMark;Id=test-mark;Hidden\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.id).toBe('test-mark')
+    expect(state?.bufferMarks?.[0]?.hidden).toBe(true)
+  })
+
+  it('OSC 633;P Task creates a buffer mark and disables command storage', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;Task=build\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.line).toBeTypeOf('number')
+    // Task marks have no id or hidden flag
+    expect(state?.bufferMarks?.[0]?.id).toBeUndefined()
+    expect(state?.bufferMarks?.[0]?.hidden).toBeUndefined()
+  })
+
+  it('OSC 633;P Task disables command storage so subsequent commands are not tracked', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // First, send a Task property to disable command storage
+    manager.write('test-1', '\x1b]633;P;Task=build\x07')
+
+    // Then try a normal command lifecycle
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    // The mark should be there
+    const capState = manager.getCapabilityState('test-1')
+    expect(capState?.bufferMarks).toHaveLength(1)
+
+    // Commands are still tracked (disableCommandStorage only affects
+    // future serialization decisions, not the runtime tracking)
+    const cmdState = manager.getCommandDetectionState('test-1')
+    expect(cmdState?.commands).toHaveLength(1)
+  })
+
+  it('multiple buffer marks from different sources are tracked in order', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Mark from OSC 633 SetMark with Id
+    manager.write('test-1', '\x1b]633;SetMark;Id=mark-1\x07')
+    // Mark from OSC 1337 SetMark (iTerm)
+    manager.write('test-1', '\x1b]1337;SetMark\x07')
+    // Mark from OSC 633;P Task
+    manager.write('test-1', '\x1b]633;P;Task=build\x07')
+    // Mark from OSC 633 SetMark with Hidden
+    manager.write('test-1', '\x1b]633;SetMark;Hidden\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(4)
+    expect(state?.bufferMarks?.[0]?.id).toBe('mark-1')
+    expect(state?.bufferMarks?.[1]?.id).toBeUndefined() // iTerm mark
+    expect(state?.bufferMarks?.[2]?.id).toBeUndefined() // Task mark
+    expect(state?.bufferMarks?.[3]?.hidden).toBe(true)
+  })
+
+  it('buffer marks include line numbers from the terminal buffer', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write some output to move the cursor down
+    manager.write('test-1', 'line 1\r\nline 2\r\nline 3\r\n')
+    await waitForXterm()
+
+    // Place a mark
+    manager.write('test-1', '\x1b]633;SetMark;Id=after-output\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state?.bufferMarks).toHaveLength(1)
+    // The mark should be at line 3 or later (after the 3 lines of output)
+    expect(state?.bufferMarks?.[0]?.line).toBeGreaterThanOrEqual(3)
+  })
+
+  it('capability state includes both bufferMarks and cwdDetection', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;Cwd=/workspace\x07')
+    manager.write('test-1', '\x1b]633;SetMark;Id=test\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/workspace')
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.bufferMarks?.[0]?.id).toBe('test')
+  })
+
+  it('capability state includes bufferMarks, cwdDetection, and promptType together', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;Cwd=/workspace\x07')
+    manager.write('test-1', '\x1b]633;P;PromptType=starship\x07')
+    manager.write('test-1', '\x1b]633;SetMark;Id=deploy\x07')
+    manager.write('test-1', '\x1b]1337;SetMark\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/workspace')
+    expect(state?.promptType).toBe('starship')
+    expect(state?.bufferMarks).toHaveLength(2)
+    expect(state?.bufferMarks?.[0]?.id).toBe('deploy')
+    expect(state?.bufferMarks?.[1]?.id).toBeUndefined()
+  })
+
+  it('returns capability state with only bufferMarks when no cwd or promptType', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;SetMark\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.bufferMarks).toHaveLength(1)
+    expect(state?.cwdDetection).toBeUndefined()
+    expect(state?.promptType).toBeUndefined()
   })
 
   // ---------------------------------------------------------------

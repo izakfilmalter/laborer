@@ -415,3 +415,70 @@ terminal (runtime), persistence (serialized), and renderer (local copy).
 - Tests: 39/39 persistence tests pass
 - Tests: 20/20 shell-integration-addon tests pass
 - Pre-existing failures unchanged (messageport DOM tests, data channel infra)
+
+## Issue 3: FinalTerm 133 command detection fallback — COMPLETED
+
+### Summary
+Added OSC 133;B (command start) and OSC 133;D (command finished) handling as a
+command detection fallback for shells that only emit FinalTerm sequences (e.g.,
+powerlevel10k configurations that emit OSC 133 but not OSC 633). This enables
+basic command tracking for any shell with FinalTerm protocol support.
+
+The implementation follows VS Code's priority scheme: once any OSC 633 sequence
+is seen, the shell integration status permanently becomes `'vscode'` and
+FinalTerm 133;B/D stop creating commands. However, 133;A (prompt start) and
+133;C (command executed) continue to fire prompt state callbacks regardless of
+633 presence.
+
+FinalTerm-detected commands have:
+- `commandLineConfidence: 'low'` (FinalTerm doesn't include command text)
+- `isTrusted: false` (no nonce verification possible)
+- Empty `command` string (command text unavailable)
+- Full positional metadata from xterm markers (same as 633 commands)
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `ShellIntegrationStatus` type (`'none' | 'finalterm' | 'vscode'`)
+  - Added `shellIntegrationStatus` field to `HeadlessCommandState`
+  - Set `shellIntegrationStatus = 'vscode'` in `handleVsCodeOscSequence()` when
+    any 633 sequence is received
+  - Added `handleFinalTermPromptStart()` — 133;A handler: fires prompt callback
+    (idle) and records pending prompt start line for FinalTerm fallback
+  - Added `handleFinalTermCommandStart()` — 133;B handler: creates in-flight
+    command with low confidence, only when no 633 sequences seen
+  - Added `handleFinalTermCommandExecuted()` — 133;C handler: fires prompt
+    callback (running) and records executedLine/executedX on in-flight command
+  - Added `handleFinalTermCommandFinished()` — 133;D handler: finalizes command
+    with exit code and end marker, only when no 633 sequences seen
+  - Added `handleFinalTermOscSequence()` — dispatcher that parses the 133
+    marker and delegates to the per-marker handlers
+  - Refactored OSC 133 handler registration in `create()` to always register
+    (even without `onPromptState`), delegating to `handleFinalTermOscSequence`
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 10 new tests:
+    - Pure FinalTerm detection (133;A->B->C->D) produces serialized command
+    - FinalTerm commands include positional metadata from markers
+    - 133;D parses exit code from args
+    - 133;B without preceding 133;A has undefined promptStartLine
+    - FinalTerm commands carry cwd from prior cwd detection
+    - 633 takes priority: after seeing 633, 133;B/D are ignored
+    - 133;A and 133;C continue prompt state callbacks even with 633 active
+    - FinalTerm detects multiple commands in sequence
+    - 133;D without preceding 133;B is ignored
+    - FinalTerm in-flight command serialized as partial (no endLine)
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Added 1 new test:
+    - FinalTerm-detected commands serialize through persistence with low
+      confidence and untrusted flag
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 3 modified files
+- Tests: 63/63 headless-terminal tests pass (10 new)
+- Tests: 40/40 persistence tests pass (1 new)
+- Tests: 20/20 shell-integration-addon tests pass (unchanged)
+- All 141 tests across terminal package pass
+- Pre-existing empty test suite failures unchanged

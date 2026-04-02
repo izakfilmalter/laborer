@@ -70,6 +70,18 @@ interface CwdDetectionState {
   history: Array<{ cwd: string; line?: number | undefined }>
 }
 
+/**
+ * Tracks whether VS Code OSC 633 sequences have been seen for this terminal.
+ * Once any 633 sequence is seen, FinalTerm 133;B/D stop creating commands
+ * (the 633 handlers take over). 133;A and 133;C continue to fire prompt
+ * state callbacks regardless.
+ *
+ * - `'none'` — No shell integration sequences detected yet
+ * - `'finalterm'` — Only FinalTerm 133 sequences seen (fallback mode)
+ * - `'vscode'` — VS Code 633 sequences seen (takes priority permanently)
+ */
+type ShellIntegrationStatus = 'finalterm' | 'none' | 'vscode'
+
 interface HeadlessCommandState {
   commands: SerializedTerminalCommand[]
   currentCommand?: InFlightCommand | undefined
@@ -91,6 +103,8 @@ interface HeadlessCommandState {
         value: string
       }
     | undefined
+  /** Tracks whether VS Code 633 or FinalTerm 133 sequences are active. */
+  shellIntegrationStatus: ShellIntegrationStatus
 }
 
 const ESCAPE_CHARACTER = String.fromCharCode(0x1b)
@@ -135,6 +149,7 @@ const createEmptyCommandState = (): HeadlessCommandState => ({
   cwdDetection: { history: [] },
   hasRichCommandDetection: false,
   isWindowsPty: false,
+  shellIntegrationStatus: 'none',
 })
 
 const parseBooleanOscProperty = (value: string): boolean => value === 'True'
@@ -285,6 +300,169 @@ const getAbsoluteCursorLine = (
 }
 
 /**
+ * Handle FinalTerm 133;A: prompt start.
+ * Always fires the prompt callback (idle) and records prompt start line
+ * for command detection when not in VS Code mode.
+ */
+const handleFinalTermPromptStart = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
+  promptCallback?: PromptStateCallback | undefined,
+  terminalId?: string | undefined
+): void => {
+  if (promptCallback !== undefined && terminalId !== undefined) {
+    promptCallback(terminalId, 'idle')
+  }
+  if (commandState.shellIntegrationStatus !== 'vscode') {
+    commandState.pendingPromptStartLine = getAbsoluteCursorLine(terminal)
+  }
+}
+
+/**
+ * Handle FinalTerm 133;B: command start fallback.
+ * Only creates commands when no OSC 633 sequences have been seen.
+ */
+const handleFinalTermCommandStart = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>
+): void => {
+  if (commandState.shellIntegrationStatus === 'vscode') {
+    return
+  }
+  commandState.shellIntegrationStatus = 'finalterm'
+  const cursorLine = getAbsoluteCursorLine(terminal)
+  const cursorX = terminal.buffer.active.cursorX
+  const lineContent = getBufferLineContent(terminal, cursorLine)
+  commandState.currentCommand = {
+    command: '',
+    commandLineConfidence: 'low',
+    commandStartLineContent: lineContent,
+    cwd: commandState.cwd,
+    isTrusted: false,
+    promptStartLine: commandState.pendingPromptStartLine,
+    startLine: cursorLine,
+    startX: cursorX,
+    timestamp: Date.now(),
+  }
+  commandState.pendingPromptStartLine = undefined
+}
+
+/**
+ * Handle FinalTerm 133;C: command executed.
+ * Always fires the prompt callback (running). Also records executedLine/executedX
+ * on the in-flight command when not in VS Code mode.
+ */
+const handleFinalTermCommandExecuted = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
+  promptCallback?: PromptStateCallback | undefined,
+  terminalId?: string | undefined
+): void => {
+  if (promptCallback !== undefined && terminalId !== undefined) {
+    promptCallback(terminalId, 'running')
+  }
+  if (
+    commandState.shellIntegrationStatus !== 'vscode' &&
+    commandState.currentCommand !== undefined
+  ) {
+    commandState.currentCommand.executedLine = getAbsoluteCursorLine(terminal)
+    commandState.currentCommand.executedX = terminal.buffer.active.cursorX
+  }
+}
+
+/**
+ * Handle FinalTerm 133;D: command finished fallback.
+ * Only finalizes commands when no OSC 633 sequences have been seen.
+ */
+const handleFinalTermCommandFinished = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
+  exitCodeRaw?: string | undefined
+): void => {
+  if (commandState.shellIntegrationStatus === 'vscode') {
+    return
+  }
+  const currentCommand = commandState.currentCommand
+  if (currentCommand === undefined) {
+    return
+  }
+  const endLine = getAbsoluteCursorLine(terminal)
+  commandState.commands.push({
+    command: currentCommand.command,
+    commandLineConfidence: currentCommand.commandLineConfidence,
+    commandStartLineContent: currentCommand.commandStartLineContent,
+    cwd: currentCommand.cwd,
+    duration: Math.max(0, Date.now() - currentCommand.timestamp),
+    endLine,
+    executedLine: currentCommand.executedLine,
+    executedX: currentCommand.executedX,
+    exitCode:
+      exitCodeRaw === undefined ? undefined : Number.parseInt(exitCodeRaw, 10),
+    isTrusted: currentCommand.isTrusted,
+    promptStartLine: currentCommand.promptStartLine,
+    startLine: currentCommand.startLine,
+    startX: currentCommand.startX,
+    timestamp: currentCommand.timestamp,
+  })
+  commandState.currentCommand = undefined
+}
+
+/**
+ * Handle a FinalTerm OSC 133 sequence for command detection fallback.
+ *
+ * Dispatches to per-marker handler functions for A (prompt start),
+ * B (command start), C (command executed), and D (command finished).
+ */
+const handleFinalTermOscSequence = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
+  data: string,
+  promptCallback?: PromptStateCallback | undefined,
+  terminalId?: string | undefined
+): void => {
+  const semicolonIndex = data.indexOf(';')
+  const marker =
+    semicolonIndex === -1 ? data.trim() : data.slice(0, semicolonIndex).trim()
+
+  switch (marker) {
+    case 'A': {
+      handleFinalTermPromptStart(
+        commandState,
+        terminal,
+        promptCallback,
+        terminalId
+      )
+      return
+    }
+
+    case 'B': {
+      handleFinalTermCommandStart(commandState, terminal)
+      return
+    }
+
+    case 'C': {
+      handleFinalTermCommandExecuted(
+        commandState,
+        terminal,
+        promptCallback,
+        terminalId
+      )
+      return
+    }
+
+    case 'D': {
+      const args = semicolonIndex === -1 ? '' : data.slice(semicolonIndex + 1)
+      const exitCodeRaw = args.length > 0 ? args : undefined
+      handleFinalTermCommandFinished(commandState, terminal, exitCodeRaw)
+      return
+    }
+
+    default:
+      return
+  }
+}
+
+/**
  * Handle the 633;D (command finished) sequence: finalize the in-flight
  * command with all positional metadata and push it to the completed list.
  */
@@ -386,6 +564,11 @@ const handleVsCodeOscSequence = (
   const argsIndex = data.indexOf(';')
   const command = argsIndex === -1 ? data : data.slice(0, argsIndex)
   const args = argsIndex === -1 ? [] : data.slice(argsIndex + 1).split(';')
+
+  // Once any OSC 633 sequence is seen, the shell integration status
+  // permanently becomes 'vscode'. FinalTerm 133;B/D stop creating
+  // commands from this point on.
+  commandState.shellIntegrationStatus = 'vscode'
 
   switch (command) {
     case 'A': {
@@ -743,20 +926,23 @@ const createHeadlessTerminalManager = (
       oscDisposables.push(terminal.parser.registerOscHandler(2, handleTitleOsc))
     }
 
-    if (options?.onPromptState !== undefined) {
-      const promptCallback = options.onPromptState
-      const handlePromptOsc = (data: string): boolean => {
-        // OSC 133 markers: A = prompt start (idle), C = command start (running)
-        const marker = data.split(';', 1)[0]?.trim()
-        if (marker === 'A') {
-          promptCallback(terminalId, 'idle')
-        } else if (marker === 'C') {
-          promptCallback(terminalId, 'running')
-        }
-        return false
-      }
+    // OSC 133 (FinalTerm protocol) handler.
+    // Always registers to handle B/D fallback command detection even when
+    // onPromptState is not provided. A/C always fire prompt state callbacks
+    // regardless of 633 presence.
+    {
+      const promptCallback = options?.onPromptState
       oscDisposables.push(
-        terminal.parser.registerOscHandler(133, handlePromptOsc)
+        terminal.parser.registerOscHandler(133, (data: string): boolean => {
+          handleFinalTermOscSequence(
+            commandState,
+            terminal,
+            data,
+            promptCallback,
+            terminalId
+          )
+          return false
+        })
       )
     }
 

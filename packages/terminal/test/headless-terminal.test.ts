@@ -1132,4 +1132,247 @@ describe('HeadlessTerminalManager', () => {
     const state = manager.getScreenState('test-1')
     expect(state).toContain('Normal output')
   })
+
+  // ---------------------------------------------------------------
+  // FinalTerm 133 command detection fallback
+  // ---------------------------------------------------------------
+
+  it('detects commands from pure FinalTerm sequences (133;A->B->C->D)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Pure FinalTerm sequence — no 633 sequences at all
+    manager.write(
+      'test-1',
+      '\x1b]133;A\x07' + // Prompt start
+        '$ ' +
+        '\x1b]133;B\x07' + // Command start
+        '\x1b]133;C\x07' + // Command executed
+        'output text\r\n' +
+        '\x1b]133;D;0\x07' // Command finished with exit code 0
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+
+    const cmd = state?.commands[0]
+    // FinalTerm commands have low confidence, are untrusted, and have empty command
+    expect(cmd?.command).toBe('')
+    expect(cmd?.commandLineConfidence).toBe('low')
+    expect(cmd?.isTrusted).toBe(false)
+    expect(cmd?.exitCode).toBe(0)
+  })
+
+  it('FinalTerm-detected commands include positional metadata from markers', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]133;A\x07' +
+        '$ ' +
+        '\x1b]133;B\x07' +
+        '\x1b]133;C\x07' +
+        'output\r\n' +
+        '\x1b]133;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+
+    // All positional fields should be populated
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.executedLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
+    expect(cmd?.executedX).toBeTypeOf('number')
+    expect(cmd?.commandStartLineContent).toBeTypeOf('string')
+
+    // Ordering assertions
+    expect(cmd?.promptStartLine).toBeLessThanOrEqual(cmd?.startLine ?? -1)
+    expect(cmd?.executedLine).toBeGreaterThanOrEqual(cmd?.startLine ?? -1)
+    expect(cmd?.endLine).toBeGreaterThanOrEqual(cmd?.executedLine ?? -1)
+  })
+
+  it('FinalTerm 133;D parses exit code from args', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]133;A\x07' +
+        '\x1b]133;B\x07' +
+        '\x1b]133;C\x07' +
+        '\x1b]133;D;127\x07' // Non-zero exit code
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+    expect(cmd?.exitCode).toBe(127)
+  })
+
+  it('FinalTerm 133;B without preceding 133;A has undefined promptStartLine', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // No 133;A before 133;B
+    manager.write('test-1', '\x1b]133;B\x07\x1b]133;C\x07\x1b]133;D;0\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+    expect(cmd?.promptStartLine).toBeUndefined()
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+  })
+
+  it('FinalTerm commands carry cwd from prior cwd detection', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Set cwd via OSC 7, then detect command via FinalTerm
+    manager.write(
+      'test-1',
+      '\x1b]7;file://localhost/home/user/project\x07' +
+        '\x1b]133;A\x07' +
+        '\x1b]133;B\x07' +
+        '\x1b]133;C\x07' +
+        '\x1b]133;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+    expect(cmd?.cwd).toBe('/home/user/project')
+  })
+
+  it('OSC 633 takes priority: after seeing 633, FinalTerm 133;B/D are ignored for command detection', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // First, send a 633 sequence to establish VS Code mode
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    // Now try FinalTerm sequences — these should NOT create commands
+    manager.write(
+      'test-1',
+      '\x1b]133;A\x07' +
+        '\x1b]133;B\x07' +
+        '\x1b]133;C\x07' +
+        '\x1b]133;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    // Should only have the one command from 633, not from 133
+    expect(state?.commands).toHaveLength(1)
+    expect(state?.commands[0]?.command).toBe('echo hello')
+    expect(state?.commands[0]?.commandLineConfidence).toBe('high')
+  })
+
+  it('133;A and 133;C continue to fire prompt state callbacks even when 633 is active', async () => {
+    const promptStates: Array<{ id: string; state: 'idle' | 'running' }> = []
+    manager = createHeadlessTerminalManager({
+      onPromptState: (terminalId, state) => {
+        promptStates.push({ id: terminalId, state })
+      },
+    })
+    manager.create('test-1', 80, 24)
+
+    // Establish 633 mode
+    manager.write('test-1', '\x1b]633;B\x07\x1b]633;D;0\x07')
+
+    // Now send 133;A and 133;C — they should still fire callbacks
+    manager.write('test-1', '\x1b]133;A\x07')
+    manager.write('test-1', '\x1b]133;C\x07')
+
+    await waitForXterm()
+
+    // Should have idle and running callbacks from 133;A and 133;C
+    expect(promptStates).toContainEqual({ id: 'test-1', state: 'idle' })
+    expect(promptStates).toContainEqual({ id: 'test-1', state: 'running' })
+  })
+
+  it('FinalTerm detects multiple commands in sequence', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Two commands via pure FinalTerm
+    manager.write(
+      'test-1',
+      '\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07output1\r\n\x1b]133;D;0\x07' +
+        '\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07output2\r\n\x1b]133;D;1\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(2)
+
+    expect(state?.commands[0]?.exitCode).toBe(0)
+    expect(state?.commands[0]?.commandLineConfidence).toBe('low')
+
+    expect(state?.commands[1]?.exitCode).toBe(1)
+    expect(state?.commands[1]?.commandLineConfidence).toBe('low')
+
+    // Second command should start at or after first ends
+    const cmd1EndLine = state?.commands[0]?.endLine ?? -1
+    const cmd2PromptLine = state?.commands[1]?.promptStartLine ?? -1
+    expect(cmd2PromptLine).toBeGreaterThanOrEqual(cmd1EndLine)
+  })
+
+  it('FinalTerm 133;D without preceding 133;B is ignored', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // 133;D without 133;B — no current command to finalize
+    manager.write('test-1', '\x1b]133;D;0\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(0)
+  })
+
+  it('FinalTerm in-flight command is serialized as partial (no endLine)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Start a command via FinalTerm but don't finish it
+    manager.write('test-1', '\x1b]133;A\x07\x1b]133;B\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+
+    const cmd = state?.commands[0]
+    expect(cmd?.command).toBe('')
+    expect(cmd?.commandLineConfidence).toBe('low')
+    expect(cmd?.isTrusted).toBe(false)
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    // In-flight: no endLine, executedLine, or executedX
+    expect(cmd?.endLine).toBeUndefined()
+    expect(cmd?.executedLine).toBeUndefined()
+    expect(cmd?.executedX).toBeUndefined()
+  })
 })

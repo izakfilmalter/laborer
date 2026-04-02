@@ -8,7 +8,7 @@
 |---|-------|------------|--------|
 | 1 | Positional metadata on commands (OSC 633;A + 633;C) | None | Done |
 | 2 | Complete PromptInputModel | 1 | Done |
-| 3 | FinalTerm 133 command detection fallback | 1 | Ready |
+| 3 | FinalTerm 133 command detection fallback | 1 | Done |
 | 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Ready |
 | 5 | Capability store + CwdDetection | None | Done |
 | 6 | BufferMarkDetection + gutter UI | 5 | Ready |
@@ -129,16 +129,16 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] OSC 133;B handler creates a command start (with marker) when no 633 command detection has been seen
-- [ ] OSC 133;D handler finalizes the current command (with exit code from args, end marker) when no 633 command detection has been seen
-- [ ] FinalTerm-detected commands have `commandLineConfidence: 'low'`, `isTrusted: false`, and empty `command` string
-- [ ] FinalTerm-detected commands include positional metadata (`startLine`, `endLine`, etc.) from markers
-- [ ] Once any OSC 633 sequence is seen, 133;B and 133;D stop creating commands (priority scheme)
-- [ ] 133;A and 133;C continue to emit prompt state callbacks regardless of 633 presence (existing behavior preserved)
-- [ ] A `shellIntegrationStatus` field (or equivalent) tracks whether 633 sequences have been seen
-- [ ] Tests verify pure FinalTerm command detection (133;A -> 133;B -> 133;C -> 133;D) produces a serialized command
-- [ ] Tests verify that 633 takes priority: after seeing a 633 sequence, 133;B/D are ignored for command detection
-- [ ] Tests verify FinalTerm commands serialize through persistence and appear in replay events
+- [x] OSC 133;B handler creates a command start (with marker) when no 633 command detection has been seen
+- [x] OSC 133;D handler finalizes the current command (with exit code from args, end marker) when no 633 command detection has been seen
+- [x] FinalTerm-detected commands have `commandLineConfidence: 'low'`, `isTrusted: false`, and empty `command` string
+- [x] FinalTerm-detected commands include positional metadata (`startLine`, `endLine`, etc.) from markers
+- [x] Once any OSC 633 sequence is seen, 133;B and 133;D stop creating commands (priority scheme)
+- [x] 133;A and 133;C continue to emit prompt state callbacks regardless of 633 presence (existing behavior preserved)
+- [x] A `shellIntegrationStatus` field (or equivalent) tracks whether 633 sequences have been seen
+- [x] Tests verify pure FinalTerm command detection (133;A -> 133;B -> 133;C -> 133;D) produces a serialized command
+- [x] Tests verify that 633 takes priority: after seeing a 633 sequence, 133;B/D are ignored for command detection
+- [x] Tests verify FinalTerm commands serialize through persistence and appear in replay events
 
 ### Blocked by
 

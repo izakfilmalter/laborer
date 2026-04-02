@@ -533,6 +533,64 @@ describe('createTerminalSessionPersistence', () => {
       headlessManager.disposeAll()
     })
 
+    it('serializes FinalTerm-detected commands with low confidence and untrusted', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      // Pure FinalTerm sequences — no 633 at all
+      headlessManager.write(
+        'term-1',
+        '\x1b]133;A\x07' +
+          '\x1b]133;B\x07' +
+          '\x1b]133;C\x07' +
+          'output\r\n' +
+          '\x1b]133;D;0\x07'
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output\r\n')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.commands).toEqual({
+        isWindowsPty: false,
+        hasRichCommandDetection: false,
+        commands: [
+          expect.objectContaining({
+            command: '',
+            commandLineConfidence: 'low',
+            exitCode: 0,
+            isTrusted: false,
+            startLine: expect.any(Number),
+            endLine: expect.any(Number),
+            executedLine: expect.any(Number),
+            promptStartLine: expect.any(Number),
+          }),
+        ],
+      })
+
+      headlessManager.disposeAll()
+    })
+
     it('does not write when no terminals exist', () => {
       const persistence = createTerminalSessionPersistence()
       persistence.serializeState(

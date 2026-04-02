@@ -63,6 +63,7 @@ import {
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
+import { FileService } from './services/file-service.js'
 import { FileTreeService } from './services/file-tree-service.js'
 import {
   FileWatcherClient,
@@ -269,6 +270,7 @@ const DeferredGroup1Layers = Layer.mergeAll(
   ContainerService.layer,
   PrdStorageService.layer,
   DiffService.layer,
+  FileService.layer,
   FileTreeService.layer,
   PrWatcher.layer,
   WorktreeReconciler.layer
@@ -353,6 +355,11 @@ const DeferredServicesProxyLive = Layer.scopedContext(
 
     const containerService = yield* makeRefDelegatingService(ContainerService)
     const diffService = yield* makeRefDelegatingService(DiffService)
+    const fileService = yield* makeRefDelegatingService(FileService, {
+      // FileService.watcherSubscribe returns a Stream, not an Effect.
+      watcherSubscribe: () =>
+        Stream.fail(serviceInitializingError('@laborer/FileService')),
+    })
     const fileTreeService = yield* makeRefDelegatingService(FileTreeService, {
       // FileTreeService.subscribe returns a Stream, not an Effect.
       // The default proxy returns Effect.fail(...) which causes a
@@ -436,6 +443,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           Context.get(stackCtx, ContainerService)
         )
         yield* Ref.set(diffService.ref, Context.get(stackCtx, DiffService))
+        yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
         yield* Ref.set(
           fileTreeService.ref,
           Context.get(stackCtx, FileTreeService)
@@ -543,6 +551,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.empty(),
       Context.add(ContainerService, containerService.proxy),
       Context.add(DiffService, diffService.proxy),
+      Context.add(FileService, fileService.proxy),
       Context.add(FileTreeService, fileTreeService.proxy),
       Context.add(DockerDetection, dockerDetection.proxy),
       Context.add(GithubTaskImporter, githubTaskImporter.proxy),

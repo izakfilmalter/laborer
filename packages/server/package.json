@@ -40,6 +40,7 @@
     "@opentelemetry/sdk-trace-node": "^2.0.0",
     "@opentelemetry/sdk-trace-web": "^2.0.0",
     "@opentelemetry/semantic-conventions": "^1.33.0",
+    "diff": "7.0.0",
     "effect": "catalog:",
     "sql.js": "^1.14.1"
   },
@@ -47,6 +48,7 @@
     "@effect/vitest": "catalog:",
     "@laborer/config": "workspace:*",
     "@laborer/file-watcher": "workspace:*",
+    "@types/diff": "7.0.0",
     "@types/node": "^25.3.3",
     "@types/sql.js": "^1.4.10",
     "@vitest/coverage-v8": "^3.2.4",

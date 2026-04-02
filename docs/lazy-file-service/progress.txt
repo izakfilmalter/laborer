@@ -7,11 +7,11 @@ Issues: docs/lazy-file-service/issues.md
 
 - [x] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [DONE]
 - [ ] Issue 2: file.list — Gitignore marking                                  [READY]
-- [ ] Issue 3: file.read — On-demand file content with per-file diff          [READY]
+- [x] Issue 3: file.read — On-demand file content with per-file diff          [DONE]
 - [ ] Issue 4: file.status — Workspace-level changed file summary             [READY]
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
 - [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2]
-- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 3, 4]
+- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 4]
 - [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
 - [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
 
@@ -66,3 +66,35 @@ Phase 4:             Issue 9
 - Cleanup on stream teardown: unsubscribes event handler + unsubscribes file watcher
 - Workspace lookup validates existence and rejects destroyed workspaces (NOT_FOUND / INVALID_STATE)
 - All 8 tests pass, format check clean, no new type errors
+
+### Issue 3: file.read — On-demand file content with per-file diff — DONE
+
+**Dependencies added:**
+- `diff@7.0.0` — structured patch computation (`structuredPatch`, `formatPatch`)
+- `@types/diff@7.0.0` — TypeScript type definitions for the diff package
+
+**Files modified:**
+- `packages/shared/src/rpc.ts` — Added `PatchHunk`, `StructuredPatch`, `FileContent` schemas and `file.read` RPC definition
+- `packages/server/src/services/file-service.ts` — Added `read()` method to FileService with binary/image detection, per-file diff computation via `structuredPatch`
+- `packages/server/src/rpc/handlers.ts` — Wired `file.read` handler delegating to FileService.read()
+- `packages/server/src/utility-main.ts` — Added FileService to deferred service proxy pattern (import, DeferredGroup1Layers, proxy creation, Ref swap, context output)
+- `packages/server/test/file-service.test.ts` — Added 10 integration tests for read() (text, diff, staged, unmodified, untracked, binary, image, missing, traversal, NOT_FOUND)
+- `packages/server/test/rpc/core-layers.test.ts` — Added FileService stub to DeferredServiceStubs
+- `packages/server/test/rpc/messageport-rpc.test.ts` — Added FileService stub to DeferredServiceStubs
+- `packages/server/package.json` — Added `diff` and `@types/diff` dependencies
+
+**Implementation details:**
+- `FileContent` schema: `{ type: "text" | "binary", content, diff?, patch?, encoding?, mimeType? }`
+- `StructuredPatch` schema with `PatchHunk` for structured diff representation
+- `FileService.read(workspaceId, filePath)` reads file content and computes per-file diff against HEAD
+- Binary files detected by extension (60+ extensions: exe, dll, zip, pdf, wasm, etc.) — returned with `type: "binary"` and empty content
+- Image files detected by extension (14 formats: png, jpg, gif, webp, svg, etc.) — base64 encoded with MIME type
+- Text files read as UTF-8 with trailing whitespace trimmed
+- Diff computed via `git diff -- <file>`, falling back to `git diff --staged -- <file>`
+- Structured patch computed via `structuredPatch()` with `context: Infinity` for full-file context
+- Formatted diff string computed via `formatPatch()` from the structured patch
+- Git commands use `spawnGit` with `-c core.fsmonitor=false` and `readOnly: true`
+- Non-existent files return `type: "text"` with empty content (no error)
+- Path traversal protection rejects paths escaping worktree root
+- Git failures (not a repo, no commits) gracefully fall back to content-only response
+- All 18 file-service tests pass, format check clean, no type errors

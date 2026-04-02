@@ -16,7 +16,7 @@ import { events } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { FileService } from '../src/services/file-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { createTempDir, initRepo } from './helpers/git-helpers.js'
+import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
@@ -334,6 +334,253 @@ describe('FileService', () => {
       assert.strictEqual(result.code, 'INVALID_STATE')
 
       cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // =================================================================
+  // FileService.read() tests — Issue 3
+  // =================================================================
+
+  // --- Behavior 9: Read a text file returns correct content ---
+  it.scoped('read returns text file content with type "text"', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-text', tempRoots)
+      writeFileSync(join(repoPath, 'hello.txt'), 'Hello, world!\n')
+      git('add hello.txt', repoPath)
+      git('commit -m "add hello"', repoPath)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'hello.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, 'Hello, world!')
+      // No diff because file matches HEAD
+      assert.isUndefined(result.diff)
+      assert.isUndefined(result.patch)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 10: Read a modified tracked file returns diff and patch ---
+  it.scoped('read returns diff and patch for a modified tracked file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-diff', tempRoots)
+      writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2\n')
+      git('add tracked.txt', repoPath)
+      git('commit -m "add tracked"', repoPath)
+
+      // Modify the file after committing
+      writeFileSync(
+        join(repoPath, 'tracked.txt'),
+        'line 1\nline 2 modified\nline 3\n'
+      )
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'tracked.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, 'line 1\nline 2 modified\nline 3')
+      // Should have diff and patch since the file was modified
+      assert.isDefined(result.diff, 'Expected diff to be present')
+      assert.isDefined(result.patch, 'Expected patch to be present')
+      if (result.patch === undefined) {
+        assert.fail('patch should be defined')
+      }
+      assert.isTrue(result.patch.hunks.length > 0, 'Expected at least one hunk')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 11: Read a staged-but-not-committed file returns diff ---
+  it.scoped('read returns diff via --staged fallback for staged changes', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-staged', tempRoots)
+      writeFileSync(join(repoPath, 'staged.txt'), 'original\n')
+      git('add staged.txt', repoPath)
+      git('commit -m "add staged"', repoPath)
+
+      // Modify and stage the file (but do not commit)
+      writeFileSync(join(repoPath, 'staged.txt'), 'modified\n')
+      git('add staged.txt', repoPath)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'staged.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, 'modified')
+      assert.isDefined(result.diff, 'Expected diff for staged file')
+      assert.isDefined(result.patch, 'Expected patch for staged file')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 12: Read an unmodified file returns no diff ---
+  it.scoped('read returns no diff/patch for an unmodified tracked file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-clean', tempRoots)
+      writeFileSync(join(repoPath, 'clean.txt'), 'no changes\n')
+      git('add clean.txt', repoPath)
+      git('commit -m "add clean"', repoPath)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'clean.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, 'no changes')
+      assert.isUndefined(result.diff)
+      assert.isUndefined(result.patch)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 13: Read a newly created (untracked) file ---
+  it.scoped('read returns content but no diff for an untracked file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-untracked', tempRoots)
+      writeFileSync(join(repoPath, 'new-file.txt'), 'brand new\n')
+      // Do NOT git add — leave untracked
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'new-file.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, 'brand new')
+      // Untracked files have no diff against HEAD
+      assert.isUndefined(result.diff)
+      assert.isUndefined(result.patch)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 14: Read a binary file returns type "binary" ---
+  it.scoped('read returns type "binary" for binary file extensions', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-binary', tempRoots)
+      writeFileSync(join(repoPath, 'app.exe'), Buffer.from([0, 1, 2, 3]))
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'app.exe')
+
+      assert.strictEqual(result.type, 'binary')
+      assert.strictEqual(result.content, '')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 15: Read an image file returns base64 with mimeType ---
+  it.scoped('read returns base64 content with mimeType for image files', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-image', tempRoots)
+      // Write a minimal 1x1 PNG (smallest valid PNG file)
+      const pngBytes = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      )
+      writeFileSync(join(repoPath, 'icon.png'), pngBytes)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'icon.png')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.encoding, 'base64')
+      assert.strictEqual(result.mimeType, 'image/png')
+      assert.isTrue(result.content.length > 0, 'Expected non-empty base64')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 16: Read a non-existent file returns empty content ---
+  it.scoped('read returns empty content for a non-existent file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-missing', tempRoots)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.read(workspaceId, 'does-not-exist.txt')
+
+      assert.strictEqual(result.type, 'text')
+      assert.strictEqual(result.content, '')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 17: Read rejects path traversal ---
+  it.scoped('read rejects path traversal outside worktree root', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-read-traversal', tempRoots)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService
+        .read(workspaceId, '../../etc/passwd')
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
+
+      if (result === 'success') {
+        assert.fail('Expected PATH_TRAVERSAL error')
+      }
+      assert.strictEqual(result._tag, 'RpcError')
+      assert.strictEqual(result.code, 'PATH_TRAVERSAL')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 18: Read from non-existent workspace returns NOT_FOUND ---
+  it.scoped('read fails with NOT_FOUND for unknown workspace', () =>
+    Effect.gen(function* () {
+      const fileService = yield* FileService
+      const result = yield* fileService
+        .read('nonexistent-workspace-id', 'file.txt')
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
+
+      if (result === 'success') {
+        assert.fail('Expected NOT_FOUND error')
+      }
+      assert.strictEqual(result._tag, 'RpcError')
+      assert.strictEqual(result.code, 'NOT_FOUND')
     }).pipe(Effect.provide(TestFileServiceLayer))
   )
 })

@@ -7,26 +7,29 @@
  *
  * Currently implements:
  * - `list(workspaceId, dir?)` — single directory level listing
+ * - `read(workspaceId, filePath)` — file content + per-file diff
  * - `watcherSubscribe(workspaceId)` — per-workspace file watcher event stream
  *
- * Future additions (Issues 3, 4):
- * - `read(workspaceId, filePath)` — file content + per-file diff
+ * Future additions (Issue 4):
  * - `status(workspaceId)` — workspace-level changed file summary
  *
  * @see PRD: Lazy File Service
  * @see Issue 1: file.list — Lazy per-directory listing (tracer bullet)
+ * @see Issue 3: file.read — On-demand file content with per-file diff
  * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
  */
 
-import { readdir } from 'node:fs/promises'
-import { join, normalize, relative, resolve } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { extname, join, normalize, relative, resolve } from 'node:path'
 import type {
+  FileContent,
   FileNode,
   FileWatcherEvent,
   WatchFileEvent,
 } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
+import { formatPatch, structuredPatch } from 'diff'
 import {
   Array as Arr,
   Context,
@@ -36,6 +39,7 @@ import {
   pipe,
   Stream,
 } from 'effect'
+import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
 
@@ -70,6 +74,123 @@ const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set([
 
 /** Individual file names to skip (OS metadata files that are noise). */
 const IGNORED_FILES: ReadonlySet<string> = new Set(['.DS_Store', 'Thumbs.db'])
+
+// ── Binary and image detection ──────────────────────────────────
+// Extension-based detection for binary and image files. Modeled on
+// OpenCode's File.read() approach.
+
+/** Extensions that are known binary formats (non-text, non-image). */
+const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
+  'exe',
+  'dll',
+  'so',
+  'dylib',
+  'bin',
+  'o',
+  'a',
+  'lib',
+  'zip',
+  'gz',
+  'tar',
+  'bz2',
+  'xz',
+  '7z',
+  'rar',
+  'zst',
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'wasm',
+  'pyc',
+  'pyo',
+  'class',
+  'sqlite',
+  'db',
+  'sqlite3',
+  'ttf',
+  'otf',
+  'woff',
+  'woff2',
+  'eot',
+  'mp3',
+  'mp4',
+  'avi',
+  'mov',
+  'mkv',
+  'flv',
+  'wmv',
+  'wav',
+  'flac',
+  'ogg',
+  'dmg',
+  'iso',
+  'img',
+  'jar',
+  'war',
+  'ear',
+  'deb',
+  'rpm',
+  'msi',
+  'lock',
+])
+
+/** Extensions that are image formats. */
+const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'webp',
+  'ico',
+  'tiff',
+  'tif',
+  'svg',
+  'avif',
+  'heic',
+  'heif',
+  'jxl',
+])
+
+/** MIME types for image extensions. */
+const IMAGE_MIME_TYPES: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  tiff: 'image/tiff',
+  tif: 'image/tiff',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jxl: 'image/jxl',
+}
+
+/** Get the lowercase extension without the dot. */
+const getExt = (filePath: string): string =>
+  extname(filePath).toLowerCase().slice(1)
+
+/** Check if a file is a known image by extension. */
+const isImageByExtension = (filePath: string): boolean =>
+  IMAGE_EXTENSIONS.has(getExt(filePath))
+
+/** Check if a file is a known binary by extension (non-image). */
+const isBinaryByExtension = (filePath: string): boolean =>
+  BINARY_EXTENSIONS.has(getExt(filePath))
+
+/** Get the MIME type for an image file. */
+const getImageMimeType = (filePath: string): string => {
+  const ext = getExt(filePath)
+  return IMAGE_MIME_TYPES[ext] ?? `image/${ext}`
+}
 
 /**
  * Sort order for FileNode: directories first, then alphabetical by name.
@@ -205,6 +326,91 @@ const mapEventType = (
   return type
 }
 
+// ── Per-file diff computation ───────────────────────────────────
+// Computes the diff of a text file against HEAD. Tries unstaged diff
+// first, then falls back to staged diff. Uses the `diff` npm library
+// for structured patch output.
+
+/**
+ * Compute per-file diff for a text file against HEAD.
+ *
+ * Runs `git diff -- <file>`, falling back to `git diff --staged -- <file>`.
+ * When a diff exists, retrieves the original content from HEAD and computes
+ * a structured patch via `structuredPatch()` with `context: Infinity`.
+ *
+ * If git is not available or the repo has no commits, returns content without diff.
+ */
+const computeFileDiff = (
+  worktreeRoot: string,
+  filePath: string,
+  content: string
+): Effect.Effect<FileContent, RpcError> =>
+  Effect.tryPromise({
+    try: async (): Promise<FileContent> => {
+      // Try unstaged diff first
+      let gitDiffResult = await spawnGit(
+        ['-c', 'core.fsmonitor=false', 'diff', '--', filePath],
+        { cwd: worktreeRoot, readOnly: true }
+      )
+
+      let diff = gitDiffResult.stdout.trim()
+
+      // Fall back to staged diff
+      if (!diff) {
+        gitDiffResult = await spawnGit(
+          ['-c', 'core.fsmonitor=false', 'diff', '--staged', '--', filePath],
+          { cwd: worktreeRoot, readOnly: true }
+        )
+        diff = gitDiffResult.stdout.trim()
+      }
+
+      // If there is a diff, compute the structured patch
+      if (diff) {
+        // Get original content from HEAD
+        const showResult = await spawnGit(['show', `HEAD:${filePath}`], {
+          cwd: worktreeRoot,
+          readOnly: true,
+        })
+        const original = showResult.exitCode === 0 ? showResult.stdout : ''
+
+        const patch = structuredPatch(
+          filePath,
+          filePath,
+          original,
+          content,
+          'old',
+          'new',
+          { context: Number.POSITIVE_INFINITY }
+        )
+
+        return {
+          type: 'text',
+          content,
+          patch: {
+            oldFileName: patch.oldFileName ?? filePath,
+            newFileName: patch.newFileName ?? filePath,
+            oldHeader: patch.oldHeader,
+            newHeader: patch.newHeader,
+            hunks: patch.hunks,
+            index: patch.index,
+          },
+          diff: formatPatch(patch),
+        }
+      }
+
+      return { type: 'text', content }
+    },
+    catch: () =>
+      // Git not available or not a git repo — return content without diff
+      new RpcError({
+        message: 'Git diff computation failed',
+        code: 'GIT_DIFF_FAILED',
+      }),
+  }).pipe(
+    // If git is unavailable, return content without diff instead of failing
+    Effect.catchAll(() => Effect.succeed({ type: 'text' as const, content }))
+  )
+
 class FileService extends Context.Tag('@laborer/FileService')<
   FileService,
   {
@@ -222,6 +428,22 @@ class FileService extends Context.Tag('@laborer/FileService')<
       workspaceId: string,
       dir?: string
     ) => Effect.Effect<readonly FileNode[], RpcError>
+
+    /**
+     * Read a single file's content and compute its diff against HEAD.
+     *
+     * Returns `FileContent` with the file text (or base64 for images),
+     * plus optional diff and structured patch if the file has changes.
+     * Binary files are detected by extension and returned with
+     * `type: "binary"` and empty content.
+     *
+     * @param workspaceId - ID of the workspace
+     * @param filePath - Path of the file relative to the worktree root
+     */
+    readonly read: (
+      workspaceId: string,
+      filePath: string
+    ) => Effect.Effect<FileContent, RpcError>
 
     /**
      * Subscribe to file change events for a workspace's worktree.
@@ -260,6 +482,69 @@ class FileService extends Context.Tag('@laborer/FileService')<
           yield* validatePathContainment(targetDir, worktreeRoot, dir)
 
           return yield* readAndBuildNodes(targetDir, worktreeRoot)
+        })
+
+      const read = (
+        workspaceId: string,
+        filePath: string
+      ): Effect.Effect<FileContent, RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+          const fullPath = resolve(worktreeRoot, filePath)
+
+          // Validate path containment
+          yield* validatePathContainment(fullPath, worktreeRoot, filePath)
+
+          // Image files — base64 encode with MIME type
+          if (isImageByExtension(filePath)) {
+            const imageResult: string | null = yield* Effect.tryPromise({
+              try: async () => {
+                const buffer = await readFile(fullPath)
+                return buffer.toString('base64')
+              },
+              catch: () =>
+                new RpcError({
+                  message: 'File not found',
+                  code: 'NOT_FOUND',
+                }),
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+            if (imageResult === null) {
+              return { type: 'text' as const, content: '' }
+            }
+
+            return {
+              type: 'text' as const,
+              content: imageResult,
+              encoding: 'base64' as const,
+              mimeType: getImageMimeType(filePath),
+            }
+          }
+
+          // Binary files — flag without reading content
+          if (isBinaryByExtension(filePath)) {
+            return { type: 'binary' as const, content: '' }
+          }
+
+          // Text files — read content
+          const fileContent: string | null = yield* Effect.tryPromise({
+            try: () => readFile(fullPath, 'utf-8'),
+            catch: () =>
+              new RpcError({
+                message: 'File not found',
+                code: 'NOT_FOUND',
+              }),
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+          if (fileContent === null) {
+            return { type: 'text' as const, content: '' }
+          }
+
+          const content = fileContent.trimEnd()
+
+          // Compute per-file diff against HEAD
+          return yield* computeFileDiff(worktreeRoot, filePath, content)
         })
 
       const watcherSubscribe = (
@@ -323,7 +608,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
           })
         )
 
-      return FileService.of({ list, watcherSubscribe })
+      return FileService.of({ list, read, watcherSubscribe })
     })
   )
 }

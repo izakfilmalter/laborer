@@ -480,11 +480,11 @@ Run `bun run check` (typecheck + format + tests) to verify.
 |---|-------|-----------|--------|
 | 1 | file.list — Lazy per-directory listing (tracer bullet) | None | **Done** |
 | 2 | file.list — Gitignore marking | ~~Issue 1~~ | Ready |
-| 3 | file.read — On-demand file content with per-file diff | ~~Issue 1~~ | Ready |
+| 3 | file.read — On-demand file content with per-file diff | ~~Issue 1~~ | **Done** |
 | 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | Ready |
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
 | 6 | Client tree pane — Lazy per-directory fetching | Issues 2, ~~5~~ | Blocked |
-| 7 | Client diff pane — On-demand per-file diffs | Issues 3, 4, ~~5~~ | Blocked |
+| 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, 4, ~~5~~ | Blocked |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | Ready |
 | 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, 8 | Blocked |
 

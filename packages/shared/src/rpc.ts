@@ -416,6 +416,90 @@ export const FileWatcherEvent = Schema.Struct({
 
 export type FileWatcherEvent = typeof FileWatcherEvent.Type
 
+/**
+ * A single hunk within a structured patch, representing a contiguous
+ * set of changes between the old and new file versions.
+ *
+ * Each hunk has start positions and line counts for both old and new
+ * versions, plus an array of diff lines where each line is prefixed
+ * with `" "` (context), `"+"` (added), or `"-"` (removed).
+ *
+ * @see PRD: Lazy File Service — FileContent.patch schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const PatchHunk = Schema.Struct({
+  /** Starting line in the old file. */
+  oldStart: Schema.Number,
+  /** Number of lines from the old file in this hunk. */
+  oldLines: Schema.Number,
+  /** Starting line in the new file. */
+  newStart: Schema.Number,
+  /** Number of lines from the new file in this hunk. */
+  newLines: Schema.Number,
+  /** Diff lines, each prefixed with " ", "+", or "-". */
+  lines: Schema.Array(Schema.String),
+})
+
+export type PatchHunk = typeof PatchHunk.Type
+
+/**
+ * A structured patch representing the diff between two versions of a file.
+ *
+ * Computed via the `diff` npm library's `structuredPatch()` with
+ * `context: Infinity` so the entire file is included as context.
+ *
+ * @see PRD: Lazy File Service — FileContent.patch schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const StructuredPatch = Schema.Struct({
+  /** Old file name (typically the relative path). */
+  oldFileName: Schema.String,
+  /** New file name (typically the relative path). */
+  newFileName: Schema.String,
+  /** Old file header (e.g., "old"). */
+  oldHeader: Schema.optional(Schema.String),
+  /** New file header (e.g., "new"). */
+  newHeader: Schema.optional(Schema.String),
+  /** Array of hunks representing changes. */
+  hunks: Schema.Array(PatchHunk),
+  /** Index line from the diff header. */
+  index: Schema.optional(Schema.String),
+})
+
+export type StructuredPatch = typeof StructuredPatch.Type
+
+/**
+ * File content returned by `file.read`.
+ *
+ * Represents the content of a single file from a workspace's worktree,
+ * along with its diff against HEAD (if the file has changes).
+ *
+ * - `type: "text"` — text file, `content` is the UTF-8 string
+ * - `type: "binary"` — binary file, `content` is empty
+ *
+ * For images, `content` is base64-encoded with `encoding: "base64"`
+ * and `mimeType` set to the image MIME type.
+ *
+ * @see PRD: Lazy File Service — FileContent schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const FileContent = Schema.Struct({
+  /** Whether this is a text or binary file. */
+  type: Schema.Literal('text', 'binary'),
+  /** File content (UTF-8 text, base64 for images, or empty for binary). */
+  content: Schema.String,
+  /** Raw git diff output for this file (absent if no changes). */
+  diff: Schema.optional(Schema.String),
+  /** Structured patch with hunks (absent if no changes). */
+  patch: Schema.optional(StructuredPatch),
+  /** Content encoding (present only for base64-encoded content). */
+  encoding: Schema.optional(Schema.Literal('base64')),
+  /** MIME type (present for images and detected binary files). */
+  mimeType: Schema.optional(Schema.String),
+})
+
+export type FileContent = typeof FileContent.Type
+
 // ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
@@ -1057,6 +1141,28 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       dir: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Read a single file's content from a workspace's worktree and compute
+   * its diff against HEAD.
+   *
+   * Returns `FileContent` with the file's text (or base64 for images),
+   * plus optional diff and structured patch if the file has changes.
+   * Binary files are detected by extension and returned with `type: "binary"`
+   * and empty content. Non-existent files return `type: "text"` with empty
+   * content.
+   *
+   * @see PRD: Lazy File Service — file.read RPC
+   * @see Issue 3: file.read — On-demand file content with per-file diff
+   */
+  Rpc.make('file.read', {
+    success: FileContent,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
     },
   }),
 

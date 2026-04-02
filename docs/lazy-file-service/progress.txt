@@ -9,9 +9,9 @@ Issues: docs/lazy-file-service/issues.md
 - [ ] Issue 2: file.list — Gitignore marking                                  [READY]
 - [ ] Issue 3: file.read — On-demand file content with per-file diff          [READY]
 - [ ] Issue 4: file.status — Workspace-level changed file summary             [READY]
-- [ ] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [READY]
-- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2, 5]
-- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 3, 4, 5]
+- [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
+- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2]
+- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 3, 4]
 - [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
 - [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
 
@@ -43,3 +43,26 @@ Phase 4:             Issue 9
 - Path traversal protection rejects paths escaping worktree root
 - Workspace lookup validates existence and rejects destroyed workspaces
 - All 8 tests pass, format check clean, no type errors in new files
+
+### Issue 5: file.watcher.subscribe — Per-workspace watcher event stream — DONE
+
+**Files created:**
+- `packages/server/test/file-service-watcher.test.ts` — 8 integration tests for watcher subscription
+
+**Files modified:**
+- `packages/shared/src/rpc.ts` — Added `FileWatcherEvent` schema and `file.watcher.subscribe` streaming RPC
+- `packages/server/src/services/file-service.ts` — Added `watcherSubscribe()` method to FileService, added `FileWatcherClient` dependency
+- `packages/server/src/rpc/handlers.ts` — Wired `file.watcher.subscribe` handler delegating to FileService.watcherSubscribe()
+- `packages/server/test/file-service.test.ts` — Added `TestFileWatcherClientLayer` to test layer (FileService now requires it)
+
+**Implementation details:**
+- `FileWatcherEvent` schema: `{ file: string, event: "add" | "change" | "unlink" }`
+- `FileService.watcherSubscribe(workspaceId)` returns a `Stream<FileWatcherEvent, RpcError>`
+- Uses `Stream.asyncPush` with `Effect.acquireRelease` for event handler lifecycle
+- Subscribes a recursive file watcher via `FileWatcherClient.subscribe(worktreePath, { recursive: true })`
+- Filters events by subscription ID so only events from this workspace's watcher are forwarded
+- Maps internal "delete" event type to client-facing "unlink" type
+- File paths are relative to worktree root (uses `fileName` when available, falls back to `relative(worktreePath, absolutePath)`)
+- Cleanup on stream teardown: unsubscribes event handler + unsubscribes file watcher
+- Workspace lookup validates existence and rejects destroyed workspaces (NOT_FOUND / INVALID_STATE)
+- All 8 tests pass, format check clean, no new type errors

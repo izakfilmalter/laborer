@@ -7,6 +7,7 @@
  *
  * Currently implements:
  * - `list(workspaceId, dir?)` — single directory level listing
+ * - `watcherSubscribe(workspaceId)` — per-workspace file watcher event stream
  *
  * Future additions (Issues 3, 4):
  * - `read(workspaceId, filePath)` — file content + per-file diff
@@ -14,14 +15,28 @@
  *
  * @see PRD: Lazy File Service
  * @see Issue 1: file.list — Lazy per-directory listing (tracer bullet)
+ * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
  */
 
 import { readdir } from 'node:fs/promises'
 import { join, normalize, relative, resolve } from 'node:path'
-import type { FileNode } from '@laborer/shared/rpc'
+import type {
+  FileNode,
+  FileWatcherEvent,
+  WatchFileEvent,
+} from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Layer, Order, pipe } from 'effect'
+import {
+  Array as Arr,
+  Context,
+  Effect,
+  Layer,
+  Order,
+  pipe,
+  Stream,
+} from 'effect'
+import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
 
 // ── Directory ignore rules ──────────────────────────────────────
@@ -177,6 +192,19 @@ const readAndBuildNodes = (targetDir: string, worktreeRoot: string) =>
     return pipe(nodes, Arr.sort(fileNodeOrder))
   })
 
+// ── Event type mapping ──────────────────────────────────────────
+// Maps internal watcher event types to client-facing types.
+// The file-watcher sidecar uses "delete" but the client API uses "unlink".
+
+const mapEventType = (
+  type: 'add' | 'change' | 'delete'
+): FileWatcherEvent['event'] => {
+  if (type === 'delete') {
+    return 'unlink'
+  }
+  return type
+}
+
 class FileService extends Context.Tag('@laborer/FileService')<
   FileService,
   {
@@ -194,12 +222,29 @@ class FileService extends Context.Tag('@laborer/FileService')<
       workspaceId: string,
       dir?: string
     ) => Effect.Effect<readonly FileNode[], RpcError>
+
+    /**
+     * Subscribe to file change events for a workspace's worktree.
+     *
+     * Returns a `Stream` of `FileWatcherEvent` objects with file paths
+     * relative to the worktree root. Events are forwarded from the
+     * file-watcher sidecar, filtered to this workspace's subscription.
+     *
+     * On stream teardown (client disconnect), the file watcher
+     * subscription is automatically cleaned up.
+     *
+     * @param workspaceId - ID of the workspace
+     */
+    readonly watcherSubscribe: (
+      workspaceId: string
+    ) => Stream.Stream<FileWatcherEvent, RpcError>
   }
 >() {
   static readonly layer = Layer.scoped(
     FileService,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
+      const fileWatcherClient = yield* FileWatcherClient
 
       const list = (
         workspaceId: string,
@@ -217,7 +262,68 @@ class FileService extends Context.Tag('@laborer/FileService')<
           return yield* readAndBuildNodes(targetDir, worktreeRoot)
         })
 
-      return FileService.of({ list })
+      const watcherSubscribe = (
+        workspaceId: string
+      ): Stream.Stream<FileWatcherEvent, RpcError> =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const workspace = yield* lookupWorkspace(store, workspaceId)
+            const worktreePath = workspace.worktreePath
+
+            // Subscribe a recursive file watcher on the worktree
+            const watchSubscription = yield* fileWatcherClient
+              .subscribe(worktreePath, { recursive: true })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new RpcError({
+                      message: `Failed to subscribe file watcher: ${String(error.message)}`,
+                      code: 'WATCHER_SUBSCRIBE_FAILED',
+                    })
+                )
+              )
+
+            yield* Effect.logDebug(
+              '[FileService.watcherSubscribe] watcher subscribed, creating stream'
+            )
+            // Build a push-based stream that forwards filtered watcher
+            // events. Uses acquireRelease so the event handler and watcher
+            // subscription are properly cleaned up on stream teardown.
+            return Stream.asyncPush<FileWatcherEvent, RpcError>((emit) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  // Register event handler filtered to this subscription
+                  return fileWatcherClient.onFileEvent(
+                    (watchEvent: WatchFileEvent) => {
+                      if (watchEvent.subscriptionId !== watchSubscription.id) {
+                        return
+                      }
+
+                      // Compute relative path from the worktree root
+                      const relativePath =
+                        watchEvent.fileName ??
+                        relative(worktreePath, watchEvent.absolutePath)
+
+                      emit.single({
+                        file: relativePath,
+                        event: mapEventType(watchEvent.type),
+                      })
+                    }
+                  )
+                }),
+                (eventSubscription) =>
+                  Effect.gen(function* () {
+                    eventSubscription.unsubscribe()
+                    yield* fileWatcherClient
+                      .unsubscribe(watchSubscription.id)
+                      .pipe(Effect.catchAll(() => Effect.void))
+                  })
+              )
+            )
+          })
+        )
+
+      return FileService.of({ list, watcherSubscribe })
     })
   )
 }

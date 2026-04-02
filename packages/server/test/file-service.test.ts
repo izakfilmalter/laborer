@@ -17,13 +17,15 @@ import { Effect, Layer } from 'effect'
 import { FileService } from '../src/services/file-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { createTempDir, initRepo } from './helpers/git-helpers.js'
+import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 /**
  * Layer for FileService tests — provides real FileService with
- * in-memory LaborerStore (no file watcher needed for list).
+ * in-memory LaborerStore and no-op file watcher client.
  */
 const TestFileServiceLayer = FileService.layer.pipe(
+  Layer.provide(TestFileWatcherClientLayer),
   Layer.provideMerge(TestLaborerStore)
 )
 

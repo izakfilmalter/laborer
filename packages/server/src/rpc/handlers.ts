@@ -1295,5 +1295,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const fileService = yield* FileService
         return yield* fileService.list(workspaceId, dir)
       }),
+
+    // -------------------------------------------------------------------
+    // File Watcher Streaming RPCs (Lazy File Service)
+    // -------------------------------------------------------------------
+    'file.watcher.subscribe': ({ workspaceId }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const fileService = yield* FileService
+          return fileService.watcherSubscribe(workspaceId)
+        })
+      ),
   })
 )

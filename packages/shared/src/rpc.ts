@@ -395,6 +395,27 @@ export const FileNode = Schema.Struct({
 
 export type FileNode = typeof FileNode.Type
 
+/**
+ * A file change event streamed to the client from `file.watcher.subscribe`.
+ *
+ * The `file` path is relative to the worktree root. The `event` type maps
+ * internal watcher types to the client-facing vocabulary:
+ * - `"add"` — a file was created
+ * - `"change"` — a file was modified
+ * - `"unlink"` — a file was deleted
+ *
+ * @see PRD: Lazy File Service — FileWatcherEvent schema
+ * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
+ */
+export const FileWatcherEvent = Schema.Struct({
+  /** Path of the changed file, relative to the worktree root. */
+  file: Schema.String,
+  /** The type of file change. */
+  event: Schema.Literal('add', 'change', 'unlink'),
+})
+
+export type FileWatcherEvent = typeof FileWatcherEvent.Type
+
 // ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
@@ -1036,6 +1057,29 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       dir: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Streaming RPC that forwards file change events for a workspace's worktree.
+   *
+   * Subscribes a recursive file watcher on the workspace's worktree via
+   * the file-watcher sidecar. Events are streamed as `FileWatcherEvent`
+   * objects with paths relative to the worktree root. The client uses
+   * these events for invalidation only — not for data.
+   *
+   * On stream teardown (client disconnect), the file watcher subscription
+   * is automatically cleaned up.
+   *
+   * @see PRD: Lazy File Service — Watcher Event Stream
+   * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
+   */
+  Rpc.make('file.watcher.subscribe', {
+    success: FileWatcherEvent,
+    error: RpcError,
+    stream: true,
+    payload: {
+      workspaceId: Schema.String,
     },
   })
 ) {}

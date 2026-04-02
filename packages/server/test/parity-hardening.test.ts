@@ -8,9 +8,7 @@
  *    are robust under edge cases.
  * 2. FileWatcherClient subscribe calls include proper ignore globs
  *    when passed by the coordinator.
- * 3. End-to-end downstream invalidation (FileWatcherClient events →
- *    DiffService) operates correctly.
- * 4. Coverage reporting includes the updated repo-watching areas.
+ * 3. Coverage reporting includes the updated repo-watching areas.
  *
  * @see PRD-opencode-repo-watching-alignment — Issue 7
  * @see PRD-file-watcher-extraction.md
@@ -25,7 +23,6 @@ import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
-import { DiffService } from '../src/services/diff-service.js'
 import {
   type FileEventHandler,
   type FileEventSubscription,
@@ -33,10 +30,6 @@ import {
 } from '../src/services/file-watcher-client.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
-import {
-  DEFAULT_IGNORED_PREFIXES,
-  shouldIgnore,
-} from '../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -44,7 +37,6 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { delay } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -127,55 +119,6 @@ const createCoordinatorTestLayer = (
   const fileWatcherClientLayer = createRecordingFileWatcherClientLayer(params)
 
   return RepositoryWatchCoordinator.layer.pipe(
-    Layer.provide(
-      Layer.succeed(
-        BranchStateTracker,
-        BranchStateTracker.of({
-          refreshBranches: () => Effect.succeed({ checked: 0, updated: 0 }),
-        })
-      )
-    ),
-    Layer.provide(ConfigService.layer),
-    Layer.provide(fileWatcherClientLayer),
-    Layer.provide(
-      Layer.succeed(
-        WorktreeReconciler,
-        WorktreeReconciler.of({
-          reconcile: () =>
-            Effect.succeed({ added: 0, removed: 0, unchanged: 0 }),
-        })
-      )
-    ),
-    Layer.provide(
-      Layer.succeed(
-        RepositoryIdentity,
-        RepositoryIdentity.of({
-          resolve: () =>
-            Effect.succeed({
-              canonicalRoot: repoPath,
-              canonicalGitCommonDir: join(repoPath, '.git'),
-              repoId: `${repoPath}-repo`,
-              isMainWorktree: true,
-            }),
-        })
-      )
-    ),
-    Layer.provideMerge(TestLaborerStore)
-  )
-}
-
-const createEndToEndLayerWithDiffService = (
-  repoPath: string,
-  params: {
-    readonly subscribedPaths: RecordedSubscription[]
-    readonly emitEvent: { current: (event: WatchFileEvent) => void }
-    readonly subscriptionsByPath: Map<string, string>
-  }
-) => {
-  const fileWatcherClientLayer = createRecordingFileWatcherClientLayer(params)
-
-  return DiffService.layer.pipe(
-    Layer.provideMerge(RepositoryWatchCoordinator.layer),
     Layer.provide(
       Layer.succeed(
         BranchStateTracker,
@@ -500,212 +443,7 @@ describe('FileWatcherClient ignore passthrough hardening', () => {
   )
 })
 
-// ── 3. Ignore filtering pure functions ──────────────────────────
-
-describe('Ignore filtering boundary hardening', () => {
-  it.effect('shouldIgnore handles deeply nested ignored paths', () =>
-    Effect.sync(() => {
-      assert.isTrue(
-        shouldIgnore(
-          'node_modules/@scope/package/dist/index.js',
-          DEFAULT_IGNORED_PREFIXES
-        )
-      )
-      assert.isTrue(
-        shouldIgnore('.git/refs/heads/main', DEFAULT_IGNORED_PREFIXES)
-      )
-      assert.isTrue(
-        shouldIgnore('dist/esm/chunk-abc123.js', DEFAULT_IGNORED_PREFIXES)
-      )
-      assert.isTrue(
-        shouldIgnore(
-          'coverage/lcov-report/src/index.ts.html',
-          DEFAULT_IGNORED_PREFIXES
-        )
-      )
-    })
-  )
-
-  it.effect('shouldIgnore allows paths that share prefix substrings', () =>
-    Effect.sync(() => {
-      // "distribution" starts with "dist" but is a different first segment
-      assert.isFalse(
-        shouldIgnore('distribution/README.md', DEFAULT_IGNORED_PREFIXES)
-      )
-      // "builder" starts with "build" but is a different first segment
-      assert.isFalse(
-        shouldIgnore('builder/config.ts', DEFAULT_IGNORED_PREFIXES)
-      )
-      // "outreach" starts with "out" but is a different first segment
-      assert.isFalse(shouldIgnore('outreach/docs.md', DEFAULT_IGNORED_PREFIXES))
-    })
-  )
-})
-
-// ── 4. End-to-end downstream invalidation ───────────────────────
-
-describe('End-to-end downstream invalidation hardening', () => {
-  it.scoped(
-    'file event triggers DiffService invalidation through full pipeline',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-e2e-native', tempRoots)
-        const subscribedPaths: RecordedSubscription[] = []
-        const emitEvent = {
-          current: (_event: WatchFileEvent) => {
-            // no-op initial stub
-          },
-        }
-        const subscriptionsByPath = new Map<string, string>()
-        const testLayer = createEndToEndLayerWithDiffService(repoPath, {
-          subscribedPaths,
-          emitEvent,
-          subscriptionsByPath,
-        })
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const diffService = yield* DiffService
-          const { store } = yield* LaborerStore
-
-          const projectId = 'project-e2e-native'
-
-          store.commit(
-            events.projectCreated({
-              id: projectId,
-              repoPath,
-              name: 'e2e-native-test',
-              brrrConfig: null,
-            })
-          )
-
-          const workspaceId = crypto.randomUUID()
-          store.commit(
-            events.workspaceCreated({
-              id: workspaceId,
-              projectId,
-              taskSource: null,
-              branchName: 'main',
-              worktreePath: repoPath,
-              status: 'running',
-              origin: 'laborer',
-              createdAt: new Date().toISOString(),
-              baseSha: null,
-            })
-          )
-
-          yield* coordinator.watchProject(projectId, repoPath)
-          yield* diffService.startPolling(workspaceId, 60_000)
-
-          // Deliver a file event through the FileWatcherClient
-          const repoSubId = subscriptionsByPath.get(repoPath)
-          if (repoSubId === undefined) {
-            throw new Error('Expected repo root subscription')
-          }
-
-          emitEvent.current({
-            subscriptionId: repoSubId,
-            type: 'add',
-            fileName: 'new-feature.ts',
-            absolutePath: join(repoPath, 'new-feature.ts'),
-          })
-
-          // Wait for debounce to fire
-          yield* Effect.promise(() => delay(500))
-
-          // DiffService should still be operational
-          const stillPolling = yield* diffService.isPolling(workspaceId)
-          assert.isTrue(
-            stillPolling,
-            'DiffService should remain operational after event processing'
-          )
-
-          yield* diffService.stopPolling(workspaceId)
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
-
-  it.scoped(
-    'rapid file events coalesce correctly in DiffService debounce',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-e2e-mixed', tempRoots)
-        const subscribedPaths: RecordedSubscription[] = []
-        const emitEvent = {
-          current: (_event: WatchFileEvent) => {
-            // no-op initial stub
-          },
-        }
-        const subscriptionsByPath = new Map<string, string>()
-        const testLayer = createEndToEndLayerWithDiffService(repoPath, {
-          subscribedPaths,
-          emitEvent,
-          subscriptionsByPath,
-        })
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const diffService = yield* DiffService
-          const { store } = yield* LaborerStore
-
-          const projectId = 'project-e2e-mixed'
-
-          store.commit(
-            events.projectCreated({
-              id: projectId,
-              repoPath,
-              name: 'e2e-mixed-test',
-              brrrConfig: null,
-            })
-          )
-
-          const workspaceId = crypto.randomUUID()
-          store.commit(
-            events.workspaceCreated({
-              id: workspaceId,
-              projectId,
-              taskSource: null,
-              branchName: 'main',
-              worktreePath: repoPath,
-              status: 'running',
-              origin: 'laborer',
-              createdAt: new Date().toISOString(),
-              baseSha: null,
-            })
-          )
-
-          yield* coordinator.watchProject(projectId, repoPath)
-          yield* diffService.startPolling(workspaceId, 60_000)
-
-          // Deliver a burst of file events
-          const repoSubId = subscriptionsByPath.get(repoPath)
-          if (repoSubId === undefined) {
-            throw new Error('Expected repo root subscription')
-          }
-
-          for (let i = 0; i < 5; i++) {
-            emitEvent.current({
-              subscriptionId: repoSubId,
-              type: 'add',
-              fileName: `burst-${i}.ts`,
-              absolutePath: join(repoPath, `burst-${i}.ts`),
-            })
-          }
-
-          // Wait for debounce + processing
-          yield* Effect.promise(() => delay(600))
-
-          // DiffService should coalesce them via debounce
-          const stillPolling = yield* diffService.isPolling(workspaceId)
-          assert.isTrue(stillPolling)
-
-          yield* diffService.stopPolling(workspaceId)
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
-})
-
-// ── 5. Coverage reporting ───────────────────────────────────────
+// ── 3. Coverage reporting ───────────────────────────────────────
 
 describe('Coverage configuration', () => {
   it.effect(
@@ -718,8 +456,8 @@ describe('Coverage configuration', () => {
           'src/services/file-watcher-client.ts',
           'src/services/repository-watch-coordinator.ts',
           'src/services/project-registry.ts',
-          'src/services/diff-service.ts',
           'src/services/config-service.ts',
+          'src/services/file-service.ts',
         ]
 
         // Verify each file matches the src/**/*.ts pattern

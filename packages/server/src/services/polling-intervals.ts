@@ -14,27 +14,6 @@
  */
 
 // ---------------------------------------------------------------------------
-// DiffService — `git diff` polling
-// ---------------------------------------------------------------------------
-
-/** Polling interval for workspaces with an open panel. */
-export const DIFF_POLL_INTERVAL_MS = 5000
-
-/**
- * Debounce applied to file-watcher events before triggering a diff
- * refresh. Matches VS Code's 1 000 ms debounce on file-change →
- * git status.
- */
-export const DIFF_EVENT_DEBOUNCE_MS = 1000
-
-/**
- * Mandatory cooldown after an event-driven diff refresh completes.
- * Matches VS Code's 5 000 ms cooldown after git status. Prevents
- * sustained heavy git load during continuous file churn.
- */
-export const DIFF_EVENT_COOLDOWN_MS = 5000
-
-// ---------------------------------------------------------------------------
 // PrWatcher — `gh pr view` polling
 // ---------------------------------------------------------------------------
 
@@ -96,10 +75,3 @@ export const REPO_WATCH_RECOVERY_MS = 1000
 
 /** Debounce for worktree watcher reconciliation triggers. */
 export const WORKTREE_WATCHER_DEBOUNCE_MS = 500
-
-// ---------------------------------------------------------------------------
-// FileTreeService — file tree snapshot refresh
-// ---------------------------------------------------------------------------
-
-/** Debounce for file-watcher events → file tree refresh. */
-export const FILE_TREE_EVENT_DEBOUNCE_MS = 300

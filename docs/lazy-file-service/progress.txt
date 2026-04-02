@@ -13,7 +13,7 @@ Issues: docs/lazy-file-service/issues.md
 - [x] Issue 6: Client tree pane — Lazy per-directory fetching                 [DONE]
 - [x] Issue 7: Client diff pane — On-demand per-file diffs                    [DONE]
 - [x] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [DONE]
-- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [READY]
+- [x] Issue 9: Remove old code + deprecate LiveStore events                   [DONE]
 
 ## Execution Order
 
@@ -242,3 +242,74 @@ Phase 4:             Issue 9
   - Diagnostic `console.debug`/`console.warn` logging for LiveStore sync debugging
 - TypeScript clean, Biome format clean (0 errors, 0 warnings)
 - Biome complexity within limit: `DiffPaneContent` reduced to ~15 via hook extraction
+
+### Issue 9: Remove old code + deprecate LiveStore events — DONE
+
+**Files deleted (server services):**
+- `packages/server/src/services/diff-service.ts` — 718-line DiffService (polling-based git diff)
+- `packages/server/src/services/file-tree-service.ts` — 672-line FileTreeService (streaming full-tree snapshots)
+- `packages/server/src/services/repository-event-bus.ts` — 306-line RepositoryEventBus (event intermediary)
+
+**Files deleted (server tests):**
+- `packages/server/test/diff-service-event-consumer.test.ts`
+- `packages/server/test/file-tree-service.test.ts`
+- `packages/server/test/repository-event-bus.test.ts`
+
+**Files modified (shared schema — `packages/shared/src/rpc.ts`):**
+- Removed `DiffResponse` schema (lines 238-242)
+- Removed `FileTreeSnapshot` schema and type export (lines 541-551)
+- Removed `diff.refresh` RPC definition (lines 881-890)
+- Removed `fileTree.subscribe` streaming RPC definition (lines 1130-1145)
+
+**Files modified (shared schema — `packages/shared/src/schema.ts`):**
+- `diffs` table: marked `@deprecated`, removed from `activeTables` (still in `tables` export for backward compat)
+- `v1.DiffUpdated` materializer: changed to no-op `() => []`
+- `v1.DiffCleared` materializer: changed to no-op `() => []`
+- Event definitions retained (immutable eventlog backward compatibility)
+
+**Files modified (shared tests — `packages/shared/test/schema.test.ts`):**
+- Replaced "materializes diff lifecycle events" test with "diff events are no-ops" test
+- Removed `tables.diffs` queries from deprecated-events snapshot test
+
+**Files modified (server handlers — `packages/server/src/rpc/handlers.ts`):**
+- Removed `DiffService` and `FileTreeService` imports
+- Removed `diff.refresh` handler
+- Removed `fileTree.subscribe` handler
+- Removed `DiffService.startPolling()` from: workspace.create, workspace.startContainer, container.unpause, task.updateStatus onReady callbacks
+- Removed `DiffService.stopPolling()` from: workspace.destroy, task.updateStatus auto-cleanup
+- Updated JSDoc comments to reflect removal
+
+**Files modified (server entry — `packages/server/src/utility-main.ts`):**
+- Removed `DiffService` and `FileTreeService` imports
+- Removed `DiffService.layer` and `FileTreeService.layer` from `DeferredGroup1Layers`
+- Removed `makeRefDelegatingService(DiffService)` and `makeRefDelegatingService(FileTreeService)` proxy creation
+- Removed `Ref.set` swaps for DiffService and FileTreeService
+- Removed `Context.add(DiffService, ...)` and `Context.add(FileTreeService, ...)` from context output
+
+**Files modified (server polling — `packages/server/src/services/polling-intervals.ts`):**
+- Removed `DIFF_POLL_INTERVAL_MS`, `DIFF_EVENT_DEBOUNCE_MS`, `DIFF_EVENT_COOLDOWN_MS` constants
+- Removed `FILE_TREE_EVENT_DEBOUNCE_MS` constant
+
+**Files modified (server tests — test layers):**
+- `packages/server/test/rpc/test-layer.ts` — Removed DiffService/FileTreeService imports and layer entries
+- `packages/server/test/rpc/core-layers.test.ts` — Removed DiffService/FileTreeService proxy stubs
+- `packages/server/test/rpc/messageport-rpc.test.ts` — Removed DiffService/FileTreeService proxy stubs
+- `packages/server/test/parity-hardening.test.ts` — Removed DiffService import, `createEndToEndLayerWithDiffService` helper, "Ignore filtering" and "End-to-end downstream invalidation" test sections; updated coverage file list
+
+**Files modified (web app):**
+- `apps/web/src/panes/tree-pane.tsx` — Removed `FileTreePreloader` no-op component and its export
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Removed `FileTreePreloader` import and JSX usage
+
+**What was NOT removed (still in use):**
+- `visible-workspaces.ts` — still imported by `pr-watcher.ts`
+- `DiffScrollContext` — still actively used by `diff-pane.tsx` and `review-pane.tsx`
+- `RepositoryWatchCoordinator` — simplified in Issue 8, not fully removed (still coordinates branch detection + worktree reconciliation)
+- `BranchStateTracker` — still in use
+
+**Verification:**
+- All typechecks pass (shared, server, web, file-watcher, mcp)
+- Biome format clean (0 fixes applied)
+- Shared tests: 75/75 pass
+- Server tests: 405/411 pass (5 failures are pre-existing in pr-watcher, project-registry, project-management — none related to this change)
+- Web tests: pre-existing failures only
+- No orphaned imports or dead code in modified files

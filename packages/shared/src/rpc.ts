@@ -235,12 +235,6 @@ const DockerStatusResponse = Schema.Struct({
   error: Schema.optional(Schema.String),
 })
 
-const DiffResponse = Schema.Struct({
-  workspaceId: Schema.String,
-  diffContent: Schema.String,
-  lastUpdated: Schema.String,
-})
-
 const PrStatusResponse = Schema.Struct({
   number: Schema.NullOr(Schema.Int),
   state: Schema.NullOr(Schema.String),
@@ -537,18 +531,6 @@ export const GitStatusEntry = Schema.Struct({
 })
 
 export type GitStatusEntry = typeof GitStatusEntry.Type
-
-/**
- * A snapshot of the file tree for a workspace's worktree.
- * Contains all files from filesystem readdir (including gitignored files)
- * and their git status decorations.
- */
-export const FileTreeSnapshot = Schema.Struct({
-  files: Schema.Array(Schema.String),
-  gitStatus: Schema.Array(GitStatusEntry),
-})
-
-export type FileTreeSnapshot = typeof FileTreeSnapshot.Type
 
 // ---------------------------------------------------------------------------
 // RPC Definitions
@@ -879,17 +861,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // Diff RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('diff.refresh', {
-    success: DiffResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
   // Editor RPCs
   // -----------------------------------------------------------------------
   Rpc.make('editor.open', {
@@ -1119,28 +1090,6 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       reviewId: Schema.Number,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // File Tree RPCs
-  // -----------------------------------------------------------------------
-
-  /**
-   * Streaming RPC that pushes file tree snapshots for a workspace's worktree.
-   *
-   * The first emission is the initial snapshot (full file listing); subsequent
-   * emissions are pushed when files change on disk. The stream stays open
-   * until the client disconnects (panel close / unmount).
-   *
-   * @see PRD: Live File Tree with Git Status Decorations
-   */
-  Rpc.make('fileTree.subscribe', {
-    success: FileTreeSnapshot,
-    error: RpcError,
-    stream: true,
-    payload: {
-      workspaceId: Schema.String,
     },
   }),
 

@@ -527,16 +527,5 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
   )
 }
 
-/**
- * FileTreePreloader is no longer needed — the lazy file tree model
- * fetches data on-demand when the tree pane opens. Retained as a
- * no-op component for backward compatibility during the transition
- * so existing FileTreePreloader mounts in workspace-frames.tsx don't
- * break.
- */
-function FileTreePreloader(_props: { readonly workspaceId: string }): null {
-  return null
-}
-
-export { FileTreePreloader, TreePane }
+export { TreePane }
 export type { TreePaneProps }

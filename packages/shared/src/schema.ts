@@ -72,6 +72,11 @@ export const terminals = State.SQLite.table({
   },
 })
 
+/**
+ * @deprecated — diffs table removed as part of Lazy File Service migration.
+ * Retained for backward compatibility in tests that reference `tables.diffs`.
+ * Not registered in `activeTables`.
+ */
 export const diffs = State.SQLite.table({
   name: 'diffs',
   columns: {
@@ -662,11 +667,8 @@ const materializers = State.SQLite.materializers(events, {
   'v1.TerminalKilled': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.TerminalRemoved': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.TerminalRestarted': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
-  'v1.DiffUpdated': ({ workspaceId, diffContent, lastUpdated }) =>
-    diffs
-      .insert({ workspaceId, diffContent, lastUpdated })
-      .onConflict('workspaceId', 'replace'),
-  'v1.DiffCleared': ({ workspaceId }) => diffs.delete().where({ workspaceId }),
+  'v1.DiffUpdated': () => [], // @deprecated — no-op materializer retained for backward compat (Lazy File Service)
+  'v1.DiffCleared': () => [], // @deprecated — no-op materializer retained for backward compat (Lazy File Service)
   'v1.TaskCreated': ({
     id,
     projectId,
@@ -761,7 +763,6 @@ export const tables = {
 const activeTables = {
   projects,
   workspaces,
-  diffs,
   tasks,
   prds,
   appSettings,

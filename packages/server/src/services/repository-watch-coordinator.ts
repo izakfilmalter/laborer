@@ -451,7 +451,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           handleWorktreesEvent(state)
         }
         // repo-root events are handled by the file-watcher service's
-        // normalization and streamed directly to DiffService via
+        // normalization and streamed to clients via
         // FileWatcherClient.onFileEvent — the coordinator doesn't
         // need to handle them here.
       }

@@ -276,10 +276,13 @@ describe('LiveStore schema', () => {
       })
   )
 
-  it.scoped('materializes diff lifecycle events into the diffs table', () =>
+  it.scoped('diff events are no-ops after Lazy File Service migration', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
 
+      // Diff events are deprecated — materializers return [] (no-op).
+      // The events still decode successfully for backward compat,
+      // but no rows are written to any table.
       store.commit(
         events.diffUpdated({
           workspaceId: 'workspace-1',
@@ -288,28 +291,9 @@ describe('LiveStore schema', () => {
         })
       )
 
-      store.commit(
-        events.diffUpdated({
-          workspaceId: 'workspace-1',
-          diffContent: 'diff --git a/file.ts b/file.ts\n+updated line',
-          lastUpdated: '2026-03-06T00:01:00.000Z',
-        })
-      )
-
-      assert.deepStrictEqual(store.query(tables.diffs), [
-        {
-          workspaceId: 'workspace-1',
-          diffContent: 'diff --git a/file.ts b/file.ts\n+updated line',
-          lastUpdated: '2026-03-06T00:01:00.000Z',
-        },
-      ])
-
       store.commit(events.diffCleared({ workspaceId: 'workspace-1' }))
 
-      assert.deepStrictEqual(
-        store.query(tables.diffs.where('workspaceId', 'workspace-1')),
-        []
-      )
+      // No crash — events decode and commit without error
     })
   )
 
@@ -431,13 +415,6 @@ describe('LiveStore schema', () => {
         })
       )
       store.commit(
-        events.diffUpdated({
-          workspaceId: 'workspace-1',
-          diffContent: 'diff --git a/file.ts b/file.ts',
-          lastUpdated: '2026-03-06T00:00:00.000Z',
-        })
-      )
-      store.commit(
         events.taskCreated({
           id: 'task-1',
           projectId: 'project-1',
@@ -463,7 +440,6 @@ describe('LiveStore schema', () => {
       const beforeDeprecatedEvents = {
         projects: store.query(tables.projects),
         workspaces: store.query(tables.workspaces),
-        diffs: store.query(tables.diffs),
         tasks: store.query(tables.tasks),
         prds: store.query(tables.prds),
         panelLayout: store.query(tables.panelLayout),
@@ -498,7 +474,6 @@ describe('LiveStore schema', () => {
         {
           projects: store.query(tables.projects),
           workspaces: store.query(tables.workspaces),
-          diffs: store.query(tables.diffs),
           tasks: store.query(tables.tasks),
           prds: store.query(tables.prds),
           panelLayout: store.query(tables.panelLayout),

@@ -19,10 +19,8 @@ import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
-import { DiffService } from '../services/diff-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { FileService } from '../services/file-service.js'
-import { FileTreeService } from '../services/file-tree-service.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -706,11 +704,10 @@ export const handleProjectList = () =>
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
  * - config.get/config.update: delegates to ConfigService via ProjectRegistry lookup (Issue #157)
- * - workspace.create: delegates to WorkspaceProvider.createWorktree + DiffService.startPolling (Issue #33/#40/#85)
- * - workspace.destroy: delegates to DiffService.stopPolling + TerminalClient.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
+ * - workspace.create: delegates to WorkspaceProvider.createWorktree (Issue #33/#40/#85)
+ * - workspace.destroy: delegates to TerminalClient.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
  * - terminal.spawn: delegates to TerminalClient.spawnInWorkspace (Issue #50/#143)
  * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
- * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
  * - brrr.startLoop: delegates to TerminalClient.spawnInWorkspace with `brrr build --once` (Issue #92/#143)
  * - brrr.review: delegates to TerminalClient.spawnInWorkspace with `brrr review <prNumber>` (Issue #96/#143)
@@ -808,14 +805,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'workspace.create': ({ projectId, branchName, taskId }) =>
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
-        // Pass an onReady callback that starts diff/PR polling once the
+        // Pass an onReady callback that starts PR polling once the
         // background worktree setup completes and the workspace is 'running'.
-        const diffService = yield* DiffService
         const prWatcher = yield* PrWatcher
         const workspaceSyncService = yield* WorkspaceSyncService
         const onReady = (workspaceId: string) =>
           Effect.gen(function* () {
-            yield* diffService.startPolling(workspaceId)
             yield* prWatcher.startPolling(workspaceId)
             yield* workspaceSyncService.startPolling(workspaceId)
           })
@@ -841,10 +836,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
     'workspace.destroy': ({ workspaceId, force }) =>
       Effect.gen(function* () {
-        // Issue #85: Stop diff polling before destroying the workspace.
-        const diffService = yield* DiffService
-        yield* diffService.stopPolling(workspaceId)
-
         // Stop PR polling before destroying the workspace.
         const prWatcher = yield* PrWatcher
         yield* prWatcher.stopPolling(workspaceId)
@@ -894,12 +885,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'workspace.startContainer': ({ workspaceId }) =>
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
-        const diffService = yield* DiffService
         const prWatcher = yield* PrWatcher
         const workspaceSyncService = yield* WorkspaceSyncService
         const onReady = (wsId: string) =>
           Effect.gen(function* () {
-            yield* diffService.startPolling(wsId)
             yield* prWatcher.startPolling(wsId)
             yield* workspaceSyncService.startPolling(wsId)
           })
@@ -938,12 +927,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
                 `Container not found for workspace "${workspaceId}", recreating`
               )
               const provider = yield* WorkspaceProvider
-              const diffService = yield* DiffService
               const prWatcher = yield* PrWatcher
               const workspaceSyncService = yield* WorkspaceSyncService
               const onReady = (wsId: string) =>
                 Effect.gen(function* () {
-                  yield* diffService.startPolling(wsId)
                   yield* prWatcher.startPolling(wsId)
                   yield* workspaceSyncService.startPolling(wsId)
                 })
@@ -963,15 +950,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
-      }),
-
-    // -------------------------------------------------------------------
-    // Diff RPCs (Issue #82-86)
-    // -------------------------------------------------------------------
-    'diff.refresh': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const diffService = yield* DiffService
-        return yield* diffService.getDiff(workspaceId)
       }),
 
     // -------------------------------------------------------------------
@@ -1112,12 +1090,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             const branchName = `task/${idPrefix}/${slug}`
 
             const provider = yield* WorkspaceProvider
-            const diffService = yield* DiffService
             const prWatcher = yield* PrWatcher
             const workspaceSyncService = yield* WorkspaceSyncService
             const onReady = (workspaceId: string) =>
               Effect.gen(function* () {
-                yield* diffService.startPolling(workspaceId)
                 yield* prWatcher.startPolling(workspaceId)
                 yield* workspaceSyncService.startPolling(workspaceId)
               })
@@ -1144,9 +1120,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
           for (const workspace of linkedWorkspaces) {
             yield* Effect.gen(function* () {
-              const diffService = yield* DiffService
-              yield* diffService.stopPolling(workspace.id)
-
               const prWatcher = yield* PrWatcher
               yield* prWatcher.stopPolling(workspace.id)
 
@@ -1275,17 +1248,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           tokenType: body.token_type ?? 'bearer',
         }
       }),
-
-    // -------------------------------------------------------------------
-    // File Tree RPCs
-    // -------------------------------------------------------------------
-    'fileTree.subscribe': ({ workspaceId }) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const fileTreeService = yield* FileTreeService
-          return fileTreeService.subscribe(workspaceId)
-        })
-      ),
 
     // -------------------------------------------------------------------
     // File Service RPCs (Lazy File Service)

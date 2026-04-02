@@ -452,15 +452,15 @@ Run `bun run check` (typecheck + format + tests) to verify.
 
 ### Acceptance criteria
 
-- [ ] All removed files are deleted from the repository
-- [ ] `diffs` table removed from LiveStore schema
-- [ ] `v1.DiffUpdated` and `v1.DiffCleared` materializers changed to no-op `() => []`
-- [ ] `diff.refresh` and `fileTree.subscribe` RPCs removed
-- [ ] Old RPC handlers removed from `handlers.ts`
-- [ ] Old service layers removed from `utility-main.ts` composition
-- [ ] Web app has no remaining references to removed services/RPCs
-- [ ] `bun run check` passes (typecheck + format + tests)
-- [ ] No orphaned imports or dead code
+- [x] All removed files are deleted from the repository
+- [x] `diffs` table removed from LiveStore schema
+- [x] `v1.DiffUpdated` and `v1.DiffCleared` materializers changed to no-op `() => []`
+- [x] `diff.refresh` and `fileTree.subscribe` RPCs removed
+- [x] Old RPC handlers removed from `handlers.ts`
+- [x] Old service layers removed from `utility-main.ts` composition
+- [x] Web app has no remaining references to removed services/RPCs
+- [x] `bun run check` passes (typecheck + format + tests)
+- [x] No orphaned imports or dead code
 
 ### Blocked by
 
@@ -486,7 +486,7 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | **Done** |
 | 7 | Client diff pane — On-demand per-file diffs | ~~Issues 3, 4, 5~~ | **Done** |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | **Done** |
-| 9 | Remove old code + deprecate LiveStore events | ~~Issues 6, 7, 8~~ | Ready |
+| 9 | Remove old code + deprecate LiveStore events | ~~Issues 6, 7, 8~~ | **Done** |
 
 ### Parallel execution paths
 

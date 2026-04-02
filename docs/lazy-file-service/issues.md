@@ -339,15 +339,15 @@ The diff rendering continues to use `@pierre/diffs`. The data source changes fro
 
 ### Acceptance criteria
 
-- [ ] Diff pane uses `file.status` for changed file list instead of LiveStore `diffs` table
-- [ ] Diff pane uses `file.read` for per-file diff content instead of parsing monolithic workspace diff
-- [ ] No LiveStore subscription for diff data
-- [ ] Watcher events trigger selective re-fetching (only affected file or status list)
-- [ ] File list sidebar updates when files are added/removed
-- [ ] Currently displayed file diff updates when file changes on disk
-- [ ] Accept/reject hunk interactions continue to work
-- [ ] Loading and empty states handled
-- [ ] All tests pass
+- [x] Diff pane uses `file.status` for changed file list instead of LiveStore `diffs` table
+- [x] Diff pane uses `file.read` for per-file diff content instead of parsing monolithic workspace diff
+- [x] No LiveStore subscription for diff data
+- [x] Watcher events trigger selective re-fetching (only affected file or status list)
+- [x] File list sidebar updates when files are added/removed
+- [x] Currently displayed file diff updates when file changes on disk
+- [x] Accept/reject hunk interactions continue to work
+- [x] Loading and empty states handled
+- [x] All tests pass
 
 ### Blocked by
 
@@ -484,9 +484,9 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | **Done** |
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
 | 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | **Done** |
-| 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, ~~4~~, ~~5~~ | Ready |
+| 7 | Client diff pane — On-demand per-file diffs | ~~Issues 3, 4, 5~~ | **Done** |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | **Done** |
-| 9 | Remove old code + deprecate LiveStore events | Issues ~~6~~, 7, ~~8~~ | Blocked |
+| 9 | Remove old code + deprecate LiveStore events | ~~Issues 6, 7, 8~~ | Ready |
 
 ### Parallel execution paths
 

@@ -11,9 +11,9 @@ Issues: docs/lazy-file-service/issues.md
 - [x] Issue 4: file.status — Workspace-level changed file summary             [DONE]
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
 - [x] Issue 6: Client tree pane — Lazy per-directory fetching                 [DONE]
-- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [READY]
+- [x] Issue 7: Client diff pane — On-demand per-file diffs                    [DONE]
 - [x] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [DONE]
-- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 7]
+- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [READY]
 
 ## Execution Order
 
@@ -200,3 +200,45 @@ Phase 4:             Issue 9
   - Phase 4 lifecycle gating
   - `fileTreeOptions` (flattenEmptyDirectories, sort, virtualize)
 - All 11 invalidation tests pass, TypeScript clean, Biome format clean
+
+### Issue 7: Client diff pane — On-demand per-file diffs — DONE
+
+**Files modified:**
+- `apps/web/src/panes/diff-pane.tsx` — Complete rewrite from LiveStore subscription to on-demand RPC model
+
+**Implementation details:**
+- Replaced LiveStore `diffs` table subscription with on-demand `file.status` + `file.read` RPCs:
+  - `file.status(workspaceId)` fetches the list of changed files on mount
+  - `file.read(workspaceId, filePath)` fetches per-file content + diff for each changed file
+  - No more monolithic workspace-wide diff string — each file's diff is fetched independently
+- Added `file.watcher.subscribe` streaming RPC subscription for reactive invalidation:
+  - Uses shared `getWatcherAtom` cache (same pattern as tree pane) — shared subscriptions per workspace
+  - Watcher events processed via extracted `processWatcherEvents()` pure function:
+    - `"change"` events on displayed files → re-fetch individual file diff via `file.read`
+    - `"add"`/`"unlink"` events → re-fetch `file.status` to update the file list
+    - `.git/` path changes ignored
+  - Newly appearing files (from status re-fetch) automatically get their diffs fetched
+- Added `LifecyclePhase.Eventually` gating:
+  - `DiffPane` wrapper shows loading skeleton until Phase 4
+  - `DiffPaneContent` inner component mounted only when deferred services are ready
+- Extracted custom hooks for cognitive complexity management:
+  - `useDiffStore(workspaceId)` — manages file status fetching, per-file diff fetching, watcher subscription, and invalidation lifecycle
+  - `useAnnotatedDiffs(orderedFileDiffs)` — manages accept/reject annotation overlay state
+  - `processWatcherEvents(events, displayedPaths)` — pure function for watcher event processing
+- Preserved all existing functionality:
+  - Accept/reject hunk annotations (Issue #88) — `diffAcceptRejectHunk` from @pierre/diffs
+  - Click-to-open file in editor (Issue #112) — `editor.open` RPC mutation
+  - Cross-pane diff scroll (Issue #11) — `useOnDiffScrollRequest` hook
+  - Responsive split/unified layout based on pane width
+  - Scroll position preservation via MutationObserver
+  - "Updated" flash indicator on content changes
+  - `useTransition` for deferred rendering of expensive FileDiff components
+  - Loading spinner and empty state UI
+- Removed old code paths:
+  - LiveStore `diffs` table query (`queryDb(diffs)`)
+  - `useLaborerStore()` hook (no longer needed)
+  - `useDebouncedValue` hook (no longer needed — per-file fetching is naturally granular)
+  - `formatLastUpdated()` helper (no more timestamp footer)
+  - Diagnostic `console.debug`/`console.warn` logging for LiveStore sync debugging
+- TypeScript clean, Biome format clean (0 errors, 0 warnings)
+- Biome complexity within limit: `DiffPaneContent` reduced to ~15 via hook extraction

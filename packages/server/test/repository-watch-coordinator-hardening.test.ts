@@ -530,7 +530,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
   )
 
   it.scoped(
-    'git event classification routes HEAD and refs to branch refresh, worktrees to reconciliation',
+    'only files ending with HEAD trigger branch refresh; worktrees trigger reconciliation',
     () => {
       const reconcileCalls = { current: 0 }
       const branchRefreshCalls = { current: 0 }
@@ -557,18 +557,17 @@ describe('RepositoryWatchCoordinator hardening', () => {
           throw new Error('Expected git dir subscription')
         }
 
-        // Test branch-related events: HEAD, refs/heads/main, MERGE_HEAD,
-        // REBASE_HEAD, ORIG_HEAD, FETCH_HEAD
-        const branchFiles = [
+        // Only files ending with "HEAD" trigger branch refresh
+        // (HEAD, MERGE_HEAD, REBASE_HEAD, ORIG_HEAD, FETCH_HEAD)
+        const headFiles = [
           'HEAD',
-          'refs/heads/main',
           'MERGE_HEAD',
           'REBASE_HEAD',
           'ORIG_HEAD',
           'FETCH_HEAD',
         ]
 
-        for (const fileName of branchFiles) {
+        for (const fileName of headFiles) {
           emitEvent.current({
             subscriptionId: gitSubId,
             type: 'change',
@@ -581,11 +580,11 @@ describe('RepositoryWatchCoordinator hardening', () => {
           waitFor(() => Promise.resolve(branchRefreshCalls.current === 1))
         )
 
-        // All branch events debounce to a single branch refresh
+        // All HEAD-suffix events debounce to a single branch refresh
         assert.strictEqual(
           branchRefreshCalls.current,
           1,
-          'Branch-related events should trigger branch refresh'
+          'HEAD-suffix events should trigger branch refresh'
         )
 
         // Reset and test worktree-specific events
@@ -637,6 +636,63 @@ describe('RepositoryWatchCoordinator hardening', () => {
           branchRefreshCalls.current,
           1,
           'null fileName should trigger branch refresh'
+        )
+      }).pipe(Effect.provide(TestLayer))
+    }
+  )
+
+  it.scoped(
+    'non-HEAD git changes (refs/heads/main, index, config) do not trigger branch refresh',
+    () => {
+      const reconcileCalls = { current: 0 }
+      const branchRefreshCalls = { current: 0 }
+      const subscribedPaths: string[] = []
+      const unsubscribedIds: string[] = []
+      const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+      const subscriptionsByPath = new Map<string, string>()
+
+      const TestLayer = createTestLayer({
+        reconcileCalls,
+        branchRefreshCalls,
+        subscribedPaths,
+        unsubscribedIds,
+        emitEvent,
+        subscriptionsByPath,
+      })
+
+      return Effect.gen(function* () {
+        const coordinator = yield* RepositoryWatchCoordinator
+        yield* coordinator.watchProject('project-non-head', '/input/repo')
+
+        const gitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+        if (gitSubId === undefined) {
+          throw new Error('Expected git dir subscription')
+        }
+
+        // These git dir events should NOT trigger branch refresh
+        const nonHeadFiles = [
+          'refs/heads/main',
+          'index',
+          'config',
+          'packed-refs',
+        ]
+
+        for (const fileName of nonHeadFiles) {
+          emitEvent.current({
+            subscriptionId: gitSubId,
+            type: 'change',
+            fileName,
+            absolutePath: `/virtual/repo/.git/${fileName}`,
+          })
+        }
+
+        // Wait enough time for a debounced branch refresh to fire
+        yield* Effect.promise(() => delay(1000))
+
+        assert.strictEqual(
+          branchRefreshCalls.current,
+          0,
+          'Non-HEAD git changes should not trigger branch refresh'
         )
       }).pipe(Effect.provide(TestLayer))
     }

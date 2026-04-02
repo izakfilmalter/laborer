@@ -61,9 +61,8 @@ import {
   serviceInitializingError,
 } from './services/deferred-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
-import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
-import { FileTreeService } from './services/file-tree-service.js'
+import { FileService } from './services/file-service.js'
 import {
   FileWatcherClient,
   FileWatcherRpcPort,
@@ -268,8 +267,7 @@ const DeferredGroup1Layers = Layer.mergeAll(
   BranchStateTracker.layer,
   ContainerService.layer,
   PrdStorageService.layer,
-  DiffService.layer,
-  FileTreeService.layer,
+  FileService.layer,
   PrWatcher.layer,
   WorktreeReconciler.layer
 )
@@ -352,14 +350,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     // --- Create Ref-backed delegating proxies for each deferred service ---
 
     const containerService = yield* makeRefDelegatingService(ContainerService)
-    const diffService = yield* makeRefDelegatingService(DiffService)
-    const fileTreeService = yield* makeRefDelegatingService(FileTreeService, {
-      // FileTreeService.subscribe returns a Stream, not an Effect.
-      // The default proxy returns Effect.fail(...) which causes a
-      // server-wide Defect ("Not a valid effect") when the RPC framework
-      // tries to consume it as a Stream. Return Stream.fail instead.
-      subscribe: () =>
-        Stream.fail(serviceInitializingError('@laborer/FileTreeService')),
+    const fileService = yield* makeRefDelegatingService(FileService, {
+      // FileService.watcherSubscribe returns a Stream, not an Effect.
+      watcherSubscribe: () =>
+        Stream.fail(serviceInitializingError('@laborer/FileService')),
     })
     const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
       // DockerDetection.check() has no error channel — return valid data
@@ -435,11 +429,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           containerService.ref,
           Context.get(stackCtx, ContainerService)
         )
-        yield* Ref.set(diffService.ref, Context.get(stackCtx, DiffService))
-        yield* Ref.set(
-          fileTreeService.ref,
-          Context.get(stackCtx, FileTreeService)
-        )
+        yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
         yield* Ref.set(
           githubTaskImporter.ref,
           Context.get(stackCtx, GithubTaskImporter)
@@ -542,8 +532,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     return pipe(
       Context.empty(),
       Context.add(ContainerService, containerService.proxy),
-      Context.add(DiffService, diffService.proxy),
-      Context.add(FileTreeService, fileTreeService.proxy),
+      Context.add(FileService, fileService.proxy),
       Context.add(DockerDetection, dockerDetection.proxy),
       Context.add(GithubTaskImporter, githubTaskImporter.proxy),
       Context.add(LinearTaskImporter, linearTaskImporter.proxy),

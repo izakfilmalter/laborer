@@ -235,12 +235,6 @@ const DockerStatusResponse = Schema.Struct({
   error: Schema.optional(Schema.String),
 })
 
-const DiffResponse = Schema.Struct({
-  workspaceId: Schema.String,
-  diffContent: Schema.String,
-  lastUpdated: Schema.String,
-})
-
 const PrStatusResponse = Schema.Struct({
   number: Schema.NullOr(Schema.Int),
   state: Schema.NullOr(Schema.String),
@@ -367,6 +361,163 @@ const ReviewFetchVerdictResponse = Schema.Struct({
 })
 
 // ---------------------------------------------------------------------------
+// File Service Schemas (Lazy File Service)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single file or directory entry returned by `file.list`.
+ *
+ * Each node represents one entry in a directory listing. The `path` is
+ * relative to the worktree root, `absolute` is the full filesystem path,
+ * and `ignored` indicates whether the entry matches a `.gitignore` or
+ * `.ignore` pattern.
+ *
+ * @see PRD: Lazy File Service — FileNode schema
+ */
+export const FileNode = Schema.Struct({
+  /** File or directory name (basename). */
+  name: Schema.String,
+  /** Path relative to the worktree root. */
+  path: Schema.String,
+  /** Absolute filesystem path. */
+  absolute: Schema.String,
+  /** Whether this entry is a file or directory. */
+  type: Schema.Literal('file', 'directory'),
+  /** Whether this entry matches a gitignore/ignore pattern. */
+  ignored: Schema.Boolean,
+})
+
+export type FileNode = typeof FileNode.Type
+
+/**
+ * A file change event streamed to the client from `file.watcher.subscribe`.
+ *
+ * The `file` path is relative to the worktree root. The `event` type maps
+ * internal watcher types to the client-facing vocabulary:
+ * - `"add"` — a file was created
+ * - `"change"` — a file was modified
+ * - `"unlink"` — a file was deleted
+ *
+ * @see PRD: Lazy File Service — FileWatcherEvent schema
+ * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
+ */
+export const FileWatcherEvent = Schema.Struct({
+  /** Path of the changed file, relative to the worktree root. */
+  file: Schema.String,
+  /** The type of file change. */
+  event: Schema.Literal('add', 'change', 'unlink'),
+})
+
+export type FileWatcherEvent = typeof FileWatcherEvent.Type
+
+/**
+ * A single hunk within a structured patch, representing a contiguous
+ * set of changes between the old and new file versions.
+ *
+ * Each hunk has start positions and line counts for both old and new
+ * versions, plus an array of diff lines where each line is prefixed
+ * with `" "` (context), `"+"` (added), or `"-"` (removed).
+ *
+ * @see PRD: Lazy File Service — FileContent.patch schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const PatchHunk = Schema.Struct({
+  /** Starting line in the old file. */
+  oldStart: Schema.Number,
+  /** Number of lines from the old file in this hunk. */
+  oldLines: Schema.Number,
+  /** Starting line in the new file. */
+  newStart: Schema.Number,
+  /** Number of lines from the new file in this hunk. */
+  newLines: Schema.Number,
+  /** Diff lines, each prefixed with " ", "+", or "-". */
+  lines: Schema.Array(Schema.String),
+})
+
+export type PatchHunk = typeof PatchHunk.Type
+
+/**
+ * A structured patch representing the diff between two versions of a file.
+ *
+ * Computed via the `diff` npm library's `structuredPatch()` with
+ * `context: Infinity` so the entire file is included as context.
+ *
+ * @see PRD: Lazy File Service — FileContent.patch schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const StructuredPatch = Schema.Struct({
+  /** Old file name (typically the relative path). */
+  oldFileName: Schema.String,
+  /** New file name (typically the relative path). */
+  newFileName: Schema.String,
+  /** Old file header (e.g., "old"). */
+  oldHeader: Schema.optional(Schema.String),
+  /** New file header (e.g., "new"). */
+  newHeader: Schema.optional(Schema.String),
+  /** Array of hunks representing changes. */
+  hunks: Schema.Array(PatchHunk),
+  /** Index line from the diff header. */
+  index: Schema.optional(Schema.String),
+})
+
+export type StructuredPatch = typeof StructuredPatch.Type
+
+/**
+ * File content returned by `file.read`.
+ *
+ * Represents the content of a single file from a workspace's worktree,
+ * along with its diff against HEAD (if the file has changes).
+ *
+ * - `type: "text"` — text file, `content` is the UTF-8 string
+ * - `type: "binary"` — binary file, `content` is empty
+ *
+ * For images, `content` is base64-encoded with `encoding: "base64"`
+ * and `mimeType` set to the image MIME type.
+ *
+ * @see PRD: Lazy File Service — FileContent schema
+ * @see Issue 3: file.read — On-demand file content with per-file diff
+ */
+export const FileContent = Schema.Struct({
+  /** Whether this is a text or binary file. */
+  type: Schema.Literal('text', 'binary'),
+  /** File content (UTF-8 text, base64 for images, or empty for binary). */
+  content: Schema.String,
+  /** Raw git diff output for this file (absent if no changes). */
+  diff: Schema.optional(Schema.String),
+  /** Structured patch with hunks (absent if no changes). */
+  patch: Schema.optional(StructuredPatch),
+  /** Content encoding (present only for base64-encoded content). */
+  encoding: Schema.optional(Schema.Literal('base64')),
+  /** MIME type (present for images and detected binary files). */
+  mimeType: Schema.optional(Schema.String),
+})
+
+export type FileContent = typeof FileContent.Type
+
+/**
+ * Summary of a single changed file in a workspace, returned by `file.status`.
+ *
+ * Each entry represents a file that differs from HEAD — either modified,
+ * newly added (untracked), or deleted. Line counts indicate the number of
+ * lines added and removed relative to HEAD.
+ *
+ * @see PRD: Lazy File Service — FileInfo schema
+ * @see Issue 4: file.status — Workspace-level changed file summary
+ */
+export const FileInfo = Schema.Struct({
+  /** Path of the changed file, relative to the worktree root. */
+  path: Schema.String,
+  /** Number of lines added relative to HEAD. */
+  added: Schema.Number,
+  /** Number of lines removed relative to HEAD. */
+  removed: Schema.Number,
+  /** The type of change: added (untracked), deleted, or modified. */
+  status: Schema.Literal('added', 'deleted', 'modified'),
+})
+
+export type FileInfo = typeof FileInfo.Type
+
+// ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
 
@@ -380,18 +531,6 @@ export const GitStatusEntry = Schema.Struct({
 })
 
 export type GitStatusEntry = typeof GitStatusEntry.Type
-
-/**
- * A snapshot of the file tree for a workspace's worktree.
- * Contains all files from filesystem readdir (including gitignored files)
- * and their git status decorations.
- */
-export const FileTreeSnapshot = Schema.Struct({
-  files: Schema.Array(Schema.String),
-  gitStatus: Schema.Array(GitStatusEntry),
-})
-
-export type FileTreeSnapshot = typeof FileTreeSnapshot.Type
 
 // ---------------------------------------------------------------------------
 // RPC Definitions
@@ -722,17 +861,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // Diff RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('diff.refresh', {
-    success: DiffResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
   // Editor RPCs
   // -----------------------------------------------------------------------
   Rpc.make('editor.open', {
@@ -966,20 +1094,89 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // File Tree RPCs
+  // File Service RPCs (Lazy File Service)
   // -----------------------------------------------------------------------
 
   /**
-   * Streaming RPC that pushes file tree snapshots for a workspace's worktree.
+   * List a single directory level from a workspace's worktree.
    *
-   * The first emission is the initial snapshot (full file listing); subsequent
-   * emissions are pushed when files change on disk. The stream stays open
-   * until the client disconnects (panel close / unmount).
+   * Returns `FileNode[]` sorted directories-first, then alphabetically.
+   * Noisy directories (node_modules, .git, dist, build, etc.) and OS
+   * metadata files (.DS_Store, Thumbs.db) are skipped. When `dir` is
+   * omitted, lists the worktree root.
    *
-   * @see PRD: Live File Tree with Git Status Decorations
+   * @see PRD: Lazy File Service — file.list RPC
    */
-  Rpc.make('fileTree.subscribe', {
-    success: FileTreeSnapshot,
+  Rpc.make('file.list', {
+    success: Schema.Array(FileNode),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      dir: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Read a single file's content from a workspace's worktree and compute
+   * its diff against HEAD.
+   *
+   * Returns `FileContent` with the file's text (or base64 for images),
+   * plus optional diff and structured patch if the file has changes.
+   * Binary files are detected by extension and returned with `type: "binary"`
+   * and empty content. Non-existent files return `type: "text"` with empty
+   * content.
+   *
+   * @see PRD: Lazy File Service — file.read RPC
+   * @see Issue 3: file.read — On-demand file content with per-file diff
+   */
+  Rpc.make('file.read', {
+    success: FileContent,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
+    },
+  }),
+
+  /**
+   * Return a summary of all changed files in a workspace with line-level
+   * change counts.
+   *
+   * Runs three git commands in parallel:
+   * - `git diff --numstat HEAD` for modified files with line counts
+   * - `git ls-files --others --exclude-standard` for untracked (added) files
+   * - `git diff --name-only --diff-filter=D HEAD` for deleted files
+   *
+   * Returns `FileInfo[]` where each entry has a relative path, added/removed
+   * line counts, and a status of "added", "deleted", or "modified".
+   *
+   * @see PRD: Lazy File Service — file.status RPC
+   * @see Issue 4: file.status — Workspace-level changed file summary
+   */
+  Rpc.make('file.status', {
+    success: Schema.Array(FileInfo),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Streaming RPC that forwards file change events for a workspace's worktree.
+   *
+   * Subscribes a recursive file watcher on the workspace's worktree via
+   * the file-watcher sidecar. Events are streamed as `FileWatcherEvent`
+   * objects with paths relative to the worktree root. The client uses
+   * these events for invalidation only — not for data.
+   *
+   * On stream teardown (client disconnect), the file watcher subscription
+   * is automatically cleaned up.
+   *
+   * @see PRD: Lazy File Service — Watcher Event Stream
+   * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
+   */
+  Rpc.make('file.watcher.subscribe', {
+    success: FileWatcherEvent,
     error: RpcError,
     stream: true,
     payload: {

@@ -1,19 +1,21 @@
 /**
- * File tree pane component — renders a live file tree using @pierre/trees.
+ * File tree pane component — renders a lazy per-directory file tree
+ * using @pierre/trees.
  *
- * Subscribes to the `fileTree.subscribe` streaming RPC which provides
- * the full list of tracked + untracked files and git status entries for
- * a workspace's worktree. Data is fed directly into @pierre/trees'
- * React `<FileTree>` component as controlled `files` and `gitStatus`
- * props.
+ * Uses the `file.list` request/response RPC for lazy per-directory
+ * fetching and the `file.watcher.subscribe` streaming RPC for reactive
+ * invalidation. Directories are loaded on expand, not eagerly on mount.
+ *
+ * Git status decorations are fetched via `file.status` and passed to
+ * @pierre/trees. The watcher stream also triggers status re-fetches
+ * when files are added, changed, or removed.
  *
  * Displayed as a left-side panel alongside workspace frames, mirroring
  * how the diff pane is rendered on the right side.
  *
- * Error handling: when the streaming RPC fails (workspace not found,
- * workspace in invalid state, worktree not ready, git errors), the
- * component renders a user-friendly error message instead of a blank
- * screen or crash.
+ * Error handling: when the RPC fails (workspace not found, workspace
+ * in invalid state, worktree not ready, git errors), the component
+ * renders a user-friendly error message instead of a blank screen.
  *
  * Right-click context menu: each tree item can be right-clicked to
  * show a context menu with "Open in Editor", "Copy Path", and
@@ -24,8 +26,9 @@
  * path (crossing shadow DOM boundaries) to ensure the right-click
  * landed on a tree item before allowing the menu to open.
  *
- * @see packages/server/src/services/file-tree-service.ts — server-side service
- * @see docs/file-tree-git-status/PRD.md — feature PRD
+ * @see packages/server/src/services/file-service.ts — server-side FileService
+ * @see docs/lazy-file-service/PRD.md — Lazy File Service PRD
+ * @see Issue 6: Client tree pane — Lazy per-directory fetching
  */
 
 import { Result } from '@effect-atom/atom'
@@ -34,21 +37,13 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@effect-atom/atom-react/Hooks'
-import type { FileTreeSnapshot } from '@laborer/shared/rpc'
+import type { FileNode } from '@laborer/shared/rpc'
 import { workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import type { FileTreeSelectionItem } from '@pierre/trees'
 import { FileTree } from '@pierre/trees/react'
-import { Cause, pipe } from 'effect'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -62,6 +57,8 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { invalidateFromWatcher } from '@/panes/file-tree/invalidate-from-watcher'
+import { useFileTreeStore } from '@/panes/file-tree/use-file-tree-store'
 
 /**
  * Options for the @pierre/trees FileTree component.
@@ -88,96 +85,6 @@ interface TreePaneProps {
 }
 
 // ---------------------------------------------------------------------------
-// Shared atom cache — ensures the preloader and TreePaneContent use the
-// same atom instance so the RPC subscription isn't duplicated.
-// ---------------------------------------------------------------------------
-
-const fileTreeAtomCache = new Map<
-  string,
-  ReturnType<typeof LaborerClient.query>
->()
-
-/**
- * Get or create the `fileTree.subscribe` pull atom for a workspace.
- * Cached by workspaceId so all consumers share one RPC subscription.
- */
-function getFileTreeAtom(workspaceId: string) {
-  let atom = fileTreeAtomCache.get(workspaceId)
-  if (!atom) {
-    atom = LaborerClient.query('fileTree.subscribe', { workspaceId })
-    fileTreeAtomCache.set(workspaceId, atom)
-  }
-  return atom
-}
-
-/**
- * Preload the file tree data for a workspace.
- *
- * Renders as a hidden component inside WorkspaceFrame. Starts the
- * `fileTree.subscribe` streaming RPC in the background once Phase 4
- * (Eventually) is reached. When the user later opens the Files panel,
- * the first snapshot is already available and renders instantly.
- *
- * Uses `useAtomMount` which mounts the atom in the registry (starting
- * the RPC subscription) without subscribing to value changes, so this
- * component causes zero re-renders after mount.
- */
-function FileTreePreloader({
-  workspaceId,
-}: {
-  readonly workspaceId: string
-}): null {
-  const atom = useMemo(() => getFileTreeAtom(workspaceId), [workspaceId])
-  useAtomMount(atom)
-  return null
-}
-
-/**
- * Extract the latest snapshot from the streaming RPC pull result.
- *
- * The pull-based atom accumulates stream items in `result.value.items`.
- * Since each FileTreeSnapshot is a complete replacement (not a delta),
- * we only care about the most recent item in the array.
- *
- * Returns error information when the stream fails so the UI can render
- * a user-friendly message instead of a blank screen.
- */
-function useFileTreeSnapshot(workspaceId: string): {
-  error: string | null
-  isLoading: boolean
-  snapshot: FileTreeSnapshot | null
-} {
-  const fileTreeAtom = useMemo(
-    () => getFileTreeAtom(workspaceId),
-    [workspaceId]
-  )
-  const result = useAtomValue(fileTreeAtom)
-
-  if (Result.isInitial(result) || result.waiting) {
-    return { snapshot: null, isLoading: true, error: null }
-  }
-
-  if (Result.isFailure(result)) {
-    // Extract a user-friendly error message from the Cause.
-    // The cause wraps RpcError which has `{ message: string, code?: string }`.
-    const errorMessage = pipe(Cause.failures(result.cause), (chunk) => {
-      const first = chunk[Symbol.iterator]().next()
-      if (first.done !== true && first.value !== undefined) {
-        const err = first.value as { message?: string }
-        return err.message ?? 'Failed to load file tree'
-      }
-      return 'Failed to load file tree'
-    })
-    return { snapshot: null, isLoading: false, error: errorMessage }
-  }
-
-  // Pull result success value has shape { done, items: NonEmptyArray<T> }
-  const { items } = result.value
-  const latestSnapshot = items.at(-1) ?? null
-  return { snapshot: latestSnapshot, isLoading: false, error: null }
-}
-
-// ---------------------------------------------------------------------------
 // Module-level atoms — shared across all TreePaneContent instances.
 // ---------------------------------------------------------------------------
 
@@ -186,6 +93,12 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'treePaneWorkspaces' })
 
 /** Mutation atom for opening files in the user's configured editor. */
 const editorOpenMutation = LaborerClient.mutation('editor.open')
+
+/** Mutation atom for listing a single directory level. */
+const fileListMutation = LaborerClient.mutation('file.list')
+
+/** Mutation atom for fetching workspace-level changed file summary. */
+const fileStatusMutation = LaborerClient.mutation('file.status')
 
 // ---------------------------------------------------------------------------
 // Context menu items component
@@ -256,7 +169,7 @@ function FileTreeContextMenuContent({
 }
 
 /**
- * Loading skeleton shown before the first file tree snapshot arrives.
+ * Loading skeleton shown before the first file tree listing arrives.
  * Renders animated placeholder lines that mimic a file tree structure.
  */
 function TreePaneLoading() {
@@ -280,7 +193,7 @@ function TreePaneLoading() {
 }
 
 /**
- * Error state shown when the streaming RPC fails.
+ * Error state shown when the RPC fails.
  * Displays a user-friendly message with an icon, without crashing the panel.
  */
 function TreePaneError({ message }: { readonly message: string }) {
@@ -297,22 +210,69 @@ function TreePaneError({ message }: { readonly message: string }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Git status helper
+// ---------------------------------------------------------------------------
+
+/** Fetch git status and return entries in `@pierre/trees` format. */
+const fetchGitStatus = async (
+  fetchFn: (args: { payload: { workspaceId: string } }) => Promise<unknown>,
+  workspaceId: string
+): Promise<
+  readonly { path: string; status: 'added' | 'deleted' | 'modified' }[]
+> => {
+  const result = await fetchFn({ payload: { workspaceId } })
+  return (
+    result as readonly {
+      path: string
+      status: 'added' | 'deleted' | 'modified'
+    }[]
+  ).map((entry) => ({
+    path: entry.path,
+    status: entry.status,
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// Watcher subscription hook
+// ---------------------------------------------------------------------------
+
+/**
+ * Get or create the `file.watcher.subscribe` pull atom for a workspace.
+ * Cached by workspaceId so multiple mounts share one stream subscription.
+ */
+const watcherAtomCache = new Map<
+  string,
+  ReturnType<typeof LaborerClient.query>
+>()
+
+const getWatcherAtom = (workspaceId: string) => {
+  let atom = watcherAtomCache.get(workspaceId)
+  if (!atom) {
+    atom = LaborerClient.query('file.watcher.subscribe', { workspaceId })
+    watcherAtomCache.set(workspaceId, atom)
+  }
+  return atom
+}
+
+// ---------------------------------------------------------------------------
+// Tree pane content — lazy per-directory fetching
+// ---------------------------------------------------------------------------
+
 /**
  * Inner content of the tree pane, mounted only after Phase 4 (Eventually)
- * when the FileTreeService's deferred proxy has been swapped for the real
- * service. Subscribes to the streaming RPC and renders @pierre/trees.
+ * when the FileService's deferred proxy has been swapped for the real
+ * service.
  *
- * Uses `useTransition` to defer re-renders when snapshot data changes.
- * For large repos (10k+ files), re-rendering the `<FileTree>` component
- * can be expensive (virtualization recalculation, git status badge
- * computation). By wrapping the state update in a transition, the update
- * is marked as non-urgent so it doesn't block user interactions like
- * scrolling, expanding/collapsing folders, or typing in terminals.
+ * Uses the lazy per-directory store (`useFileTreeStore`) which:
+ * - Fetches the root directory on mount via `file.list`
+ * - Fetches subdirectories on expand via `file.list(workspaceId, dir)`
+ * - Maintains a flat `files` list compatible with `@pierre/trees`
  *
- * The pattern mirrors DiffPane's approach: the streaming RPC pushes new
- * snapshots, which are stored in `deferredSnapshot` via `startTransition`.
- * While the transition is pending, the previous tree content remains
- * visible and interactive.
+ * Subscribes to `file.watcher.subscribe` for reactive invalidation:
+ * - When a file is added or removed, the parent directory is re-fetched
+ * - When a directory changes, that directory is re-fetched
+ * - `.git/` changes are ignored (handled by branch detection)
  *
  * Context menu: uses the Base UI ContextMenu component which natively
  * handles right-click positioning and proper dismiss behavior (outside
@@ -324,7 +284,7 @@ function TreePaneError({ message }: { readonly message: string }) {
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const store = useLaborerStore()
   const workspaceRows = store.useQuery(allWorkspaces$)
-  const { snapshot, isLoading, error } = useFileTreeSnapshot(workspaceId)
+  const listFiles = useAtomSet(fileListMutation, { mode: 'promise' })
 
   // Look up the workspace's worktreePath for building absolute file paths.
   const worktreePath = useMemo(() => {
@@ -336,16 +296,96 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     )
   }, [workspaceRows, workspaceId])
 
-  // --- Deferred rendering via useTransition ---
-  const [, startTransition] = useTransition()
-  const [deferredSnapshot, setDeferredSnapshot] =
-    useState<FileTreeSnapshot | null>(snapshot)
+  // --- Lazy file tree store ---
+  const listDir = useCallback(
+    async (dir: string): Promise<readonly FileNode[]> => {
+      const result = await listFiles({
+        payload: { workspaceId, dir: dir || undefined },
+      })
+      return result as readonly FileNode[]
+    },
+    [workspaceId, listFiles]
+  )
+
+  const treeStore = useFileTreeStore({ list: listDir })
+
+  // Load root directory on mount.
+  useEffect(() => {
+    treeStore.listDir('')
+  }, [treeStore.listDir])
+
+  // --- Watcher subscription for invalidation ---
+  const watcherAtom = useMemo(() => getWatcherAtom(workspaceId), [workspaceId])
+  useAtomMount(watcherAtom)
+  const watcherResult = useAtomValue(watcherAtom)
+
+  // --- Git status ---
+  const fetchFileStatus = useAtomSet(fileStatusMutation, { mode: 'promise' })
+  const [gitStatus, setGitStatus] = useState<
+    readonly { path: string; status: 'added' | 'deleted' | 'modified' }[]
+  >([])
+
+  /** Refresh git status from the server. */
+  const refreshGitStatus = useCallback(() => {
+    fetchGitStatus(fetchFileStatus, workspaceId)
+      .then(setGitStatus)
+      .catch(() => setGitStatus([]))
+  }, [fetchFileStatus, workspaceId])
+
+  // Fetch git status on mount.
+  useEffect(() => {
+    refreshGitStatus()
+  }, [refreshGitStatus])
+
+  // Process watcher events for tree invalidation and status refresh.
+  const lastProcessedIndexRef = useRef(0)
 
   useEffect(() => {
-    startTransition(() => {
-      setDeferredSnapshot(snapshot)
-    })
-  }, [snapshot])
+    if (!Result.isSuccess(watcherResult)) {
+      return
+    }
+    const { items } = watcherResult.value
+    const startIndex = lastProcessedIndexRef.current
+
+    if (items.length <= startIndex) {
+      return
+    }
+
+    // Process new events since last check.
+    let statusChanged = false
+    for (let i = startIndex; i < items.length; i++) {
+      const event = items[i]
+      if (!event) {
+        continue
+      }
+
+      invalidateFromWatcher(event, {
+        hasNode: treeStore.hasNode,
+        isDirLoaded: treeStore.isDirLoaded,
+        nodeType: treeStore.nodeType,
+        refreshDir: (dir: string) => treeStore.listDir(dir, { force: true }),
+      })
+
+      // Any add/change/unlink event could affect git status.
+      const { file: path } = event
+      if (!path.startsWith('.git/') && path !== '.git') {
+        statusChanged = true
+      }
+    }
+
+    lastProcessedIndexRef.current = items.length
+
+    if (statusChanged) {
+      refreshGitStatus()
+    }
+  }, [
+    watcherResult,
+    treeStore.hasNode,
+    treeStore.isDirLoaded,
+    treeStore.nodeType,
+    treeStore.listDir,
+    refreshGitStatus,
+  ])
 
   // --- Context menu state ---
   // Track the most recently selected items from @pierre/trees so we know
@@ -408,15 +448,15 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     []
   )
 
-  if (error !== null) {
-    return <TreePaneError message={error} />
+  if (treeStore.error !== null) {
+    return <TreePaneError message={treeStore.error} />
   }
 
-  if (isLoading || deferredSnapshot === null) {
+  if (treeStore.isLoading) {
     return <TreePaneLoading />
   }
 
-  if (deferredSnapshot.files.length === 0) {
+  if (treeStore.files.length === 0) {
     return (
       <div className="flex items-center justify-center p-4">
         <span className="text-muted-foreground text-xs">
@@ -431,13 +471,14 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <ContextMenuTrigger className="h-full">
         <FileTree
           className="h-full"
-          files={deferredSnapshot.files as string[]}
+          files={treeStore.files as string[]}
           gitStatus={
-            deferredSnapshot.gitStatus as {
+            gitStatus as {
               path: string
               status: 'added' | 'deleted' | 'modified'
             }[]
           }
+          onExpandedItemsChange={treeStore.onExpandedItemsChange}
           onSelection={handleSelection}
           options={fileTreeOptions}
         />
@@ -486,5 +527,5 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
   )
 }
 
-export { FileTreePreloader, TreePane }
+export { TreePane }
 export type { TreePaneProps }

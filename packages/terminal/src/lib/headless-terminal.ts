@@ -89,6 +89,16 @@ interface HeadlessCommandState {
   /** Cwd detection capability state, fed by multiple OSC sources. */
   cwdDetection: CwdDetectionState
   hasRichCommandDetection: boolean
+  /**
+   * Whether the current command input spans multiple lines with
+   * continuation prompts. Set by OSC 633;F, cleared by OSC 633;G.
+   */
+  inContinuation: boolean
+  /**
+   * Whether the shell is currently rendering a right-aligned prompt.
+   * Set by OSC 633;H, cleared by OSC 633;I.
+   */
+  inRightPrompt: boolean
   isWindowsPty: boolean
   /** Tracks the prompt start line from OSC 633;A, consumed by 633;B */
   pendingPromptStartLine?: number | undefined
@@ -103,6 +113,11 @@ interface HeadlessCommandState {
         value: string
       }
     | undefined
+  /**
+   * Line position where the right prompt started. Recorded by OSC 633;H,
+   * cleared by OSC 633;I.
+   */
+  rightPromptStartLine?: number | undefined
   /** Tracks whether VS Code 633 or FinalTerm 133 sequences are active. */
   shellIntegrationStatus: ShellIntegrationStatus
 }
@@ -148,6 +163,8 @@ const createEmptyCommandState = (): HeadlessCommandState => ({
   commands: [],
   cwdDetection: { history: [] },
   hasRichCommandDetection: false,
+  inContinuation: false,
+  inRightPrompt: false,
   isWindowsPty: false,
   shellIntegrationStatus: 'none',
 })
@@ -651,6 +668,34 @@ const handleVsCodeOscSequence = (
       return
     }
 
+    case 'F': {
+      // Continuation prompt start: the shell is rendering a continuation
+      // prompt for multi-line input. Marked "UNFINALIZED" in VS Code.
+      commandState.inContinuation = true
+      return
+    }
+
+    case 'G': {
+      // Continuation prompt end: the continuation prompt has ended.
+      commandState.inContinuation = false
+      return
+    }
+
+    case 'H': {
+      // Right prompt start: the shell is rendering a right-aligned prompt.
+      // Record the current line position. Marked "UNFINALIZED" in VS Code.
+      commandState.inRightPrompt = true
+      commandState.rightPromptStartLine = getAbsoluteCursorLine(terminal)
+      return
+    }
+
+    case 'I': {
+      // Right prompt end: the right-aligned prompt has ended.
+      commandState.inRightPrompt = false
+      commandState.rightPromptStartLine = undefined
+      return
+    }
+
     case 'P': {
       handlePropertySequence(commandState, terminal, args)
       return
@@ -686,6 +731,21 @@ const handleVsCodeOscSequence = (
  * on idle terminals.
  */
 type TerminalInteractionState = 'none' | 'replay-only' | 'session'
+
+/**
+ * Observable shell integration state for a terminal. Exposes internal
+ * tracking flags for continuation prompts and right-aligned prompts.
+ */
+interface ShellIntegrationState {
+  /** Whether the shell is rendering a continuation prompt (OSC 633;F/G). */
+  readonly inContinuation: boolean
+  /** Whether the shell is rendering a right-aligned prompt (OSC 633;H/I). */
+  readonly inRightPrompt: boolean
+  /** Line position where the right prompt started, if active. */
+  readonly rightPromptStartLine?: number | undefined
+  /** Current shell integration status. */
+  readonly shellIntegrationStatus: ShellIntegrationStatus
+}
 
 interface HeadlessTerminalState {
   readonly commandState: HeadlessCommandState
@@ -813,6 +873,15 @@ interface HeadlessTerminalManager {
    * - Alternate screen mode switch (`\x1b[?1049h`) if active
    */
   readonly getScreenState: (terminalId: string) => string
+
+  /**
+   * Get the current shell integration state for a terminal, including
+   * continuation prompt and right prompt tracking flags.
+   * Returns undefined if the terminal does not exist.
+   */
+  readonly getShellIntegrationState: (
+    terminalId: string
+  ) => ShellIntegrationState | undefined
 
   /**
    * Transition a terminal to 'replay-only' interaction state.
@@ -1149,6 +1218,22 @@ const createHeadlessTerminalManager = (
     }
   }
 
+  const getShellIntegrationState = (
+    terminalId: string
+  ): ShellIntegrationState | undefined => {
+    const state = terminals.get(terminalId)
+    if (state === undefined) {
+      return undefined
+    }
+
+    return {
+      inContinuation: state.commandState.inContinuation,
+      inRightPrompt: state.commandState.inRightPrompt,
+      rightPromptStartLine: state.commandState.rightPromptStartLine,
+      shellIntegrationStatus: state.commandState.shellIntegrationStatus,
+    }
+  }
+
   return {
     create,
     freeRawReviveBuffer,
@@ -1156,6 +1241,7 @@ const createHeadlessTerminalManager = (
     getScreenState,
     getCapabilityState,
     getCommandDetectionState,
+    getShellIntegrationState,
     markReplayed,
     resize,
     setRawReviveBuffer,
@@ -1170,5 +1256,6 @@ export type {
   HeadlessTerminalManagerOptions,
   PromptStateCallback,
   PtyWriteCallback,
+  ShellIntegrationState,
   TitleChangeCallback,
 }

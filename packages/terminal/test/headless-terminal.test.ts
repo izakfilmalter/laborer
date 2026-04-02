@@ -1375,4 +1375,207 @@ describe('HeadlessTerminalManager', () => {
     expect(cmd?.executedLine).toBeUndefined()
     expect(cmd?.executedX).toBeUndefined()
   })
+
+  // ---------------------------------------------------------------
+  // OSC 633;F/G (continuation prompt) and 633;H/I (right prompt)
+  // ---------------------------------------------------------------
+
+  it('633;F sets continuation state and 633;G clears it', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Initially, continuation state should be false
+    const initialState = manager.getShellIntegrationState('test-1')
+    expect(initialState?.inContinuation).toBe(false)
+
+    // Send 633;F to start continuation
+    manager.write('test-1', '\x1b]633;F\x07')
+    await waitForXterm()
+
+    const afterF = manager.getShellIntegrationState('test-1')
+    expect(afterF?.inContinuation).toBe(true)
+
+    // Send 633;G to end continuation
+    manager.write('test-1', '\x1b]633;G\x07')
+    await waitForXterm()
+
+    const afterG = manager.getShellIntegrationState('test-1')
+    expect(afterG?.inContinuation).toBe(false)
+  })
+
+  it('633;H sets right prompt state and records start line, 633;I clears it', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Initially, right prompt state should be false
+    const initialState = manager.getShellIntegrationState('test-1')
+    expect(initialState?.inRightPrompt).toBe(false)
+    expect(initialState?.rightPromptStartLine).toBeUndefined()
+
+    // Send 633;H to start right prompt
+    manager.write('test-1', '\x1b]633;H\x07')
+    await waitForXterm()
+
+    const afterH = manager.getShellIntegrationState('test-1')
+    expect(afterH?.inRightPrompt).toBe(true)
+    expect(afterH?.rightPromptStartLine).toBeTypeOf('number')
+
+    // Send 633;I to end right prompt
+    manager.write('test-1', '\x1b]633;I\x07')
+    await waitForXterm()
+
+    const afterI = manager.getShellIntegrationState('test-1')
+    expect(afterI?.inRightPrompt).toBe(false)
+    expect(afterI?.rightPromptStartLine).toBeUndefined()
+  })
+
+  it('continuation state toggles correctly across multiple F/G cycles', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // First continuation cycle
+    manager.write('test-1', '\x1b]633;F\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inContinuation).toBe(
+      true
+    )
+
+    manager.write('test-1', '\x1b]633;G\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inContinuation).toBe(
+      false
+    )
+
+    // Second continuation cycle
+    manager.write('test-1', '\x1b]633;F\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inContinuation).toBe(
+      true
+    )
+
+    manager.write('test-1', '\x1b]633;G\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inContinuation).toBe(
+      false
+    )
+  })
+
+  it('right prompt state toggles correctly across multiple H/I cycles', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // First right prompt cycle
+    manager.write('test-1', '\x1b]633;H\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inRightPrompt).toBe(true)
+
+    manager.write('test-1', '\x1b]633;I\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inRightPrompt).toBe(
+      false
+    )
+
+    // Second right prompt cycle
+    manager.write('test-1', '\x1b]633;H\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inRightPrompt).toBe(true)
+
+    manager.write('test-1', '\x1b]633;I\x07')
+    await waitForXterm()
+    expect(manager.getShellIntegrationState('test-1')?.inRightPrompt).toBe(
+      false
+    )
+  })
+
+  it('F/G/H/I sequences do not interfere with A/B/C/D command lifecycle', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Full command lifecycle with F/G/H/I interspersed
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' + // Prompt start
+        '\x1b]633;H\x07' + // Right prompt start (during prompt)
+        '\x1b]633;I\x07' + // Right prompt end
+        '\x1b]633;B\x07' + // Command start
+        '\x1b]633;F\x07' + // Continuation start (multi-line input)
+        '\x1b]633;G\x07' + // Continuation end
+        '\x1b]633;E;echo\\x20hello\x07' + // Command line
+        '\x1b]633;C\x07' + // Command executed
+        'hello\r\n' +
+        '\x1b]633;D;0\x07' // Command finished
+    )
+
+    await waitForXterm()
+
+    // Command should be fully tracked with all positional metadata
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+
+    const cmd = state?.commands[0]
+    expect(cmd?.command).toBe('echo hello')
+    expect(cmd?.exitCode).toBe(0)
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.executedLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
+    expect(cmd?.executedX).toBeTypeOf('number')
+    expect(cmd?.commandStartLineContent).toBeTypeOf('string')
+
+    // Continuation and right prompt state should be cleared after the lifecycle
+    const shellState = manager.getShellIntegrationState('test-1')
+    expect(shellState?.inContinuation).toBe(false)
+    expect(shellState?.inRightPrompt).toBe(false)
+  })
+
+  it('F/G sequences within a multi-line command do not break command detection', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Simulate a multi-line command with continuation prompts
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;F\x07' + // First continuation
+        '\x1b]633;G\x07' +
+        '\x1b]633;F\x07' + // Second continuation
+        '\x1b]633;G\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+    expect(state?.commands[0]?.command).toBe('echo hello')
+    expect(state?.commands[0]?.exitCode).toBe(0)
+  })
+
+  it('633;F/G/H/I set shellIntegrationStatus to vscode', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Initially no shell integration
+    expect(
+      manager.getShellIntegrationState('test-1')?.shellIntegrationStatus
+    ).toBe('none')
+
+    // Any 633 sequence sets status to vscode
+    manager.write('test-1', '\x1b]633;F\x07')
+    await waitForXterm()
+
+    expect(
+      manager.getShellIntegrationState('test-1')?.shellIntegrationStatus
+    ).toBe('vscode')
+  })
+
+  it('getShellIntegrationState returns undefined for non-existent terminal', () => {
+    manager = createHeadlessTerminalManager()
+    expect(manager.getShellIntegrationState('non-existent')).toBeUndefined()
+  })
 })

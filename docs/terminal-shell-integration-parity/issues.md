@@ -9,7 +9,7 @@
 | 1 | Positional metadata on commands (OSC 633;A + 633;C) | None | Done |
 | 2 | Complete PromptInputModel | 1 | Done |
 | 3 | FinalTerm 133 command detection fallback | 1 | Done |
-| 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Ready |
+| 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Done |
 | 5 | Capability store + CwdDetection | None | Done |
 | 6 | BufferMarkDetection + gutter UI | 5 | Ready |
 | 7 | ShellEnvDetection + indicator | 5 | Ready |
@@ -165,14 +165,14 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] OSC 633;F handler sets a continuation state flag on the current command
-- [ ] OSC 633;G handler clears the continuation state flag
-- [ ] OSC 633;H handler records a right prompt start marker position
-- [ ] OSC 633;I handler clears the right prompt state
-- [ ] No changes to serialized command shape or persistence format
-- [ ] Tests verify continuation state toggles correctly across F/G sequences
-- [ ] Tests verify right prompt state toggles correctly across H/I sequences
-- [ ] Tests verify that F/G/H/I sequences do not interfere with the A/B/C/D command lifecycle
+- [x] OSC 633;F handler sets a continuation state flag on the current command
+- [x] OSC 633;G handler clears the continuation state flag
+- [x] OSC 633;H handler records a right prompt start marker position
+- [x] OSC 633;I handler clears the right prompt state
+- [x] No changes to serialized command shape or persistence format
+- [x] Tests verify continuation state toggles correctly across F/G sequences
+- [x] Tests verify right prompt state toggles correctly across H/I sequences
+- [x] Tests verify that F/G/H/I sequences do not interfere with the A/B/C/D command lifecycle
 
 ### Blocked by
 

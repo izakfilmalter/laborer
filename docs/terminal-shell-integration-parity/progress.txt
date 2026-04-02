@@ -482,3 +482,57 @@ FinalTerm-detected commands have:
 - Tests: 20/20 shell-integration-addon tests pass (unchanged)
 - All 141 tests across terminal package pass
 - Pre-existing empty test suite failures unchanged
+
+## Issue 4: OSC 633;F/G/H/I (continuation + right prompt) — COMPLETED
+
+### Summary
+Added handlers for OSC 633;F (continuation prompt start), 633;G (continuation
+prompt end), 633;H (right prompt start), and 633;I (right prompt end) to the
+headless terminal's shell integration. These sequences are marked "UNFINALIZED"
+in VS Code but are actively handled. They enable tracking multi-line command
+input (continuation prompts) and right-aligned prompts (common in fish, zsh
+with right-prompt themes).
+
+The implementation adds two boolean flags (`inContinuation`, `inRightPrompt`)
+and an optional `rightPromptStartLine` to `HeadlessCommandState`. These are
+tracked internally for future UI consumption but do not change the serialized
+command shape or persistence format.
+
+A new `getShellIntegrationState()` method on `HeadlessTerminalManager` exposes
+the continuation and right prompt tracking flags for observability and testing.
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `inContinuation`, `inRightPrompt`, and `rightPromptStartLine` fields
+    to `HeadlessCommandState`
+  - Added `ShellIntegrationState` interface for observable state
+  - Added `getShellIntegrationState()` method to `HeadlessTerminalManager`
+    interface and implementation
+  - Added OSC 633;F handler: sets `inContinuation = true`
+  - Added OSC 633;G handler: sets `inContinuation = false`
+  - Added OSC 633;H handler: sets `inRightPrompt = true`, records
+    `rightPromptStartLine` from cursor position
+  - Added OSC 633;I handler: sets `inRightPrompt = false`, clears
+    `rightPromptStartLine`
+  - Exported `ShellIntegrationState` type
+  - Updated `createEmptyCommandState()` with new field defaults
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 8 new tests:
+    - 633;F sets continuation state and 633;G clears it
+    - 633;H sets right prompt state and records start line, 633;I clears it
+    - Continuation state toggles correctly across multiple F/G cycles
+    - Right prompt state toggles correctly across multiple H/I cycles
+    - F/G/H/I sequences do not interfere with A/B/C/D command lifecycle
+    - F/G sequences within a multi-line command do not break command detection
+    - 633;F/G/H/I set shellIntegrationStatus to vscode
+    - getShellIntegrationState returns undefined for non-existent terminal
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 2 modified files
+- Tests: 71/71 headless-terminal tests pass (8 new)
+- Tests: 40/40 persistence tests pass (unchanged)
+- Tests: 20/20 shell-integration-addon tests pass (unchanged)
+- Pre-existing data channel flaky failures unchanged

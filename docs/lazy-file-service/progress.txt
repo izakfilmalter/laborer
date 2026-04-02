@@ -5,12 +5,12 @@ Issues: docs/lazy-file-service/issues.md
 
 ## Issue Status
 
-- [ ] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [READY]
-- [ ] Issue 2: file.list — Gitignore marking                                  [BLOCKED by 1]
-- [ ] Issue 3: file.read — On-demand file content with per-file diff          [BLOCKED by 1]
-- [ ] Issue 4: file.status — Workspace-level changed file summary             [BLOCKED by 1]
-- [ ] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [BLOCKED by 1]
-- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 1, 2, 5]
+- [x] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [DONE]
+- [ ] Issue 2: file.list — Gitignore marking                                  [READY]
+- [ ] Issue 3: file.read — On-demand file content with per-file diff          [READY]
+- [ ] Issue 4: file.status — Workspace-level changed file summary             [READY]
+- [ ] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [READY]
+- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2, 5]
 - [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 3, 4, 5]
 - [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
 - [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
@@ -24,4 +24,22 @@ Phase 4:             Issue 9
 
 ## Log
 
-(No entries yet)
+### Issue 1: file.list — Lazy per-directory listing (tracer bullet) — DONE
+
+**Files created:**
+- `packages/server/src/services/file-service.ts` — FileService Effect service with `list()` method
+- `packages/server/test/file-service.test.ts` — 8 integration tests
+
+**Files modified:**
+- `packages/shared/src/rpc.ts` — Added `FileNode` schema and `file.list` RPC definition
+- `packages/server/src/rpc/handlers.ts` — Wired `file.list` handler delegating to FileService
+- `packages/server/test/rpc/test-layer.ts` — Added FileService.layer to DeferredGroup1Layers
+
+**Implementation details:**
+- `FileService.list(workspaceId, dir?)` reads a single directory level via `readdir` with `withFileTypes`
+- Returns `FileNode[]` with name, path (relative), absolute, type (file/directory), ignored (false for now)
+- Sorts directories first, then files alphabetically within each group
+- Skips 22 ignored directories (node_modules, .git, dist, build, etc.) and 2 OS metadata files
+- Path traversal protection rejects paths escaping worktree root
+- Workspace lookup validates existence and rejects destroyed workspaces
+- All 8 tests pass, format check clean, no type errors in new files

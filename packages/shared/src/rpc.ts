@@ -367,6 +367,35 @@ const ReviewFetchVerdictResponse = Schema.Struct({
 })
 
 // ---------------------------------------------------------------------------
+// File Service Schemas (Lazy File Service)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single file or directory entry returned by `file.list`.
+ *
+ * Each node represents one entry in a directory listing. The `path` is
+ * relative to the worktree root, `absolute` is the full filesystem path,
+ * and `ignored` indicates whether the entry matches a `.gitignore` or
+ * `.ignore` pattern.
+ *
+ * @see PRD: Lazy File Service — FileNode schema
+ */
+export const FileNode = Schema.Struct({
+  /** File or directory name (basename). */
+  name: Schema.String,
+  /** Path relative to the worktree root. */
+  path: Schema.String,
+  /** Absolute filesystem path. */
+  absolute: Schema.String,
+  /** Whether this entry is a file or directory. */
+  type: Schema.Literal('file', 'directory'),
+  /** Whether this entry matches a gitignore/ignore pattern. */
+  ignored: Schema.Boolean,
+})
+
+export type FileNode = typeof FileNode.Type
+
+// ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
 
@@ -984,6 +1013,29 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
     payload: {
       workspaceId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // File Service RPCs (Lazy File Service)
+  // -----------------------------------------------------------------------
+
+  /**
+   * List a single directory level from a workspace's worktree.
+   *
+   * Returns `FileNode[]` sorted directories-first, then alphabetically.
+   * Noisy directories (node_modules, .git, dist, build, etc.) and OS
+   * metadata files (.DS_Store, Thumbs.db) are skipped. When `dir` is
+   * omitted, lists the worktree root.
+   *
+   * @see PRD: Lazy File Service — file.list RPC
+   */
+  Rpc.make('file.list', {
+    success: Schema.Array(FileNode),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      dir: Schema.optional(Schema.String),
     },
   })
 ) {}

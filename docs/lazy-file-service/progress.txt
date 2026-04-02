@@ -1,0 +1,27 @@
+# Lazy File Service — Progress Tracker
+
+PRD:    docs/lazy-file-service/PRD.md
+Issues: docs/lazy-file-service/issues.md
+
+## Issue Status
+
+- [ ] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [READY]
+- [ ] Issue 2: file.list — Gitignore marking                                  [BLOCKED by 1]
+- [ ] Issue 3: file.read — On-demand file content with per-file diff          [BLOCKED by 1]
+- [ ] Issue 4: file.status — Workspace-level changed file summary             [BLOCKED by 1]
+- [ ] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [BLOCKED by 1]
+- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 1, 2, 5]
+- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 3, 4, 5]
+- [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
+- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
+
+## Execution Order
+
+Phase 1 (parallel):  Issue 1, Issue 8
+Phase 2 (parallel):  Issue 2, Issue 3, Issue 4, Issue 5
+Phase 3 (parallel):  Issue 6, Issue 7
+Phase 4:             Issue 9
+
+## Log
+
+(No entries yet)

@@ -99,6 +99,7 @@ interface SerializedCwdDetection {
 /** Serialized capability store from the headless terminal. */
 interface SerializedCapabilityStore {
   readonly cwdDetection?: SerializedCwdDetection | undefined
+  readonly promptType?: string | undefined
 }
 
 // ---------------------------------------------------------------------------

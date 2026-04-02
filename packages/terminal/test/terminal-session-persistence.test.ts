@@ -992,6 +992,125 @@ describe('createTerminalSessionPersistence', () => {
 
       headlessManager.disposeAll()
     })
+
+    it('serializes prompt type from OSC 633;P PromptType', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;P;PromptType=starship\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'some output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities).toEqual({
+        promptType: 'starship',
+      })
+
+      headlessManager.disposeAll()
+    })
+
+    it('preserves restored prompt type when serializing again', () => {
+      const persistence = createTerminalSessionPersistence()
+      persistence.registerTerminal('term-1', 80, 24)
+      persistence.restoreReplayEvent('term-1', {
+        capabilities: {
+          promptType: 'p10k',
+        },
+        events: [
+          {
+            cols: 80,
+            rows: 24,
+            data: 'restored output\r\n',
+          },
+        ],
+      })
+
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => ''
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities).toEqual({
+        promptType: 'p10k',
+      })
+    })
+
+    it('serializes both cwd detection and prompt type together', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;P;Cwd=/workspace\x07')
+      headlessManager.write('term-1', '\x1b]633;P;PromptType=oh-my-posh\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.cwdDetection?.cwd
+      ).toBe('/workspace')
+      expect(state.terminals[0]?.replayEvent.capabilities?.promptType).toBe(
+        'oh-my-posh'
+      )
+
+      headlessManager.disposeAll()
+    })
   })
 
   // ---------------------------------------------------------------

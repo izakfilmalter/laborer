@@ -114,6 +114,11 @@ interface HeadlessCommandState {
       }
     | undefined
   /**
+   * Detected prompt framework type (e.g., "p10k", "posh-git", "starship").
+   * Set by OSC 633;P PromptType.
+   */
+  promptType?: string | undefined
+  /**
    * Line position where the right prompt started. Recorded by OSC 633;H,
    * cleared by OSC 633;I.
    */
@@ -564,6 +569,11 @@ const handlePropertySequence = (
       updatePromptInputModel(commandState, {
         lastPromptLine: getPromptTerminator(value),
       })
+      return
+    }
+
+    case 'PromptType': {
+      commandState.promptType = value
       return
     }
 
@@ -1151,8 +1161,12 @@ const createHeadlessTerminalManager = (
       return undefined
     }
 
-    const { cwdDetection } = state.commandState
-    if (cwdDetection.cwd === undefined && cwdDetection.history.length === 0) {
+    const { cwdDetection, promptType } = state.commandState
+    const hasCwd =
+      cwdDetection.cwd !== undefined || cwdDetection.history.length > 0
+    const hasPromptType = promptType !== undefined
+
+    if (!(hasCwd || hasPromptType)) {
       return undefined
     }
 
@@ -1168,6 +1182,7 @@ const createHeadlessTerminalManager = (
         cwdDetection.cwd !== undefined
           ? { cwd: cwdDetection.cwd, history }
           : undefined,
+      ...(hasPromptType ? { promptType } : {}),
     }
   }
 

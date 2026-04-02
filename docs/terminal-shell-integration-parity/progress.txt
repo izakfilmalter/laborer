@@ -536,3 +536,67 @@ the continuation and right prompt tracking flags for observability and testing.
 - Tests: 40/40 persistence tests pass (unchanged)
 - Tests: 20/20 shell-integration-addon tests pass (unchanged)
 - Pre-existing data channel flaky failures unchanged
+
+## Issue 8: PromptTypeDetection + badge — COMPLETED
+
+### Summary
+Added `PromptTypeDetection` capability to the capability store. The prompt type
+string (e.g., "p10k", "starship", "oh-my-posh") is detected from OSC 633;P
+PromptType sequences emitted by compatible shell integration scripts. The
+prompt type is stored in `HeadlessCommandState.promptType`, serialized into
+`SerializedCapabilityStore.promptType`, and flows through all layers: headless
+terminal tracking, persistence serialization, data channel replay, and
+renderer-side types.
+
+The capability store now returns a non-undefined result when either cwd
+detection or prompt type detection has data, enabling either capability to
+be present independently or together.
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `promptType` field to `HeadlessCommandState`
+  - Added `PromptType` case to `handlePropertySequence()` — stores the value
+    from OSC 633;P PromptType
+  - Updated `getCapabilityState()` to include `promptType` in the serialized
+    output and return non-undefined when either cwd or promptType is present
+
+- `packages/terminal/src/services/terminal-session-persistence.ts`:
+  - Added optional `promptType` field to `SerializedCapabilityStore`
+
+- `apps/web/src/hooks/use-terminal-messageport.ts`:
+  - Added optional `promptType` field to renderer-side
+    `SerializedCapabilityStore` type
+  - Updated `isSerializedCapabilityStore()` type guard to validate
+    `promptType` is a string when present
+
+- `apps/web/src/lib/shell-integration-addon.ts`:
+  - Added optional `promptType` field to renderer-side
+    `SerializedCapabilityStore` type
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 6 new tests:
+    - Detects prompt type from OSC 633;P PromptType
+    - Detects different prompt type strings (starship)
+    - Updates prompt type when a new PromptType property is received
+    - Returns capability state with only promptType when no cwd is detected
+    - Returns capability state with both promptType and cwdDetection
+    - Returns undefined capability state when neither cwd nor promptType
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Added 3 new tests:
+    - Serializes prompt type from OSC 633;P PromptType
+    - Preserves restored prompt type when serializing again
+    - Serializes both cwd detection and prompt type together
+
+### Not yet implemented
+- Renderer UI badge showing the detected prompt type in the terminal header
+  (requires design decisions about visual treatment and component placement)
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 6 modified files
+- Tests: 77/77 headless-terminal tests pass (6 new)
+- Tests: 43/43 persistence tests pass (3 new)
+- Tests: 20/20 shell-integration-addon tests pass (unchanged)
+- Pre-existing empty test suite failures unchanged

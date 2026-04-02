@@ -99,6 +99,7 @@ interface SerializedCwdDetection {
 
 interface SerializedCapabilityStore {
   readonly cwdDetection?: SerializedCwdDetection | undefined
+  readonly promptType?: string | undefined
 }
 
 interface ReplayControlMessage {
@@ -286,6 +287,13 @@ function isSerializedCapabilityStore(
     if (typeof cwd.cwd !== 'string' || !Array.isArray(cwd.history)) {
       return false
     }
+  }
+  // Validate promptType shape if present.
+  if (
+    candidate.promptType !== undefined &&
+    typeof candidate.promptType !== 'string'
+  ) {
+    return false
   }
   return true
 }

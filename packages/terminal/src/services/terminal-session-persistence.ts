@@ -277,6 +277,7 @@ interface SerializedCwdDetection {
 
 interface SerializedCapabilityStore {
   readonly cwdDetection?: SerializedCwdDetection | undefined
+  readonly promptType?: string | undefined
 }
 
 interface SerializedReplayEvent {

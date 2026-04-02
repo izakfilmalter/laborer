@@ -13,7 +13,7 @@
 | 5 | Capability store + CwdDetection | None | Done |
 | 6 | BufferMarkDetection + gutter UI | 5 | Ready |
 | 7 | ShellEnvDetection + indicator | 5 | Ready |
-| 8 | PromptTypeDetection + badge | 5 | Ready |
+| 8 | PromptTypeDetection + badge | 5 | Done |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Done |
 | 10 | Replay input guard | None | Done |
 | 11 | rawReviveBuffer optimization | None | Done |
@@ -324,14 +324,14 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] `PromptTypeDetection` capability stores the detected prompt type string
-- [ ] OSC 633;P PromptType handler feeds the capability
-- [ ] Prompt type serializes in `SerializedCapabilityStore.promptType`
-- [ ] Prompt type restores from persisted state after recovery
+- [x] `PromptTypeDetection` capability stores the detected prompt type string
+- [x] OSC 633;P PromptType handler feeds the capability
+- [x] Prompt type serializes in `SerializedCapabilityStore.promptType`
+- [x] Prompt type restores from persisted state after recovery
 - [ ] Renderer shows a badge with the prompt type name when detected
 - [ ] Badge is hidden when no prompt type is detected
-- [ ] Tests verify prompt type detection from OSC 633;P PromptType
-- [ ] Tests verify serialization roundtrip
+- [x] Tests verify prompt type detection from OSC 633;P PromptType
+- [x] Tests verify serialization roundtrip
 
 ### Blocked by
 

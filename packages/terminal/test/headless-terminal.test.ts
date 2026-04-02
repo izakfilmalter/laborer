@@ -983,6 +983,89 @@ describe('HeadlessTerminalManager', () => {
   })
 
   // ---------------------------------------------------------------
+  // Capability store: PromptTypeDetection from OSC 633;P PromptType
+  // ---------------------------------------------------------------
+
+  it('detects prompt type from OSC 633;P PromptType', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;PromptType=p10k\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.promptType).toBe('p10k')
+  })
+
+  it('detects different prompt type strings', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;PromptType=starship\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state?.promptType).toBe('starship')
+  })
+
+  it('updates prompt type when a new PromptType property is received', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;PromptType=p10k\x07')
+    manager.write('test-1', '\x1b]633;P;PromptType=oh-my-posh\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state?.promptType).toBe('oh-my-posh')
+  })
+
+  it('returns capability state with only promptType when no cwd is detected', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;PromptType=starship\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.promptType).toBe('starship')
+    expect(state?.cwdDetection).toBeUndefined()
+  })
+
+  it('returns capability state with both promptType and cwdDetection', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;Cwd=/home/user\x07')
+    manager.write('test-1', '\x1b]633;P;PromptType=p10k\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.promptType).toBe('p10k')
+    expect(state?.cwdDetection?.cwd).toBe('/home/user')
+  })
+
+  it('returns undefined capability state when neither cwd nor promptType is detected', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', 'plain output')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeUndefined()
+  })
+
+  // ---------------------------------------------------------------
   // rawReviveBuffer optimization
   // ---------------------------------------------------------------
 

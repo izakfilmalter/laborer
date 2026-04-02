@@ -10,10 +10,10 @@ Issues: docs/lazy-file-service/issues.md
 - [x] Issue 3: file.read — On-demand file content with per-file diff          [DONE]
 - [x] Issue 4: file.status — Workspace-level changed file summary             [DONE]
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
-- [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [READY]
+- [x] Issue 6: Client tree pane — Lazy per-directory fetching                 [DONE]
 - [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [READY]
 - [x] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [DONE]
-- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7]
+- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 7]
 
 ## Execution Order
 
@@ -160,3 +160,43 @@ Phase 4:             Issue 9
 - Debounce timing preserved for rapid HEAD changes during rebase/merge operations
 - All 23 coordinator tests pass (9 hardening + 5 lifecycle + 9 branch-tracker), format check clean, typecheck clean
 - Pre-existing failures in worktree-reconciler/project-registry tests are unrelated to this change
+
+### Issue 6: Client tree pane — Lazy per-directory fetching — DONE
+
+**Files already created (prior sessions):**
+- `apps/web/src/panes/file-tree/use-file-tree-store.ts` — React hook for lazy per-directory state management (379 lines)
+- `apps/web/src/panes/file-tree/invalidate-from-watcher.ts` — Pure function for client-side watcher invalidation (77 lines)
+- `apps/web/test/invalidate-from-watcher.test.ts` — 11 unit tests for invalidation logic (141 lines)
+
+**Files modified:**
+- `apps/web/src/panes/tree-pane.tsx` — Replaced streaming `fileTree.subscribe` approach with lazy per-directory model
+
+**Implementation details:**
+- Replaced `TreePaneContent` from streaming full-tree snapshots to lazy per-directory fetching:
+  - Uses `useFileTreeStore` hook with `file.list` RPC for lazy directory loading
+  - Root directory fetched on mount, subdirectories fetched on expand
+  - Flat `files` array built from loaded directories, passed to `@pierre/trees`
+  - Controlled expansion via `onExpandedItemsChange` callback
+- Added `file.watcher.subscribe` streaming RPC subscription for reactive invalidation:
+  - Uses `getWatcherAtom` cache (keyed by workspaceId) for shared subscriptions
+  - Processes watcher events via `invalidateFromWatcher` pure function
+  - Only refreshes loaded/expanded directories; unloaded dirs fetched fresh on expand
+  - `.git/` path changes ignored (handled by branch detection)
+- Added `file.status` RPC integration for git status decorations:
+  - Fetches on mount and re-fetches when watcher events indicate file changes
+  - Maps `FileInfo` entries to `@pierre/trees` `gitStatus` format
+  - Non-critical: failures silently return empty status (tree still works)
+- `FileTreePreloader` converted to no-op component for backward compatibility:
+  - Existing mounts in `workspace-frames.tsx` still compile but do nothing
+  - Will be fully removed in Issue 9 cleanup
+- Removed old code paths:
+  - `fileTreeAtomCache` (streaming atom cache)
+  - `getFileTreeAtom()` (streaming atom factory)
+  - `useFileTreeSnapshot()` (streaming result extractor)
+  - `useTransition`/`deferredSnapshot` pattern (no longer needed with lazy model)
+- Preserved all existing functionality:
+  - Context menu (Open in Editor, Copy Path, Copy Relative Path)
+  - Loading skeleton and error states
+  - Phase 4 lifecycle gating
+  - `fileTreeOptions` (flattenEmptyDirectories, sort, virtualize)
+- All 11 invalidation tests pass, TypeScript clean, Biome format clean

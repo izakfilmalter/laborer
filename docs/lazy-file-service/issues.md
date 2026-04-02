@@ -285,16 +285,16 @@ The tree pane continues to use `@pierre/trees` for rendering. The data source ch
 
 ### Acceptance criteria
 
-- [ ] Tree pane uses `file.list` RPC instead of `fileTree.subscribe` streaming RPC
-- [ ] Directories are fetched lazily on expand, not eagerly on mount
-- [ ] `invalidateFromWatcher` is a pure function with comprehensive unit tests
-- [ ] Watcher events only refresh loaded/expanded directories
-- [ ] `.git/` path changes are ignored
-- [ ] Expand/collapse state is preserved when sibling directories update
-- [ ] Tree pane subscribes to `file.watcher.subscribe` on mount and unsubscribes on unmount
-- [ ] Loading state shown while directory listing is in flight
-- [ ] Error state shown if listing fails
-- [ ] All tests pass
+- [x] Tree pane uses `file.list` RPC instead of `fileTree.subscribe` streaming RPC
+- [x] Directories are fetched lazily on expand, not eagerly on mount
+- [x] `invalidateFromWatcher` is a pure function with comprehensive unit tests
+- [x] Watcher events only refresh loaded/expanded directories
+- [x] `.git/` path changes are ignored
+- [x] Expand/collapse state is preserved when sibling directories update
+- [x] Tree pane subscribes to `file.watcher.subscribe` on mount and unsubscribes on unmount
+- [x] Loading state shown while directory listing is in flight
+- [x] Error state shown if listing fails
+- [x] All tests pass
 
 ### Blocked by
 
@@ -483,10 +483,10 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | 3 | file.read — On-demand file content with per-file diff | ~~Issue 1~~ | **Done** |
 | 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | **Done** |
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
-| 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | Ready |
+| 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | **Done** |
 | 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, ~~4~~, ~~5~~ | Ready |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | **Done** |
-| 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, ~~8~~ | Blocked |
+| 9 | Remove old code + deprecate LiveStore events | Issues ~~6~~, 7, ~~8~~ | Blocked |
 
 ### Parallel execution paths
 

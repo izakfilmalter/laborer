@@ -46,13 +46,20 @@ const HEARTBEAT_INTERVAL_MS = 5000
 
 /**
  * How long to wait for a pong before declaring the port dead (ms).
- * Set to 3× the ping interval so transient delays (GC pauses, CPU
- * contention) don't cause false positives.
+ * Set to 6× the ping interval so heavy synchronous work on the
+ * server (e.g. SQLite sync changesets, LiveStore rematerialization)
+ * doesn't cause false-positive dead port detections.
+ *
+ * With a 5 s ping interval the client gets six pings (at 5, 10, 15,
+ * 20, 25, 30 s) before declaring the channel dead — generous enough
+ * to survive temporary event-loop stalls while still catching truly
+ * dead ports within 35 s.
  *
  * @see .reference/vscode/src/vs/base/parts/ipc/common/ipc.net.ts —
- *      VS Code's `ProtocolConstants.TimeoutTime` for similar timeout logic.
+ *      VS Code uses `ProtocolConstants.TimeoutTime = 20_000` with
+ *      additional heuristics (unacked messages, last timeout time).
  */
-const HEARTBEAT_TIMEOUT_MS = 15_000
+const HEARTBEAT_TIMEOUT_MS = 30_000
 
 /**
  * Custom DOM event name dispatched when a MessagePort is detected as dead

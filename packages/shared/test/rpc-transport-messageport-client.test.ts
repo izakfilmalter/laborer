@@ -431,8 +431,8 @@ describe('heartbeat timeout detection', () => {
       requestFailed = true
     })
 
-    // Advance past heartbeat timeout (15s) + one interval (5s).
-    await vi.advanceTimersByTimeAsync(20_000)
+    // Advance past heartbeat timeout (30s) + one interval (5s).
+    await vi.advanceTimersByTimeAsync(35_000)
 
     // The request should have failed due to the synthetic Defect.
     await requestPromise
@@ -459,5 +459,98 @@ describe('heartbeat timeout detection', () => {
     expect(result).toBe('still alive')
 
     await pair.cleanup()
+  })
+
+  it('survives a temporary server stall shorter than the timeout window', async () => {
+    // Simulate a server that stops echoing pongs for 20s (heavy sync work)
+    // then resumes. With a 30s timeout, the port should survive.
+    // With the old 15s timeout, this would falsely declare the port dead.
+    const { port1: serverNodePort, port2: clientNodePort } =
+      new MessageChannel()
+
+    // Track whether we're simulating a stall.
+    let stalled = false
+
+    // Build a proxy port for the server that drops pings during a stall
+    // to simulate an event-loop-blocked utility process. We set up the
+    // proxy BEFORE building the server so the server's transport
+    // attaches its listeners to our proxy, not the raw port.
+    const proxyServerPort: RpcMessagePort = {
+      postMessage(value: unknown, transferList?: readonly unknown[]) {
+        serverNodePort.postMessage(value, transferList as undefined)
+      },
+      on(event: string, listener: (...args: unknown[]) => void) {
+        if (event === 'message') {
+          serverNodePort.on('message', (data: unknown) => {
+            // During a stall, drop ping messages to simulate
+            // a blocked event loop that can't echo pongs.
+            if (stalled && data === PING_MESSAGE) {
+              return
+            }
+            listener(data)
+          })
+        } else {
+          serverNodePort.on(event, listener)
+        }
+      },
+      off(event: string, listener: (...args: unknown[]) => void) {
+        serverNodePort.off(event, listener)
+      },
+      close() {
+        serverNodePort.close()
+      },
+    }
+
+    const serverScope = Effect.runSync(Scope.make())
+    const serverLayer = RpcServer.layer(TestRpcs).pipe(
+      Layer.provide(layerProtocolMessagePort(proxyServerPort)),
+      Layer.provide(TestRpcsLive)
+    )
+    await Effect.runPromise(
+      Layer.buildWithScope(serverLayer, serverScope).pipe(Effect.asVoid)
+    )
+
+    // Build client
+    const clientScope = Effect.runSync(Scope.make())
+    const protocol = await Effect.runPromise(
+      makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
+        Scope.extend(clientScope)
+      )
+    )
+    const rpcClient: any = await Effect.runPromise(
+      RpcClient.make(TestRpcs).pipe(
+        Effect.provideService(RpcClient.Protocol, protocol),
+        Scope.extend(clientScope)
+      )
+    )
+
+    // Verify RPC works before the stall.
+    const before = await Effect.runPromise(
+      rpcClient.echo({ input: 'before stall' })
+    )
+    expect(before).toBe('before stall')
+
+    // Simulate a 20s server stall (no pong echoes during this time).
+    stalled = true
+    await vi.advanceTimersByTimeAsync(20_000)
+    stalled = false
+
+    // After the stall ends, the next ping should get a pong and reset
+    // the liveness timestamp. Advance past one more interval.
+    await vi.advanceTimersByTimeAsync(5000)
+
+    // RPC should still work — the port should NOT have been declared dead.
+    const after = await Effect.runPromise(
+      rpcClient.echo({ input: 'after stall' })
+    )
+    expect(after).toBe('after stall')
+
+    // Cleanup
+    await Effect.runPromise(Scope.close(clientScope, Exit.void)).catch(() => {
+      // Scope may already be partially closed.
+    })
+    await Effect.runPromise(Scope.close(serverScope, Exit.void)).catch(() => {
+      // Scope may already be partially closed.
+    })
   })
 })

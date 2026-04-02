@@ -8,10 +8,8 @@
  * Currently implements:
  * - `list(workspaceId, dir?)` — single directory level listing
  * - `read(workspaceId, filePath)` — file content + per-file diff
- * - `watcherSubscribe(workspaceId)` — per-workspace file watcher event stream
- *
- * Future additions (Issue 4):
  * - `status(workspaceId)` — workspace-level changed file summary
+ * - `watcherSubscribe(workspaceId)` — per-workspace file watcher event stream
  *
  * @see PRD: Lazy File Service
  * @see Issue 1: file.list — Lazy per-directory listing (tracer bullet)
@@ -23,6 +21,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { extname, join, normalize, relative, resolve } from 'node:path'
 import type {
   FileContent,
+  FileInfo,
   FileNode,
   FileWatcherEvent,
   WatchFileEvent,
@@ -326,6 +325,184 @@ const mapEventType = (
   return type
 }
 
+// ── Status computation helpers ──────────────────────────────────
+// Extracted from FileService.status() for clarity and to keep cognitive
+// complexity within bounds.
+
+/** Common git args prepended to status-related commands. */
+const STATUS_GIT_FLAGS = [
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.quotepath=false',
+]
+
+/**
+ * Run the three git commands needed for `file.status` in parallel.
+ * Returns `[numstat, untracked, deleted]` results.
+ */
+const runStatusGitCommands = (worktreeRoot: string) =>
+  Effect.all(
+    [
+      Effect.tryPromise({
+        try: () =>
+          spawnGit([...STATUS_GIT_FLAGS, 'diff', '--numstat', 'HEAD'], {
+            cwd: worktreeRoot,
+            readOnly: true,
+          }),
+        catch: () =>
+          new RpcError({
+            message: 'Failed to run git diff --numstat',
+            code: 'GIT_COMMAND_FAILED',
+          }),
+      }),
+      Effect.tryPromise({
+        try: () =>
+          spawnGit(
+            [...STATUS_GIT_FLAGS, 'ls-files', '--others', '--exclude-standard'],
+            { cwd: worktreeRoot, readOnly: true }
+          ),
+        catch: () =>
+          new RpcError({
+            message: 'Failed to run git ls-files',
+            code: 'GIT_COMMAND_FAILED',
+          }),
+      }),
+      Effect.tryPromise({
+        try: () =>
+          spawnGit(
+            [
+              ...STATUS_GIT_FLAGS,
+              'diff',
+              '--name-only',
+              '--diff-filter=D',
+              'HEAD',
+            ],
+            { cwd: worktreeRoot, readOnly: true }
+          ),
+        catch: () =>
+          new RpcError({
+            message: 'Failed to run git diff --diff-filter=D',
+            code: 'GIT_COMMAND_FAILED',
+          }),
+      }),
+    ],
+    { concurrency: 3 }
+  )
+
+/**
+ * Parse `git diff --numstat HEAD` output into FileInfo entries.
+ * Format per line: `<added>\t<removed>\t<path>`
+ * Binary files show `-\t-\t<path>`.
+ */
+const parseNumstatOutput = (stdout: string): FileInfo[] => {
+  const trimmed = stdout.trim()
+  if (!trimmed) {
+    return []
+  }
+  const entries: FileInfo[] = []
+  for (const line of trimmed.split('\n')) {
+    const parts = line.split('\t')
+    if (parts.length >= 3) {
+      const addedStr = parts[0] ?? '0'
+      const removedStr = parts[1] ?? '0'
+      const filePath = parts.slice(2).join('\t')
+      const added = addedStr === '-' ? 0 : Number.parseInt(addedStr, 10)
+      const removed = removedStr === '-' ? 0 : Number.parseInt(removedStr, 10)
+      entries.push({
+        path: filePath,
+        added: Number.isNaN(added) ? 0 : added,
+        removed: Number.isNaN(removed) ? 0 : removed,
+        status: 'modified',
+      })
+    }
+  }
+  return entries
+}
+
+/**
+ * Parse `git ls-files --others --exclude-standard` output into FileInfo entries.
+ * Reads each untracked file to count lines for the `added` count.
+ */
+const parseUntrackedOutput = (
+  stdout: string,
+  worktreeRoot: string
+): Effect.Effect<FileInfo[], RpcError> => {
+  const trimmed = stdout.trim()
+  if (!trimmed) {
+    return Effect.succeed([])
+  }
+  const paths = trimmed.split('\n').filter((p) => p.length > 0)
+  return Effect.forEach(paths, (filePath) =>
+    pipe(
+      Effect.tryPromise({
+        try: async () => {
+          const content = await readFile(
+            resolve(worktreeRoot, filePath),
+            'utf-8'
+          )
+          return content.split('\n').filter((l) => l.length > 0).length
+        },
+        catch: () =>
+          new RpcError({
+            message: `Failed to read untracked file: ${filePath}`,
+            code: 'READ_FAILED',
+          }),
+      }),
+      Effect.catchAll(() => Effect.succeed(0)),
+      Effect.map(
+        (lineCount): FileInfo => ({
+          path: filePath,
+          added: lineCount,
+          removed: 0,
+          status: 'added',
+        })
+      )
+    )
+  )
+}
+
+/**
+ * Parse `git diff --name-only --diff-filter=D HEAD` output into FileInfo entries.
+ */
+const parseDeletedOutput = (stdout: string): FileInfo[] => {
+  const trimmed = stdout.trim()
+  if (!trimmed) {
+    return []
+  }
+  return trimmed
+    .split('\n')
+    .filter((p) => p.length > 0)
+    .map(
+      (filePath): FileInfo => ({
+        path: filePath,
+        added: 0,
+        removed: 0,
+        status: 'deleted',
+      })
+    )
+}
+
+/**
+ * Remove deleted files from the modified list — `git diff --numstat` includes
+ * deleted files, so they'd appear in both the modified and deleted lists.
+ */
+const deduplicateStatusResults = (
+  results: readonly FileInfo[]
+): readonly FileInfo[] => {
+  const deletedPaths = new Set(
+    pipe(
+      results,
+      Arr.filter((f) => f.status === 'deleted'),
+      Arr.map((f) => f.path)
+    )
+  )
+  return pipe(
+    results,
+    Arr.filter((f) => f.status !== 'modified' || !deletedPaths.has(f.path))
+  )
+}
+
 // ── Per-file diff computation ───────────────────────────────────
 // Computes the diff of a text file against HEAD. Tries unstaged diff
 // first, then falls back to staged diff. Uses the `diff` npm library
@@ -446,6 +623,23 @@ class FileService extends Context.Tag('@laborer/FileService')<
     ) => Effect.Effect<FileContent, RpcError>
 
     /**
+     * Return a summary of all changed files in a workspace.
+     *
+     * Runs three git commands in parallel:
+     * - `git diff --numstat HEAD` for modified files with line counts
+     * - `git ls-files --others --exclude-standard` for untracked (added) files
+     * - `git diff --name-only --diff-filter=D HEAD` for deleted files
+     *
+     * Returns `FileInfo[]` where each entry has a relative path,
+     * added/removed line counts, and a status.
+     *
+     * @param workspaceId - ID of the workspace
+     */
+    readonly status: (
+      workspaceId: string
+    ) => Effect.Effect<readonly FileInfo[], RpcError>
+
+    /**
      * Subscribe to file change events for a workspace's worktree.
      *
      * Returns a `Stream` of `FileWatcherEvent` objects with file paths
@@ -547,6 +741,27 @@ class FileService extends Context.Tag('@laborer/FileService')<
           return yield* computeFileDiff(worktreeRoot, filePath, content)
         })
 
+      const status = (
+        workspaceId: string
+      ): Effect.Effect<readonly FileInfo[], RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+
+          // Run three git commands in parallel
+          const [numstatResult, untrackedResult, deletedResult] =
+            yield* runStatusGitCommands(worktreeRoot)
+
+          const modified = parseNumstatOutput(numstatResult.stdout)
+          const added = yield* parseUntrackedOutput(
+            untrackedResult.stdout,
+            worktreeRoot
+          )
+          const deleted = parseDeletedOutput(deletedResult.stdout)
+
+          return deduplicateStatusResults([...modified, ...added, ...deleted])
+        })
+
       const watcherSubscribe = (
         workspaceId: string
       ): Stream.Stream<FileWatcherEvent, RpcError> =>
@@ -608,7 +823,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
           })
         )
 
-      return FileService.of({ list, read, watcherSubscribe })
+      return FileService.of({ list, read, status, watcherSubscribe })
     })
   )
 }

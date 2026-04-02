@@ -8,10 +8,10 @@ Issues: docs/lazy-file-service/issues.md
 - [x] Issue 1: file.list — Lazy per-directory listing (tracer bullet)         [DONE]
 - [ ] Issue 2: file.list — Gitignore marking                                  [READY]
 - [x] Issue 3: file.read — On-demand file content with per-file diff          [DONE]
-- [ ] Issue 4: file.status — Workspace-level changed file summary             [READY]
+- [x] Issue 4: file.status — Workspace-level changed file summary             [DONE]
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
 - [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [BLOCKED by 2]
-- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [BLOCKED by 4]
+- [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [READY]
 - [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
 - [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
 
@@ -98,3 +98,29 @@ Phase 4:             Issue 9
 - Path traversal protection rejects paths escaping worktree root
 - Git failures (not a repo, no commits) gracefully fall back to content-only response
 - All 18 file-service tests pass, format check clean, no type errors
+
+### Issue 4: file.status — Workspace-level changed file summary — DONE
+
+**Files modified:**
+- `packages/shared/src/rpc.ts` — Added `FileInfo` schema and `file.status` RPC definition
+- `packages/server/src/services/file-service.ts` — Added `status()` method to FileService with extracted helper functions for git output parsing
+- `packages/server/src/rpc/handlers.ts` — Wired `file.status` handler delegating to FileService.status()
+- `packages/server/test/file-service.test.ts` — Added 6 integration tests for status() (modified, added, deleted, clean, all-three, NOT_FOUND)
+
+**Implementation details:**
+- `FileInfo` schema: `{ path: string, added: number, removed: number, status: "added" | "deleted" | "modified" }`
+- `FileService.status(workspaceId)` runs three git commands in parallel via `Effect.all` with `{ concurrency: 3 }`:
+  1. `git diff --numstat HEAD` — modified files with added/removed line counts
+  2. `git ls-files --others --exclude-standard` — untracked (added) files
+  3. `git diff --name-only --diff-filter=D HEAD` — deleted files
+- Git commands use `-c core.fsmonitor=false` and `-c core.quotepath=false` for consistency
+- Untracked files have `added` count computed by reading and counting non-empty lines
+- Deleted files have both `added` and `removed` set to 0
+- Deduplication removes deleted files from the modified list (they appear in both --numstat and --diff-filter=D)
+- Helper functions extracted to keep cognitive complexity within Biome's limit:
+  - `runStatusGitCommands()` — parallel git command execution
+  - `parseNumstatOutput()` — parse modified files from numstat
+  - `parseUntrackedOutput()` — parse untracked files with line counting
+  - `parseDeletedOutput()` — parse deleted files
+  - `deduplicateStatusResults()` — remove deleted files from modified list
+- All 24 file-service tests pass, format check clean, no type errors in modified files

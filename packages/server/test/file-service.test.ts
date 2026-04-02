@@ -9,7 +9,7 @@
  * @see Issue 1: file.list — Lazy per-directory listing (tracer bullet)
  */
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events } from '@laborer/shared/schema'
@@ -575,6 +575,177 @@ describe('FileService', () => {
             onFailure: (error) => Effect.succeed(error),
           })
         )
+
+      if (result === 'success') {
+        assert.fail('Expected NOT_FOUND error')
+      }
+      assert.strictEqual(result._tag, 'RpcError')
+      assert.strictEqual(result.code, 'NOT_FOUND')
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // =================================================================
+  // FileService.status() tests — Issue 4
+  // =================================================================
+
+  // --- Behavior 19: Modified file appears with status "modified" and line counts ---
+  it.scoped(
+    'status returns modified file with correct added/removed counts',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-svc-status-modified', tempRoots)
+        writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2\nline 3\n')
+        git('add tracked.txt', repoPath)
+        git('commit -m "add tracked"', repoPath)
+
+        // Modify: change one line, add one line
+        writeFileSync(
+          join(repoPath, 'tracked.txt'),
+          'line 1\nline 2 modified\nline 3\nline 4\n'
+        )
+
+        const { store } = yield* LaborerStore
+        const workspaceId = seedWorkspace(store, repoPath)
+
+        const fileService = yield* FileService
+        const result = yield* fileService.status(workspaceId)
+
+        const tracked = result.find((f) => f.path === 'tracked.txt')
+        assert.isDefined(tracked, 'Expected tracked.txt in status')
+        assert.strictEqual(tracked?.status, 'modified')
+        // git diff --numstat counts: 2 added (modified line + new line), 1 removed (old line)
+        assert.isTrue(
+          typeof tracked?.added === 'number' && tracked.added > 0,
+          'Expected added > 0'
+        )
+        assert.isTrue(
+          typeof tracked?.removed === 'number' && tracked.removed > 0,
+          'Expected removed > 0'
+        )
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 20: Newly created (untracked) file appears with status "added" ---
+  it.scoped(
+    'status returns untracked file with status "added" and line count',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-svc-status-added', tempRoots)
+        writeFileSync(join(repoPath, 'new-file.txt'), 'hello\nworld\n')
+        // Do NOT git add — leave untracked
+
+        const { store } = yield* LaborerStore
+        const workspaceId = seedWorkspace(store, repoPath)
+
+        const fileService = yield* FileService
+        const result = yield* fileService.status(workspaceId)
+
+        const newFile = result.find((f) => f.path === 'new-file.txt')
+        assert.isDefined(newFile, 'Expected new-file.txt in status')
+        assert.strictEqual(newFile?.status, 'added')
+        assert.strictEqual(newFile?.added, 2, 'Expected 2 lines added')
+        assert.strictEqual(newFile?.removed, 0, 'Expected 0 lines removed')
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 21: Deleted file appears with status "deleted" ---
+  it.scoped('status returns deleted file with status "deleted"', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-status-deleted', tempRoots)
+      writeFileSync(join(repoPath, 'to-delete.txt'), 'goodbye\n')
+      git('add to-delete.txt', repoPath)
+      git('commit -m "add to-delete"', repoPath)
+
+      // Delete the file (tracked deletion, not staged)
+      unlinkSync(join(repoPath, 'to-delete.txt'))
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.status(workspaceId)
+
+      const deleted = result.find(
+        (f: { path: string }) => f.path === 'to-delete.txt'
+      )
+      assert.isDefined(deleted, 'Expected to-delete.txt in status')
+      assert.strictEqual(deleted?.status, 'deleted')
+      assert.strictEqual(deleted?.added, 0, 'Expected 0 lines added')
+      assert.strictEqual(deleted?.removed, 0, 'Expected 0 lines removed')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 22: Clean working tree returns empty array ---
+  it.scoped('status returns empty array for clean working tree', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-status-clean', tempRoots)
+      // initRepo already commits README.md, so the tree is clean
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.status(workspaceId)
+
+      assert.strictEqual(
+        result.length,
+        0,
+        'Expected empty array for clean tree'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 23: All three types in same response ---
+  it.scoped('status returns modified, added, and deleted files together', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-status-all', tempRoots)
+      writeFileSync(join(repoPath, 'modify-me.txt'), 'original\n')
+      writeFileSync(join(repoPath, 'delete-me.txt'), 'to be deleted\n')
+      git('add .', repoPath)
+      git('commit -m "add files"', repoPath)
+
+      // Modify one file
+      writeFileSync(join(repoPath, 'modify-me.txt'), 'changed\n')
+      // Delete one file
+      unlinkSync(join(repoPath, 'delete-me.txt'))
+      // Add one new file (untracked)
+      writeFileSync(join(repoPath, 'brand-new.txt'), 'new content\n')
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService.status(workspaceId)
+
+      const statuses = result.map((f) => f.status).sort()
+      assert.isTrue(statuses.includes('modified'), 'Expected a modified file')
+      assert.isTrue(statuses.includes('added'), 'Expected an added file')
+      assert.isTrue(statuses.includes('deleted'), 'Expected a deleted file')
+
+      assert.strictEqual(result.length, 3, 'Expected exactly 3 changed files')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Behavior 24: NOT_FOUND for unknown workspace ---
+  it.scoped('status fails with NOT_FOUND for unknown workspace', () =>
+    Effect.gen(function* () {
+      const fileService = yield* FileService
+      const result = yield* fileService.status('nonexistent-workspace-id').pipe(
+        Effect.matchEffect({
+          onSuccess: () => Effect.succeed('success' as const),
+          onFailure: (error) => Effect.succeed(error),
+        })
+      )
 
       if (result === 'success') {
         assert.fail('Expected NOT_FOUND error')

@@ -181,16 +181,16 @@ For untracked files, the `added` count is computed by reading the file and count
 
 ### Acceptance criteria
 
-- [ ] `FileInfo` schema defined with path, added, removed, status fields
-- [ ] `file.status` RPC defined with workspaceId payload
-- [ ] `FileService.status()` runs three git commands in parallel
-- [ ] Modified files include accurate added/removed line counts
-- [ ] Untracked files have `status: "added"` with line count from file content
-- [ ] Deleted files have `status: "deleted"` with zero counts
-- [ ] Clean working tree returns empty array
-- [ ] Git commands use `-c core.fsmonitor=false` and `-c core.quotepath=false`
-- [ ] All paths are relative to the worktree root
-- [ ] All tests pass
+- [x] `FileInfo` schema defined with path, added, removed, status fields
+- [x] `file.status` RPC defined with workspaceId payload
+- [x] `FileService.status()` runs three git commands in parallel
+- [x] Modified files include accurate added/removed line counts
+- [x] Untracked files have `status: "added"` with line count from file content
+- [x] Deleted files have `status: "deleted"` with zero counts
+- [x] Clean working tree returns empty array
+- [x] Git commands use `-c core.fsmonitor=false` and `-c core.quotepath=false`
+- [x] All paths are relative to the worktree root
+- [x] All tests pass
 
 ### Blocked by
 
@@ -481,10 +481,10 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | 1 | file.list — Lazy per-directory listing (tracer bullet) | None | **Done** |
 | 2 | file.list — Gitignore marking | ~~Issue 1~~ | Ready |
 | 3 | file.read — On-demand file content with per-file diff | ~~Issue 1~~ | **Done** |
-| 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | Ready |
+| 4 | file.status — Workspace-level changed file summary | ~~Issue 1~~ | **Done** |
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
 | 6 | Client tree pane — Lazy per-directory fetching | Issues 2, ~~5~~ | Blocked |
-| 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, 4, ~~5~~ | Blocked |
+| 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, ~~4~~, ~~5~~ | Ready |
 | 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | Ready |
 | 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, 8 | Blocked |
 

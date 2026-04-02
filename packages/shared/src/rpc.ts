@@ -500,6 +500,29 @@ export const FileContent = Schema.Struct({
 
 export type FileContent = typeof FileContent.Type
 
+/**
+ * Summary of a single changed file in a workspace, returned by `file.status`.
+ *
+ * Each entry represents a file that differs from HEAD — either modified,
+ * newly added (untracked), or deleted. Line counts indicate the number of
+ * lines added and removed relative to HEAD.
+ *
+ * @see PRD: Lazy File Service — FileInfo schema
+ * @see Issue 4: file.status — Workspace-level changed file summary
+ */
+export const FileInfo = Schema.Struct({
+  /** Path of the changed file, relative to the worktree root. */
+  path: Schema.String,
+  /** Number of lines added relative to HEAD. */
+  added: Schema.Number,
+  /** Number of lines removed relative to HEAD. */
+  removed: Schema.Number,
+  /** The type of change: added (untracked), deleted, or modified. */
+  status: Schema.Literal('added', 'deleted', 'modified'),
+})
+
+export type FileInfo = typeof FileInfo.Type
+
 // ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
@@ -1163,6 +1186,29 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       filePath: Schema.String,
+    },
+  }),
+
+  /**
+   * Return a summary of all changed files in a workspace with line-level
+   * change counts.
+   *
+   * Runs three git commands in parallel:
+   * - `git diff --numstat HEAD` for modified files with line counts
+   * - `git ls-files --others --exclude-standard` for untracked (added) files
+   * - `git diff --name-only --diff-filter=D HEAD` for deleted files
+   *
+   * Returns `FileInfo[]` where each entry has a relative path, added/removed
+   * line counts, and a status of "added", "deleted", or "modified".
+   *
+   * @see PRD: Lazy File Service — file.status RPC
+   * @see Issue 4: file.status — Workspace-level changed file summary
+   */
+  Rpc.make('file.status', {
+    success: Schema.Array(FileInfo),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
     },
   }),
 

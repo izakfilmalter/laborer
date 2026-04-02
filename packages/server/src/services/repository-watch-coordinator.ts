@@ -106,33 +106,22 @@ const formatWatcherWarning = (
 }
 
 /**
- * Files in the git directory that indicate branch-related changes.
- * HEAD is modified on branch switches, refs/ contains branch pointers,
- * MERGE_HEAD and REBASE_HEAD appear during merge/rebase operations.
- */
-const BRANCH_RELATED_FILES = new Set([
-  'HEAD',
-  'MERGE_HEAD',
-  'REBASE_HEAD',
-  'ORIG_HEAD',
-  'FETCH_HEAD',
-])
-
-/**
  * Determine whether a filesystem event from the git directory
  * is branch-related based on the fileName.
+ *
+ * Simplified to match OpenCode's VCS pattern: only events where
+ * the fileName ends with "HEAD" trigger branch detection. This
+ * covers HEAD (branch switches), MERGE_HEAD, REBASE_HEAD,
+ * ORIG_HEAD, and FETCH_HEAD. Other git metadata changes like
+ * refs/heads/main or index are ignored for branch detection.
+ *
+ * @see .reference/opencode/packages/opencode/src/project/vcs.ts
  */
 const isBranchRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
     return true
   }
-  if (BRANCH_RELATED_FILES.has(fileName)) {
-    return true
-  }
-  if (fileName.startsWith('refs')) {
-    return true
-  }
-  return false
+  return fileName.endsWith('HEAD')
 }
 
 /**

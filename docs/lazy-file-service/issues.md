@@ -394,13 +394,13 @@ The worktree reconciliation concern (`WorktreeReconciler`) is orthogonal — it 
 
 ### Acceptance criteria
 
-- [ ] Branch detection works by filtering watcher events for `HEAD` path changes
-- [ ] `git rev-parse --abbrev-ref HEAD` is used to resolve the branch name
-- [ ] Duplicate branch updates (same branch name) are suppressed
-- [ ] Non-HEAD git directory changes are ignored
-- [ ] LiveStore workspace metadata is updated on branch change
-- [ ] `RepositoryWatchCoordinator` complexity is reduced or eliminated
-- [ ] All tests pass
+- [x] Branch detection works by filtering watcher events for `HEAD` path changes
+- [x] `git rev-parse --abbrev-ref HEAD` is used to resolve the branch name
+- [x] Duplicate branch updates (same branch name) are suppressed
+- [x] Non-HEAD git directory changes are ignored
+- [x] LiveStore workspace metadata is updated on branch change
+- [x] `RepositoryWatchCoordinator` complexity is reduced or eliminated
+- [x] All tests pass
 
 ### Blocked by
 
@@ -485,8 +485,8 @@ Run `bun run check` (typecheck + format + tests) to verify.
 | 5 | file.watcher.subscribe — Per-workspace watcher event stream | ~~Issue 1~~ | **Done** |
 | 6 | Client tree pane — Lazy per-directory fetching | ~~Issues 2, 5~~ | Ready |
 | 7 | Client diff pane — On-demand per-file diffs | Issues ~~3~~, ~~4~~, ~~5~~ | Ready |
-| 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | Ready |
-| 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, 8 | Blocked |
+| 8 | Simplify branch detection (copy OpenCode VCS pattern) | None | **Done** |
+| 9 | Remove old code + deprecate LiveStore events | Issues 6, 7, ~~8~~ | Blocked |
 
 ### Parallel execution paths
 

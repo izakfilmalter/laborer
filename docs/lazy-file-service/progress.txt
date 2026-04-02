@@ -12,8 +12,8 @@ Issues: docs/lazy-file-service/issues.md
 - [x] Issue 5: file.watcher.subscribe — Per-workspace watcher event stream    [DONE]
 - [ ] Issue 6: Client tree pane — Lazy per-directory fetching                 [READY]
 - [ ] Issue 7: Client diff pane — On-demand per-file diffs                    [READY]
-- [ ] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [READY]
-- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7, 8]
+- [x] Issue 8: Simplify branch detection (copy OpenCode VCS pattern)          [DONE]
+- [ ] Issue 9: Remove old code + deprecate LiveStore events                   [BLOCKED by 6, 7]
 
 ## Execution Order
 
@@ -144,3 +144,19 @@ Phase 4:             Issue 9
 - The ignore checker is loaded once per `list()` call and passed to `readAndBuildNodes()`
 - Follows OpenCode's pattern from `.reference/opencode/packages/opencode/src/file/index.ts`
 - All 29 file-service tests pass (24 existing + 5 new), format check clean, no type errors
+
+### Issue 8: Simplify branch detection (copy OpenCode VCS pattern) — DONE
+
+**Files modified:**
+- `packages/server/src/services/repository-watch-coordinator.ts` — Simplified `isBranchRelatedEvent()` to use `fileName.endsWith('HEAD')` instead of `BRANCH_RELATED_FILES` set + `refs/*` prefix matching. Removed `BRANCH_RELATED_FILES` constant.
+- `packages/server/test/repository-watch-coordinator-hardening.test.ts` — Updated event classification test to reflect HEAD-suffix filter; added new test verifying non-HEAD git changes (refs/heads/main, index, config, packed-refs) do NOT trigger branch refresh.
+
+**Implementation details:**
+- Simplified branch detection to match OpenCode's VCS pattern: only watcher events where `fileName?.endsWith('HEAD')` trigger branch refresh
+- This covers HEAD (branch switches), MERGE_HEAD, REBASE_HEAD, ORIG_HEAD, and FETCH_HEAD — all the files that indicate actual branch state changes
+- Removed the `BRANCH_RELATED_FILES` set and the `refs/*` prefix check — ref updates like `refs/heads/main` are pack/reference operations that don't necessarily indicate the current branch changed
+- `null` fileName still triggers both branch refresh and worktree reconciliation (safety fallback)
+- Worktree-related event handling unchanged (still triggers reconciliation)
+- Debounce timing preserved for rapid HEAD changes during rebase/merge operations
+- All 23 coordinator tests pass (9 hardening + 5 lifecycle + 9 branch-tracker), format check clean, typecheck clean
+- Pre-existing failures in worktree-reconciler/project-registry tests are unrelated to this change

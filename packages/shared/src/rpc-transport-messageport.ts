@@ -31,6 +31,21 @@ import type {
 import { Effect, Layer, Mailbox, Queue, Scope } from 'effect'
 
 // ---------------------------------------------------------------------------
+// Heartbeat protocol constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Sentinel message for the application-level heartbeat protocol.
+ * The client transport sends `__rpc_ping__` periodically; the server
+ * transport echoes `__rpc_pong__` back immediately.
+ *
+ * Defined here (the server transport) to avoid circular imports.
+ * Re-exported from `rpc-transport-messageport-client.ts`.
+ */
+export const PING_MESSAGE = '__rpc_ping__'
+export const PONG_MESSAGE = '__rpc_pong__'
+
+// ---------------------------------------------------------------------------
 // MessagePort abstraction
 // ---------------------------------------------------------------------------
 
@@ -104,6 +119,18 @@ export const makeProtocolMessagePort = (
 
       // Sync event handlers push to the queue.
       const messageHandler = (data: unknown): void => {
+        // Echo heartbeat pings immediately — this is the server side of
+        // the application-level keepalive protocol. The client transport
+        // sends `__rpc_ping__` periodically and expects `__rpc_pong__`
+        // back within a timeout to detect dead channels.
+        if (data === PING_MESSAGE) {
+          try {
+            port.postMessage(PONG_MESSAGE)
+          } catch {
+            // Port may be closing — ignore.
+          }
+          return
+        }
         console.log(
           '[rpc-server-transport] message received:',
           typeof data,

@@ -811,3 +811,106 @@ describe('LifecycleMonitor', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// onProcessExit callback tests
+// ---------------------------------------------------------------------------
+
+describe('LifecycleMonitor onProcessExit callback', () => {
+  let mockManager: MockManager & UtilityProcessManager
+  let statuses: LifecycleStatus[]
+  let processExitCalls: ServiceName[]
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockManager = createMockManager()
+    statuses = []
+    processExitCalls = []
+    mockWebContentsSend.mockClear()
+    mockGetAllWindows.mockClear()
+    mockGetAllWindows.mockReturnValue([
+      {
+        isDestroyed: () => false,
+        webContents: { send: mockWebContentsSend },
+      },
+    ])
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function createMonitorWithExitCallback(): LifecycleMonitor {
+    const monitor = new LifecycleMonitor(mockManager, {
+      maxRestarts: 3,
+      onProcessExit: (name) => {
+        processExitCalls.push(name)
+      },
+    })
+    monitor.setStatusListener((status) => statuses.push(status))
+    return monitor
+  }
+
+  it('calls onProcessExit when a service crashes unexpectedly', () => {
+    const monitor = createMonitorWithExitCallback()
+    monitor.forkAndMonitor('server')
+    monitor.handleReady('server')
+
+    // Simulate crash
+    mockManager.simulateUnexpectedExit('server', 1, 'segfault')
+
+    expect(processExitCalls).toEqual(['server'])
+    monitor.shutdown()
+  })
+
+  it('calls onProcessExit when heartbeat times out', () => {
+    const monitor = createMonitorWithExitCallback()
+    monitor.forkAndMonitor('terminal')
+    monitor.handleReady('terminal')
+
+    // Advance past heartbeat timeout
+    vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+
+    expect(processExitCalls).toEqual(['terminal'])
+    monitor.shutdown()
+  })
+
+  it('calls onProcessExit on manual restart before the process is restarted', async () => {
+    const monitor = createMonitorWithExitCallback()
+    monitor.forkAndMonitor('server')
+    monitor.handleReady('server')
+
+    await monitor.manualRestart('server')
+
+    expect(processExitCalls).toEqual(['server'])
+    monitor.shutdown()
+  })
+
+  it('does not call onProcessExit when callback is not provided', () => {
+    // Create monitor without the callback
+    const monitor = new LifecycleMonitor(mockManager, { maxRestarts: 3 })
+    monitor.setStatusListener((status) => statuses.push(status))
+    monitor.forkAndMonitor('server')
+    monitor.handleReady('server')
+
+    // Simulate crash — should not throw even without callback
+    mockManager.simulateUnexpectedExit('server', 1, '')
+
+    expect(statuses.some((s) => s.state === 'crashed')).toBe(true)
+    monitor.shutdown()
+  })
+
+  it('calls onProcessExit for each crashed service independently', () => {
+    const monitor = createMonitorWithExitCallback()
+    monitor.forkAndMonitor('server')
+    monitor.forkAndMonitor('terminal')
+    monitor.handleReady('server')
+    monitor.handleReady('terminal')
+
+    mockManager.simulateUnexpectedExit('server', 1, '')
+    mockManager.simulateUnexpectedExit('terminal', 1, '')
+
+    expect(processExitCalls).toEqual(['server', 'terminal'])
+    monitor.shutdown()
+  })
+})

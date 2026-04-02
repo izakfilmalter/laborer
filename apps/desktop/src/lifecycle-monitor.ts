@@ -138,13 +138,24 @@ export class LifecycleMonitor {
   private listener: StatusListener | null = null
   private isQuitting = false
   private readonly maxRestarts: number
+  private readonly onProcessExit: ((name: ServiceName) => void) | undefined
 
   constructor(
     manager: UtilityProcessManager,
-    options?: { maxRestarts?: number }
+    options?: {
+      maxRestarts?: number
+      /**
+       * Called when a utility process exits (crash or intentional restart).
+       * Used by main.ts to close renderer-side MessagePorts so the
+       * renderer's `onclose` handler fires and RPC clients detect the
+       * dead channel.
+       */
+      onProcessExit?: (name: ServiceName) => void
+    }
   ) {
     this.manager = manager
     this.maxRestarts = options?.maxRestarts ?? MAX_RESTARTS
+    this.onProcessExit = options?.onProcessExit
 
     // Wire up the unexpected exit handler from UtilityProcessManager.
     this.manager.setExitHandler((name, code, lastStderr) => {
@@ -207,6 +218,10 @@ export class LifecycleMonitor {
     state.restartAttempts = 0
     state.isReady = false
     this.clearHeartbeatTimer(name)
+
+    // Close renderer-side ports before killing — the old port channels
+    // become invalid once the process is restarted.
+    this.onProcessExit?.(name)
 
     this.emitStatus({ state: 'starting', name })
 
@@ -358,6 +373,12 @@ export class LifecycleMonitor {
     // Clear heartbeat timer since the process is gone.
     this.clearHeartbeatTimer(name)
 
+    // Close all renderer-side MessagePorts for this service so the
+    // renderer's `onclose` handler fires and RPC clients detect the
+    // dead channel immediately (instead of relying on the unreliable
+    // Web MessagePort close event from GC).
+    this.onProcessExit?.(name)
+
     // Mark as not ready.
     const state = this.getOrCreateState(name)
     state.isReady = false
@@ -490,6 +511,10 @@ export class LifecycleMonitor {
     }
 
     state.isReady = false
+
+    // Close renderer-side ports before killing so RPC clients detect
+    // the dead channel immediately.
+    this.onProcessExit?.(name)
 
     const error = `Process unresponsive — no heartbeat received within ${HEARTBEAT_TIMEOUT_MS}ms.`
     console.error(`[lifecycle:${name}] ${error}`)

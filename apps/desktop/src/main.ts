@@ -13,6 +13,7 @@ import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
   askRenderersBeforeQuit,
+  closeRendererPortsForService,
   getWorkspaceWindowRegistry,
   QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
@@ -399,7 +400,9 @@ app
     // Create the lifecycle monitor for utility process health monitoring.
     // Uses native process events and heartbeat messages instead of HTTP
     // health polling.
-    lifecycleMonitor = new LifecycleMonitor(utilityProcessManager)
+    lifecycleMonitor = new LifecycleMonitor(utilityProcessManager, {
+      onProcessExit: closeRendererPortsForService,
+    })
 
     // Wire bootstrap messages (ready, heartbeat) from utility processes
     // to the lifecycle monitor for startup detection and liveness.

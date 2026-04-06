@@ -141,6 +141,11 @@ export const makeClientProtocolMessagePort = (
         // Any real message also counts as proof of liveness (like
         // Mux's "inbound frame tracking" pattern).
         lastPongTimestamp = Date.now()
+        console.log(
+          '[rpc-client-transport] recv:',
+          typeof data,
+          JSON.stringify(data as object)?.slice(0, 200)
+        )
         Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
       }
 

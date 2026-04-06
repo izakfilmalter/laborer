@@ -242,7 +242,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           )
 
           yield* Effect.log(
-            `[WorktreeReconciler] ADDING external workspace: id=${newWorkspaceId.slice(0, 8)} project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'} status=running`
+            `[WorktreeReconciler] ADDING external workspace: id=${newWorkspaceId.slice(0, 8)} project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'} status=stopped`
           )
 
           store.commit(
@@ -252,7 +252,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
               taskSource: null,
               branchName,
               worktreePath: canonicalDetectedPath,
-              status: 'running',
+              status: 'stopped',
               origin: 'external',
               createdAt: new Date().toISOString(),
               baseSha,

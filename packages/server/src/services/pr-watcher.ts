@@ -364,12 +364,25 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             .filter((workspace) => workspace.status !== 'destroyed')
 
           const activeWorkspaces = allWorkspaces.filter(
-            (workspace) => workspace.status !== 'destroyed'
+            (workspace) =>
+              workspace.status === 'running' || workspace.status === 'creating'
+          )
+
+          const stoppedWorkspaces = allWorkspaces.filter(
+            (workspace) => workspace.status === 'stopped'
           )
 
           yield* Effect.forEach(
             activeWorkspaces,
             (workspace) => startPolling(workspace.id),
+            { discard: true }
+          )
+
+          // Run a one-time PR check for stopped workspaces to refresh stale
+          // PR data, but do not start continuous polling for them.
+          yield* Effect.forEach(
+            stoppedWorkspaces,
+            (workspace) => checkPr(workspace.id),
             { discard: true }
           )
         }

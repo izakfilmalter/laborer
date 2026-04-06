@@ -10,13 +10,13 @@
  * 1. `laborer.json` at the project root
  * 2. Walk up parent directories looking for `laborer.json` files
  * 3. Global config at `~/.config/laborer/laborer.json`
- * 4. Hardcoded defaults: `worktreeDir` = `~/.config/laborer/<projectName>`
+ * 4. Hardcoded defaults: `worktreeDir` = `<projectRepoPath>.worktrees`
  *
  * Config schema:
  * ```json
  * {
- *   "worktreeDir": "~/.config/laborer/my-project",
- *   "prdsDir": "~/.config/laborer/my-project/prds",
+ *   "worktreeDir": "/path/to/my-project.worktrees",
+ *   "prdsDir": "/path/to/my-project.worktrees/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
  *   "brrrConfig": "path/to/brrr/config.toml"
  * }
@@ -30,7 +30,7 @@
  * const program = Effect.gen(function* () {
  *   const config = yield* ConfigService
  *   const resolved = yield* config.resolveConfig("/path/to/repo", "my-project")
- *   // resolved.worktreeDir.value === "/Users/me/.config/laborer/my-project"
+ *   // resolved.worktreeDir.value === "/path/to/repo.worktrees"
  *   // resolved.worktreeDir.source === "default"
  * })
  * ```
@@ -662,9 +662,10 @@ const validateDevServerConfig = (
 
 const mergeConfigs = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>,
-  projectName: string
+  _projectName: string,
+  projectRepoPath: string
 ): ResolvedLaborerConfig => {
-  const defaultWorktreeDir = join(GLOBAL_CONFIG_DIR, projectName)
+  const defaultWorktreeDir = `${projectRepoPath}.worktrees`
   const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
   let agent: ResolvedValue<AgentProvider> = {
@@ -841,7 +842,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
             : [...localConfigs]
 
         // 5. Merge with closest-wins strategy and apply defaults
-        const resolved = mergeConfigs(allLayers, projectName)
+        const resolved = mergeConfigs(allLayers, projectName, projectRepoPath)
 
         // 6. Validate devServer mutual exclusion (image vs dockerfile)
         const validationError = validateDevServerConfig(resolved.devServer)

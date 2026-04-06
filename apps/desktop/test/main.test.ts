@@ -112,10 +112,22 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     app: {
       whenReady: () => Promise.resolve(),
       on: appOn,
+      once: vi.fn(),
       quit: vi.fn(),
       setAsDefaultProtocolClient: vi.fn(),
     },
     BrowserWindow,
+    ipcMain: {
+      on: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      handle: vi.fn(),
+      removeHandler: vi.fn(),
+      removeAllListeners: vi.fn(),
+    },
+    shell: {
+      openExternal: vi.fn(async () => undefined),
+    },
   }))
 
   vi.doMock('../src/auto-updater.js', () => ({
@@ -128,7 +140,10 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
   vi.doMock('../src/ipc.js', () => ({
+    askRenderersBeforeQuit: vi.fn(async () => false),
+    closeRendererPortsForService: vi.fn(),
     getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
+    QUIT_CONFIRMED_CHANNEL: 'desktop:quit-confirmed',
     registerIpcHandlers: registerIpcHandlersMock,
     setDownloadUpdateHandler: vi.fn(),
     setGetSidecarStatusesHandler: vi.fn(),
@@ -393,9 +408,12 @@ describe('main multi-window restore', () => {
     // Step 2: Trigger app quit via 'before-quit'.
     const beforeQuitHandler = appOn.mock.calls.find(
       (call: unknown[]) => call[0] === 'before-quit'
-    )?.[1] as (() => void) | undefined
+    )?.[1] as ((event: { preventDefault: () => void }) => void) | undefined
     expect(beforeQuitHandler).toBeDefined()
-    beforeQuitHandler?.()
+    beforeQuitHandler?.({ preventDefault: vi.fn() })
+    // Allow the async askRenderersBeforeQuit to resolve and set isQuitting = true.
+    await Promise.resolve()
+    await Promise.resolve()
 
     // Step 3: The hidden window's close fires again during quit (not prevented).
     const secondCloseEvent = { preventDefault: vi.fn() }
@@ -430,9 +448,12 @@ describe('main multi-window restore', () => {
     // Trigger app quit via 'before-quit'.
     const beforeQuitHandler = appOn.mock.calls.find(
       (call: unknown[]) => call[0] === 'before-quit'
-    )?.[1] as (() => void) | undefined
+    )?.[1] as ((event: { preventDefault: () => void }) => void) | undefined
     expect(beforeQuitHandler).toBeDefined()
-    beforeQuitHandler?.()
+    beforeQuitHandler?.({ preventDefault: vi.fn() })
+    // Allow the async askRenderersBeforeQuit to resolve and set isQuitting = true.
+    await Promise.resolve()
+    await Promise.resolve()
 
     // Both windows close during quit (not hidden, not prevented).
     for (const instance of BrowserWindow.instances) {

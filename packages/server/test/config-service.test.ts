@@ -143,15 +143,9 @@ describe('ConfigService', () => {
         const result = yield* resolveConfig(projectDir, 'test-project')
 
         assert.strictEqual(result.prdsDir.source, 'default')
-        assert.strictEqual(
-          result.prdsDir.value,
-          join(GLOBAL_CONFIG_DIR, 'test-project', 'prds')
-        )
+        assert.strictEqual(result.prdsDir.value, `${projectDir}.worktrees/prds`)
         assert.strictEqual(result.worktreeDir.source, 'default')
-        assert.strictEqual(
-          result.worktreeDir.value,
-          join(GLOBAL_CONFIG_DIR, 'test-project')
-        )
+        assert.strictEqual(result.worktreeDir.value, `${projectDir}.worktrees`)
         assert.strictEqual(result.setupScripts.source, 'default')
         assert.deepStrictEqual(result.setupScripts.value, [])
         assert.strictEqual(result.brrrConfig.source, 'default')

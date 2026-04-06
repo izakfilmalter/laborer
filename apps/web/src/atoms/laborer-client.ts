@@ -8,12 +8,18 @@
  * Uses `AtomRpc.Tag` to provide typed `query` and `mutation` atoms that
  * integrate with React components via `@effect-atom/atom`.
  *
+ * Mutations are wrapped in `Effect.uninterruptible` so that in-flight RPC
+ * requests complete even when the subscribing React component unmounts.
+ * Without this, the atom registry disposes the fiber on unmount, sending an
+ * RPC Interrupt message that cancels the request before the server responds.
+ *
  * @see Issue #4: Renderer RPC client wired to MessagePort
  * @see packages/server/src/utility-main.ts — Server utility process entry
  */
 
+import { Reactivity } from '@effect/experimental'
 import { RpcClient } from '@effect/rpc'
-import { AtomRpc } from '@effect-atom/atom'
+import { Atom, AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
@@ -41,6 +47,10 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
  *
  * Uses MessagePort to the server utility process.
  * Provides `mutation` and `query` helpers for all LaborerRpcs endpoints.
+ *
+ * Mutations are uninterruptible — they run to completion even when the
+ * subscribing React component unmounts. This prevents the atom registry
+ * from cancelling in-flight RPC requests via fiber interruption.
  */
 export const ConfigReactivityKeys = ['config'] as const
 
@@ -51,3 +61,33 @@ export class LaborerClient extends AtomRpc.Tag<LaborerClient>()(
     protocol: serverProtocol,
   }
 ) {}
+// Override the default mutation factory with one that wraps the RPC effect
+// in Effect.uninterruptible. The default AtomRpc.Tag mutation uses
+// makeResultFn which hardcodes uninterruptible=false. By wrapping the
+// effect body itself, the fiber stays in an uninterruptible region even
+// when the atom registry's cancel() calls unsafeInterruptAsFork on cleanup.
+;(LaborerClient as unknown as Record<string, unknown>).mutation = Atom.family(
+  (tag: string) =>
+    LaborerClient.runtime.fn<{
+      readonly payload: unknown
+      readonly reactivityKeys?:
+        | readonly unknown[]
+        | Readonly<Record<string, readonly unknown[]>>
+        | undefined
+      readonly headers?: unknown
+    }>()(
+      Effect.fnUntraced(function* ({ headers, payload, reactivityKeys }) {
+        const client = yield* LaborerClient
+        const effect = client(
+          tag as never,
+          payload as never,
+          {
+            headers,
+          } as never
+        )
+        return yield* Effect.uninterruptible(
+          reactivityKeys ? Reactivity.mutation(effect, reactivityKeys) : effect
+        )
+      })
+    )
+)

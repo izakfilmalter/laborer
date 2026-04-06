@@ -98,6 +98,15 @@ function ProjectSettingsForm({
     [projectId]
   )
   const configResult = useAtomValue(configGet$)
+
+  useEffect(() => {
+    const waiting =
+      'waiting' in configResult ? String(configResult.waiting) : 'n/a'
+    console.log(
+      `[project-settings] configResult._tag=${configResult._tag} waiting=${waiting}`
+    )
+  }, [configResult])
+
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
   const [agent, setAgent] = useState<AgentProvider>('opencode')

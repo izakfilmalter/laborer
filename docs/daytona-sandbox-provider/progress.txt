@@ -53,3 +53,42 @@ Date: 2026-04-07
 ### Verification:
 - All 15 turbo tasks pass (typecheck + format + test across all packages)
 - 89 shared tests pass (22 schema tests), 410 server tests pass
+
+## Issue 8: SandboxProvider Effect interface definition
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Created new file packages/server/src/services/sandbox-provider.ts
+- Defined SandboxProvider Effect Context.Tag with identifier '@laborer/SandboxProvider'
+- Interface includes 8 methods:
+  createSandbox(params: CreateSandboxParams) => Effect<void, RpcError>
+  destroySandbox(workspaceId: string) => Effect<void, RpcError>
+  pauseSandbox(workspaceId: string) => Effect<void, RpcError>
+  resumeSandbox(workspaceId: string) => Effect<void, RpcError>
+  getPreviewUrl(workspaceId: string, port: number) => Effect<string, RpcError>
+  spawnTerminal(workspaceId: string, opts?: TerminalOpts) => Effect<TerminalHandle, RpcError>
+  reconcileState() => Effect<void>
+  checkAvailability() => Effect<ProviderStatus>
+- Defined CreateSandboxParams type with workspaceId, branchName, projectName, worktreePath,
+  devServerConfig (matching ResolvedDevServerConfig shape), and optional onReady callback
+- Defined TerminalOpts type with optional command, autoRun, cols, rows
+- Defined TerminalHandle type with id, workspaceId, command, status — matches existing
+  TerminalRecord shape from terminal-client.ts for drop-in compatibility
+- Defined ProviderStatus type with available boolean + optional error string — matches
+  existing DockerStatus shape from docker-detection.ts
+- All types exported for use by both Docker and Daytona implementations
+
+### Design decisions:
+- CreateSandboxParams.devServerConfig uses concrete types (not ResolvedValue<T> wrappers)
+  since providers need the resolved values, not the provenance metadata
+- TerminalHandle intentionally matches TerminalRecord to minimize adapter code in Issue 9
+- ProviderStatus intentionally matches DockerStatus to minimize adapter code in Issue 9
+- No layer defined on SandboxProvider — implementations provide their own layers
+- reconcileState and checkAvailability have no error channel (Effect<void> / Effect<ProviderStatus>)
+  since failures are handled internally (logged, not propagated)
+
+### Verification:
+- All turbo typecheck tasks pass (7/7)
+- bun run format passes

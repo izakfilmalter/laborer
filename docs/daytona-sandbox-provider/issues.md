@@ -1125,8 +1125,8 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 5 | Provider config: add provider field to laborer.json + config resolution | 1 | Ready |
 | 6 | Provider config: global default sandbox provider in appSettings | 5 | Blocked |
 | 7 | Daytona env vars in packages/env | None | Ready |
-| 8 | SandboxProvider Effect interface definition | 2 | Ready |
-| 9 | DockerSandboxProvider: wrap existing ContainerService behind SandboxProvider | 8 | Blocked |
+| 8 | SandboxProvider Effect interface definition | 2 | Done |
+| 9 | DockerSandboxProvider: wrap existing ContainerService behind SandboxProvider | 8 | Ready |
 | 10 | WorkspaceProvider refactor: delegate to SandboxProvider instead of ContainerService | 9 | Blocked |
 | 11 | Daytona SDK client Effect service (thin wrapper) | 7 | Blocked |
 | 12 | Daytona availability check service + RPC | 11 | Blocked |

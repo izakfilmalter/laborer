@@ -468,6 +468,61 @@ export const prdRemoved = Events.synced({
   }),
 })
 
+// -- v2 Sandbox events (provider-agnostic) -----------------------------------
+
+export const sandboxStarted = Events.synced({
+  name: 'v2.SandboxStarted',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    sandboxId: Schema.String,
+    sandboxUrl: Schema.String,
+    sandboxImage: Schema.String,
+    /** Port the dev server listens on. Optional for backward compat. */
+    sandboxPort: Schema.optional(Schema.Number),
+    /** Which provider created this sandbox: 'docker' or 'daytona'. */
+    sandboxProvider: Schema.String,
+  }),
+})
+
+export const sandboxStopped = Events.synced({
+  name: 'v2.SandboxStopped',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+  }),
+})
+
+export const sandboxPaused = Events.synced({
+  name: 'v2.SandboxPaused',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+  }),
+})
+
+export const sandboxResumed = Events.synced({
+  name: 'v2.SandboxResumed',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+  }),
+})
+
+export const sandboxSetupStepChanged = Events.synced({
+  name: 'v2.SandboxSetupStepChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** Current setup step, or null when setup is complete. */
+    step: Schema.NullOr(Schema.String),
+  }),
+})
+
+export const sandboxPortChanged = Events.synced({
+  name: 'v2.SandboxPortChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** The new port, or null to clear. */
+    sandboxPort: Schema.NullOr(Schema.Number),
+  }),
+})
+
 // -- App Settings events ----------------------------------------------------
 
 export const appSettingChanged = Events.synced({
@@ -512,6 +567,12 @@ export const events = {
   containerPaused,
   containerUnpaused,
   containerSetupStepChanged,
+  sandboxStarted,
+  sandboxStopped,
+  sandboxPaused,
+  sandboxResumed,
+  sandboxSetupStepChanged,
+  sandboxPortChanged,
   worktreeSetupStepChanged,
   terminalSpawned,
   terminalOutput,
@@ -662,6 +723,41 @@ const materializers = State.SQLite.materializers(events, {
     workspaces.update({ sandboxStatus: 'running' }).where({ id: workspaceId }),
   'v1.ContainerSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
+  'v2.SandboxStarted': ({
+    workspaceId,
+    sandboxId,
+    sandboxUrl,
+    sandboxImage,
+    sandboxPort,
+    sandboxProvider,
+  }) =>
+    workspaces
+      .update({
+        sandboxId,
+        sandboxUrl,
+        sandboxImage,
+        sandboxPort: sandboxPort ?? null,
+        sandboxStatus: 'running',
+        sandboxSetupStep: null,
+        sandboxProvider,
+      })
+      .where({ id: workspaceId }),
+  'v2.SandboxStopped': ({ workspaceId }) =>
+    workspaces
+      .update({
+        sandboxId: null,
+        sandboxStatus: null,
+        sandboxSetupStep: null,
+      })
+      .where({ id: workspaceId }),
+  'v2.SandboxPaused': ({ workspaceId }) =>
+    workspaces.update({ sandboxStatus: 'paused' }).where({ id: workspaceId }),
+  'v2.SandboxResumed': ({ workspaceId }) =>
+    workspaces.update({ sandboxStatus: 'running' }).where({ id: workspaceId }),
+  'v2.SandboxSetupStepChanged': ({ workspaceId, step }) =>
+    workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
+  'v2.SandboxPortChanged': ({ workspaceId, sandboxPort }) =>
+    workspaces.update({ sandboxPort }).where({ id: workspaceId }),
   'v1.WorktreeSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ worktreeSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

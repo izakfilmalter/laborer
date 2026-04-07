@@ -20,3 +20,36 @@ Date: 2026-04-07
 ### Verification:
 - All 15 turbo tasks pass (typecheck + format + test across all packages)
 - 1070 web tests pass, 410 server tests pass, 81 shared tests pass
+
+## Issue 2: Schema — new v2.Sandbox* events + bridging materializers
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Defined 6 new v2.Sandbox* events in packages/shared/src/schema.ts:
+  v2.SandboxStarted (workspaceId, sandboxId, sandboxUrl, sandboxImage, sandboxPort?, sandboxProvider)
+  v2.SandboxStopped (workspaceId)
+  v2.SandboxPaused (workspaceId)
+  v2.SandboxResumed (workspaceId)
+  v2.SandboxSetupStepChanged (workspaceId, step)
+  v2.SandboxPortChanged (workspaceId, sandboxPort)
+- Added materializers for all 6 new events writing to sandbox* columns
+- v2.SandboxStarted materializer sets sandboxProvider column (v1 events do not)
+- All new events added to the `events` export object
+- Old v1.Container* events and materializers remain unchanged for backward compatibility
+- Both v1 and v2 events coexist in the schema
+
+### Tests added (8 new tests in packages/shared/test/schema.test.ts):
+- v2.SandboxStarted sets sandbox fields and sandboxProvider
+- v2.SandboxStarted works without optional sandboxPort
+- v2.SandboxStopped clears sandbox state
+- v2.SandboxPaused sets sandboxStatus to paused
+- v2.SandboxResumed sets sandboxStatus to running
+- v2.SandboxSetupStepChanged updates sandboxSetupStep (including null clear)
+- v2.SandboxPortChanged updates sandboxPort (including null clear)
+- v2.Sandbox* and v1.Container* events coexist and both materialize correctly
+
+### Verification:
+- All 15 turbo tasks pass (typecheck + format + test across all packages)
+- 89 shared tests pass (22 schema tests), 410 server tests pass

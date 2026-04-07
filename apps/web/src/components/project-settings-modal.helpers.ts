@@ -3,6 +3,8 @@ interface SetupScriptItem {
   readonly value: string
 }
 
+type SandboxProviderType = 'docker' | 'daytona'
+
 interface ResolvedConfigSnapshot {
   readonly agent: 'opencode' | 'claude' | 'codex'
   readonly brrrConfig: string | null
@@ -10,6 +12,7 @@ interface ResolvedConfigSnapshot {
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
   readonly devServerNetwork: string | null
+  readonly devServerProvider: SandboxProviderType | null
   readonly devServerSetupScripts: readonly string[]
   readonly devServerStartCommand: string | null
   readonly setupScripts: readonly string[]
@@ -24,6 +27,7 @@ interface ConfigUpdates {
     image?: string
     installCommand?: string
     network?: string
+    provider?: SandboxProviderType
     setupScripts?: string[]
     startCommand?: string
   }
@@ -65,6 +69,7 @@ const buildDevServerUpdates = (
     image: string
     installCommand: string
     network: string
+    provider: SandboxProviderType | null
     setupScripts: string[]
     startCommand: string
   },
@@ -75,6 +80,7 @@ const buildDevServerUpdates = (
   const installCommandChanged =
     current.installCommand !== (resolved.devServerInstallCommand ?? '')
   const networkChanged = current.network !== (resolved.devServerNetwork ?? '')
+  const providerChanged = current.provider !== resolved.devServerProvider
   const setupScriptsChanged = !areStringArraysEqual(
     current.setupScripts,
     resolved.devServerSetupScripts
@@ -88,6 +94,7 @@ const buildDevServerUpdates = (
       imageChanged ||
       installCommandChanged ||
       networkChanged ||
+      providerChanged ||
       setupScriptsChanged ||
       startCommandChanged
     )
@@ -108,6 +115,9 @@ const buildDevServerUpdates = (
   if (networkChanged) {
     devServer.network = current.network
   }
+  if (providerChanged && current.provider !== null) {
+    devServer.provider = current.provider
+  }
   if (setupScriptsChanged) {
     devServer.setupScripts = current.setupScripts
   }
@@ -123,6 +133,7 @@ const buildConfigUpdates = ({
   devServerImage,
   devServerInstallCommand,
   devServerNetwork,
+  devServerProvider,
   devServerSetupScripts,
   devServerStartCommand,
   brrrConfig,
@@ -135,6 +146,7 @@ const buildConfigUpdates = ({
   devServerImage: string
   devServerInstallCommand: string
   devServerNetwork: string
+  devServerProvider: SandboxProviderType | null
   devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
   brrrConfig: string
@@ -178,6 +190,7 @@ const buildConfigUpdates = ({
       image: devServerImage.trim(),
       installCommand: devServerInstallCommand.trim(),
       network: devServerNetwork.trim(),
+      provider: devServerProvider,
       setupScripts: normalizeSetupScripts(devServerSetupScripts),
       startCommand: devServerStartCommand.trim(),
     },
@@ -215,4 +228,4 @@ export {
   getSettingsLoadErrorMessage,
   normalizeSetupScripts,
 }
-export type { ResolvedConfigSnapshot, SetupScriptItem }
+export type { ResolvedConfigSnapshot, SandboxProviderType, SetupScriptItem }

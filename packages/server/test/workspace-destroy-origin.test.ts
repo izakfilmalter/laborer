@@ -44,6 +44,9 @@ const TestTerminalClient = Layer.succeed(
         status: 'running' as const,
       }),
     killAllForWorkspace: () => Effect.succeed(0),
+    resizeTerminal: () => Effect.void,
+    killTerminal: () => Effect.void,
+    removeTerminal: () => Effect.void,
   })
 )
 

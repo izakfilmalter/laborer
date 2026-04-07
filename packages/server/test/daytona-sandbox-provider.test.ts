@@ -533,6 +533,12 @@ const dsc = (
   workdir: '/app',
 })
 
+/** Default repoUrl for tests. */
+const TEST_REPO_URL = 'https://github.com/test/repo.git'
+
+/** Default currentBranch for tests. */
+const TEST_CURRENT_BRANCH = 'main'
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -553,6 +559,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/test',
             projectName: 'test-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc({ image: 'node:22', port: 3000 }),
           })
 
@@ -600,6 +608,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/default',
             projectName: 'default-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc({ image: null }),
           })
 
@@ -633,6 +643,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/cb',
             projectName: 'cb-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc(),
             onReady: () => Ref.set(called, true).pipe(Effect.asVoid),
           })
@@ -661,6 +673,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feat/cool',
             projectName: 'my-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc(),
           })
 
@@ -691,6 +705,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/git-sync',
               projectName: 'sync-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
             })
 
@@ -720,6 +736,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/git-init',
               projectName: 'init-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
             })
 
@@ -752,6 +770,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/git-checkout',
               projectName: 'checkout-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
             })
 
@@ -781,6 +801,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/step',
               projectName: 'step-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
             })
 
@@ -805,6 +827,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/cleanup',
             projectName: 'cleanup-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc(),
           })
 
@@ -842,6 +866,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/snapshot',
               projectName: 'snap-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc({ image: 'node:22' }),
             })
 
@@ -894,6 +920,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/cache-hit',
               projectName: 'cached-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc({ image: 'node:22' }),
             })
 
@@ -942,6 +970,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/no-lockfile',
             projectName: 'no-lock-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc({ image: 'node:22' }),
           })
 
@@ -984,6 +1014,8 @@ describe('DaytonaSandboxProvider', () => {
             branchName: 'feature/custom-install',
             projectName: 'custom-install-project',
             worktreePath,
+            repoUrl: TEST_REPO_URL,
+            currentBranch: TEST_CURRENT_BRANCH,
             devServerConfig: dsc({
               image: 'node:22',
               installCommand: 'bun install --production',
@@ -1031,6 +1063,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/steps',
               projectName: 'steps-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc({ image: 'node:22' }),
             })
 
@@ -1069,6 +1103,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/default-image-snap',
               projectName: 'default-snap-project',
               worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc({ image: null }),
             })
 
@@ -2434,6 +2470,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/test',
               projectName: 'test-project',
               worktreePath: '/tmp/test',
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
               onReady: undefined,
             })
@@ -2469,6 +2507,8 @@ describe('DaytonaSandboxProvider', () => {
               branchName: 'feature/test',
               projectName: 'test-project',
               worktreePath: '/tmp/test',
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
               devServerConfig: dsc(),
               onReady: undefined,
             })

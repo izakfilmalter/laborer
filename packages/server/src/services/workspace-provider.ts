@@ -934,11 +934,57 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
        * Communicates progress via sandboxSetupStepChanged events emitted
        * by the provider implementation.
        */
+      /**
+       * Get the remote origin URL for a repo path.
+       * Returns null if the remote cannot be resolved.
+       */
+      const getRepoRemoteUrl = (
+        repoPath: string
+      ): Effect.Effect<string | null> =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'remote', 'get-url', 'origin'], {
+              cwd: repoPath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            return exitCode === 0 ? stdout.trim() : null
+          },
+          catch: () => null as never,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+      /**
+       * Get the current branch name for a repo path.
+       * Returns null if the branch cannot be resolved (e.g. detached HEAD).
+       */
+      const getCurrentBranch = (
+        repoPath: string
+      ): Effect.Effect<string | null> =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
+              cwd: repoPath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            const branch = exitCode === 0 ? stdout.trim() : null
+            // rev-parse returns "HEAD" for detached HEAD state
+            return branch === 'HEAD' ? null : branch
+          },
+          catch: () => null as never,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
       const performSandboxSetup = (params: {
         readonly id: string
         readonly branchName: string
         readonly worktreePath: string
         readonly projectName: string
+        readonly repoUrl: string | null
+        readonly currentBranch: string | null
         readonly devServer: {
           readonly autoOpen: { readonly value: boolean }
           readonly autoStopInterval: { readonly value: number | null }
@@ -971,6 +1017,8 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             worktreePath: params.worktreePath,
             branchName: params.branchName,
             projectName: params.projectName,
+            repoUrl: params.repoUrl,
+            currentBranch: params.currentBranch,
             devServerConfig: {
               autoOpen: params.devServer.autoOpen.value,
               autoStopInterval: params.devServer.autoStopInterval.value,
@@ -1016,9 +1064,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const resolvedBranch =
             branchName ?? `laborer/${crypto.randomUUID().slice(0, 8)}`
 
-          // 3. Compute worktree path from resolved config
+          // Determine the effective provider for this workspace
+          const effectiveProvider = resolvedConfig.devServer.provider.value
+
+          // 3. Compute worktree path from resolved config.
+          // For Daytona, there is no local worktree — code lives in the
+          // cloud sandbox. Use empty string as a placeholder.
+          const isDaytona = effectiveProvider === 'daytona'
           const worktreeDir = resolvedConfig.worktreeDir.value
-          const worktreePath = join(worktreeDir, slugify(resolvedBranch))
+          const worktreePath = isDaytona
+            ? ''
+            : join(worktreeDir, slugify(resolvedBranch))
 
           // 4. Generate workspace ID and commit to LiveStore immediately
           // with status 'creating'. The UI sees the workspace right away
@@ -1053,68 +1109,103 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           // 5. Fork the heavy setup work into a background fiber.
-          // This includes: git fetch, branch check, worktree creation,
-          // validation, setup scripts, and optional container setup.
-          // Progress is communicated via worktreeSetupStepChanged events.
+          // For Docker: git fetch, worktree creation, setup scripts, then container setup.
+          // For Daytona: skip worktree entirely, go straight to sandbox creation
+          //   (sandbox clones code from remote and creates branch internally).
+          // Progress is communicated via worktreeSetupStepChanged / sandboxSetupStepChanged events.
           const worktreeSetupEffect = Effect.gen(function* () {
-            // Phase 0: Wait for any in-flight destroy cleanup targeting the
-            // same worktree path. This blocks on the actual background fiber
-            // instead of polling with a timeout.
-            const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
-              worktreePath
-            )
-            if (inFlightDestroy !== undefined) {
-              yield* Effect.logInfo(
-                `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-              yield* Fiber.join(inFlightDestroy)
-              yield* Effect.logInfo(
-                `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-            }
+            if (isDaytona) {
+              // ── Daytona path ──────────────────────────────────────
+              // No local worktree needed. The Daytona sandbox clones
+              // the repo from the remote and creates the workspace
+              // branch inside the sandbox. This is much faster than
+              // creating a local worktree + pushing code via SSH.
 
-            // Phase 1: Create and validate worktree, run setup scripts
-            const baseSha = yield* performWorktreeSetup({
-              id,
-              branchName: resolvedBranch,
-              repoPath: project.repoPath,
-              worktreeDir,
-              worktreePath,
-              setupScripts: resolvedConfig.setupScripts.value,
-            })
+              // Resolve the remote origin URL and current branch so
+              // the Daytona provider can clone the repo in the sandbox.
+              const repoUrl = yield* getRepoRemoteUrl(project.repoPath)
+              const currentBranch = yield* getCurrentBranch(project.repoPath)
 
-            // Update baseSha now that we have it
-            if (baseSha !== null) {
-              store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
-            }
-
-            // Worktree setup complete — transition to 'running'.
-            // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
-            store.commit(
-              events.workspaceStatusChanged({ id, status: 'running' })
-            )
-
-            // Run the onReady callback (e.g. start diff/PR polling)
-            if (onReady) {
-              yield* onReady(id).pipe(
-                Effect.catchAll((err) =>
-                  Effect.logWarning(
-                    `onReady callback failed for workspace ${id}: ${err.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-                )
+              // Transition to 'running' immediately — the sandbox
+              // creation is the only setup work and it reports its
+              // own progress via sandboxSetupStepChanged events.
+              store.commit(
+                events.workspaceStatusChanged({ id, status: 'running' })
               )
-            }
 
-            // Phase 2: Start sandbox if devServer config has an image
-            const devServerImage = resolvedConfig.devServer.image.value
-            if (devServerImage !== null) {
               yield* performSandboxSetup({
                 id,
                 branchName: resolvedBranch,
                 worktreePath,
                 projectName: project.name,
+                repoUrl,
+                currentBranch,
                 devServer: resolvedConfig.devServer,
+                onReady,
               })
+            } else {
+              // ── Docker path (unchanged) ───────────────────────────
+              // Phase 0: Wait for any in-flight destroy cleanup targeting the
+              // same worktree path. This blocks on the actual background fiber
+              // instead of polling with a timeout.
+              const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+                worktreePath
+              )
+              if (inFlightDestroy !== undefined) {
+                yield* Effect.logInfo(
+                  `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+                yield* Fiber.join(inFlightDestroy)
+                yield* Effect.logInfo(
+                  `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+              }
+
+              // Phase 1: Create and validate worktree, run setup scripts
+              const baseSha = yield* performWorktreeSetup({
+                id,
+                branchName: resolvedBranch,
+                repoPath: project.repoPath,
+                worktreeDir,
+                worktreePath,
+                setupScripts: resolvedConfig.setupScripts.value,
+              })
+
+              // Update baseSha now that we have it
+              if (baseSha !== null) {
+                store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
+              }
+
+              // Worktree setup complete — transition to 'running'.
+              // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
+              store.commit(
+                events.workspaceStatusChanged({ id, status: 'running' })
+              )
+
+              // Run the onReady callback (e.g. start diff/PR polling)
+              if (onReady) {
+                yield* onReady(id).pipe(
+                  Effect.catchAll((err) =>
+                    Effect.logWarning(
+                      `onReady callback failed for workspace ${id}: ${err.message}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
+                )
+              }
+
+              // Phase 2: Start sandbox if devServer config has an image
+              const devServerImage = resolvedConfig.devServer.image.value
+              if (devServerImage !== null) {
+                yield* performSandboxSetup({
+                  id,
+                  branchName: resolvedBranch,
+                  worktreePath,
+                  projectName: project.name,
+                  repoUrl: null,
+                  currentBranch: null,
+                  devServer: resolvedConfig.devServer,
+                })
+              }
             }
           }).pipe(
             Effect.catchAll((err) =>
@@ -1626,13 +1717,25 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           }
 
-          // 5. Fork sandbox setup as a background fiber (same pattern
+          // 5. Resolve repo info for Daytona provider
+          const repoUrl =
+            effectiveProvider === 'daytona'
+              ? yield* getRepoRemoteUrl(project.repoPath)
+              : null
+          const currentBranch =
+            effectiveProvider === 'daytona'
+              ? yield* getCurrentBranch(project.repoPath)
+              : null
+
+          // 6. Fork sandbox setup as a background fiber (same pattern
           //    as createWorktree)
           const sandboxSetupEffect = performSandboxSetup({
             id: workspaceId,
             branchName: workspace.branchName,
             worktreePath: workspace.worktreePath,
             projectName: project.name,
+            repoUrl,
+            currentBranch,
             devServer: resolvedConfig.devServer,
             onReady,
           }).pipe(

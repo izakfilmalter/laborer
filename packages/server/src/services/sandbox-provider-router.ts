@@ -29,6 +29,7 @@ import {
   type DaytonaClientMissingKeyError,
 } from './daytona-client.js'
 import { DaytonaSandboxProvider } from './daytona-sandbox-provider.js'
+import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
 import { DockerSandboxProvider } from './docker-sandbox-provider.js'
 import { LaborerStore } from './laborer-store.js'
 import type { CreateSandboxParams } from './sandbox-provider.js'
@@ -198,6 +199,51 @@ const SandboxProviderRouterLayer: Layer.Layer<
       yield* provider.setAutoStopInterval(workspaceId, interval)
     })
 
+    // ── Terminal lifecycle routing ──────────────────────────────
+    // Terminal operations are routed by checking the `daytona:` prefix
+    // on the terminal ID. This mirrors the data port routing in the
+    // Electron main process (ipc.ts).
+
+    /**
+     * Resolve the provider for a terminal operation by checking the
+     * terminal ID prefix. Daytona terminal IDs start with `daytona:`.
+     */
+    const resolveForTerminal = (
+      terminalId: string
+    ): SandboxProvider['Type'] => {
+      if (terminalId.startsWith(DAYTONA_TERMINAL_ID_PREFIX)) {
+        if (daytona === null) {
+          // This shouldn't happen in practice — Daytona terminal IDs
+          // only exist if the Daytona provider was available at spawn time.
+          // But handle gracefully just in case.
+          return docker
+        }
+        return daytona
+      }
+      return docker
+    }
+
+    const resizeTerminal = Effect.fn('SandboxProviderRouter.resizeTerminal')(
+      function* (terminalId: string, cols: number, rows: number) {
+        const provider = resolveForTerminal(terminalId)
+        yield* provider.resizeTerminal(terminalId, cols, rows)
+      }
+    )
+
+    const killTerminal = Effect.fn('SandboxProviderRouter.killTerminal')(
+      function* (terminalId: string) {
+        const provider = resolveForTerminal(terminalId)
+        yield* provider.killTerminal(terminalId)
+      }
+    )
+
+    const removeTerminal = Effect.fn('SandboxProviderRouter.removeTerminal')(
+      function* (terminalId: string) {
+        const provider = resolveForTerminal(terminalId)
+        yield* provider.removeTerminal(terminalId)
+      }
+    )
+
     // ── Non-routed methods ──────────────────────────────────────
 
     /**
@@ -232,6 +278,9 @@ const SandboxProviderRouterLayer: Layer.Layer<
       resumeSandbox,
       getPreviewUrl,
       spawnTerminal,
+      resizeTerminal,
+      killTerminal,
+      removeTerminal,
       reconcileState,
       checkAvailability,
       setAutoStopInterval,

@@ -224,6 +224,30 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     readonly killAllForWorkspace: (
       workspaceId: string
     ) => Effect.Effect<number, never>
+
+    /**
+     * Resize a terminal's PTY session.
+     * Forwards to the terminal utility process via the RPC connection.
+     */
+    readonly resizeTerminal: (
+      terminalId: string,
+      cols: number,
+      rows: number
+    ) => Effect.Effect<void, RpcError>
+
+    /**
+     * Kill a terminal's PTY session (stop the process, retain metadata).
+     * Forwards to the terminal utility process via the RPC connection.
+     */
+    readonly killTerminal: (terminalId: string) => Effect.Effect<void, RpcError>
+
+    /**
+     * Remove a terminal — kills the PTY (if running) and cleans up.
+     * Forwards to the terminal utility process via the RPC connection.
+     */
+    readonly removeTerminal: (
+      terminalId: string
+    ) => Effect.Effect<void, RpcError>
   }
 >() {
   static readonly layer = Layer.scoped(
@@ -765,18 +789,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 1b. Verify worktree directory exists on disk
-          if (!existsSync(workspace.worktreePath)) {
-            return yield* new RpcError({
-              message: `Worktree directory does not exist: ${workspace.worktreePath}. The git worktree may have been removed outside of Laborer.`,
-              code: 'WORKTREE_NOT_FOUND',
-            })
-          }
-
-          // 2. Daytona workspace: delegate to SandboxProvider.spawnTerminal
-          //    The Daytona PTY runs as a WebSocket session in the server
-          //    process, not via docker exec in the terminal process.
-          //    @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
+          // 1b. Daytona workspace: delegate to SandboxProvider.spawnTerminal
+          //     Daytona workspaces have no local worktree — code lives in
+          //     the cloud sandbox. Skip worktree directory validation and
+          //     route directly to the Daytona PTY (WebSocket session in
+          //     the server process, not via docker exec).
+          //     @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
           if (
             workspace.sandboxProvider === 'daytona' &&
             workspace.sandboxId != null
@@ -784,6 +802,14 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             return yield* sandboxProvider.spawnTerminal(workspaceId, {
               command,
               autoRun,
+            })
+          }
+
+          // 1c. Verify worktree directory exists on disk (Docker / host only)
+          if (!existsSync(workspace.worktreePath)) {
+            return yield* new RpcError({
+              message: `Worktree directory does not exist: ${workspace.worktreePath}. The git worktree may have been removed outside of Laborer.`,
+              code: 'WORKTREE_NOT_FOUND',
             })
           }
 
@@ -846,6 +872,37 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           return killedCount
         })
 
+      // ---------------------------------------------------------------
+      // Individual terminal lifecycle — forward to terminal process
+      // ---------------------------------------------------------------
+
+      const resizeTerminal = Effect.fn('TerminalClient.resizeTerminal')(
+        function* (terminalId: string, cols: number, rows: number) {
+          const { client: rpcClient } = yield* getOrCreateClient
+          yield* rpcClient.terminal
+            .resize({ id: terminalId, cols, rows })
+            .pipe(Effect.catchAll(mapTerminalError))
+        }
+      )
+
+      const killTerminal = Effect.fn('TerminalClient.killTerminal')(function* (
+        terminalId: string
+      ) {
+        const { client: rpcClient } = yield* getOrCreateClient
+        yield* rpcClient.terminal
+          .kill({ id: terminalId })
+          .pipe(Effect.catchAll(mapTerminalError))
+      })
+
+      const removeTerminal = Effect.fn('TerminalClient.removeTerminal')(
+        function* (terminalId: string) {
+          const { client: rpcClient } = yield* getOrCreateClient
+          yield* rpcClient.terminal
+            .remove({ id: terminalId })
+            .pipe(Effect.catchAll(mapTerminalError))
+        }
+      )
+
       yield* Effect.addFinalizer(() =>
         Effect.log('Shutdown: disconnecting from terminal service').pipe(
           Effect.annotateLogs('module', logPrefix)
@@ -855,6 +912,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       return TerminalClient.of({
         spawnInWorkspace,
         killAllForWorkspace,
+        resizeTerminal,
+        killTerminal,
+        removeTerminal,
       })
     })
   )

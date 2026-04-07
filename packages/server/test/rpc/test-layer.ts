@@ -87,6 +87,9 @@ const TestTerminalClient = Layer.effect(
           ])
           return 0
         }),
+      resizeTerminal: () => Effect.void,
+      killTerminal: () => Effect.void,
+      removeTerminal: () => Effect.void,
     })
   })
 )

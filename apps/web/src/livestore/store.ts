@@ -26,8 +26,8 @@
  * @see Issue #17: LiveStore client adapter setup
  */
 
-import { schema } from '@laborer/shared/schema'
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
+import { schema } from '@laborer/shared/schema'
 
 import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'

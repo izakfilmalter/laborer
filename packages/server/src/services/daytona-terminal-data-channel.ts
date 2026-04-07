@@ -232,34 +232,33 @@ const attachDaytonaDataChannel = (
 }
 
 /**
- * Set the `onData` callback on a Daytona PtyHandle.
+ * Set the PTY output callback on a Daytona PtyHandle.
  *
- * The Daytona SDK's PtyHandle stores the `onData` callback as an internal
- * property. Since we can't add listeners after creation, we replace the
- * callback to redirect PTY output to the MessagePort bridge.
+ * The Daytona SDK's PtyHandle stores the output callback as a `private
+ * readonly onPty` property (set during construction via `createPty`'s
+ * `onData` option). The WebSocket message handler references `this.onPty`
+ * at call time, so replacing it at runtime redirects all future output.
  *
- * This is a deliberate escape hatch — the PtyHandle's `onData` was
- * intentionally set as a no-op during `spawnTerminal` (Issue 16),
- * to be replaced here when the data channel is attached.
+ * TypeScript marks it `private readonly`, but at runtime there's no
+ * enforcement — we override it via `as any` to redirect PTY output
+ * to the MessagePort bridge.
+ *
+ * The `onData` callback passed to `createPty` was intentionally set as
+ * a no-op during `spawnTerminal` (Issue 16), to be replaced here when
+ * the data channel is attached.
+ *
+ * @see .reference/daytona/libs/sdk-typescript/src/PtyHandle.ts
  */
 function setPtyOnData(
   ptyHandle: PtyHandle,
   callback: (data: Uint8Array) => void
 ): void {
-  // The SDK's PtyHandle stores the onData callback. Access it to
-  // redirect output to the MessagePort bridge.
   // biome-ignore lint/suspicious/noExplicitAny: SDK internal access for PTY bridge
   const handle = ptyHandle as any
-  if (typeof handle.onData === 'function') {
-    // PtyHandle has a public onData setter/method — use it
-    handle.onData = callback
-  } else if ('_onData' in handle) {
-    // Access internal _onData property
-    handle._onData = callback
-  } else if ('options' in handle && handle.options) {
-    // Access via the options object used during createPty
-    handle.options.onData = callback
-  }
+  // The SDK's PtyHandle stores the callback as `onPty` (private readonly).
+  // The WebSocket message handler calls `this.onPty(bytes)` on each
+  // message, so replacing it redirects output immediately.
+  handle.onPty = callback
 }
 
 /**

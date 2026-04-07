@@ -1193,15 +1193,38 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)
-    // Only terminal.spawn is handled here — it resolves workspace info
-    // (cwd, env) before delegating to the terminal service. All other
-    // terminal RPCs (write, resize, kill, remove, restart) are called
-    // directly from the web app to the terminal service.
+    // terminal.spawn resolves workspace info (cwd, env) before
+    // delegating to the terminal service.
+    //
+    // terminal.resize, terminal.kill, terminal.remove route through
+    // the SandboxProvider so Daytona terminals are handled by the
+    // server (PtyHandle WebSocket) while Docker/host terminals are
+    // forwarded to the terminal utility process. The web app sends
+    // these for Daytona terminals only (detected by `daytona:` prefix);
+    // local terminals are handled directly by TerminalServiceClient.
     // -------------------------------------------------------------------
     'terminal.spawn': ({ workspaceId, command, autoRun }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
+      }),
+
+    'terminal.resize': ({ id, cols, rows }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.resizeTerminal(id, cols, rows)
+      }),
+
+    'terminal.kill': ({ id }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.killTerminal(id)
+      }),
+
+    'terminal.remove': ({ id }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.removeTerminal(id)
       }),
 
     // -------------------------------------------------------------------

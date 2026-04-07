@@ -380,6 +380,32 @@ class DockerSandboxProvider extends Context.Tag(
         }
       )
 
+      // ── Terminal lifecycle: resize / kill / remove ────────────
+      // Docker terminals live in the terminal utility process, so
+      // these delegate to TerminalClient which forwards via the
+      // MessagePort RPC bridge. In the surgical routing approach,
+      // these won't be called (the web app routes Docker terminal
+      // operations directly to the terminal process), but they're
+      // here for interface completeness.
+
+      const resizeTerminal = Effect.fn('DockerSandboxProvider.resizeTerminal')(
+        function* (terminalId: string, cols: number, rows: number) {
+          yield* terminalClient.resizeTerminal(terminalId, cols, rows)
+        }
+      )
+
+      const killTerminal = Effect.fn('DockerSandboxProvider.killTerminal')(
+        function* (terminalId: string) {
+          yield* terminalClient.killTerminal(terminalId)
+        }
+      )
+
+      const removeTerminal = Effect.fn('DockerSandboxProvider.removeTerminal')(
+        function* (terminalId: string) {
+          yield* terminalClient.removeTerminal(terminalId)
+        }
+      )
+
       // ── reconcileState ────────────────────────────────────────
       // The existing ContainerService already runs startup
       // reconciliation and a `docker events` listener as daemon
@@ -421,6 +447,9 @@ class DockerSandboxProvider extends Context.Tag(
         resumeSandbox,
         getPreviewUrl,
         spawnTerminal,
+        resizeTerminal,
+        killTerminal,
+        removeTerminal,
         reconcileState,
         checkAvailability,
         setAutoStopInterval,

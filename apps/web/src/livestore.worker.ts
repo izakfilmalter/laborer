@@ -27,8 +27,8 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
-import { schema } from '@laborer/shared/schema'
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
+import { schema } from '@laborer/shared/schema'
 import { makeWorker } from '@livestore/adapter-web/worker'
 import type { makeWsSync } from '@livestore/sync-cf/client'
 import { makeMessagePortSync } from './livestore/messageport-sync'

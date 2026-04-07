@@ -1,7 +1,7 @@
+import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
-import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 
 const { getDesktopBridgeMock, isElectronMock, resetTerminalListStoreMock } =
   vi.hoisted(() => ({

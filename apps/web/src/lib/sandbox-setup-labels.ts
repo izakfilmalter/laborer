@@ -37,6 +37,8 @@ const getSandboxSetupLabel = (step: string): string => {
       return 'Creating sandbox...'
     case 'building-snapshot':
       return 'Building sandbox snapshot...'
+    case 'cloning-repo':
+      return 'Cloning repository into sandbox...'
     case 'pushing-code':
       return 'Pushing code to sandbox...'
     case 'configuring-ssh':

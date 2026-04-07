@@ -553,4 +553,73 @@ describe('heartbeat timeout detection', () => {
       // Scope may already be partially closed.
     })
   })
+
+  it('can disable the raw heartbeat for Electron-managed ports', async () => {
+    const { port1: serverNodePort, port2: clientNodePort } =
+      new MessageChannel()
+
+    // Build a proxy server that intentionally drops raw heartbeat pings while
+    // still serving normal RPC traffic. This mirrors the Electron sync-port
+    // path where regular RPC works but the transport-level ping/pong loop is
+    // not a reliable liveness signal.
+    const proxyServerPort: RpcMessagePort = {
+      postMessage(value: unknown, transferList?: readonly unknown[]) {
+        serverNodePort.postMessage(value, transferList as undefined)
+      },
+      on(event: string, listener: (...args: unknown[]) => void) {
+        if (event === 'message') {
+          serverNodePort.on('message', (data: unknown) => {
+            if (data === PING_MESSAGE) {
+              return
+            }
+            listener(data)
+          })
+          return
+        }
+        serverNodePort.on(event, listener)
+      },
+      off(event: string, listener: (...args: unknown[]) => void) {
+        serverNodePort.off(event, listener)
+      },
+      close() {
+        serverNodePort.close()
+      },
+    }
+
+    const serverScope = Effect.runSync(Scope.make())
+    const serverLayer = RpcServer.layer(TestRpcs).pipe(
+      Layer.provide(layerProtocolMessagePort(proxyServerPort)),
+      Layer.provide(TestRpcsLive)
+    )
+    await Effect.runPromise(
+      Layer.buildWithScope(serverLayer, serverScope).pipe(Effect.asVoid)
+    )
+
+    const clientScope = Effect.runSync(Scope.make())
+    const protocol = await Effect.runPromise(
+      makeClientProtocolMessagePort(toRpcPort(clientNodePort), {
+        heartbeatEnabled: false,
+      }).pipe(Scope.extend(clientScope))
+    )
+    const rpcClient: any = await Effect.runPromise(
+      RpcClient.make(TestRpcs).pipe(
+        Effect.provideService(RpcClient.Protocol, protocol),
+        Scope.extend(clientScope)
+      )
+    )
+
+    await vi.advanceTimersByTimeAsync(35_000)
+
+    const result = await Effect.runPromise(
+      rpcClient.echo({ input: 'still alive without raw heartbeat' })
+    )
+    expect(result).toBe('still alive without raw heartbeat')
+
+    await Effect.runPromise(Scope.close(clientScope, Exit.void)).catch(() => {
+      // Scope may already be partially closed.
+    })
+    await Effect.runPromise(Scope.close(serverScope, Exit.void)).catch(() => {
+      // Scope may already be partially closed.
+    })
+  })
 })

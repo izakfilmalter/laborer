@@ -87,18 +87,7 @@ import {
   Ref,
 } from 'effect'
 
-import {
-  buildAddRemoteArgs,
-  buildPushArgs,
-  buildRemoteName,
-  buildRemoveRemoteArgs,
-  buildSandboxCheckoutCommand,
-  buildSandboxInitCommand,
-  buildSshGitEnv,
-  buildSshRemoteUrl,
-} from '../lib/git-sync.js'
 import { buildCacheHash, buildSnapshotName } from '../lib/snapshot-cache.js'
-import { spawnGit } from '../lib/spawn-git.js'
 import {
   removeSshConfigEntry,
   SSH_TOKEN_EXPIRY_MINUTES,
@@ -380,159 +369,83 @@ class DaytonaSandboxProvider extends Context.Tag(
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
 
-      // ── pushCodeToSandbox ─────────────────────────────────────
-      // Issue 15: Push the local worktree HEAD to the Daytona sandbox via SSH.
+      // ── cloneCodeInSandbox ────────────────────────────────────
+      // Clone the project repo directly in the Daytona sandbox using
+      // the SDK's git API, then create and checkout the workspace branch.
+      //
+      // This replaces the old SSH push flow (Issue 15) with a much faster
+      // approach: the sandbox clones from the remote directly, avoiding
+      // the overhead of local worktree creation + SSH push.
       //
       // Steps:
-      // 1. Report progress: "pushing-code"
-      // 2. Get SSH access token from Daytona API (10-minute expiry)
-      // 3. Initialize a bare git repo inside the sandbox
-      // 4. Add a temporary git remote pointing at the sandbox via SSH
-      // 5. Push HEAD to the sandbox: `git push sandbox-{wid} HEAD:main --force`
-      // 6. Checkout the pushed code in the sandbox working tree
-      // 7. Clean up the temporary local git remote (always, even on failure)
+      // 1. Report progress: "cloning-repo"
+      // 2. Clone the repo from the remote URL into the sandbox at the
+      //    current branch using `sandbox.git.clone()`
+      // 3. Create the workspace branch using `sandbox.git.createBranch()`
+      // 4. Checkout the workspace branch using `sandbox.git.checkoutBranch()`
 
-      const pushCodeToSandbox = Effect.fn(
-        'DaytonaSandboxProvider.pushCodeToSandbox'
+      const cloneCodeInSandbox = Effect.fn(
+        'DaytonaSandboxProvider.cloneCodeInSandbox'
       )(function* (
         sandbox: DaytonaSandbox,
         workspaceId: string,
-        worktreePath: string
+        repoUrl: string,
+        currentBranch: string | null,
+        workspaceBranch: string
       ) {
         // Step 1: Report progress
         store.commit(
           events.sandboxSetupStepChanged({
             workspaceId,
-            step: 'pushing-code',
+            step: 'cloning-repo',
           })
         )
+
+        // Step 2: Clone the repo into the sandbox at the current branch
+        const cloneBranch = currentBranch ?? 'main'
 
         yield* Effect.logInfo(
-          `Pushing worktree code to Daytona sandbox "${sandbox.id}" for workspace "${workspaceId}"`
+          `Cloning repo into sandbox "${sandbox.id}": url="${repoUrl}", branch="${cloneBranch}"`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
-        // Step 2: Get SSH access token
-        const sshAccess = yield* Effect.tryPromise({
-          try: () => sandbox.createSshAccess(10),
-          catch: (error) =>
-            new RpcError({
-              message: `Failed to create SSH access for sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
-              code: 'DAYTONA_ERROR',
-            }),
-        })
-
-        yield* Effect.logDebug(
-          `SSH access created for sandbox "${sandbox.id}": token expires at ${String(sshAccess.expiresAt)}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-
-        // Step 3: Initialize git repo in sandbox (idempotent — safe to re-run)
-        yield* Effect.tryPromise({
-          try: () => sandbox.process.executeCommand(buildSandboxInitCommand()),
-          catch: (error) =>
-            new RpcError({
-              message: `Failed to initialize git repo in sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
-              code: 'DAYTONA_ERROR',
-            }),
-        })
-
-        // Step 4: Add temporary local git remote
-        const remoteName = buildRemoteName(workspaceId)
-        const remoteUrl = buildSshRemoteUrl(sshAccess.token)
-        const sshEnv = buildSshGitEnv()
-
-        const addResult = yield* Effect.tryPromise({
-          try: () =>
-            spawnGit(buildAddRemoteArgs(remoteName, remoteUrl), {
-              cwd: worktreePath,
-            }),
-          catch: (error) =>
-            new RpcError({
-              message: `Failed to add git remote "${remoteName}": ${error instanceof Error ? error.message : String(error)}`,
-              code: 'GIT_ERROR',
-            }),
-        })
-
-        if (addResult.exitCode !== 0) {
-          // Remote might already exist from a previous failed attempt — try removing and re-adding
-          yield* Effect.tryPromise({
-            try: () =>
-              spawnGit(buildRemoveRemoteArgs(remoteName), {
-                cwd: worktreePath,
-              }),
-            catch: () => undefined as never, // Ignore remove errors
-          }).pipe(Effect.ignore)
-
-          const retryResult = yield* Effect.tryPromise({
-            try: () =>
-              spawnGit(buildAddRemoteArgs(remoteName, remoteUrl), {
-                cwd: worktreePath,
-              }),
-            catch: (error) =>
-              new RpcError({
-                message: `Failed to add git remote "${remoteName}" (retry): ${error instanceof Error ? error.message : String(error)}`,
-                code: 'GIT_ERROR',
-              }),
-          })
-
-          if (retryResult.exitCode !== 0) {
-            return yield* new RpcError({
-              message: `git remote add failed: ${retryResult.stderr}`,
-              code: 'GIT_ERROR',
-            })
-          }
-        }
-
-        // Step 5: Push HEAD to the sandbox remote
-        // Use Effect.ensuring to guarantee remote cleanup even if push fails
         yield* Effect.tryPromise({
           try: () =>
-            spawnGit(buildPushArgs(remoteName), {
-              cwd: worktreePath,
-              env: sshEnv,
-              timeoutMs: 120_000, // 2 minutes for large repos
-            }),
+            sandbox.git.clone(repoUrl, DAYTONA_PROJECT_DIR, cloneBranch),
           catch: (error) =>
             new RpcError({
-              message: `Failed to push to sandbox: ${error instanceof Error ? error.message : String(error)}`,
-              code: 'GIT_ERROR',
-            }),
-        }).pipe(
-          Effect.flatMap((pushResult) => {
-            if (pushResult.exitCode !== 0) {
-              return new RpcError({
-                message: `git push failed (exit ${String(pushResult.exitCode)}): ${pushResult.stderr}`,
-                code: 'GIT_ERROR',
-              })
-            }
-            return Effect.logDebug(
-              `Code pushed to sandbox "${sandbox.id}" successfully`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-          }),
-          // Step 7: Always clean up the local remote, even on push failure
-          Effect.ensuring(
-            Effect.tryPromise({
-              try: () =>
-                spawnGit(buildRemoveRemoteArgs(remoteName), {
-                  cwd: worktreePath,
-                }),
-              catch: () => undefined as never, // Ignore cleanup errors
-            }).pipe(Effect.ignore)
-          )
-        )
-
-        // Step 6: Checkout the pushed code in the sandbox
-        yield* Effect.tryPromise({
-          try: () =>
-            sandbox.process.executeCommand(buildSandboxCheckoutCommand()),
-          catch: (error) =>
-            new RpcError({
-              message: `Failed to checkout code in sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
+              message: `Failed to clone repo in sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
               code: 'DAYTONA_ERROR',
             }),
         })
 
         yield* Effect.logInfo(
-          `Worktree code pushed and checked out in sandbox "${sandbox.id}" for workspace "${workspaceId}"`
+          `Repo cloned in sandbox "${sandbox.id}" at branch "${cloneBranch}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        // Step 3: Create the workspace branch
+        yield* Effect.tryPromise({
+          try: () =>
+            sandbox.git.createBranch(DAYTONA_PROJECT_DIR, workspaceBranch),
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to create branch "${workspaceBranch}" in sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
+              code: 'DAYTONA_ERROR',
+            }),
+        })
+
+        // Step 4: Checkout the workspace branch
+        yield* Effect.tryPromise({
+          try: () =>
+            sandbox.git.checkoutBranch(DAYTONA_PROJECT_DIR, workspaceBranch),
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to checkout branch "${workspaceBranch}" in sandbox "${sandbox.id}": ${error instanceof Error ? error.message : String(error)}`,
+              code: 'DAYTONA_ERROR',
+            }),
+        })
+
+        yield* Effect.logInfo(
+          `Workspace branch "${workspaceBranch}" created and checked out in sandbox "${sandbox.id}"`
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
 
@@ -788,8 +701,20 @@ class DaytonaSandboxProvider extends Context.Tag(
             `v2.SandboxStarted committed for workspace "${workspaceId}"`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // Step 8: Push worktree code to sandbox via SSH (Issue 15)
-          yield* pushCodeToSandbox(sandbox, workspaceId, params.worktreePath)
+          // Step 8: Clone repo into sandbox and create workspace branch
+          if (params.repoUrl !== null) {
+            yield* cloneCodeInSandbox(
+              sandbox,
+              workspaceId,
+              params.repoUrl,
+              params.currentBranch,
+              branchName
+            )
+          } else {
+            yield* Effect.logWarning(
+              `No repoUrl provided for workspace "${workspaceId}", skipping code clone`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          }
 
           // Step 9: Set up SSH config for VS Code Remote SSH (Issue 22)
           store.commit(
@@ -1194,6 +1119,85 @@ class DaytonaSandboxProvider extends Context.Tag(
         }
       )
 
+      // ── Terminal lifecycle: resize / kill / remove ────────────
+      // These methods operate on Daytona PtyHandle sessions directly.
+      // The web app routes terminal operations for `daytona:`-prefixed
+      // IDs to the server (via LaborerRpcs) instead of the terminal
+      // utility process.
+
+      const resizeTerminal = Effect.fn('DaytonaSandboxProvider.resizeTerminal')(
+        function* (terminalId: string, cols: number, rows: number) {
+          const rawSessionId = terminalId.startsWith(DAYTONA_TERMINAL_ID_PREFIX)
+            ? terminalId.slice(DAYTONA_TERMINAL_ID_PREFIX.length)
+            : terminalId
+          const ptyHandle = getDaytonaPtyHandle(rawSessionId)
+
+          if (!ptyHandle) {
+            return yield* new RpcError({
+              message: `Daytona terminal not found: ${terminalId}`,
+              code: 'TERMINAL_NOT_FOUND',
+            })
+          }
+
+          yield* Effect.tryPromise({
+            try: () => ptyHandle.resize(cols, rows),
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to resize Daytona terminal "${terminalId}": ${error instanceof Error ? error.message : String(error)}`,
+                code: 'DAYTONA_ERROR',
+              }),
+          })
+        }
+      )
+
+      const killTerminal = Effect.fn('DaytonaSandboxProvider.killTerminal')(
+        function* (terminalId: string) {
+          const rawSessionId = terminalId.startsWith(DAYTONA_TERMINAL_ID_PREFIX)
+            ? terminalId.slice(DAYTONA_TERMINAL_ID_PREFIX.length)
+            : terminalId
+          const ptyHandle = getDaytonaPtyHandle(rawSessionId)
+
+          if (!ptyHandle) {
+            return yield* new RpcError({
+              message: `Daytona terminal not found: ${terminalId}`,
+              code: 'TERMINAL_NOT_FOUND',
+            })
+          }
+
+          yield* Effect.tryPromise({
+            try: () => ptyHandle.disconnect(),
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to kill Daytona terminal "${terminalId}": ${error instanceof Error ? error.message : String(error)}`,
+                code: 'DAYTONA_ERROR',
+              }),
+          })
+        }
+      )
+
+      const removeTerminal = Effect.fn('DaytonaSandboxProvider.removeTerminal')(
+        function* (terminalId: string) {
+          const rawSessionId = terminalId.startsWith(DAYTONA_TERMINAL_ID_PREFIX)
+            ? terminalId.slice(DAYTONA_TERMINAL_ID_PREFIX.length)
+            : terminalId
+          const ptyHandle = getDaytonaPtyHandle(rawSessionId)
+
+          if (ptyHandle) {
+            yield* Effect.tryPromise({
+              try: () => ptyHandle.disconnect(),
+              catch: (error) =>
+                new RpcError({
+                  message: `Failed to disconnect Daytona terminal "${terminalId}": ${error instanceof Error ? error.message : String(error)}`,
+                  code: 'DAYTONA_ERROR',
+                }),
+            })
+            removeDaytonaPtyHandle(rawSessionId)
+          }
+
+          // No error if already removed — idempotent like the local terminal remove.
+        }
+      )
+
       // ── reconcileState ────────────────────────────────────────
       // Issue 20: Full implementation.
       //
@@ -1500,6 +1504,9 @@ class DaytonaSandboxProvider extends Context.Tag(
         resumeSandbox,
         getPreviewUrl,
         spawnTerminal,
+        resizeTerminal,
+        killTerminal,
+        removeTerminal,
         reconcileState,
         checkAvailability,
         setAutoStopInterval,

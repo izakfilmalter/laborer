@@ -13,6 +13,12 @@ import { Context, type Effect } from 'effect'
 interface CreateSandboxParams {
   /** Git branch name (used for naming / labelling). */
   readonly branchName: string
+  /**
+   * Current branch of the project's main repo (e.g. "main", "develop").
+   * Used by Daytona to clone the repo at this branch before creating
+   * the workspace branch. Not used by Docker (which uses local worktrees).
+   */
+  readonly currentBranch: string | null
   /** Resolved dev server configuration from `ConfigService`. */
   readonly devServerConfig: {
     /** Auto-open the dev server sidebar on terminal spawn. */
@@ -54,9 +60,15 @@ interface CreateSandboxParams {
     | undefined
   /** Human-readable project name (used for naming / labelling). */
   readonly projectName: string
+  /**
+   * Remote origin URL of the project repo (e.g. "git@github.com:user/repo.git").
+   * Used by Daytona to clone the repo into the sandbox. Not used by Docker
+   * (which bind-mounts the local worktree).
+   */
+  readonly repoUrl: string | null
   /** Unique workspace identifier. */
   readonly workspaceId: string
-  /** Absolute path to the local git worktree on the host. */
+  /** Absolute path to the local git worktree on the host (empty string for Daytona). */
   readonly worktreePath: string
 }
 
@@ -163,6 +175,40 @@ class SandboxProvider extends Context.Tag('@laborer/SandboxProvider')<
       workspaceId: string,
       opts?: TerminalOpts
     ) => Effect.Effect<TerminalHandle, RpcError>
+
+    /**
+     * Resize a terminal's PTY session.
+     *
+     * For Daytona: calls `PtyHandle.resize()` on the WebSocket PTY.
+     * For Docker/host: forwards to the terminal utility process via
+     * `TerminalClient`.
+     *
+     * @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
+     */
+    readonly resizeTerminal: (
+      terminalId: string,
+      cols: number,
+      rows: number
+    ) => Effect.Effect<void, RpcError>
+
+    /**
+     * Kill a terminal's PTY session (stop the process, retain metadata).
+     *
+     * For Daytona: disconnects the PtyHandle WebSocket.
+     * For Docker/host: forwards to the terminal utility process.
+     */
+    readonly killTerminal: (terminalId: string) => Effect.Effect<void, RpcError>
+
+    /**
+     * Remove a terminal — kills the PTY (if running) and cleans up all
+     * resources including the PtyHandle registry entry.
+     *
+     * For Daytona: disconnects + removes from registry.
+     * For Docker/host: forwards to the terminal utility process.
+     */
+    readonly removeTerminal: (
+      terminalId: string
+    ) => Effect.Effect<void, RpcError>
 
     /**
      * Sync LiveStore state with the actual provider state.

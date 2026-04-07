@@ -11,20 +11,14 @@
  * - `isConnected: true` → `{ state: 'healthy' }` (sync idle, connected)
  * - `isConnected: false` → `{ state: 'starting' }` (sync connecting/catching up)
  *
- * Uses polling on `store.networkStatus.get` since the Effect Subscribable
- * stream API requires an Effect runtime which is heavy for a simple React bridge.
- *
  * @see Issue #2: LiveStore sync status indicator
  * @see apps/web/src/components/sync-status-context.tsx — the context being updated
  */
 
-import { Effect } from 'effect'
+import { Effect, Fiber, Stream } from 'effect'
 import { useEffect, useRef } from 'react'
 import { useSyncStatusUpdate } from '@/components/sync-status-context'
 import { useLaborerStore } from '@/livestore/store'
-
-/** Polling interval for checking network status (ms). */
-const SYNC_STATUS_POLL_INTERVAL_MS = 2000
 
 /**
  * Renderless component that bridges LiveStore sync status to the
@@ -38,31 +32,33 @@ function SyncStatusBridge(): null {
   useEffect(() => {
     mountedRef.current = true
 
-    function pollNetworkStatus() {
-      Effect.runPromise(store.networkStatus.get)
-        .then((status) => {
-          if (!mountedRef.current) {
-            return
-          }
-          setSyncState(
-            status.isConnected ? { state: 'healthy' } : { state: 'starting' }
-          )
-        })
-        .catch(() => {
-          // If we can't read network status, leave state as-is
-        })
+    const applyNetworkStatus = (status: { isConnected: boolean }) => {
+      if (!mountedRef.current) {
+        return
+      }
+
+      setSyncState(
+        status.isConnected ? { state: 'healthy' } : { state: 'starting' }
+      )
     }
 
-    // Poll immediately, then on interval
-    pollNetworkStatus()
-    const intervalId = setInterval(
-      pollNetworkStatus,
-      SYNC_STATUS_POLL_INTERVAL_MS
+    Effect.runPromise(store.networkStatus.get)
+      .then(applyNetworkStatus)
+      .catch(() => {
+        // If we can't read the initial network status, leave state as-is.
+      })
+
+    const networkStatusFiber = Effect.runFork(
+      store.networkStatus.changes.pipe(
+        Stream.runForEach((status) =>
+          Effect.sync(() => applyNetworkStatus(status))
+        )
+      )
     )
 
     return () => {
       mountedRef.current = false
-      clearInterval(intervalId)
+      Effect.runFork(Fiber.interrupt(networkStatusFiber))
     }
   }, [store, setSyncState])
 

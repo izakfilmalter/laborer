@@ -1,23 +1,37 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "ui": "tui",
+  "ui": "stream",
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**", "dist-electron/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        "dist/**",
+        "dist-electron/**"
+      ]
     },
     "//#format:fix": {
       "cache": false
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": [
+        "^typecheck"
+      ]
     },
     "test": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": [
+        "^typecheck"
+      ]
     },
     "test:watch": {
-      "dependsOn": ["^typecheck"],
+      "dependsOn": [
+        "^typecheck"
+      ],
       "cache": false,
       "persistent": true
     },

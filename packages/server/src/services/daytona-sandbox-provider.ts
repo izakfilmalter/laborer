@@ -14,9 +14,10 @@
  * - `reconcileState` (Issue 20) — polling loop that syncs LiveStore with
  *   actual Daytona sandbox states every 30 seconds, forked as a daemon fiber
  *
+ * - `checkAvailability` (Issue 12) — verifies API connectivity with result caching
+ *
  * Stub methods (to be implemented in downstream issues):
  * - `getPreviewUrl` (Issue 18)
- * - `checkAvailability` (Issue 12)
  *
  * ### spawnTerminal flow (Issue 16):
  * 1. Look up workspace in LiveStore to get the `sandboxId`
@@ -80,6 +81,7 @@ import {
   Fiber,
   Layer,
   pipe,
+  Ref,
 } from 'effect'
 
 import {
@@ -97,7 +99,7 @@ import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
 import { LaborerStore } from './laborer-store.js'
 import { DAYTONA_RECONCILE_POLL_INTERVAL_MS } from './polling-intervals.js'
-import type { CreateSandboxParams } from './sandbox-provider.js'
+import type { CreateSandboxParams, ProviderStatus } from './sandbox-provider.js'
 import { SandboxProvider } from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
@@ -180,6 +182,9 @@ class DaytonaSandboxProvider extends Context.Tag(
     Effect.gen(function* () {
       const daytonaClient = yield* DaytonaClient
       const { store } = yield* LaborerStore
+
+      // Cached availability check result — checked once, cached for the session.
+      const cachedAvailability = yield* Ref.make<ProviderStatus | null>(null)
 
       yield* Effect.logInfo('DaytonaSandboxProvider initialized').pipe(
         Effect.annotateLogs('module', logPrefix)
@@ -968,28 +973,73 @@ class DaytonaSandboxProvider extends Context.Tag(
         }).pipe(Effect.forever)
       })
 
-      // ── checkAvailability ─────────────────────────────────────
-      // Stub: will be fully implemented in Issue 12.
-      // For now, perform a basic check: verify API key is set and
-      // attempt a lightweight SDK call.
+      // ── checkAvailability (Issue 12) ────────────────────────────
+      // Verifies that the Daytona API is reachable by performing a
+      // lightweight `list(limit=1)` call. The result is cached after
+      // the first successful or failed check — Daytona availability
+      // is unlikely to change during a server session.
+      //
+      // Since `DaytonaSandboxProvider.layer` depends on `DaytonaClient.layer`
+      // (which dies if DAYTONA_API_KEY is missing), we know the API key is
+      // present if this code executes. The check focuses on connectivity.
+
+      const runAvailabilityCheck = Effect.gen(function* () {
+        // Lightweight connectivity test: list with limit=1
+        const status: ProviderStatus = yield* daytonaClient
+          .list(undefined, undefined, 1)
+          .pipe(
+            Effect.map(
+              (): ProviderStatus => ({
+                available: true,
+              })
+            ),
+            Effect.catchAll((error) => {
+              const errorCode =
+                error instanceof RpcError ? error.code : undefined
+
+              // Provide actionable guidance based on error type
+              let guidance: string
+              if (errorCode === 'DAYTONA_RATE_LIMIT') {
+                guidance =
+                  'Daytona API rate limit reached. Try again in a few minutes.'
+              } else if (errorCode === 'DAYTONA_TIMEOUT') {
+                guidance =
+                  'Daytona API is unreachable. Check your network connection and verify the API URL.'
+              } else {
+                guidance = `Daytona API check failed: ${error.message}. Verify your DAYTONA_API_KEY is valid and the API is reachable.`
+              }
+
+              return Effect.succeed<ProviderStatus>({
+                available: false,
+                error: guidance,
+              })
+            })
+          )
+
+        if (status.available) {
+          yield* Effect.logInfo('Daytona API is available').pipe(
+            Effect.annotateLogs('module', logPrefix)
+          )
+        } else {
+          yield* Effect.logWarning(
+            `Daytona API unavailable: ${status.error}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+
+        return status
+      })
 
       const checkAvailability = Effect.fn(
         'DaytonaSandboxProvider.checkAvailability'
       )(function* () {
-        // Try listing sandboxes with limit=1 as a connectivity check
-        const result = yield* daytonaClient.list(undefined, undefined, 1).pipe(
-          Effect.map(() => ({
-            available: true as const,
-          })),
-          Effect.catchAll((error) =>
-            Effect.succeed({
-              available: false as const,
-              error: error.message,
-            })
-          )
-        )
+        const cached = yield* Ref.get(cachedAvailability)
+        if (cached !== null) {
+          return cached
+        }
 
-        return result
+        const status = yield* runAvailabilityCheck
+        yield* Ref.set(cachedAvailability, status)
+        return status
       })
 
       // ── setAutoStopInterval ──────────────────────────────────
@@ -1025,6 +1075,11 @@ class DaytonaSandboxProvider extends Context.Tag(
           `Auto-stop interval set to ${interval} minutes for workspace "${workspaceId}" (sandbox: "${sandboxId}")`
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
+
+      // ── Run availability check eagerly ─────────────────────────
+      // Cache the result during layer construction so it's ready before
+      // the first `sandbox.providerStatus` RPC arrives.
+      yield* checkAvailability()
 
       // ── Fork reconciliation daemon ────────────────────────────
       // The reconciliation loop runs for the lifetime of the service.

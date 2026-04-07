@@ -1,5 +1,9 @@
 /**
- * Tests for DaytonaSandboxProvider — Issues 13, 14, 15, 16, 19 & 20
+ * Tests for DaytonaSandboxProvider — Issues 12, 13, 14, 15, 16, 19 & 20
+ *
+ * Issue 12: Verifies checkAvailability — returns available when API is reachable,
+ * returns unavailable with actionable guidance when list fails (auth error,
+ * rate limit, timeout), and caches the result after the first check.
  *
  * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
@@ -824,8 +828,9 @@ describe('DaytonaSandboxProvider', () => {
           // Do NOT seed a workspace — it should skip gracefully
           yield* sp.destroySandbox('nonexistent-workspace-id')
 
-          // No SDK calls should be made
-          assert.strictEqual(log.length, 0)
+          // No SDK calls should be made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -842,8 +847,9 @@ describe('DaytonaSandboxProvider', () => {
 
           yield* sp.destroySandbox(wid)
 
-          // No SDK calls should be made
-          assert.strictEqual(log.length, 0)
+          // No SDK calls should be made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1028,8 +1034,9 @@ describe('DaytonaSandboxProvider', () => {
 
           assert.isNotNull(result)
           assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
-          // No SDK calls made
-          assert.strictEqual(log.length, 0)
+          // No SDK calls made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1116,8 +1123,9 @@ describe('DaytonaSandboxProvider', () => {
 
           assert.isNotNull(result)
           assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
-          // No SDK calls made
-          assert.strictEqual(log.length, 0)
+          // No SDK calls made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1200,7 +1208,9 @@ describe('DaytonaSandboxProvider', () => {
 
           assert.isNotNull(result)
           assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
-          assert.strictEqual(log.length, 0)
+          // No SDK calls made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1214,6 +1224,140 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const status = yield* sp.checkAvailability()
           assert.isTrue(status.available)
+          assert.isUndefined(status.error)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('returns unavailable with guidance when list fails', () =>
+      Effect.gen(function* () {
+        const listFailClientLayer = Layer.succeed(
+          DaytonaClient,
+          DaytonaClient.of({
+            create: () => Effect.die('not expected'),
+            createFromSnapshot: () => Effect.die('not expected'),
+            get: () => Effect.die('not expected'),
+            list: () =>
+              new RpcError({
+                message: 'Unauthorized: invalid API key',
+                code: 'DAYTONA_ERROR',
+              }),
+            start: () => Effect.void,
+            stop: () => Effect.void,
+            delete: () => Effect.void,
+            setAutostopInterval: () => Effect.void,
+            snapshot: {} as DaytonaClient['Type']['snapshot'],
+            raw: {} as DaytonaClient['Type']['raw'],
+          })
+        )
+        const layer = DaytonaSandboxProvider.layer.pipe(
+          Layer.provide(listFailClientLayer),
+          Layer.provideMerge(TestLaborerStore)
+        )
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const status = yield* sp.checkAvailability()
+          assert.isFalse(status.available)
+          assert.isDefined(status.error)
+          assert.include(status.error, 'DAYTONA_API_KEY')
+        }).pipe(Effect.provide(layer))
+      })
+    )
+
+    it.scoped(
+      'returns unavailable with rate limit guidance when rate limited',
+      () =>
+        Effect.gen(function* () {
+          const rateLimitClientLayer = Layer.succeed(
+            DaytonaClient,
+            DaytonaClient.of({
+              create: () => Effect.die('not expected'),
+              createFromSnapshot: () => Effect.die('not expected'),
+              get: () => Effect.die('not expected'),
+              list: () =>
+                new RpcError({
+                  message: 'Rate limit exceeded',
+                  code: 'DAYTONA_RATE_LIMIT',
+                }),
+              start: () => Effect.void,
+              stop: () => Effect.void,
+              delete: () => Effect.void,
+              setAutostopInterval: () => Effect.void,
+              snapshot: {} as DaytonaClient['Type']['snapshot'],
+              raw: {} as DaytonaClient['Type']['raw'],
+            })
+          )
+          const layer = DaytonaSandboxProvider.layer.pipe(
+            Layer.provide(rateLimitClientLayer),
+            Layer.provideMerge(TestLaborerStore)
+          )
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const status = yield* sp.checkAvailability()
+            assert.isFalse(status.available)
+            assert.isDefined(status.error)
+            assert.include(status.error, 'rate limit')
+          }).pipe(Effect.provide(layer))
+        })
+    )
+
+    it.scoped(
+      'returns unavailable with timeout guidance when API unreachable',
+      () =>
+        Effect.gen(function* () {
+          const timeoutClientLayer = Layer.succeed(
+            DaytonaClient,
+            DaytonaClient.of({
+              create: () => Effect.die('not expected'),
+              createFromSnapshot: () => Effect.die('not expected'),
+              get: () => Effect.die('not expected'),
+              list: () =>
+                new RpcError({
+                  message: 'Request timed out',
+                  code: 'DAYTONA_TIMEOUT',
+                }),
+              start: () => Effect.void,
+              stop: () => Effect.void,
+              delete: () => Effect.void,
+              setAutostopInterval: () => Effect.void,
+              snapshot: {} as DaytonaClient['Type']['snapshot'],
+              raw: {} as DaytonaClient['Type']['raw'],
+            })
+          )
+          const layer = DaytonaSandboxProvider.layer.pipe(
+            Layer.provide(timeoutClientLayer),
+            Layer.provideMerge(TestLaborerStore)
+          )
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const status = yield* sp.checkAvailability()
+            assert.isFalse(status.available)
+            assert.isDefined(status.error)
+            assert.include(status.error, 'unreachable')
+          }).pipe(Effect.provide(layer))
+        })
+    )
+
+    it.scoped('caches the result after first check', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+
+          // First call — should invoke list
+          const status1 = yield* sp.checkAvailability()
+          assert.isTrue(status1.available)
+
+          // Second call — should return cached result without calling list again
+          const status2 = yield* sp.checkAvailability()
+          assert.isTrue(status2.available)
+
+          // list() is called during layer construction (eager check) and then
+          // again if we call checkAvailability() after (but it should be cached).
+          // The eager check + first explicit call should result in exactly 1 list call
+          // (since the eager check caches the result).
+          const listCalls = log.filter((r) => r.method === 'list')
+          assert.strictEqual(listCalls.length, 1)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1435,8 +1579,9 @@ describe('DaytonaSandboxProvider', () => {
 
           assert.isNotNull(result)
           assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
-          // No SDK calls made
-          assert.strictEqual(log.length, 0)
+          // No SDK calls made besides the eager availability check
+          const nonListCalls = log.filter((r) => r.method !== 'list')
+          assert.strictEqual(nonListCalls.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )

@@ -785,3 +785,66 @@ block starting at line 1831, causing syntax errors and test suite failures.
 - Server typecheck passes (`tsc --noEmit`)
 - 40 daytona-sandbox-provider tests pass + 16 git-sync tests pass
 - `bun run format` passes (492 files, no fixes)
+
+## Issue 12: Daytona availability check service + RPC
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Enhanced `checkAvailability` in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Added result caching via `Ref.make<ProviderStatus | null>(null)` — checked once,
+    cached for the server session (matching DockerDetection's caching pattern)
+  - Added eager evaluation: `checkAvailability()` runs during layer construction so the
+    result is ready before the first `sandbox.providerStatus` RPC arrives
+  - Added actionable error guidance based on error type:
+    - `DAYTONA_RATE_LIMIT` → "rate limit reached, try again in a few minutes"
+    - `DAYTONA_TIMEOUT` → "API unreachable, check network and API URL"
+    - Other errors → "check failed, verify DAYTONA_API_KEY is valid"
+  - Added structured logging: logs info when available, warning with error when unavailable
+  - Connectivity check: calls `daytonaClient.list(limit=1)` as lightweight API probe
+- Updated `apps/web/src/components/provider-status-banner.tsx`:
+  - Added `isDaytonaError()` helper to detect Daytona-specific errors from error message
+  - Banner now renders provider-appropriate guidance links:
+    - Daytona errors → "Manage Daytona API keys" link to `app.daytona.io/dashboard/keys`
+    - Docker/other errors → "Install OrbStack" link (existing behavior)
+  - Updated file header comment to reference Issue 12
+- Updated 6 existing test assertions in `daytona-sandbox-provider.test.ts`:
+  - Changed `assert.strictEqual(log.length, 0)` to filter out `list` calls from the
+    eager availability check, using `log.filter(r => r.method !== 'list')` — the eager
+    check adds 1 `list` call to the shared mock log during layer construction
+
+### Tests added (4 new tests in packages/server/test/daytona-sandbox-provider.test.ts):
+- checkAvailability: returns unavailable with DAYTONA_API_KEY guidance when list fails
+  (uses inline `listFailClientLayer` with DAYTONA_ERROR code)
+- checkAvailability: returns unavailable with rate limit guidance when rate limited
+  (uses inline `rateLimitClientLayer` with DAYTONA_RATE_LIMIT code)
+- checkAvailability: returns unavailable with timeout guidance when API unreachable
+  (uses inline `timeoutClientLayer` with DAYTONA_TIMEOUT code)
+- checkAvailability: caches the result after first check — verifies only 1 `list` call
+  is made across multiple `checkAvailability()` invocations (eager check caches result)
+
+### Existing test updated:
+- checkAvailability: returns available when list succeeds — added `assert.isUndefined(status.error)` assertion
+
+### Design decisions:
+- Caching follows the DockerDetection pattern: `Ref.make<ProviderStatus | null>(null)`
+  with cache-on-first-check semantics. Daytona API availability is unlikely to change
+  during a server session.
+- Eager evaluation during layer construction matches DockerDetection — the result is
+  ready before the first RPC call arrives, avoiding a loading state in the UI.
+- API key presence is implicitly verified: `DaytonaSandboxProvider.layer` depends on
+  `DaytonaClient.layer`, which `Effect.die`s if `DAYTONA_API_KEY` is missing. If
+  `checkAvailability` runs, the API key is present. The connectivity check focuses on
+  whether the API is reachable and the key is valid.
+- Error messages include "DAYTONA_API_KEY" in the text for the generic error case,
+  which the UI uses to detect Daytona-specific errors and render the appropriate
+  guidance link.
+- The `sandbox.providerStatus` RPC handler (Issue 3) already delegates to
+  `SandboxProvider.checkAvailability()`, so no handler changes were needed.
+
+### Verification:
+- All 15 turbo tasks pass (typecheck + format + test across all packages)
+- 479 server tests pass (50 test files, 1 skipped) — 44 daytona-sandbox-provider tests
+- 89 shared tests pass
+- `bun run format` passes (492 files, no fixes)

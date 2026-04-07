@@ -3,10 +3,11 @@
  *
  * Queries the `sandbox.providerStatus` RPC on mount. When the configured
  * sandbox provider (Docker or Daytona) is unavailable, renders a persistent
- * warning banner with the error message and guidance.
+ * warning banner with the error message and provider-specific guidance.
  *
  * Issue 2: Docker prerequisite detection
  * Issue 4: UI update to provider-agnostic naming
+ * Issue 12: Daytona availability check + Daytona-specific guidance
  */
 
 import { useAtomValue } from '@effect-atom/atom-react/Hooks'
@@ -22,6 +23,14 @@ const providerStatus$ = LaborerClient.query(
   // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
   undefined as void
 )
+
+/**
+ * Detect whether the error message indicates a Daytona-specific issue.
+ * Used to render provider-appropriate guidance links.
+ */
+const isDaytonaError = (error: string | undefined): boolean =>
+  error !== undefined &&
+  (error.includes('Daytona') || error.includes('DAYTONA_API_KEY'))
 
 function ProviderStatusContent() {
   const result = useAtomValue(providerStatus$)
@@ -41,21 +50,36 @@ function ProviderStatusContent() {
     return null
   }
 
+  const errorMessage =
+    result.value.error ??
+    'The sandbox provider is not available on this system.'
+  const isDaytona = isDaytonaError(result.value.error)
+
   return (
     <Alert variant="destructive">
       <AlertTriangle className="size-3.5" />
       <AlertTitle>Sandbox provider not available</AlertTitle>
       <AlertDescription>
-        {result.value.error ??
-          'The sandbox provider is not available on this system.'}{' '}
-        <a
-          className="font-medium underline underline-offset-4"
-          href="https://orbstack.dev"
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          Install OrbStack
-        </a>
+        {errorMessage}{' '}
+        {isDaytona ? (
+          <a
+            className="font-medium underline underline-offset-4"
+            href="https://app.daytona.io/dashboard/keys"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Manage Daytona API keys
+          </a>
+        ) : (
+          <a
+            className="font-medium underline underline-offset-4"
+            href="https://orbstack.dev"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Install OrbStack
+          </a>
+        )}
       </AlertDescription>
     </Alert>
   )

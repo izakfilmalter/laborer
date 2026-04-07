@@ -4,7 +4,7 @@ Parent PRD: [PRD-terminal-local-echo.md](./PRD-terminal-local-echo.md)
 
 ## Issue 1: Core typeahead addon — port prediction engine from VS Code
 
-Status: TODO
+Status: DONE
 
 ### What to build
 

@@ -1,0 +1,25 @@
+## Issue 1: Core typeahead addon — port prediction engine from VS Code
+
+Status: DONE
+
+Ported VS Code's terminalTypeAheadAddon.ts (~1575 lines) into apps/web/src/lib/typeahead-addon.ts.
+
+Adaptations made:
+- Replaced Disposable/Emitter/toDisposable with minimal inline classes
+- Replaced @debounce decorator with inline setTimeout-based debounce
+- Replaced IConfigurationService with plain ITypeAheadConfig interface + DEFAULT_CONFIG
+- Removed ITelemetryService entirely
+- Replaced ITerminalProcessManager with minimal ITypeAheadProcessManager interface
+- Replaced Color.fromHex with inline hex parser
+- Replaced escapeRegExpCharacters, isNumber, SingleOrMany with inline utilities
+- Replaced disposableTimeout with setTimeout + clearTimeout
+- Fixed all Biome lint issues (75 total): noParameterProperties, useReadonlyClassProperties,
+  noControlCharactersInRegex (suppressed for terminal escape sequences), useSortedInterfaceMembers,
+  noExcessiveCognitiveComplexity (suppressed for ported VS Code logic), useCollapsedIf,
+  noEmptyBlockStatements, useAtIndex, noParameterAssign, useNumberNamespace, useTopLevelRegex,
+  useSimplifiedLogicExpression
+- Fixed all TypeScript errors with exactOptionalPropertyTypes strict mode
+- Typecheck passes (tsc --noEmit)
+- Format passes (ultracite check)
+- Microsoft MIT license header with adaptation note included
+- All prediction classes, StringReader, Cursor, PredictionTimeline, PredictionStats exported

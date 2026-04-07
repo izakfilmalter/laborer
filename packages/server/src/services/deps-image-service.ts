@@ -20,7 +20,7 @@
  * mount from shadowing the pre-installed dependencies.
  */
 
-import { execSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   existsSync,
@@ -414,6 +414,33 @@ const getContainerCachePath = (lockfileType: LockfileType): string => {
 }
 
 /**
+ * Run a CLI command asynchronously and return its trimmed stdout.
+ *
+ * Uses `execFile` (non-blocking) instead of `execSync` so the Node.js
+ * event loop stays responsive — the server utility process shares this
+ * event loop with RPC ping/pong heartbeats on MessagePorts.
+ */
+const execCommand = (
+  command: string,
+  args: readonly string[],
+  timeout = 5000
+): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args as string[],
+      { encoding: 'utf-8', timeout },
+      (error, stdout) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve((stdout ?? '').trim())
+      }
+    )
+  })
+
+/**
  * Detect the host machine's package manager store/cache path.
  *
  * Runs the appropriate CLI command (`pnpm store path`, `npm config get cache`,
@@ -427,54 +454,48 @@ const getContainerCachePath = (lockfileType: LockfileType): string => {
  *
  * Returns `null` when the CLI isn't installed or the command fails.
  */
-const getHostStorePath = (lockfileType: LockfileType): string | null => {
-  try {
-    switch (lockfileType) {
-      case 'pnpm': {
-        // `pnpm store path` returns e.g. /Users/x/Library/pnpm/store/v10
-        // Mount the parent so all version subdirectories are shared.
-        const storePath = execSync('pnpm store path', {
-          encoding: 'utf-8',
-          timeout: 5000,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim()
-        if (storePath.length === 0) {
-          return null
+const getHostStorePath = (
+  lockfileType: LockfileType
+): Effect.Effect<string | null> =>
+  Effect.tryPromise({
+    try: async () => {
+      switch (lockfileType) {
+        case 'pnpm': {
+          // `pnpm store path` returns e.g. /Users/x/Library/pnpm/store/v10
+          // Mount the parent so all version subdirectories are shared.
+          const storePath = await execCommand('pnpm', ['store', 'path'])
+          if (storePath.length === 0) {
+            return null
+          }
+          // Go up one level from the versioned path (v10, v3, etc.)
+          const parent = join(storePath, '..')
+          return existsSync(parent) ? parent : null
         }
-        // Go up one level from the versioned path (v10, v3, etc.)
-        const parent = join(storePath, '..')
-        return existsSync(parent) ? parent : null
+        case 'npm': {
+          const cachePath = await execCommand('npm', ['config', 'get', 'cache'])
+          return cachePath.length > 0 && existsSync(cachePath)
+            ? cachePath
+            : null
+        }
+        case 'yarn': {
+          const cachePath = await execCommand('yarn', ['cache', 'dir'])
+          return cachePath.length > 0 && existsSync(cachePath)
+            ? cachePath
+            : null
+        }
+        case 'bun': {
+          // Bun doesn't have a direct "cache path" command, but the global
+          // cache lives at ~/.bun/install/cache by default.
+          const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+          const cachePath = join(home, '.bun', 'install', 'cache')
+          return existsSync(cachePath) ? cachePath : null
+        }
+        default:
+          return null
       }
-      case 'npm': {
-        const cachePath = execSync('npm config get cache', {
-          encoding: 'utf-8',
-          timeout: 5000,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim()
-        return cachePath.length > 0 && existsSync(cachePath) ? cachePath : null
-      }
-      case 'yarn': {
-        const cachePath = execSync('yarn cache dir', {
-          encoding: 'utf-8',
-          timeout: 5000,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim()
-        return cachePath.length > 0 && existsSync(cachePath) ? cachePath : null
-      }
-      case 'bun': {
-        // Bun doesn't have a direct "cache path" command, but the global
-        // cache lives at ~/.bun/install/cache by default.
-        const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
-        const cachePath = join(home, '.bun', 'install', 'cache')
-        return existsSync(cachePath) ? cachePath : null
-      }
-      default:
-        return null
-    }
-  } catch {
-    return null
-  }
-}
+    },
+    catch: () => null,
+  }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
 /**
  * Install bun inside a running container when the lockfile is bun-based.
@@ -720,7 +741,7 @@ const buildDepsImage = (
     // packages instead of fetching them from the network.
     // Falls back to a Docker named volume when the host path can't be
     // detected (e.g. the PM isn't installed on the host).
-    const hostStorePath = getHostStorePath(lockfileType)
+    const hostStorePath = yield* getHostStorePath(lockfileType)
     const cacheMount = hostStorePath
       ? `${hostStorePath}:${containerCachePath}`
       : `${getCacheVolumeName(lockfileType)}:${containerCachePath}`

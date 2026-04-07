@@ -17,7 +17,13 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFile,
+  writeFileSync,
+} from 'node:fs'
 import { dirname } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
@@ -266,8 +272,44 @@ const makeSyncStorage = async (dataDir: string, storeId: string) => {
   // Track whether the database has unflushed changes.
   let dirty = false
   let flushTimer: ReturnType<typeof setInterval> | null = null
+  // Guard against concurrent async flushes — if a flush is in progress,
+  // the next timer tick will skip and retry on the following interval.
+  let flushing = false
 
+  /**
+   * Asynchronously persist the in-memory database to disk.
+   *
+   * `db.export()` is synchronous (sql.js WASM limitation) but typically
+   * completes in single-digit milliseconds for databases under ~10 MB.
+   * The disk write uses the async `writeFile` so the Node.js event loop
+   * stays responsive — this is critical because the same event loop
+   * handles RPC ping/pong heartbeats on shared MessagePorts.
+   */
   const flushToDisk = () => {
+    if (!dirty || flushing) {
+      return
+    }
+    flushing = true
+    // db.export() is synchronous but we accept the brief stall —
+    // the expensive part (disk I/O) is async below.
+    const data = db.export()
+    const buffer = Buffer.from(data)
+    dirty = false
+    writeFile(dbPath, buffer, (err) => {
+      flushing = false
+      if (err) {
+        // Re-mark dirty so the next interval retries.
+        dirty = true
+        console.error('[sync-backend] async flush failed:', err)
+      }
+    })
+  }
+
+  /**
+   * Synchronous flush used only during `close()` to guarantee data is
+   * persisted before the database handle is released.
+   */
+  const flushToDiskSync = () => {
     if (!dirty) {
       return
     }
@@ -354,12 +396,13 @@ const makeSyncStorage = async (dataDir: string, storeId: string) => {
     },
 
     close: () => {
-      // Final flush before closing.
+      // Final flush before closing — must be synchronous to guarantee
+      // data is persisted before the database handle is released.
       if (flushTimer !== null) {
         clearInterval(flushTimer)
         flushTimer = null
       }
-      flushToDisk()
+      flushToDiskSync()
       db.close()
     },
   }

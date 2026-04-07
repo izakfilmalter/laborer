@@ -1,29 +1,54 @@
 # Laborer
 
-A local-first desktop application for orchestrating multiple AI coding agents in parallel. Laborer provides a tmux-style panel system where each pane is a live terminal running an AI agent, a diff viewer, or a raw shell — enabling you to monitor and interact with many agents working on different branches simultaneously.
+**Mission control for parallel AI coding agents.**
+
+A local-first desktop application for orchestrating multiple AI coding agents in parallel. Laborer provides a tmux-style panel system where each pane is a live terminal running an AI agent, a diff viewer, a file tree, a review panel, or a raw shell -- enabling you to monitor and interact with many agents working on different branches simultaneously.
+
+```
++-------------------+-------------------+-------------------+
+|  Agent: auth-fix  |  Agent: api-v2    |  Agent: tests     |
+|  branch: fix/auth |  branch: feat/api |  branch: test/e2e |
+|  port: 3101       |  port: 3102       |  port: 3103       |
+|  [running]        |  [waiting]        |  [running]        |
++-------------------+-------------------+-------------------+
+|          Diff Viewer          |        File Tree          |
+|    accept/reject per hunk    |    git status decorations  |
++-------------------------------+---------------------------+
+```
 
 ## Why Laborer?
 
-Running 4-10+ AI coding agents at once is painful without purpose-built tooling:
+Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, Codex) but can only effectively use **one at a time**. The bottleneck is no longer the AI -- it's the developer's ability to manage multiple agents at once.
 
-- **No multi-agent visibility** — Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes.
-- **Manual environment management** — Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace.
-- **Disconnected workflows** — Unifies the pipeline from PRD writing to issue creation to implementation to review in a single interface.
+- **No multi-agent visibility** -- Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes with real-time status tracking.
+- **Manual environment management** -- Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace. Each agent gets a fully isolated environment automatically.
+- **Disconnected workflows** -- Unifies the pipeline from PRD writing to issue creation to agent execution to code review in a single interface. No context-switching between Linear, GitHub, terminal, and review tools.
+- **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent. Laborer saturates your machine with parallel execution.
 
 ## Features
 
-- **Tmux-style panel layout** — Recursive horizontal/vertical splits with keyboard shortcuts, drag-and-drop workspace tabs, and fullscreen mode
-- **Git worktree-based workspaces** — Each workspace gets its own branch, directory, and allocated port. Automatic setup scripts, port allocation, and full lifecycle management
-- **Full terminal emulation** — Real PTY terminals via node-pty + xterm.js with WebSocket streaming. Multiple terminals per workspace (agent, type checker, test runner, dev server, shell)
-- **Live diff viewer** — Real-time git diffs against the worktree's base SHA with accept/reject annotations
-- **Agent status tracking** — Detects when AI agents are active vs waiting for input, with OS-level notifications
-- **PRD editor** — Rich text editor for writing product requirements documents, with issue creation directly from PRDs
-- **Task management** — Import tasks from GitHub Issues, Linear tickets, or create manually. Create workspaces directly from tasks
-- **Docker container support** — Optional containerized dev servers via OrbStack with bind-mounted worktrees
-- **GitHub PR integration** — Tracks PR state (open/closed/merged) per workspace
-- **MCP server** — Model Context Protocol server for PRD and issue management, enabling AI agents to interact with Laborer
-- **Multi-window support** — Multiple Electron windows with persistent layout and window state
-- **Auto-updates** — GitHub Releases-based auto-update for the desktop app
+### Workspace Management
+- **Git worktree-based workspaces** -- Each workspace gets its own branch, directory, and allocated port (range 3100-3999). Automatic setup scripts, port allocation, and full lifecycle management (create/run/stop/destroy). Auto-detects existing worktrees.
+- **Docker container support** -- Optional containerized dev servers via OrbStack with bind-mounted worktrees and stable `.orb.local` URLs. Container pause/unpause and status tracking.
+- **Cross-project dashboard** -- High-level command-center view showing all workspaces and tasks across all projects with status summaries.
+
+### Terminal and Agent Orchestration
+- **Tmux-style panel layout** -- Recursive horizontal/vertical splits with keyboard shortcuts (Ctrl+B prefix), drag-and-drop workspace tabs, fullscreen mode, and tabbed window layout (window tabs > workspace tiles > panel tabs > panel splits).
+- **Full terminal emulation** -- Real PTY terminals via node-pty + xterm.js with VS Code-grade flow control, 100k+ line scrollback, per-terminal MessagePort channels for zero-copy data transfer, and crash-resilient session persistence. Multiple terminals per workspace (agent, type checker, test runner, dev server, shell).
+- **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, Codex, and rlph/brrr.
+- **Multi-window support** -- Multiple Electron windows with persistent layout, window state across restarts, and drag-and-drop tab reordering.
+
+### Code Review and Diffs
+- **Live diff viewer** -- Real-time git diffs against the worktree's base SHA with per-hunk accept/reject annotations. Split and unified views. Reactive updates via filesystem watcher.
+- **File tree with git status** -- Lazy per-directory file browser with git status decorations, right-click context menus, and reactive invalidation.
+- **PR review findings** -- GitHub PR comment integration with severity-sorted display (critical/warning/info), checkbox triage, and one-click "Fix Selected" action.
+- **GitHub PR integration** -- Tracks PR state (open/closed/merged) per workspace with ahead/behind counts.
+
+### Planning and Task Management
+- **PRD editor** -- Plate.js rich text editor for writing product requirements documents with debounced auto-save and integrated issues list.
+- **Task management** -- Import tasks from GitHub Issues, Linear tickets, or create via MCP-driven PRD workflow. Create workspaces directly from tasks.
+- **MCP server** -- Model Context Protocol server enabling AI agents to create PRDs, break them into issues, and query remaining work. Auto-registers with OpenCode, Claude Code, and Codex.
+- **Auto-updates** -- GitHub Releases-based auto-update keeps the desktop app current.
 
 ## Tech Stack
 

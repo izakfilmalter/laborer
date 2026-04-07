@@ -51,6 +51,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useTerminalList } from '@/hooks/use-terminal-list'
+import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -336,6 +337,7 @@ interface ProjectSection {
     readonly sandboxUrl: string | null
     readonly sandboxPort: number | null
     readonly sandboxStatus: string | null
+    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }>
 }
@@ -595,6 +597,7 @@ function DashboardWorkspaceRow({
     readonly sandboxUrl: string | null
     readonly sandboxPort: number | null
     readonly sandboxStatus: string | null
+    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }
   readonly terminalCount: number
@@ -634,6 +637,12 @@ function DashboardWorkspaceRow({
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">
           {terminalCount} terminal{terminalCount !== 1 ? 's' : ''}
+        </span>
+      )}
+      {workspace.sandboxSetupStep != null && (
+        <span className="flex shrink-0 items-center gap-1 text-sky-500 text-xs">
+          <Spinner className="size-3 text-sky-500" />
+          {getSandboxSetupLabel(workspace.sandboxSetupStep)}
         </span>
       )}
       {displayStatus === 'errored' && workspace.errorMessage ? (

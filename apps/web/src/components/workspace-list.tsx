@@ -116,6 +116,7 @@ import {
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
+import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -166,35 +167,8 @@ const getWorktreeSetupLabel = (step: string): string => {
   }
 }
 
-/**
- * Human-readable label for sandbox setup progress steps.
- * Handles both Docker steps ("building-image", "starting-container")
- * and Daytona steps ("creating-sandbox", "pushing-code", etc.),
- * as well as granular Docker build steps ("Step 4/5: RUN pnpm install").
- */
-const getSandboxSetupLabel = (step: string): string => {
-  if (step.startsWith('Step ')) {
-    return step
-  }
-  switch (step) {
-    case 'building-image':
-      return 'Building container image...'
-    case 'starting-container':
-      return 'Starting container...'
-    case 'creating-sandbox':
-      return 'Creating sandbox...'
-    case 'building-snapshot':
-      return 'Building sandbox snapshot...'
-    case 'pushing-code':
-      return 'Pushing code to sandbox...'
-    case 'configuring-ssh':
-      return 'Configuring SSH access...'
-    case 'starting-sandbox':
-      return 'Starting sandbox...'
-    default:
-      return 'Setting up sandbox...'
-  }
-}
+// getSandboxSetupLabel is shared with workspace-dashboard.tsx —
+// see apps/web/src/lib/sandbox-setup-labels.ts for the implementation.
 
 /**
  * Returns Tailwind classes for a status badge based on workspace status.

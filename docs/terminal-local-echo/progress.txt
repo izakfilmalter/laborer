@@ -85,3 +85,44 @@ ITypeAheadProcessManager, TypeAheadAddon from @/lib/typeahead-addon.
 - Typecheck passes (tsc --noEmit)
 - Format passes (ultracite check)
 - Pre-existing Bun crash in terminal-data-channel.test.ts is unrelated
+
+## Issue 2: Port VS Code typeahead tests
+
+Status: DONE
+
+Ported VS Code's terminalTypeAhead.test.ts (~551 lines) into apps/web/test/typeahead-addon.test.ts.
+
+Adaptations made:
+- Replaced suite/test/setup/teardown with vitest describe/it/beforeEach/afterEach
+- Replaced assert.strictEqual/deepStrictEqual with vitest expect().toBe/toStrictEqual
+- Replaced sinon useFakeTimers with vi.useFakeTimers/vi.advanceTimersByTime/vi.useRealTimers
+- Replaced VS Code Emitter with addon's exported Emitter class
+- Replaced DisposableStore with manual IDisposable[] array and cleanup
+- Replaced TestConfigurationService with plain ITypeAheadConfig object
+- Replaced ITerminalProcessManager mock with ITypeAheadProcessManager cast
+- Replaced isString check in mockCell with typeof === 'string'
+- Replaced hasOwnProperty with `in` operator
+- Removed ITelemetryService mock (addon has no telemetry)
+- Removed ensureNoDisposablesAreLeakedInTestSuite (replaced with afterEach cleanup)
+- Ported TestTypeAheadAddon subclass exposing internal state for assertions
+- Ported createMockTerminal with mock Terminal, IBuffer, and cursor tracking
+- Ported mockCell proxy for simulating xterm IBufferCell interface
+
+All VS Code test cases preserved:
+- PredictionStats: creates sane data, circular buffer (2 tests)
+- Timeline: predicts single character, validates character prediction,
+  validates zsh prediction (#112842), does not validate zsh on differing lookbehind,
+  rolls back character prediction, handles left/right arrow at boundary,
+  internal cursor state reset on undo, restores cursor graphics mode,
+  validates/applies graphics mode, ignores cursor hides/shows,
+  matches backspace at EOL (bash/zsh), gradually matches backspace,
+  restores old char after invalid backspace, waits for validation before delete,
+  waits for first valid prediction, disables on title change,
+  adds line wrap prediction behind boundary (19 tests)
+
+Total: 21 tests, 50 assertions, all passing.
+
+- All tests pass (bun test)
+- Typecheck passes (tsc --noEmit)
+- Format passes (ultracite check)
+- Microsoft MIT license header with adaptation note included

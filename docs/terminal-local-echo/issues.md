@@ -66,7 +66,7 @@ None — can start immediately.
 
 ## Issue 2: Port VS Code typeahead tests
 
-Status: TODO
+Status: DONE
 
 ### What to build
 

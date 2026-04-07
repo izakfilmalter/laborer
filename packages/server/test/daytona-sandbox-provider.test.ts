@@ -1,8 +1,12 @@
 /**
- * Tests for DaytonaSandboxProvider — Issue 13: create sandbox
+ * Tests for DaytonaSandboxProvider — Issues 13 & 14
  *
- * Verifies createSandbox with a mocked DaytonaClient, ensuring correct
+ * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
+ *
+ * Issue 14: Verifies destroySandbox lifecycle — deletion, idempotent handling of
+ * already-destroyed sandboxes, graceful skip when workspace is missing or has no
+ * sandboxId, and best-effort cleanup when delete fails.
  */
 
 import { CodeLanguage } from '@daytonaio/sdk'
@@ -132,6 +136,78 @@ const makeNotFoundClientLayer = (
     })
   )
 
+/**
+ * Mock DaytonaClient where `.get()` fails with a non-NOT_FOUND error
+ * (e.g. network timeout). Used to verify destroySandbox handles transient
+ * errors gracefully — skips delete but still commits the stop event.
+ */
+const makeGetErrorClientLayer = (
+  log: MockCallRecord[]
+): Layer.Layer<DaytonaClient> =>
+  Layer.succeed(
+    DaytonaClient,
+    DaytonaClient.of({
+      create: () => Effect.die('not expected'),
+      createFromSnapshot: () => Effect.die('not expected'),
+      get: (...args) => {
+        log.push({ method: 'get', args })
+        return new RpcError({
+          message: 'Request timed out',
+          code: 'DAYTONA_TIMEOUT',
+        })
+      },
+      list: () =>
+        Effect.succeed({
+          items: [],
+          total: 0,
+        } as unknown as DaytonaPaginatedSandboxes),
+      start: () => Effect.void,
+      stop: () => Effect.void,
+      delete: () => Effect.void,
+      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      raw: {} as DaytonaClient['Type']['raw'],
+    })
+  )
+
+/**
+ * Mock DaytonaClient where `.get()` succeeds but `.delete()` fails.
+ * Used to verify destroySandbox still commits v2.SandboxStopped even
+ * when the actual SDK delete call errors.
+ */
+const makeDeleteFailClientLayer = (
+  log: MockCallRecord[]
+): Layer.Layer<DaytonaClient> => {
+  const sb = makeMockSandbox()
+  return Layer.succeed(
+    DaytonaClient,
+    DaytonaClient.of({
+      create: () => Effect.die('not expected'),
+      createFromSnapshot: () => Effect.die('not expected'),
+      get: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'get', args })
+          return sb
+        }),
+      list: () =>
+        Effect.succeed({
+          items: [],
+          total: 0,
+        } as unknown as DaytonaPaginatedSandboxes),
+      start: () => Effect.void,
+      stop: () => Effect.void,
+      delete: (...args) => {
+        log.push({ method: 'delete', args })
+        return new RpcError({
+          message: 'Internal server error',
+          code: 'DAYTONA_ERROR',
+        })
+      },
+      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      raw: {} as DaytonaClient['Type']['raw'],
+    })
+  )
+}
+
 const makeLayer = (log: MockCallRecord[]) =>
   DaytonaSandboxProvider.layer.pipe(
     Layer.provide(makeMockClientLayer(log)),
@@ -141,6 +217,18 @@ const makeLayer = (log: MockCallRecord[]) =>
 const makeNotFoundLayer = (log: MockCallRecord[]) =>
   DaytonaSandboxProvider.layer.pipe(
     Layer.provide(makeNotFoundClientLayer(log)),
+    Layer.provideMerge(TestLaborerStore)
+  )
+
+const makeGetErrorLayer = (log: MockCallRecord[]) =>
+  DaytonaSandboxProvider.layer.pipe(
+    Layer.provide(makeGetErrorClientLayer(log)),
+    Layer.provideMerge(TestLaborerStore)
+  )
+
+const makeDeleteFailLayer = (log: MockCallRecord[]) =>
+  DaytonaSandboxProvider.layer.pipe(
+    Layer.provide(makeDeleteFailClientLayer(log)),
     Layer.provideMerge(TestLaborerStore)
   )
 
@@ -363,7 +451,7 @@ describe('DaytonaSandboxProvider', () => {
       })
     )
 
-    it.scoped('handles already-destroyed sandbox gracefully', () =>
+    it.scoped('handles already-destroyed sandbox gracefully (NOT_FOUND)', () =>
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
@@ -383,11 +471,117 @@ describe('DaytonaSandboxProvider', () => {
 
           yield* sp.destroySandbox(wid)
 
+          // Should NOT call delete (sandbox is already gone)
+          assert.strictEqual(log.filter((c) => c.method === 'delete').length, 0)
           const [ws] = store.query(tables.workspaces.where('id', wid))
           assert.strictEqual(ws?.sandboxId, null)
           assert.strictEqual(ws?.sandboxStatus, null)
         }).pipe(Effect.provide(makeNotFoundLayer(log)))
       })
+    )
+
+    it.scoped('skips gracefully when workspace not found in LiveStore', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          // Do NOT seed a workspace — it should skip gracefully
+          yield* sp.destroySandbox('nonexistent-workspace-id')
+
+          // No SDK calls should be made
+          assert.strictEqual(log.length, 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('skips gracefully when workspace has no sandboxId', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          // Seed workspace WITHOUT starting a sandbox (no sandboxId)
+          seedWorkspace(store as never, wid)
+
+          yield* sp.destroySandbox(wid)
+
+          // No SDK calls should be made
+          assert.strictEqual(log.length, 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped(
+      'still commits SandboxStopped when get fails with non-NOT_FOUND error',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId: 'sb-timeout',
+                sandboxUrl: 'sb-timeout',
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            yield* sp.destroySandbox(wid)
+
+            // get was called, delete was NOT called (couldn't fetch sandbox)
+            assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+            assert.strictEqual(
+              log.filter((c) => c.method === 'delete').length,
+              0
+            )
+            // SandboxStopped event still committed
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxId, null)
+            assert.strictEqual(ws?.sandboxStatus, null)
+          }).pipe(Effect.provide(makeGetErrorLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'still commits SandboxStopped when delete fails (best-effort)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId: 'sb-del-fail',
+                sandboxUrl: 'sb-del-fail',
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            yield* sp.destroySandbox(wid)
+
+            // Both get and delete were called
+            assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+            assert.strictEqual(
+              log.filter((c) => c.method === 'delete').length,
+              1
+            )
+            // SandboxStopped event still committed despite delete failure
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxId, null)
+            assert.strictEqual(ws?.sandboxStatus, null)
+          }).pipe(Effect.provide(makeDeleteFailLayer(log)))
+        })
     )
   })
 

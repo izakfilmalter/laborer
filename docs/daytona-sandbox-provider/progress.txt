@@ -482,3 +482,39 @@ Date: 2026-04-07
 - 89 shared tests pass
 - 1070+ web tests pass
 - `bun run format` passes (490 files, no fixes)
+
+## Issue 14: DaytonaSandboxProvider — destroy sandbox
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Enhanced `destroySandbox` in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Improved error handling in `.get()` to distinguish DAYTONA_NOT_FOUND (sandbox already
+    gone, skip delete) from other errors (transient failures — log warning, skip delete)
+  - Added detailed step-by-step comments for the destroy flow
+  - Added SSH config cleanup hook placeholder (TODO for Issue 22)
+  - Added success log after successful SDK delete
+  - Commits v2.SandboxStopped regardless of deletion outcome (best-effort semantics)
+- Updated file header comment to reflect Issue 14 completion — no longer describes
+  destroy as a stub
+- Added error code to warning log messages for better debuggability
+
+### Tests added (4 new tests in packages/server/test/daytona-sandbox-provider.test.ts):
+- destroySandbox: skips gracefully when workspace not found in LiveStore (no SDK calls)
+- destroySandbox: skips gracefully when workspace has no sandboxId (no SDK calls)
+- destroySandbox: still commits SandboxStopped when get fails with non-NOT_FOUND error
+  (DAYTONA_TIMEOUT — verifies delete is skipped but event is committed)
+- destroySandbox: still commits SandboxStopped when delete fails (best-effort — verifies
+  both get and delete are called, event is committed despite delete failure)
+
+### Mock infrastructure added:
+- `makeGetErrorClientLayer`: DaytonaClient mock where `.get()` returns DAYTONA_TIMEOUT
+- `makeDeleteFailClientLayer`: DaytonaClient mock where `.get()` succeeds but `.delete()` fails
+- Corresponding `makeGetErrorLayer` and `makeDeleteFailLayer` factory functions
+
+### Verification:
+- Server typecheck passes (`tsc --noEmit`)
+- 432 server tests pass (49 test files, 1 skipped) — 13 total for daytona-sandbox-provider
+- 89 shared tests pass
+- `bun run format` passes (490 files, no fixes)

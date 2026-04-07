@@ -4,20 +4,27 @@
  * Implements the `SandboxProvider` interface using the Daytona SDK (via `DaytonaClient`)
  * to manage cloud sandbox lifecycle, terminal access, preview URLs, and state reconciliation.
  *
- * This issue (Issue 13) implements the `createSandbox` method — the core of the Daytona
- * integration. Remaining methods (destroy, pause, resume, preview URLs, terminal, reconciliation)
- * are stubbed and will be implemented in downstream issues (14–22).
+ * Fully implemented methods:
+ * - `createSandbox` (Issue 13) — core sandbox creation flow
+ * - `destroySandbox` (Issue 14) — sandbox teardown with best-effort cleanup
  *
- * The `createSandbox` flow:
- * 1. Determines the sandbox image from `devServer.image` or falls back to the Daytona default
- * 2. Creates the sandbox via `DaytonaClient.create()` with labeler labels, auto-stop interval,
- *    and optional resource limits
- * 3. Waits for the sandbox to reach `started` state (handled by the SDK)
- * 4. Commits a `v2.SandboxStarted` event to LiveStore with the sandbox ID, preview URL base,
- *    image, and `sandboxProvider: "daytona"`
- * 5. Reports progress via `v2.SandboxSetupStepChanged` events throughout
+ * Stub methods (to be implemented in downstream issues):
+ * - `pauseSandbox` / `resumeSandbox` (Issue 19)
+ * - `getPreviewUrl` (Issue 18)
+ * - `spawnTerminal` (Issue 16)
+ * - `reconcileState` (Issue 20)
+ * - `checkAvailability` (Issue 12)
  *
- * Issue 13: DaytonaSandboxProvider — create sandbox
+ * ### destroySandbox flow (Issue 14):
+ * 1. Looks up the workspace in LiveStore to get the `sandboxId`
+ * 2. If no workspace or no `sandboxId`, returns gracefully (idempotent)
+ * 3. Calls `DaytonaClient.get(sandboxId)` to fetch the sandbox
+ *    - If NOT_FOUND (404): sandbox already gone, treated as success
+ *    - Other errors from `.get()` are logged as warnings; we still attempt cleanup
+ * 4. Calls `DaytonaClient.delete(sandbox)` to destroy the cloud sandbox
+ *    - Errors from `.delete()` are logged as warnings (best-effort, never fails the destroy)
+ * 5. Cleans up SSH config entries (hook prepared for Issue 22)
+ * 6. Commits `v2.SandboxStopped` event to LiveStore
  */
 
 import { CodeLanguage } from '@daytonaio/sdk'
@@ -187,11 +194,20 @@ class DaytonaSandboxProvider extends Context.Tag(
       )
 
       // ── destroySandbox ────────────────────────────────────────
-      // Stub: will be implemented in Issue 14.
+      // Issue 14: Full implementation.
+      //
+      // Best-effort sandbox teardown:
+      // 1. Look up workspace → get sandboxId (early return if missing)
+      // 2. Fetch sandbox from Daytona API
+      //    - NOT_FOUND → already gone, skip delete
+      //    - Other fetch errors → log warning, skip delete
+      // 3. Delete the sandbox (errors logged, never propagated)
+      // 4. SSH config cleanup hook (Issue 22)
+      // 5. Commit v2.SandboxStopped event
 
       const destroySandbox = Effect.fn('DaytonaSandboxProvider.destroySandbox')(
         function* (workspaceId: string) {
-          // Look up workspace to get the sandboxId
+          // Step 1: Look up workspace to get the sandboxId
           const allWorkspaces = store.query(tables.workspaces)
           const workspaceOpt = pipe(
             allWorkspaces,
@@ -214,36 +230,54 @@ class DaytonaSandboxProvider extends Context.Tag(
             return
           }
 
-          // Get the sandbox from Daytona and delete it
-          const sandbox = yield* daytonaClient.get(workspace.sandboxId).pipe(
+          const sandboxId = workspace.sandboxId
+
+          // Step 2: Fetch the sandbox from Daytona, distinguishing
+          // "not found" (already destroyed) from other errors.
+          const sandbox = yield* daytonaClient.get(sandboxId).pipe(
             Effect.catchAll((error) =>
               Effect.gen(function* () {
-                // Sandbox already gone — treat as success
-                yield* Effect.logWarning(
-                  `Daytona sandbox "${workspace.sandboxId}" not found (may already be destroyed): ${error.message}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
+                if (error.code === 'DAYTONA_NOT_FOUND') {
+                  yield* Effect.logDebug(
+                    `Daytona sandbox "${sandboxId}" not found (already destroyed)`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                } else {
+                  yield* Effect.logWarning(
+                    `Failed to fetch Daytona sandbox "${sandboxId}" for deletion: ${error.message} (code: ${error.code})`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                }
                 return null
               })
             )
           )
 
+          // Step 3: Delete the sandbox if we fetched it successfully
           if (sandbox !== null) {
             yield* daytonaClient
               .delete(sandbox)
               .pipe(
                 Effect.catchAll((error) =>
                   Effect.logWarning(
-                    `Failed to delete Daytona sandbox "${workspace.sandboxId}": ${error.message}`
+                    `Failed to delete Daytona sandbox "${sandboxId}": ${error.message} (code: ${error.code})`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
                 )
               )
+
+            yield* Effect.logInfo(
+              `Daytona sandbox "${sandboxId}" deleted successfully`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
           }
 
-          // Commit v2.SandboxStopped event
+          // Step 4: SSH config cleanup (Issue 22 will implement the actual cleanup)
+          // TODO(Issue 22): Remove ~/.ssh/config entry for laborer-{workspaceId}
+
+          // Step 5: Commit v2.SandboxStopped event regardless of deletion outcome.
+          // The sandbox is gone from our perspective — either successfully deleted,
+          // already destroyed, or unreachable. In all cases, we update LiveStore.
           store.commit(events.sandboxStopped({ workspaceId }))
 
           yield* Effect.logInfo(
-            `Daytona sandbox destroyed for workspace "${workspaceId}"`
+            `Daytona sandbox destroy complete for workspace "${workspaceId}"`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       )

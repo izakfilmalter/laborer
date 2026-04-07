@@ -1,11 +1,12 @@
 /**
- * DockerStatusBanner — Warning banner when Docker is unavailable
+ * ProviderStatusBanner — Warning banner when the sandbox provider is unavailable
  *
- * Queries the `docker.status` RPC on mount. When Docker is unavailable,
- * renders a persistent warning banner with the error message and a link
- * to install OrbStack.
+ * Queries the `sandbox.providerStatus` RPC on mount. When the configured
+ * sandbox provider (Docker or Daytona) is unavailable, renders a persistent
+ * warning banner with the error message and guidance.
  *
  * Issue 2: Docker prerequisite detection
+ * Issue 4: UI update to provider-agnostic naming
  */
 
 import { useAtomValue } from '@effect-atom/atom-react/Hooks'
@@ -16,11 +17,14 @@ import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 
-// biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-const dockerStatus$ = LaborerClient.query('docker.status', undefined as void)
+const providerStatus$ = LaborerClient.query(
+  'sandbox.providerStatus',
+  // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+  undefined as void
+)
 
-function DockerStatusContent() {
-  const result = useAtomValue(dockerStatus$)
+function ProviderStatusContent() {
+  const result = useAtomValue(providerStatus$)
 
   // Still loading or waiting for response
   if (result._tag === 'Initial' || result.waiting) {
@@ -32,7 +36,7 @@ function DockerStatusContent() {
     return null
   }
 
-  // Docker is available — no banner needed
+  // Provider is available — no banner needed
   if (result.value.available) {
     return null
   }
@@ -40,9 +44,10 @@ function DockerStatusContent() {
   return (
     <Alert variant="destructive">
       <AlertTriangle className="size-3.5" />
-      <AlertTitle>Docker not available</AlertTitle>
+      <AlertTitle>Sandbox provider not available</AlertTitle>
       <AlertDescription>
-        {result.value.error ?? 'Docker is not available on this system.'}{' '}
+        {result.value.error ??
+          'The sandbox provider is not available on this system.'}{' '}
         <a
           className="font-medium underline underline-offset-4"
           href="https://orbstack.dev"
@@ -57,14 +62,14 @@ function DockerStatusContent() {
 }
 
 /**
- * Docker status banner — only queries the server and renders after Phase 4
- * (Eventually) when deferred services (including DockerDetection) are ready.
- * Before Phase 4, renders nothing — the docker.status RPC would return a
+ * Provider status banner — only queries the server and renders after Phase 4
+ * (Eventually) when deferred services (including the sandbox provider) are ready.
+ * Before Phase 4, renders nothing — the sandbox.providerStatus RPC would return a
  * SERVICE_INITIALIZING error anyway.
  *
  * @see Issue #12: Progressive feature enablement for Phases 3-4
  */
-function DockerStatusBanner() {
+function ProviderStatusBanner() {
   const isEventually = useWhenPhase(LifecyclePhase.Eventually)
 
   if (!isEventually) {
@@ -73,9 +78,9 @@ function DockerStatusBanner() {
 
   return (
     <Suspense fallback={null}>
-      <DockerStatusContent />
+      <ProviderStatusContent />
     </Suspense>
   )
 }
 
-export { DockerStatusBanner }
+export { ProviderStatusBanner }

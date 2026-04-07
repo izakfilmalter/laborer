@@ -125,12 +125,10 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-const startContainerMutation = LaborerClient.mutation(
-  'workspace.startContainer'
-)
-const setContainerPortMutation = LaborerClient.mutation('container.setPort')
-const pauseContainerMutation = LaborerClient.mutation('container.pause')
-const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
+const startSandboxMutation = LaborerClient.mutation('workspace.startSandbox')
+const setSandboxPortMutation = LaborerClient.mutation('sandbox.setPort')
+const pauseSandboxMutation = LaborerClient.mutation('sandbox.pause')
+const resumeSandboxMutation = LaborerClient.mutation('sandbox.resume')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
@@ -163,11 +161,12 @@ const getWorktreeSetupLabel = (step: string): string => {
 }
 
 /**
- * Human-readable label for container setup progress steps.
- * Handles both coarse steps ("building-image") and granular
- * Docker build steps ("Step 4/5: RUN pnpm install").
+ * Human-readable label for sandbox setup progress steps.
+ * Handles both Docker steps ("building-image", "starting-container")
+ * and Daytona steps ("creating-sandbox", "pushing-code", etc.),
+ * as well as granular Docker build steps ("Step 4/5: RUN pnpm install").
  */
-const getContainerSetupLabel = (step: string): string => {
+const getSandboxSetupLabel = (step: string): string => {
   if (step.startsWith('Step ')) {
     return step
   }
@@ -176,8 +175,18 @@ const getContainerSetupLabel = (step: string): string => {
       return 'Building container image...'
     case 'starting-container':
       return 'Starting container...'
+    case 'creating-sandbox':
+      return 'Creating sandbox...'
+    case 'building-snapshot':
+      return 'Building sandbox snapshot...'
+    case 'pushing-code':
+      return 'Pushing code to sandbox...'
+    case 'configuring-ssh':
+      return 'Configuring SSH access...'
+    case 'starting-sandbox':
+      return 'Starting sandbox...'
     default:
-      return 'Setting up container...'
+      return 'Setting up sandbox...'
   }
 }
 
@@ -266,10 +275,10 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
 }
 
 /**
- * Pause/unpause toggle button for containerized workspaces.
- * Calls `container.pause` or `container.unpause` RPC based on current state.
+ * Pause/resume toggle button for sandboxed workspaces.
+ * Calls `sandbox.pause` or `sandbox.resume` RPC based on current state.
  */
-function ContainerPauseButton({
+function SandboxPauseButton({
   workspaceId,
   isPaused,
 }: {
@@ -278,10 +287,10 @@ function ContainerPauseButton({
 }) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isLoading, setIsLoading] = useState(false)
-  const pauseContainer = useAtomSet(pauseContainerMutation, {
+  const pauseSandbox = useAtomSet(pauseSandboxMutation, {
     mode: 'promise',
   })
-  const unpauseContainer = useAtomSet(unpauseContainerMutation, {
+  const resumeSandbox = useAtomSet(resumeSandboxMutation, {
     mode: 'promise',
   })
 
@@ -289,27 +298,27 @@ function ContainerPauseButton({
     setIsLoading(true)
     try {
       if (isPaused) {
-        await unpauseContainer({ payload: { workspaceId } })
-        toast.success('Container resumed')
+        await resumeSandbox({ payload: { workspaceId } })
+        toast.success('Sandbox resumed')
       } else {
-        await pauseContainer({ payload: { workspaceId } })
-        toast.success('Container paused')
+        await pauseSandbox({ payload: { workspaceId } })
+        toast.success('Sandbox paused')
       }
     } catch (error: unknown) {
       toast.error(
-        `Failed to ${isPaused ? 'resume' : 'pause'} container: ${extractErrorMessage(error)}`
+        `Failed to ${isPaused ? 'resume' : 'pause'} sandbox: ${extractErrorMessage(error)}`
       )
     } finally {
       setIsLoading(false)
     }
-  }, [isPaused, pauseContainer, unpauseContainer, workspaceId])
+  }, [isPaused, pauseSandbox, resumeSandbox, workspaceId])
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            aria-label={isPaused ? 'Resume container' : 'Pause container'}
+            aria-label={isPaused ? 'Resume sandbox' : 'Pause sandbox'}
             disabled={!isServerReady || isLoading}
             onClick={handleToggle}
             size="icon-xs"
@@ -336,13 +345,13 @@ function ContainerPauseButton({
         )}
       </TooltipTrigger>
       <TooltipContent>
-        {isPaused ? 'Resume container' : 'Pause container'}
+        {isPaused ? 'Resume sandbox' : 'Pause sandbox'}
       </TooltipContent>
     </Tooltip>
   )
 }
 
-function ContainerPortButton({
+function SandboxPortButton({
   workspaceId,
   currentPort,
 }: {
@@ -354,7 +363,7 @@ function ContainerPortButton({
   const [portValue, setPortValue] = useState(
     currentPort != null ? String(currentPort) : ''
   )
-  const setContainerPort = useAtomSet(setContainerPortMutation, {
+  const setSandboxPort = useAtomSet(setSandboxPortMutation, {
     mode: 'promise',
   })
 
@@ -368,7 +377,7 @@ function ContainerPortButton({
       return
     }
     try {
-      await setContainerPort({
+      await setSandboxPort({
         payload: { workspaceId, port: parsed },
       })
       setIsOpen(false)
@@ -376,7 +385,7 @@ function ContainerPortButton({
     } catch (error: unknown) {
       toast.error(`Failed to set port: ${extractErrorMessage(error)}`)
     }
-  }, [portValue, setContainerPort, workspaceId])
+  }, [portValue, setSandboxPort, workspaceId])
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -395,7 +404,7 @@ function ContainerPortButton({
             <PopoverTrigger
               render={
                 <Button
-                  aria-label="Set container port"
+                  aria-label="Set sandbox port"
                   disabled={!isServerReady}
                   size="icon-xs"
                   variant="ghost"
@@ -414,7 +423,7 @@ function ContainerPortButton({
           }
         />
         <TooltipContent>
-          {currentPort != null ? `Port: ${currentPort}` : 'Set container port'}
+          {currentPort != null ? `Port: ${currentPort}` : 'Set sandbox port'}
         </TooltipContent>
       </Tooltip>
       <PopoverContent className="w-48 p-2">
@@ -542,10 +551,10 @@ function DestroyDialogDescription({
 }
 
 /**
- * Start Container button — starts a container for a non-containerized
+ * Start Sandbox button — starts a sandbox for a non-sandboxed
  * workspace, converting it into a laborer-managed workspace.
  */
-function StartContainerButton({
+function StartSandboxButton({
   isStarting,
   onClick,
 }: {
@@ -559,7 +568,7 @@ function StartContainerButton({
       <TooltipTrigger
         render={
           <Button
-            aria-label="Start container"
+            aria-label="Start sandbox"
             disabled={!isServerReady || isStarting}
             onClick={onClick}
             size="icon-xs"
@@ -575,7 +584,7 @@ function StartContainerButton({
           )}
         />
       </TooltipTrigger>
-      <TooltipContent>Start Container</TooltipContent>
+      <TooltipContent>Start Sandbox</TooltipContent>
     </Tooltip>
   )
 }
@@ -745,55 +754,55 @@ function WorkspaceItem({
   associatedPrdId,
   isRootWorkspace,
 }: WorkspaceItemProps) {
-  const [isStartingContainer, setIsStartingContainer] = useState(false)
+  const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
     'active' | 'waiting_for_input' | null
   >(null)
-  const startContainer = useAtomSet(startContainerMutation, {
+  const startSandbox = useAtomSet(startSandboxMutation, {
     mode: 'promise',
   })
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
 
-  const handleStartContainer = useCallback(async () => {
-    setIsStartingContainer(true)
+  const handleStartSandbox = useCallback(async () => {
+    setIsStartingSandbox(true)
     try {
-      await startContainer({
+      await startSandbox({
         payload: { workspaceId: workspace.id },
       })
-      toast.success('Container started')
+      toast.success('Sandbox started')
     } catch (error: unknown) {
-      toast.error(`Failed to start container: ${extractErrorMessage(error)}`)
+      toast.error(`Failed to start sandbox: ${extractErrorMessage(error)}`)
     } finally {
-      setIsStartingContainer(false)
+      setIsStartingSandbox(false)
     }
-  }, [startContainer, workspace.id])
+  }, [startSandbox, workspace.id])
 
-  const isContainerized = workspace.sandboxId != null
-  const isContainerPaused = workspace.sandboxStatus === 'paused'
-  const hasContainerConfig = workspace.sandboxUrl != null
-  // Only show the container link when a container actually exists.
-  // containerUrl is intentionally preserved after container destruction
+  const isSandboxed = workspace.sandboxId != null
+  const isSandboxPaused = workspace.sandboxStatus === 'paused'
+  const hasSandboxConfig = workspace.sandboxUrl != null
+  // Only show the sandbox link when a sandbox actually exists.
+  // sandboxUrl is intentionally preserved after sandbox destruction
   // for display purposes, but we don't want to show a clickable link
-  // to a container that no longer exists.
-  const containerLink =
-    isContainerized && workspace.sandboxUrl
+  // to a sandbox that no longer exists.
+  const sandboxLink =
+    isSandboxed && workspace.sandboxUrl
       ? `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
       : null
 
   /**
-   * Derive display status from the container state. The badge reflects
-   * the container lifecycle, not the workspace lifecycle:
-   * - Container running → "running"
-   * - Container paused → "paused"
-   * - Container gone (was containerized but containerId cleared) → "stopped"
-   * - Never containerized → fall back to workspace.status
+   * Derive display status from the sandbox state. The badge reflects
+   * the sandbox lifecycle, not the workspace lifecycle:
+   * - Sandbox running → "running"
+   * - Sandbox paused → "paused"
+   * - Sandbox gone (was sandboxed but sandboxId cleared) → "stopped"
+   * - Never sandboxed → fall back to workspace.status
    */
   const displayStatus = (() => {
-    if (isContainerized) {
-      return isContainerPaused ? 'paused' : 'running'
+    if (isSandboxed) {
+      return isSandboxPaused ? 'paused' : 'running'
     }
-    if (hasContainerConfig) {
+    if (hasSandboxConfig) {
       return 'stopped'
     }
     return workspace.status
@@ -801,43 +810,43 @@ function WorkspaceItem({
 
   const needsAttention = workspaceAgentStatus === 'waiting_for_input'
 
-  const handleContainerLinkClick = async (
+  const handleSandboxLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>
   ) => {
-    if (!(isElectron() && containerLink)) {
+    if (!(isElectron() && sandboxLink)) {
       return
     }
 
     event.preventDefault()
-    await openExternalUrl(containerLink)
+    await openExternalUrl(sandboxLink)
   }
 
   let infraLabel: ReactNode = (
-    <span className="text-muted-foreground/70 text-xs">No container</span>
+    <span className="text-muted-foreground/70 text-xs">No sandbox</span>
   )
-  if (containerLink) {
+  if (sandboxLink) {
     infraLabel = (
       <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
           <a
             className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-            href={containerLink}
-            onClick={handleContainerLinkClick}
+            href={sandboxLink}
+            onClick={handleSandboxLinkClick}
             rel="noopener"
             target="_blank"
-            title={`Open ${containerLink}`}
+            title={`Open ${sandboxLink}`}
           >
             {workspace.sandboxUrl}
           </a>
           <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-            <CopyButton title="Copy URL" value={containerLink} />
+            <CopyButton title="Copy URL" value={sandboxLink} />
             <Tooltip>
               <TooltipTrigger>
                 <a
                   aria-label="Open in browser"
                   className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  href={containerLink}
-                  onClick={handleContainerLinkClick}
+                  href={sandboxLink}
+                  onClick={handleSandboxLinkClick}
                   rel="noopener"
                   target="_blank"
                 >
@@ -922,7 +931,7 @@ function WorkspaceItem({
             )}
           </div>
         </div>
-        {/* Row 2 — Infra: container URL, status, pause/play (hidden for root workspace) */}
+        {/* Row 2 — Infra: sandbox URL, status, pause/play (hidden for root workspace) */}
         {!isRootWorkspace && (
           <div className="flex min-w-0 items-center justify-between gap-2">
             {infraLabel}
@@ -957,21 +966,21 @@ function WorkspaceItem({
                   {displayStatus}
                 </Badge>
               )}
-              {isContainerized ? (
+              {isSandboxed ? (
                 <>
-                  <ContainerPauseButton
-                    isPaused={isContainerPaused}
+                  <SandboxPauseButton
+                    isPaused={isSandboxPaused}
                     workspaceId={workspace.id}
                   />
-                  <ContainerPortButton
+                  <SandboxPortButton
                     currentPort={workspace.sandboxPort}
                     workspaceId={workspace.id}
                   />
                 </>
               ) : (
-                <StartContainerButton
-                  isStarting={isStartingContainer}
-                  onClick={handleStartContainer}
+                <StartSandboxButton
+                  isStarting={isStartingSandbox}
+                  onClick={handleStartSandbox}
                 />
               )}
             </div>
@@ -988,7 +997,7 @@ function WorkspaceItem({
         {workspace.sandboxSetupStep != null && (
           <div className="mb-2 flex items-center gap-2 text-sky-500 text-xs">
             <Spinner className="size-3 text-sky-500" />
-            {getContainerSetupLabel(workspace.sandboxSetupStep)}
+            {getSandboxSetupLabel(workspace.sandboxSetupStep)}
           </div>
         )}
         <div className="border-t pt-2">

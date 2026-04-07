@@ -372,3 +372,49 @@ Date: 2026-04-07
 - 419 server tests pass (50 test files, 1 skipped)
 - 1070 web tests pass (73 test files, 1 skipped)
 - `bun run format` passes (490 files, no fixes)
+
+## Issue 4: UI — update all components to use sandbox* column names + RPC names
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Updated `workspace-list.tsx` — all RPC mutations switched to new names:
+  - `workspace.startContainer` -> `workspace.startSandbox`
+  - `container.setPort` -> `sandbox.setPort`
+  - `container.pause` -> `sandbox.pause`
+  - `container.unpause` -> `sandbox.resume`
+- Renamed UI components to provider-agnostic names:
+  - `ContainerPauseButton` -> `SandboxPauseButton`
+  - `ContainerPortButton` -> `SandboxPortButton`
+  - `StartContainerButton` -> `StartSandboxButton`
+  - `getContainerSetupLabel` -> `getSandboxSetupLabel`
+- Updated all user-facing strings from "container" to "sandbox" (aria-labels, toast messages,
+  tooltip content, comments)
+- Updated `getSandboxSetupLabel` to include Daytona-specific setup steps:
+  `creating-sandbox`, `building-snapshot`, `pushing-code`, `configuring-ssh`, `starting-sandbox`
+  alongside existing Docker steps (`building-image`, `starting-container`)
+- Updated internal variable names: `isContainerized` -> `isSandboxed`,
+  `isContainerPaused` -> `isSandboxPaused`, `hasContainerConfig` -> `hasSandboxConfig`,
+  `containerLink` -> `sandboxLink`, `handleContainerLinkClick` -> `handleSandboxLinkClick`,
+  `isStartingContainer` -> `isStartingSandbox`, `handleStartContainer` -> `handleStartSandbox`
+- Replaced `docker-status-banner.tsx` with `provider-status-banner.tsx`:
+  - `DockerStatusBanner` -> `ProviderStatusBanner`
+  - `docker.status` RPC -> `sandbox.providerStatus` RPC
+  - Updated banner title from "Docker not available" to "Sandbox provider not available"
+  - Deleted old `docker-status-banner.tsx` file
+- Updated `__root.tsx` to import `ProviderStatusBanner` from new file
+- Updated test fixtures:
+  - `workspace-card-layout.test.tsx`: `PAUSE_CONTAINER_RE` -> `PAUSE_SANDBOX_RE`,
+    `RESUME_CONTAINER_RE` -> `RESUME_SANDBOX_RE`, updated describe/it descriptions
+  - `workspace-plan-scope.test.tsx`: `START_CONTAINER_RE` -> `START_SANDBOX_RE`,
+    updated comment
+
+### Verification:
+- All 7 turbo typecheck tasks pass (`tsc --noEmit`)
+- 1070 web tests pass (73 test files, 1 skipped)
+- 419 server tests pass (49 test files, 1 skipped)
+- 89 shared tests pass
+- `bun run format` passes (490 files, no fixes)
+- No remaining `container*` column references in `apps/web/src/`
+- No remaining old RPC names (`container.pause`, `docker.status`, etc.) in `apps/web/src/`

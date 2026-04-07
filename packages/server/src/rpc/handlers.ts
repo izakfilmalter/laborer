@@ -32,6 +32,7 @@ import {
 } from '../services/prd-storage-service.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
+import { SandboxProvider } from '../services/sandbox-provider.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -925,6 +926,71 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             Effect.gen(function* () {
               yield* Effect.logInfo(
                 `Container not found for workspace "${workspaceId}", recreating`
+              )
+              const provider = yield* WorkspaceProvider
+              const prWatcher = yield* PrWatcher
+              const workspaceSyncService = yield* WorkspaceSyncService
+              const onReady = (wsId: string) =>
+                Effect.gen(function* () {
+                  yield* prWatcher.startPolling(wsId)
+                  yield* workspaceSyncService.startPolling(wsId)
+                })
+              yield* provider.startSandbox(workspaceId, onReady)
+            })
+        )
+      ),
+
+    // -------------------------------------------------------------------
+    // Sandbox RPCs (provider-agnostic — canonical names going forward)
+    //
+    // These delegate to the SandboxProvider abstraction. The old
+    // container.* / docker.* handlers above are kept as backward-compat
+    // aliases that go through the Docker-specific services directly.
+    // -------------------------------------------------------------------
+    'sandbox.providerStatus': () =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        return yield* sandboxProvider.checkAvailability()
+      }),
+    'workspace.startSandbox': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const onReady = (wsId: string) =>
+          Effect.gen(function* () {
+            yield* prWatcher.startPolling(wsId)
+            yield* workspaceSyncService.startPolling(wsId)
+          })
+        yield* provider.startSandbox(workspaceId, onReady)
+      }),
+    'sandbox.setPort': ({ workspaceId, port }) =>
+      Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.sandboxPortChanged({
+            workspaceId,
+            sandboxPort: port,
+          })
+        )
+      }),
+    'sandbox.pause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.pauseSandbox(workspaceId)
+      }),
+    'sandbox.resume': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.resumeSandbox(workspaceId)
+      }).pipe(
+        Effect.catchIf(
+          (err) =>
+            err._tag === 'RpcError' && err.code === 'CONTAINER_NOT_FOUND',
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.logInfo(
+                `Sandbox not found for workspace "${workspaceId}", recreating`
               )
               const provider = yield* WorkspaceProvider
               const prWatcher = yield* PrWatcher

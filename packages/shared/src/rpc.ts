@@ -235,6 +235,12 @@ const DockerStatusResponse = Schema.Struct({
   error: Schema.optional(Schema.String),
 })
 
+/**
+ * Alias for DockerStatusResponse — used by the new provider-agnostic
+ * `sandbox.providerStatus` RPC. Same shape as `docker.status`.
+ */
+const ProviderStatusResponse = DockerStatusResponse
+
 const PrStatusResponse = Schema.Struct({
   number: Schema.NullOr(Schema.Int),
   state: Schema.NullOr(Schema.String),
@@ -836,6 +842,47 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   Rpc.make('container.unpause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Sandbox RPCs (provider-agnostic replacements for container/docker RPCs)
+  //
+  // These are the canonical names going forward. The old container.* and
+  // docker.* names above are kept as backward-compatible aliases.
+  // -----------------------------------------------------------------------
+
+  Rpc.make('sandbox.providerStatus', {
+    success: ProviderStatusResponse,
+  }),
+
+  Rpc.make('workspace.startSandbox', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('sandbox.setPort', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      /** The port number, or null to clear. */
+      port: Schema.NullOr(Schema.Int),
+    },
+  }),
+
+  Rpc.make('sandbox.pause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('sandbox.resume', {
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

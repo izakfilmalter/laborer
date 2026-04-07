@@ -317,3 +317,58 @@ Date: 2026-04-07
 - 419 server tests pass (50 test files, 1 skipped)
 - 89 shared tests pass
 - `bun run format` passes (490 files, no fixes)
+
+## Issue 3: RPC rename — container.* to sandbox.* with backward-compat aliases
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Added 5 new provider-agnostic RPC definitions in `packages/shared/src/rpc.ts`:
+  - `sandbox.providerStatus` (replaces `docker.status`) — uses same `DockerStatusResponse` schema via `ProviderStatusResponse` alias
+  - `workspace.startSandbox` (replaces `workspace.startContainer`) — same payload shape
+  - `sandbox.setPort` (replaces `container.setPort`) — same payload shape
+  - `sandbox.pause` (replaces `container.pause`) — same payload shape
+  - `sandbox.resume` (replaces `container.unpause`) — same payload shape
+- Old RPC names (`docker.status`, `workspace.startContainer`, `container.setPort`,
+  `container.pause`, `container.unpause`) retained as backward-compatible aliases —
+  both old and new names have active handlers
+- Added handlers for all 5 new RPC names in `packages/server/src/rpc/handlers.ts`:
+  - `sandbox.providerStatus` delegates to `SandboxProvider.checkAvailability()`
+  - `workspace.startSandbox` delegates to `WorkspaceProvider.startSandbox()`
+  - `sandbox.setPort` commits `v2.sandboxPortChanged` event (not `v1.containerPortChanged`)
+  - `sandbox.pause` delegates to `SandboxProvider.pauseSandbox()`
+  - `sandbox.resume` delegates to `SandboxProvider.resumeSandbox()` with same
+    CONTAINER_NOT_FOUND fallback-to-recreate logic as old `container.unpause`
+- Old handlers unchanged — they still call `ContainerService` / `DockerDetection` directly
+- New handlers route through `SandboxProvider` abstraction (provider-agnostic)
+
+### Infrastructure changes:
+- Added `SandboxProvider` to `DeferredServicesProxyLive` in `utility-main.ts`:
+  - Added `makeRefDelegatingService(SandboxProvider, { checkAvailability: ... })` proxy
+  - Changed `DockerSandboxProvider.layer` from `Layer.provide` to `Layer.provideMerge` in
+    `DeferredServiceStack` so `SandboxProvider` appears in stack output context
+  - Added `Ref.set(sandboxProvider.ref, Context.get(stackCtx, SandboxProvider))` ref swap
+  - Added `Context.add(SandboxProvider, sandboxProvider.proxy)` to return context
+- Updated `test-layer.ts`: Changed `DockerSandboxProvider.layer` to `Layer.provideMerge`
+  so `SandboxProvider` is in test stack output context
+- Updated `core-layers.test.ts`: Added `SandboxProvider` stub to `DeferredServiceStubs`
+  with `checkAvailability` placeholder override (returns `{ available: false }`)
+- Updated `messageport-rpc.test.ts`: Added same `SandboxProvider` stub
+
+### Design decisions:
+- New sandbox.* handlers use `SandboxProvider` abstraction while old container.* handlers
+  continue to use `ContainerService`/`DockerDetection` directly — this preserves exact
+  backward compatibility for the old paths while new paths go through the abstraction
+- `sandbox.setPort` uses `v2.sandboxPortChanged` event (already defined in Issue 2)
+  while `container.setPort` continues to use `v1.containerPortChanged` — both events
+  materialize to the same `sandboxPort` column
+- `sandbox.providerStatus` has no error channel (matches `docker.status`) — the
+  `checkAvailability` method returns `{ available: false }` on failure rather than failing
+
+### Verification:
+- All typechecks pass (shared, server, web — `tsc --noEmit`)
+- 89 shared tests pass (5 test files)
+- 419 server tests pass (50 test files, 1 skipped)
+- 1070 web tests pass (73 test files, 1 skipped)
+- `bun run format` passes (490 files, no fixes)

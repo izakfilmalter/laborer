@@ -188,7 +188,7 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * `WorkspaceProvider.layer` which delegates sandbox operations to it.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
-  Layer.provide(DockerSandboxProvider.layer),
+  Layer.provideMerge(DockerSandboxProvider.layer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)

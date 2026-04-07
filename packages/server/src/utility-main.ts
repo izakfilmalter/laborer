@@ -77,6 +77,7 @@ import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
+import { SandboxProvider } from './services/sandbox-provider.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
@@ -302,7 +303,7 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * depending on `ContainerService` + `DepsImageService`.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
-  Layer.provide(DockerSandboxProvider.layer),
+  Layer.provideMerge(DockerSandboxProvider.layer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)
@@ -380,6 +381,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     const workspaceSyncService =
       yield* makeRefDelegatingService(WorkspaceSyncService)
     const depsImageService = yield* makeRefDelegatingService(DepsImageService)
+    const sandboxProvider = yield* makeRefDelegatingService(SandboxProvider, {
+      // sandbox.providerStatus has no error channel — return valid placeholder
+      checkAvailability: () => Effect.succeed({ available: false }),
+    })
 
     // --- Fork background fiber to build real services ---
 
@@ -470,6 +475,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           workspaceSyncService.ref,
           Context.get(stackCtx, WorkspaceSyncService)
         )
+        yield* Ref.set(
+          sandboxProvider.ref,
+          Context.get(stackCtx, SandboxProvider)
+        )
 
         // TODO: Build McpRegistrar after stack is ready (needs
         // ProjectRegistry + WorkspaceProvider from the stack context)
@@ -554,7 +563,8 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.add(TerminalClient, terminalClient.proxy),
       Context.add(WorkspaceProvider, workspaceProvider.proxy),
       Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
-      Context.add(DepsImageService, depsImageService.proxy)
+      Context.add(DepsImageService, depsImageService.proxy),
+      Context.add(SandboxProvider, sandboxProvider.proxy)
     )
   })
 )

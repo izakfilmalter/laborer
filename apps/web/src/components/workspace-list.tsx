@@ -133,6 +133,12 @@ const resumeSandboxMutation = LaborerClient.mutation('sandbox.resume')
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
 
+/**
+ * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
+ * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
+ */
+const FULL_URL_RE = /^https?:\/\//u
+
 type WorkspaceStatus =
   | 'creating'
   | 'running'
@@ -785,10 +791,17 @@ function WorkspaceItem({
   // sandboxUrl is intentionally preserved after sandbox destruction
   // for display purposes, but we don't want to show a clickable link
   // to a sandbox that no longer exists.
-  const sandboxLink =
-    isSandboxed && workspace.sandboxUrl
-      ? `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
-      : null
+  const sandboxLink = (() => {
+    if (!(isSandboxed && workspace.sandboxUrl)) {
+      return null
+    }
+    // Daytona preview URLs are stored as full URLs (https://...).
+    // Docker sandbox URLs are hostnames (e.g., branch--project.orb.local).
+    if (FULL_URL_RE.test(workspace.sandboxUrl)) {
+      return workspace.sandboxUrl
+    }
+    return `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
+  })()
 
   /**
    * Derive display status from the sandbox state. The badge reflects
@@ -836,7 +849,9 @@ function WorkspaceItem({
             target="_blank"
             title={`Open ${sandboxLink}`}
           >
-            {workspace.sandboxUrl}
+            {FULL_URL_RE.test(workspace.sandboxUrl ?? '')
+              ? (workspace.sandboxUrl ?? '').replace(FULL_URL_RE, '')
+              : workspace.sandboxUrl}
           </a>
           <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
             <CopyButton title="Copy URL" value={sandboxLink} />

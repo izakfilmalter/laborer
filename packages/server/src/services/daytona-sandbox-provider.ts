@@ -16,8 +16,8 @@
  *
  * - `checkAvailability` (Issue 12) — verifies API connectivity with result caching
  *
- * Stub methods (to be implemented in downstream issues):
- * - `getPreviewUrl` (Issue 18)
+ * - `getPreviewUrl` (Issue 18) — resolves Daytona preview URLs via SDK and
+ *   persists them to LiveStore for UI display
  *
  * ### spawnTerminal flow (Issue 16):
  * 1. Look up workspace in LiveStore to get the `sandboxId`
@@ -421,12 +421,25 @@ class DaytonaSandboxProvider extends Context.Tag(
             })
           )
 
-          // Step 6: Determine the preview URL base
-          // Daytona preview URLs follow the pattern:
-          // https://{port}-{sandboxId}.preview.daytona.io
-          // We store the sandbox ID as the URL base; the port is appended
-          // when getPreviewUrl is called.
-          const sandboxUrl = sandbox.id
+          // Step 6: Determine the preview URL.
+          // When a port is configured, resolve the full Daytona preview URL
+          // (e.g., https://3000-abc123.preview.daytona.io) so the UI can
+          // display it directly without provider-specific URL construction.
+          // When no port is configured, store the sandbox ID as a fallback —
+          // the URL will be resolved when the port is set via sandbox.setPort.
+          let sandboxUrl: string = sandbox.id
+          const configPort = devServerConfig.port
+          if (configPort != null) {
+            const previewLink = yield* Effect.tryPromise({
+              try: () => sandbox.getPreviewLink(configPort),
+              catch: (error) =>
+                new RpcError({
+                  message: `Failed to get preview link for port ${configPort}: ${error instanceof Error ? error.message : String(error)}`,
+                  code: 'DAYTONA_ERROR',
+                }),
+            })
+            sandboxUrl = previewLink.url
+          }
 
           // Step 7: Commit v2.SandboxStarted event
           const sandboxImage = image !== null ? image : 'daytona-default'
@@ -656,7 +669,10 @@ class DaytonaSandboxProvider extends Context.Tag(
       )
 
       // ── getPreviewUrl ─────────────────────────────────────────
-      // Stub: will be fully implemented in Issue 18.
+      // Issue 18: Returns the Daytona preview URL for a given port.
+      // Calls sandbox.getPreviewLink(port) via the SDK and returns the URL.
+      // Also updates sandboxUrl in LiveStore so the UI always has the
+      // current preview URL.
 
       const getPreviewUrl = Effect.fn('DaytonaSandboxProvider.getPreviewUrl')(
         function* (workspaceId: string, port: number) {
@@ -687,7 +703,15 @@ class DaytonaSandboxProvider extends Context.Tag(
               }),
           })
 
-          return previewLink.url
+          const url = previewLink.url
+
+          // Persist the resolved preview URL to LiveStore so the UI
+          // always displays the correct Daytona preview URL.
+          store.commit(
+            events.sandboxUrlChanged({ workspaceId, sandboxUrl: url })
+          )
+
+          return url
         }
       )
 

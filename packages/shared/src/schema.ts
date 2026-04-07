@@ -523,6 +523,15 @@ export const sandboxPortChanged = Events.synced({
   }),
 })
 
+export const sandboxUrlChanged = Events.synced({
+  name: 'v2.SandboxUrlChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** The new preview URL (full URL for Daytona, hostname for Docker). */
+    sandboxUrl: Schema.String,
+  }),
+})
+
 // -- App Settings events ----------------------------------------------------
 
 export const appSettingChanged = Events.synced({
@@ -573,6 +582,7 @@ export const events = {
   sandboxResumed,
   sandboxSetupStepChanged,
   sandboxPortChanged,
+  sandboxUrlChanged,
   worktreeSetupStepChanged,
   terminalSpawned,
   terminalOutput,
@@ -758,6 +768,8 @@ const materializers = State.SQLite.materializers(events, {
     workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
   'v2.SandboxPortChanged': ({ workspaceId, sandboxPort }) =>
     workspaces.update({ sandboxPort }).where({ id: workspaceId }),
+  'v2.SandboxUrlChanged': ({ workspaceId, sandboxUrl }) =>
+    workspaces.update({ sandboxUrl }).where({ id: workspaceId }),
   'v1.WorktreeSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ worktreeSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

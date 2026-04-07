@@ -1049,6 +1049,27 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             sandboxPort: port,
           })
         )
+
+        // For Daytona workspaces, refresh the preview URL when the port
+        // changes. Daytona preview URLs are port-specific (e.g.,
+        // https://3000-abc123.preview.daytona.io) unlike Docker URLs
+        // where the port is simply appended to the hostname.
+        if (port !== null) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspace = pipe(
+            allWorkspaces,
+            Array.findFirst((w) => w.id === workspaceId)
+          )
+          if (
+            workspace._tag === 'Some' &&
+            workspace.value.sandboxProvider === 'daytona'
+          ) {
+            const sandboxProvider = yield* SandboxProvider
+            yield* sandboxProvider
+              .getPreviewUrl(workspaceId, port)
+              .pipe(Effect.catchAll(() => Effect.void))
+          }
+        }
       }),
     'sandbox.pause': ({ workspaceId }) =>
       Effect.gen(function* () {

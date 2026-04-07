@@ -965,3 +965,95 @@ Date: 2026-04-07
 - All typechecks pass (server, shared, web, desktop — `tsc --noEmit`)
 - 16 new daytona-terminal-data-channel tests pass
 - `bun run format` passes (494 files, no fixes)
+
+## Issue 18: Daytona preview URLs — getPreviewUrl + UI display
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+
+#### Schema: `packages/shared/src/schema.ts`
+- Added `v2.SandboxUrlChanged` event with `workspaceId` and `sandboxUrl` fields
+- Added materializer: updates `sandboxUrl` column in workspaces table
+- Added to `events` export object
+
+#### DaytonaSandboxProvider: `packages/server/src/services/daytona-sandbox-provider.ts`
+- Updated `createSandbox`: When `devServer.port` is configured, resolves the full
+  Daytona preview URL via `sandbox.getPreviewLink(port)` and stores it as `sandboxUrl`
+  (e.g., `https://3000-abc123.preview.daytona.io`). When no port is configured, stores
+  the sandbox ID as a fallback — the URL is resolved when `sandbox.setPort` is called.
+- Updated `getPreviewUrl`: After resolving the preview URL from the SDK, commits a
+  `v2.SandboxUrlChanged` event to persist the URL to LiveStore so the UI always has
+  the current preview URL for the workspace.
+- Removed stale "stub" comment from `getPreviewUrl` — method was already implemented
+  in Issue 13, now enhanced with LiveStore persistence.
+
+#### RPC handler: `packages/server/src/rpc/handlers.ts`
+- Updated `sandbox.setPort` handler: After committing the `sandboxPortChanged` event,
+  checks if the workspace uses the Daytona provider. If so, calls
+  `sandboxProvider.getPreviewUrl(workspaceId, port)` to refresh the preview URL.
+  This is necessary because Daytona preview URLs are port-specific (the port is encoded
+  in the URL, unlike Docker where port is appended to a hostname). Error is caught
+  silently — port change should succeed even if preview URL refresh fails.
+
+#### UI: `apps/web/src/components/workspace-list.tsx`
+- Added top-level `FULL_URL_RE` regex constant for detecting full URLs (https://)
+- Updated `sandboxLink` construction: Daytona preview URLs (which start with `https://`)
+  are used directly as the link href. Docker sandbox URLs (hostnames like `.orb.local`)
+  use the existing `http://{sandboxUrl}:{port}` pattern.
+- Updated display text: For Daytona URLs, strips the protocol prefix for a cleaner
+  display label.
+
+#### UI: `apps/web/src/components/workspace-dashboard.tsx`
+- Added top-level `FULL_URL_RE` regex constant
+- Added `buildSandboxLink(sandboxUrl, sandboxPort)` helper function: Returns the URL
+  directly for full URLs, or constructs `http://{host}:{port}` for Docker hostnames
+- Added `buildSandboxDisplayLabel(sandboxUrl, sandboxPort)` helper function: Strips
+  protocol from full URLs, or returns `host:port` for Docker hostnames
+- Added `SandboxUrlLink` component: Encapsulates the preview URL rendering with correct
+  href and display label for both Docker and Daytona URLs
+- Replaced inline URL construction with `SandboxUrlLink` component
+
+### Tests added:
+
+#### Schema tests (1 new test in `packages/shared/test/schema.test.ts`):
+- `v2.SandboxUrlChanged` updates `sandboxUrl` — verifies that the materializer
+  correctly updates the `sandboxUrl` column when a `v2.SandboxUrlChanged` event
+  is committed
+
+#### Daytona sandbox provider tests (3 new tests in `packages/server/test/daytona-sandbox-provider.test.ts`):
+- `getPreviewUrl` returns Daytona preview URL and persists it to LiveStore —
+  verifies URL is returned and committed as `v2.SandboxUrlChanged`
+- `getPreviewUrl` returns different URL for different port — verifies port-specific
+  URL generation (e.g., port 8080 → `https://8080-sandbox-test-123.preview.daytona.io`)
+- `getPreviewUrl` returns NOT_FOUND when workspace has no sandbox
+
+#### Existing tests updated:
+- `createSandbox` with port 3000: Added assertion verifying `sandboxUrl` is the full
+  Daytona preview URL (`https://3000-sandbox-test-123.preview.daytona.io`)
+- `createSandbox` without port (image: null): Added assertion verifying `sandboxUrl`
+  is the sandbox ID (`sandbox-test-123`)
+- Updated `makeMockSandbox.getPreviewLink` to accept port parameter and record calls
+  to the shared log (was previously a no-args stub returning a hardcoded URL)
+
+### Design decisions:
+- **Full URL in `sandboxUrl`**: For Daytona, `sandboxUrl` stores the complete preview
+  URL (e.g., `https://3000-abc123.preview.daytona.io`) rather than just the sandbox ID.
+  This eliminates the need for provider-specific URL construction logic in the UI.
+- **Protocol detection in UI**: The UI uses `FULL_URL_RE` (`/^https?:\/\//u`) to detect
+  whether `sandboxUrl` is a full URL (Daytona) or a hostname (Docker). Full URLs are
+  used directly; hostnames get `http://` prepended with port appended.
+- **Best-effort preview URL refresh**: The `sandbox.setPort` handler catches and
+  silences errors from `getPreviewUrl` — the port change should succeed even if the
+  Daytona API is temporarily unreachable. The preview URL will be stale but not broken.
+- **v2.SandboxUrlChanged event**: A new event was added rather than reusing
+  `v2.SandboxStarted` because the URL can change independently of sandbox lifecycle
+  (e.g., when the user changes the dev server port).
+
+### Verification:
+- All 7 turbo typecheck tasks pass (`tsc --noEmit`)
+- 90 shared tests pass (23 schema tests)
+- 498 server tests pass (47 daytona-sandbox-provider tests)
+- 1070 web tests pass
+- `bun run format` passes (494 files, no fixes)

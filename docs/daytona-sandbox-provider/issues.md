@@ -1135,7 +1135,7 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 15 | Git sync: push worktree HEAD to Daytona sandbox via SSH | 13 | Done |
 | 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Done |
 | 17 | Daytona PTY: bridge to xterm.js terminal component | 16 | Done |
-| 18 | Daytona preview URLs: getPreviewUrl + UI display | 13 | Ready |
+| 18 | Daytona preview URLs: getPreviewUrl + UI display | 13 | Done |
 | 19 | Daytona sandbox pause/resume (stop/start) + auto-stop config | 13 | Done |
 | 20 | Daytona state reconciliation polling loop | 13, 19 | Done |
 | 21 | Daytona Image builder: snapshot caching with lockfile hash | 13 | Ready |

@@ -61,6 +61,12 @@ const dashboardWorkspaces$ = queryDb(workspaces, {
 })
 const dashboardTasks$ = queryDb(tasks, { label: 'dashboardTasks' })
 
+/**
+ * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
+ * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
+ */
+const FULL_URL_RE = /^https?:\/\//u
+
 type WorkspaceStatus =
   | 'creating'
   | 'running'
@@ -521,6 +527,60 @@ function ProjectDashboardSection({
   )
 }
 
+/**
+ * Builds the sandbox preview URL from the stored sandboxUrl + port.
+ * Daytona preview URLs are stored as full URLs (https://...).
+ * Docker sandbox URLs are hostnames (e.g., branch--project.orb.local)
+ * where the port is appended as :{port}.
+ */
+function buildSandboxLink(
+  sandboxUrl: string,
+  sandboxPort: number | null
+): string {
+  if (FULL_URL_RE.test(sandboxUrl)) {
+    return sandboxUrl
+  }
+  return `http://${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
+}
+
+/**
+ * Extracts a human-readable display label from a sandbox URL.
+ * For full URLs, strips the protocol. For Docker hostnames, shows
+ * hostname:port.
+ */
+function buildSandboxDisplayLabel(
+  sandboxUrl: string,
+  sandboxPort: number | null
+): string {
+  if (FULL_URL_RE.test(sandboxUrl)) {
+    return sandboxUrl.replace(FULL_URL_RE, '')
+  }
+  return `${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
+}
+
+/** Renders a sandbox preview URL as a clickable link. */
+function SandboxUrlLink({
+  sandboxUrl,
+  sandboxPort,
+}: {
+  readonly sandboxUrl: string
+  readonly sandboxPort: number | null
+}) {
+  const href = buildSandboxLink(sandboxUrl, sandboxPort)
+  const label = buildSandboxDisplayLabel(sandboxUrl, sandboxPort)
+  return (
+    <a
+      className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+      href={href}
+      rel="noopener"
+      target="_blank"
+      title={`Open ${href}`}
+    >
+      {label}
+    </a>
+  )
+}
+
 /** Compact workspace row in the dashboard. */
 function DashboardWorkspaceRow({
   workspace,
@@ -566,16 +626,10 @@ function DashboardWorkspaceRow({
         </span>
       )}
       {isContainerized && workspace.sandboxUrl ? (
-        <a
-          className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-          href={`http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`}
-          rel="noopener"
-          target="_blank"
-          title={`Open http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`}
-        >
-          {workspace.sandboxUrl}
-          {workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}
-        </a>
+        <SandboxUrlLink
+          sandboxPort={workspace.sandboxPort}
+          sandboxUrl={workspace.sandboxUrl}
+        />
       ) : null}
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">

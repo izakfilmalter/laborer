@@ -589,6 +589,58 @@ describe('LiveStore schema', () => {
     })
   )
 
+  it.scoped('v2.SandboxUrlChanged updates sandboxUrl', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.workspaceCreated({
+          id: 'workspace-url-change',
+          projectId: 'project-1',
+          taskSource: null,
+          branchName: 'feature/sandbox-url-change',
+          worktreePath: '/tmp/project-1/.laborer/workspace-url-change',
+          status: 'running',
+          origin: 'laborer',
+          createdAt: '2026-04-07T00:00:00.000Z',
+          baseSha: 'abc123',
+        })
+      )
+
+      store.commit(
+        events.sandboxStarted({
+          workspaceId: 'workspace-url-change',
+          sandboxId: 'daytona-url-test',
+          sandboxUrl: 'daytona-url-test',
+          sandboxImage: 'daytona-default',
+          sandboxProvider: 'daytona',
+        })
+      )
+
+      // Initially sandboxUrl is the sandbox ID
+      const row = store.query(
+        tables.workspaces.where('id', 'workspace-url-change')
+      )
+      assert.strictEqual(row[0]?.sandboxUrl, 'daytona-url-test')
+
+      // Update with full Daytona preview URL
+      store.commit(
+        events.sandboxUrlChanged({
+          workspaceId: 'workspace-url-change',
+          sandboxUrl: 'https://3000-daytona-url-test.preview.daytona.io',
+        })
+      )
+
+      const row2 = store.query(
+        tables.workspaces.where('id', 'workspace-url-change')
+      )
+      assert.strictEqual(
+        row2[0]?.sandboxUrl,
+        'https://3000-daytona-url-test.preview.daytona.io'
+      )
+    })
+  )
+
   it.scoped(
     'v2.Sandbox* and v1.Container* events coexist and both materialize correctly',
     () =>

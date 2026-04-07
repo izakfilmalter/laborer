@@ -156,11 +156,13 @@ const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
         sshCommand: 'ssh -p 2222 test-ssh-token-abc@ssh.app.daytona.io',
       })
     },
-    getPreviewLink: () =>
-      Promise.resolve({
-        url: 'https://3000-sandbox-test-123.preview.daytona.io',
+    getPreviewLink: (port: number) => {
+      log?.push({ method: 'sandbox.getPreviewLink', args: [port] })
+      return Promise.resolve({
+        url: `https://${port}-sandbox-test-123.preview.daytona.io`,
         token: '',
-      }),
+      })
+    },
   }) as unknown as DaytonaSandbox
 
 // ---------------------------------------------------------------------------
@@ -525,6 +527,12 @@ describe('DaytonaSandboxProvider', () => {
           assert.strictEqual(ws?.sandboxProvider, 'daytona')
           assert.strictEqual(ws?.sandboxPort, 3000)
           assert.strictEqual(ws?.sandboxSetupStep, null)
+
+          // When port is specified, sandboxUrl stores the full preview URL
+          assert.strictEqual(
+            ws?.sandboxUrl,
+            'https://3000-sandbox-test-123.preview.daytona.io'
+          )
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -554,6 +562,9 @@ describe('DaytonaSandboxProvider', () => {
           const [ws] = store.query(tables.workspaces.where('id', wid))
           assert.strictEqual(ws?.sandboxImage, 'daytona-default')
           assert.strictEqual(ws?.sandboxProvider, 'daytona')
+
+          // When no port is specified, sandboxUrl stores just the sandbox ID
+          assert.strictEqual(ws?.sandboxUrl, 'sandbox-test-123')
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
@@ -1358,6 +1369,104 @@ describe('DaytonaSandboxProvider', () => {
           // (since the eager check caches the result).
           const listCalls = log.filter((r) => r.method === 'list')
           assert.strictEqual(listCalls.length, 1)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('getPreviewUrl', () => {
+    it.scoped('returns Daytona preview URL and persists it to LiveStore', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sandbox-test-123',
+              sandboxUrl: 'sandbox-test-123',
+              sandboxImage: 'daytona-default',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          const url = yield* sp.getPreviewUrl(wid, 3000)
+
+          assert.strictEqual(
+            url,
+            'https://3000-sandbox-test-123.preview.daytona.io'
+          )
+
+          // Verify the URL was persisted to LiveStore
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(
+            ws?.sandboxUrl,
+            'https://3000-sandbox-test-123.preview.daytona.io'
+          )
+
+          // Verify getPreviewLink was called with the correct port
+          const previewCalls = log.filter(
+            (c) => c.method === 'sandbox.getPreviewLink'
+          )
+          assert.strictEqual(previewCalls.length, 1)
+          assert.deepStrictEqual(previewCalls[0]?.args, [3000])
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('returns different URL for different port', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sandbox-test-123',
+              sandboxUrl: 'sandbox-test-123',
+              sandboxImage: 'daytona-default',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          const url = yield* sp.getPreviewUrl(wid, 8080)
+
+          assert.strictEqual(
+            url,
+            'https://8080-sandbox-test-123.preview.daytona.io'
+          )
+
+          // Verify LiveStore was updated with the new URL
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(
+            ws?.sandboxUrl,
+            'https://8080-sandbox-test-123.preview.daytona.io'
+          )
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('returns NOT_FOUND when workspace has no sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+
+          const result = yield* sp.getPreviewUrl(wid, 3000).pipe(Effect.either)
+
+          assert.strictEqual(result._tag, 'Left')
+          if (result._tag === 'Left') {
+            assert.strictEqual(result.left.code, 'NOT_FOUND')
+          }
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )

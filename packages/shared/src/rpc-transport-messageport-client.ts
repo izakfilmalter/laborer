@@ -62,6 +62,19 @@ const HEARTBEAT_INTERVAL_MS = 5000
 const HEARTBEAT_TIMEOUT_MS = 30_000
 
 /**
+ * If a heartbeat tick fires and the wall-clock time since the last
+ * tick exceeds the interval by this factor, we infer the system was
+ * sleeping. In that case we reset the liveness timestamp instead of
+ * declaring the port dead — the utility process was also suspended
+ * and couldn't have sent a pong.
+ *
+ * Factor of 3× the interval (15 s) is generous: normal jitter from
+ * event-loop stalls rarely exceeds a few hundred ms. A 15+ second
+ * gap between 5 s ticks strongly indicates OS suspend/resume.
+ */
+const SLEEP_DETECTION_FACTOR = 3
+
+/**
  * Custom DOM event name dispatched when a MessagePort is detected as dead
  * (close event, heartbeat timeout, or send failure). The renderer's
  * `SidecarRuntimeBoundary` listens for this to trigger a generation bump
@@ -122,6 +135,10 @@ export const makeClientProtocolMessagePort = (
 
       // Heartbeat tracking — timestamp of last pong (or message) received.
       let lastPongTimestamp = Date.now()
+      // Timestamp of the last heartbeat tick, used to detect system sleep.
+      // If the gap between consecutive ticks is much larger than the interval,
+      // the OS suspended the process and we should forgive the missed pongs.
+      let lastTickTimestamp = Date.now()
       let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 
       // Drain the queue in a fiber, calling writeResponse for each message.
@@ -230,12 +247,39 @@ export const makeClientProtocolMessagePort = (
       // Start the application-level heartbeat timer.
       // Sends a ping every HEARTBEAT_INTERVAL_MS and checks whether a pong
       // (or any message) was received within HEARTBEAT_TIMEOUT_MS.
+      //
+      // Sleep detection: if the wall-clock gap between consecutive ticks is
+      // much larger than the interval, the OS suspended the process (system
+      // sleep / lid close). In that case we reset the pong timestamp instead
+      // of declaring the port dead — the utility process was suspended too
+      // and couldn't have responded to pings.
       heartbeatInterval = setInterval(() => {
         if (portState.closed) {
           return
         }
 
-        const elapsed = Date.now() - lastPongTimestamp
+        const now = Date.now()
+        const tickGap = now - lastTickTimestamp
+        lastTickTimestamp = now
+
+        // Detect system sleep: if the gap between this tick and the
+        // previous one is much larger than expected, the OS suspended
+        // the process. Forgive the missed pongs and reset liveness.
+        if (tickGap > HEARTBEAT_INTERVAL_MS * SLEEP_DETECTION_FACTOR) {
+          console.info(
+            `[rpc-client-transport] Detected system sleep (tick gap ${tickGap}ms, expected ~${HEARTBEAT_INTERVAL_MS}ms) — resetting heartbeat`
+          )
+          lastPongTimestamp = now
+          // Send a fresh ping so the server responds promptly after wake.
+          try {
+            port.postMessage(PING_MESSAGE)
+          } catch {
+            closeHandler()
+          }
+          return
+        }
+
+        const elapsed = now - lastPongTimestamp
         if (elapsed > HEARTBEAT_TIMEOUT_MS) {
           console.warn(
             `[rpc-client-transport] No pong received in ${elapsed}ms — declaring port dead`

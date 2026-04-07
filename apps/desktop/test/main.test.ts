@@ -125,6 +125,10 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       removeHandler: vi.fn(),
       removeAllListeners: vi.fn(),
     },
+    powerMonitor: {
+      on: vi.fn(),
+      removeListener: vi.fn(),
+    },
     shell: {
       openExternal: vi.fn(async () => undefined),
     },
@@ -172,6 +176,8 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       getCurrentStatuses = vi.fn(() => [])
       handleReady = vi.fn()
       handleHeartbeat = vi.fn()
+      handleSuspend = vi.fn()
+      handleResume = vi.fn()
       manualRestart = vi.fn()
       isHealthy = vi.fn(() => false)
       areServicesHealthy = vi.fn(() => false)

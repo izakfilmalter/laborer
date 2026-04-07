@@ -270,6 +270,44 @@ export class LifecycleMonitor {
   }
 
   /**
+   * Pause all heartbeat timers. Called when the system is about to
+   * suspend (sleep / lid close). Without this, heartbeat timeouts
+   * fire immediately after resume because wall-clock time advanced
+   * while the process was frozen, causing false-positive crash
+   * detections and unnecessary utility process restarts.
+   *
+   * @see handleResume — restarts the heartbeat timers after wake.
+   */
+  handleSuspend(): void {
+    console.info('[lifecycle] System suspending — pausing all heartbeat timers')
+    for (const [name, state] of this.services) {
+      if (state.heartbeatTimer) {
+        clearTimeout(state.heartbeatTimer)
+        state.heartbeatTimer = null
+        console.info(`[lifecycle:${name}] Paused heartbeat timer`)
+      }
+    }
+  }
+
+  /**
+   * Restart heartbeat timers after system resume. Gives each healthy
+   * service a fresh timeout window to send its next heartbeat.
+   *
+   * @see handleSuspend — pauses timers before sleep.
+   */
+  handleResume(): void {
+    console.info(
+      '[lifecycle] System resumed — restarting heartbeat timers for healthy services'
+    )
+    for (const [name, state] of this.services) {
+      if (state.isReady) {
+        this.resetHeartbeatTimer(name)
+        console.info(`[lifecycle:${name}] Restarted heartbeat timer`)
+      }
+    }
+  }
+
+  /**
    * Signal that the app is shutting down. Cancels all pending restarts
    * and heartbeat timers, suppresses future restart attempts.
    */

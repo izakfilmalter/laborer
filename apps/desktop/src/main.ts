@@ -1,6 +1,6 @@
 import { watch } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, powerMonitor, shell } from 'electron'
 import {
   broadcastUpdateStateToWindow,
   configureAutoUpdater,
@@ -427,6 +427,16 @@ app
       'file-watcher',
       'mcp',
     ])
+
+    // Pause heartbeat monitoring when the system sleeps so stale
+    // timestamps don't trigger false-positive crash detections on wake.
+    // `powerMonitor` is only available after `app.whenReady()`.
+    powerMonitor.on('suspend', () => {
+      lifecycleMonitor?.handleSuspend()
+    })
+    powerMonitor.on('resume', () => {
+      lifecycleMonitor?.handleResume()
+    })
 
     // In dev mode, watch sidecar dist directories for changes and auto-restart
     // utility processes. `tsdown --watch` rebuilds dist/utility-main.mjs on

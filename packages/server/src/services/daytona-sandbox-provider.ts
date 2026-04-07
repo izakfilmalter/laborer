@@ -100,8 +100,11 @@ import { DaytonaClient } from './daytona-client.js'
 import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
 import { LaborerStore } from './laborer-store.js'
 import { DAYTONA_RECONCILE_POLL_INTERVAL_MS } from './polling-intervals.js'
-import type { CreateSandboxParams, ProviderStatus } from './sandbox-provider.js'
-import { SandboxProvider } from './sandbox-provider.js'
+import type {
+  CreateSandboxParams,
+  ProviderStatus,
+  SandboxProvider,
+} from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'DaytonaSandboxProvider'
@@ -175,11 +178,11 @@ class DaytonaSandboxProvider extends Context.Tag(
    * - `LaborerStore` — LiveStore access for workspace lookups and event commits
    */
   static readonly layer: Layer.Layer<
-    SandboxProvider,
+    DaytonaSandboxProvider,
     never,
     DaytonaClient | LaborerStore
   > = Layer.scoped(
-    SandboxProvider,
+    DaytonaSandboxProvider,
     Effect.gen(function* () {
       const daytonaClient = yield* DaytonaClient
       const { store } = yield* LaborerStore
@@ -1134,7 +1137,7 @@ class DaytonaSandboxProvider extends Context.Tag(
 
       // ── Return the SandboxProvider implementation ─────────────
 
-      return SandboxProvider.of({
+      return DaytonaSandboxProvider.of({
         createSandbox,
         destroySandbox,
         pauseSandbox,

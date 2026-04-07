@@ -1541,8 +1541,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
             )
 
+          // Docker requires an explicit image; Daytona uses a default image
+          // when none is configured. Only gate on missing image for Docker.
           const devServerImage = resolvedConfig.devServer.image.value
-          if (devServerImage === null) {
+          const effectiveProvider = resolvedConfig.devServer.provider.value
+          if (devServerImage === null && effectiveProvider !== 'daytona') {
             return yield* new RpcError({
               message:
                 'No devServer.image configured in laborer.json — cannot start sandbox',

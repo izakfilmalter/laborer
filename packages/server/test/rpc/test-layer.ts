@@ -9,7 +9,6 @@ import { ContainerService } from '../../src/services/container-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
-import { DockerSandboxProvider } from '../../src/services/docker-sandbox-provider.js'
 import { FileService } from '../../src/services/file-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
@@ -20,6 +19,7 @@ import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
+import { SandboxProviderRoutedLayer } from '../../src/services/sandbox-provider-router.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -184,11 +184,12 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
  *
- * `DockerSandboxProvider.layer` provides `SandboxProvider` for
- * `WorkspaceProvider.layer` which delegates sandbox operations to it.
+ * `SandboxProviderRoutedLayer` provides `SandboxProvider` (routing between
+ * Docker and Daytona) for `WorkspaceProvider.layer` which delegates sandbox
+ * operations to it.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
-  Layer.provideMerge(DockerSandboxProvider.layer),
+  Layer.provideMerge(SandboxProviderRoutedLayer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)
@@ -219,7 +220,7 @@ const DeferredServicesReadyTrueLayer = Layer.effect(
  */
 /**
  * DeferredServiceStack with TestTerminalClient baked in.
- * DockerSandboxProvider.layer (inside the stack) requires TerminalClient.
+ * SandboxProviderRoutedLayer (inside the stack) requires TerminalClient.
  */
 const DeferredServiceStackWithTerminal = DeferredServiceStack.pipe(
   Layer.provide(TestTerminalClient),

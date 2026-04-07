@@ -63,7 +63,6 @@ import {
 } from './services/deferred-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
 import { DockerDetection } from './services/docker-detection.js'
-import { DockerSandboxProvider } from './services/docker-sandbox-provider.js'
 import { FileService } from './services/file-service.js'
 import {
   FileWatcherClient,
@@ -79,6 +78,7 @@ import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
+import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
@@ -299,12 +299,13 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * Each group uses provideMerge so all services remain available
  * as outputs for higher layers to consume.
  *
- * `DockerSandboxProvider.layer` provides the `SandboxProvider` service
+ * `SandboxProviderRoutedLayer` provides the `SandboxProvider` service
+ * (routing between Docker and Daytona based on workspace config)
  * that `WorkspaceProvider.layer` now depends on instead of directly
  * depending on `ContainerService` + `DepsImageService`.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
-  Layer.provideMerge(DockerSandboxProvider.layer),
+  Layer.provideMerge(SandboxProviderRoutedLayer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)
@@ -432,7 +433,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           DeferredServiceStack.pipe(
             Layer.provide(Layer.succeedContext(leafCtx)),
             Layer.provide(CoreDeps),
-            // DockerSandboxProvider.layer needs TerminalClient — provide
+            // SandboxProviderRoutedLayer needs TerminalClient — provide
             // the deferred proxy so the real implementation is swapped in
             // when the terminal fiber completes.
             Layer.provide(Layer.succeed(TerminalClient, terminalClient.proxy))

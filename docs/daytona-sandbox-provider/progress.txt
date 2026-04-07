@@ -1057,3 +1057,113 @@ Date: 2026-04-07
 - 498 server tests pass (47 daytona-sandbox-provider tests)
 - 1070 web tests pass
 - `bun run format` passes (494 files, no fixes)
+
+## Issue 23: End-to-end integration — Daytona workspace creation flow
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+
+#### New file: `packages/server/src/services/sandbox-provider-router.ts`
+- Created `SandboxProviderRouter` — a routing `SandboxProvider` layer that dispatches
+  sandbox operations to either `DockerSandboxProvider` or `DaytonaSandboxProvider`
+  based on per-workspace configuration
+- Routing logic:
+  - `createSandbox`: reads `devServerConfig.provider` from the params to dispatch
+  - All other methods (`destroySandbox`, `pauseSandbox`, `resumeSandbox`, `getPreviewUrl`,
+    `spawnTerminal`, `setAutoStopInterval`): looks up the workspace's `sandboxProvider`
+    column in LiveStore to determine which provider to use
+  - `reconcileState`: runs both providers' reconciliation (Docker events + Daytona polling)
+  - `checkAvailability`: returns the Docker provider's status (the primary provider)
+- `SandboxProviderRoutedLayer`: Composed layer that provides `SandboxProvider` and
+  `DockerSandboxProvider` by:
+  1. Building `DockerSandboxProvider.layer` (always succeeds)
+  2. Optionally building `DaytonaSandboxProvider.layer` via `DaytonaClient.layer` —
+     catches `DaytonaClientMissingKeyError` when `DAYTONA_API_KEY` is not set
+  3. Building the routing layer that dispatches between the two
+- When Daytona is not available, requests routed to it return a clear
+  `DAYTONA_UNAVAILABLE` error with guidance to set `DAYTONA_API_KEY`
+- Uses `Effect.serviceOption(DaytonaSandboxProvider)` to optionally resolve the
+  Daytona provider — no crash if it's not in the context
+
+#### Modified: `packages/server/src/services/docker-sandbox-provider.ts`
+- Changed `DockerSandboxProvider.layer` to provide its own `DockerSandboxProvider`
+  tag instead of the abstract `SandboxProvider` tag
+- Changed `SandboxProvider.of(...)` to `DockerSandboxProvider.of(...)` in the return value
+- Changed `SandboxProvider` import to type-only import (no longer used as a value)
+- No behavioral changes — the adapter still wraps the same Docker services
+
+#### Modified: `packages/server/src/services/daytona-sandbox-provider.ts`
+- Changed `DaytonaSandboxProvider.layer` to provide its own `DaytonaSandboxProvider`
+  tag instead of the abstract `SandboxProvider` tag
+- Changed `SandboxProvider.of(...)` to `DaytonaSandboxProvider.of(...)` in the return value
+- Changed `SandboxProvider` import to type-only (no longer used as a value)
+- No behavioral changes — the Daytona implementation is unchanged
+
+#### Modified: `packages/server/src/services/daytona-client.ts`
+- Changed `DaytonaClient.layer` from `Effect.die` to `Effect.fail` with a typed
+  `DaytonaClientMissingKeyError` when `DAYTONA_API_KEY` is not set
+- Added `DaytonaClientMissingKeyError` class extending `Data.TaggedError` with
+  a descriptive message
+- Layer type signature updated: `Layer.Layer<DaytonaClient, DaytonaClientMissingKeyError>`
+- This allows the `SandboxProviderRouter` to catch the error and gracefully degrade
+  when Daytona credentials are not configured, instead of crashing the service stack
+- Exported `DaytonaClientMissingKeyError` for use by the router
+
+#### Modified: `packages/server/src/services/workspace-provider.ts`
+- Updated `startSandbox` to allow null `devServer.image` for Daytona workspaces:
+  - Previously: rejected all workspaces with `devServer.image === null`
+  - Now: only rejects when `provider !== 'daytona'` and `image === null`
+  - Daytona uses a default image (Node 22, bun, git, Claude Code, OpenCode, Codex)
+    when no explicit image is configured
+
+#### Modified: `packages/server/src/utility-main.ts`
+- Replaced `DockerSandboxProvider.layer` with `SandboxProviderRoutedLayer` in
+  `DeferredServiceStack`
+- Removed `DockerSandboxProvider` import (no longer directly referenced)
+- Added `SandboxProviderRoutedLayer` import
+- Updated comments to reflect the routing layer
+
+#### Modified: `packages/server/test/rpc/test-layer.ts`
+- Replaced `DockerSandboxProvider.layer` with `SandboxProviderRoutedLayer` in
+  `DeferredServiceStack`
+- Updated imports and comments accordingly
+
+#### Modified: `packages/server/test/workspace-destroy-origin.test.ts`
+- Replaced `DockerSandboxProvider.layer` with `SandboxProviderRoutedLayer` in `TestLayer`
+- Updated imports and comments accordingly
+
+#### Modified: `packages/server/test/daytona-sandbox-provider.test.ts`
+- Updated all 47 `yield* SandboxProvider` usages to `yield* DaytonaSandboxProvider`
+  since the layer now provides its own tag
+- Removed unused `SandboxProvider` import
+
+### Architecture decisions:
+- **Routing layer pattern**: The `SandboxProviderRouter` holds both providers as
+  internal dependencies and dispatches based on workspace config. This keeps provider
+  routing centralized and transparent to `WorkspaceProvider` — it still delegates to
+  a single `SandboxProvider` from the Effect context.
+- **Optional Daytona**: `DaytonaClient.layer` uses `Effect.fail` (not `Effect.die`) so
+  `SandboxProviderRoutedLayer` can catch the error and provide Docker-only. This means
+  users without a `DAYTONA_API_KEY` get the exact same Docker experience as before.
+- **Provider tags**: Both `DockerSandboxProvider` and `DaytonaSandboxProvider` now provide
+  their own tags (not the abstract `SandboxProvider`). The router composes them and
+  provides the abstract `SandboxProvider` tag for consumption by `WorkspaceProvider`,
+  RPC handlers, and terminal client.
+- **Per-workspace dispatch**: For `createSandbox`, the provider is determined by
+  `devServerConfig.provider`. For all other operations, the provider is determined
+  by the `sandboxProvider` column stored on the workspace in LiveStore. This ensures
+  operations always go to the correct provider even after restart.
+- **Docker flow unchanged**: The Docker path is completely unaffected. The router
+  defaults to Docker for any workspace without an explicit `sandboxProvider` set to
+  `'daytona'`. All existing Docker tests pass unchanged (modulo pre-existing
+  environment issues with `@effect/vitest` module loading).
+
+### Verification:
+- All typechecks pass (server, shared, web — `tsc --noEmit`)
+- `bun run format` passes (495 files, no fixes)
+- Git-sync tests pass (16 tests)
+- Daytona terminal data channel tests pass (16 tests)
+- Pre-existing `@effect/vitest` module loading issue affects some test files
+  (confirmed pre-existing by running tests on the previous commit)

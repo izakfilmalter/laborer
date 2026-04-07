@@ -11,11 +11,11 @@ import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
 import { DockerDetection } from '../src/services/docker-detection.js'
-import { DockerSandboxProvider } from '../src/services/docker-sandbox-provider.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
+import { SandboxProviderRoutedLayer } from '../src/services/sandbox-provider-router.js'
 import { TerminalClient } from '../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -30,7 +30,7 @@ const docker = (args: string): string =>
   execSync(`docker ${args}`, { encoding: 'utf-8' }).trim()
 
 /**
- * Stub TerminalClient for tests — DockerSandboxProvider.layer requires it
+ * Stub TerminalClient for tests — SandboxProviderRoutedLayer requires it
  * but these tests don't exercise terminal functionality.
  */
 const TestTerminalClient = Layer.succeed(
@@ -48,7 +48,7 @@ const TestTerminalClient = Layer.succeed(
 )
 
 const TestLayer = WorkspaceProvider.layer.pipe(
-  Layer.provide(DockerSandboxProvider.layer),
+  Layer.provide(SandboxProviderRoutedLayer),
   Layer.provideMerge(TestTerminalClient),
   Layer.provideMerge(DockerDetection.layer),
   Layer.provideMerge(DepsImageService.layer),

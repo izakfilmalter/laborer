@@ -21,7 +21,24 @@ import {
 } from '@daytonaio/sdk'
 import { env } from '@laborer/env/server'
 import { RpcError } from '@laborer/shared/rpc'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Data, Effect, Layer } from 'effect'
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/**
+ * Typed error indicating that `DAYTONA_API_KEY` is not configured.
+ *
+ * Used by `DaytonaClient.layer` so that callers (e.g. `SandboxProviderRouter`)
+ * can catch the error and gracefully degrade when Daytona credentials are not
+ * available, instead of crashing the entire service stack.
+ */
+class DaytonaClientMissingKeyError extends Data.TaggedError(
+  'DaytonaClientMissingKeyError'
+)<{
+  readonly message: string
+}> {}
 
 // ---------------------------------------------------------------------------
 // SDK type aliases (used by consumers: DaytonaSandboxProvider, etc.)
@@ -161,17 +178,23 @@ class DaytonaClient extends Context.Tag('@laborer/DaytonaClient')<
    * Reads `DAYTONA_API_KEY`, `DAYTONA_API_URL`, and `DAYTONA_TARGET` from
    * the env service. Fails the layer if `DAYTONA_API_KEY` is not set
    * (the env schema makes it optional, but this service requires it).
+   *
+   * Uses `Effect.fail` (not `Effect.die`) so that callers like
+   * `SandboxProviderRouter` can catch the error and gracefully degrade
+   * when Daytona credentials are not configured.
    */
-  static readonly layer: Layer.Layer<DaytonaClient> = Layer.effect(
+  static readonly layer: Layer.Layer<
+    DaytonaClient,
+    DaytonaClientMissingKeyError
+  > = Layer.effect(
     DaytonaClient,
     Effect.gen(function* () {
       const apiKey = env.DAYTONA_API_KEY
       if (apiKey === undefined) {
-        return yield* Effect.die(
-          new Error(
-            'DAYTONA_API_KEY is not set. The DaytonaClient service requires a valid API key.'
-          )
-        )
+        return yield* new DaytonaClientMissingKeyError({
+          message:
+            'DAYTONA_API_KEY is not set. The DaytonaClient service requires a valid API key.',
+        })
       }
 
       const daytona = new Daytona({
@@ -303,7 +326,7 @@ class DaytonaClient extends Context.Tag('@laborer/DaytonaClient')<
   )
 }
 
-export { DaytonaClient }
+export { DaytonaClient, DaytonaClientMissingKeyError }
 export type { DaytonaSandbox, DaytonaPaginatedSandboxes }
 export type {
   CreateSandboxFromImageParams,

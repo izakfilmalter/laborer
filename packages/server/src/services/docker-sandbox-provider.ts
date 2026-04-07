@@ -29,8 +29,10 @@ import { ContainerService } from './container-service.js'
 import { DepsImageService } from './deps-image-service.js'
 import { DockerDetection } from './docker-detection.js'
 import { LaborerStore } from './laborer-store.js'
-import type { CreateSandboxParams } from './sandbox-provider.js'
-import { SandboxProvider } from './sandbox-provider.js'
+import type {
+  CreateSandboxParams,
+  SandboxProvider,
+} from './sandbox-provider.js'
 import { TerminalClient } from './terminal-client.js'
 
 /** Module-level log annotation for structured logging. */
@@ -131,7 +133,7 @@ class DockerSandboxProvider extends Context.Tag(
    * - `LaborerStore` — LiveStore access for workspace lookups
    */
   static readonly layer: Layer.Layer<
-    SandboxProvider,
+    DockerSandboxProvider,
     never,
     | ContainerService
     | DepsImageService
@@ -139,7 +141,7 @@ class DockerSandboxProvider extends Context.Tag(
     | TerminalClient
     | LaborerStore
   > = Layer.effect(
-    SandboxProvider,
+    DockerSandboxProvider,
     Effect.gen(function* () {
       const containerService = yield* ContainerService
       const depsImageService = yield* DepsImageService
@@ -412,7 +414,7 @@ class DockerSandboxProvider extends Context.Tag(
 
       // ── Return the SandboxProvider implementation ─────────────
 
-      return SandboxProvider.of({
+      return DockerSandboxProvider.of({
         createSandbox,
         destroySandbox,
         pauseSandbox,

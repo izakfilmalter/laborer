@@ -44,7 +44,6 @@ import type {
 import { DaytonaClient } from '../../server/src/services/daytona-client.js'
 import { DaytonaSandboxProvider } from '../../server/src/services/daytona-sandbox-provider.js'
 import { LaborerStore } from '../../server/src/services/laborer-store.js'
-import { SandboxProvider } from '../../server/src/services/sandbox-provider.js'
 import { initRepo } from './helpers/git-helpers.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
@@ -494,7 +493,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           const worktreePath = seedWorkspace(store as never, wid)
@@ -541,7 +540,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           const worktreePath = seedWorkspace(store as never, wid)
@@ -573,7 +572,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           const worktreePath = seedWorkspace(store as never, wid)
@@ -597,7 +596,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           const worktreePath = seedWorkspace(
@@ -632,7 +631,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             const worktreePath = seedWorkspace(store as never, wid)
@@ -661,7 +660,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             const worktreePath = seedWorkspace(store as never, wid)
@@ -693,7 +692,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             const worktreePath = seedWorkspace(store as never, wid)
@@ -722,7 +721,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             const worktreePath = seedWorkspace(store as never, wid)
@@ -746,7 +745,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           const worktreePath = seedWorkspace(store as never, wid)
@@ -777,7 +776,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -806,7 +805,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -835,7 +834,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           // Do NOT seed a workspace — it should skip gracefully
           yield* sp.destroySandbox('nonexistent-workspace-id')
 
@@ -850,7 +849,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           // Seed workspace WITHOUT starting a sandbox (no sandboxId)
@@ -871,7 +870,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -907,7 +906,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -943,7 +942,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -972,7 +971,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1002,7 +1001,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1032,7 +1031,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1058,7 +1057,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1088,7 +1087,7 @@ describe('DaytonaSandboxProvider', () => {
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1121,7 +1120,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1147,7 +1146,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1178,7 +1177,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1207,7 +1206,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1232,7 +1231,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const status = yield* sp.checkAvailability()
           assert.isTrue(status.available)
           assert.isUndefined(status.error)
@@ -1266,7 +1265,7 @@ describe('DaytonaSandboxProvider', () => {
           Layer.provideMerge(TestLaborerStore)
         )
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const status = yield* sp.checkAvailability()
           assert.isFalse(status.available)
           assert.isDefined(status.error)
@@ -1303,7 +1302,7 @@ describe('DaytonaSandboxProvider', () => {
             Layer.provideMerge(TestLaborerStore)
           )
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const status = yield* sp.checkAvailability()
             assert.isFalse(status.available)
             assert.isDefined(status.error)
@@ -1340,7 +1339,7 @@ describe('DaytonaSandboxProvider', () => {
             Layer.provideMerge(TestLaborerStore)
           )
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const status = yield* sp.checkAvailability()
             assert.isFalse(status.available)
             assert.isDefined(status.error)
@@ -1353,7 +1352,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
 
           // First call — should invoke list
           const status1 = yield* sp.checkAvailability()
@@ -1379,7 +1378,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1421,7 +1420,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1456,7 +1455,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1477,7 +1476,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1506,7 +1505,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1551,7 +1550,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1584,7 +1583,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1612,7 +1611,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1646,7 +1645,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1675,7 +1674,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1762,7 +1761,7 @@ describe('DaytonaSandboxProvider', () => {
           const log: MockCallRecord[] = []
           const sandboxId = 'sb-reconcile-stopped'
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1803,7 +1802,7 @@ describe('DaytonaSandboxProvider', () => {
           const log: MockCallRecord[] = []
           const sandboxId = 'sb-reconcile-started'
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1842,7 +1841,7 @@ describe('DaytonaSandboxProvider', () => {
           const log: MockCallRecord[] = []
           const sandboxId = 'sb-reconcile-destroyed'
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1880,7 +1879,7 @@ describe('DaytonaSandboxProvider', () => {
         const log: MockCallRecord[] = []
         const sandboxId = 'sb-reconcile-archived'
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -1917,7 +1916,7 @@ describe('DaytonaSandboxProvider', () => {
           const log: MockCallRecord[] = []
           const sandboxId = 'sb-reconcile-synced'
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid = crypto.randomUUID()
             seedWorkspace(store as never, wid)
@@ -1952,7 +1951,7 @@ describe('DaytonaSandboxProvider', () => {
       Effect.gen(function* () {
         const log: MockCallRecord[] = []
         yield* Effect.gen(function* () {
-          const sp = yield* SandboxProvider
+          const sp = yield* DaytonaSandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
           seedWorkspace(store as never, wid)
@@ -2033,7 +2032,7 @@ describe('DaytonaSandboxProvider', () => {
           )
 
           yield* Effect.gen(function* () {
-            const sp = yield* SandboxProvider
+            const sp = yield* DaytonaSandboxProvider
             const { store } = yield* LaborerStore
             const wid1 = crypto.randomUUID()
             const wid2 = crypto.randomUUID()

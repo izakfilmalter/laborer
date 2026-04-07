@@ -584,3 +584,76 @@ Date: 2026-04-07
 - 58 RPC tests pass (12 test files)
 - 89 shared tests pass
 - `bun run format` passes (490 files, no fixes)
+
+## Issue 15: Git sync — push worktree HEAD to Daytona sandbox via SSH
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Created new file `packages/server/src/lib/git-sync.ts` with pure helper functions:
+  - `buildRemoteName(workspaceId)` — builds `sandbox-{workspaceId}` remote name
+  - `buildSshRemoteUrl(token, host?, projectDir?)` — builds `ssh://{token}@{host}{projectDir}` URL
+  - `buildAddRemoteArgs(remoteName, remoteUrl)` — git args for `remote add`
+  - `buildPushArgs(remoteName)` — git args for `push HEAD:main --force`
+  - `buildRemoveRemoteArgs(remoteName)` — git args for `remote remove`
+  - `buildSandboxInitCommand(projectDir?)` — sandbox command for `git init` + `receive.denyCurrentBranch ignore`
+  - `buildSandboxCheckoutCommand(projectDir?)` — sandbox command for `git checkout -f main`
+  - `buildSshGitEnv()` — SSH env vars with `StrictHostKeyChecking=no`, `UserKnownHostsFile=/dev/null`, port 2222
+  - Constants: `DAYTONA_SSH_HOST`, `DAYTONA_PROJECT_DIR`
+- Added `pushCodeToSandbox` Effect function in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Step 1: Report progress `'pushing-code'` via `v2.SandboxSetupStepChanged`
+  - Step 2: Get SSH access token from Daytona API (10-minute expiry) via `sandbox.createSshAccess(10)`
+  - Step 3: Initialize git repo in sandbox via `sandbox.process.executeCommand(buildSandboxInitCommand())`
+  - Step 4: Add temporary local git remote via `spawnGit(buildAddRemoteArgs(...))`
+    - Handles remote already existing from a previous failed attempt (remove + retry)
+  - Step 5: Push HEAD to sandbox via `spawnGit(buildPushArgs(...))` with SSH env, 2-minute timeout
+  - Step 6: Checkout pushed code in sandbox via `sandbox.process.executeCommand(buildSandboxCheckoutCommand())`
+  - Step 7: Clean up temporary git remote via `Effect.ensuring(...)` — always runs even on push failure
+- Integrated `pushCodeToSandbox` into `createSandbox` flow:
+  - Called after `v2.SandboxStarted` event and before `onReady` callback
+  - Clears `sandboxSetupStep` to null after successful push (setup complete)
+- Updated `makeMockSandbox` in tests to accept optional `log` parameter:
+  - Added `createSshAccess` mock method returning test token `test-ssh-token-abc`
+  - Added `process.executeCommand` mock method recording calls to log
+- Added `vi.mock` for `spawnGit` in DaytonaSandboxProvider tests to prevent real SSH connections
+
+### Tests added:
+
+#### Pure function tests (16 tests in `packages/server/test/git-sync.test.ts`):
+- `buildRemoteName` — sandbox-{workspaceId} format, UUID handling
+- `buildSshRemoteUrl` — default host/dir, custom host, custom dir, token in URL
+- `buildAddRemoteArgs` — correct git args array
+- `buildPushArgs` — push with --force flag
+- `buildRemoveRemoteArgs` — correct remove args
+- `buildSandboxInitCommand` — git init + receive.denyCurrentBranch, custom dir
+- `buildSandboxCheckoutCommand` — checkout -f main, custom dir
+- `buildSshGitEnv` — StrictHostKeyChecking, UserKnownHostsFile, port 2222
+
+#### Integration tests (5 new tests in `packages/server/test/daytona-sandbox-provider.test.ts`):
+- createSandbox calls `createSshAccess` with 10-minute expiry during git sync
+- createSandbox executes `git init` in sandbox before pushing code
+- createSandbox executes `git checkout -f main` in sandbox after push
+- createSandbox reports `pushing-code` setup step, then clears it (null) on completion
+- createSandbox calls `git remote remove` to clean up after push
+
+### Design decisions:
+- SSH remote URL format: `ssh://{token}@ssh.app.daytona.io/home/daytona/project`
+  matches the PRD specification for Daytona SSH gateway access
+- `receive.denyCurrentBranch ignore` configured in sandbox git repo to allow
+  pushes to a checked-out branch (sandbox starts with a working tree)
+- `git push --force` used because the sandbox may have a different history
+  (or none at all) on creation
+- `Effect.ensuring` guarantees remote cleanup even on push failure,
+  preventing orphaned git remotes in the local worktree
+- Remote name collision handling: if `git remote add` fails (exit code != 0),
+  attempts to remove the existing remote and retry once
+- `spawnGit` with 120-second timeout for push (accommodates large repos)
+- `vi.mock` for `spawnGit` in tests prevents real SSH connections while
+  still testing the full Effect pipeline including SDK calls
+
+### Verification:
+- Server typecheck passes (`tsc --noEmit`)
+- 461 server tests pass (50 test files, 1 skipped) — 26 daytona-sandbox-provider + 16 git-sync
+- 89 shared tests pass
+- `bun run format` passes (492 files, no fixes)

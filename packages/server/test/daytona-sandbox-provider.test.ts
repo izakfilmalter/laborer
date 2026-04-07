@@ -1,5 +1,5 @@
 /**
- * Tests for DaytonaSandboxProvider — Issues 13, 14, & 19
+ * Tests for DaytonaSandboxProvider — Issues 13, 14, 15 & 19
  *
  * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
@@ -8,17 +8,23 @@
  * already-destroyed sandboxes, graceful skip when workspace is missing or has no
  * sandboxId, and best-effort cleanup when delete fails.
  *
+ * Issue 15: Verifies git sync — pushing worktree HEAD to sandbox via SSH.
+ * Tests that createSshAccess is called, git init is executed in the sandbox,
+ * local git remote is added/pushed/cleaned up, and checkout is executed.
+ *
  * Issue 19: Verifies pauseSandbox and resumeSandbox idempotency — pausing
  * an already-stopped/archived sandbox skips the SDK stop call, resuming an
  * already-started sandbox skips the SDK start call. Also tests
  * setAutoStopInterval delegation to the SDK.
  */
 
+import { rmSync } from 'node:fs'
 import { CodeLanguage } from '@daytonaio/sdk'
 import { assert, describe, it } from '@effect/vitest'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer, Ref } from 'effect'
+import { afterAll, beforeEach, vi } from 'vitest'
 import type {
   DaytonaPaginatedSandboxes,
   DaytonaSandbox,
@@ -27,7 +33,25 @@ import { DaytonaClient } from '../../server/src/services/daytona-client.js'
 import { DaytonaSandboxProvider } from '../../server/src/services/daytona-sandbox-provider.js'
 import { LaborerStore } from '../../server/src/services/laborer-store.js'
 import { SandboxProvider } from '../../server/src/services/sandbox-provider.js'
+import { initRepo } from './helpers/git-helpers.js'
 import { TestLaborerStore } from './helpers/test-store.js'
+
+// ---------------------------------------------------------------------------
+// Mock spawnGit to prevent real SSH connections during unit tests.
+// The mock records calls and returns success exit codes.
+// ---------------------------------------------------------------------------
+
+const spawnGitCalls: Array<{ args: readonly string[]; cwd: string }> = []
+
+vi.mock('../../server/src/lib/spawn-git.js', () => ({
+  spawnGit: (
+    args: readonly string[],
+    options: { cwd: string; env?: Record<string, string>; timeoutMs?: number }
+  ) => {
+    spawnGitCalls.push({ args: [...args], cwd: options.cwd })
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' })
+  },
+}))
 
 // ---------------------------------------------------------------------------
 // Types & helpers
@@ -38,7 +62,7 @@ interface MockCallRecord {
   readonly method: string
 }
 
-const makeMockSandbox = (): DaytonaSandbox =>
+const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
   ({
     id: 'sandbox-test-123',
     name: 'test-sandbox',
@@ -57,9 +81,26 @@ const makeMockSandbox = (): DaytonaSandbox =>
     toolboxProxyUrl: 'https://toolbox.test',
     fs: {} as DaytonaSandbox['fs'],
     git: {} as DaytonaSandbox['git'],
-    process: {} as DaytonaSandbox['process'],
+    process: {
+      executeCommand: (...args: unknown[]) => {
+        log?.push({ method: 'sandbox.process.executeCommand', args })
+        return Promise.resolve({ exitCode: 0, result: '' })
+      },
+    } as unknown as DaytonaSandbox['process'],
     computerUse: {} as DaytonaSandbox['computerUse'],
     codeInterpreter: {} as DaytonaSandbox['codeInterpreter'],
+    createSshAccess: (...args: unknown[]) => {
+      log?.push({ method: 'sandbox.createSshAccess', args })
+      return Promise.resolve({
+        id: 'ssh-access-1',
+        sandboxId: 'sandbox-test-123',
+        token: 'test-ssh-token-abc',
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        sshCommand: 'ssh -p 2222 test-ssh-token-abc@ssh.app.daytona.io',
+      })
+    },
     getPreviewLink: () =>
       Promise.resolve({
         url: 'https://3000-sandbox-test-123.preview.daytona.io',
@@ -74,7 +115,7 @@ const makeMockSandbox = (): DaytonaSandbox =>
 const makeMockClientLayer = (
   log: MockCallRecord[]
 ): Layer.Layer<DaytonaClient> => {
-  const sb = makeMockSandbox()
+  const sb = makeMockSandbox(log)
   return Layer.succeed(
     DaytonaClient,
     DaytonaClient.of({
@@ -188,7 +229,7 @@ const makeGetErrorClientLayer = (
 const makeDeleteFailClientLayer = (
   log: MockCallRecord[]
 ): Layer.Layer<DaytonaClient> => {
-  const sb = makeMockSandbox()
+  const sb = makeMockSandbox(log)
   return Layer.succeed(
     DaytonaClient,
     DaytonaClient.of({
@@ -228,7 +269,7 @@ const makeStateClientLayer = (
   log: MockCallRecord[],
   state: string
 ): Layer.Layer<DaytonaClient> => {
-  const sb = { ...makeMockSandbox(), state } as unknown as DaytonaSandbox
+  const sb = { ...makeMockSandbox(log), state } as unknown as DaytonaSandbox
   return Layer.succeed(
     DaytonaClient,
     DaytonaClient.of({
@@ -305,20 +346,41 @@ const makeDeleteFailLayer = (log: MockCallRecord[]) =>
   )
 
 // ---------------------------------------------------------------------------
+// Temp directory management
+// ---------------------------------------------------------------------------
+
+const tempRoots: string[] = []
+
+beforeEach(() => {
+  spawnGitCalls.length = 0
+})
+
+afterAll(() => {
+  for (const root of tempRoots) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Seed helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Seed a workspace in LiveStore AND create a real git repo as the worktree.
+ * Returns the worktree path (a real git repo) for use in createSandbox calls.
+ */
 const seedWorkspace = (
   store: { commit: (e: unknown) => void },
   workspaceId: string,
   projectName = 'test-project',
   branchName = 'feature/test'
-) => {
+): string => {
+  const repoPath = initRepo(`daytona-${workspaceId.slice(0, 8)}`, tempRoots)
   const projectId = `project-${crypto.randomUUID()}`
   store.commit(
     events.projectCreated({
       id: projectId,
-      repoPath: '/tmp/test-repo',
+      repoPath,
       name: projectName,
       brrrConfig: null,
     })
@@ -329,13 +391,14 @@ const seedWorkspace = (
       projectId,
       taskSource: null,
       branchName,
-      worktreePath: `/tmp/worktrees/${branchName}`,
+      worktreePath: repoPath,
       status: 'creating',
       origin: 'laborer',
       createdAt: new Date().toISOString(),
       baseSha: null,
     })
   )
+  return repoPath
 }
 
 const dsc = (
@@ -377,13 +440,13 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
-          seedWorkspace(store as never, wid)
+          const worktreePath = seedWorkspace(store as never, wid)
 
           yield* sp.createSandbox({
             workspaceId: wid,
             branchName: 'feature/test',
             projectName: 'test-project',
-            worktreePath: '/tmp/worktrees/feature/test',
+            worktreePath,
             devServerConfig: dsc({ image: 'node:22', port: 3000 }),
           })
 
@@ -418,13 +481,13 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
-          seedWorkspace(store as never, wid)
+          const worktreePath = seedWorkspace(store as never, wid)
 
           yield* sp.createSandbox({
             workspaceId: wid,
             branchName: 'feature/default',
             projectName: 'default-project',
-            worktreePath: '/tmp/worktrees/feature/default',
+            worktreePath,
             devServerConfig: dsc({ image: null }),
           })
 
@@ -447,14 +510,14 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
-          seedWorkspace(store as never, wid)
+          const worktreePath = seedWorkspace(store as never, wid)
           const called = yield* Ref.make(false)
 
           yield* sp.createSandbox({
             workspaceId: wid,
             branchName: 'feature/cb',
             projectName: 'cb-project',
-            worktreePath: '/tmp/worktrees/feature/cb',
+            worktreePath,
             devServerConfig: dsc(),
             onReady: () => Ref.set(called, true).pipe(Effect.asVoid),
           })
@@ -471,13 +534,18 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const { store } = yield* LaborerStore
           const wid = crypto.randomUUID()
-          seedWorkspace(store as never, wid, 'my-project', 'feat/cool')
+          const worktreePath = seedWorkspace(
+            store as never,
+            wid,
+            'my-project',
+            'feat/cool'
+          )
 
           yield* sp.createSandbox({
             workspaceId: wid,
             branchName: 'feat/cool',
             projectName: 'my-project',
-            worktreePath: '/tmp/worktrees/feat/cool',
+            worktreePath,
             devServerConfig: dsc(),
           })
 
@@ -488,6 +556,151 @@ describe('DaytonaSandboxProvider', () => {
             'laborer-project': 'my-project',
             'laborer-branch': 'feat/cool',
           })
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped(
+      'calls createSshAccess on the sandbox during git sync (Issue 15)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/git-sync',
+              projectName: 'sync-project',
+              worktreePath,
+              devServerConfig: dsc(),
+            })
+
+            const sshCalls = log.filter(
+              (c) => c.method === 'sandbox.createSshAccess'
+            )
+            assert.strictEqual(sshCalls.length, 1)
+            // Token expiry should be 10 minutes
+            assert.strictEqual((sshCalls[0]?.args as unknown[])[0], 10)
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'executes git init in sandbox before pushing code (Issue 15)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/git-init',
+              projectName: 'init-project',
+              worktreePath,
+              devServerConfig: dsc(),
+            })
+
+            const execCalls = log.filter(
+              (c) => c.method === 'sandbox.process.executeCommand'
+            )
+            // Should have at least 2 calls: git init + git checkout
+            assert.isTrue(execCalls.length >= 2)
+            // First call should be git init
+            const initCmd = (execCalls[0]?.args as unknown[])[0] as string
+            assert.isTrue(initCmd.includes('git init'))
+            assert.isTrue(initCmd.includes('receive.denyCurrentBranch ignore'))
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'executes git checkout in sandbox after pushing code (Issue 15)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/git-checkout',
+              projectName: 'checkout-project',
+              worktreePath,
+              devServerConfig: dsc(),
+            })
+
+            const execCalls = log.filter(
+              (c) => c.method === 'sandbox.process.executeCommand'
+            )
+            // Last executeCommand call should be the checkout
+            const lastCmd = (execCalls.at(-1)?.args as unknown[])[0] as string
+            assert.isTrue(lastCmd.includes('git checkout -f main'))
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'reports pushing-code setup step during git sync (Issue 15)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/step',
+              projectName: 'step-project',
+              worktreePath,
+              devServerConfig: dsc(),
+            })
+
+            // After successful creation, setup step should be cleared (null)
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxSetupStep, null)
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped('calls git remote remove to clean up after push (Issue 15)', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          const worktreePath = seedWorkspace(store as never, wid)
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/cleanup',
+            projectName: 'cleanup-project',
+            worktreePath,
+            devServerConfig: dsc(),
+          })
+
+          // Verify spawnGit was called with 'remote remove' to clean up
+          const removeCalls = spawnGitCalls.filter(
+            (c) => c.args[0] === 'remote' && c.args[1] === 'remove'
+          )
+          assert.strictEqual(removeCalls.length, 1)
+          assert.isTrue(
+            (removeCalls[0]?.args[2] as string).includes(`sandbox-${wid}`)
+          )
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )

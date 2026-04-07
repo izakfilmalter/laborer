@@ -11,9 +11,11 @@
  * - Git sync: push worktree HEAD to sandbox via SSH (Issue 15)
  * - `spawnTerminal` (Issue 16) — WebSocket PTY session creation via Daytona SDK
  *
+ * - `reconcileState` (Issue 20) — polling loop that syncs LiveStore with
+ *   actual Daytona sandbox states every 30 seconds, forked as a daemon fiber
+ *
  * Stub methods (to be implemented in downstream issues):
  * - `getPreviewUrl` (Issue 18)
- * - `reconcileState` (Issue 20)
  * - `checkAvailability` (Issue 12)
  *
  * ### spawnTerminal flow (Issue 16):
@@ -70,7 +72,15 @@
 import { CodeLanguage, type PtyHandle } from '@daytonaio/sdk'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
+import {
+  Array as Arr,
+  Context,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  pipe,
+} from 'effect'
 
 import {
   buildAddRemoteArgs,
@@ -86,6 +96,7 @@ import { spawnGit } from '../lib/spawn-git.js'
 import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
 import { LaborerStore } from './laborer-store.js'
+import { DAYTONA_RECONCILE_POLL_INTERVAL_MS } from './polling-intervals.js'
 import type { CreateSandboxParams } from './sandbox-provider.js'
 import { SandboxProvider } from './sandbox-provider.js'
 
@@ -164,7 +175,7 @@ class DaytonaSandboxProvider extends Context.Tag(
     SandboxProvider,
     never,
     DaytonaClient | LaborerStore
-  > = Layer.effect(
+  > = Layer.scoped(
     SandboxProvider,
     Effect.gen(function* () {
       const daytonaClient = yield* DaytonaClient
@@ -795,15 +806,167 @@ class DaytonaSandboxProvider extends Context.Tag(
       )
 
       // ── reconcileState ────────────────────────────────────────
-      // Stub: will be implemented in Issue 20.
+      // Issue 20: Full implementation.
+      //
+      // Polls the Daytona API every 30 seconds to detect sandbox state
+      // drift (e.g. auto-stop after idle, external destroy, archive).
+      //
+      // On each tick:
+      // 1. Query LiveStore for all workspaces with sandboxProvider=daytona
+      //    and a non-null sandboxId
+      // 2. For each, call DaytonaClient.get(sandboxId) to check actual state
+      // 3. Compare actual vs LiveStore state; commit events for mismatches:
+      //    - Daytona stopped + LS running → SandboxPaused
+      //    - Daytona started + LS paused  → SandboxResumed
+      //    - Daytona not found/destroyed  → SandboxStopped
+      //    - Daytona archived + LS any    → SandboxPaused
+      // 4. Errors on individual sandbox checks are logged and skipped.
+      //
+      // The loop is forked as a daemon fiber in the Layer.scoped setup.
 
+      /**
+       * Reconcile a single workspace's LiveStore state with the actual
+       * Daytona sandbox state. Returns void; errors are caught and logged.
+       */
+      const reconcileOneWorkspace = Effect.fn(
+        'DaytonaSandboxProvider.reconcileOneWorkspace'
+      )(function* (workspace: {
+        readonly id: string
+        readonly sandboxId: string
+        readonly sandboxStatus: string | null
+      }) {
+        const {
+          id: workspaceId,
+          sandboxId,
+          sandboxStatus: lsStatus,
+        } = workspace
+
+        const sandbox = yield* daytonaClient.get(sandboxId).pipe(
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
+              if (error.code === 'DAYTONA_NOT_FOUND') {
+                // Sandbox destroyed externally — sync LiveStore
+                if (lsStatus !== null) {
+                  yield* Effect.logInfo(
+                    `Reconcile: Daytona sandbox "${sandboxId}" not found (destroyed externally), syncing LiveStore`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                  store.commit(events.sandboxStopped({ workspaceId }))
+                }
+              } else {
+                yield* Effect.logWarning(
+                  `Reconcile: failed to fetch Daytona sandbox "${sandboxId}": ${error.message} (code: ${error.code})`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+              }
+              return null
+            })
+          )
+        )
+
+        if (sandbox === null) {
+          return
+        }
+
+        const daytonaState = String(sandbox.state)
+
+        // Map Daytona states to our LiveStore states:
+        // - 'started' / 'running' → 'running'
+        // - 'stopped' / 'stopping' → 'paused'
+        // - 'archived' / 'archiving' → 'paused'
+        // - anything else unexpected → log and skip
+
+        if (
+          (daytonaState === 'started' || daytonaState === 'running') &&
+          lsStatus !== 'running'
+        ) {
+          yield* Effect.logInfo(
+            `Reconcile: sandbox "${sandboxId}" is ${daytonaState} in Daytona but "${lsStatus ?? 'null'}" in LiveStore, committing SandboxResumed`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          store.commit(events.sandboxResumed({ workspaceId }))
+        } else if (
+          (daytonaState === 'stopped' || daytonaState === 'stopping') &&
+          lsStatus !== 'paused'
+        ) {
+          yield* Effect.logInfo(
+            `Reconcile: sandbox "${sandboxId}" is ${daytonaState} in Daytona but "${lsStatus ?? 'null'}" in LiveStore, committing SandboxPaused`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          store.commit(events.sandboxPaused({ workspaceId }))
+        } else if (
+          (daytonaState === 'archived' || daytonaState === 'archiving') &&
+          lsStatus !== 'paused'
+        ) {
+          yield* Effect.logInfo(
+            `Reconcile: sandbox "${sandboxId}" is ${daytonaState} in Daytona but "${lsStatus ?? 'null'}" in LiveStore, committing SandboxPaused (archived treated as paused)`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          store.commit(events.sandboxPaused({ workspaceId }))
+        }
+      })
+
+      /**
+       * Run one full reconciliation pass across all Daytona workspaces.
+       */
+      const runReconciliationPass = Effect.fn(
+        'DaytonaSandboxProvider.runReconciliationPass'
+      )(function* () {
+        const allWorkspaces = store.query(tables.workspaces)
+        const daytonaWorkspaces = pipe(
+          allWorkspaces,
+          Arr.filter(
+            (ws) => ws.sandboxProvider === 'daytona' && ws.sandboxId !== null
+          )
+        )
+
+        if (daytonaWorkspaces.length === 0) {
+          return
+        }
+
+        yield* Effect.logDebug(
+          `Reconciling Daytona state for ${String(daytonaWorkspaces.length)} workspace(s)`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        yield* Effect.forEach(
+          daytonaWorkspaces,
+          (workspace) =>
+            reconcileOneWorkspace({
+              id: workspace.id,
+              sandboxId: workspace.sandboxId as string,
+              sandboxStatus: workspace.sandboxStatus,
+            }),
+          { discard: true }
+        )
+      })
+
+      /**
+       * reconcileState — run one reconciliation pass.
+       *
+       * Exposed on the SandboxProvider interface so it can be called
+       * directly in tests. In production the Layer forks a daemon fiber
+       * that calls this repeatedly on a 30-second interval.
+       */
       const reconcileState = Effect.fn('DaytonaSandboxProvider.reconcileState')(
         function* () {
-          yield* Effect.logDebug(
-            'Daytona state reconciliation not yet implemented. See Issue 20.'
-          ).pipe(Effect.annotateLogs('module', logPrefix))
+          yield* runReconciliationPass()
         }
       )
+
+      /**
+       * The forever-polling daemon loop.
+       *
+       * Runs one immediate reconciliation pass on startup, then sleeps
+       * and repeats forever until the fiber is interrupted.
+       */
+      const reconcileLoop: Effect.Effect<never> = Effect.gen(function* () {
+        yield* Effect.logInfo(
+          'Running initial Daytona state reconciliation pass'
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+        yield* runReconciliationPass()
+
+        return yield* Effect.gen(function* () {
+          yield* Effect.sleep(
+            Duration.millis(DAYTONA_RECONCILE_POLL_INTERVAL_MS)
+          )
+          yield* runReconciliationPass()
+        }).pipe(Effect.forever)
+      })
 
       // ── checkAvailability ─────────────────────────────────────
       // Stub: will be fully implemented in Issue 12.
@@ -862,6 +1025,24 @@ class DaytonaSandboxProvider extends Context.Tag(
           `Auto-stop interval set to ${interval} minutes for workspace "${workspaceId}" (sandbox: "${sandboxId}")`
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
+
+      // ── Fork reconciliation daemon ────────────────────────────
+      // The reconciliation loop runs for the lifetime of the service.
+      // On service shutdown the fiber is interrupted automatically by
+      // Effect's Scope management (Layer.scoped + forkDaemon).
+
+      const reconcileFiber = yield* Effect.forkDaemon(reconcileLoop)
+
+      yield* Effect.addFinalizer(() =>
+        Fiber.interrupt(reconcileFiber).pipe(
+          Effect.tap(() =>
+            Effect.logInfo('Daytona state reconciliation loop stopped').pipe(
+              Effect.annotateLogs('module', logPrefix)
+            )
+          ),
+          Effect.asVoid
+        )
+      )
 
       // ── Return the SandboxProvider implementation ─────────────
 

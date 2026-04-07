@@ -1,5 +1,5 @@
 /**
- * Tests for DaytonaSandboxProvider — Issues 13, 14, 15, 16 & 19
+ * Tests for DaytonaSandboxProvider — Issues 13, 14, 15, 16, 19 & 20
  *
  * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
@@ -20,6 +20,10 @@
  * an already-stopped/archived sandbox skips the SDK stop call, resuming an
  * already-started sandbox skips the SDK start call. Also tests
  * setAutoStopInterval delegation to the SDK.
+ *
+ * Issue 20: Verifies state reconciliation — the polling loop detects sandbox
+ * state drift and commits the correct LiveStore events (SandboxPaused,
+ * SandboxResumed, SandboxStopped) to sync with actual Daytona state.
  */
 
 import { rmSync } from 'node:fs'
@@ -1435,6 +1439,391 @@ describe('DaytonaSandboxProvider', () => {
           assert.strictEqual(log.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
+    )
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Issue 20: State reconciliation
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('reconcileState', () => {
+    /**
+     * Mock DaytonaClient where `.get()` returns a sandbox with a state
+     * looked up from a configurable map by sandboxId. This allows
+     * per-workspace state control for reconciliation tests.
+     */
+    const makeReconcileClientLayer = (
+      log: MockCallRecord[],
+      stateMap: Record<string, string>
+    ): Layer.Layer<DaytonaClient> =>
+      Layer.succeed(
+        DaytonaClient,
+        DaytonaClient.of({
+          create: () => Effect.die('not expected in reconcile tests'),
+          createFromSnapshot: () =>
+            Effect.die('not expected in reconcile tests'),
+          get: (...args) => {
+            log.push({ method: 'get', args })
+            const sandboxId = args[0]
+            const state = stateMap[sandboxId]
+            if (state === undefined) {
+              return new RpcError({
+                message: `Sandbox ${sandboxId} not found`,
+                code: 'DAYTONA_NOT_FOUND',
+              })
+            }
+            return Effect.succeed({
+              ...makeMockSandbox(log),
+              id: sandboxId,
+              state,
+            } as unknown as DaytonaSandbox)
+          },
+          list: () =>
+            Effect.succeed({
+              items: [],
+              total: 0,
+            } as unknown as DaytonaPaginatedSandboxes),
+          start: () => Effect.void,
+          stop: () => Effect.void,
+          delete: () => Effect.void,
+          setAutostopInterval: () => Effect.void,
+          snapshot: {} as DaytonaClient['Type']['snapshot'],
+          raw: {} as DaytonaClient['Type']['raw'],
+        })
+      )
+
+    const makeReconcileLayer = (
+      log: MockCallRecord[],
+      stateMap: Record<string, string>
+    ) =>
+      DaytonaSandboxProvider.layer.pipe(
+        Layer.provide(makeReconcileClientLayer(log, stateMap)),
+        Layer.provideMerge(TestLaborerStore)
+      )
+
+    it.scoped(
+      'commits SandboxPaused when Daytona state is stopped but LiveStore says running',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          const sandboxId = 'sb-reconcile-stopped'
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId,
+                sandboxUrl: sandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            // Verify LiveStore says 'running' before reconciliation
+            const [wsBefore] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsBefore?.sandboxStatus, 'running')
+
+            // Run one reconciliation pass
+            yield* sp.reconcileState()
+
+            // After reconciliation, LiveStore should say 'paused'
+            const [wsAfter] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsAfter?.sandboxStatus, 'paused')
+
+            // DaytonaClient.get was called
+            const getCalls = log.filter((c) => c.method === 'get')
+            assert.isTrue(getCalls.length >= 1)
+          }).pipe(
+            Effect.provide(makeReconcileLayer(log, { [sandboxId]: 'stopped' }))
+          )
+        })
+    )
+
+    it.scoped(
+      'commits SandboxResumed when Daytona state is started but LiveStore says paused',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          const sandboxId = 'sb-reconcile-started'
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId,
+                sandboxUrl: sandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+            // Pause the workspace in LiveStore
+            store.commit(events.sandboxPaused({ workspaceId: wid }))
+
+            // Verify LiveStore says 'paused' before reconciliation
+            const [wsBefore] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsBefore?.sandboxStatus, 'paused')
+
+            // Run one reconciliation pass
+            yield* sp.reconcileState()
+
+            // After reconciliation, LiveStore should say 'running'
+            const [wsAfter] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsAfter?.sandboxStatus, 'running')
+          }).pipe(
+            Effect.provide(makeReconcileLayer(log, { [sandboxId]: 'started' }))
+          )
+        })
+    )
+
+    it.scoped(
+      'commits SandboxStopped when Daytona sandbox is not found (destroyed externally)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          const sandboxId = 'sb-reconcile-destroyed'
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId,
+                sandboxUrl: sandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            // Verify LiveStore says 'running' before reconciliation
+            const [wsBefore] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsBefore?.sandboxStatus, 'running')
+            assert.strictEqual(wsBefore?.sandboxId, sandboxId)
+
+            // Run one reconciliation pass
+            yield* sp.reconcileState()
+
+            // After reconciliation, sandboxId and sandboxStatus should be null
+            const [wsAfter] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsAfter?.sandboxId, null)
+            assert.strictEqual(wsAfter?.sandboxStatus, null)
+          }).pipe(
+            // Empty stateMap — sandbox not found (DAYTONA_NOT_FOUND)
+            Effect.provide(makeReconcileLayer(log, {}))
+          )
+        })
+    )
+
+    it.scoped('treats archived sandbox as paused (commits SandboxPaused)', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        const sandboxId = 'sb-reconcile-archived'
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId,
+              sandboxUrl: sandboxId,
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          // Verify LiveStore says 'running' before reconciliation
+          const [wsBefore] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(wsBefore?.sandboxStatus, 'running')
+
+          // Run one reconciliation pass
+          yield* sp.reconcileState()
+
+          // After reconciliation, LiveStore should say 'paused' (archived treated as paused)
+          const [wsAfter] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(wsAfter?.sandboxStatus, 'paused')
+        }).pipe(
+          Effect.provide(makeReconcileLayer(log, { [sandboxId]: 'archived' }))
+        )
+      })
+    )
+
+    it.scoped(
+      'does nothing when states are already in sync (Daytona running, LS running)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          const sandboxId = 'sb-reconcile-synced'
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId,
+                sandboxUrl: sandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            // LiveStore says 'running', Daytona says 'started' — already in sync
+            const [wsBefore] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsBefore?.sandboxStatus, 'running')
+
+            // Run one reconciliation pass
+            yield* sp.reconcileState()
+
+            // Still 'running' — no events committed
+            const [wsAfter] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(wsAfter?.sandboxStatus, 'running')
+            assert.strictEqual(wsAfter?.sandboxId, sandboxId)
+          }).pipe(
+            Effect.provide(makeReconcileLayer(log, { [sandboxId]: 'started' }))
+          )
+        })
+    )
+
+    it.scoped('skips Docker workspaces (only reconciles Daytona)', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          // Create a workspace with sandboxProvider=docker (not daytona)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-docker-skip',
+              sandboxUrl: 'sb-docker-skip',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'docker',
+            })
+          )
+
+          // Run one reconciliation pass
+          yield* sp.reconcileState()
+
+          // DaytonaClient.get should NOT have been called for a Docker workspace
+          const getCalls = log.filter((c) => c.method === 'get')
+          assert.strictEqual(getCalls.length, 0)
+
+          // LiveStore unchanged
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxStatus, 'running')
+        }).pipe(Effect.provide(makeReconcileLayer(log, {})))
+      })
+    )
+
+    it.scoped(
+      'handles per-workspace errors gracefully (continues with other workspaces)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          const goodSandboxId = 'sb-reconcile-good'
+          const badSandboxId = 'sb-reconcile-bad'
+
+          /**
+           * Mock client where one sandbox times out but another succeeds.
+           */
+          const mixedClientLayer = Layer.succeed(
+            DaytonaClient,
+            DaytonaClient.of({
+              create: () => Effect.die('not expected'),
+              createFromSnapshot: () => Effect.die('not expected'),
+              get: (...args) => {
+                log.push({ method: 'get', args })
+                const sandboxId = args[0]
+                if (sandboxId === badSandboxId) {
+                  return new RpcError({
+                    message: 'Request timed out',
+                    code: 'DAYTONA_TIMEOUT',
+                  })
+                }
+                // Good sandbox reports 'stopped' (should trigger SandboxPaused)
+                return Effect.succeed({
+                  ...makeMockSandbox(log),
+                  id: sandboxId,
+                  state: 'stopped',
+                } as unknown as DaytonaSandbox)
+              },
+              list: () =>
+                Effect.succeed({
+                  items: [],
+                  total: 0,
+                } as unknown as DaytonaPaginatedSandboxes),
+              start: () => Effect.void,
+              stop: () => Effect.void,
+              delete: () => Effect.void,
+              setAutostopInterval: () => Effect.void,
+              snapshot: {} as DaytonaClient['Type']['snapshot'],
+              raw: {} as DaytonaClient['Type']['raw'],
+            })
+          )
+
+          const mixedLayer = DaytonaSandboxProvider.layer.pipe(
+            Layer.provide(mixedClientLayer),
+            Layer.provideMerge(TestLaborerStore)
+          )
+
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid1 = crypto.randomUUID()
+            const wid2 = crypto.randomUUID()
+            seedWorkspace(store as never, wid1)
+            seedWorkspace(store as never, wid2)
+
+            // First workspace: good sandbox that's stopped
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid1,
+                sandboxId: goodSandboxId,
+                sandboxUrl: goodSandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            // Second workspace: bad sandbox that times out
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid2,
+                sandboxId: badSandboxId,
+                sandboxUrl: badSandboxId,
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            // Run one reconciliation pass
+            yield* sp.reconcileState()
+
+            // Good workspace should be reconciled to 'paused'
+            const [ws1] = store.query(tables.workspaces.where('id', wid1))
+            assert.strictEqual(ws1?.sandboxStatus, 'paused')
+
+            // Bad workspace should remain 'running' (error was logged, not propagated)
+            const [ws2] = store.query(tables.workspaces.where('id', wid2))
+            assert.strictEqual(ws2?.sandboxStatus, 'running')
+
+            // Both .get() calls were attempted
+            const getCalls = log.filter((c) => c.method === 'get')
+            assert.strictEqual(getCalls.length, 2)
+          }).pipe(Effect.provide(mixedLayer))
+        })
     )
   })
 })

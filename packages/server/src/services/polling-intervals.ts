@@ -75,3 +75,17 @@ export const REPO_WATCH_RECOVERY_MS = 1000
 
 /** Debounce for worktree watcher reconciliation triggers. */
 export const WORKTREE_WATCHER_DEBOUNCE_MS = 500
+
+// ---------------------------------------------------------------------------
+// Daytona state reconciliation — sandbox state polling
+// ---------------------------------------------------------------------------
+
+/**
+ * Polling interval for Daytona sandbox state reconciliation.
+ *
+ * Unlike Docker (which uses a real-time `docker events` stream), Daytona
+ * has no event stream. The reconciliation loop polls the Daytona API to
+ * detect sandboxes that auto-stopped, were archived, or were destroyed
+ * externally. 30 s balances freshness with API rate budget.
+ */
+export const DAYTONA_RECONCILE_POLL_INTERVAL_MS = 30_000

@@ -92,3 +92,44 @@ Date: 2026-04-07
 ### Verification:
 - All turbo typecheck tasks pass (7/7)
 - bun run format passes
+
+## Issue 9: DockerSandboxProvider — wrap existing ContainerService behind SandboxProvider
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Created new file packages/server/src/services/docker-sandbox-provider.ts
+- Defined DockerSandboxProvider as a Context.Tag that produces a SandboxProvider value
+- DockerSandboxProvider.layer depends on ContainerService, DepsImageService, DockerDetection,
+  TerminalClient, and LaborerStore
+- All 8 SandboxProvider interface methods implemented as thin delegation:
+  - createSandbox: orchestrates DepsImageService.ensureDepsImage + ContainerService.createContainer
+    (mirrors existing performContainerSetup flow from WorkspaceProvider)
+  - destroySandbox: delegates to ContainerService.destroyContainer
+  - pauseSandbox: delegates to ContainerService.pauseContainer
+  - resumeSandbox: delegates to ContainerService.unpauseContainer
+  - getPreviewUrl: constructs http://{sandboxUrl}:{port} from LiveStore workspace data,
+    falls back to containerName() utility for URL derivation
+  - spawnTerminal: delegates to TerminalClient.spawnInWorkspace (which already handles
+    docker exec path for containerized workspaces)
+  - reconcileState: no-op — ContainerService.layer already runs startup reconciliation
+    + docker events listener as daemon fibers
+  - checkAvailability: delegates to DockerDetection.check()
+
+### Design decisions:
+- Pure adapter layer: no new behavior introduced, existing Docker flow unchanged
+- ContainerService continues to emit v1.Container* events internally (both v1 and v2
+  materializers write to the same sandbox* columns, so this is correct)
+- Full migration of Docker path to v2 events deferred to Issue 10 (WorkspaceProvider refactor)
+- Uses Layer.effect (not Layer.scoped) since no finalizers are needed — cleanup is handled
+  by the underlying services (ContainerService, TerminalClient)
+- createSandbox looks up project repoPath from LiveStore for lockfile detection, falling
+  back to worktreePath if project lookup fails
+- getPreviewUrl returns full http:// URL with port appended
+
+### Verification:
+- All turbo typecheck tasks pass (server, shared, file-watcher)
+- bun run format passes (487 files, no fixes)
+- 410 server tests pass (48 test files)
+- 89 shared tests pass

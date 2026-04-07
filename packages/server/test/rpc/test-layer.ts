@@ -146,16 +146,28 @@ const DeferredLeafLayers = Layer.mergeAll(
 )
 
 /**
- * Deferred Group 1 — services depending on LaborerStore + leaf layers.
+ * Deferred Group 1a — services depending on LaborerStore + leaf layers.
+ * Does NOT include WorktreeReconciler because it needs SandboxProvider,
+ * which is built in Group 1b after ContainerService is available.
  */
-const DeferredGroup1Layers = Layer.mergeAll(
+const DeferredGroup1aLayers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
   PrdStorageService.layer,
   FileService.layer,
-  PrWatcher.layer,
-  WorktreeReconciler.layer
+  PrWatcher.layer
+)
+
+/**
+ * Deferred Group 1b — adds SandboxProvider (routed between Docker and
+ * Daytona) on top of Group 1a, then builds WorktreeReconciler which
+ * needs SandboxProvider for sandbox cleanup when removing stale
+ * workspaces.
+ */
+const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(
+  Layer.provideMerge(SandboxProviderRoutedLayer),
+  Layer.provideMerge(DeferredGroup1aLayers)
 )
 
 const TestBackgroundFetchLayer = Layer.succeed(
@@ -187,12 +199,11 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
  *
- * `SandboxProviderRoutedLayer` provides `SandboxProvider` (routing between
- * Docker and Daytona) for `WorkspaceProvider.layer` which delegates sandbox
- * operations to it.
+ * `SandboxProvider` is already in the stack from Group 1b
+ * (via `SandboxProviderRoutedLayer`), so `WorkspaceProvider.layer`
+ * can consume it directly.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
-  Layer.provideMerge(SandboxProviderRoutedLayer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)

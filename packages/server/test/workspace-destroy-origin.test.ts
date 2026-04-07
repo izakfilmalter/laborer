@@ -22,6 +22,7 @@ import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
+import { NoopSandboxProvider } from './helpers/test-sandbox-provider.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
@@ -61,6 +62,7 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(BranchStateTracker.layer),
   Layer.provideMerge(TestFileWatcherClientLayer),
   Layer.provideMerge(WorktreeReconciler.layer),
+  Layer.provide(NoopSandboxProvider),
   Layer.provideMerge(WorktreeDetector.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(ConfigService.layer),

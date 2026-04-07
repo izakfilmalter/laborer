@@ -5,7 +5,7 @@
  * to manage cloud sandbox lifecycle, terminal access, preview URLs, and state reconciliation.
  *
  * Fully implemented methods:
- * - `createSandbox` (Issue 13) — core sandbox creation flow
+ * - `createSandbox` (Issues 13, 21) — core sandbox creation flow with snapshot caching
  * - `destroySandbox` (Issue 14) — sandbox teardown with best-effort cleanup
  * - `pauseSandbox` / `resumeSandbox` (Issue 19) — idempotent stop/start with auto-stop config
  * - Git sync: push worktree HEAD to sandbox via SSH (Issue 15)
@@ -70,7 +70,7 @@
  * 6. Commits `v2.SandboxResumed` event to LiveStore
  */
 
-import { CodeLanguage, type PtyHandle } from '@daytonaio/sdk'
+import { CodeLanguage, Image, type PtyHandle } from '@daytonaio/sdk'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import {
@@ -94,10 +94,12 @@ import {
   buildSshGitEnv,
   buildSshRemoteUrl,
 } from '../lib/git-sync.js'
+import { buildCacheHash, buildSnapshotName } from '../lib/snapshot-cache.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
 import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
+import { detectLockfile } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { DAYTONA_RECONCILE_POLL_INTERVAL_MS } from './polling-intervals.js'
 import type {
@@ -350,13 +352,121 @@ class DaytonaSandboxProvider extends Context.Tag(
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
 
+      // ── resolveSnapshot ───────────────────────────────────────
+      // Issue 21: Detect lockfile in the worktree, check for an existing
+      // cached snapshot, or build a new one.
+      //
+      // Returns a snapshot name if a cached snapshot is available (or was
+      // just built), or null if no snapshot caching applies.
+
+      const resolveSnapshot = Effect.fn(
+        'DaytonaSandboxProvider.resolveSnapshot'
+      )(function* (
+        worktreePath: string,
+        projectName: string,
+        workspaceId: string,
+        image: string | null,
+        installCommand: string | null
+      ) {
+        // Step 1: Detect lockfile in the worktree
+        const lockfile = detectLockfile(worktreePath)
+        if (lockfile === null) {
+          yield* Effect.logDebug(
+            `No lockfile found in "${worktreePath}", skipping snapshot caching`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          return null
+        }
+
+        // Step 2: Determine the install command.
+        // Use the explicit installCommand from config if set, otherwise
+        // fall back to the auto-detected command from the lockfile.
+        const effectiveInstallCommand =
+          installCommand ?? lockfile.installCommand
+
+        yield* Effect.logInfo(
+          `Lockfile detected: ${lockfile.type} (hash: ${lockfile.hash}), install command: "${effectiveInstallCommand}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        // Step 3: Compute cache hash and snapshot name
+        const cacheHash = buildCacheHash(lockfile.hash, image ?? undefined)
+        const snapshotName = buildSnapshotName(projectName, cacheHash)
+
+        yield* Effect.logDebug(`Snapshot cache key: "${snapshotName}"`).pipe(
+          Effect.annotateLogs('module', logPrefix)
+        )
+
+        // Step 4: Check if the snapshot already exists
+        const existingSnapshot = yield* Effect.tryPromise({
+          try: () => daytonaClient.snapshot.get(snapshotName),
+          catch: () => null,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+        if (existingSnapshot !== null) {
+          yield* Effect.logInfo(
+            `Snapshot cache hit: "${snapshotName}" (state: ${String(existingSnapshot.state)})`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          return snapshotName
+        }
+
+        // Step 5: Cache miss — build a new snapshot
+        yield* Effect.logInfo(
+          `Snapshot cache miss: building "${snapshotName}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        store.commit(
+          events.sandboxSetupStepChanged({
+            workspaceId,
+            step: 'building-snapshot',
+          })
+        )
+
+        // Build an Image definition with the install command.
+        // When an explicit base image is configured, use it.
+        // Otherwise, use the default Daytona image as the base.
+        const baseImage =
+          image !== null
+            ? Image.base(image)
+            : Image.base('daytonaio/sdk:latest')
+        const snapshotImage = baseImage.runCommands(effectiveInstallCommand)
+
+        yield* Effect.tryPromise({
+          try: () =>
+            daytonaClient.snapshot.create(
+              { name: snapshotName, image: snapshotImage },
+              {
+                onLogs: (chunk) => {
+                  // Stream build logs to the UI via setup step events
+                  store.commit(
+                    events.sandboxSetupStepChanged({
+                      workspaceId,
+                      step: chunk,
+                    })
+                  )
+                },
+              }
+            ),
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to build snapshot "${snapshotName}": ${error instanceof Error ? error.message : String(error)}`,
+              code: 'DAYTONA_ERROR',
+            }),
+        })
+
+        yield* Effect.logInfo(
+          `Snapshot built successfully: "${snapshotName}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        return snapshotName
+      })
+
       // ── createSandbox ─────────────────────────────────────────
       // Core Daytona integration: create a cloud sandbox for a workspace.
       //
       // Steps:
       // 1. Report progress: "creating-sandbox"
       // 2. Determine image from devServer config or use Daytona default
-      // 3. Create sandbox via DaytonaClient.create() with labels, auto-stop, resources
+      // 2b. Issue 21: Detect lockfile, check for cached snapshot
+      // 3. Create sandbox via DaytonaClient (from snapshot if cached, else from image)
       // 4. SDK waits for sandbox to reach "started" state
       // 5. Report progress: "starting-sandbox"
       // 6. Commit v2.SandboxStarted event with sandboxProvider: "daytona"
@@ -381,10 +491,38 @@ class DaytonaSandboxProvider extends Context.Tag(
           )
 
           // Step 2: Determine image
-          // Use devServer.image if set, otherwise pass no image to use
-          // the Daytona default image (which includes Node 22, bun, git,
-          // Claude Code, OpenCode, Codex).
           const image = devServerConfig.image
+
+          // Step 2b (Issue 21): Attempt snapshot caching.
+          // If a lockfile is found and an install command is available,
+          // check for a cached snapshot. If found, create from snapshot.
+          // If not, build a snapshot for future use.
+          const snapshotName = yield* resolveSnapshot(
+            params.worktreePath,
+            projectName,
+            workspaceId,
+            image,
+            devServerConfig.installCommand
+          ).pipe(
+            Effect.catchAll((error) => {
+              // Snapshot caching is best-effort. If it fails (e.g., API error
+              // building the snapshot), fall back to creating without a snapshot.
+              return Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  `Snapshot caching failed, falling back to image-based creation: ${error instanceof RpcError ? error.message : String(error)}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+                return null
+              })
+            })
+          )
+
+          // Restore the "creating-sandbox" step after potential snapshot build steps
+          store.commit(
+            events.sandboxSetupStepChanged({
+              workspaceId,
+              step: 'creating-sandbox',
+            })
+          )
 
           // Step 3: Build common create params
           const baseParams = {
@@ -401,13 +539,21 @@ class DaytonaSandboxProvider extends Context.Tag(
           }
 
           // Step 4: Create the sandbox via the Daytona SDK.
-          // When an image is specified, use CreateSandboxFromImageParams.
-          // Otherwise, use CreateSandboxFromSnapshotParams (no snapshot = Daytona default).
-          // The SDK handles waiting for the sandbox to reach "started" state.
-          const sandbox =
-            image !== null
-              ? yield* daytonaClient.create({ ...baseParams, image })
-              : yield* daytonaClient.createFromSnapshot(baseParams)
+          // Priority: cached snapshot > image > default Daytona image.
+          let sandbox: DaytonaSandbox
+          if (snapshotName !== null) {
+            // Create from cached (or freshly built) snapshot
+            sandbox = yield* daytonaClient.createFromSnapshot({
+              ...baseParams,
+              snapshot: snapshotName,
+            })
+          } else if (image !== null) {
+            // Create from explicit image (no snapshot caching)
+            sandbox = yield* daytonaClient.create({ ...baseParams, image })
+          } else {
+            // Use Daytona default image (no image, no snapshot)
+            sandbox = yield* daytonaClient.createFromSnapshot(baseParams)
+          }
 
           yield* Effect.logInfo(
             `Daytona sandbox created: id="${sandbox.id}", state="${String(sandbox.state)}"`
@@ -425,11 +571,6 @@ class DaytonaSandboxProvider extends Context.Tag(
           )
 
           // Step 6: Determine the preview URL.
-          // When a port is configured, resolve the full Daytona preview URL
-          // (e.g., https://3000-abc123.preview.daytona.io) so the UI can
-          // display it directly without provider-specific URL construction.
-          // When no port is configured, store the sandbox ID as a fallback —
-          // the URL will be resolved when the port is set via sandbox.setPort.
           let sandboxUrl: string = sandbox.id
           const configPort = devServerConfig.port
           if (configPort != null) {

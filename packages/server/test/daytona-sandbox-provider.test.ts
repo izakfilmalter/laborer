@@ -30,7 +30,8 @@
  * SandboxResumed, SandboxStopped) to sync with actual Daytona state.
  */
 
-import { rmSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { CodeLanguage } from '@daytonaio/sdk'
 import { assert, describe, it } from '@effect/vitest'
 import { RpcError } from '@laborer/shared/rpc'
@@ -168,8 +169,45 @@ const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
 // Mock layers
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a mock snapshot service for the `DaytonaClient.snapshot` sub-service.
+ *
+ * By default, `get` throws (snapshot not found) and `create` succeeds.
+ * Pass `snapshotExists: true` to make `get` return a mock snapshot (cache hit).
+ */
+const makeMockSnapshotService = (
+  log: MockCallRecord[],
+  options: { snapshotExists?: boolean } = {}
+) =>
+  ({
+    get: (...args: unknown[]) => {
+      log.push({ method: 'snapshot.get', args })
+      if (options.snapshotExists) {
+        return Promise.resolve({
+          id: 'snap-1',
+          name: args[0] as string,
+          state: 'ACTIVE',
+        })
+      }
+      throw new Error('Snapshot not found')
+    },
+    create: (...args: unknown[]) => {
+      log.push({ method: 'snapshot.create', args })
+      return Promise.resolve({
+        id: 'snap-new',
+        name: (args[0] as { name: string }).name,
+        state: 'ACTIVE',
+      })
+    },
+    list: () =>
+      Promise.resolve({ items: [], total: 0, page: 1, totalPages: 0 }),
+    delete: () => Promise.resolve(),
+    activate: () => Promise.resolve({}),
+  }) as unknown as DaytonaClient['Type']['snapshot']
+
 const makeMockClientLayer = (
-  log: MockCallRecord[]
+  log: MockCallRecord[],
+  options: { snapshotExists?: boolean } = {}
 ): Layer.Layer<DaytonaClient> => {
   const sb = makeMockSandbox(log)
   return Layer.succeed(
@@ -211,7 +249,7 @@ const makeMockClientLayer = (
         Effect.sync(() => {
           log.push({ method: 'setAutostopInterval', args })
         }),
-      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      snapshot: makeMockSnapshotService(log, options),
       raw: {} as DaytonaClient['Type']['raw'],
     })
   )
@@ -238,7 +276,7 @@ const makeNotFoundClientLayer = (
       stop: () => Effect.void,
       delete: () => Effect.void,
       setAutostopInterval: () => Effect.void,
-      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      snapshot: makeMockSnapshotService(log),
       raw: {} as DaytonaClient['Type']['raw'],
     })
   )
@@ -272,7 +310,7 @@ const makeGetErrorClientLayer = (
       stop: () => Effect.void,
       delete: () => Effect.void,
       setAutostopInterval: () => Effect.void,
-      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      snapshot: makeMockSnapshotService(log),
       raw: {} as DaytonaClient['Type']['raw'],
     })
   )
@@ -311,7 +349,7 @@ const makeDeleteFailClientLayer = (
         })
       },
       setAutostopInterval: () => Effect.void,
-      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      snapshot: makeMockSnapshotService(log),
       raw: {} as DaytonaClient['Type']['raw'],
     })
   )
@@ -365,15 +403,18 @@ const makeStateClientLayer = (
         Effect.sync(() => {
           log.push({ method: 'setAutostopInterval', args })
         }),
-      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      snapshot: makeMockSnapshotService(log),
       raw: {} as DaytonaClient['Type']['raw'],
     })
   )
 }
 
-const makeLayer = (log: MockCallRecord[]) =>
+const makeLayer = (
+  log: MockCallRecord[],
+  clientOptions?: { snapshotExists?: boolean }
+) =>
   DaytonaSandboxProvider.layer.pipe(
-    Layer.provide(makeMockClientLayer(log)),
+    Layer.provide(makeMockClientLayer(log, clientOptions)),
     Layer.provideMerge(TestLaborerStore)
   )
 
@@ -460,6 +501,7 @@ const seedWorkspace = (
 const dsc = (
   overrides: Partial<{
     image: string | null
+    installCommand: string | null
     port: number | null
     startCommand: string | null
   }> = {}
@@ -468,7 +510,8 @@ const dsc = (
   autoStopInterval: null as number | null,
   dockerfile: null,
   image: 'image' in overrides ? (overrides.image ?? null) : 'node:22',
-  installCommand: null,
+  installCommand:
+    'installCommand' in overrides ? (overrides.installCommand ?? null) : null,
   network: null,
   port: 'port' in overrides ? (overrides.port ?? null) : null,
   provider: null as 'docker' | 'daytona' | null,
@@ -768,6 +811,283 @@ describe('DaytonaSandboxProvider', () => {
           )
         }).pipe(Effect.provide(makeLayer(log)))
       })
+    )
+
+    // ── Issue 21: Snapshot caching tests ──────────────────────
+    // Tests for lockfile detection + snapshot caching during sandbox creation.
+
+    it.scoped(
+      'creates snapshot when lockfile exists and no cached snapshot (cache miss)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            // Write a lockfile to the worktree so detectLockfile finds it
+            writeFileSync(join(worktreePath, 'bun.lock'), 'lockfile-content-v1')
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/snapshot',
+              projectName: 'snap-project',
+              worktreePath,
+              devServerConfig: dsc({ image: 'node:22' }),
+            })
+
+            // snapshot.get was called (to check cache)
+            const getSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.get'
+            )
+            assert.strictEqual(getSnapshotCalls.length, 1)
+
+            // snapshot.create was called (cache miss → build)
+            const createSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.create'
+            )
+            assert.strictEqual(createSnapshotCalls.length, 1)
+
+            // Sandbox created from snapshot (not from image directly)
+            const createFromSnapshotCalls = log.filter(
+              (c) => c.method === 'createFromSnapshot'
+            )
+            assert.strictEqual(createFromSnapshotCalls.length, 1)
+
+            // Should NOT have called create (image-based)
+            const createCalls = log.filter((c) => c.method === 'create')
+            assert.strictEqual(createCalls.length, 0)
+
+            // Verify sandbox was created successfully
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxId, 'sandbox-test-123')
+            assert.strictEqual(ws?.sandboxProvider, 'daytona')
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'uses cached snapshot when lockfile exists and snapshot already built (cache hit)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            // Write a lockfile to the worktree
+            writeFileSync(join(worktreePath, 'bun.lock'), 'lockfile-content-v1')
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/cache-hit',
+              projectName: 'cached-project',
+              worktreePath,
+              devServerConfig: dsc({ image: 'node:22' }),
+            })
+
+            // snapshot.get was called (to check cache)
+            const getSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.get'
+            )
+            assert.strictEqual(getSnapshotCalls.length, 1)
+
+            // snapshot.create was NOT called (cache hit)
+            const createSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.create'
+            )
+            assert.strictEqual(createSnapshotCalls.length, 0)
+
+            // Sandbox created from snapshot
+            const createFromSnapshotCalls = log.filter(
+              (c) => c.method === 'createFromSnapshot'
+            )
+            assert.strictEqual(createFromSnapshotCalls.length, 1)
+
+            // Verify the snapshot name was passed
+            const snapshotParams = createFromSnapshotCalls[0]
+              ?.args[0] as Record<string, unknown>
+            assert.isString(snapshotParams.snapshot)
+            assert.isTrue(
+              (snapshotParams.snapshot as string).startsWith('laborer-deps-')
+            )
+          }).pipe(Effect.provide(makeLayer(log, { snapshotExists: true })))
+        })
+    )
+
+    it.scoped('skips snapshot caching when no lockfile is found', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* DaytonaSandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          const worktreePath = seedWorkspace(store as never, wid)
+
+          // No lockfile written — worktree has only git files
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/no-lockfile',
+            projectName: 'no-lock-project',
+            worktreePath,
+            devServerConfig: dsc({ image: 'node:22' }),
+          })
+
+          // snapshot.get should NOT be called (no lockfile)
+          const getSnapshotCalls = log.filter(
+            (c) => c.method === 'snapshot.get'
+          )
+          assert.strictEqual(getSnapshotCalls.length, 0)
+
+          // snapshot.create should NOT be called
+          const createSnapshotCalls = log.filter(
+            (c) => c.method === 'snapshot.create'
+          )
+          assert.strictEqual(createSnapshotCalls.length, 0)
+
+          // Sandbox created from image directly (not snapshot)
+          const createCalls = log.filter((c) => c.method === 'create')
+          assert.strictEqual(createCalls.length, 1)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('uses installCommand from config when available', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* DaytonaSandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          const worktreePath = seedWorkspace(store as never, wid)
+
+          // Write a lockfile
+          writeFileSync(
+            join(worktreePath, 'bun.lock'),
+            'lockfile-content-custom'
+          )
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/custom-install',
+            projectName: 'custom-install-project',
+            worktreePath,
+            devServerConfig: dsc({
+              image: 'node:22',
+              installCommand: 'bun install --production',
+            }),
+          })
+
+          // snapshot.create should be called with the custom install command
+          const createSnapshotCalls = log.filter(
+            (c) => c.method === 'snapshot.create'
+          )
+          assert.strictEqual(createSnapshotCalls.length, 1)
+
+          // The first arg is the params object with { name, image }
+          const snapshotParams = createSnapshotCalls[0]?.args[0] as {
+            name: string
+            image: { dockerfile: string }
+          }
+          // The Image should contain a RUN command with the custom install command
+          assert.isTrue(
+            snapshotParams.image.dockerfile.includes('bun install --production')
+          )
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped(
+      'reports building-snapshot setup step during snapshot build',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            // Write a lockfile so snapshot caching triggers
+            writeFileSync(
+              join(worktreePath, 'package-lock.json'),
+              '{"lockfileVersion":3}'
+            )
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/steps',
+              projectName: 'steps-project',
+              worktreePath,
+              devServerConfig: dsc({ image: 'node:22' }),
+            })
+
+            // After creation, step should be cleared
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxSetupStep, null)
+
+            // Verify that a snapshot.create was called (the build happened)
+            const createSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.create'
+            )
+            assert.strictEqual(createSnapshotCalls.length, 1)
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'snapshot caching works with default Daytona image (no explicit image)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
+
+            // Write a lockfile
+            writeFileSync(
+              join(worktreePath, 'pnpm-lock.yaml'),
+              'lockfileVersion: 5.4'
+            )
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/default-image-snap',
+              projectName: 'default-snap-project',
+              worktreePath,
+              devServerConfig: dsc({ image: null }),
+            })
+
+            // Snapshot.create should be called even with null image
+            const createSnapshotCalls = log.filter(
+              (c) => c.method === 'snapshot.create'
+            )
+            assert.strictEqual(createSnapshotCalls.length, 1)
+
+            // Sandbox created from the newly-built snapshot
+            const createFromSnapshotCalls = log.filter(
+              (c) => c.method === 'createFromSnapshot'
+            )
+            assert.strictEqual(createFromSnapshotCalls.length, 1)
+
+            // Verify snapshot name was passed to createFromSnapshot
+            const params = createFromSnapshotCalls[0]?.args[0] as Record<
+              string,
+              unknown
+            >
+            assert.isString(params.snapshot)
+            assert.isTrue(
+              (params.snapshot as string).startsWith('laborer-deps-')
+            )
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
     )
   })
 

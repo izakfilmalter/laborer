@@ -1319,3 +1319,125 @@ Date: 2026-04-07
 - 1088 web tests pass (74 test files, 1 skipped)
 - 90 shared tests pass
 - `bun run format` passes (497 files, no fixes)
+
+## Issue 21: Daytona Image builder — snapshot caching with lockfile hash
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+
+#### New file: `packages/server/src/lib/snapshot-cache.ts`
+- Pure helper functions for Daytona snapshot dependency caching:
+  - `buildCacheHash(lockfileHash, baseImage?)` — computes a 12-char SHA-256
+    hash from lockfile hash + optional base image name. When a base image is
+    specified, the cache key includes both so different base images produce
+    different snapshots even with the same lockfile.
+  - `buildSnapshotName(projectName, cacheHash)` — builds a Daytona snapshot
+    name in the format `laborer-deps-{projectSlug}-{cacheHash}`, sanitized
+    and truncated to 63 characters (Daytona's name length limit).
+- Constants exported: `SNAPSHOT_NAME_PREFIX` (`laborer-deps`),
+  `MAX_SNAPSHOT_NAME_LENGTH` (63)
+- Reuses `detectLockfile` and `sanitizeProjectSlug` from `deps-image-service.ts`
+  (imported directly, not re-exported, to comply with Biome's barrel file rule)
+
+#### Modified: `packages/server/src/services/daytona-sandbox-provider.ts`
+- Added `resolveSnapshot` Effect function — the core snapshot caching logic:
+  1. Detects lockfile in the worktree via `detectLockfile(worktreePath)`
+  2. Determines effective install command (explicit from config > auto-detected)
+  3. Computes cache hash and snapshot name via `buildCacheHash` / `buildSnapshotName`
+  4. Checks if snapshot exists via `daytonaClient.snapshot.get(snapshotName)`
+     - Catches all errors (treats as cache miss)
+  5. If snapshot exists (cache hit): returns the snapshot name for direct use
+  6. If snapshot doesn't exist (cache miss):
+     - Reports `building-snapshot` setup step
+     - Builds an `Image` via Daytona SDK (`Image.base(baseImage).runCommands(installCmd)`)
+     - Creates snapshot via `daytonaClient.snapshot.create()` with `onLogs` callback
+       that streams build logs to the UI as setup step events
+     - Returns the snapshot name for use
+  7. If no lockfile found: returns null (skip snapshot caching)
+- Updated `createSandbox` to integrate snapshot caching:
+  - Calls `resolveSnapshot()` before sandbox creation (best-effort: errors
+    caught and logged, falls back to image-based creation)
+  - Three-way sandbox creation dispatch:
+    - `snapshotName !== null` → `createFromSnapshot({ ...baseParams, snapshot: snapshotName })`
+    - `image !== null` → `create({ ...baseParams, image })` (no lockfile, explicit image)
+    - Both null → `createFromSnapshot(baseParams)` (Daytona default image)
+  - Restores `creating-sandbox` setup step after potential snapshot build steps
+- Added imports: `Image` from `@daytonaio/sdk`, `buildCacheHash` and
+  `buildSnapshotName` from `snapshot-cache.ts`, `detectLockfile` from
+  `deps-image-service.ts`
+- Updated file header comment to document Issue 21
+
+#### Modified: `packages/server/test/daytona-sandbox-provider.test.ts`
+- Added `makeMockSnapshotService(log, options?)` — mock for `DaytonaClient.snapshot`:
+  - `get()` throws by default (cache miss), returns mock snapshot when `snapshotExists: true`
+  - `create()` records calls and returns mock active snapshot
+  - Replaced `snapshot: {} as ...` in all 5 mock client layers with real mock
+- Updated `makeMockClientLayer` to accept `options: { snapshotExists?: boolean }`
+  for testing cache hit vs miss scenarios
+- Updated `makeLayer` to forward `clientOptions` to `makeMockClientLayer`
+- Updated `dsc()` helper to support `installCommand` override
+- Added `writeFileSync` and `join` imports for writing lockfiles to temp repos
+
+### Tests added:
+
+#### Pure function tests (15 tests in `packages/server/test/snapshot-cache.test.ts`):
+- `buildCacheHash` produces 12-char hex string
+- `buildCacheHash` includes base image in hash
+- `buildCacheHash` produces different hashes for different lockfile hashes
+- `buildCacheHash` produces different hashes for different base images
+- `buildCacheHash` is deterministic
+- `buildCacheHash` matches manual SHA-256 computation (without image)
+- `buildCacheHash` matches manual SHA-256 computation (with image)
+- `buildSnapshotName` produces correct prefix-slug-hash format
+- `buildSnapshotName` sanitizes special characters
+- `buildSnapshotName` lowercases project name
+- `buildSnapshotName` truncates to MAX_SNAPSHOT_NAME_LENGTH
+- `buildSnapshotName` preserves short names without truncation
+- `buildSnapshotName` handles empty project name
+- Constants: SNAPSHOT_NAME_PREFIX is `laborer-deps`
+- Constants: MAX_SNAPSHOT_NAME_LENGTH is 63
+
+#### Integration tests (6 new tests in `packages/server/test/daytona-sandbox-provider.test.ts`):
+- Creates snapshot when lockfile exists and no cached snapshot (cache miss) —
+  verifies `snapshot.get` called, `snapshot.create` called, sandbox created
+  from snapshot (not image)
+- Uses cached snapshot when snapshot already built (cache hit) — verifies
+  `snapshot.get` called, `snapshot.create` NOT called, `createFromSnapshot`
+  called with snapshot name
+- Skips snapshot caching when no lockfile found — verifies no snapshot
+  API calls, sandbox created from image directly
+- Uses installCommand from config when available — verifies the custom
+  install command appears in the Image dockerfile
+- Reports building-snapshot setup step during build — verifies
+  `snapshot.create` called and setup step cleared afterward
+- Snapshot caching works with default Daytona image (null image) —
+  verifies `createFromSnapshot` called with snapshot name even when
+  no explicit image is configured
+
+### Design decisions:
+- Snapshot caching is **best-effort**: if `resolveSnapshot` fails (e.g.,
+  snapshot API error, build failure), `createSandbox` catches the error,
+  logs a warning, and falls back to creating without a snapshot. This
+  ensures workspace creation never fails due to snapshot caching issues.
+- Lockfile detection reuses `detectLockfile` from `deps-image-service.ts`
+  (already battle-tested in the Docker flow) rather than duplicating the
+  lockfile candidate list. The function is already exported.
+- Cache hash includes the base image name (when specified) so that
+  different base images produce different snapshots even with the same
+  lockfile. This matches the `DepsImageService` pattern.
+- When no lockfile is found, snapshot caching is skipped entirely —
+  no snapshot API calls are made, and sandbox creation proceeds as before.
+- `Image.base('daytonaio/sdk:latest')` is used as the fallback base image
+  when no explicit image is configured, since that's the Daytona default
+  image contents (Node 22, bun, git, Claude Code, OpenCode, Codex).
+- Snapshot build logs are streamed to the UI via `onLogs` callback that
+  commits `sandboxSetupStepChanged` events. This provides real-time
+  feedback during the build process.
+
+### Verification:
+- All 7 turbo typecheck tasks pass (`tsc --noEmit`)
+- 528 server tests pass (52 test files, 1 skipped) — 53 daytona-sandbox-provider + 15 snapshot-cache
+- 90 shared tests pass
+- `bun run format` passes (499 files, no fixes)

@@ -110,7 +110,7 @@ All test cases from the VS Code suite should be preserved:
 
 ## Issue 3: Hook integration — add onBeforeProcessData to useTerminalMessagePort
 
-Status: TODO
+Status: DONE
 
 ### What to build
 

@@ -240,6 +240,22 @@ function isSerializedTerminalCommand(
 }
 
 interface UseTerminalMessagePortOptions {
+  /**
+   * Optional callback to intercept and transform PTY output data before it
+   * reaches the `onData` callback. Receives a mutable event object whose
+   * `data` property can be modified in-place. The (possibly mutated) data
+   * is then forwarded to `onData` and used for flow control accounting.
+   *
+   * This follows VS Code's `ITerminalProcessManager.onBeforeProcessData`
+   * pattern and is used by the TypeAheadAddon to reconcile predictions
+   * against incoming server output.
+   *
+   * Called for: raw PTY string output, decoded ArrayBuffer output, and
+   * screenState control messages. NOT called for replay data (which
+   * bypasses `onData` entirely).
+   */
+  readonly onBeforeProcessData?: (event: { data: string }) => void
+
   /** Callback invoked with terminal output data (raw UTF-8). */
   readonly onData: (data: string) => void
 
@@ -291,6 +307,7 @@ interface UseTerminalMessagePortResult {
  */
 function useTerminalMessagePort({
   terminalId,
+  onBeforeProcessData,
   onData,
   onStatus,
   onReplayStart,
@@ -308,6 +325,8 @@ function useTerminalMessagePort({
   const unackedCharsRef = useRef(0)
 
   // Refs for latest callback/state to avoid stale closures
+  const onBeforeProcessDataRef = useRef(onBeforeProcessData)
+  onBeforeProcessDataRef.current = onBeforeProcessData
   const onDataRef = useRef(onData)
   onDataRef.current = onData
   const onStatusRef = useRef(onStatus)
@@ -331,7 +350,9 @@ function useTerminalMessagePort({
       return
     }
     if (msg.type === 'screenState') {
-      onDataRef.current(msg.data)
+      const beforeEvent = { data: msg.data }
+      onBeforeProcessDataRef.current?.(beforeEvent)
+      onDataRef.current(beforeEvent.data)
       return
     }
     if (msg.type === 'replay') {
@@ -382,8 +403,10 @@ function useTerminalMessagePort({
       // Handle ArrayBuffer (zero-copy large output from utility process)
       if (data instanceof ArrayBuffer) {
         const text = textDecoder.current.decode(data)
-        onDataRef.current(text)
-        maybeAck(text.length)
+        const beforeEvent = { data: text }
+        onBeforeProcessDataRef.current?.(beforeEvent)
+        onDataRef.current(beforeEvent.data)
+        maybeAck(beforeEvent.data.length)
         return
       }
 
@@ -396,8 +419,10 @@ function useTerminalMessagePort({
         }
 
         // Raw PTY output data
-        onDataRef.current(data)
-        maybeAck(data.length)
+        const beforeEvent = { data }
+        onBeforeProcessDataRef.current?.(beforeEvent)
+        onDataRef.current(beforeEvent.data)
+        maybeAck(beforeEvent.data.length)
       }
     },
     [handleControlMessage, maybeAck]

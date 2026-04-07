@@ -23,3 +23,30 @@ Adaptations made:
 - Format passes (ultracite check)
 - Microsoft MIT license header with adaptation note included
 - All prediction classes, StringReader, Cursor, PredictionTimeline, PredictionStats exported
+
+## Issue 3: Hook integration — add onBeforeProcessData to useTerminalMessagePort
+
+Status: DONE
+
+Wired the onBeforeProcessData callback into the useTerminalMessagePort hook so that
+PTY output data is intercepted and transformable before reaching xterm.js.
+
+The interface and ref were already in place from a prior partial implementation. The
+actual interception calls were added to three code paths:
+
+1. ArrayBuffer path (handleMessage): decoded text passes through onBeforeProcessData
+   before onData and maybeAck flow control accounting.
+2. Raw PTY string path (handleMessage): string data passes through onBeforeProcessData
+   before onData and maybeAck.
+3. screenState control message path (handleControlMessage): screen state data passes
+   through onBeforeProcessData before onData.
+
+Replay data (replay/replayComplete control messages) intentionally bypasses
+onBeforeProcessData — replay frames are historical, not live PTY output.
+
+The callback is optional and uses optional chaining (?.), so when not provided,
+behavior is identical to the previous implementation with zero overhead.
+
+- Typecheck passes (tsc --noEmit)
+- Format passes (ultracite check)
+- Pre-existing test failure in use-terminal-messageport.test.ts (missing jsdom env) is unrelated

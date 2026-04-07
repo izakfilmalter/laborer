@@ -518,3 +518,69 @@ Date: 2026-04-07
 - 432 server tests pass (49 test files, 1 skipped) — 13 total for daytona-sandbox-provider
 - 89 shared tests pass
 - `bun run format` passes (490 files, no fixes)
+
+## Issue 19: Daytona sandbox pause/resume (stop/start) + auto-stop config
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Enhanced `pauseSandbox` in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Added idempotency: checks sandbox state via `DaytonaClient.get()` before calling `stop()`
+  - If sandbox is already `stopped` or `archived`, skips the SDK stop call (logs debug message)
+  - Still commits `v2.SandboxPaused` event regardless (syncs LiveStore to match actual state)
+  - Added SSH config cleanup TODO hook for Issue 22
+  - Improved logging with sandbox ID
+- Enhanced `resumeSandbox` in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Added idempotency: checks sandbox state via `DaytonaClient.get()` before calling `start()`
+  - If sandbox is already `started`, skips the SDK start call (logs debug message)
+  - Still commits `v2.SandboxResumed` event regardless (syncs LiveStore to match actual state)
+  - Added SSH config setup TODO hook for Issue 22
+  - Improved logging with sandbox ID
+- Added `setAutoStopInterval` to `SandboxProvider` interface (`packages/server/src/services/sandbox-provider.ts`):
+  - New method: `setAutoStopInterval(workspaceId, interval) => Effect<void, RpcError>`
+  - For Daytona: calls `sandbox.setAutostopInterval()` via the SDK
+  - For Docker: no-op (containers don't have auto-stop)
+- Implemented `setAutoStopInterval` in `DaytonaSandboxProvider`:
+  - Looks up workspace → gets sandboxId
+  - Fetches sandbox from Daytona API
+  - Calls `DaytonaClient.setAutostopInterval(sandbox, interval)` to update the SDK
+- Added no-op `setAutoStopInterval` in `DockerSandboxProvider`
+- Added `setAutostopInterval` to `DaytonaClient` service (`packages/server/src/services/daytona-client.ts`):
+  - New Effect-wrapped method: calls `sandbox.setAutostopInterval(interval)` via SDK
+  - Error mapping to `RpcError` consistent with other SDK methods
+- Added `sandbox.setAutoStop` RPC definition in `packages/shared/src/rpc.ts`:
+  - Payload: `workspaceId: string`, `interval: Int` (minutes, 0 disables)
+  - Error type: `RpcError`
+- Added `sandbox.setAutoStop` handler in `packages/server/src/rpc/handlers.ts`:
+  - Delegates to `SandboxProvider.setAutoStopInterval()`
+- Updated file header comment in `daytona-sandbox-provider.ts` to document pause/resume flows
+- Updated all mock `DaytonaClient` layers in tests to include `setAutostopInterval` method
+
+### Tests added (8 new tests in packages/server/test/daytona-sandbox-provider.test.ts):
+- pauseSandbox: skips stop call when sandbox is already stopped (idempotent)
+- pauseSandbox: skips stop call when sandbox is archived (idempotent)
+- pauseSandbox: returns NOT_FOUND when workspace has no sandbox
+- resumeSandbox: skips start call when sandbox is already started (idempotent)
+- resumeSandbox: returns NOT_FOUND when workspace has no sandbox
+- setAutoStopInterval: calls setAutostopInterval on the SDK sandbox with correct interval
+- setAutoStopInterval: calls setAutostopInterval with 0 to disable auto-stop
+- setAutoStopInterval: returns NOT_FOUND when workspace has no sandbox
+
+### Mock infrastructure added:
+- `makeStateClientLayer`: DaytonaClient mock where `.get()` returns a sandbox with a
+  configurable state (used for idempotency tests)
+- `makeStateLayer`: Composed layer using `makeStateClientLayer` for specific sandbox states
+
+### Existing test updated:
+- `resumeSandbox > starts sandbox and commits SandboxResumed` now uses `makeStateLayer(log, 'stopped')`
+  instead of `makeLayer(log)` since the default mock sandbox has `state: 'started'` and the
+  idempotent implementation correctly skips the start call for already-started sandboxes
+
+### Verification:
+- All 7 turbo typecheck tasks pass (`tsc --noEmit`)
+- 21 daytona-sandbox-provider tests pass (8 new + 13 existing)
+- 73 total tests pass across key test files (daytona, config-service, core-layers)
+- 58 RPC tests pass (12 test files)
+- 89 shared tests pass
+- `bun run format` passes (490 files, no fixes)

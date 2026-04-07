@@ -1080,6 +1080,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             })
         )
       ),
+    'sandbox.setAutoStop': ({ workspaceId, interval }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.setAutoStopInterval(workspaceId, interval)
+      }),
 
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)

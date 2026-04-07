@@ -915,6 +915,15 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  Rpc.make('sandbox.setAutoStop', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      /** Minutes of inactivity before auto-stop (0 disables auto-stop). */
+      interval: Schema.Int,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Terminal RPCs
   // -----------------------------------------------------------------------

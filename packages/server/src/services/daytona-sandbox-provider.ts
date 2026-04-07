@@ -7,9 +7,9 @@
  * Fully implemented methods:
  * - `createSandbox` (Issue 13) — core sandbox creation flow
  * - `destroySandbox` (Issue 14) — sandbox teardown with best-effort cleanup
+ * - `pauseSandbox` / `resumeSandbox` (Issue 19) — idempotent stop/start with auto-stop config
  *
  * Stub methods (to be implemented in downstream issues):
- * - `pauseSandbox` / `resumeSandbox` (Issue 19)
  * - `getPreviewUrl` (Issue 18)
  * - `spawnTerminal` (Issue 16)
  * - `reconcileState` (Issue 20)
@@ -25,6 +25,22 @@
  *    - Errors from `.delete()` are logged as warnings (best-effort, never fails the destroy)
  * 5. Cleans up SSH config entries (hook prepared for Issue 22)
  * 6. Commits `v2.SandboxStopped` event to LiveStore
+ *
+ * ### pauseSandbox flow (Issue 19):
+ * 1. Looks up workspace → get sandboxId (error if missing)
+ * 2. Fetches sandbox from Daytona API to check current state
+ * 3. Idempotent: if sandbox is already stopped/archived, commits SandboxPaused and returns
+ * 4. Calls `DaytonaClient.stop(sandbox)` to stop the cloud sandbox
+ * 5. SSH config cleanup hook (Issue 22)
+ * 6. Commits `v2.SandboxPaused` event to LiveStore
+ *
+ * ### resumeSandbox flow (Issue 19):
+ * 1. Looks up workspace → get sandboxId (error if missing)
+ * 2. Fetches sandbox from Daytona API to check current state
+ * 3. Idempotent: if sandbox is already started, commits SandboxResumed and returns
+ * 4. Calls `DaytonaClient.start(sandbox)` to start the cloud sandbox
+ * 5. SSH config setup hook (Issue 22)
+ * 6. Commits `v2.SandboxResumed` event to LiveStore
  */
 
 import { CodeLanguage } from '@daytonaio/sdk'
@@ -283,7 +299,11 @@ class DaytonaSandboxProvider extends Context.Tag(
       )
 
       // ── pauseSandbox ──────────────────────────────────────────
-      // Stub: will be fully implemented in Issue 19.
+      // Issue 19: Full implementation with idempotency.
+      //
+      // Maps to Daytona `sandbox.stop()`. Idempotent: pausing an
+      // already-stopped or archived sandbox skips the SDK call and
+      // still commits `v2.SandboxPaused` to sync LiveStore state.
 
       const pauseSandbox = Effect.fn('DaytonaSandboxProvider.pauseSandbox')(
         function* (workspaceId: string) {
@@ -303,19 +323,36 @@ class DaytonaSandboxProvider extends Context.Tag(
             })
           }
 
-          const sandbox = yield* daytonaClient.get(workspaceOpt.value.sandboxId)
-          yield* daytonaClient.stop(sandbox)
+          const sandboxId = workspaceOpt.value.sandboxId
+          const sandbox = yield* daytonaClient.get(sandboxId)
+
+          // Idempotent: if sandbox is already stopped or archived, skip the stop call.
+          // Daytona states: started, stopped, archived, stopping, starting, etc.
+          const state = String(sandbox.state)
+          if (state === 'stopped' || state === 'archived') {
+            yield* Effect.logDebug(
+              `Daytona sandbox "${sandboxId}" already in state "${state}", skipping stop call`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          } else {
+            yield* daytonaClient.stop(sandbox)
+          }
+
+          // TODO(Issue 22): Remove ~/.ssh/config entry for laborer-{workspaceId}
 
           store.commit(events.sandboxPaused({ workspaceId }))
 
           yield* Effect.logInfo(
-            `Daytona sandbox paused for workspace "${workspaceId}"`
+            `Daytona sandbox paused for workspace "${workspaceId}" (sandbox: "${sandboxId}")`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       )
 
       // ── resumeSandbox ─────────────────────────────────────────
-      // Stub: will be fully implemented in Issue 19.
+      // Issue 19: Full implementation with idempotency.
+      //
+      // Maps to Daytona `sandbox.start()`. Idempotent: resuming an
+      // already-started sandbox skips the SDK call and still commits
+      // `v2.SandboxResumed` to sync LiveStore state.
 
       const resumeSandbox = Effect.fn('DaytonaSandboxProvider.resumeSandbox')(
         function* (workspaceId: string) {
@@ -335,13 +372,25 @@ class DaytonaSandboxProvider extends Context.Tag(
             })
           }
 
-          const sandbox = yield* daytonaClient.get(workspaceOpt.value.sandboxId)
-          yield* daytonaClient.start(sandbox)
+          const sandboxId = workspaceOpt.value.sandboxId
+          const sandbox = yield* daytonaClient.get(sandboxId)
+
+          // Idempotent: if sandbox is already started, skip the start call.
+          const state = String(sandbox.state)
+          if (state === 'started') {
+            yield* Effect.logDebug(
+              `Daytona sandbox "${sandboxId}" already in state "started", skipping start call`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          } else {
+            yield* daytonaClient.start(sandbox)
+          }
+
+          // TODO(Issue 22): Write/update ~/.ssh/config entry for laborer-{workspaceId}
 
           store.commit(events.sandboxResumed({ workspaceId }))
 
           yield* Effect.logInfo(
-            `Daytona sandbox resumed for workspace "${workspaceId}"`
+            `Daytona sandbox resumed for workspace "${workspaceId}" (sandbox: "${sandboxId}")`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       )
@@ -429,6 +478,40 @@ class DaytonaSandboxProvider extends Context.Tag(
         return result
       })
 
+      // ── setAutoStopInterval ──────────────────────────────────
+      // Issue 19: Update the auto-stop interval for a Daytona sandbox.
+      //
+      // Calls `sandbox.setAutostopInterval()` via the SDK. The interval
+      // is in minutes (0 disables auto-stop).
+
+      const setAutoStopInterval = Effect.fn(
+        'DaytonaSandboxProvider.setAutoStopInterval'
+      )(function* (workspaceId: string, interval: number) {
+        const allWorkspaces = store.query(tables.workspaces)
+        const workspaceOpt = pipe(
+          allWorkspaces,
+          Arr.findFirst((w) => w.id === workspaceId)
+        )
+
+        if (
+          workspaceOpt._tag === 'None' ||
+          workspaceOpt.value.sandboxId === null
+        ) {
+          return yield* new RpcError({
+            message: `Cannot set auto-stop: workspace "${workspaceId}" has no active Daytona sandbox`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const sandboxId = workspaceOpt.value.sandboxId
+        const sandbox = yield* daytonaClient.get(sandboxId)
+        yield* daytonaClient.setAutostopInterval(sandbox, interval)
+
+        yield* Effect.logInfo(
+          `Auto-stop interval set to ${interval} minutes for workspace "${workspaceId}" (sandbox: "${sandboxId}")`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+      })
+
       // ── Return the SandboxProvider implementation ─────────────
 
       return SandboxProvider.of({
@@ -440,6 +523,7 @@ class DaytonaSandboxProvider extends Context.Tag(
         spawnTerminal,
         reconcileState,
         checkAvailability,
+        setAutoStopInterval,
       })
     })
   )

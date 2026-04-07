@@ -1,5 +1,5 @@
 /**
- * Tests for DaytonaSandboxProvider — Issues 13 & 14
+ * Tests for DaytonaSandboxProvider — Issues 13, 14, & 19
  *
  * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
@@ -7,6 +7,11 @@
  * Issue 14: Verifies destroySandbox lifecycle — deletion, idempotent handling of
  * already-destroyed sandboxes, graceful skip when workspace is missing or has no
  * sandboxId, and best-effort cleanup when delete fails.
+ *
+ * Issue 19: Verifies pauseSandbox and resumeSandbox idempotency — pausing
+ * an already-stopped/archived sandbox skips the SDK stop call, resuming an
+ * already-started sandbox skips the SDK start call. Also tests
+ * setAutoStopInterval delegation to the SDK.
  */
 
 import { CodeLanguage } from '@daytonaio/sdk'
@@ -105,6 +110,10 @@ const makeMockClientLayer = (
         Effect.sync(() => {
           log.push({ method: 'delete', args })
         }),
+      setAutostopInterval: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'setAutostopInterval', args })
+        }),
       snapshot: {} as DaytonaClient['Type']['snapshot'],
       raw: {} as DaytonaClient['Type']['raw'],
     })
@@ -131,6 +140,7 @@ const makeNotFoundClientLayer = (
       start: () => Effect.void,
       stop: () => Effect.void,
       delete: () => Effect.void,
+      setAutostopInterval: () => Effect.void,
       snapshot: {} as DaytonaClient['Type']['snapshot'],
       raw: {} as DaytonaClient['Type']['raw'],
     })
@@ -164,6 +174,7 @@ const makeGetErrorClientLayer = (
       start: () => Effect.void,
       stop: () => Effect.void,
       delete: () => Effect.void,
+      setAutostopInterval: () => Effect.void,
       snapshot: {} as DaytonaClient['Type']['snapshot'],
       raw: {} as DaytonaClient['Type']['raw'],
     })
@@ -202,6 +213,61 @@ const makeDeleteFailClientLayer = (
           code: 'DAYTONA_ERROR',
         })
       },
+      setAutostopInterval: () => Effect.void,
+      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      raw: {} as DaytonaClient['Type']['raw'],
+    })
+  )
+}
+
+/**
+ * Mock DaytonaClient where `.get()` returns a sandbox with a specific state.
+ * Used for idempotency tests (pause already-stopped, resume already-started).
+ */
+const makeStateClientLayer = (
+  log: MockCallRecord[],
+  state: string
+): Layer.Layer<DaytonaClient> => {
+  const sb = { ...makeMockSandbox(), state } as unknown as DaytonaSandbox
+  return Layer.succeed(
+    DaytonaClient,
+    DaytonaClient.of({
+      create: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'create', args })
+          return sb
+        }),
+      createFromSnapshot: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'createFromSnapshot', args })
+          return sb
+        }),
+      get: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'get', args })
+          return sb
+        }),
+      list: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'list', args })
+          return { items: [], total: 0 } as unknown as DaytonaPaginatedSandboxes
+        }),
+      start: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'start', args })
+        }),
+      stop: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'stop', args })
+        }),
+      delete: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'delete', args })
+        }),
+      setAutostopInterval: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'setAutostopInterval', args })
+        }),
       snapshot: {} as DaytonaClient['Type']['snapshot'],
       raw: {} as DaytonaClient['Type']['raw'],
     })
@@ -211,6 +277,12 @@ const makeDeleteFailClientLayer = (
 const makeLayer = (log: MockCallRecord[]) =>
   DaytonaSandboxProvider.layer.pipe(
     Layer.provide(makeMockClientLayer(log)),
+    Layer.provideMerge(TestLaborerStore)
+  )
+
+const makeStateLayer = (log: MockCallRecord[], state: string) =>
+  DaytonaSandboxProvider.layer.pipe(
+    Layer.provide(makeStateClientLayer(log, state)),
     Layer.provideMerge(TestLaborerStore)
   )
 
@@ -612,6 +684,91 @@ describe('DaytonaSandboxProvider', () => {
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )
+
+    it.scoped(
+      'skips stop call when sandbox is already stopped (idempotent)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId: 'sb-already-stopped',
+                sandboxUrl: 'sb-already-stopped',
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            yield* sp.pauseSandbox(wid)
+
+            // get was called (to check state), but stop was NOT called
+            assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+            assert.strictEqual(log.filter((c) => c.method === 'stop').length, 0)
+            // SandboxPaused event still committed
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxStatus, 'paused')
+          }).pipe(Effect.provide(makeStateLayer(log, 'stopped')))
+        })
+    )
+
+    it.scoped('skips stop call when sandbox is archived (idempotent)', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-archived',
+              sandboxUrl: 'sb-archived',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.pauseSandbox(wid)
+
+          // get was called, but stop was NOT called (archived = already inactive)
+          assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+          assert.strictEqual(log.filter((c) => c.method === 'stop').length, 0)
+          // SandboxPaused event still committed
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxStatus, 'paused')
+        }).pipe(Effect.provide(makeStateLayer(log, 'archived')))
+      })
+    )
+
+    it.scoped('returns NOT_FOUND when workspace has no sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          // No sandboxStarted event — workspace has no sandboxId
+
+          const result = yield* sp.pauseSandbox(wid).pipe(
+            Effect.map(() => null),
+            Effect.catchAll((err) => Effect.succeed(err))
+          )
+
+          assert.isNotNull(result)
+          assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
+          // No SDK calls made
+          assert.strictEqual(log.length, 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
   })
 
   describe('resumeSandbox', () => {
@@ -639,6 +796,147 @@ describe('DaytonaSandboxProvider', () => {
           assert.strictEqual(log.filter((c) => c.method === 'start').length, 1)
           const [ws] = store.query(tables.workspaces.where('id', wid))
           assert.strictEqual(ws?.sandboxStatus, 'running')
+        }).pipe(Effect.provide(makeStateLayer(log, 'stopped')))
+      })
+    )
+
+    it.scoped(
+      'skips start call when sandbox is already started (idempotent)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* SandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: wid,
+                sandboxId: 'sb-already-running',
+                sandboxUrl: 'sb-already-running',
+                sandboxImage: 'node:22',
+                sandboxProvider: 'daytona',
+              })
+            )
+
+            yield* sp.resumeSandbox(wid)
+
+            // get was called, but start was NOT called
+            assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+            assert.strictEqual(
+              log.filter((c) => c.method === 'start').length,
+              0
+            )
+            // SandboxResumed event still committed
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxStatus, 'running')
+          }).pipe(Effect.provide(makeStateLayer(log, 'started')))
+        })
+    )
+
+    it.scoped('returns NOT_FOUND when workspace has no sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          // No sandboxStarted event — workspace has no sandboxId
+
+          const result = yield* sp.resumeSandbox(wid).pipe(
+            Effect.map(() => null),
+            Effect.catchAll((err) => Effect.succeed(err))
+          )
+
+          assert.isNotNull(result)
+          assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
+          // No SDK calls made
+          assert.strictEqual(log.length, 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('setAutoStopInterval', () => {
+    it.scoped('calls setAutostopInterval on the SDK sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-autostop',
+              sandboxUrl: 'sb-autostop',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.setAutoStopInterval(wid, 30)
+
+          assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+          const autostopCalls = log.filter(
+            (c) => c.method === 'setAutostopInterval'
+          )
+          assert.strictEqual(autostopCalls.length, 1)
+          // Second arg is the interval
+          assert.strictEqual((autostopCalls[0]?.args as unknown[])[1], 30)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('calls setAutostopInterval with 0 to disable', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-autostop-0',
+              sandboxUrl: 'sb-autostop-0',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.setAutoStopInterval(wid, 0)
+
+          const autostopCalls = log.filter(
+            (c) => c.method === 'setAutostopInterval'
+          )
+          assert.strictEqual(autostopCalls.length, 1)
+          assert.strictEqual((autostopCalls[0]?.args as unknown[])[1], 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('returns NOT_FOUND when workspace has no sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+
+          const result = yield* sp.setAutoStopInterval(wid, 30).pipe(
+            Effect.map(() => null),
+            Effect.catchAll((err) => Effect.succeed(err))
+          )
+
+          assert.isNotNull(result)
+          assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
+          assert.strictEqual(log.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )

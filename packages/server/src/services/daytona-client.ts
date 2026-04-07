@@ -135,6 +135,16 @@ class DaytonaClient extends Context.Tag('@laborer/DaytonaClient')<
     ) => Effect.Effect<void, RpcError>
 
     /**
+     * Set the auto-stop interval for a sandbox.
+     * @param sandbox - The sandbox to update
+     * @param interval - Minutes of inactivity before auto-stop (0 disables)
+     */
+    readonly setAutostopInterval: (
+      sandbox: DaytonaSandbox,
+      interval: number
+    ) => Effect.Effect<void, RpcError>
+
+    /**
      * Access to the underlying Daytona snapshot service.
      * Exposed directly since snapshot operations are varied and
      * wrapping every sub-method adds little value.
@@ -264,6 +274,17 @@ class DaytonaClient extends Context.Tag('@laborer/DaytonaClient')<
         })
       })
 
+      // ── setAutostopInterval ───────────────────────────────────
+
+      const setAutostopInterval = Effect.fn(
+        'DaytonaClient.setAutostopInterval'
+      )(function* (sandbox: DaytonaSandbox, interval: number) {
+        yield* Effect.tryPromise({
+          try: () => sandbox.setAutostopInterval(interval),
+          catch: mapDaytonaError,
+        })
+      })
+
       // ── Return the service ──────────────────────────────────
 
       return DaytonaClient.of({
@@ -274,6 +295,7 @@ class DaytonaClient extends Context.Tag('@laborer/DaytonaClient')<
         start,
         stop,
         delete: del,
+        setAutostopInterval,
         snapshot: daytona.snapshot,
         raw: daytona,
       })

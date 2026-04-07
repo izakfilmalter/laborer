@@ -400,6 +400,16 @@ class DockerSandboxProvider extends Context.Tag(
         return yield* dockerDetection.check()
       })
 
+      // ── setAutoStopInterval ────────────────────────────────────
+      // No-op for Docker — containers don't have auto-stop intervals.
+      const setAutoStopInterval = Effect.fn(
+        'DockerSandboxProvider.setAutoStopInterval'
+      )(function* (_workspaceId: string, _interval: number) {
+        yield* Effect.logDebug(
+          'setAutoStopInterval is a no-op for Docker provider'
+        ).pipe(Effect.annotateLogs('module', 'DockerSandboxProvider'))
+      })
+
       // ── Return the SandboxProvider implementation ─────────────
 
       return SandboxProvider.of({
@@ -411,6 +421,7 @@ class DockerSandboxProvider extends Context.Tag(
         spawnTerminal,
         reconcileState,
         checkAvailability,
+        setAutoStopInterval,
       })
     })
   )

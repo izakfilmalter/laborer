@@ -179,6 +179,20 @@ class SandboxProvider extends Context.Tag('@laborer/SandboxProvider')<
      * Daytona API key configured and reachable).
      */
     readonly checkAvailability: () => Effect.Effect<ProviderStatus>
+
+    /**
+     * Set the auto-stop interval for a sandbox (minutes of inactivity).
+     *
+     * For Daytona: calls `sandbox.setAutostopInterval()` via the SDK.
+     * For Docker: no-op (Docker containers don't have auto-stop).
+     *
+     * @param workspaceId - The workspace whose sandbox to update
+     * @param interval - Minutes of inactivity before auto-stop (0 disables)
+     */
+    readonly setAutoStopInterval: (
+      workspaceId: string,
+      interval: number
+    ) => Effect.Effect<void, RpcError>
   }
 >() {}
 

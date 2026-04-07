@@ -19,6 +19,7 @@ import {
   buildSshRemoteUrl,
   DAYTONA_PROJECT_DIR,
   DAYTONA_SSH_HOST,
+  isSandboxRemoteName,
 } from '../../server/src/lib/git-sync.js'
 
 describe('git-sync helpers', () => {
@@ -30,6 +31,17 @@ describe('git-sync helpers', () => {
     it('handles UUID-style workspace IDs', () => {
       const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
       expect(buildRemoteName(uuid)).toBe(`sandbox-${uuid}`)
+    })
+  })
+
+  describe('isSandboxRemoteName', () => {
+    it('matches laborer sandbox remotes', () => {
+      expect(isSandboxRemoteName('sandbox-ws-abc-123')).toBe(true)
+    })
+
+    it('does not match normal repository remotes', () => {
+      expect(isSandboxRemoteName('origin')).toBe(false)
+      expect(isSandboxRemoteName('upstream')).toBe(false)
     })
   })
 

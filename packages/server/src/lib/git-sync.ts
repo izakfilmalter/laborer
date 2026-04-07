@@ -20,6 +20,9 @@
  */
 const DAYTONA_SSH_HOST = 'ssh.app.daytona.io'
 
+/** Prefix used for temporary Daytona git remotes. */
+const SANDBOX_REMOTE_PREFIX = 'sandbox-'
+
 /**
  * Default working directory inside Daytona sandboxes.
  * The agent and dev server operate from this path.
@@ -38,7 +41,16 @@ const DAYTONA_PROJECT_DIR = '/home/daytona/project'
  * The remote is added temporarily during code push and removed afterward.
  */
 const buildRemoteName = (workspaceId: string): string =>
-  `sandbox-${workspaceId}`
+  `${SANDBOX_REMOTE_PREFIX}${workspaceId}`
+
+/**
+ * Check whether a git remote name belongs to Laborer's temporary sandbox sync.
+ *
+ * These remotes are added briefly while pushing worktree code to Daytona and
+ * should be ignored by generic repo fetches.
+ */
+const isSandboxRemoteName = (remoteName: string): boolean =>
+  remoteName.startsWith(SANDBOX_REMOTE_PREFIX)
 
 /**
  * Build the SSH remote URL for pushing code to a Daytona sandbox.
@@ -141,6 +153,7 @@ export {
   buildPushArgs,
   buildRemoveRemoteArgs,
   buildRemoteName,
+  isSandboxRemoteName,
   buildSandboxCheckoutCommand,
   buildSandboxInitCommand,
   buildSshGitEnv,

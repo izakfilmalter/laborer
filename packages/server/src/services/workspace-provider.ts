@@ -57,6 +57,7 @@ import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
+import { isSandboxRemoteName } from '../lib/git-sync.js'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
@@ -271,10 +272,12 @@ const buildSetupFailureMessage = (failure: {
 }
 
 /**
- * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
- * to ensure all remote branches are up-to-date. This is important because
- * `git worktree add` creates a branch from the current HEAD — if the local
- * repo is stale, the worktree starts from an outdated commit.
+ * Fetch the latest remote refs before worktree creation.
+ *
+ * Only persistent repository remotes are fetched. Temporary Daytona
+ * `sandbox-*` remotes are skipped because git config is shared across worktrees,
+ * and those ephemeral remotes can otherwise block creation with interactive SSH
+ * prompts after an earlier sandbox sync.
  *
  * Network failures (DNS resolution, SSH auth, remote unreachable) are caught
  * and returned as a clear `GIT_FETCH_FAILED` error. The error message includes
@@ -292,18 +295,65 @@ const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
       Effect.annotateLogs('module', logPrefix)
     )
 
-    const result = yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['git', 'fetch', '--all'], {
+    const remotesResult = yield* Effect.tryPromise({
+      try: () =>
+        spawnGit(['remote'], {
           cwd: repoPath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stdout = await new Response(proc.stdout).text()
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stdout, stderr }
-      },
+          readOnly: true,
+        }),
+      catch: (error) =>
+        new RpcError({
+          message: `Failed to list git remotes: ${String(error)}`,
+          code: 'GIT_FETCH_FAILED',
+        }),
+    })
+
+    if (remotesResult.exitCode !== 0) {
+      return yield* new RpcError({
+        message: `Failed to list git remotes (exit ${String(remotesResult.exitCode)}): ${remotesResult.stderr.trim()}`,
+        code: 'GIT_FETCH_FAILED',
+      })
+    }
+
+    const remoteNames = remotesResult.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    const fetchableRemoteNames = remoteNames.filter(
+      (remoteName) => !isSandboxRemoteName(remoteName)
+    )
+    const skippedRemoteNames = remoteNames.filter(isSandboxRemoteName)
+
+    if (skippedRemoteNames.length > 0) {
+      yield* Effect.logDebug(
+        `Skipping ephemeral sandbox remotes during fetch: ${skippedRemoteNames.join(', ')}`
+      ).pipe(Effect.annotateLogs('module', logPrefix))
+    }
+
+    if (fetchableRemoteNames.length === 0) {
+      yield* Effect.logDebug('No fetchable git remotes found').pipe(
+        Effect.annotateLogs('module', logPrefix)
+      )
+      return
+    }
+
+    const firstFetchableRemoteName = fetchableRemoteNames[0]
+    if (firstFetchableRemoteName === undefined) {
+      return
+    }
+
+    const fetchArgs =
+      fetchableRemoteNames.length === 1
+        ? ['fetch', firstFetchableRemoteName]
+        : ['fetch', '--multiple', ...fetchableRemoteNames]
+
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        spawnGit(fetchArgs, {
+          cwd: repoPath,
+          timeoutMs: 120_000,
+        }),
       catch: (error) =>
         new RpcError({
           message: `Failed to spawn git fetch: ${String(error)}`,

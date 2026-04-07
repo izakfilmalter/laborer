@@ -9,6 +9,7 @@ import { ContainerService } from '../../src/services/container-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
+import { DockerSandboxProvider } from '../../src/services/docker-sandbox-provider.js'
 import { FileService } from '../../src/services/file-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
@@ -182,8 +183,12 @@ const DeferredGroup2Layers = Layer.mergeAll(
 /**
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
+ *
+ * `DockerSandboxProvider.layer` provides `SandboxProvider` for
+ * `WorkspaceProvider.layer` which delegates sandbox operations to it.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
+  Layer.provide(DockerSandboxProvider.layer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(DeferredGroup2Layers),
   Layer.provideMerge(DeferredGroup1WithSync)
@@ -212,10 +217,19 @@ const DeferredServicesReadyTrueLayer = Layer.effect(
  * Uses DeferredServicesReadyTrueLayer because all services are built
  * eagerly, matching the production state after deferred init completes.
  */
+/**
+ * DeferredServiceStack with TestTerminalClient baked in.
+ * DockerSandboxProvider.layer (inside the stack) requires TerminalClient.
+ */
+const DeferredServiceStackWithTerminal = DeferredServiceStack.pipe(
+  Layer.provide(TestTerminalClient),
+  Layer.provide(TestTerminalClientRecorderLayer)
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredServiceStackWithTerminal),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
@@ -225,7 +239,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredServiceStackWithTerminal),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),

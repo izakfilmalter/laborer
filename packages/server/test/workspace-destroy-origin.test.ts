@@ -10,10 +10,13 @@ import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
+import { DockerDetection } from '../src/services/docker-detection.js'
+import { DockerSandboxProvider } from '../src/services/docker-sandbox-provider.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
+import { TerminalClient } from '../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
@@ -26,7 +29,28 @@ const tempRoots: string[] = []
 const docker = (args: string): string =>
   execSync(`docker ${args}`, { encoding: 'utf-8' }).trim()
 
+/**
+ * Stub TerminalClient for tests — DockerSandboxProvider.layer requires it
+ * but these tests don't exercise terminal functionality.
+ */
+const TestTerminalClient = Layer.succeed(
+  TerminalClient,
+  TerminalClient.of({
+    spawnInWorkspace: () =>
+      Effect.succeed({
+        id: 'stub',
+        workspaceId: 'stub',
+        command: 'stub',
+        status: 'running' as const,
+      }),
+    killAllForWorkspace: () => Effect.succeed(0),
+  })
+)
+
 const TestLayer = WorkspaceProvider.layer.pipe(
+  Layer.provide(DockerSandboxProvider.layer),
+  Layer.provideMerge(TestTerminalClient),
+  Layer.provideMerge(DockerDetection.layer),
   Layer.provideMerge(DepsImageService.layer),
   Layer.provideMerge(ContainerService.layer),
   Layer.provideMerge(ProjectRegistry.layer),

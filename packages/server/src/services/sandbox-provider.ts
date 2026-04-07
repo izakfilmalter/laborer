@@ -39,7 +39,9 @@ interface CreateSandboxParams {
    * Implementations may use this to kick off post-creation tasks
    * (e.g. auto-running the dev server).
    */
-  readonly onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+  readonly onReady?:
+    | ((workspaceId: string) => Effect.Effect<void, RpcError>)
+    | undefined
   /** Human-readable project name (used for naming / labelling). */
   readonly projectName: string
   /** Unique workspace identifier. */

@@ -133,3 +133,46 @@ Date: 2026-04-07
 - bun run format passes (487 files, no fixes)
 - 410 server tests pass (48 test files)
 - 89 shared tests pass
+
+## Issue 10: WorkspaceProvider refactor — delegate to SandboxProvider instead of ContainerService
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Refactored WorkspaceProvider.layer to depend on SandboxProvider instead of ContainerService + DepsImageService
+- Removed ContainerService and DepsImageService imports from workspace-provider.ts
+- Added SandboxProvider import and dependency
+- Renamed `performContainerSetup` to `performSandboxSetup` — now delegates to
+  `sandboxProvider.createSandbox()` instead of directly calling depsImageService + containerService
+- Renamed `startContainer` to `startSandbox` in the WorkspaceProvider service interface
+- Updated `destroyWorktree` background cleanup: replaced direct containerService.destroyContainer
+  + deterministic name fallback with `sandboxProvider.destroySandbox()`
+- Removed Docker-specific helpers (`dockerContainerExists`, `destroyContainerByName`) from
+  workspace-provider.ts — these are now in docker-sandbox-provider.ts
+- Updated error handler to use `sandboxSetupStepChanged` instead of `containerSetupStepChanged`
+- Updated CreateSandboxParams.onReady type to `| undefined` for exactOptionalPropertyTypes compat
+
+### Handler updates (rpc/handlers.ts):
+- `workspace.startContainer` handler now calls `provider.startSandbox()` instead of `provider.startContainer()`
+- `container.unpause` fallback handler updated to call `provider.startSandbox()`
+
+### DockerSandboxProvider enhancements (docker-sandbox-provider.ts):
+- Enhanced `destroySandbox` to handle deterministic name-based container cleanup (moved from
+  WorkspaceProvider) — checks if workspace has sandboxId, falls back to containerName() for
+  leaked container cleanup when origin is 'laborer'
+- Added `dockerContainerExists` and `destroyContainerByName` helpers (moved from workspace-provider.ts)
+
+### Layer composition updates:
+- utility-main.ts: Added `DockerSandboxProvider.layer` to DeferredServiceStack via `Layer.provide()`
+  and provided TerminalClient proxy to the stack build
+- test/rpc/test-layer.ts: Added DockerSandboxProvider.layer to DeferredServiceStack, created
+  `DeferredServiceStackWithTerminal` to provide TestTerminalClient to the stack
+- test/workspace-destroy-origin.test.ts: Updated TestLayer to include DockerSandboxProvider.layer,
+  DockerDetection.layer, and a stub TestTerminalClient
+
+### Verification:
+- All 7 turbo typecheck tasks pass
+- bun run format passes (487 files, no fixes)
+- 410 server tests pass (48 test files)
+- 89 shared tests pass

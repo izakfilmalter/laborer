@@ -15,8 +15,7 @@
  * The `ContainerService` internally emits `v1.Container*` events, which
  * materialize into the same `sandbox*` columns as the `v2.Sandbox*` events
  * (both old and new materializers write to the same column names). The v1
- * events continue to work correctly; full migration to v2 events for the
- * Docker path will happen when `WorkspaceProvider` is refactored (Issue 10).
+ * events continue to work correctly.
  *
  * Issue 9: DockerSandboxProvider — wrap existing ContainerService behind SandboxProvider
  */
@@ -25,6 +24,7 @@ import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { ContainerService } from './container-service.js'
 import { DepsImageService } from './deps-image-service.js'
 import { DockerDetection } from './docker-detection.js'
@@ -35,6 +35,76 @@ import { TerminalClient } from './terminal-client.js'
 
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'DockerSandboxProvider'
+
+/**
+ * Check if a Docker container with the given name exists.
+ */
+const dockerContainerExists = (name: string): Effect.Effect<boolean, never> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = spawn(['docker', 'inspect', name], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      return exitCode === 0
+    },
+    catch: () => false,
+  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+
+/**
+ * Best-effort removal of a Docker container by name.
+ * Used as a fallback when the container has no `sandboxId` in LiveStore
+ * but may exist with a deterministic name (e.g., from a failed creation).
+ */
+const destroyContainerByName = (
+  name: string,
+  workspaceId: string
+): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    const exists = yield* dockerContainerExists(name)
+    if (!exists) {
+      yield* Effect.logDebug(
+        `No Docker container named "${name}" found for workspace "${workspaceId}", skipping fallback cleanup`
+      ).pipe(Effect.annotateLogs('module', logPrefix))
+      return
+    }
+
+    yield* Effect.logInfo(
+      `Destroying leaked container "${name}" for workspace "${workspaceId}" via deterministic fallback`
+    ).pipe(Effect.annotateLogs('module', logPrefix))
+
+    yield* Effect.tryPromise({
+      try: async () => {
+        const proc = spawn(['docker', 'rm', '-f', name], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const exitCode = await proc.exited
+        const stderr = await new Response(proc.stderr).text()
+        return { exitCode, stderr }
+      },
+      catch: (error) => String(error),
+    }).pipe(
+      Effect.tap((result) => {
+        if (typeof result === 'string') {
+          return Effect.logWarning(
+            `Failed to remove leaked container "${name}": ${result}`
+          )
+        }
+
+        if (result.exitCode !== 0) {
+          return Effect.logWarning(
+            `docker rm -f failed for leaked container "${name}" (exit ${result.exitCode}): ${result.stderr.trim()}`
+          )
+        }
+
+        return Effect.logDebug(`Leaked container "${name}" removed`)
+      }),
+      Effect.annotateLogs('module', logPrefix),
+      Effect.catchAll(() => Effect.void)
+    )
+  })
 
 // ---------------------------------------------------------------------------
 // Service tag (for layer identification / future provider-specific deps)
@@ -79,8 +149,8 @@ class DockerSandboxProvider extends Context.Tag(
 
       // ── createSandbox ─────────────────────────────────────────
       // Orchestrates deps image build + container creation.
-      // Mirrors the existing `performContainerSetup` flow from
-      // `WorkspaceProvider` but exposed through the provider interface.
+      // Orchestrates the deps image build + container creation flow
+      // exposed through the SandboxProvider interface.
 
       const createSandbox = Effect.fn('DockerSandboxProvider.createSandbox')(
         function* (params: CreateSandboxParams) {
@@ -186,7 +256,43 @@ class DockerSandboxProvider extends Context.Tag(
 
       const destroySandbox = Effect.fn('DockerSandboxProvider.destroySandbox')(
         function* (workspaceId: string) {
-          yield* containerService.destroyContainer(workspaceId)
+          // Look up workspace to determine cleanup strategy
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspaceOpt = pipe(
+            allWorkspaces,
+            Arr.findFirst((w) => w.id === workspaceId)
+          )
+
+          if (workspaceOpt._tag === 'None') {
+            yield* Effect.logDebug(
+              `Workspace "${workspaceId}" not found in LiveStore, skipping container destroy`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            return
+          }
+
+          const workspace = workspaceOpt.value
+
+          if (workspace.sandboxId !== null) {
+            // Container is tracked — destroy via ContainerService
+            yield* containerService.destroyContainer(workspaceId)
+          } else if (workspace.origin === 'laborer') {
+            // No tracked container but workspace is laborer-managed —
+            // attempt deterministic name-based cleanup for leaked containers.
+            // This handles the case where container creation failed mid-way
+            // and no sandboxId was committed to LiveStore.
+            const allProjects = store.query(tables.projects)
+            const projectOpt = pipe(
+              allProjects,
+              Arr.findFirst((p) => p.id === workspace.projectId)
+            )
+            if (projectOpt._tag === 'Some') {
+              const deterministicName = containerName(
+                workspace.branchName,
+                projectOpt.value.name
+              ).name
+              yield* destroyContainerByName(deterministicName, workspaceId)
+            }
+          }
         }
       )
 

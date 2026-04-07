@@ -2,9 +2,9 @@
  * WorkspaceProvider — Effect Service
  *
  * Manages isolated workspace environments via git worktrees. Each workspace
- * gets its own branch and directory. The provider interface
- * is designed to be pluggable — v1 ships with git worktrees, but future
- * implementations could use Docker or Daytona.
+ * gets its own branch and directory. Sandbox lifecycle (container/cloud
+ * sandbox creation, destruction, pause, resume) is delegated to the
+ * configured `SandboxProvider` implementation (Docker or Daytona).
  *
  * Responsibilities:
  * - Worktree creation via `git worktree add`
@@ -54,17 +54,15 @@
 import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
-import { ContainerService } from './container-service.js'
-import { DepsImageService } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import { SandboxProvider } from './sandbox-provider.js'
 
 /**
  * Shape of a workspace record returned by the provider.
@@ -271,68 +269,6 @@ const buildSetupFailureMessage = (failure: {
 
   return `Setup script '${failure.command}' failed with exit code ${failure.exitCode}.${outputSuffix}`
 }
-
-const dockerContainerExists = (name: string): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = spawn(['docker', 'inspect', name], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const exitCode = await proc.exited
-      return exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-
-const destroyContainerByName = (
-  name: string,
-  workspaceId: string
-): Effect.Effect<void, never> =>
-  Effect.gen(function* () {
-    const exists = yield* dockerContainerExists(name)
-    if (!exists) {
-      yield* Effect.logDebug(
-        `No Docker container named "${name}" found for workspace "${workspaceId}", skipping fallback cleanup`
-      ).pipe(Effect.annotateLogs('module', logPrefix))
-      return
-    }
-
-    yield* Effect.logInfo(
-      `Destroying leaked container "${name}" for workspace "${workspaceId}" via deterministic fallback`
-    ).pipe(Effect.annotateLogs('module', logPrefix))
-
-    yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['docker', 'rm', '-f', name], {
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stderr }
-      },
-      catch: (error) => String(error),
-    }).pipe(
-      Effect.tap((result) => {
-        if (typeof result === 'string') {
-          return Effect.logWarning(
-            `Failed to remove leaked container "${name}": ${result}`
-          )
-        }
-
-        if (result.exitCode !== 0) {
-          return Effect.logWarning(
-            `docker rm -f failed for leaked container "${name}" (exit ${result.exitCode}): ${result.stderr.trim()}`
-          )
-        }
-
-        return Effect.logDebug(`Leaked container "${name}" removed`)
-      }),
-      Effect.annotateLogs('module', logPrefix),
-      Effect.catchAll(() => Effect.void)
-    )
-  })
 
 /**
  * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
@@ -656,20 +592,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<readonly string[], RpcError>
 
     /**
-     * Start a container for an existing workspace.
+     * Start a sandbox for an existing workspace.
      *
-     * Converts a non-containerized workspace (typically one detected from
+     * Converts a non-sandboxed workspace (typically one detected from
      * an existing git worktree with origin 'external') into a fully
-     * containerized laborer workspace. Transitions the workspace to
-     * 'running' status, updates origin to 'laborer', and runs container
+     * sandboxed laborer workspace. Transitions the workspace to
+     * 'running' status, updates origin to 'laborer', and runs sandbox
      * setup as a background fiber.
      *
-     * @param workspaceId - ID of the workspace to containerize
+     * @param workspaceId - ID of the workspace to sandbox
      * @param onReady - Optional effect to run when workspace is ready
      *   (e.g. start diff/PR polling). Errors are logged but do not
      *   affect workspace status.
      */
-    readonly startContainer: (
+    readonly startSandbox: (
       workspaceId: string,
       onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
     ) => Effect.Effect<void, RpcError>
@@ -709,8 +645,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const { store } = yield* LaborerStore
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
-      const containerService = yield* ContainerService
-      const depsImageService = yield* DepsImageService
+      const sandboxProvider = yield* SandboxProvider
 
       /**
        * Create a git worktree, validate it, and run setup scripts.
@@ -941,112 +876,53 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         })
 
       /**
-       * Run background container setup (deps image build + container creation).
-       * Communicates progress via containerSetupStepChanged events.
-       * Follows the same pattern as the original container setup fiber.
+       * Run background sandbox setup by delegating to the configured
+       * SandboxProvider. The provider handles all provider-specific steps
+       * (e.g. Docker: deps image build + container creation; Daytona:
+       * sandbox creation + code push).
+       *
+       * Communicates progress via sandboxSetupStepChanged events emitted
+       * by the provider implementation.
        */
-      const performContainerSetup = (params: {
+      const performSandboxSetup = (params: {
         readonly id: string
         readonly branchName: string
         readonly worktreePath: string
-        readonly repoPath: string
         readonly projectName: string
-        readonly devServerImage: string
         readonly devServer: {
+          readonly autoOpen: { readonly value: boolean }
           readonly dockerfile: { readonly value: string | null }
+          readonly image: { readonly value: string | null }
           readonly installCommand: { readonly value: string | null }
           readonly network: { readonly value: string | null }
           readonly port: { readonly value: number | null }
           readonly setupScripts: { readonly value: readonly string[] }
+          readonly startCommand: { readonly value: string | null }
           readonly workdir: { readonly value: string }
         }
+        readonly onReady?:
+          | ((workspaceId: string) => Effect.Effect<void, RpcError>)
+          | undefined
       }): Effect.Effect<void, RpcError> =>
         Effect.gen(function* () {
-          const { id, branchName, worktreePath, repoPath, projectName } = params
-
-          // Signal UI: building deps image
-          store.commit(
-            events.containerSetupStepChanged({
-              workspaceId: id,
-              step: 'building-image',
-            })
-          )
-
-          const depsResult = yield* depsImageService
-            .ensureDepsImage({
-              projectRoot: repoPath,
-              projectName,
-              baseImage: params.devServerImage,
+          yield* sandboxProvider.createSandbox({
+            workspaceId: params.id,
+            worktreePath: params.worktreePath,
+            branchName: params.branchName,
+            projectName: params.projectName,
+            devServerConfig: {
+              autoOpen: params.devServer.autoOpen.value,
+              dockerfile: params.devServer.dockerfile.value,
+              image: params.devServer.image.value,
+              installCommand: params.devServer.installCommand.value,
+              network: params.devServer.network.value,
+              port: params.devServer.port.value,
+              setupScripts: params.devServer.setupScripts.value,
+              startCommand: params.devServer.startCommand.value,
               workdir: params.devServer.workdir.value,
-              worktreePath,
-              installCommand:
-                params.devServer.installCommand.value ?? undefined,
-              setupScripts:
-                params.devServer.setupScripts.value.length > 0
-                  ? params.devServer.setupScripts.value
-                  : undefined,
-              onProgress: (step) => {
-                store.commit(
-                  events.containerSetupStepChanged({
-                    workspaceId: id,
-                    step,
-                  })
-                )
-              },
-            })
-            .pipe(
-              Effect.catchAll((error: RpcError) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `Deps image build failed, falling back to base image: ${error.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-                  return null
-                })
-              )
-            )
-
-          // Signal UI: starting container
-          store.commit(
-            events.containerSetupStepChanged({
-              workspaceId: id,
-              step: 'starting-container',
-            })
-          )
-
-          yield* containerService
-            .createContainer({
-              workspaceId: id,
-              worktreePath,
-              branchName,
-              projectName,
-              depsImageName: depsResult?.imageName,
-              devServerConfig: {
-                image: params.devServerImage,
-                dockerfile: params.devServer.dockerfile.value,
-                network: params.devServer.network.value,
-                port: params.devServer.port.value,
-                workdir: params.devServer.workdir.value,
-              },
-            })
-            .pipe(
-              Effect.tapError((containerError) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `Container creation failed for workspace ${id}: ${containerError.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-
-                  // Clear setup step so the UI no longer shows a spinner
-                  store.commit(
-                    events.containerSetupStepChanged({
-                      workspaceId: id,
-                      step: null,
-                    })
-                  )
-                })
-              )
-            )
-
-          // containerStarted materializer clears containerSetupStep automatically
+            },
+            onReady: params.onReady,
+          })
         })
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
@@ -1165,16 +1041,14 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
             }
 
-            // Phase 2: Start container if devServer config has an image
+            // Phase 2: Start sandbox if devServer config has an image
             const devServerImage = resolvedConfig.devServer.image.value
             if (devServerImage !== null) {
-              yield* performContainerSetup({
+              yield* performSandboxSetup({
                 id,
                 branchName: resolvedBranch,
                 worktreePath,
-                repoPath: project.repoPath,
                 projectName: project.name,
-                devServerImage,
                 devServer: resolvedConfig.devServer,
               })
             }
@@ -1193,9 +1067,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   })
                 )
 
-                // Clear container setup step in case it was set
+                // Clear sandbox setup step in case it was set
                 store.commit(
-                  events.containerSetupStepChanged({
+                  events.sandboxSetupStepChanged({
                     workspaceId: id,
                     step: null,
                   })
@@ -1380,38 +1254,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           const backgroundCleanup = Effect.gen(function* () {
-            const latestWorkspace =
-              store.query(tables.workspaces.where('id', workspaceId))[0] ??
-              workspace
-            const deterministicContainerName = containerName(
-              latestWorkspace.branchName,
-              project.name
-            ).name
-
-            // Destroy container if one exists (Issue #5)
-            // Container destruction happens before worktree removal so
-            // the container is stopped before its bind-mounted directory
-            // is deleted. Best-effort: logs warnings but continues cleanup.
-            if (latestWorkspace.sandboxId !== null) {
-              yield* Effect.logInfo(
-                `Destroying tracked container: ${latestWorkspace.sandboxId}`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-
-              yield* containerService
-                .destroyContainer(workspaceId)
-                .pipe(
-                  Effect.catchAll((error) =>
-                    Effect.logWarning(
-                      `Container destroy failed for workspace "${workspaceId}": ${error.message}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-                  )
+            // Destroy sandbox if one exists.
+            // Sandbox destruction happens before worktree removal so
+            // the sandbox is stopped before its bind-mounted directory
+            // (Docker) or linked code (Daytona) is deleted.
+            // Best-effort: logs warnings but continues cleanup.
+            yield* sandboxProvider
+              .destroySandbox(workspaceId)
+              .pipe(
+                Effect.catchAll((error) =>
+                  Effect.logWarning(
+                    `Sandbox destroy failed for workspace "${workspaceId}": ${String(error)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
                 )
-            } else if (latestWorkspace.origin === 'laborer') {
-              yield* destroyContainerByName(
-                deterministicContainerName,
-                workspaceId
               )
-            }
 
             // 4. Remove the git worktree and branch.
             //    Both laborer-managed and external workspaces have their
@@ -1628,7 +1484,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         }
       )
 
-      const startContainer = Effect.fn('WorkspaceProvider.startContainer')(
+      const startSandbox = Effect.fn('WorkspaceProvider.startSandbox')(
         function* (
           workspaceId: string,
           onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
@@ -1649,7 +1505,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           const workspace = workspaceOpt.value
 
-          // 2. Reject if workspace already has a container
+          // 2. Reject if workspace already has a sandbox
           if (workspace.sandboxId != null) {
             return yield* new RpcError({
               message: `Workspace ${workspaceId} already has a sandbox`,
@@ -1675,13 +1531,13 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           if (devServerImage === null) {
             return yield* new RpcError({
               message:
-                'No devServer.image configured in laborer.json — cannot start container',
+                'No devServer.image configured in laborer.json — cannot start sandbox',
               code: 'NO_DEV_SERVER_IMAGE',
             })
           }
 
           yield* Effect.logInfo(
-            `Starting container for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
+            `Starting sandbox for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
           // 4. Transition workspace: update origin to 'laborer' and status
@@ -1703,37 +1559,25 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           }
 
-          // 5. Run the onReady callback (e.g. start diff/PR polling)
-          if (onReady) {
-            yield* onReady(workspaceId).pipe(
-              Effect.catchAll((err) =>
-                Effect.logWarning(
-                  `onReady callback failed for workspace ${workspaceId}: ${err.message}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              )
-            )
-          }
-
-          // 6. Fork container setup as a background fiber (same pattern
+          // 5. Fork sandbox setup as a background fiber (same pattern
           //    as createWorktree)
-          const containerSetupEffect = performContainerSetup({
+          const sandboxSetupEffect = performSandboxSetup({
             id: workspaceId,
             branchName: workspace.branchName,
             worktreePath: workspace.worktreePath,
-            repoPath: project.repoPath,
             projectName: project.name,
-            devServerImage,
             devServer: resolvedConfig.devServer,
+            onReady,
           }).pipe(
             Effect.catchAll((err) =>
               Effect.gen(function* () {
                 yield* Effect.logWarning(
-                  `Container setup failed for workspace ${workspaceId}: ${String(err)}`
+                  `Sandbox setup failed for workspace ${workspaceId}: ${String(err)}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
 
-                // Clear container setup step
+                // Clear sandbox setup step
                 store.commit(
-                  events.containerSetupStepChanged({
+                  events.sandboxSetupStepChanged({
                     workspaceId,
                     step: null,
                   })
@@ -1752,7 +1596,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           )
 
-          const fiber = yield* containerSetupEffect.pipe(Effect.forkIn(scope))
+          const fiber = yield* sandboxSetupEffect.pipe(Effect.forkIn(scope))
 
           // Track the fiber so destroyWorktree can interrupt it
           yield* Ref.update(setupFibers, (m) => {
@@ -1885,7 +1729,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       return WorkspaceProvider.of({
         createWorktree,
         destroyWorktree,
-        startContainer,
+        startSandbox,
         checkDirtyFiles,
         getWorkspaceEnv,
       })

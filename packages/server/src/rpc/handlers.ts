@@ -892,7 +892,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             yield* prWatcher.startPolling(wsId)
             yield* workspaceSyncService.startPolling(wsId)
           })
-        yield* provider.startContainer(workspaceId, onReady)
+        yield* provider.startSandbox(workspaceId, onReady)
       }),
 
     // -------------------------------------------------------------------
@@ -934,7 +934,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
                   yield* prWatcher.startPolling(wsId)
                   yield* workspaceSyncService.startPolling(wsId)
                 })
-              yield* provider.startContainer(workspaceId, onReady)
+              yield* provider.startSandbox(workspaceId, onReady)
             })
         )
       ),

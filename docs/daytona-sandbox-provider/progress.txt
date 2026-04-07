@@ -176,3 +176,35 @@ Date: 2026-04-07
 - bun run format passes (487 files, no fixes)
 - 410 server tests pass (48 test files)
 - 89 shared tests pass
+
+## Issue 7: Daytona env vars in packages/env
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Extended packages/env/src/server.ts with three new Daytona-specific env vars:
+  - DAYTONA_API_KEY: optional string (z.string().min(1).optional()) — only required at
+    runtime when Daytona provider is actually used, validated by DaytonaClient service
+  - DAYTONA_API_URL: optional string with URL validation, defaults to "https://app.daytona.io/api"
+  - DAYTONA_TARGET: optional string, defaults to "us"
+- All three vars use Zod validation consistent with existing env vars (TERMINAL_GRACE_PERIOD_MS, etc.)
+- Variables are loaded via @t3-oss/env-core with emptyStringAsUndefined: true
+- .env.local already contains DAYTONA_API_KEY and DAYTONA_API_URL values — now properly
+  validated and typed through the env schema
+
+### Design decisions:
+- DAYTONA_API_KEY is optional at the schema level (not required) because not every user
+  has Daytona credentials. Runtime validation happens in the DaytonaClient service (Issue 11)
+  when the provider is actually used
+- DAYTONA_API_URL uses z.string().url() for proper URL validation with a sensible default
+- DAYTONA_TARGET uses z.string().min(1) (not an enum) to allow future region values without
+  schema changes
+- No test files added — packages/env has no existing test infrastructure, and env validation
+  is tested implicitly by the server test suite which imports the env module
+
+### Verification:
+- All 15 turbo tasks pass (typecheck + format + test across all packages)
+- 410 server tests pass (48 test files)
+- 89 shared tests pass
+- bun run format passes (487 files, no fixes)

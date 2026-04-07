@@ -30,18 +30,20 @@ export const workspaces = State.SQLite.table({
     createdAt: State.SQLite.text(),
     /** SHA of the parent branch HEAD when the worktree was created. Used by DiffService as the base for `git diff`. */
     baseSha: State.SQLite.text({ nullable: true }),
-    /** Docker container ID when a dev server container is running for this workspace. Null when no container exists. */
-    containerId: State.SQLite.text({ nullable: true }),
-    /** The `.orb.local` URL for the containerized dev server. Null when no container exists. */
-    containerUrl: State.SQLite.text({ nullable: true }),
-    /** Port the dev server listens on inside the container. Null when not configured. */
-    containerPort: State.SQLite.integer({ nullable: true }),
-    /** The Docker image used for the container (e.g., `node:22`). Null when no container exists. */
-    containerImage: State.SQLite.text({ nullable: true }),
-    /** The current container status: 'running' or 'paused'. Null when no container exists. */
-    containerStatus: State.SQLite.text({ nullable: true }),
-    /** Current step of the background container setup process. Null when setup is complete or not started. */
-    containerSetupStep: State.SQLite.text({ nullable: true }),
+    /** Sandbox ID when a dev server sandbox is running for this workspace. Null when no sandbox exists. */
+    sandboxId: State.SQLite.text({ nullable: true }),
+    /** The URL for the sandbox dev server. Null when no sandbox exists. */
+    sandboxUrl: State.SQLite.text({ nullable: true }),
+    /** Port the dev server listens on inside the sandbox. Null when not configured. */
+    sandboxPort: State.SQLite.integer({ nullable: true }),
+    /** The image used for the sandbox (e.g., `node:22`). Null when no sandbox exists. */
+    sandboxImage: State.SQLite.text({ nullable: true }),
+    /** The current sandbox status: 'running' or 'paused'. Null when no sandbox exists. */
+    sandboxStatus: State.SQLite.text({ nullable: true }),
+    /** Current step of the background sandbox setup process. Null when setup is complete or not started. */
+    sandboxSetupStep: State.SQLite.text({ nullable: true }),
+    /** Which sandbox provider was used: 'docker' or 'daytona'. Null for workspaces created before provider support. */
+    sandboxProvider: State.SQLite.text({ nullable: true }),
     /** Current step of the background worktree setup process (git fetch, worktree add, setup scripts). Null when setup is complete or not started. */
     worktreeSetupStep: State.SQLite.text({ nullable: true }),
     /** Pull request number associated with this workspace's branch. Null when no PR exists. */
@@ -586,11 +588,12 @@ const materializers = State.SQLite.materializers(events, {
       origin,
       createdAt,
       baseSha,
-      containerId: null,
-      containerUrl: null,
-      containerImage: null,
-      containerStatus: null,
-      containerSetupStep: null,
+      sandboxId: null,
+      sandboxUrl: null,
+      sandboxImage: null,
+      sandboxStatus: null,
+      sandboxSetupStep: null,
+      sandboxProvider: null,
       worktreeSetupStep: null,
       prNumber: null,
       prUrl: null,
@@ -633,32 +636,32 @@ const materializers = State.SQLite.materializers(events, {
   }) =>
     workspaces
       .update({
-        containerId,
-        containerUrl,
-        containerImage,
-        containerPort: containerPort ?? null,
-        containerStatus: 'running',
-        containerSetupStep: null,
+        sandboxId: containerId,
+        sandboxUrl: containerUrl,
+        sandboxImage: containerImage,
+        sandboxPort: containerPort ?? null,
+        sandboxStatus: 'running',
+        sandboxSetupStep: null,
       })
       .where({ id: workspaceId }),
   'v1.ContainerPortChanged': ({ workspaceId, containerPort }) =>
-    workspaces.update({ containerPort }).where({ id: workspaceId }),
+    workspaces
+      .update({ sandboxPort: containerPort })
+      .where({ id: workspaceId }),
   'v1.ContainerStopped': ({ workspaceId }) =>
     workspaces
       .update({
-        containerId: null,
-        containerStatus: null,
-        containerSetupStep: null,
+        sandboxId: null,
+        sandboxStatus: null,
+        sandboxSetupStep: null,
       })
       .where({ id: workspaceId }),
   'v1.ContainerPaused': ({ workspaceId }) =>
-    workspaces.update({ containerStatus: 'paused' }).where({ id: workspaceId }),
+    workspaces.update({ sandboxStatus: 'paused' }).where({ id: workspaceId }),
   'v1.ContainerUnpaused': ({ workspaceId }) =>
-    workspaces
-      .update({ containerStatus: 'running' })
-      .where({ id: workspaceId }),
+    workspaces.update({ sandboxStatus: 'running' }).where({ id: workspaceId }),
   'v1.ContainerSetupStepChanged': ({ workspaceId, step }) =>
-    workspaces.update({ containerSetupStep: step }).where({ id: workspaceId }),
+    workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
   'v1.WorktreeSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ worktreeSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

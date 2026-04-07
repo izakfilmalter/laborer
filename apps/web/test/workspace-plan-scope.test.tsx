@@ -504,9 +504,9 @@ describe('WorkspaceList plan association', () => {
           return [
             {
               ...WORKSPACE_REGULAR,
-              containerId: 'container-1',
-              containerStatus: 'running',
-              containerUrl: 'preview.example.com',
+              sandboxId: 'container-1',
+              sandboxStatus: 'running',
+              sandboxUrl: 'preview.example.com',
             },
           ]
         }

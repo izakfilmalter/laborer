@@ -1176,7 +1176,7 @@ export function usePanelLayout() {
     (workspaceId: string): boolean => {
       const wsList = store.query(allWorkspaces$)
       const ws = wsList.find((w) => w.id === workspaceId)
-      return ws?.containerId != null
+      return ws?.sandboxId != null
     },
     [store]
   )

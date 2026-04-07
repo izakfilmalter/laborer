@@ -1118,11 +1118,11 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Schema rename: container* columns to sandbox* | None | Ready |
-| 2 | Schema: new v2.Sandbox* events + bridging materializers | 1 | Blocked |
+| 1 | Schema rename: container* columns to sandbox* | None | Done |
+| 2 | Schema: new v2.Sandbox* events + bridging materializers | 1 | Ready |
 | 3 | RPC rename: container.* to sandbox.* with backward-compat aliases | 2 | Blocked |
 | 4 | UI: update all components to use sandbox* column names + RPC names | 3 | Blocked |
-| 5 | Provider config: add provider field to laborer.json + config resolution | 1 | Blocked |
+| 5 | Provider config: add provider field to laborer.json + config resolution | 1 | Ready |
 | 6 | Provider config: global default sandbox provider in appSettings | 5 | Blocked |
 | 7 | Daytona env vars in packages/env | None | Ready |
 | 8 | SandboxProvider Effect interface definition | 2 | Blocked |

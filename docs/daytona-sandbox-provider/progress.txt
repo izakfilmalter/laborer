@@ -1,0 +1,22 @@
+## Issue 1: Schema rename — container* columns to sandbox*
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Renamed 6 workspace table columns in packages/shared/src/schema.ts:
+  containerId -> sandboxId, containerUrl -> sandboxUrl, containerPort -> sandboxPort,
+  containerImage -> sandboxImage, containerStatus -> sandboxStatus, containerSetupStep -> sandboxSetupStep
+- Added new sandboxProvider column (text, nullable) to workspaces table
+- Updated WorkspaceCreated materializer to initialize all sandbox* columns to null + sandboxProvider to null
+- Updated all v1.Container* event materializers to write to sandbox* columns (event field names preserved for backward compat)
+- Old v1.Container* event definitions retained (not deleted) for LiveStore backward compatibility
+- Updated server-side code: container-service.ts, workspace-provider.ts, terminal-client.ts, rpc/handlers.ts
+- Updated web UI code: workspace-dashboard.tsx, workspace-list.tsx, workspace-frame-header-container.tsx, use-panel-layout.ts
+- Updated all tests: schema.test.ts, container-service.e2e.test.ts, workspace-management.test.ts,
+  workspace-card-layout.test.tsx, workspace-plan-scope.test.tsx, workspace-frame-header-container.test.tsx,
+  workspace-list-root-delete.test.tsx, first-launch-empty-cache.test.tsx
+
+### Verification:
+- All 15 turbo tasks pass (typecheck + format + test across all packages)
+- 1070 web tests pass, 410 server tests pass, 81 shared tests pass

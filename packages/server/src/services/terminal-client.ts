@@ -561,7 +561,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         rpcClient: TerminalRpc,
         terminalId: string,
         projectId: string,
-        containerImage: string | null
+        sandboxImage: string | null
       ): Effect.Effect<void, never> =>
         Effect.gen(function* () {
           const project = yield* registry.getProject(projectId)
@@ -582,7 +582,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             // Skip setup scripts when a cached deps image was used —
             // node_modules and other setup is already baked into the image.
             const hasCachedDeps =
-              containerImage?.startsWith('laborer-deps/') === true
+              sandboxImage?.startsWith('laborer-deps/') === true
             const setupScripts = hasCachedDeps
               ? []
               : resolvedConfig.devServer.setupScripts.value
@@ -616,9 +616,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         'TerminalClient.spawnContainerTerminal'
       )(function* (
         workspace: {
-          readonly containerId: string | null
-          readonly containerImage: string | null
-          readonly containerUrl: string | null
+          readonly sandboxId: string | null
+          readonly sandboxImage: string | null
+          readonly sandboxUrl: string | null
           readonly projectId: string
           readonly worktreePath: string
         },
@@ -629,7 +629,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         const { client: rpcClient } = yield* getOrCreateClient
 
         const containerNameValue =
-          workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
+          workspace.sandboxUrl?.replace('.orb.local', '') ?? workspaceId
 
         yield* Effect.log(
           `Spawning container terminal: docker exec -it ${containerNameValue} /bin/sh`
@@ -663,7 +663,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             rpcClient,
             terminalInfo.id,
             workspace.projectId,
-            workspace.containerImage ?? null
+            workspace.sandboxImage ?? null
           ).pipe(Effect.forkDaemon)
         }
 
@@ -772,7 +772,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           }
 
           // 2. Dev server terminal in containerized workspace: spawn inside container
-          if (workspace.containerId != null && autoRun === true) {
+          if (workspace.sandboxId != null && autoRun === true) {
             return yield* spawnContainerTerminal(
               workspace,
               workspaceId,

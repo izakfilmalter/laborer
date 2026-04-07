@@ -1392,9 +1392,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             // Container destruction happens before worktree removal so
             // the container is stopped before its bind-mounted directory
             // is deleted. Best-effort: logs warnings but continues cleanup.
-            if (latestWorkspace.containerId !== null) {
+            if (latestWorkspace.sandboxId !== null) {
               yield* Effect.logInfo(
-                `Destroying tracked container: ${latestWorkspace.containerId}`
+                `Destroying tracked container: ${latestWorkspace.sandboxId}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
 
               yield* containerService
@@ -1650,9 +1650,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const workspace = workspaceOpt.value
 
           // 2. Reject if workspace already has a container
-          if (workspace.containerId != null) {
+          if (workspace.sandboxId != null) {
             return yield* new RpcError({
-              message: `Workspace ${workspaceId} already has a container`,
+              message: `Workspace ${workspaceId} already has a sandbox`,
               code: 'ALREADY_CONTAINERIZED',
             })
           }

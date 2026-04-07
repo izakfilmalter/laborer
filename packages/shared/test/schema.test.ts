@@ -129,12 +129,13 @@ describe('LiveStore schema', () => {
           origin: 'laborer',
           createdAt: '2026-03-06T00:00:00.000Z',
           baseSha: 'abc123',
-          containerId: null,
-          containerUrl: null,
-          containerPort: null,
-          containerImage: null,
-          containerStatus: null,
-          containerSetupStep: null,
+          sandboxId: null,
+          sandboxUrl: null,
+          sandboxPort: null,
+          sandboxImage: null,
+          sandboxStatus: null,
+          sandboxSetupStep: null,
+          sandboxProvider: null,
           prNumber: null,
           prUrl: null,
           prTitle: null,
@@ -189,15 +190,15 @@ describe('LiveStore schema', () => {
           })
         )
 
-        // Verify container fields start as null
+        // Verify sandbox fields start as null
         const beforeContainer = store.query(
           tables.workspaces.where('id', 'workspace-container')
         )
         assert.strictEqual(beforeContainer.length, 1)
-        assert.strictEqual(beforeContainer[0]?.containerId, null)
-        assert.strictEqual(beforeContainer[0]?.containerUrl, null)
-        assert.strictEqual(beforeContainer[0]?.containerImage, null)
-        assert.strictEqual(beforeContainer[0]?.containerStatus, null)
+        assert.strictEqual(beforeContainer[0]?.sandboxId, null)
+        assert.strictEqual(beforeContainer[0]?.sandboxUrl, null)
+        assert.strictEqual(beforeContainer[0]?.sandboxImage, null)
+        assert.strictEqual(beforeContainer[0]?.sandboxStatus, null)
 
         // Start a container
         store.commit(
@@ -213,13 +214,13 @@ describe('LiveStore schema', () => {
           tables.workspaces.where('id', 'workspace-container')
         )
         assert.strictEqual(afterStart.length, 1)
-        assert.strictEqual(afterStart[0]?.containerId, 'docker-abc123')
+        assert.strictEqual(afterStart[0]?.sandboxId, 'docker-abc123')
         assert.strictEqual(
-          afterStart[0]?.containerUrl,
+          afterStart[0]?.sandboxUrl,
           'feature-container-test--project-1.orb.local'
         )
-        assert.strictEqual(afterStart[0]?.containerImage, 'node:22')
-        assert.strictEqual(afterStart[0]?.containerStatus, 'running')
+        assert.strictEqual(afterStart[0]?.sandboxImage, 'node:22')
+        assert.strictEqual(afterStart[0]?.sandboxStatus, 'running')
 
         // Pause the container
         store.commit(
@@ -232,10 +233,10 @@ describe('LiveStore schema', () => {
           tables.workspaces.where('id', 'workspace-container')
         )
         assert.strictEqual(afterPause.length, 1)
-        assert.strictEqual(afterPause[0]?.containerStatus, 'paused')
-        // Other container fields should be preserved
-        assert.strictEqual(afterPause[0]?.containerId, 'docker-abc123')
-        assert.strictEqual(afterPause[0]?.containerImage, 'node:22')
+        assert.strictEqual(afterPause[0]?.sandboxStatus, 'paused')
+        // Other sandbox fields should be preserved
+        assert.strictEqual(afterPause[0]?.sandboxId, 'docker-abc123')
+        assert.strictEqual(afterPause[0]?.sandboxImage, 'node:22')
 
         // Unpause the container
         store.commit(
@@ -248,8 +249,8 @@ describe('LiveStore schema', () => {
           tables.workspaces.where('id', 'workspace-container')
         )
         assert.strictEqual(afterUnpause.length, 1)
-        assert.strictEqual(afterUnpause[0]?.containerStatus, 'running')
-        assert.strictEqual(afterUnpause[0]?.containerId, 'docker-abc123')
+        assert.strictEqual(afterUnpause[0]?.sandboxStatus, 'running')
+        assert.strictEqual(afterUnpause[0]?.sandboxId, 'docker-abc123')
 
         // Stop the container
         store.commit(
@@ -262,13 +263,13 @@ describe('LiveStore schema', () => {
           tables.workspaces.where('id', 'workspace-container')
         )
         assert.strictEqual(afterStop.length, 1)
-        assert.strictEqual(afterStop[0]?.containerId, null)
+        assert.strictEqual(afterStop[0]?.sandboxId, null)
         assert.strictEqual(
-          afterStop[0]?.containerUrl,
+          afterStop[0]?.sandboxUrl,
           'feature-container-test--project-1.orb.local'
         )
-        assert.strictEqual(afterStop[0]?.containerImage, 'node:22')
-        assert.strictEqual(afterStop[0]?.containerStatus, null)
+        assert.strictEqual(afterStop[0]?.sandboxImage, 'node:22')
+        assert.strictEqual(afterStop[0]?.sandboxStatus, null)
 
         // Verify other workspace fields are preserved after container events
         assert.strictEqual(afterStop[0]?.branchName, 'feature/container-test')

@@ -302,7 +302,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           const workspace = workspaceOpt.value
 
           // If no container is associated, nothing to destroy
-          if (workspace.containerId === null) {
+          if (workspace.sandboxId === null) {
             yield* Effect.logDebug(
               `Workspace "${workspaceId}" has no container, skipping container destroy`
             ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -310,7 +310,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           }
 
           const containerNameValue =
-            workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
+            workspace.sandboxUrl?.replace('.orb.local', '') ?? workspaceId
 
           yield* Effect.logInfo(
             `Destroying container "${containerNameValue}" for workspace "${workspaceId}"`
@@ -393,7 +393,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
 
       /**
        * Helper to look up a workspace and its container name from LiveStore.
-       * Returns null if the workspace or containerId is missing.
+       * Returns null if the workspace or sandboxId is missing.
        */
       const lookupContainer = (workspaceId: string) => {
         const allWorkspaces = store.query(tables.workspaces)
@@ -407,12 +407,12 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         }
 
         const workspace = workspaceOpt.value
-        if (workspace.containerId === null) {
+        if (workspace.sandboxId === null) {
           return null
         }
 
         const name =
-          workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
+          workspace.sandboxUrl?.replace('.orb.local', '') ?? workspaceId
 
         return { workspace, name }
       }
@@ -625,14 +625,14 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         'ContainerService.reconcileWorkspaceContainer'
       )(function* (workspace: {
         readonly id: string
-        readonly containerId: string | null
-        readonly containerUrl: string | null
-        readonly containerStatus: string | null
+        readonly sandboxId: string | null
+        readonly sandboxUrl: string | null
+        readonly sandboxStatus: string | null
       }) {
         const name =
-          workspace.containerUrl?.replace('.orb.local', '') ?? workspace.id
+          workspace.sandboxUrl?.replace('.orb.local', '') ?? workspace.id
         const dockerStatus = yield* getDockerContainerStatus(name)
-        const lsStatus = workspace.containerStatus
+        const lsStatus = workspace.sandboxStatus
 
         // Already in sync — nothing to do
         if (
@@ -659,7 +659,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
       // Run reconciliation for all containerized workspaces at startup
       const containerized = store
         .query(tables.workspaces)
-        .filter((ws) => ws.containerId !== null)
+        .filter((ws) => ws.sandboxId !== null)
 
       if (containerized.length > 0) {
         yield* Effect.logInfo(
@@ -688,11 +688,11 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         const allWorkspaces = store.query(tables.workspaces)
         const map = new Map<string, string>()
         for (const workspace of allWorkspaces) {
-          if (workspace.containerId === null) {
+          if (workspace.sandboxId === null) {
             continue
           }
           const name =
-            workspace.containerUrl?.replace('.orb.local', '') ?? workspace.id
+            workspace.sandboxUrl?.replace('.orb.local', '') ?? workspace.id
           map.set(name, workspace.id)
         }
         return map

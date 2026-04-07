@@ -211,14 +211,14 @@ interface WorkspaceCounts {
  */
 function getDisplayStatus(ws: {
   readonly status: string
-  readonly containerId?: string | null
-  readonly containerStatus?: string | null
-  readonly containerUrl?: string | null
+  readonly sandboxId?: string | null
+  readonly sandboxStatus?: string | null
+  readonly sandboxUrl?: string | null
 }): string {
-  if (ws.containerId != null) {
-    return ws.containerStatus === 'paused' ? 'paused' : 'running'
+  if (ws.sandboxId != null) {
+    return ws.sandboxStatus === 'paused' ? 'paused' : 'running'
   }
-  if (ws.containerUrl != null) {
+  if (ws.sandboxUrl != null) {
     return 'stopped'
   }
   return ws.status
@@ -228,9 +228,9 @@ function getDisplayStatus(ws: {
 function computeWorkspaceCounts(
   wsList: ReadonlyArray<{
     readonly status: string
-    readonly containerId?: string | null
-    readonly containerStatus?: string | null
-    readonly containerUrl?: string | null
+    readonly sandboxId?: string | null
+    readonly sandboxStatus?: string | null
+    readonly sandboxUrl?: string | null
   }>
 ): WorkspaceCounts {
   let running = 0
@@ -326,10 +326,10 @@ interface ProjectSection {
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
-    readonly containerId: string | null
-    readonly containerUrl: string | null
-    readonly containerPort: number | null
-    readonly containerStatus: string | null
+    readonly sandboxId: string | null
+    readonly sandboxUrl: string | null
+    readonly sandboxPort: number | null
+    readonly sandboxStatus: string | null
     readonly errorMessage: string | null
   }>
 }
@@ -531,19 +531,19 @@ function DashboardWorkspaceRow({
     readonly branchName: string
     readonly status: string
     readonly origin: WorkspaceOrigin | string
-    readonly containerId: string | null
-    readonly containerUrl: string | null
-    readonly containerPort: number | null
-    readonly containerStatus: string | null
+    readonly sandboxId: string | null
+    readonly sandboxUrl: string | null
+    readonly sandboxPort: number | null
+    readonly sandboxStatus: string | null
     readonly errorMessage: string | null
   }
   readonly terminalCount: number
 }) {
   const isDetectedWorkspace =
     (workspace.origin as WorkspaceOrigin) === 'external'
-  const isContainerized = workspace.containerId != null
-  const isContainerPaused = workspace.containerStatus === 'paused'
-  const hasContainerConfig = workspace.containerUrl != null
+  const isContainerized = workspace.sandboxId != null
+  const isContainerPaused = workspace.sandboxStatus === 'paused'
+  const hasContainerConfig = workspace.sandboxUrl != null
   const displayStatus = (() => {
     if (isContainerized) {
       return isContainerPaused ? 'paused' : 'running'
@@ -565,16 +565,16 @@ function DashboardWorkspaceRow({
           Detected
         </span>
       )}
-      {isContainerized && workspace.containerUrl ? (
+      {isContainerized && workspace.sandboxUrl ? (
         <a
           className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-          href={`http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
+          href={`http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`}
           rel="noopener"
           target="_blank"
-          title={`Open http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
+          title={`Open http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`}
         >
-          {workspace.containerUrl}
-          {workspace.containerPort != null ? `:${workspace.containerPort}` : ''}
+          {workspace.sandboxUrl}
+          {workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}
         </a>
       ) : null}
       {terminalCount > 0 && (

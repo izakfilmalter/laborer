@@ -598,11 +598,11 @@ interface WorkspaceItemProps {
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
     readonly taskSource: string | null
-    readonly containerId: string | null
-    readonly containerUrl: string | null
-    readonly containerPort: number | null
-    readonly containerStatus: string | null
-    readonly containerSetupStep: string | null
+    readonly sandboxId: string | null
+    readonly sandboxUrl: string | null
+    readonly sandboxPort: number | null
+    readonly sandboxStatus: string | null
+    readonly sandboxSetupStep: string | null
     readonly worktreeSetupStep: string | null
     readonly prNumber: number | null
     readonly prUrl: string | null
@@ -769,16 +769,16 @@ function WorkspaceItem({
     }
   }, [startContainer, workspace.id])
 
-  const isContainerized = workspace.containerId != null
-  const isContainerPaused = workspace.containerStatus === 'paused'
-  const hasContainerConfig = workspace.containerUrl != null
+  const isContainerized = workspace.sandboxId != null
+  const isContainerPaused = workspace.sandboxStatus === 'paused'
+  const hasContainerConfig = workspace.sandboxUrl != null
   // Only show the container link when a container actually exists.
   // containerUrl is intentionally preserved after container destruction
   // for display purposes, but we don't want to show a clickable link
   // to a container that no longer exists.
   const containerLink =
-    isContainerized && workspace.containerUrl
-      ? `http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`
+    isContainerized && workspace.sandboxUrl
+      ? `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
       : null
 
   /**
@@ -827,7 +827,7 @@ function WorkspaceItem({
             target="_blank"
             title={`Open ${containerLink}`}
           >
-            {workspace.containerUrl}
+            {workspace.sandboxUrl}
           </a>
           <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
             <CopyButton title="Copy URL" value={containerLink} />
@@ -964,7 +964,7 @@ function WorkspaceItem({
                     workspaceId={workspace.id}
                   />
                   <ContainerPortButton
-                    currentPort={workspace.containerPort}
+                    currentPort={workspace.sandboxPort}
                     workspaceId={workspace.id}
                   />
                 </>
@@ -985,10 +985,10 @@ function WorkspaceItem({
             {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
           </div>
         )}
-        {workspace.containerSetupStep != null && (
+        {workspace.sandboxSetupStep != null && (
           <div className="mb-2 flex items-center gap-2 text-sky-500 text-xs">
             <Spinner className="size-3 text-sky-500" />
-            {getContainerSetupLabel(workspace.containerSetupStep)}
+            {getContainerSetupLabel(workspace.sandboxSetupStep)}
           </div>
         )}
         <div className="border-t pt-2">

@@ -208,15 +208,15 @@ describe('LaborerRpcs workspace management', () => {
           assert.strictEqual(workspaceRow.status, 'running')
           assert.isNull(workspaceRow.taskSource)
           assert.strictEqual(workspaceRow.worktreePath, workspace.worktreePath)
-          assert.isNull(workspaceRow.containerId)
-          assert.isNull(workspaceRow.containerUrl)
-          assert.isNull(workspaceRow.containerImage)
-          assert.isNull(workspaceRow.containerStatus)
-          // containerSetupStep is set by a background fiber and may be
-          // non-null if the async container setup has started by query time
+          assert.isNull(workspaceRow.sandboxId)
+          assert.isNull(workspaceRow.sandboxUrl)
+          assert.isNull(workspaceRow.sandboxImage)
+          assert.isNull(workspaceRow.sandboxStatus)
+          // sandboxSetupStep is set by a background fiber and may be
+          // non-null if the async sandbox setup has started by query time
           assert.isString(
-            typeof workspaceRow.containerSetupStep === 'string'
-              ? workspaceRow.containerSetupStep
+            typeof workspaceRow.sandboxSetupStep === 'string'
+              ? workspaceRow.sandboxSetupStep
               : 'null-is-ok'
           )
         })

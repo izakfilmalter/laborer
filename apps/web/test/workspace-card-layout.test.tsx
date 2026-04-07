@@ -217,10 +217,10 @@ const makeWorkspace = (
     origin: string
     createdAt: string
     taskSource: string | null
-    containerId: string | null
-    containerUrl: string | null
-    containerStatus: string | null
-    containerSetupStep: string | null
+    sandboxId: string | null
+    sandboxUrl: string | null
+    sandboxStatus: string | null
+    sandboxSetupStep: string | null
     worktreeSetupStep: string | null
     prNumber: number | null
     prUrl: string | null
@@ -236,10 +236,10 @@ const makeWorkspace = (
   origin: 'laborer',
   createdAt: new Date().toISOString(),
   taskSource: null,
-  containerId: null,
-  containerUrl: null,
-  containerStatus: null,
-  containerSetupStep: null,
+  sandboxId: null,
+  sandboxUrl: null,
+  sandboxStatus: null,
+  sandboxSetupStep: null,
   worktreeSetupStep: null,
   prNumber: null,
   prUrl: null,
@@ -315,9 +315,9 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
   it('shows status badge and pause button on the infra row for containerized workspace', () => {
     mockStore([
       makeWorkspace({
-        containerId: 'container-1',
-        containerUrl: 'my-app--laborer.orb.local',
-        containerStatus: 'running',
+        sandboxId: 'container-1',
+        sandboxUrl: 'my-app--laborer.orb.local',
+        sandboxStatus: 'running',
       }),
     ])
 
@@ -354,9 +354,9 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
   it('shows paused status with resume button for paused containers', () => {
     mockStore([
       makeWorkspace({
-        containerId: 'container-1',
-        containerUrl: 'my-app--laborer.orb.local',
-        containerStatus: 'paused',
+        sandboxId: 'container-1',
+        sandboxUrl: 'my-app--laborer.orb.local',
+        sandboxStatus: 'paused',
       }),
     ])
 

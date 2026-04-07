@@ -1139,7 +1139,7 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 19 | Daytona sandbox pause/resume (stop/start) + auto-stop config | 13 | Done |
 | 20 | Daytona state reconciliation polling loop | 13, 19 | Done |
 | 21 | Daytona Image builder: snapshot caching with lockfile hash | 13 | Done |
-| 22 | VS Code Remote SSH: SSH config automation + token refresh | 13 | Ready |
+| 22 | VS Code Remote SSH: SSH config automation + token refresh | 13 | Done |
 | 23 | End-to-end integration: Daytona workspace creation flow | 10, 13, 15, 16 | Done |
 | 24 | Setup step progress UI for Daytona-specific steps | 23 | Done |
 

@@ -130,6 +130,7 @@ const startSandboxMutation = LaborerClient.mutation('workspace.startSandbox')
 const setSandboxPortMutation = LaborerClient.mutation('sandbox.setPort')
 const pauseSandboxMutation = LaborerClient.mutation('sandbox.pause')
 const resumeSandboxMutation = LaborerClient.mutation('sandbox.resume')
+const openInVsCodeMutation = LaborerClient.mutation('sandbox.openInVsCode')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
@@ -327,6 +328,50 @@ function SandboxPauseButton({
       <TooltipContent>
         {isPaused ? 'Resume sandbox' : 'Pause sandbox'}
       </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function OpenInVsCodeButton({ workspaceId }: { readonly workspaceId: string }) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const [isLoading, setIsLoading] = useState(false)
+  const openInVsCode = useAtomSet(openInVsCodeMutation, {
+    mode: 'promise',
+  })
+
+  const handleClick = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      await openInVsCode({ payload: { workspaceId } })
+      toast.success('Opening in VS Code...')
+    } catch (error: unknown) {
+      toast.error(`Failed to open in VS Code: ${extractErrorMessage(error)}`)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [openInVsCode, workspaceId])
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Open in VS Code"
+            disabled={!isServerReady || isLoading}
+            onClick={handleClick}
+            size="icon-xs"
+            variant="ghost"
+          />
+        }
+      >
+        <ExternalLink
+          className={cn(
+            'size-3.5',
+            isLoading ? 'animate-pulse text-muted-foreground' : 'text-blue-500'
+          )}
+        />
+      </TooltipTrigger>
+      <TooltipContent>Open in VS Code (SSH)</TooltipContent>
     </Tooltip>
   )
 }
@@ -760,6 +805,11 @@ function WorkspaceItem({
 
   const isSandboxed = workspace.sandboxId != null
   const isSandboxPaused = workspace.sandboxStatus === 'paused'
+  // sandboxProvider is not in LiveStore's inferred queryDb type (column count limit),
+  // but it IS in the SQLite table and accessible at runtime.
+  const isDaytonaSandbox =
+    (workspace as { sandboxProvider?: string | null }).sandboxProvider ===
+    'daytona'
   const hasSandboxConfig = workspace.sandboxUrl != null
   // Only show the sandbox link when a sandbox actually exists.
   // sandboxUrl is intentionally preserved after sandbox destruction
@@ -957,6 +1007,9 @@ function WorkspaceItem({
               )}
               {isSandboxed ? (
                 <>
+                  {isDaytonaSandbox && !isSandboxPaused && (
+                    <OpenInVsCodeButton workspaceId={workspace.id} />
+                  )}
                   <SandboxPauseButton
                     isPaused={isSandboxPaused}
                     workspaceId={workspace.id}

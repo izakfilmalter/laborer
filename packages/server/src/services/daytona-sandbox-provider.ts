@@ -34,7 +34,7 @@
  *    (accessible via `getDaytonaPtyHandle` for Issue 17 bridge)
  * 7. Return a TerminalHandle with metadata
  *
- * ### destroySandbox flow (Issue 14):
+ * ### destroySandbox flow (Issue 14, Issue 22):
  * 1. Looks up the workspace in LiveStore to get the `sandboxId`
  * 2. If no workspace or no `sandboxId`, returns gracefully (idempotent)
  * 3. Calls `DaytonaClient.get(sandboxId)` to fetch the sandbox
@@ -42,15 +42,15 @@
  *    - Other errors from `.get()` are logged as warnings; we still attempt cleanup
  * 4. Calls `DaytonaClient.delete(sandbox)` to destroy the cloud sandbox
  *    - Errors from `.delete()` are logged as warnings (best-effort, never fails the destroy)
- * 5. Cleans up SSH config entries (hook prepared for Issue 22)
+ * 5. Cleans up SSH config entries and cancels token refresh fiber (Issue 22)
  * 6. Commits `v2.SandboxStopped` event to LiveStore
  *
- * ### pauseSandbox flow (Issue 19):
+ * ### pauseSandbox flow (Issue 19, Issue 22):
  * 1. Looks up workspace → get sandboxId (error if missing)
  * 2. Fetches sandbox from Daytona API to check current state
  * 3. Idempotent: if sandbox is already stopped/archived, commits SandboxPaused and returns
  * 4. Calls `DaytonaClient.stop(sandbox)` to stop the cloud sandbox
- * 5. SSH config cleanup hook (Issue 22)
+ * 5. Removes SSH config entry and cancels token refresh fiber (Issue 22)
  * 6. Commits `v2.SandboxPaused` event to LiveStore
  *
  * ### pushCodeToSandbox flow (Issue 15):
@@ -61,15 +61,18 @@
  * 5. Checkout pushed code in sandbox: `sandbox.process.executeCommand('git checkout -f main')`
  * 6. Clean up local remote: `git remote remove sandbox-{wid}`
  *
- * ### resumeSandbox flow (Issue 19):
+ * ### resumeSandbox flow (Issue 19, Issue 22):
  * 1. Looks up workspace → get sandboxId (error if missing)
  * 2. Fetches sandbox from Daytona API to check current state
  * 3. Idempotent: if sandbox is already started, commits SandboxResumed and returns
  * 4. Calls `DaytonaClient.start(sandbox)` to start the cloud sandbox
- * 5. SSH config setup hook (Issue 22)
+ * 5. Writes/updates SSH config entry and starts token refresh fiber (Issue 22)
  * 6. Commits `v2.SandboxResumed` event to LiveStore
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { CodeLanguage, Image, type PtyHandle } from '@daytonaio/sdk'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
@@ -96,6 +99,12 @@ import {
 } from '../lib/git-sync.js'
 import { buildCacheHash, buildSnapshotName } from '../lib/snapshot-cache.js'
 import { spawnGit } from '../lib/spawn-git.js'
+import {
+  removeSshConfigEntry,
+  SSH_TOKEN_EXPIRY_MINUTES,
+  SSH_TOKEN_REFRESH_MINUTES,
+  upsertSshConfigEntry,
+} from '../lib/ssh-config.js'
 import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
 import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
@@ -150,6 +159,61 @@ const removeDaytonaPtyHandle = (sessionId: string): void => {
   daytonaPtyHandles.delete(sessionId)
 }
 
+// ---------------------------------------------------------------------------
+// SSH config file I/O
+// ---------------------------------------------------------------------------
+
+/**
+ * Path to the SSH config file.
+ * Resolved lazily from `$HOME/.ssh/config`.
+ */
+const getSshConfigPath = (): string => join(homedir(), '.ssh', 'config')
+
+/**
+ * Read the SSH config file contents. Returns an empty string if the file
+ * doesn't exist or can't be read.
+ */
+const readSshConfig = (): string => {
+  const configPath = getSshConfigPath()
+  try {
+    if (!existsSync(configPath)) {
+      return ''
+    }
+    return readFileSync(configPath, 'utf-8')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Write the SSH config file. Creates the `~/.ssh` directory if it doesn't
+ * exist. Uses mode 0o600 for the config file (SSH requires this).
+ */
+const writeSshConfig = (content: string): void => {
+  const configPath = getSshConfigPath()
+  const dir = dirname(configPath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+  }
+  writeFileSync(configPath, content, { mode: 0o600 })
+}
+
+// ---------------------------------------------------------------------------
+// SSH token refresh fiber registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of workspaceId → SSH token refresh fiber.
+ *
+ * Each active Daytona workspace gets a fiber that refreshes the SSH
+ * token at the 45-minute mark (of a 60-minute token). The fiber updates
+ * `~/.ssh/config` with the new token so VS Code Remote SSH stays connected.
+ *
+ * Fibers are created on sandbox create/resume and interrupted on
+ * sandbox pause/destroy.
+ */
+const sshRefreshFibers = new Map<string, Fiber.RuntimeFiber<void>>()
+
 /** Default auto-stop interval in minutes (15 minutes of idle). */
 const DEFAULT_AUTO_STOP_INTERVAL = 15
 
@@ -195,6 +259,126 @@ class DaytonaSandboxProvider extends Context.Tag(
       yield* Effect.logInfo('DaytonaSandboxProvider initialized').pipe(
         Effect.annotateLogs('module', logPrefix)
       )
+
+      // ── SSH config management (Issue 22) ──────────────────────
+      // Write/remove `~/.ssh/config` entries for Daytona sandboxes
+      // and manage SSH token refresh fibers for VS Code Remote SSH.
+
+      /**
+       * Write or update the SSH config entry for a workspace.
+       *
+       * 1. Get an SSH access token (60-minute expiry)
+       * 2. Upsert the config entry in `~/.ssh/config`
+       * 3. Start a refresh fiber that renews the token at 45 minutes
+       */
+      const setupSshConfig = Effect.fn('DaytonaSandboxProvider.setupSshConfig')(
+        function* (sandbox: DaytonaSandbox, workspaceId: string) {
+          yield* Effect.logDebug(
+            `Setting up SSH config for workspace "${workspaceId}" (sandbox: "${sandbox.id}")`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // Get a 60-minute SSH access token
+          const sshAccess = yield* Effect.tryPromise({
+            try: () => sandbox.createSshAccess(SSH_TOKEN_EXPIRY_MINUTES),
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to create SSH access for VS Code: ${error instanceof Error ? error.message : String(error)}`,
+                code: 'DAYTONA_ERROR',
+              }),
+          })
+
+          // Upsert the SSH config entry
+          yield* Effect.sync(() => {
+            const currentConfig = readSshConfig()
+            const updatedConfig = upsertSshConfigEntry(
+              currentConfig,
+              workspaceId,
+              sshAccess.token
+            )
+            writeSshConfig(updatedConfig)
+          })
+
+          yield* Effect.logInfo(
+            `SSH config entry written for workspace "${workspaceId}" (host: laborer-${workspaceId})`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // Cancel any existing refresh fiber for this workspace
+          const existingFiber = sshRefreshFibers.get(workspaceId)
+          if (existingFiber !== undefined) {
+            yield* Fiber.interrupt(existingFiber).pipe(Effect.ignore)
+            sshRefreshFibers.delete(workspaceId)
+          }
+
+          // Start a refresh fiber that renews the token at the 45-minute mark.
+          // The fiber sleeps for SSH_TOKEN_REFRESH_MINUTES, then refreshes
+          // the token and updates the config. Repeats forever until interrupted.
+          const refreshLoop = Effect.gen(function* () {
+            yield* Effect.sleep(Duration.minutes(SSH_TOKEN_REFRESH_MINUTES))
+
+            yield* Effect.logDebug(
+              `Refreshing SSH token for workspace "${workspaceId}"`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            const newAccess = yield* Effect.tryPromise({
+              try: () => sandbox.createSshAccess(SSH_TOKEN_EXPIRY_MINUTES),
+              catch: (error) =>
+                new RpcError({
+                  message: `Failed to refresh SSH token: ${error instanceof Error ? error.message : String(error)}`,
+                  code: 'DAYTONA_ERROR',
+                }),
+            })
+
+            yield* Effect.sync(() => {
+              const config = readSshConfig()
+              const updated = upsertSshConfigEntry(
+                config,
+                workspaceId,
+                newAccess.token
+              )
+              writeSshConfig(updated)
+            })
+
+            yield* Effect.logDebug(
+              `SSH token refreshed for workspace "${workspaceId}" (expires: ${String(newAccess.expiresAt)})`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `SSH token refresh failed for workspace "${workspaceId}": ${error instanceof RpcError ? error.message : String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            ),
+            Effect.forever
+          )
+
+          const fiber = yield* Effect.forkDaemon(refreshLoop)
+          sshRefreshFibers.set(workspaceId, fiber)
+        }
+      )
+
+      /**
+       * Remove the SSH config entry for a workspace and cancel its refresh fiber.
+       */
+      const cleanupSshConfig = Effect.fn(
+        'DaytonaSandboxProvider.cleanupSshConfig'
+      )(function* (workspaceId: string) {
+        // Cancel the refresh fiber
+        const fiber = sshRefreshFibers.get(workspaceId)
+        if (fiber !== undefined) {
+          yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
+          sshRefreshFibers.delete(workspaceId)
+        }
+
+        // Remove the SSH config entry
+        yield* Effect.sync(() => {
+          const currentConfig = readSshConfig()
+          const updatedConfig = removeSshConfigEntry(currentConfig, workspaceId)
+          writeSshConfig(updatedConfig)
+        })
+
+        yield* Effect.logDebug(
+          `SSH config entry removed for workspace "${workspaceId}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+      })
 
       // ── pushCodeToSandbox ─────────────────────────────────────
       // Issue 15: Push the local worktree HEAD to the Daytona sandbox via SSH.
@@ -607,7 +791,22 @@ class DaytonaSandboxProvider extends Context.Tag(
           // Step 8: Push worktree code to sandbox via SSH (Issue 15)
           yield* pushCodeToSandbox(sandbox, workspaceId, params.worktreePath)
 
-          // Step 9: Clear setup step progress (setup complete)
+          // Step 9: Set up SSH config for VS Code Remote SSH (Issue 22)
+          store.commit(
+            events.sandboxSetupStepChanged({
+              workspaceId,
+              step: 'configuring-ssh',
+            })
+          )
+          yield* setupSshConfig(sandbox, workspaceId).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `SSH config setup failed (non-fatal): ${error instanceof RpcError ? error.message : String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            )
+          )
+
+          // Step 10: Clear setup step progress (setup complete)
           store.commit(
             events.sandboxSetupStepChanged({
               workspaceId,
@@ -701,8 +900,8 @@ class DaytonaSandboxProvider extends Context.Tag(
             ).pipe(Effect.annotateLogs('module', logPrefix))
           }
 
-          // Step 4: SSH config cleanup (Issue 22 will implement the actual cleanup)
-          // TODO(Issue 22): Remove ~/.ssh/config entry for laborer-{workspaceId}
+          // Step 4: SSH config cleanup (Issue 22)
+          yield* cleanupSshConfig(workspaceId)
 
           // Step 5: Commit v2.SandboxStopped event regardless of deletion outcome.
           // The sandbox is gone from our perspective — either successfully deleted,
@@ -754,7 +953,8 @@ class DaytonaSandboxProvider extends Context.Tag(
             yield* daytonaClient.stop(sandbox)
           }
 
-          // TODO(Issue 22): Remove ~/.ssh/config entry for laborer-{workspaceId}
+          // Issue 22: Remove SSH config entry and cancel token refresh
+          yield* cleanupSshConfig(workspaceId)
 
           store.commit(events.sandboxPaused({ workspaceId }))
 
@@ -802,7 +1002,14 @@ class DaytonaSandboxProvider extends Context.Tag(
             yield* daytonaClient.start(sandbox)
           }
 
-          // TODO(Issue 22): Write/update ~/.ssh/config entry for laborer-{workspaceId}
+          // Issue 22: Write/update SSH config entry and start token refresh
+          yield* setupSshConfig(sandbox, workspaceId).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `SSH config setup on resume failed (non-fatal): ${error.message}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            )
+          )
 
           store.commit(events.sandboxResumed({ workspaceId }))
 
@@ -1266,14 +1473,22 @@ class DaytonaSandboxProvider extends Context.Tag(
       const reconcileFiber = yield* Effect.forkDaemon(reconcileLoop)
 
       yield* Effect.addFinalizer(() =>
-        Fiber.interrupt(reconcileFiber).pipe(
-          Effect.tap(() =>
-            Effect.logInfo('Daytona state reconciliation loop stopped').pipe(
-              Effect.annotateLogs('module', logPrefix)
-            )
-          ),
-          Effect.asVoid
-        )
+        Effect.gen(function* () {
+          // Interrupt the reconciliation loop
+          yield* Fiber.interrupt(reconcileFiber).pipe(Effect.asVoid)
+          yield* Effect.logInfo(
+            'Daytona state reconciliation loop stopped'
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // Interrupt all SSH token refresh fibers (Issue 22)
+          for (const [wsId, fiber] of sshRefreshFibers) {
+            yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
+            sshRefreshFibers.delete(wsId)
+          }
+          yield* Effect.logDebug('All SSH token refresh fibers stopped').pipe(
+            Effect.annotateLogs('module', logPrefix)
+          )
+        })
       )
 
       // ── Return the SandboxProvider implementation ─────────────

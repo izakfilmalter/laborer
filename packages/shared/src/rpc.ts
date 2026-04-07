@@ -944,6 +944,13 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  Rpc.make('sandbox.openInVsCode', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Terminal RPCs
   // -----------------------------------------------------------------------

@@ -1134,6 +1134,63 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* sandboxProvider.setAutoStopInterval(workspaceId, interval)
       }),
 
+    'sandbox.openInVsCode': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+
+        // Look up workspace to verify it exists and uses Daytona
+        const allWorkspaces = store.query(tables.workspaces)
+        const workspaceOpt = pipe(
+          allWorkspaces,
+          Array.findFirst((w) => w.id === workspaceId)
+        )
+
+        if (workspaceOpt._tag === 'None') {
+          return yield* new RpcError({
+            message: `Workspace not found: ${workspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const workspace = workspaceOpt.value
+        if (workspace.sandboxProvider !== 'daytona') {
+          return yield* new RpcError({
+            message:
+              'Open in VS Code via SSH is only available for Daytona sandboxes',
+            code: 'INVALID_ARGUMENT',
+          })
+        }
+
+        if (
+          workspace.sandboxId === null ||
+          workspace.sandboxStatus !== 'running'
+        ) {
+          return yield* new RpcError({
+            message: 'Sandbox must be running to open in VS Code',
+            code: 'INVALID_ARGUMENT',
+          })
+        }
+
+        // Build and execute the VS Code remote command
+        const hostAlias = `laborer-${workspaceId}`
+        const remoteArg = `ssh-remote+${hostAlias}`
+        const projectDir = '/home/daytona/project'
+
+        yield* Effect.tryPromise({
+          try: async () => {
+            const { exec } = await import('node:child_process')
+            const { promisify } = await import('node:util')
+            const execAsync = promisify(exec)
+            await execAsync(`code --remote ${remoteArg} ${projectDir}`)
+          },
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to open VS Code: ${error instanceof Error ? error.message : String(error)}`,
+              code: 'INTERNAL_ERROR',
+            }),
+        })
+      }),
+
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)
     // Only terminal.spawn is handled here — it resolves workspace info

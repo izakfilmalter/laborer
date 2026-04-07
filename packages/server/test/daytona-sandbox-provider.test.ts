@@ -66,6 +66,13 @@ vi.mock('../../server/src/lib/spawn-git.js', () => ({
 }))
 
 // ---------------------------------------------------------------------------
+// Note: SSH config file I/O is NOT mocked here because mocking node:fs
+// breaks @effect/vitest module loading. Instead, SSH config behavior is
+// verified through the DaytonaClient call log (createSshAccess calls)
+// and the pure helper tests in ssh-config.test.ts.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Types & helpers
 // ---------------------------------------------------------------------------
 
@@ -2397,6 +2404,120 @@ describe('DaytonaSandboxProvider', () => {
             assert.strictEqual(getCalls.length, 2)
           }).pipe(Effect.provide(mixedLayer))
         })
+    )
+  })
+
+  // -----------------------------------------------------------------------
+  // Issue 22: SSH config management
+  //
+  // File I/O (readFileSync/writeFileSync) cannot be mocked because
+  // vi.mock('node:fs') breaks @effect/vitest module loading. SSH config
+  // behavior is verified via:
+  // 1. SDK call log — createSshAccess calls with correct expiry
+  // 2. Pure function tests in ssh-config.test.ts (27 tests)
+  // -----------------------------------------------------------------------
+
+  describe('SSH config (Issue 22)', () => {
+    it.scoped(
+      'createSandbox requests SSH access with 60-minute expiry for VS Code config',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/test',
+              projectName: 'test-project',
+              worktreePath: '/tmp/test',
+              devServerConfig: dsc(),
+              onReady: undefined,
+            })
+
+            // Verify SSH access was requested twice:
+            // 1st call: git sync (10-minute token)
+            // 2nd call: SSH config for VS Code (60-minute token)
+            const sshAccessCalls = log.filter(
+              (c) => c.method === 'sandbox.createSshAccess'
+            )
+            assert.isTrue(sshAccessCalls.length >= 2)
+            // First call: git push (10 min)
+            assert.deepStrictEqual(sshAccessCalls[0]?.args, [10])
+            // Second call: SSH config (60 min)
+            assert.deepStrictEqual(sshAccessCalls[1]?.args, [60])
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped(
+      'createSandbox completes setup steps including configuring-ssh',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            seedWorkspace(store as never, wid)
+
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/test',
+              projectName: 'test-project',
+              worktreePath: '/tmp/test',
+              devServerConfig: dsc(),
+              onReady: undefined,
+            })
+
+            // After full setup, step should be cleared to null
+            const [ws] = store.query(tables.workspaces.where('id', wid))
+            assert.strictEqual(ws?.sandboxSetupStep, null)
+
+            // The SSH config step is verified implicitly: if createSshAccess(60)
+            // was called, the configuring-ssh step must have been reported
+            const sshAccessCalls = log.filter(
+              (c) => c.method === 'sandbox.createSshAccess'
+            )
+            assert.isTrue(sshAccessCalls.length >= 2)
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
+    )
+
+    it.scoped('resumeSandbox requests SSH access for VS Code config', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* DaytonaSandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sandbox-test-123',
+              sandboxUrl: 'sandbox-test-123',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+          store.commit(events.sandboxPaused({ workspaceId: wid }))
+
+          yield* sp.resumeSandbox(wid)
+
+          // Filter out the eager availability check's `list` call
+          const sshAccessCalls = log.filter(
+            (c) => c.method === 'sandbox.createSshAccess'
+          )
+          // Resume should request SSH access for VS Code config (60 min)
+          assert.isTrue(sshAccessCalls.length >= 1)
+          assert.deepStrictEqual(sshAccessCalls[0]?.args, [60])
+        }).pipe(Effect.provide(makeStateLayer(log, 'stopped')))
+      })
     )
   })
 })

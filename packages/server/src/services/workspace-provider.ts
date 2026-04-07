@@ -891,11 +891,22 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         readonly projectName: string
         readonly devServer: {
           readonly autoOpen: { readonly value: boolean }
+          readonly autoStopInterval: { readonly value: number | null }
           readonly dockerfile: { readonly value: string | null }
           readonly image: { readonly value: string | null }
           readonly installCommand: { readonly value: string | null }
           readonly network: { readonly value: string | null }
           readonly port: { readonly value: number | null }
+          readonly provider: {
+            readonly value: 'docker' | 'daytona' | null
+          }
+          readonly resources: {
+            readonly value: {
+              readonly cpu?: number | undefined
+              readonly disk?: number | undefined
+              readonly memory?: number | undefined
+            } | null
+          }
           readonly setupScripts: { readonly value: readonly string[] }
           readonly startCommand: { readonly value: string | null }
           readonly workdir: { readonly value: string }
@@ -912,11 +923,14 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             projectName: params.projectName,
             devServerConfig: {
               autoOpen: params.devServer.autoOpen.value,
+              autoStopInterval: params.devServer.autoStopInterval.value,
               dockerfile: params.devServer.dockerfile.value,
               image: params.devServer.image.value,
               installCommand: params.devServer.installCommand.value,
               network: params.devServer.network.value,
               port: params.devServer.port.value,
+              provider: params.devServer.provider.value,
+              resources: params.devServer.resources.value,
               setupScripts: params.devServer.setupScripts.value,
               startCommand: params.devServer.startCommand.value,
               workdir: params.devServer.workdir.value,

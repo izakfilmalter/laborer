@@ -418,3 +418,67 @@ Date: 2026-04-07
 - `bun run format` passes (490 files, no fixes)
 - No remaining `container*` column references in `apps/web/src/`
 - No remaining old RPC names (`container.pause`, `docker.status`, etc.) in `apps/web/src/`
+
+## Issue 5: Provider config — add provider field to laborer.json + config resolution
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Extended `DevServerConfig` interface in `packages/server/src/services/config-service.ts` with:
+  - `provider?: "docker" | "daytona"` — per-project sandbox provider selection
+  - `resources?: { cpu?: number; memory?: number; disk?: number }` — Daytona sandbox resource limits
+  - `autoStopInterval?: number` — minutes of inactivity before auto-stop (Daytona only)
+- Added `SandboxProviderType` type alias and `VALID_SANDBOX_PROVIDERS` constant
+- Added `SandboxResources` interface for resource limits
+- Extended `ResolvedDevServerConfig` with resolved versions of all three new fields:
+  - `provider: ResolvedValue<SandboxProviderType | null>` (default: null)
+  - `resources: ResolvedValue<SandboxResources | null>` (default: null)
+  - `autoStopInterval: ResolvedValue<number | null>` (default: null)
+- Updated `mergeDevServerConfig` to resolve new fields across config layers (closest wins)
+- Updated `mergeDevServerUpdates` to merge new fields (also added missing `port` merge)
+- Updated `validateDevServerConfig` to reject invalid `provider` values
+- Extended `DevServerConfigResponse` RPC schema in `packages/shared/src/rpc.ts` with:
+  - `autoStopInterval`, `provider`, `resources` fields
+  - `SandboxProviderTypeSchema`, `SandboxResourcesSchema` exported schemas
+- Extended `config.update` RPC payload to accept new devServer fields
+- Refactored `handleConfigUpdate` in `packages/server/src/rpc/handlers.ts`:
+  - Extracted `validateDevServerUpdate` helper function to reduce complexity
+  - Added validation for `provider`, `autoStopInterval`, `resources`
+  - Added helper validators: `isOptionalString`, `isOptionalBoolean`,
+    `isOptionalPositiveNumber`, `isOptionalNumber`, `isOptionalStringArray`,
+    `isValidSandboxResources`
+- Updated `CreateSandboxParams.devServerConfig` in `sandbox-provider.ts` with new fields
+- Updated `performSandboxSetup` in `workspace-provider.ts` to pass through new fields
+- Updated test fixtures:
+  - `test/daytona-sandbox-provider.test.ts`: `dsc()` helper includes new fields
+  - `test/rpc/config-management.test.ts`: expected config objects include new fields
+
+### Tests added (10 new tests in packages/server/test/config-service.test.ts):
+- Returns null defaults for provider, resources, autoStopInterval
+- Reads devServer.provider "daytona" from project config
+- Reads devServer.provider "docker" from project config
+- Rejects invalid provider value
+- Reads devServer.autoStopInterval from project config
+- Reads devServer.resources from project config
+- Inherits provider from ancestor config
+- Overrides ancestor provider with project config
+- Writes and round-trips provider config (provider + autoStopInterval + resources)
+
+### Design decisions:
+- `provider` defaults to `null` (not `"docker"`) — resolution against the global default
+  is deferred to Issue 6. A null provider means "use whatever the global default is"
+- `resources` is typed as `SandboxResources | null` (nullable object) rather than
+  individual nullable fields, matching how Daytona SDK accepts resource params
+- `autoStopInterval` is a plain number (minutes), not a Duration, matching Daytona's API
+- Validation rejects invalid provider values at the `validateDevServerConfig` level
+  (same as the existing image/dockerfile mutual exclusion validation)
+- New types `SandboxProviderType` and `SandboxResources` are exported for use by other
+  packages (e.g., the Daytona SDK client)
+
+### Verification:
+- All 15 turbo tasks pass (typecheck + format + test across all packages)
+- 428 server tests pass (49 test files, 1 skipped)
+- 89 shared tests pass
+- 1070+ web tests pass
+- `bun run format` passes (490 files, no fixes)

@@ -186,11 +186,18 @@ const dsc = (
   }> = {}
 ) => ({
   autoOpen: false,
+  autoStopInterval: null as number | null,
   dockerfile: null,
   image: 'image' in overrides ? (overrides.image ?? null) : 'node:22',
   installCommand: null,
   network: null,
   port: 'port' in overrides ? (overrides.port ?? null) : null,
+  provider: null as 'docker' | 'daytona' | null,
+  resources: null as {
+    readonly cpu?: number | undefined
+    readonly disk?: number | undefined
+    readonly memory?: number | undefined
+  } | null,
   setupScripts: [] as readonly string[],
   startCommand:
     'startCommand' in overrides ? (overrides.startCommand ?? null) : null,

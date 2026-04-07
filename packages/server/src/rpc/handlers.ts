@@ -203,6 +203,92 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
       )
   })
 
+/** Validate optional string field. */
+const isOptionalString = (v: unknown): boolean =>
+  v === undefined || typeof v === 'string'
+
+/** Validate optional boolean field. */
+const isOptionalBoolean = (v: unknown): boolean =>
+  v === undefined || typeof v === 'boolean'
+
+/** Validate optional positive number field. */
+const isOptionalPositiveNumber = (v: unknown): boolean =>
+  v === undefined || (typeof v === 'number' && v > 0)
+
+/** Validate optional number field. */
+const isOptionalNumber = (v: unknown): boolean =>
+  v === undefined || typeof v === 'number'
+
+/** Validate optional string array field. */
+const isOptionalStringArray = (v: unknown): boolean =>
+  v === undefined || (Array.isArray(v) && v.every((s) => typeof s === 'string'))
+
+/** Validate sandbox resources object. */
+const isValidSandboxResources = (
+  r: { cpu?: unknown; disk?: unknown; memory?: unknown } | undefined
+): boolean => {
+  if (r === undefined) {
+    return true
+  }
+  if (typeof r !== 'object') {
+    return false
+  }
+  return (
+    isOptionalNumber(r.cpu) &&
+    isOptionalNumber(r.memory) &&
+    isOptionalNumber(r.disk)
+  )
+}
+
+/**
+ * Validate a devServer update payload.
+ * Returns true if the update is structurally valid (or undefined/absent).
+ */
+const validateDevServerUpdate = (
+  ds:
+    | {
+        autoOpen?: boolean | undefined
+        autoStopInterval?: number | undefined
+        dockerfile?: string | undefined
+        image?: string | undefined
+        port?: number | undefined
+        provider?: 'docker' | 'daytona' | undefined
+        resources?:
+          | {
+              cpu?: number | undefined
+              disk?: number | undefined
+              memory?: number | undefined
+            }
+          | undefined
+        setupScripts?: readonly string[] | undefined
+        startCommand?: string | undefined
+        workdir?: string | undefined
+      }
+    | undefined
+): boolean => {
+  if (ds === undefined) {
+    return true
+  }
+  if (typeof ds !== 'object') {
+    return false
+  }
+  const validProviders = ['docker', 'daytona']
+  const isValidProvider =
+    ds.provider === undefined || validProviders.includes(ds.provider)
+
+  return (
+    isOptionalBoolean(ds.autoOpen) &&
+    isOptionalPositiveNumber(ds.autoStopInterval) &&
+    isOptionalString(ds.image) &&
+    isOptionalString(ds.dockerfile) &&
+    isOptionalString(ds.startCommand) &&
+    isOptionalString(ds.workdir) &&
+    isOptionalStringArray(ds.setupScripts) &&
+    isValidProvider &&
+    isValidSandboxResources(ds.resources)
+  )
+}
+
 export const handleConfigUpdate = ({
   projectId,
   config,
@@ -213,8 +299,18 @@ export const handleConfigUpdate = ({
     devServer?:
       | {
           autoOpen?: boolean | undefined
+          autoStopInterval?: number | undefined
           dockerfile?: string | undefined
           image?: string | undefined
+          port?: number | undefined
+          provider?: 'docker' | 'daytona' | undefined
+          resources?:
+            | {
+                cpu?: number | undefined
+                disk?: number | undefined
+                memory?: number | undefined
+              }
+            | undefined
           setupScripts?: readonly string[] | undefined
           startCommand?: string | undefined
           workdir?: string | undefined
@@ -236,27 +332,7 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
-    const isValidDevServerSetupScripts =
-      config.devServer?.setupScripts === undefined ||
-      (Array.isArray(config.devServer.setupScripts) &&
-        config.devServer.setupScripts.every(
-          (script) => typeof script === 'string'
-        ))
-
-    const isValidDevServer =
-      config.devServer === undefined ||
-      (typeof config.devServer === 'object' &&
-        (config.devServer.autoOpen === undefined ||
-          typeof config.devServer.autoOpen === 'boolean') &&
-        (config.devServer.image === undefined ||
-          typeof config.devServer.image === 'string') &&
-        (config.devServer.dockerfile === undefined ||
-          typeof config.devServer.dockerfile === 'string') &&
-        isValidDevServerSetupScripts &&
-        (config.devServer.startCommand === undefined ||
-          typeof config.devServer.startCommand === 'string') &&
-        (config.devServer.workdir === undefined ||
-          typeof config.devServer.workdir === 'string'))
+    const isValidDevServer = validateDevServerUpdate(config.devServer)
 
     const isValidConfig =
       isValidAgent &&

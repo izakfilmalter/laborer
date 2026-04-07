@@ -897,4 +897,204 @@ describe('ConfigService', () => {
         })
     )
   })
+
+  // -------------------------------------------------------------------------
+  // Provider config fields (Issue 5)
+  // -------------------------------------------------------------------------
+
+  describe('provider config', () => {
+    it.effect(
+      'should return null defaults for provider, resources, autoStopInterval',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-defaults')
+          mkdirSync(projectDir, { recursive: true })
+
+          const result = yield* resolveConfig(projectDir, 'provider-defaults')
+
+          assert.isNull(result.devServer.provider.value)
+          assert.strictEqual(result.devServer.provider.source, 'default')
+          assert.isNull(result.devServer.resources.value)
+          assert.strictEqual(result.devServer.resources.source, 'default')
+          assert.isNull(result.devServer.autoStopInterval.value)
+          assert.strictEqual(
+            result.devServer.autoStopInterval.source,
+            'default'
+          )
+        })
+    )
+
+    it.effect('should read devServer.provider from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-daytona')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { provider: 'daytona' } as never,
+        })
+
+        const result = yield* resolveConfig(projectDir, 'provider-daytona')
+
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.provider.source, configPath)
+      })
+    )
+
+    it.effect(
+      'should read devServer.provider "docker" from project config',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-docker')
+          mkdirSync(projectDir, { recursive: true })
+          const configPath = writeConfig(projectDir, {
+            devServer: { provider: 'docker' } as never,
+          })
+
+          const result = yield* resolveConfig(projectDir, 'provider-docker')
+
+          assert.strictEqual(result.devServer.provider.value, 'docker')
+          assert.strictEqual(result.devServer.provider.source, configPath)
+        })
+    )
+
+    it.effect('should reject invalid provider value', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-invalid')
+        mkdirSync(projectDir, { recursive: true })
+        writeConfig(projectDir, {
+          devServer: { provider: 'invalid' } as never,
+        })
+
+        const result = yield* resolveConfig(
+          projectDir,
+          'provider-invalid'
+        ).pipe(Effect.either)
+
+        assert.isTrue(
+          result._tag === 'Left',
+          'Expected validation error for invalid provider'
+        )
+        if (result._tag === 'Left') {
+          assert.include(result.left.message, 'provider')
+        }
+      })
+    )
+
+    it.effect(
+      'should read devServer.autoStopInterval from project config',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'auto-stop-interval')
+          mkdirSync(projectDir, { recursive: true })
+          const configPath = writeConfig(projectDir, {
+            devServer: { autoStopInterval: 30 } as never,
+          })
+
+          const result = yield* resolveConfig(projectDir, 'auto-stop-interval')
+
+          assert.strictEqual(result.devServer.autoStopInterval.value, 30)
+          assert.strictEqual(
+            result.devServer.autoStopInterval.source,
+            configPath
+          )
+        })
+    )
+
+    it.effect('should read devServer.resources from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'resources')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: {
+            resources: { cpu: 4, memory: 8, disk: 50 },
+          } as never,
+        })
+
+        const result = yield* resolveConfig(projectDir, 'resources')
+
+        assert.deepStrictEqual(result.devServer.resources.value, {
+          cpu: 4,
+          memory: 8,
+          disk: 50,
+        })
+        assert.strictEqual(result.devServer.resources.source, configPath)
+      })
+    )
+
+    it.effect('should inherit provider from ancestor config', () =>
+      Effect.gen(function* () {
+        const parent = join(testRoot, 'provider-inherit-parent')
+        const child = join(parent, 'provider-inherit-child')
+        mkdirSync(child, { recursive: true })
+
+        const parentPath = writeConfig(parent, {
+          devServer: { provider: 'daytona' } as never,
+        })
+        writeConfig(child, {
+          devServer: { startCommand: 'bun dev' },
+        })
+
+        const result = yield* resolveConfig(child, 'provider-inherit')
+
+        // provider inherited from parent
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.provider.source, parentPath)
+      })
+    )
+
+    it.effect('should override ancestor provider with project config', () =>
+      Effect.gen(function* () {
+        const parent = join(testRoot, 'provider-override-parent')
+        const child = join(parent, 'provider-override-child')
+        mkdirSync(child, { recursive: true })
+
+        writeConfig(parent, {
+          devServer: { provider: 'daytona' } as never,
+        })
+        const childPath = writeConfig(child, {
+          devServer: { provider: 'docker' } as never,
+        })
+
+        const result = yield* resolveConfig(child, 'provider-override')
+
+        assert.strictEqual(result.devServer.provider.value, 'docker')
+        assert.strictEqual(result.devServer.provider.source, childPath)
+      })
+    )
+
+    it.effect('should write and round-trip provider config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-write-roundtrip')
+        mkdirSync(projectDir, { recursive: true })
+
+        const svc = yield* ConfigService
+
+        yield* svc.writeProjectConfig(projectDir, {
+          devServer: {
+            provider: 'daytona',
+            autoStopInterval: 20,
+            resources: { cpu: 2, memory: 4 },
+          } as never,
+        })
+
+        const raw = JSON.parse(
+          readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
+        ) as Record<string, unknown>
+        const rawDs = raw.devServer as Record<string, unknown>
+        assert.strictEqual(rawDs.provider, 'daytona')
+        assert.strictEqual(rawDs.autoStopInterval, 20)
+        assert.deepStrictEqual(rawDs.resources, { cpu: 2, memory: 4 })
+
+        const result = yield* svc.resolveConfig(
+          projectDir,
+          'provider-write-roundtrip'
+        )
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.autoStopInterval.value, 20)
+        assert.deepStrictEqual(result.devServer.resources.value, {
+          cpu: 2,
+          memory: 4,
+        })
+      }).pipe(Effect.provide(ConfigService.layer))
+    )
+  })
 })

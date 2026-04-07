@@ -95,11 +95,14 @@ describe('LaborerRpcs config management', () => {
             agent: { source: 'default', value: 'opencode' },
             devServer: {
               autoOpen: { source: 'default', value: false },
+              autoStopInterval: { source: 'default', value: null },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
               network: { source: 'default', value: null },
               port: { source: 'default', value: null },
+              provider: { source: 'default', value: null },
+              resources: { source: 'default', value: null },
               setupScripts: {
                 source: 'default',
                 value: ['corepack enable', 'pnpm install --force', 'exec bash'],
@@ -201,11 +204,14 @@ describe('LaborerRpcs config management', () => {
             agent: { source: 'default', value: 'opencode' },
             devServer: {
               autoOpen: { source: canonicalConfigPath, value: true },
+              autoStopInterval: { source: 'default', value: null },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
               network: { source: 'default', value: null },
               port: { source: 'default', value: null },
+              provider: { source: 'default', value: null },
+              resources: { source: 'default', value: null },
               setupScripts: {
                 source: 'default',
                 value: ['corepack enable', 'pnpm install --force', 'exec bash'],

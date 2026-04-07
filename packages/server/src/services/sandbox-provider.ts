@@ -17,6 +17,8 @@ interface CreateSandboxParams {
   readonly devServerConfig: {
     /** Auto-open the dev server sidebar on terminal spawn. */
     readonly autoOpen: boolean
+    /** Minutes of inactivity before auto-stop (Daytona only). */
+    readonly autoStopInterval: number | null
     /** Path to a Dockerfile (mutually exclusive with `image`). */
     readonly dockerfile: string | null
     /** Base image name (e.g. "node:22"). */
@@ -27,6 +29,14 @@ interface CreateSandboxParams {
     readonly network: string | null
     /** Port the dev server listens on. */
     readonly port: number | null
+    /** Sandbox provider for this project ("docker" or "daytona"). */
+    readonly provider: 'docker' | 'daytona' | null
+    /** Daytona sandbox resource limits (CPU, memory, disk). */
+    readonly resources: {
+      readonly cpu?: number | undefined
+      readonly disk?: number | undefined
+      readonly memory?: number | undefined
+    } | null
     /** Scripts to run inside the sandbox before the start command. */
     readonly setupScripts: readonly string[]
     /** Command to start the dev server. */

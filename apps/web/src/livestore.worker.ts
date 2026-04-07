@@ -28,9 +28,17 @@
  */
 
 import { schema } from '@laborer/shared/schema'
+import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { makeWorker } from '@livestore/adapter-web/worker'
 import type { makeWsSync } from '@livestore/sync-cf/client'
 import { makeMessagePortSync } from './livestore/messageport-sync'
+
+// The sync transport runs inside this worker, so transport-level port death
+// events would otherwise stay trapped here. Relay them to the main thread so
+// the React-side runtime boundary can recreate the LiveStore session.
+self.addEventListener(RPC_PORT_DEAD_EVENT, () => {
+  self.postMessage({ type: RPC_PORT_DEAD_EVENT })
+})
 
 /**
  * Wait for a MessagePort from the main thread.

@@ -14,12 +14,27 @@
 
 import { StoreRegistry } from '@livestore/livestore'
 import { StoreRegistryProvider } from '@livestore/react'
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 
 import Loader from '@/components/loader'
 
 const LiveStoreProvider = ({ children }: { children: React.ReactNode }) => {
   const [storeRegistry] = useState(() => new StoreRegistry())
+
+  useEffect(() => {
+    return () => {
+      const disposableStoreRegistry = storeRegistry as StoreRegistry & {
+        dispose?: () => Promise<void>
+      }
+
+      disposableStoreRegistry.dispose?.().catch((error: unknown) => {
+        console.warn(
+          '[LiveStoreProvider] Failed to dispose StoreRegistry during unmount',
+          error
+        )
+      })
+    }
+  }, [storeRegistry])
 
   return (
     <StoreRegistryProvider storeRegistry={storeRegistry}>

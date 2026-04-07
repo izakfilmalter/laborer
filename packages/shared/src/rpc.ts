@@ -194,6 +194,7 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
+  defaultSandboxProvider: ConfigResolvedValueNullableSandboxProvider,
   devServer: DevServerConfigResponse,
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
@@ -677,6 +678,7 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('globalConfig.get', {
     success: Schema.Struct({
       agent: Schema.optional(AgentProviderSchema),
+      defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
     }),
     error: RpcError,
   }),
@@ -686,7 +688,25 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
+        defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
       }),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Settings RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('settings.getDefaultProvider', {
+    success: Schema.Struct({
+      provider: Schema.NullOr(SandboxProviderTypeSchema),
+    }),
+    error: RpcError,
+  }),
+
+  Rpc.make('settings.setDefaultProvider', {
+    error: RpcError,
+    payload: {
+      provider: SandboxProviderTypeSchema,
     },
   }),
 

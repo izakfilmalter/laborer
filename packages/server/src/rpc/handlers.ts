@@ -365,6 +365,7 @@ export const handleGlobalConfigGet = () =>
     const globalConfig = yield* configService.readGlobalConfig()
     return {
       agent: globalConfig.agent,
+      defaultSandboxProvider: globalConfig.defaultSandboxProvider,
     }
   })
 
@@ -373,11 +374,31 @@ export const handleGlobalConfigUpdate = ({
 }: {
   config: {
     agent?: 'opencode' | 'claude' | 'codex' | undefined
+    defaultSandboxProvider?: 'docker' | 'daytona' | undefined
   }
 }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService
     yield* configService.writeGlobalConfig(config)
+  })
+
+export const handleSettingsGetDefaultProvider = () =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    const globalConfig = yield* configService.readGlobalConfig()
+    return {
+      provider: globalConfig.defaultSandboxProvider ?? null,
+    }
+  })
+
+export const handleSettingsSetDefaultProvider = ({
+  provider,
+}: {
+  provider: 'docker' | 'daytona'
+}) =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    yield* configService.writeGlobalConfig({ defaultSandboxProvider: provider })
   })
 
 export const handlePrdCreate = ({
@@ -861,6 +882,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'globalConfig.get': handleGlobalConfigGet,
     'globalConfig.update': handleGlobalConfigUpdate,
+
+    // -------------------------------------------------------------------
+    // Settings RPCs
+    // -------------------------------------------------------------------
+    'settings.getDefaultProvider': handleSettingsGetDefaultProvider,
+    'settings.setDefaultProvider': handleSettingsSetDefaultProvider,
 
     // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)

@@ -1128,9 +1128,9 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 8 | SandboxProvider Effect interface definition | 2 | Done |
 | 9 | DockerSandboxProvider: wrap existing ContainerService behind SandboxProvider | 8 | Done |
 | 10 | WorkspaceProvider refactor: delegate to SandboxProvider instead of ContainerService | 9 | Done |
-| 11 | Daytona SDK client Effect service (thin wrapper) | 7 | Ready |
-| 12 | Daytona availability check service + RPC | 11 | Blocked |
-| 13 | DaytonaSandboxProvider: create sandbox | 8, 11 | Blocked |
+| 11 | Daytona SDK client Effect service (thin wrapper) | 7 | Done |
+| 12 | Daytona availability check service + RPC | 11 | Ready |
+| 13 | DaytonaSandboxProvider: create sandbox | 8, 11 | Ready |
 | 14 | DaytonaSandboxProvider: destroy sandbox | 13 | Blocked |
 | 15 | Git sync: push worktree HEAD to Daytona sandbox via SSH | 13 | Blocked |
 | 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Blocked |

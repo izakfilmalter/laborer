@@ -208,3 +208,50 @@ Date: 2026-04-07
 - 410 server tests pass (48 test files)
 - 89 shared tests pass
 - bun run format passes (487 files, no fixes)
+
+## Issue 11: Daytona SDK client Effect service (thin wrapper)
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Installed `@daytonaio/sdk` (v0.161.0) as a dependency of `packages/server`
+- Created new file `packages/server/src/services/daytona-client.ts`
+- Defined `DaytonaClient` Effect `Context.Tag` with identifier `@laborer/DaytonaClient`
+- Service interface exposes 7 Effect-wrapped SDK operations:
+  - `create(params, options?)` — create sandbox from image
+  - `createFromSnapshot(params, options?)` — create sandbox from snapshot
+  - `get(sandboxIdOrName)` — get sandbox by ID or name
+  - `list(labels?, page?, limit?)` — list sandboxes with optional label filter
+  - `start(sandbox, timeout?)` — start a stopped sandbox
+  - `stop(sandbox)` — stop a running sandbox
+  - `delete(sandbox, timeout?)` — permanently delete a sandbox
+- Also exposes `snapshot` (Daytona SnapshotService) and `raw` (Daytona SDK instance) for direct access
+- `DaytonaClient.layer` reads `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_TARGET` from env
+  and constructs the `Daytona` SDK instance. Dies if `DAYTONA_API_KEY` is not set.
+- Error mapping: SDK errors -> `RpcError` with distinct codes:
+  - `DaytonaNotFoundError` -> `DAYTONA_NOT_FOUND`
+  - `DaytonaRateLimitError` -> `DAYTONA_RATE_LIMIT`
+  - `DaytonaTimeoutError` -> `DAYTONA_TIMEOUT`
+  - Other errors -> `DAYTONA_ERROR` / `DAYTONA_UNKNOWN`
+- Exported type aliases for consumers: `DaytonaSandbox`, `DaytonaPaginatedSandboxes`,
+  `CreateSandboxFromImageParams`, `CreateSandboxFromSnapshotParams`
+
+### Design decisions:
+- `PaginatedSandboxes` is not exported from `@daytonaio/sdk` public API, so we use
+  `Awaited<ReturnType<Daytona['list']>>` as the `DaytonaPaginatedSandboxes` type alias
+- Layer uses `Effect.die` (defect, not typed error) for missing API key since this is
+  a configuration error that should crash early, not be handled by callers
+- Each SDK method wrapped with `Effect.fn` for call-site tracing
+- `snapshot` sub-service exposed directly (not wrapped) since snapshot operations are
+  varied and wrapping each adds minimal value
+- `raw` Daytona instance exposed for cases needing direct SDK access (e.g., sandbox
+  instance methods like `createSshAccess`, `getPreviewLink`)
+- No test files added — the DaytonaClient layer requires a real API key to construct.
+  Integration tests (Daytona-required) will be added as part of downstream issues.
+
+### Verification:
+- Server typecheck passes (`tsc --noEmit`)
+- 410 server tests pass (48 test files)
+- 89 shared tests pass
+- `bun run format` passes (488 files, no fixes)

@@ -255,3 +255,65 @@ Date: 2026-04-07
 - 410 server tests pass (48 test files)
 - 89 shared tests pass
 - `bun run format` passes (488 files, no fixes)
+
+## Issue 13: DaytonaSandboxProvider — create sandbox
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Created new file `packages/server/src/services/daytona-sandbox-provider.ts`
+- Defined `DaytonaSandboxProvider` as a `Context.Tag` that produces a `SandboxProvider` value
+- `DaytonaSandboxProvider.layer` depends on `DaytonaClient` and `LaborerStore`
+- All 8 `SandboxProvider` interface methods implemented:
+  - `createSandbox`: Core Daytona integration — creates a cloud sandbox for a workspace
+    - Determines image from `devServer.image` or uses Daytona default (via `createFromSnapshot`)
+    - Creates sandbox via `DaytonaClient.create()` with TypeScript language, labeler labels
+      (`laborer-workspace-id`, `laborer-project`, `laborer-branch`), auto-stop (15min),
+      auto-archive (7 days), auto-delete disabled (-1)
+    - Reports progress via `v2.SandboxSetupStepChanged` events (`creating-sandbox`, `starting-sandbox`)
+    - Commits `v2.SandboxStarted` event with `sandboxProvider: "daytona"`
+    - Invokes `onReady` callback after successful creation
+  - `destroySandbox`: Looks up sandbox from LiveStore, calls `DaytonaClient.get()` then
+    `DaytonaClient.delete()`, handles already-destroyed (404) gracefully, commits `v2.SandboxStopped`
+  - `pauseSandbox`: Calls `DaytonaClient.stop()`, commits `v2.SandboxPaused`
+  - `resumeSandbox`: Calls `DaytonaClient.start()`, commits `v2.SandboxResumed`
+  - `getPreviewUrl`: Calls `sandbox.getPreviewLink(port)` via SDK, returns URL string
+  - `spawnTerminal`: Stub returning `NOT_IMPLEMENTED` error (Issue 16)
+  - `reconcileState`: Stub logging debug message (Issue 20)
+  - `checkAvailability`: Calls `DaytonaClient.list(limit=1)` as connectivity check
+
+### Design decisions:
+- When `devServer.image` is null, uses `DaytonaClient.createFromSnapshot` (no snapshot param =
+  Daytona default image which includes Node 22, bun, git, Claude Code, OpenCode, Codex)
+- When `devServer.image` is set, uses `DaytonaClient.create` with `CreateSandboxFromImageParams`
+- `sandboxUrl` column stores the sandbox ID (Daytona preview URLs are constructed per-port
+  via `sandbox.getPreviewLink()`)
+- `sandboxImage` stored as `'daytona-default'` when using the default image
+- Destroy is best-effort: logs warnings on errors but doesn't fail the destroy
+- Destroy is idempotent: handles already-destroyed sandboxes gracefully (catches 404)
+- Pause/resume call Daytona stop/start respectively (Daytona terminology)
+
+### Tests added (9 tests in packages/server/test/daytona-sandbox-provider.test.ts):
+- createSandbox: calls `create` with correct SDK params when `devServer.image` is set
+- createSandbox: calls `createFromSnapshot` when `devServer.image` is null (Daytona default)
+- createSandbox: invokes `onReady` callback after creation
+- createSandbox: sets labels with workspace ID, project name, and branch name
+- destroySandbox: deletes sandbox and commits `SandboxStopped`
+- destroySandbox: handles already-destroyed sandbox gracefully (NOT_FOUND)
+- pauseSandbox: stops sandbox and commits `SandboxPaused`
+- resumeSandbox: starts sandbox and commits `SandboxResumed`
+- checkAvailability: returns available when `DaytonaClient.list` succeeds
+
+### Test approach:
+- Uses mutable `MockCallRecord[]` array shared via closure with `Layer.succeed`-based
+  mock `DaytonaClient` — avoids Layer memoization issues with Effect `Ref`-based call logs
+- `DaytonaSandboxProvider.layer` composed with mock `DaytonaClient` + `TestLaborerStore`
+- Separate `makeNotFoundClientLayer` for destroy idempotency test (`.get()` returns `DAYTONA_NOT_FOUND`)
+- Each test gets fresh `callLog` array and fresh Layer via factory functions
+
+### Verification:
+- Server typecheck passes (`tsc --noEmit`)
+- 419 server tests pass (50 test files, 1 skipped)
+- 89 shared tests pass
+- `bun run format` passes (490 files, no fixes)

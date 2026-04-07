@@ -1130,16 +1130,16 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 10 | WorkspaceProvider refactor: delegate to SandboxProvider instead of ContainerService | 9 | Done |
 | 11 | Daytona SDK client Effect service (thin wrapper) | 7 | Done |
 | 12 | Daytona availability check service + RPC | 11 | Ready |
-| 13 | DaytonaSandboxProvider: create sandbox | 8, 11 | Ready |
-| 14 | DaytonaSandboxProvider: destroy sandbox | 13 | Blocked |
-| 15 | Git sync: push worktree HEAD to Daytona sandbox via SSH | 13 | Blocked |
-| 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Blocked |
+| 13 | DaytonaSandboxProvider: create sandbox | 8, 11 | Done |
+| 14 | DaytonaSandboxProvider: destroy sandbox | 13 | Ready |
+| 15 | Git sync: push worktree HEAD to Daytona sandbox via SSH | 13 | Ready |
+| 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Ready |
 | 17 | Daytona PTY: bridge to xterm.js terminal component | 16 | Blocked |
-| 18 | Daytona preview URLs: getPreviewUrl + UI display | 13 | Blocked |
-| 19 | Daytona sandbox pause/resume (stop/start) + auto-stop config | 13 | Blocked |
+| 18 | Daytona preview URLs: getPreviewUrl + UI display | 13 | Ready |
+| 19 | Daytona sandbox pause/resume (stop/start) + auto-stop config | 13 | Ready |
 | 20 | Daytona state reconciliation polling loop | 13, 19 | Blocked |
-| 21 | Daytona Image builder: snapshot caching with lockfile hash | 13 | Blocked |
-| 22 | VS Code Remote SSH: SSH config automation + token refresh | 13 | Blocked |
+| 21 | Daytona Image builder: snapshot caching with lockfile hash | 13 | Ready |
+| 22 | VS Code Remote SSH: SSH config automation + token refresh | 13 | Ready |
 | 23 | End-to-end integration: Daytona workspace creation flow | 10, 13, 15, 16 | Blocked |
 | 24 | Setup step progress UI for Daytona-specific steps | 23 | Blocked |
 

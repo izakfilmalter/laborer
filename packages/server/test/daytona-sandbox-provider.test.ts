@@ -1,0 +1,458 @@
+/**
+ * Tests for DaytonaSandboxProvider — Issue 13: create sandbox
+ *
+ * Verifies createSandbox with a mocked DaytonaClient, ensuring correct
+ * SDK parameters and LiveStore event commits. No real API calls.
+ */
+
+import { CodeLanguage } from '@daytonaio/sdk'
+import { assert, describe, it } from '@effect/vitest'
+import { RpcError } from '@laborer/shared/rpc'
+import { events, tables } from '@laborer/shared/schema'
+import { Effect, Layer, Ref } from 'effect'
+import type {
+  DaytonaPaginatedSandboxes,
+  DaytonaSandbox,
+} from '../../server/src/services/daytona-client.js'
+import { DaytonaClient } from '../../server/src/services/daytona-client.js'
+import { DaytonaSandboxProvider } from '../../server/src/services/daytona-sandbox-provider.js'
+import { LaborerStore } from '../../server/src/services/laborer-store.js'
+import { SandboxProvider } from '../../server/src/services/sandbox-provider.js'
+import { TestLaborerStore } from './helpers/test-store.js'
+
+// ---------------------------------------------------------------------------
+// Types & helpers
+// ---------------------------------------------------------------------------
+
+interface MockCallRecord {
+  readonly args: readonly unknown[]
+  readonly method: string
+}
+
+const makeMockSandbox = (): DaytonaSandbox =>
+  ({
+    id: 'sandbox-test-123',
+    name: 'test-sandbox',
+    state: 'started',
+    organizationId: 'org-1',
+    user: 'daytona',
+    env: {},
+    labels: {},
+    public: false,
+    target: 'us',
+    cpu: 2,
+    gpu: 0,
+    memory: 4,
+    disk: 20,
+    networkBlockAll: false,
+    toolboxProxyUrl: 'https://toolbox.test',
+    fs: {} as DaytonaSandbox['fs'],
+    git: {} as DaytonaSandbox['git'],
+    process: {} as DaytonaSandbox['process'],
+    computerUse: {} as DaytonaSandbox['computerUse'],
+    codeInterpreter: {} as DaytonaSandbox['codeInterpreter'],
+    getPreviewLink: () =>
+      Promise.resolve({
+        url: 'https://3000-sandbox-test-123.preview.daytona.io',
+        token: '',
+      }),
+  }) as unknown as DaytonaSandbox
+
+// ---------------------------------------------------------------------------
+// Mock layers
+// ---------------------------------------------------------------------------
+
+const makeMockClientLayer = (
+  log: MockCallRecord[]
+): Layer.Layer<DaytonaClient> => {
+  const sb = makeMockSandbox()
+  return Layer.succeed(
+    DaytonaClient,
+    DaytonaClient.of({
+      create: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'create', args })
+          return sb
+        }),
+      createFromSnapshot: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'createFromSnapshot', args })
+          return sb
+        }),
+      get: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'get', args })
+          return sb
+        }),
+      list: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'list', args })
+          return { items: [], total: 0 } as unknown as DaytonaPaginatedSandboxes
+        }),
+      start: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'start', args })
+        }),
+      stop: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'stop', args })
+        }),
+      delete: (...args) =>
+        Effect.sync(() => {
+          log.push({ method: 'delete', args })
+        }),
+      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      raw: {} as DaytonaClient['Type']['raw'],
+    })
+  )
+}
+
+const makeNotFoundClientLayer = (
+  log: MockCallRecord[]
+): Layer.Layer<DaytonaClient> =>
+  Layer.succeed(
+    DaytonaClient,
+    DaytonaClient.of({
+      create: () => Effect.die('not expected'),
+      createFromSnapshot: () => Effect.die('not expected'),
+      get: (...args) => {
+        log.push({ method: 'get', args })
+        return new RpcError({ message: 'Not found', code: 'DAYTONA_NOT_FOUND' })
+      },
+      list: () =>
+        Effect.succeed({
+          items: [],
+          total: 0,
+        } as unknown as DaytonaPaginatedSandboxes),
+      start: () => Effect.void,
+      stop: () => Effect.void,
+      delete: () => Effect.void,
+      snapshot: {} as DaytonaClient['Type']['snapshot'],
+      raw: {} as DaytonaClient['Type']['raw'],
+    })
+  )
+
+const makeLayer = (log: MockCallRecord[]) =>
+  DaytonaSandboxProvider.layer.pipe(
+    Layer.provide(makeMockClientLayer(log)),
+    Layer.provideMerge(TestLaborerStore)
+  )
+
+const makeNotFoundLayer = (log: MockCallRecord[]) =>
+  DaytonaSandboxProvider.layer.pipe(
+    Layer.provide(makeNotFoundClientLayer(log)),
+    Layer.provideMerge(TestLaborerStore)
+  )
+
+// ---------------------------------------------------------------------------
+// Seed helpers
+// ---------------------------------------------------------------------------
+
+const seedWorkspace = (
+  store: { commit: (e: unknown) => void },
+  workspaceId: string,
+  projectName = 'test-project',
+  branchName = 'feature/test'
+) => {
+  const projectId = `project-${crypto.randomUUID()}`
+  store.commit(
+    events.projectCreated({
+      id: projectId,
+      repoPath: '/tmp/test-repo',
+      name: projectName,
+      brrrConfig: null,
+    })
+  )
+  store.commit(
+    events.workspaceCreated({
+      id: workspaceId,
+      projectId,
+      taskSource: null,
+      branchName,
+      worktreePath: `/tmp/worktrees/${branchName}`,
+      status: 'creating',
+      origin: 'laborer',
+      createdAt: new Date().toISOString(),
+      baseSha: null,
+    })
+  )
+}
+
+const dsc = (
+  overrides: Partial<{
+    image: string | null
+    port: number | null
+    startCommand: string | null
+  }> = {}
+) => ({
+  autoOpen: false,
+  dockerfile: null,
+  image: 'image' in overrides ? (overrides.image ?? null) : 'node:22',
+  installCommand: null,
+  network: null,
+  port: 'port' in overrides ? (overrides.port ?? null) : null,
+  setupScripts: [] as readonly string[],
+  startCommand:
+    'startCommand' in overrides ? (overrides.startCommand ?? null) : null,
+  workdir: '/app',
+})
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('DaytonaSandboxProvider', () => {
+  describe('createSandbox', () => {
+    it.scoped('calls create with correct SDK params when image is set', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/test',
+            projectName: 'test-project',
+            worktreePath: '/tmp/worktrees/feature/test',
+            devServerConfig: dsc({ image: 'node:22', port: 3000 }),
+          })
+
+          const creates = log.filter((c) => c.method === 'create')
+          assert.strictEqual(creates.length, 1)
+          const params = creates[0]?.args[0] as Record<string, unknown>
+          assert.strictEqual(params.image, 'node:22')
+          assert.strictEqual(params.language, CodeLanguage.TYPESCRIPT)
+          assert.deepStrictEqual(params.labels, {
+            'laborer-workspace-id': wid,
+            'laborer-project': 'test-project',
+            'laborer-branch': 'feature/test',
+          })
+          assert.strictEqual(params.autoStopInterval, 15)
+          assert.strictEqual(params.autoDeleteInterval, -1)
+
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxId, 'sandbox-test-123')
+          assert.strictEqual(ws?.sandboxImage, 'node:22')
+          assert.strictEqual(ws?.sandboxStatus, 'running')
+          assert.strictEqual(ws?.sandboxProvider, 'daytona')
+          assert.strictEqual(ws?.sandboxPort, 3000)
+          assert.strictEqual(ws?.sandboxSetupStep, null)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('calls createFromSnapshot when image is null', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/default',
+            projectName: 'default-project',
+            worktreePath: '/tmp/worktrees/feature/default',
+            devServerConfig: dsc({ image: null }),
+          })
+
+          assert.strictEqual(
+            log.filter((c) => c.method === 'createFromSnapshot').length,
+            1
+          )
+          assert.strictEqual(log.filter((c) => c.method === 'create').length, 0)
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxImage, 'daytona-default')
+          assert.strictEqual(ws?.sandboxProvider, 'daytona')
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('invokes onReady callback after creation', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          const called = yield* Ref.make(false)
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feature/cb',
+            projectName: 'cb-project',
+            worktreePath: '/tmp/worktrees/feature/cb',
+            devServerConfig: dsc(),
+            onReady: () => Ref.set(called, true).pipe(Effect.asVoid),
+          })
+
+          assert.isTrue(yield* Ref.get(called))
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('sets labels with workspace ID, project, and branch', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid, 'my-project', 'feat/cool')
+
+          yield* sp.createSandbox({
+            workspaceId: wid,
+            branchName: 'feat/cool',
+            projectName: 'my-project',
+            worktreePath: '/tmp/worktrees/feat/cool',
+            devServerConfig: dsc(),
+          })
+
+          const [call] = log.filter((c) => c.method === 'create')
+          const params = call?.args[0] as Record<string, unknown>
+          assert.deepStrictEqual(params.labels, {
+            'laborer-workspace-id': wid,
+            'laborer-project': 'my-project',
+            'laborer-branch': 'feat/cool',
+          })
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('destroySandbox', () => {
+    it.scoped('deletes sandbox and commits SandboxStopped', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-destroy',
+              sandboxUrl: 'sb-destroy',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.destroySandbox(wid)
+
+          assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+          assert.strictEqual(log.filter((c) => c.method === 'delete').length, 1)
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxId, null)
+          assert.strictEqual(ws?.sandboxStatus, null)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('handles already-destroyed sandbox gracefully', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-gone',
+              sandboxUrl: 'sb-gone',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.destroySandbox(wid)
+
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxId, null)
+          assert.strictEqual(ws?.sandboxStatus, null)
+        }).pipe(Effect.provide(makeNotFoundLayer(log)))
+      })
+    )
+  })
+
+  describe('pauseSandbox', () => {
+    it.scoped('stops sandbox and commits SandboxPaused', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pause',
+              sandboxUrl: 'sb-pause',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.pauseSandbox(wid)
+
+          assert.strictEqual(log.filter((c) => c.method === 'stop').length, 1)
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxStatus, 'paused')
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('resumeSandbox', () => {
+    it.scoped('starts sandbox and commits SandboxResumed', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-resume',
+              sandboxUrl: 'sb-resume',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+          store.commit(events.sandboxPaused({ workspaceId: wid }))
+
+          yield* sp.resumeSandbox(wid)
+
+          assert.strictEqual(log.filter((c) => c.method === 'start').length, 1)
+          const [ws] = store.query(tables.workspaces.where('id', wid))
+          assert.strictEqual(ws?.sandboxStatus, 'running')
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('checkAvailability', () => {
+    it.scoped('returns available when list succeeds', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const status = yield* sp.checkAvailability()
+          assert.isTrue(status.available)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+})

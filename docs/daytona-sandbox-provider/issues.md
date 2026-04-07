@@ -1133,14 +1133,14 @@ TDD approach: Write a UI test that sets `sandboxSetupStep` to `"pushing-code"` a
 | 13 | DaytonaSandboxProvider: create sandbox | 8, 11 | Done |
 | 14 | DaytonaSandboxProvider: destroy sandbox | 13 | Done |
 | 15 | Git sync: push worktree HEAD to Daytona sandbox via SSH | 13 | Done |
-| 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Ready |
-| 17 | Daytona PTY: bridge to xterm.js terminal component | 16 | Blocked |
+| 16 | Daytona PTY: WebSocket session creation + sendInput/resize | 13 | Done |
+| 17 | Daytona PTY: bridge to xterm.js terminal component | 16 | Ready |
 | 18 | Daytona preview URLs: getPreviewUrl + UI display | 13 | Ready |
 | 19 | Daytona sandbox pause/resume (stop/start) + auto-stop config | 13 | Done |
 | 20 | Daytona state reconciliation polling loop | 13, 19 | Ready |
 | 21 | Daytona Image builder: snapshot caching with lockfile hash | 13 | Ready |
 | 22 | VS Code Remote SSH: SSH config automation + token refresh | 13 | Ready |
-| 23 | End-to-end integration: Daytona workspace creation flow | 10, 13, 15, 16 | Blocked |
+| 23 | End-to-end integration: Daytona workspace creation flow | 10, 13, 15, 16 | Ready |
 | 24 | Setup step progress UI for Daytona-specific steps | 23 | Blocked |
 
 ### Parallelization opportunities

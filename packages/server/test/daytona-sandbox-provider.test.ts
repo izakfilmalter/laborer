@@ -1,5 +1,5 @@
 /**
- * Tests for DaytonaSandboxProvider — Issues 13, 14, 15 & 19
+ * Tests for DaytonaSandboxProvider — Issues 13, 14, 15, 16 & 19
  *
  * Issue 13: Verifies createSandbox with a mocked DaytonaClient, ensuring correct
  * SDK parameters and LiveStore event commits. No real API calls.
@@ -11,6 +11,10 @@
  * Issue 15: Verifies git sync — pushing worktree HEAD to sandbox via SSH.
  * Tests that createSshAccess is called, git init is executed in the sandbox,
  * local git remote is added/pushed/cleaned up, and checkout is executed.
+ *
+ * Issue 16: Verifies spawnTerminal — PTY session creation via Daytona SDK.
+ * Tests that createPty is called with correct parameters, waitForConnection
+ * is awaited, initial commands are sent, and TerminalHandle is returned.
  *
  * Issue 19: Verifies pauseSandbox and resumeSandbox idempotency — pausing
  * an already-stopped/archived sandbox skips the SDK stop call, resuming an
@@ -62,6 +66,42 @@ interface MockCallRecord {
   readonly method: string
 }
 
+/**
+ * Mock PtyHandle returned by `createPty`. Records `sendInput`, `resize`,
+ * `waitForConnection`, `disconnect`, and `kill` calls to the shared log.
+ */
+const makeMockPtyHandle = (sessionId: string, log?: MockCallRecord[]) => ({
+  sessionId,
+  sendInput: (...args: unknown[]) => {
+    log?.push({ method: 'ptyHandle.sendInput', args })
+    return Promise.resolve()
+  },
+  resize: (...args: unknown[]) => {
+    log?.push({ method: 'ptyHandle.resize', args })
+    return Promise.resolve({})
+  },
+  waitForConnection: () => {
+    log?.push({ method: 'ptyHandle.waitForConnection', args: [] })
+    return Promise.resolve()
+  },
+  disconnect: () => {
+    log?.push({ method: 'ptyHandle.disconnect', args: [] })
+    return Promise.resolve()
+  },
+  kill: () => {
+    log?.push({ method: 'ptyHandle.kill', args: [] })
+    return Promise.resolve()
+  },
+  wait: () => Promise.resolve({ exitCode: 0 }),
+  isConnected: () => true,
+  get exitCode() {
+    return undefined
+  },
+  get error() {
+    return undefined
+  },
+})
+
 const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
   ({
     id: 'sandbox-test-123',
@@ -85,6 +125,13 @@ const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
       executeCommand: (...args: unknown[]) => {
         log?.push({ method: 'sandbox.process.executeCommand', args })
         return Promise.resolve({ exitCode: 0, result: '' })
+      },
+      createPty: (...args: unknown[]) => {
+        log?.push({ method: 'sandbox.process.createPty', args })
+        // Extract the session ID from the options (first positional arg)
+        const opts = args[0] as { id?: string } | undefined
+        const sessionId = opts?.id ?? 'mock-pty-session'
+        return Promise.resolve(makeMockPtyHandle(sessionId, log))
       },
     } as unknown as DaytonaSandbox['process'],
     computerUse: {} as DaytonaSandbox['computerUse'],
@@ -1163,6 +1210,229 @@ describe('DaytonaSandboxProvider', () => {
           const sp = yield* SandboxProvider
           const status = yield* sp.checkAvailability()
           assert.isTrue(status.available)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+  })
+
+  describe('spawnTerminal', () => {
+    it.scoped('creates PTY session and returns TerminalHandle', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty',
+              sandboxUrl: 'sb-pty',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          const handle = yield* sp.spawnTerminal(wid)
+
+          // TerminalHandle has correct metadata
+          assert.strictEqual(handle.workspaceId, wid)
+          assert.strictEqual(handle.status, 'running')
+          assert.strictEqual(handle.command, '/bin/sh')
+          assert.isString(handle.id)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('calls createPty with correct parameters', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty-params',
+              sandboxUrl: 'sb-pty-params',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.spawnTerminal(wid, { cols: 120, rows: 30 })
+
+          const ptyCalls = log.filter(
+            (c) => c.method === 'sandbox.process.createPty'
+          )
+          assert.strictEqual(ptyCalls.length, 1)
+
+          const opts = (ptyCalls[0]?.args as unknown[])[0] as Record<
+            string,
+            unknown
+          >
+          assert.strictEqual(opts.cols, 120)
+          assert.strictEqual(opts.rows, 30)
+          assert.strictEqual(opts.cwd, '/home/daytona/project')
+          assert.isString(opts.id)
+          assert.deepStrictEqual(
+            (opts.envs as Record<string, string>).TERM,
+            'xterm-256color'
+          )
+          assert.deepStrictEqual(
+            (opts.envs as Record<string, string>).COLORTERM,
+            'truecolor'
+          )
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('uses default cols/rows when not specified', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty-defaults',
+              sandboxUrl: 'sb-pty-defaults',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.spawnTerminal(wid)
+
+          const ptyCalls = log.filter(
+            (c) => c.method === 'sandbox.process.createPty'
+          )
+          const opts = (ptyCalls[0]?.args as unknown[])[0] as Record<
+            string,
+            unknown
+          >
+          assert.strictEqual(opts.cols, 80)
+          assert.strictEqual(opts.rows, 24)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('waits for WebSocket connection to be established', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty-connect',
+              sandboxUrl: 'sb-pty-connect',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.spawnTerminal(wid)
+
+          const waitCalls = log.filter(
+            (c) => c.method === 'ptyHandle.waitForConnection'
+          )
+          assert.strictEqual(waitCalls.length, 1)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('sends initial command as input when specified', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty-cmd',
+              sandboxUrl: 'sb-pty-cmd',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          const handle = yield* sp.spawnTerminal(wid, {
+            command: 'bun dev',
+          })
+
+          // sendInput should have been called with the command + newline
+          const sendCalls = log.filter(
+            (c) => c.method === 'ptyHandle.sendInput'
+          )
+          assert.strictEqual(sendCalls.length, 1)
+          assert.strictEqual((sendCalls[0]?.args as unknown[])[0], 'bun dev\n')
+          // TerminalHandle command should reflect the specified command
+          assert.strictEqual(handle.command, 'bun dev')
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('does not send input when no command specified', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          store.commit(
+            events.sandboxStarted({
+              workspaceId: wid,
+              sandboxId: 'sb-pty-nocmd',
+              sandboxUrl: 'sb-pty-nocmd',
+              sandboxImage: 'node:22',
+              sandboxProvider: 'daytona',
+            })
+          )
+
+          yield* sp.spawnTerminal(wid)
+
+          // sendInput should NOT have been called
+          const sendCalls = log.filter(
+            (c) => c.method === 'ptyHandle.sendInput'
+          )
+          assert.strictEqual(sendCalls.length, 0)
+        }).pipe(Effect.provide(makeLayer(log)))
+      })
+    )
+
+    it.scoped('returns NOT_FOUND when workspace has no sandbox', () =>
+      Effect.gen(function* () {
+        const log: MockCallRecord[] = []
+        yield* Effect.gen(function* () {
+          const sp = yield* SandboxProvider
+          const { store } = yield* LaborerStore
+          const wid = crypto.randomUUID()
+          seedWorkspace(store as never, wid)
+          // No sandboxStarted event — workspace has no sandboxId
+
+          const result = yield* sp.spawnTerminal(wid).pipe(
+            Effect.map(() => null),
+            Effect.catchAll((err) => Effect.succeed(err))
+          )
+
+          assert.isNotNull(result)
+          assert.strictEqual((result as RpcError).code, 'NOT_FOUND')
+          // No SDK calls made
+          assert.strictEqual(log.length, 0)
         }).pipe(Effect.provide(makeLayer(log)))
       })
     )

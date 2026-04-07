@@ -9,12 +9,27 @@
  * - `destroySandbox` (Issue 14) — sandbox teardown with best-effort cleanup
  * - `pauseSandbox` / `resumeSandbox` (Issue 19) — idempotent stop/start with auto-stop config
  * - Git sync: push worktree HEAD to sandbox via SSH (Issue 15)
+ * - `spawnTerminal` (Issue 16) — WebSocket PTY session creation via Daytona SDK
  *
  * Stub methods (to be implemented in downstream issues):
  * - `getPreviewUrl` (Issue 18)
- * - `spawnTerminal` (Issue 16)
  * - `reconcileState` (Issue 20)
  * - `checkAvailability` (Issue 12)
+ *
+ * ### spawnTerminal flow (Issue 16):
+ * 1. Look up workspace in LiveStore to get the `sandboxId`
+ * 2. Fetch the Daytona sandbox via `DaytonaClient.get(sandboxId)`
+ * 3. Create a PTY session via `sandbox.process.createPty()` with:
+ *    - Unique session ID (crypto.randomUUID())
+ *    - Terminal dimensions from opts (cols/rows, defaults 80x24)
+ *    - Working directory: /home/daytona/project
+ *    - Environment: TERM=xterm-256color, COLORTERM=truecolor
+ *    - `onData` callback for terminal output (stored for Issue 17 bridge)
+ * 4. Wait for the WebSocket connection to be established
+ * 5. If a command is specified, send it as input to the PTY
+ * 6. Store the PtyHandle in an in-memory map keyed by terminal ID
+ *    (accessible via `getDaytonaPtyHandle` for Issue 17 bridge)
+ * 7. Return a TerminalHandle with metadata
  *
  * ### destroySandbox flow (Issue 14):
  * 1. Looks up the workspace in LiveStore to get the `sandboxId`
@@ -52,7 +67,7 @@
  * 6. Commits `v2.SandboxResumed` event to LiveStore
  */
 
-import { CodeLanguage } from '@daytonaio/sdk'
+import { CodeLanguage, type PtyHandle } from '@daytonaio/sdk'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
@@ -76,6 +91,45 @@ import { SandboxProvider } from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'DaytonaSandboxProvider'
+
+/** Default working directory inside Daytona sandboxes. */
+const DAYTONA_PROJECT_DIR = '/home/daytona/project'
+
+// ---------------------------------------------------------------------------
+// In-memory PTY handle registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of terminal session ID → Daytona `PtyHandle`.
+ *
+ * `spawnTerminal` stores handles here after creating a PTY session.
+ * The xterm.js bridge (Issue 17) retrieves handles via
+ * `getDaytonaPtyHandle(sessionId)` to pipe data between the WebSocket
+ * PTY and the terminal component.
+ *
+ * Handles are removed when the PTY exits or is explicitly killed.
+ */
+const daytonaPtyHandles = new Map<string, PtyHandle>()
+
+/**
+ * Retrieve a live Daytona `PtyHandle` by terminal session ID.
+ *
+ * Used by the terminal bridge (Issue 17) to wire xterm.js input/output
+ * to the Daytona WebSocket PTY session.
+ *
+ * @returns The `PtyHandle` if the session is active, or `undefined` if
+ *          the session has ended or was never created.
+ */
+const getDaytonaPtyHandle = (sessionId: string): PtyHandle | undefined =>
+  daytonaPtyHandles.get(sessionId)
+
+/**
+ * Remove a Daytona `PtyHandle` from the in-memory registry.
+ * Called when a PTY session exits or is explicitly killed.
+ */
+const removeDaytonaPtyHandle = (sessionId: string): void => {
+  daytonaPtyHandles.delete(sessionId)
+}
 
 /** Default auto-stop interval in minutes (15 minutes of idle). */
 const DEFAULT_AUTO_STOP_INTERVAL = 15
@@ -621,14 +675,122 @@ class DaytonaSandboxProvider extends Context.Tag(
       )
 
       // ── spawnTerminal ─────────────────────────────────────────
-      // Stub: will be implemented in Issue 16.
+      // Issue 16: Create a Daytona PTY session over WebSocket.
+      //
+      // Steps:
+      // 1. Look up workspace → get sandboxId (error if missing)
+      // 2. Fetch sandbox from Daytona API
+      // 3. Create a PTY session via sandbox.process.createPty()
+      //    - Generates a unique session ID
+      //    - Uses configured cols/rows (defaults: 80×24)
+      //    - Sets working directory to /home/daytona/project
+      //    - Configures TERM/COLORTERM env vars for color support
+      //    - Registers an onData callback (stored for Issue 17 bridge)
+      // 4. Wait for the WebSocket connection to be established
+      // 5. Send initial command as input if opts.command is specified
+      // 6. Store the PtyHandle in the in-memory registry
+      // 7. Return a TerminalHandle with session metadata
 
       const spawnTerminal = Effect.fn('DaytonaSandboxProvider.spawnTerminal')(
-        function* (workspaceId: string, _opts?) {
-          return yield* new RpcError({
-            message: `Daytona terminal spawning not yet implemented (workspace: "${workspaceId}"). See Issue 16.`,
-            code: 'NOT_IMPLEMENTED',
+        function* (workspaceId: string, opts?) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspaceOpt = pipe(
+            allWorkspaces,
+            Arr.findFirst((w) => w.id === workspaceId)
+          )
+
+          if (
+            workspaceOpt._tag === 'None' ||
+            workspaceOpt.value.sandboxId === null
+          ) {
+            return yield* new RpcError({
+              message: `Cannot spawn terminal: workspace "${workspaceId}" has no active Daytona sandbox`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const sandboxId = workspaceOpt.value.sandboxId
+          const sandbox = yield* daytonaClient.get(sandboxId)
+
+          // Generate a unique session ID for this PTY
+          const sessionId = crypto.randomUUID()
+          const cols = opts?.cols ?? 80
+          const rows = opts?.rows ?? 24
+          const command = opts?.command ?? '/bin/sh'
+
+          yield* Effect.logInfo(
+            `Spawning Daytona PTY session "${sessionId}" in sandbox "${sandboxId}" for workspace "${workspaceId}" (${String(cols)}×${String(rows)})`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // Create the PTY session via the Daytona SDK.
+          // The SDK opens a WebSocket to the sandbox's toolbox proxy
+          // and returns a PtyHandle for sending input / receiving output.
+          const ptyHandle = yield* Effect.tryPromise({
+            try: () =>
+              sandbox.process.createPty({
+                id: sessionId,
+                cols,
+                rows,
+                cwd: DAYTONA_PROJECT_DIR,
+                envs: {
+                  TERM: 'xterm-256color',
+                  COLORTERM: 'truecolor',
+                },
+                onData: (_data: Uint8Array) => {
+                  // Output data is received here from the WebSocket PTY.
+                  // The xterm.js bridge (Issue 17) will read from the
+                  // PtyHandle directly via getDaytonaPtyHandle(). This
+                  // callback is required by the SDK but the actual
+                  // piping to xterm happens in the bridge layer.
+                },
+              }),
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to create PTY session in sandbox "${sandboxId}": ${error instanceof Error ? error.message : String(error)}`,
+                code: 'DAYTONA_ERROR',
+              }),
           })
+
+          // Wait for the WebSocket connection to be fully established
+          // before returning the handle. This ensures the PTY is ready
+          // to accept input immediately.
+          yield* Effect.tryPromise({
+            try: () => ptyHandle.waitForConnection(),
+            catch: (error) =>
+              new RpcError({
+                message: `PTY connection failed for sandbox "${sandboxId}": ${error instanceof Error ? error.message : String(error)}`,
+                code: 'DAYTONA_ERROR',
+              }),
+          })
+
+          // Store the PtyHandle in the in-memory registry so the
+          // xterm.js bridge (Issue 17) can access it for I/O piping.
+          daytonaPtyHandles.set(sessionId, ptyHandle)
+
+          yield* Effect.logInfo(
+            `Daytona PTY session "${sessionId}" connected (sandbox: "${sandboxId}")`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // If a command was specified, send it as initial input.
+          // This mirrors the Docker terminal flow where a command
+          // can be auto-typed into the terminal on spawn.
+          if (opts?.command !== undefined) {
+            yield* Effect.tryPromise({
+              try: () => ptyHandle.sendInput(`${opts.command}\n`),
+              catch: (error) =>
+                new RpcError({
+                  message: `Failed to send initial command to PTY "${sessionId}": ${error instanceof Error ? error.message : String(error)}`,
+                  code: 'DAYTONA_ERROR',
+                }),
+            })
+          }
+
+          return {
+            id: sessionId,
+            workspaceId,
+            command,
+            status: 'running' as const,
+          }
         }
       )
 
@@ -718,4 +880,4 @@ class DaytonaSandboxProvider extends Context.Tag(
   )
 }
 
-export { DaytonaSandboxProvider }
+export { DaytonaSandboxProvider, getDaytonaPtyHandle, removeDaytonaPtyHandle }

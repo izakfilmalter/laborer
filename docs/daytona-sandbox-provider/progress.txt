@@ -657,3 +657,71 @@ Date: 2026-04-07
 - 461 server tests pass (50 test files, 1 skipped) — 26 daytona-sandbox-provider + 16 git-sync
 - 89 shared tests pass
 - `bun run format` passes (492 files, no fixes)
+
+## Issue 16: Daytona PTY — WebSocket session creation + sendInput/resize
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+- Implemented `spawnTerminal` in `packages/server/src/services/daytona-sandbox-provider.ts`:
+  - Replaces the `NOT_IMPLEMENTED` stub with full PTY session creation
+  - Looks up workspace in LiveStore to get `sandboxId`
+  - Fetches sandbox from Daytona API via `DaytonaClient.get(sandboxId)`
+  - Creates a PTY session via `sandbox.process.createPty()` with:
+    - Unique session ID (`crypto.randomUUID()`)
+    - Terminal dimensions from opts (cols/rows, defaults 80×24)
+    - Working directory: `/home/daytona/project`
+    - Environment: `TERM=xterm-256color`, `COLORTERM=truecolor`
+    - `onData` callback for terminal output (bridge point for Issue 17)
+  - Waits for WebSocket connection via `ptyHandle.waitForConnection()`
+  - Sends initial command as input if `opts.command` is specified
+  - Stores the `PtyHandle` in an in-memory `Map` keyed by session ID
+  - Returns a `TerminalHandle` with metadata (id, workspaceId, command, status)
+- Added in-memory PTY handle registry (`daytonaPtyHandles` Map):
+  - `getDaytonaPtyHandle(sessionId)` — retrieves a live PtyHandle for the
+    xterm.js bridge (Issue 17) to wire I/O
+  - `removeDaytonaPtyHandle(sessionId)` — cleans up handles when sessions end
+  - Both functions exported for use by downstream Issue 17
+- Updated file header comment to document the spawnTerminal flow
+- Added `PtyHandle` type import from `@daytonaio/sdk`
+- Added `DAYTONA_PROJECT_DIR` constant for sandbox working directory
+
+### Tests added (7 new tests in packages/server/test/daytona-sandbox-provider.test.ts):
+- spawnTerminal: creates PTY session and returns TerminalHandle with correct metadata
+- spawnTerminal: calls createPty with correct parameters (cols, rows, cwd, envs, id)
+- spawnTerminal: uses default cols/rows (80×24) when not specified
+- spawnTerminal: waits for WebSocket connection to be established
+- spawnTerminal: sends initial command as input when specified (with trailing newline)
+- spawnTerminal: does not send input when no command specified
+- spawnTerminal: returns NOT_FOUND when workspace has no sandbox
+
+### Mock infrastructure added:
+- `makeMockPtyHandle(sessionId, log)` — creates a mock PtyHandle with `sendInput`,
+  `resize`, `waitForConnection`, `disconnect`, `kill`, and `wait` methods that
+  record calls to the shared log
+- Updated `makeMockSandbox` to include `process.createPty` mock that creates
+  mock PtyHandles and records calls
+
+### Design decisions:
+- PTY handles stored in a module-level `Map<string, PtyHandle>` rather than
+  in LiveStore or Effect Ref — PTY sessions are transient WebSocket connections,
+  not persistent state. The Map is the appropriate lifetime scope.
+- `onData` callback in `createPty` is a no-op placeholder — the actual xterm.js
+  bridge (Issue 17) will read output from the PtyHandle directly. The callback
+  is required by the SDK's `PtyConnectOptions` type.
+- `waitForConnection()` is called before returning the handle to ensure the
+  WebSocket is fully established and ready for input. This prevents race
+  conditions where sendInput is called before the PTY is connected.
+- When `opts.command` is specified, a trailing `\n` is appended to simulate
+  pressing Enter, matching the Docker terminal flow behavior.
+- Default shell is `/bin/sh` when no command is specified (consistent with
+  Docker terminal defaults).
+- `getDaytonaPtyHandle` and `removeDaytonaPtyHandle` are exported as named
+  functions (not as part of the service interface) since they are used by the
+  terminal bridge layer, not by `WorkspaceProvider` or RPC handlers.
+
+### Verification:
+- Server typecheck passes (`tsc --noEmit`)
+- 468 server tests pass (50 test files, 1 skipped) — 33 daytona-sandbox-provider + 16 git-sync
+- `bun run format` passes (492 files, no fixes)

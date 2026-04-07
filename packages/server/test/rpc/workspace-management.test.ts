@@ -473,6 +473,83 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
+  it.scopedLive(
+    'workspace.create transitions to errored with setup steps cleared when setup script fails',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo('rpc-workspace-setup-fail', tempRoots)
+          const worktreeRoot = createTempDir(
+            'rpc-workspace-setup-fail-root',
+            tempRoots
+          )
+          const branchName = 'feature/rpc-setup-fail'
+
+          writeLaborerConfig(repoPath, {
+            devServer: { image: null },
+            setupScripts: ['exit 42'],
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add laborer config with failing script"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const workspace = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          assert.strictEqual(workspace.status, 'creating')
+
+          // Wait for the background setup fiber to fail and transition
+          // the workspace to 'errored' status.
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const rows = store.query(
+                tables.workspaces.where('id', workspace.id)
+              )
+              const row = rows[0]
+              if (row === undefined) {
+                return assert.fail(
+                  'Workspace row deleted — expected it to transition to errored'
+                )
+              }
+              if (row.status === 'errored') {
+                // The key assertion: setup steps must be cleared
+                assert.isNull(
+                  row.worktreeSetupStep,
+                  'worktreeSetupStep should be cleared on error'
+                )
+                assert.isNull(
+                  row.sandboxSetupStep,
+                  'sandboxSetupStep should be cleared on error'
+                )
+                // Error message should mention the failed script
+                assert.isString(row.errorMessage)
+                assert.include(row.errorMessage ?? '', 'exit 42')
+                return
+              }
+              if (row.status === 'running') {
+                return assert.fail(
+                  'Workspace reached running — expected it to error from failing setup script'
+                )
+              }
+            }
+            assert.fail(
+              'Timed out waiting for workspace to transition to errored'
+            )
+          })
+        })
+      )
+  )
+
   it.scopedLive('workspace.refreshSyncStatus returns ahead/behind counts', () =>
     runWithRpcTestContext(({ client, store }) =>
       Effect.gen(function* () {

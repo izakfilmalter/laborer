@@ -56,7 +56,16 @@ import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
+import {
+  Array as Arr,
+  Cause,
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  pipe,
+  Ref,
+} from 'effect'
 import { isSandboxRemoteName } from '../lib/git-sync.js'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
@@ -512,10 +521,21 @@ const validateWorktree = (
     // Normalize paths for comparison using realpathSync to resolve symlinks.
     // On macOS, /var is a symlink to /private/var — git resolves the symlink
     // but Node.js path.resolve() does not. realpathSync handles this.
-    const normalizedWorktree = realpathSync(worktreePath)
-    const normalizedToplevel = toplevelResult
-      ? realpathSync(toplevelResult)
-      : null
+    // Uses Effect.try so that a realpathSync failure (e.g. race condition
+    // where the directory was removed between existsSync and here) falls
+    // back to raw path comparison instead of killing the fiber with a defect.
+    const { normalizedToplevel, normalizedWorktree } = yield* Effect.try({
+      try: () => ({
+        normalizedWorktree: realpathSync(worktreePath),
+        normalizedToplevel: toplevelResult
+          ? realpathSync(toplevelResult)
+          : null,
+      }),
+      catch: () => ({
+        normalizedWorktree: worktreePath,
+        normalizedToplevel: toplevelResult,
+      }),
+    }).pipe(Effect.merge)
     return {
       directoryExists: true,
       isGitWorkTree: workTreeResult,
@@ -1208,10 +1228,16 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }
             }
           }).pipe(
-            Effect.catchAll((err) =>
+            // Use catchAllCause instead of catchAll so that both expected
+            // errors (RpcError) and unexpected defects (thrown exceptions,
+            // e.g. realpathSync failure) are caught. With plain catchAll,
+            // a defect would kill the background fiber silently and leave
+            // the workspace permanently stuck in 'creating' status.
+            Effect.catchAllCause((cause) =>
               Effect.gen(function* () {
+                const prettyMessage = Cause.pretty(cause)
                 yield* Effect.logWarning(
-                  `Background worktree setup failed for workspace ${id}: ${String(err)}`
+                  `Background worktree setup failed for workspace ${id}: ${prettyMessage}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
 
                 // Clear worktree setup step
@@ -1230,6 +1256,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   })
                 )
 
+                // Extract a user-facing error message from the cause.
+                // For expected failures (RpcError), use the error message.
+                // For defects (thrown exceptions), use the pretty-printed cause.
+                const failureOption = Cause.failureOption(cause)
+                const errorMessage =
+                  failureOption._tag === 'Some'
+                    ? String(failureOption.value)
+                    : prettyMessage
+
                 // Set workspace to errored status so the user can decide
                 // whether to retry or destroy it. Never auto-destroy — the
                 // worktree may contain uncommitted work.
@@ -1237,7 +1272,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   events.workspaceStatusChanged({
                     id,
                     status: 'errored',
-                    errorMessage: String(err),
+                    errorMessage,
                   })
                 )
               })

@@ -149,7 +149,7 @@ None — can start immediately. (Can be done in parallel with Issue 1.)
 
 ## Issue 4: Wire addon into terminal-pane — end-to-end activation
 
-Status: TODO
+Status: DONE
 
 ### What to build
 

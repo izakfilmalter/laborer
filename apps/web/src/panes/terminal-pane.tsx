@@ -46,7 +46,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -61,6 +61,13 @@ import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { openExternalUrl } from '@/lib/desktop'
 import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
+import {
+  DEFAULT_CONFIG,
+  Emitter,
+  type IBeforeProcessDataEvent,
+  type ITypeAheadProcessManager,
+  TypeAheadAddon,
+} from '@/lib/typeahead-addon'
 
 /**
  * Daytona terminal IDs are prefixed with `daytona:` so the correct
@@ -305,7 +312,39 @@ function TerminalPaneMessagePort({
   onTitleChange,
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
+  const typeAheadAddonRef = useRef<TypeAheadAddon | null>(null)
   const [replayEpoch, setReplayEpoch] = useState(0)
+
+  /**
+   * Emitter that bridges the hook's callback-style `onBeforeProcessData`
+   * to the addon's event-style `onBeforeProcessData` subscription.
+   * Created once and stable for the lifetime of this component.
+   */
+  const beforeProcessDataEmitter = useMemo(
+    () => new Emitter<IBeforeProcessDataEvent>(),
+    []
+  )
+
+  /**
+   * Process manager adapter — the minimal interface the TypeAheadAddon
+   * expects. Wraps the emitter's event so the addon can subscribe to
+   * PTY output interception.
+   */
+  const processManager = useMemo(
+    () => ({ onBeforeProcessData: beforeProcessDataEmitter.event }),
+    [beforeProcessDataEmitter]
+  )
+
+  /**
+   * Callback passed to `useTerminalMessagePort` — fires the emitter
+   * so the addon's `_onBeforeProcessData` handler can mutate the data.
+   */
+  const handleBeforeProcessData = useCallback(
+    (event: { data: string }) => {
+      beforeProcessDataEmitter.fire(event)
+    },
+    [beforeProcessDataEmitter]
+  )
 
   const handleTerminalData = useCallback((data: string) => {
     terminalRef.current?.write(data)
@@ -316,6 +355,11 @@ function TerminalPaneMessagePort({
     if (!terminal) {
       return
     }
+
+    // Clear the typeahead addon's per-line state before replaying frames.
+    // Replay data bypasses onBeforeProcessData, so the addon won't see it,
+    // but stale predictions from the previous session must be cleared.
+    typeAheadAddonRef.current?.reset()
 
     terminal.reset()
     setReplayEpoch((current) => current + 1)
@@ -353,19 +397,22 @@ function TerminalPaneMessagePort({
   )
 
   const connection = useTerminalMessagePort({
-    terminalId,
+    onBeforeProcessData: handleBeforeProcessData,
     onData: handleTerminalData,
     onReplayStart: handleReplayStart,
     onStatus: handleTerminalStatus,
+    terminalId,
   })
 
   return (
     <TerminalPaneRenderer
       connection={connection}
       onTitleChange={onTitleChange}
+      processManager={processManager}
       replayEpoch={replayEpoch}
       terminalId={terminalId}
       terminalRef={terminalRef}
+      typeAheadAddonRef={typeAheadAddonRef}
     />
   )
 }
@@ -374,9 +421,13 @@ function TerminalPaneMessagePort({
 interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
   readonly onTitleChange?: ((title: string) => void) | undefined
+  /** Process manager adapter for the TypeAheadAddon. */
+  readonly processManager: ITypeAheadProcessManager
   readonly replayEpoch: number
   readonly terminalId: string
   readonly terminalRef: React.RefObject<Terminal | null>
+  /** Ref to the TypeAheadAddon instance, set during terminal init. */
+  readonly typeAheadAddonRef: React.RefObject<TypeAheadAddon | null>
 }
 
 /**
@@ -395,8 +446,10 @@ function TerminalPaneRenderer({
   terminalId,
   onTitleChange,
   connection,
+  processManager,
   replayEpoch,
   terminalRef,
+  typeAheadAddonRef,
 }: TerminalPaneRendererProps) {
   const {
     send: connectionSend,
@@ -610,6 +663,15 @@ function TerminalPaneRenderer({
       // Web Links addon failed to load — URLs remain plain text
     }
 
+    // Load TypeAhead addon for client-side local echo prediction.
+    // Automatically activates for high-latency terminals (Daytona cloud)
+    // and stays dormant for low-latency terminals (Docker/local).
+    // The addon subscribes to onBeforeProcessData (via processManager)
+    // to intercept server output and reconcile against predictions.
+    const typeAheadAddon = new TypeAheadAddon(processManager, DEFAULT_CONFIG)
+    terminal.loadAddon(typeAheadAddon)
+    typeAheadAddonRef.current = typeAheadAddon
+
     // Initial fit — also send dimensions to server PTY so it starts
     // with the correct size (or re-syncs on reconnection).
     try {
@@ -710,6 +772,8 @@ function TerminalPaneRenderer({
       onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
+      typeAheadAddon.dispose()
+      typeAheadAddonRef.current = null
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
@@ -720,7 +784,7 @@ function TerminalPaneRenderer({
       }
       prefixModeRef.current = false
     }
-  }, [terminalId, terminalRef])
+  }, [terminalId, terminalRef, processManager, typeAheadAddonRef])
 
   /**
    * Observe the container element for size changes using ResizeObserver.

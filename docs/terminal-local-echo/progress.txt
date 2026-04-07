@@ -50,3 +50,38 @@ behavior is identical to the previous implementation with zero overhead.
 - Typecheck passes (tsc --noEmit)
 - Format passes (ultracite check)
 - Pre-existing test failure in use-terminal-messageport.test.ts (missing jsdom env) is unrelated
+
+## Issue 4: Wire addon into terminal-pane — end-to-end activation
+
+Status: DONE
+
+Connected the TypeAheadAddon to the terminal renderer in terminal-pane.tsx,
+completing the end-to-end local echo prediction pipeline.
+
+Changes in TerminalPaneMessagePort:
+1. Created an Emitter<IBeforeProcessDataEvent> (via useMemo) to bridge between
+   the hook's callback-style onBeforeProcessData and the addon's Event-style
+   onBeforeProcessData subscription.
+2. Created a processManager adapter object (via useMemo) wrapping the emitter's
+   event, matching the ITypeAheadProcessManager interface the addon expects.
+3. Added a typeAheadAddonRef to allow handleReplayStart to call addon.reset()
+   before replaying frames — clears stale predictions from previous sessions.
+4. Passed handleBeforeProcessData (fires the emitter) as the onBeforeProcessData
+   callback to useTerminalMessagePort.
+5. Passed processManager and typeAheadAddonRef down to TerminalPaneRenderer.
+
+Changes in TerminalPaneRenderer:
+1. Extended TerminalPaneRendererProps with processManager and typeAheadAddonRef.
+2. After loading all other addons (WebGL, Image, Unicode11, WebLinks), created
+   the TypeAheadAddon with processManager and DEFAULT_CONFIG, loaded it via
+   terminal.loadAddon(), and stored it in typeAheadAddonRef.
+3. Added typeAheadAddon.dispose() and typeAheadAddonRef.current = null to the
+   cleanup return of the xterm init useEffect.
+4. Added processManager and typeAheadAddonRef to the useEffect dependency array.
+
+New imports: useMemo, DEFAULT_CONFIG, Emitter, IBeforeProcessDataEvent,
+ITypeAheadProcessManager, TypeAheadAddon from @/lib/typeahead-addon.
+
+- Typecheck passes (tsc --noEmit)
+- Format passes (ultracite check)
+- Pre-existing Bun crash in terminal-data-channel.test.ts is unrelated

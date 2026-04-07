@@ -54,6 +54,7 @@ import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
+import { handleDaytonaTerminalDataPort } from './services/daytona-terminal-data-channel.js'
 import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
@@ -504,7 +505,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
             Layer.provide(
               Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
             ),
-            Layer.provide(Layer.succeed(ProjectRegistry, projectRegistry.proxy))
+            Layer.provide(
+              Layer.succeed(ProjectRegistry, projectRegistry.proxy)
+            ),
+            Layer.provide(Layer.succeed(SandboxProvider, sandboxProvider.proxy))
           )
         )
         yield* Effect.logInfo(
@@ -686,6 +690,24 @@ async function main(): Promise<void> {
       fileWatcherPort.postMessage?.({ type: 'ping', timestamp: Date.now() })
       console.log('[server-utility] Sent ping to file-watcher port')
       resolveFileWatcherRpcPort?.(fileWatcherPort)
+    } else if (
+      data?.type === 'daytona-terminal-data-port' &&
+      typeof (data as { terminalId?: string }).terminalId === 'string' &&
+      event.ports.length > 0
+    ) {
+      // Daytona terminal data port — bridge MessagePort to Daytona PTY.
+      // The server process manages Daytona PTY WebSocket connections
+      // (via DaytonaSandboxProvider), so data ports for Daytona terminals
+      // are routed here instead of to the terminal utility process.
+      //
+      // @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
+      const dataPort = event.ports[0] as RpcMessagePort
+      const { terminalId } = data as { terminalId: string }
+      dataPort.start?.()
+      console.log(
+        `[server-utility] Received Daytona terminal data port for terminal "${terminalId}"`
+      )
+      handleDaytonaTerminalDataPort(dataPort, terminalId)
     } else if (data?.type === 'port' && event.ports.length > 0) {
       // Additional RPC port — serve LaborerRpcs on it.
       // This enables other utility processes (e.g., MCP) to call

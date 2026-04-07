@@ -848,3 +848,120 @@ Date: 2026-04-07
 - 479 server tests pass (50 test files, 1 skipped) — 44 daytona-sandbox-provider tests
 - 89 shared tests pass
 - `bun run format` passes (492 files, no fixes)
+
+## Issue 17: Daytona PTY — bridge to xterm.js terminal component
+
+Status: COMPLETE
+Date: 2026-04-07
+
+### Changes made:
+
+#### New file: `packages/server/src/services/daytona-terminal-data-channel.ts`
+- Bridges MessagePort data channels (from the renderer's xterm.js) to Daytona
+  PTY WebSocket sessions in the server utility process
+- Protocol is intentionally identical to `packages/terminal/src/services/terminal-data-channel.ts`
+  so the renderer's `useTerminalMessagePort` hook works unchanged:
+  - Server → Renderer: Raw UTF-8 strings (PTY output), JSON control messages
+    (`{"type":"status","status":"running"}`, `{"type":"status","status":"stopped"}`)
+  - Renderer → Server: Raw terminal input strings (keystrokes), flow control ack messages
+- `DAYTONA_TERMINAL_ID_PREFIX = 'daytona:'` — terminal IDs prefixed with this
+  string are routed to the server process instead of the terminal process
+- `isDaytonaTerminalId(id)` — detects Daytona terminal IDs by prefix
+- `stripDaytonaPrefix(id)` — strips prefix to get the raw PtyHandle registry key
+- `attachDaytonaDataChannel(port, terminalId)` — the core bridge function:
+  - Retrieves the Daytona `PtyHandle` from the in-memory registry via `getDaytonaPtyHandle()`
+  - Sends initial `running` status control message
+  - Replaces the PtyHandle's `onData` callback (originally a no-op from Issue 16)
+    to pipe output data to the MessagePort as UTF-8 strings
+  - Listens for renderer input on the MessagePort and forwards to `ptyHandle.sendInput()`
+  - Parses flow control ack messages (no-op for Daytona — WebSocket backpressure)
+  - Handles PTY exit: sends `stopped` status, cleans up PtyHandle from registry
+- `handleDaytonaTerminalDataPort(port, terminalId)` — entry point called from
+  the server utility process when a `daytona-terminal-data-port` message arrives
+- `parseClientMessage(data)` — parses ack vs raw input (same logic as terminal-data-channel.ts)
+
+#### Updated: `packages/server/src/services/daytona-sandbox-provider.ts`
+- `spawnTerminal`: Terminal session IDs now prefixed with `daytona:` so the Electron
+  main process can route data port requests to the correct utility process:
+  - `rawSessionId = crypto.randomUUID()` — used with Daytona SDK and as PtyHandle registry key
+  - `sessionId = 'daytona:' + rawSessionId` — returned in TerminalHandle.id
+- `createPty()` uses `rawSessionId` (no prefix) as the SDK session ID
+- `daytonaPtyHandles.set()` uses `rawSessionId` (no prefix) as the registry key
+- Imported `DAYTONA_TERMINAL_ID_PREFIX` from the new data channel module
+
+#### Updated: `packages/server/src/services/terminal-client.ts`
+- Added `SandboxProvider` as a layer dependency for Daytona terminal routing
+- `spawnInWorkspace`: Added Daytona workspace detection before Docker/host paths:
+  - When `workspace.sandboxProvider === 'daytona'` and `workspace.sandboxId != null`,
+    delegates to `sandboxProvider.spawnTerminal()` instead of the Docker container
+    terminal path
+  - This routes Daytona terminal spawning through the SandboxProvider abstraction,
+    which creates the PTY via the Daytona SDK in the server process
+
+#### Updated: `packages/server/src/utility-main.ts`
+- Added `handleDaytonaTerminalDataPort` import from the new data channel module
+- Added `daytona-terminal-data-port` message handler in the parentPort listener:
+  - When the main process sends `{ type: 'daytona-terminal-data-port', terminalId }`,
+    calls `handleDaytonaTerminalDataPort(port, terminalId)` to attach the data channel
+- Updated TerminalClient.layer build to provide `SandboxProvider` proxy as dependency
+
+#### Updated: `apps/desktop/src/ipc.ts`
+- Refactored terminal data port acquisition handler to route based on terminal ID prefix:
+  - `terminalId.startsWith('daytona:')` → route to **server** utility process via
+    `{ type: 'daytona-terminal-data-port', terminalId }`
+  - All other terminal IDs → route to **terminal** utility process via
+    `{ type: 'terminal-data-port', terminalId }` (existing Docker/host path unchanged)
+- Extracted `parseTerminalDataPortPayload()` helper to reduce handler complexity
+  (fixes Biome's excessive complexity warning)
+
+#### Updated: `apps/desktop/src/utility-process-types.ts`
+- Added `DaytonaTerminalDataPortMessage` interface for the new message type
+- Added to `UtilityProcessParentMessage` union type
+
+#### Updated: `packages/server/test/rpc/lazy-connections.test.ts`
+- Added `SandboxProvider` stub to TerminalClient test layers (required since
+  TerminalClient.layer now depends on SandboxProvider)
+
+### Tests added (16 tests in `packages/server/test/daytona-terminal-data-channel.test.ts`):
+- `DAYTONA_TERMINAL_ID_PREFIX` is `"daytona:"`
+- `isDaytonaTerminalId` returns true for `daytona:` prefixed IDs
+- `isDaytonaTerminalId` returns true for prefix-only string
+- `isDaytonaTerminalId` returns false for plain UUIDs
+- `isDaytonaTerminalId` returns false for empty string
+- `isDaytonaTerminalId` returns false for non-prefix daytona occurrence
+- `stripDaytonaPrefix` strips the prefix from a terminal ID
+- `stripDaytonaPrefix` returns empty string for prefix-only
+- `stripDaytonaPrefix` handles UUIDs correctly
+- `parseClientMessage` parses a valid ack message
+- `parseClientMessage` returns null for raw terminal input
+- `parseClientMessage` returns null for empty string
+- `parseClientMessage` returns null for non-ack JSON
+- `parseClientMessage` returns null for invalid JSON starting with `{`
+- `parseClientMessage` returns null for ack without chars field
+- `parseClientMessage` returns null for ack with non-number chars
+
+### Architecture decisions:
+- **Terminal ID prefix routing**: Daytona terminal IDs are prefixed with `daytona:`
+  so the Electron main process can route data port requests without needing an
+  RPC call to the server to check terminal ownership. The prefix is checked with
+  a simple `startsWith` — no network call, no state lookup.
+- **Server process handles Daytona data channels**: Daytona PTY WebSocket
+  connections live in the server utility process (via the Daytona SDK), so
+  terminal data ports are routed there. Docker/host PTY sessions continue to
+  be handled by the terminal utility process.
+- **PtyHandle onData replacement**: The Daytona SDK's `PtyHandle` stores the
+  `onData` callback set during `createPty()`. Issue 16 set this as a no-op
+  intentionally. The bridge replaces it when the data channel is attached,
+  redirecting PTY output to the MessagePort.
+- **No renderer changes**: The existing `useTerminalMessagePort` hook and
+  `acquireTerminalDataPort` function work unchanged. The routing happens
+  entirely in the Electron main process (`ipc.ts`), transparent to the renderer.
+- **Same protocol**: The data channel uses the identical message protocol
+  as the Docker terminal path (status control messages, raw PTY I/O, flow
+  control acks), so the xterm.js terminal component renders both Docker
+  and Daytona terminals identically.
+
+### Verification:
+- All typechecks pass (server, shared, web, desktop — `tsc --noEmit`)
+- 16 new daytona-terminal-data-channel tests pass
+- `bun run format` passes (494 files, no fixes)

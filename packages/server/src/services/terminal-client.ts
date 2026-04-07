@@ -50,6 +50,7 @@ import {
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import { SandboxProvider } from './sandbox-provider.js'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -232,6 +233,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const workspaceProvider = yield* WorkspaceProvider
       const configService = yield* ConfigService
       const registry = yield* ProjectRegistry
+      const sandboxProvider = yield* SandboxProvider
 
       // Capture the layer's scope so lazy connection can use it later.
       // The scope lives for the lifetime of this service layer.
@@ -771,7 +773,21 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 2. Dev server terminal in containerized workspace: spawn inside container
+          // 2. Daytona workspace: delegate to SandboxProvider.spawnTerminal
+          //    The Daytona PTY runs as a WebSocket session in the server
+          //    process, not via docker exec in the terminal process.
+          //    @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
+          if (
+            workspace.sandboxProvider === 'daytona' &&
+            workspace.sandboxId != null
+          ) {
+            return yield* sandboxProvider.spawnTerminal(workspaceId, {
+              command,
+              autoRun,
+            })
+          }
+
+          // 3. Dev server terminal in Docker container: spawn inside container
           if (workspace.sandboxId != null && autoRun === true) {
             return yield* spawnContainerTerminal(
               workspace,
@@ -781,7 +797,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             )
           }
 
-          // 3. Regular terminal: always spawn on host (even for containerized workspaces)
+          // 4. Regular terminal: always spawn on host (even for containerized workspaces)
           return yield* spawnHostTerminal(workspace, workspaceId, command)
         }
       )

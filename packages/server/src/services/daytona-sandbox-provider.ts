@@ -97,6 +97,7 @@ import {
 import { spawnGit } from '../lib/spawn-git.js'
 import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
+import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
 import { LaborerStore } from './laborer-store.js'
 import { DAYTONA_RECONCILE_POLL_INTERVAL_MS } from './polling-intervals.js'
 import type { CreateSandboxParams, ProviderStatus } from './sandbox-provider.js'
@@ -728,8 +729,14 @@ class DaytonaSandboxProvider extends Context.Tag(
           const sandboxId = workspaceOpt.value.sandboxId
           const sandbox = yield* daytonaClient.get(sandboxId)
 
-          // Generate a unique session ID for this PTY
-          const sessionId = crypto.randomUUID()
+          // Generate a unique session ID for this PTY.
+          // The raw session ID is used with the Daytona SDK and as the
+          // key in the PtyHandle registry. The prefixed ID (with `daytona:`)
+          // is returned to the caller and used by the Electron main process
+          // to route data ports to the server process instead of the
+          // terminal utility process.
+          const rawSessionId = crypto.randomUUID()
+          const sessionId = `${DAYTONA_TERMINAL_ID_PREFIX}${rawSessionId}`
           const cols = opts?.cols ?? 80
           const rows = opts?.rows ?? 24
           const command = opts?.command ?? '/bin/sh'
@@ -741,10 +748,11 @@ class DaytonaSandboxProvider extends Context.Tag(
           // Create the PTY session via the Daytona SDK.
           // The SDK opens a WebSocket to the sandbox's toolbox proxy
           // and returns a PtyHandle for sending input / receiving output.
+          // Use the raw session ID (without prefix) as the SDK session ID.
           const ptyHandle = yield* Effect.tryPromise({
             try: () =>
               sandbox.process.createPty({
-                id: sessionId,
+                id: rawSessionId,
                 cols,
                 rows,
                 cwd: DAYTONA_PROJECT_DIR,
@@ -779,9 +787,10 @@ class DaytonaSandboxProvider extends Context.Tag(
               }),
           })
 
-          // Store the PtyHandle in the in-memory registry so the
-          // xterm.js bridge (Issue 17) can access it for I/O piping.
-          daytonaPtyHandles.set(sessionId, ptyHandle)
+          // Store the PtyHandle in the in-memory registry keyed by raw
+          // session ID (without prefix). The bridge layer (Issue 17) strips
+          // the `daytona:` prefix before looking up the handle.
+          daytonaPtyHandles.set(rawSessionId, ptyHandle)
 
           yield* Effect.logInfo(
             `Daytona PTY session "${sessionId}" connected (sandbox: "${sandboxId}")`

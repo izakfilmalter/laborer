@@ -1,5 +1,5 @@
-import { runMain } from '@effect/platform-node/NodeRuntime'
+import { NodeRuntime } from '@effect/platform-node'
 
 import { runServer } from './server'
 
-runMain(runServer)
+NodeRuntime.runMain(runServer)

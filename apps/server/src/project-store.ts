@@ -21,12 +21,12 @@ export interface ProjectStoreShape {
   readonly stream: Stream.Stream<ProjectsEvent>
 }
 
-export class ProjectStore extends Context.Service<
+export class ProjectStore extends Context.Tag('@laborer/server/ProjectStore')<
   ProjectStore,
   ProjectStoreShape
->()('@laborer/server/ProjectStore') {
+>() {
   static readonly layer = Layer.effect(
-    ProjectStore,
+    this,
     Effect.gen(function* () {
       const events = yield* PubSub.unbounded<ProjectsEvent>()
       const state = yield* Ref.make<ProjectsSnapshot>({

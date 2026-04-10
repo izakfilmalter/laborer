@@ -13,12 +13,11 @@ export interface ServerLifecycleEventsShape {
   readonly stream: Stream.Stream<ServerLifecycleStreamEvent>
 }
 
-export class ServerLifecycleEvents extends Context.Service<
-  ServerLifecycleEvents,
-  ServerLifecycleEventsShape
->()('@laborer/server/ServerLifecycleEvents') {
+export class ServerLifecycleEvents extends Context.Tag(
+  '@laborer/server/ServerLifecycleEvents'
+)<ServerLifecycleEvents, ServerLifecycleEventsShape>() {
   static readonly layer = Layer.effect(
-    ServerLifecycleEvents,
+    this,
     Effect.gen(function* () {
       const config = yield* ServerRuntimeConfig
       const pubsub = yield* PubSub.unbounded<ServerLifecycleStreamEvent>()

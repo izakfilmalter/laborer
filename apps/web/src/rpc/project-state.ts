@@ -1,4 +1,3 @@
-import { useAtomValue } from '@effect/atom-react'
 import type { ThreadId } from '@laborer/contracts/base'
 import type {
   Project,
@@ -6,16 +5,20 @@ import type {
   ProjectsSnapshot,
   ProjectThread,
 } from '@laborer/contracts/projects'
-import { Atom } from 'effect/unstable/reactivity'
 
 import type { WsRpcClient } from '@/ws-rpc-client'
-import { appAtomRegistry } from './atom-registry'
+import {
+  makeAppStateAtom,
+  readAppStateAtom,
+  useAppStateValue,
+  writeAppStateAtom,
+} from './atom-registry'
 import { getServerWelcome } from './server-state'
 
 type ProjectsStateClient = Pick<WsRpcClient['projects'], 'list' | 'subscribe'>
 
 const makeStateAtom = <Value>(label: string, initialValue: Value) =>
-  Atom.make(initialValue).pipe(Atom.keepAlive, Atom.withLabel(label))
+  makeAppStateAtom(label, initialValue)
 
 export const projectsSnapshotAtom = makeStateAtom<ProjectsSnapshot | null>(
   'projects-snapshot',
@@ -27,19 +30,19 @@ export const activeThreadIdAtom = makeStateAtom<ThreadId | null>(
 )
 
 export function getProjectsSnapshot(): ProjectsSnapshot | null {
-  return appAtomRegistry.get(projectsSnapshotAtom)
+  return readAppStateAtom(projectsSnapshotAtom)
 }
 
 export function getActiveThreadId(): ThreadId | null {
-  return appAtomRegistry.get(activeThreadIdAtom)
+  return readAppStateAtom(activeThreadIdAtom)
 }
 
 export function setActiveThreadId(threadId: ThreadId | null): void {
-  appAtomRegistry.set(activeThreadIdAtom, threadId)
+  writeAppStateAtom(activeThreadIdAtom, threadId)
 }
 
 export function setProjectsSnapshot(snapshot: ProjectsSnapshot): void {
-  appAtomRegistry.set(projectsSnapshotAtom, snapshot)
+  writeAppStateAtom(projectsSnapshotAtom, snapshot)
   ensureActiveThreadSelection(snapshot)
 }
 
@@ -112,11 +115,11 @@ export function startProjectsStateSync(
 }
 
 export function useProjectsSnapshot(): ProjectsSnapshot | null {
-  return useAtomValue(projectsSnapshotAtom)
+  return useAppStateValue(projectsSnapshotAtom)
 }
 
 export function useActiveThreadId(): ThreadId | null {
-  return useAtomValue(activeThreadIdAtom)
+  return useAppStateValue(activeThreadIdAtom)
 }
 
 export function useActiveThreadInfo(): {

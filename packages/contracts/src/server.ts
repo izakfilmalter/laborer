@@ -9,7 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from './base'
 
-export const RuntimeMode = Schema.Literals(['web', 'desktop'])
+export const RuntimeMode = Schema.Literal('web', 'desktop')
 export type RuntimeMode = typeof RuntimeMode.Type
 
 export const ServerConfig = Schema.Struct({
@@ -60,8 +60,8 @@ export const ServerLifecycleReadyEvent = Schema.Struct({
 })
 export type ServerLifecycleReadyEvent = typeof ServerLifecycleReadyEvent.Type
 
-export const ServerLifecycleStreamEvent = Schema.Union([
+export const ServerLifecycleStreamEvent = Schema.Union(
   ServerLifecycleWelcomeEvent,
-  ServerLifecycleReadyEvent,
-])
+  ServerLifecycleReadyEvent
+)
 export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type

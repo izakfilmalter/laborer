@@ -58,14 +58,14 @@ export const ProjectsEventThreadAdded = Schema.Struct({
 })
 export type ProjectsEventThreadAdded = typeof ProjectsEventThreadAdded.Type
 
-export const ProjectsEvent = Schema.Union([
+export const ProjectsEvent = Schema.Union(
   ProjectsEventSnapshot,
   ProjectsEventProjectAdded,
-  ProjectsEventThreadAdded,
-])
+  ProjectsEventThreadAdded
+)
 export type ProjectsEvent = typeof ProjectsEvent.Type
 
-export class ProjectsCreateThreadError extends Schema.TaggedErrorClass<ProjectsCreateThreadError>()(
+export class ProjectsCreateThreadError extends Schema.TaggedError<ProjectsCreateThreadError>()(
   'ProjectsCreateThreadError',
   {
     message: TrimmedNonEmptyString,

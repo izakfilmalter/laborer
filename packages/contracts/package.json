@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/rpc": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {

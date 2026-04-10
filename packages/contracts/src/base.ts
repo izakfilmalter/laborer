@@ -1,9 +1,9 @@
 import { Schema } from 'effect'
 
-export const TrimmedString = Schema.Trim
-export const TrimmedNonEmptyString = TrimmedString.check(Schema.isNonEmpty())
-export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
-export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+export const TrimmedString = Schema.Trimmed
+export const TrimmedNonEmptyString = Schema.NonEmptyTrimmedString
+export const PositiveInt = Schema.Int.pipe(Schema.greaterThanOrEqualTo(1))
+export const NonNegativeInt = Schema.NonNegativeInt
 export const IsoDateTime = Schema.String
 
 const makeId = <Brand extends string>(brand: Brand) =>

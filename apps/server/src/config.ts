@@ -17,12 +17,11 @@ export interface ServerRuntimeConfigShape {
   readonly wsUrl: string
 }
 
-export class ServerRuntimeConfig extends Context.Service<
-  ServerRuntimeConfig,
-  ServerRuntimeConfigShape
->()('@laborer/server/ServerRuntimeConfig') {
+export class ServerRuntimeConfig extends Context.Tag(
+  '@laborer/server/ServerRuntimeConfig'
+)<ServerRuntimeConfig, ServerRuntimeConfigShape>() {
   static readonly layer = Layer.effect(
-    ServerRuntimeConfig,
+    this,
     Effect.sync(() => {
       const host =
         process.env.LABORER_SERVER_HOST?.trim() || DEFAULT_SERVER_HOST

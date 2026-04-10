@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@effect/rpc": "catalog:",
     "@laborer/contracts": "workspace:*",
     "@laborer/shared": "workspace:*",
     "effect": "catalog:"

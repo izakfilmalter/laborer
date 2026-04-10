@@ -1,5 +1,7 @@
+import type { RpcClient } from '@effect/rpc'
 import { Duration, Effect, Exit, ManagedRuntime, Scope, Stream } from 'effect'
-import type { RpcClient } from 'effect/unstable/rpc'
+import type { DurationInput } from 'effect/Duration'
+import type { CloseableScope } from 'effect/Scope'
 
 import {
   createWsRpcProtocolLayer,
@@ -8,7 +10,7 @@ import {
 } from '@/rpc/protocol'
 
 interface SubscribeOptions {
-  readonly retryDelay?: Duration.Input
+  readonly retryDelay?: DurationInput
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY = Duration.millis(250)
@@ -18,7 +20,7 @@ export class WsTransport {
     RpcClient.Protocol,
     never
   >
-  private readonly clientScope: Scope.Closeable
+  private readonly clientScope: CloseableScope
   private readonly clientPromise: Promise<WsRpcProtocolClient>
   private disposed = false
 
@@ -26,7 +28,7 @@ export class WsTransport {
     this.runtime = ManagedRuntime.make(createWsRpcProtocolLayer(url))
     this.clientScope = this.runtime.runSync(Scope.make())
     this.clientPromise = this.runtime.runPromise(
-      Scope.provide(this.clientScope)(makeWsRpcProtocolClient)
+      Scope.extend(makeWsRpcProtocolClient, this.clientScope)
     )
   }
 
@@ -97,7 +99,7 @@ export class WsTransport {
             })
           )
         ),
-        Effect.catch(() => {
+        Effect.catchAll(() => {
           if (!active || this.disposed) {
             return Effect.interrupt
           }

@@ -1,3 +1,5 @@
+import { HttpLayerRouter, HttpServerResponse } from '@effect/platform'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
 import type { ProjectsEvent } from '@laborer/contracts/projects'
 import { WS_METHODS, WsRpcGroup } from '@laborer/contracts/rpc'
 import type {
@@ -5,8 +7,6 @@ import type {
   ServerLifecycleStreamEvent,
 } from '@laborer/contracts/server'
 import { Effect, Layer, Stream } from 'effect'
-import { HttpRouter, HttpServerResponse } from 'effect/unstable/http'
-import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 
 import { ServerRuntimeConfig } from './config'
 import { ProjectStore } from './project-store'
@@ -69,22 +69,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
   })
 )
 
-export const healthRouteLayer = HttpRouter.add(
+export const healthRouteLayer = HttpLayerRouter.add(
   'GET',
   '/health',
-  HttpServerResponse.json({
-    status: 'ok',
-  })
+  Effect.succeed(HttpServerResponse.unsafeJson({ status: 'ok' }))
 )
 
-export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(
-      WsRpcGroup
-    ).pipe(
-      Effect.provide(Layer.mergeAll(WsRpcLayer, RpcSerialization.layerJson))
-    )
-
-    return HttpRouter.add('GET', '/ws', rpcWebSocketHttpEffect)
-  })
-)
+export const websocketRpcRouteLayer = RpcServer.layerHttpRouter({
+  group: WsRpcGroup,
+  path: '/ws',
+  protocol: 'websocket',
+}).pipe(Layer.provide(WsRpcLayer), Layer.provide(RpcSerialization.layerJson))

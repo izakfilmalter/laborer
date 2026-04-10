@@ -1,11 +1,8 @@
+import { BrowserSocket } from '@effect/platform-browser'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { WsRpcGroup } from '@laborer/contracts/rpc'
-import type { Effect } from 'effect'
 import { Layer } from 'effect'
-import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
-import {
-  layerWebSocket,
-  layerWebSocketConstructorGlobal,
-} from 'effect/unstable/socket/Socket'
+import type * as Effect from 'effect/Effect'
 
 import { resolveServerUrl } from '@/lib/server-url'
 
@@ -14,7 +11,7 @@ export const makeWsRpcProtocolClient = RpcClient.make(WsRpcGroup)
 type RpcClientFactory = typeof makeWsRpcProtocolClient
 
 export type WsRpcProtocolClient =
-  RpcClientFactory extends Effect.Effect<infer Client, unknown, unknown>
+  RpcClientFactory extends Effect.Effect<infer Client, never, unknown>
     ? Client
     : never
 
@@ -24,11 +21,12 @@ export function createWsRpcProtocolLayer(url?: string) {
     protocol: window.location.protocol === 'https:' ? 'wss' : 'ws',
     pathname: '/ws',
   })
-  const socketLayer = layerWebSocket(resolvedUrl).pipe(
-    Layer.provide(layerWebSocketConstructorGlobal)
-  )
-
   return RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(
-    Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson))
+    Layer.provide(
+      Layer.mergeAll(
+        BrowserSocket.layerWebSocket(resolvedUrl),
+        RpcSerialization.layerJson
+      )
+    )
   )
 }

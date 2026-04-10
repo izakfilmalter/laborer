@@ -6,7 +6,6 @@ import type {
   ProjectsSnapshot,
   ProjectThread,
 } from '@laborer/contracts/projects'
-import { WS_METHODS } from '@laborer/contracts/rpc'
 import type {
   ServerConfig,
   ServerConfigStreamEvent,
@@ -56,31 +55,30 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
   return {
     dispose: () => transport.dispose(),
     projects: {
-      add: (input) =>
-        transport.request((client) => client[WS_METHODS.projectsAdd](input)),
+      add: (input) => transport.request((client) => client.projects.add(input)),
       createThread: (input) =>
-        transport.request((client) =>
-          client[WS_METHODS.projectsCreateThread](input)
-        ),
-      list: () =>
-        transport.request((client) => client[WS_METHODS.projectsList]({})),
+        transport.request((client) => client.projects.createThread(input)),
+      list: () => transport.request((client) => client.projects.list({})),
       subscribe: (listener) =>
         transport.subscribe(
-          (client) => client[WS_METHODS.subscribeProjects]({}),
+          (client) =>
+            client.subscribeProjects({}, { asMailbox: false as const }),
           listener
         ),
     },
     server: {
       getConfig: () =>
-        transport.request((client) => client[WS_METHODS.serverGetConfig]({})),
+        transport.request((client) => client.server.getConfig({})),
       subscribeConfig: (listener) =>
         transport.subscribe(
-          (client) => client[WS_METHODS.subscribeServerConfig]({}),
+          (client) =>
+            client.subscribeServerConfig({}, { asMailbox: false as const }),
           listener
         ),
       subscribeLifecycle: (listener) =>
         transport.subscribe(
-          (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+          (client) =>
+            client.subscribeServerLifecycle({}, { asMailbox: false as const }),
           listener
         ),
     },

@@ -4,7 +4,7 @@
  * Row 1 (Git): branch name + PR badge + review verdict + findings count
  *   + Review/Fix action buttons (hidden when no PR)
  *
- * Row 2 (Docker/Infra): container URL/port + status badge + pause/play
+ * Row 2 (Sandbox/Infra): sandbox URL/port + status badge + pause/play
  *
  * @see Issue: Reorganize workspace actions
  */
@@ -203,9 +203,13 @@ import { WorkspaceList } from '../src/components/workspace-list'
 
 const REVIEW_PR_RE = /review pr/i
 const FIX_FINDINGS_RE = /fix findings/i
-const PAUSE_CONTAINER_RE = /pause container/i
-const RESUME_CONTAINER_RE = /resume container/i
+const PAUSE_SANDBOX_RE = /pause sandbox/i
+const RESUME_SANDBOX_RE = /resume sandbox/i
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
+const SETTING_UP_SANDBOX_RE = /Setting up sandbox/
+const CREATING_SANDBOX_RE = /Creating sandbox/
+const BUILDING_CONTAINER_IMAGE_RE = /Building container image/
+const PUSHING_CODE_RE = /Pushing code/
 
 const makeWorkspace = (
   overrides: Partial<{
@@ -217,10 +221,10 @@ const makeWorkspace = (
     origin: string
     createdAt: string
     taskSource: string | null
-    containerId: string | null
-    containerUrl: string | null
-    containerStatus: string | null
-    containerSetupStep: string | null
+    sandboxId: string | null
+    sandboxUrl: string | null
+    sandboxStatus: string | null
+    sandboxSetupStep: string | null
     worktreeSetupStep: string | null
     prNumber: number | null
     prUrl: string | null
@@ -236,10 +240,10 @@ const makeWorkspace = (
   origin: 'laborer',
   createdAt: new Date().toISOString(),
   taskSource: null,
-  containerId: null,
-  containerUrl: null,
-  containerStatus: null,
-  containerSetupStep: null,
+  sandboxId: null,
+  sandboxUrl: null,
+  sandboxStatus: null,
+  sandboxSetupStep: null,
   worktreeSetupStep: null,
   prNumber: null,
   prUrl: null,
@@ -302,7 +306,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
   })
 })
 
-describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
+describe('Workspace card layout — Row 2 (Sandbox/Infra row)', () => {
   afterEach(() => {
     cleanup()
   })
@@ -312,12 +316,12 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('shows status badge and pause button on the infra row for containerized workspace', () => {
+  it('shows status badge and pause button on the infra row for sandboxed workspace', () => {
     mockStore([
       makeWorkspace({
-        containerId: 'container-1',
-        containerUrl: 'my-app--laborer.orb.local',
-        containerStatus: 'running',
+        sandboxId: 'container-1',
+        sandboxUrl: 'my-app--laborer.orb.local',
+        sandboxStatus: 'running',
       }),
     ])
 
@@ -327,9 +331,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
     expect(screen.getByText('running')).toBeTruthy()
 
     // Pause button should be present
-    expect(
-      screen.getByRole('button', { name: PAUSE_CONTAINER_RE })
-    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: PAUSE_SANDBOX_RE })).toBeTruthy()
 
     // Destroy button should be present on Row 1 (non-root workspace)
     expect(
@@ -337,7 +339,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
     ).toBeTruthy()
   })
 
-  it('shows status badge on infra row for non-containerized workspace', () => {
+  it('shows status badge on infra row for non-sandboxed workspace', () => {
     mockStore([makeWorkspace()])
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
@@ -351,20 +353,125 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
     ).toBeTruthy()
   })
 
-  it('shows paused status with resume button for paused containers', () => {
+  it('shows paused status with resume button for paused sandboxes', () => {
     mockStore([
       makeWorkspace({
-        containerId: 'container-1',
-        containerUrl: 'my-app--laborer.orb.local',
-        containerStatus: 'paused',
+        sandboxId: 'container-1',
+        sandboxUrl: 'my-app--laborer.orb.local',
+        sandboxStatus: 'paused',
       }),
     ])
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     expect(screen.getByText('paused')).toBeTruthy()
-    expect(
-      screen.getByRole('button', { name: RESUME_CONTAINER_RE })
-    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: RESUME_SANDBOX_RE })).toBeTruthy()
+  })
+})
+
+describe('Workspace card layout — setup step progress', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    isElectronMock.mockReturnValue(false)
+  })
+
+  it('shows Daytona "Creating sandbox..." label when sandboxSetupStep is creating-sandbox', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'creating-sandbox',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Creating sandbox...')).toBeTruthy()
+  })
+
+  it('shows Daytona "Pushing code to sandbox..." label when sandboxSetupStep is pushing-code', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'pushing-code',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Pushing code to sandbox...')).toBeTruthy()
+  })
+
+  it('shows Daytona "Building sandbox snapshot..." label when sandboxSetupStep is building-snapshot', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'building-snapshot',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Building sandbox snapshot...')).toBeTruthy()
+  })
+
+  it('shows Daytona "Configuring SSH access..." label when sandboxSetupStep is configuring-ssh', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'configuring-ssh',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Configuring SSH access...')).toBeTruthy()
+  })
+
+  it('shows Daytona "Starting sandbox..." label when sandboxSetupStep is starting-sandbox', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'starting-sandbox',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Starting sandbox...')).toBeTruthy()
+  })
+
+  it('shows Docker "Building container image..." label when sandboxSetupStep is building-image', () => {
+    mockStore([
+      makeWorkspace({
+        status: 'creating',
+        sandboxSetupStep: 'building-image',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('Building container image...')).toBeTruthy()
+  })
+
+  it('shows no setup step indicator when sandboxSetupStep is null', () => {
+    mockStore([
+      makeWorkspace({
+        sandboxId: 'container-1',
+        sandboxUrl: 'my-app--laborer.orb.local',
+        sandboxStatus: 'running',
+        sandboxSetupStep: null,
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.queryByText(SETTING_UP_SANDBOX_RE)).toBeNull()
+    expect(screen.queryByText(CREATING_SANDBOX_RE)).toBeNull()
+    expect(screen.queryByText(BUILDING_CONTAINER_IMAGE_RE)).toBeNull()
+    expect(screen.queryByText(PUSHING_CODE_RE)).toBeNull()
   })
 })

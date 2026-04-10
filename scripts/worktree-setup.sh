@@ -64,10 +64,13 @@ else
     echo "  Slug:           $WORKTREE_SLUG"
 fi
 
-# Copy .reference from root worktree
+# Copy .reference from root worktree (non-fatal; broken symlinks are fine)
 if [ -d "$ROOT_WORKTREE_PATH/.reference" ] && [ ! -e ".reference" ]; then
-    cp -r "$ROOT_WORKTREE_PATH/.reference" .reference
-    echo "  Copied .reference directory"
+    if cp -RP "$ROOT_WORKTREE_PATH/.reference" .reference 2>/dev/null; then
+        echo "  Copied .reference directory"
+    else
+        echo "  Warning: .reference copy had errors (broken symlinks?), continuing anyway" >&2
+    fi
 fi
 
 # Append worktree-specific config to .env.local

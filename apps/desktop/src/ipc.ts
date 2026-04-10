@@ -390,6 +390,26 @@ export async function askRenderersBeforeQuit(
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse and validate the payload for a terminal data port acquire request.
+ * Returns `null` if the payload is invalid.
+ */
+function parseTerminalDataPortPayload(
+  payload: unknown
+): { terminalId: string; nonce: string } | null {
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const { terminalId, nonce } = payload as {
+    terminalId: unknown
+    nonce: unknown
+  }
+  if (typeof terminalId !== 'string' || typeof nonce !== 'string') {
+    return null
+  }
+  return { terminalId, nonce }
+}
+
+/**
  * Registers all `ipcMain.handle()` handlers for the DesktopBridge IPC.
  * Should be called once during app bootstrap (after `app.whenReady()`).
  *
@@ -742,43 +762,47 @@ export function registerIpcHandlers(
 
   // -- Acquire terminal data port ------------------------------------------
   // Creates a per-terminal MessagePort pair for PTY I/O streaming.
-  // One port goes to the terminal utility process (attached to a specific
-  // PTY via `{ type: 'terminal-data-port', terminalId }`), the other goes
-  // to the renderer (attached to the xterm.js instance).
+  // One port goes to the utility process (attached to a specific PTY),
+  // the other goes to the renderer (attached to the xterm.js instance).
   //
   // This is separate from the RPC channel — RPC handles structured commands,
   // the data channel handles high-frequency I/O streaming.
   //
   // @see Issue #8: Terminal PTY I/O data channel over MessagePort
+  // -- Acquire terminal data port ------------------------------------------
+  // Routes terminal data ports to the correct utility process:
+  // - Daytona terminals (prefixed with `daytona:`) → server utility process
+  //   (where the Daytona SDK and PTY WebSocket connections live)
+  // - Docker/host terminals → terminal utility process
+  //   (where node-pty sessions are managed)
+  //
+  // @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
   ipcMain.removeAllListeners(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL)
   ipcMain.on(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL, (event, payload: unknown) => {
-    if (typeof payload !== 'object' || payload === null) {
+    const parsed = parseTerminalDataPortPayload(payload)
+    if (!parsed) {
       return
     }
 
-    const { terminalId, nonce } = payload as {
-      terminalId: unknown
-      nonce: unknown
-    }
+    const { terminalId, nonce } = parsed
+    const isDaytonaTerminal = terminalId.startsWith('daytona:')
+    const processName = isDaytonaTerminal ? 'server' : 'terminal'
+    const messageType = isDaytonaTerminal
+      ? 'daytona-terminal-data-port'
+      : 'terminal-data-port'
 
-    if (typeof terminalId !== 'string' || typeof nonce !== 'string') {
+    if (!utilityProcessManagerRef?.isRunning(processName)) {
       return
     }
 
-    if (!utilityProcessManagerRef?.isRunning('terminal')) {
-      return
-    }
-
-    const utilityProcess = utilityProcessManagerRef.getProcess('terminal')
-    if (!utilityProcess || event.sender.isDestroyed()) {
+    const targetProcess = utilityProcessManagerRef.getProcess(processName)
+    if (!targetProcess || event.sender.isDestroyed()) {
       return
     }
 
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-    rendererPortRegistry.track('terminal', rendererPort)
-    utilityProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
-      utilityPort,
-    ])
+    rendererPortRegistry.track(processName, rendererPort)
+    targetProcess.postMessage({ type: messageType, terminalId }, [utilityPort])
     event.sender.postMessage(TERMINAL_DATA_PORT_RESPONSE_CHANNEL, nonce, [
       rendererPort,
     ])

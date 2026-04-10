@@ -10,15 +10,19 @@ import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
+import { DockerDetection } from '../src/services/docker-detection.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
+import { SandboxProviderRoutedLayer } from '../src/services/sandbox-provider-router.js'
+import { TerminalClient } from '../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
+import { NoopSandboxProvider } from './helpers/test-sandbox-provider.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
@@ -26,7 +30,31 @@ const tempRoots: string[] = []
 const docker = (args: string): string =>
   execSync(`docker ${args}`, { encoding: 'utf-8' }).trim()
 
+/**
+ * Stub TerminalClient for tests — SandboxProviderRoutedLayer requires it
+ * but these tests don't exercise terminal functionality.
+ */
+const TestTerminalClient = Layer.succeed(
+  TerminalClient,
+  TerminalClient.of({
+    spawnInWorkspace: () =>
+      Effect.succeed({
+        id: 'stub',
+        workspaceId: 'stub',
+        command: 'stub',
+        status: 'running' as const,
+      }),
+    killAllForWorkspace: () => Effect.succeed(0),
+    resizeTerminal: () => Effect.void,
+    killTerminal: () => Effect.void,
+    removeTerminal: () => Effect.void,
+  })
+)
+
 const TestLayer = WorkspaceProvider.layer.pipe(
+  Layer.provide(SandboxProviderRoutedLayer),
+  Layer.provideMerge(TestTerminalClient),
+  Layer.provideMerge(DockerDetection.layer),
   Layer.provideMerge(DepsImageService.layer),
   Layer.provideMerge(ContainerService.layer),
   Layer.provideMerge(ProjectRegistry.layer),
@@ -34,6 +62,7 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(BranchStateTracker.layer),
   Layer.provideMerge(TestFileWatcherClientLayer),
   Layer.provideMerge(WorktreeReconciler.layer),
+  Layer.provide(NoopSandboxProvider),
   Layer.provideMerge(WorktreeDetector.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(ConfigService.layer),

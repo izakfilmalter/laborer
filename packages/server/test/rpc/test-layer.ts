@@ -19,6 +19,7 @@ import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
+import { SandboxProviderRoutedLayer } from '../../src/services/sandbox-provider-router.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -86,6 +87,9 @@ const TestTerminalClient = Layer.effect(
           ])
           return 0
         }),
+      resizeTerminal: () => Effect.void,
+      killTerminal: () => Effect.void,
+      removeTerminal: () => Effect.void,
     })
   })
 )
@@ -142,16 +146,28 @@ const DeferredLeafLayers = Layer.mergeAll(
 )
 
 /**
- * Deferred Group 1 — services depending on LaborerStore + leaf layers.
+ * Deferred Group 1a — services depending on LaborerStore + leaf layers.
+ * Does NOT include WorktreeReconciler because it needs SandboxProvider,
+ * which is built in Group 1b after ContainerService is available.
  */
-const DeferredGroup1Layers = Layer.mergeAll(
+const DeferredGroup1aLayers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
   PrdStorageService.layer,
   FileService.layer,
-  PrWatcher.layer,
-  WorktreeReconciler.layer
+  PrWatcher.layer
+)
+
+/**
+ * Deferred Group 1b — adds SandboxProvider (routed between Docker and
+ * Daytona) on top of Group 1a, then builds WorktreeReconciler which
+ * needs SandboxProvider for sandbox cleanup when removing stale
+ * workspaces.
+ */
+const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(
+  Layer.provideMerge(SandboxProviderRoutedLayer),
+  Layer.provideMerge(DeferredGroup1aLayers)
 )
 
 const TestBackgroundFetchLayer = Layer.succeed(
@@ -182,6 +198,10 @@ const DeferredGroup2Layers = Layer.mergeAll(
 /**
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
+ *
+ * `SandboxProvider` is already in the stack from Group 1b
+ * (via `SandboxProviderRoutedLayer`), so `WorkspaceProvider.layer`
+ * can consume it directly.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
@@ -212,10 +232,19 @@ const DeferredServicesReadyTrueLayer = Layer.effect(
  * Uses DeferredServicesReadyTrueLayer because all services are built
  * eagerly, matching the production state after deferred init completes.
  */
+/**
+ * DeferredServiceStack with TestTerminalClient baked in.
+ * SandboxProviderRoutedLayer (inside the stack) requires TerminalClient.
+ */
+const DeferredServiceStackWithTerminal = DeferredServiceStack.pipe(
+  Layer.provide(TestTerminalClient),
+  Layer.provide(TestTerminalClientRecorderLayer)
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredServiceStackWithTerminal),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
@@ -225,7 +254,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredServiceStackWithTerminal),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),

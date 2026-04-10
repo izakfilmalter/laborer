@@ -174,7 +174,7 @@ vi.mock('@/components/ui/alert-dialog', () => ({
 
 import { WorkspaceList } from '../src/components/workspace-list'
 
-const START_CONTAINER_RE = /start container/i
+const START_SANDBOX_RE = /start sandbox/i
 const DESTROY_ACTION_RE = /destroy ⌘ ↵/i
 
 const WORKSPACE_PLAN = {
@@ -470,9 +470,9 @@ describe('WorkspaceList plan association', () => {
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    // The start container button should be present
+    // The start sandbox button should be present
     const startButton = screen.getByRole('button', {
-      name: START_CONTAINER_RE,
+      name: START_SANDBOX_RE,
     })
     expect(startButton).toBeTruthy()
   })
@@ -504,9 +504,9 @@ describe('WorkspaceList plan association', () => {
           return [
             {
               ...WORKSPACE_REGULAR,
-              containerId: 'container-1',
-              containerStatus: 'running',
-              containerUrl: 'preview.example.com',
+              sandboxId: 'container-1',
+              sandboxStatus: 'running',
+              sandboxUrl: 'preview.example.com',
             },
           ]
         }

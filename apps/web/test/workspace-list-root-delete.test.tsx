@@ -211,10 +211,10 @@ const makeWorkspace = (
     origin: string
     createdAt: string
     taskSource: string | null
-    containerId: string | null
-    containerUrl: string | null
-    containerStatus: string | null
-    containerSetupStep: string | null
+    sandboxId: string | null
+    sandboxUrl: string | null
+    sandboxStatus: string | null
+    sandboxSetupStep: string | null
     worktreeSetupStep: string | null
     prNumber: number | null
     prUrl: string | null
@@ -232,10 +232,10 @@ const makeWorkspace = (
   origin: 'external',
   createdAt: new Date().toISOString(),
   taskSource: null,
-  containerId: null,
-  containerUrl: null,
-  containerStatus: null,
-  containerSetupStep: null,
+  sandboxId: null,
+  sandboxUrl: null,
+  sandboxStatus: null,
+  sandboxSetupStep: null,
   worktreeSetupStep: null,
   prNumber: null,
   prUrl: null,

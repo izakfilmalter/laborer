@@ -29,6 +29,7 @@ import {
   ConfigService,
   type ConfigValidationError,
   GLOBAL_CONFIG_DIR,
+  GLOBAL_CONFIG_PATH,
   type LaborerConfig,
   type ResolvedLaborerConfig,
 } from '../src/services/config-service.js'
@@ -894,6 +895,547 @@ describe('ConfigService', () => {
           assert.strictEqual(result.devServer.workdir.value, '/child-app')
           assert.strictEqual(result.devServer.dockerfile.source, 'default')
           assert.isNull(result.devServer.dockerfile.value)
+        })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Provider config fields (Issue 5)
+  // -------------------------------------------------------------------------
+
+  describe('provider config', () => {
+    it.effect(
+      'should return null defaults for provider, resources, autoStopInterval',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-defaults')
+          mkdirSync(projectDir, { recursive: true })
+
+          // Back up and clear global config to isolate defaults
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+
+            const result = yield* resolveConfig(projectDir, 'provider-defaults')
+
+            assert.isNull(result.devServer.provider.value)
+            assert.strictEqual(result.devServer.provider.source, 'default')
+            assert.isNull(result.devServer.resources.value)
+            assert.strictEqual(result.devServer.resources.source, 'default')
+            assert.isNull(result.devServer.autoStopInterval.value)
+            assert.strictEqual(
+              result.devServer.autoStopInterval.source,
+              'default'
+            )
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            }
+          }
+        })
+    )
+
+    it.effect('should read devServer.provider from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-daytona')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { provider: 'daytona' } as never,
+        })
+
+        const result = yield* resolveConfig(projectDir, 'provider-daytona')
+
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.provider.source, configPath)
+      })
+    )
+
+    it.effect(
+      'should read devServer.provider "docker" from project config',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-docker')
+          mkdirSync(projectDir, { recursive: true })
+          const configPath = writeConfig(projectDir, {
+            devServer: { provider: 'docker' } as never,
+          })
+
+          const result = yield* resolveConfig(projectDir, 'provider-docker')
+
+          assert.strictEqual(result.devServer.provider.value, 'docker')
+          assert.strictEqual(result.devServer.provider.source, configPath)
+        })
+    )
+
+    it.effect('should reject invalid provider value', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-invalid')
+        mkdirSync(projectDir, { recursive: true })
+        writeConfig(projectDir, {
+          devServer: { provider: 'invalid' } as never,
+        })
+
+        const result = yield* resolveConfig(
+          projectDir,
+          'provider-invalid'
+        ).pipe(Effect.either)
+
+        assert.isTrue(
+          result._tag === 'Left',
+          'Expected validation error for invalid provider'
+        )
+        if (result._tag === 'Left') {
+          assert.include(result.left.message, 'provider')
+        }
+      })
+    )
+
+    it.effect(
+      'should read devServer.autoStopInterval from project config',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'auto-stop-interval')
+          mkdirSync(projectDir, { recursive: true })
+          const configPath = writeConfig(projectDir, {
+            devServer: { autoStopInterval: 30 } as never,
+          })
+
+          const result = yield* resolveConfig(projectDir, 'auto-stop-interval')
+
+          assert.strictEqual(result.devServer.autoStopInterval.value, 30)
+          assert.strictEqual(
+            result.devServer.autoStopInterval.source,
+            configPath
+          )
+        })
+    )
+
+    it.effect('should read devServer.resources from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'resources')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: {
+            resources: { cpu: 4, memory: 8, disk: 50 },
+          } as never,
+        })
+
+        const result = yield* resolveConfig(projectDir, 'resources')
+
+        assert.deepStrictEqual(result.devServer.resources.value, {
+          cpu: 4,
+          memory: 8,
+          disk: 50,
+        })
+        assert.strictEqual(result.devServer.resources.source, configPath)
+      })
+    )
+
+    it.effect('should inherit provider from ancestor config', () =>
+      Effect.gen(function* () {
+        const parent = join(testRoot, 'provider-inherit-parent')
+        const child = join(parent, 'provider-inherit-child')
+        mkdirSync(child, { recursive: true })
+
+        const parentPath = writeConfig(parent, {
+          devServer: { provider: 'daytona' } as never,
+        })
+        writeConfig(child, {
+          devServer: { startCommand: 'bun dev' },
+        })
+
+        const result = yield* resolveConfig(child, 'provider-inherit')
+
+        // provider inherited from parent
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.provider.source, parentPath)
+      })
+    )
+
+    it.effect('should override ancestor provider with project config', () =>
+      Effect.gen(function* () {
+        const parent = join(testRoot, 'provider-override-parent')
+        const child = join(parent, 'provider-override-child')
+        mkdirSync(child, { recursive: true })
+
+        writeConfig(parent, {
+          devServer: { provider: 'daytona' } as never,
+        })
+        const childPath = writeConfig(child, {
+          devServer: { provider: 'docker' } as never,
+        })
+
+        const result = yield* resolveConfig(child, 'provider-override')
+
+        assert.strictEqual(result.devServer.provider.value, 'docker')
+        assert.strictEqual(result.devServer.provider.source, childPath)
+      })
+    )
+
+    it.effect('should write and round-trip provider config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'provider-write-roundtrip')
+        mkdirSync(projectDir, { recursive: true })
+
+        const svc = yield* ConfigService
+
+        yield* svc.writeProjectConfig(projectDir, {
+          devServer: {
+            provider: 'daytona',
+            autoStopInterval: 20,
+            resources: { cpu: 2, memory: 4 },
+          } as never,
+        })
+
+        const raw = JSON.parse(
+          readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
+        ) as Record<string, unknown>
+        const rawDs = raw.devServer as Record<string, unknown>
+        assert.strictEqual(rawDs.provider, 'daytona')
+        assert.strictEqual(rawDs.autoStopInterval, 20)
+        assert.deepStrictEqual(rawDs.resources, { cpu: 2, memory: 4 })
+
+        const result = yield* svc.resolveConfig(
+          projectDir,
+          'provider-write-roundtrip'
+        )
+        assert.strictEqual(result.devServer.provider.value, 'daytona')
+        assert.strictEqual(result.devServer.autoStopInterval.value, 20)
+        assert.deepStrictEqual(result.devServer.resources.value, {
+          cpu: 2,
+          memory: 4,
+        })
+      }).pipe(Effect.provide(ConfigService.layer))
+    )
+  })
+
+  describe('defaultSandboxProvider resolution', () => {
+    it.effect(
+      'should default to null when no defaultSandboxProvider is set',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'default-provider-null')
+          mkdirSync(projectDir, { recursive: true })
+
+          // Back up and clear global config to ensure clean default
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            // Remove global config so it doesn't set defaultSandboxProvider
+            if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+
+            const result = yield* resolveConfig(
+              projectDir,
+              'default-provider-null'
+            )
+
+            assert.isNull(result.defaultSandboxProvider.value)
+            assert.strictEqual(result.defaultSandboxProvider.source, 'default')
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            }
+          }
+        })
+    )
+
+    it.effect('should read defaultSandboxProvider from global config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'default-provider-global')
+        mkdirSync(projectDir, { recursive: true })
+
+        // Write the global config with defaultSandboxProvider
+        const svc = yield* ConfigService
+        yield* svc.writeGlobalConfig({
+          defaultSandboxProvider: 'daytona',
+        } as never)
+
+        const result = yield* svc.resolveConfig(
+          projectDir,
+          'default-provider-global'
+        )
+
+        assert.strictEqual(result.defaultSandboxProvider.value, 'daytona')
+        assert.strictEqual(
+          result.defaultSandboxProvider.source,
+          GLOBAL_CONFIG_PATH
+        )
+      }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect('should read defaultSandboxProvider from global config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'default-provider-global')
+        mkdirSync(projectDir, { recursive: true })
+
+        // Back up and restore global config around the test
+        const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+          ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+          : null
+
+        try {
+          // Write the global config with defaultSandboxProvider
+          const svc = yield* ConfigService
+          yield* svc.writeGlobalConfig({
+            defaultSandboxProvider: 'daytona',
+          } as never)
+
+          const result = yield* svc.resolveConfig(
+            projectDir,
+            'default-provider-global'
+          )
+
+          assert.strictEqual(result.defaultSandboxProvider.value, 'daytona')
+          assert.strictEqual(
+            result.defaultSandboxProvider.source,
+            GLOBAL_CONFIG_PATH
+          )
+        } finally {
+          // Restore original global config
+          if (globalConfigBackup !== null) {
+            writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+          } else if (existsSync(GLOBAL_CONFIG_PATH)) {
+            rmSync(GLOBAL_CONFIG_PATH)
+          }
+        }
+      }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect(
+      'should let per-project devServer.provider override defaultSandboxProvider',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'default-provider-override')
+          mkdirSync(projectDir, { recursive: true })
+
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            // Write global config with defaultSandboxProvider: daytona
+            const svc = yield* ConfigService
+            yield* svc.writeGlobalConfig({
+              defaultSandboxProvider: 'daytona',
+            } as never)
+
+            // Write project config with devServer.provider: docker
+            const configPath = writeConfig(projectDir, {
+              devServer: { provider: 'docker' } as never,
+            })
+
+            const result = yield* svc.resolveConfig(
+              projectDir,
+              'default-provider-override'
+            )
+
+            // Per-project devServer.provider overrides global default
+            assert.strictEqual(result.devServer.provider.value, 'docker')
+            assert.strictEqual(result.devServer.provider.source, configPath)
+
+            // Global defaultSandboxProvider is still daytona
+            assert.strictEqual(result.defaultSandboxProvider.value, 'daytona')
+            assert.strictEqual(
+              result.defaultSandboxProvider.source,
+              GLOBAL_CONFIG_PATH
+            )
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            } else if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+          }
+        }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect(
+      'should write and round-trip defaultSandboxProvider in global config',
+      () =>
+        Effect.gen(function* () {
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            const svc = yield* ConfigService
+
+            yield* svc.writeGlobalConfig({
+              defaultSandboxProvider: 'daytona',
+            } as never)
+
+            const globalConfig = yield* svc.readGlobalConfig()
+            assert.strictEqual(globalConfig.defaultSandboxProvider, 'daytona')
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            } else if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+          }
+        }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect(
+      'should resolve defaultSandboxProvider from closest config layer',
+      () =>
+        Effect.gen(function* () {
+          const parentDir = join(testRoot, 'default-provider-parent')
+          const projectDir = join(parentDir, 'child')
+          mkdirSync(projectDir, { recursive: true })
+
+          const parentPath = writeConfig(parentDir, {
+            defaultSandboxProvider: 'daytona',
+          } as never)
+
+          const result = yield* resolveConfig(
+            projectDir,
+            'default-provider-parent'
+          )
+
+          assert.strictEqual(result.defaultSandboxProvider.value, 'daytona')
+          assert.strictEqual(result.defaultSandboxProvider.source, parentPath)
+        })
+    )
+
+    it.effect(
+      'should fall back devServer.provider to defaultSandboxProvider when no per-project provider is set',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-fallback')
+          mkdirSync(projectDir, { recursive: true })
+
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            // Write global config with defaultSandboxProvider: daytona
+            const svc = yield* ConfigService
+            yield* svc.writeGlobalConfig({
+              defaultSandboxProvider: 'daytona',
+            } as never)
+
+            // Project config has no devServer.provider set
+            writeConfig(projectDir, {
+              devServer: { startCommand: 'bun dev' } as never,
+            })
+
+            const result = yield* svc.resolveConfig(
+              projectDir,
+              'provider-fallback'
+            )
+
+            // devServer.provider falls back to global defaultSandboxProvider
+            assert.strictEqual(result.devServer.provider.value, 'daytona')
+            assert.strictEqual(
+              result.devServer.provider.source,
+              GLOBAL_CONFIG_PATH
+            )
+
+            // defaultSandboxProvider itself is daytona
+            assert.strictEqual(result.defaultSandboxProvider.value, 'daytona')
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            } else if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+          }
+        }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect(
+      'should keep devServer.provider as null when no defaultSandboxProvider is set',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'provider-no-fallback')
+          mkdirSync(projectDir, { recursive: true })
+
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            // Remove global config so defaultSandboxProvider is null
+            if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+
+            // Project config has no devServer.provider set
+            writeConfig(projectDir, {
+              devServer: { startCommand: 'bun dev' } as never,
+            })
+
+            const result = yield* resolveConfig(
+              projectDir,
+              'provider-no-fallback'
+            )
+
+            // devServer.provider stays null (no fallback available)
+            assert.isNull(result.devServer.provider.value)
+            assert.strictEqual(result.devServer.provider.source, 'default')
+
+            // defaultSandboxProvider is also null
+            assert.isNull(result.defaultSandboxProvider.value)
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            }
+          }
+        })
+    )
+
+    it.effect(
+      'should fall back devServer.provider from ancestor defaultSandboxProvider',
+      () =>
+        Effect.gen(function* () {
+          const parentDir = join(testRoot, 'provider-fallback-ancestor')
+          const projectDir = join(parentDir, 'child')
+          mkdirSync(projectDir, { recursive: true })
+
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            // Remove global config to isolate ancestor config
+            if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+
+            // Ancestor config sets defaultSandboxProvider: daytona
+            const parentPath = writeConfig(parentDir, {
+              defaultSandboxProvider: 'daytona',
+            } as never)
+
+            // Project config has no devServer.provider set
+            writeConfig(projectDir, {
+              devServer: { startCommand: 'npm start' } as never,
+            })
+
+            const result = yield* resolveConfig(
+              projectDir,
+              'provider-fallback-ancestor'
+            )
+
+            // devServer.provider falls back to ancestor's defaultSandboxProvider
+            assert.strictEqual(result.devServer.provider.value, 'daytona')
+            assert.strictEqual(result.devServer.provider.source, parentPath)
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            }
+          }
         })
     )
   })

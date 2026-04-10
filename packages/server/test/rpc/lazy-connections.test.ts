@@ -26,6 +26,7 @@ import {
   FileWatcherClient,
 } from '../../src/services/file-watcher-client.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
+import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { TestLaborerStore } from '../helpers/test-store.js'
@@ -89,6 +90,9 @@ describe('Lazy sidecar connections (Issue #16)', () => {
       ),
       Layer.provide(
         Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry'))
+      ),
+      Layer.provide(
+        Layer.succeed(SandboxProvider, makeServiceProxy('SandboxProvider'))
       ),
       Layer.provide(ConfigService.layer),
       Layer.provide(TestLaborerStore)
@@ -170,6 +174,12 @@ describe('Lazy sidecar connections (Issue #16)', () => {
                 Layer.succeed(
                   ProjectRegistry,
                   makeServiceProxy('ProjectRegistry')
+                )
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  SandboxProvider,
+                  makeServiceProxy('SandboxProvider')
                 )
               ),
               Layer.provide(ConfigService.layer),

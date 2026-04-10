@@ -2,9 +2,9 @@
  * WorkspaceProvider — Effect Service
  *
  * Manages isolated workspace environments via git worktrees. Each workspace
- * gets its own branch and directory. The provider interface
- * is designed to be pluggable — v1 ships with git worktrees, but future
- * implementations could use Docker or Daytona.
+ * gets its own branch and directory. Sandbox lifecycle (container/cloud
+ * sandbox creation, destruction, pause, resume) is delegated to the
+ * configured `SandboxProvider` implementation (Docker or Daytona).
  *
  * Responsibilities:
  * - Worktree creation via `git worktree add`
@@ -54,17 +54,25 @@
 import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
+import {
+  Array as Arr,
+  Cause,
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  pipe,
+  Ref,
+} from 'effect'
+import { isSandboxRemoteName } from '../lib/git-sync.js'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
-import { ContainerService } from './container-service.js'
-import { DepsImageService } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import { SandboxProvider } from './sandbox-provider.js'
 
 /**
  * Shape of a workspace record returned by the provider.
@@ -272,73 +280,13 @@ const buildSetupFailureMessage = (failure: {
   return `Setup script '${failure.command}' failed with exit code ${failure.exitCode}.${outputSuffix}`
 }
 
-const dockerContainerExists = (name: string): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = spawn(['docker', 'inspect', name], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const exitCode = await proc.exited
-      return exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-
-const destroyContainerByName = (
-  name: string,
-  workspaceId: string
-): Effect.Effect<void, never> =>
-  Effect.gen(function* () {
-    const exists = yield* dockerContainerExists(name)
-    if (!exists) {
-      yield* Effect.logDebug(
-        `No Docker container named "${name}" found for workspace "${workspaceId}", skipping fallback cleanup`
-      ).pipe(Effect.annotateLogs('module', logPrefix))
-      return
-    }
-
-    yield* Effect.logInfo(
-      `Destroying leaked container "${name}" for workspace "${workspaceId}" via deterministic fallback`
-    ).pipe(Effect.annotateLogs('module', logPrefix))
-
-    yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['docker', 'rm', '-f', name], {
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stderr }
-      },
-      catch: (error) => String(error),
-    }).pipe(
-      Effect.tap((result) => {
-        if (typeof result === 'string') {
-          return Effect.logWarning(
-            `Failed to remove leaked container "${name}": ${result}`
-          )
-        }
-
-        if (result.exitCode !== 0) {
-          return Effect.logWarning(
-            `docker rm -f failed for leaked container "${name}" (exit ${result.exitCode}): ${result.stderr.trim()}`
-          )
-        }
-
-        return Effect.logDebug(`Leaked container "${name}" removed`)
-      }),
-      Effect.annotateLogs('module', logPrefix),
-      Effect.catchAll(() => Effect.void)
-    )
-  })
-
 /**
- * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
- * to ensure all remote branches are up-to-date. This is important because
- * `git worktree add` creates a branch from the current HEAD — if the local
- * repo is stale, the worktree starts from an outdated commit.
+ * Fetch the latest remote refs before worktree creation.
+ *
+ * Only persistent repository remotes are fetched. Temporary Daytona
+ * `sandbox-*` remotes are skipped because git config is shared across worktrees,
+ * and those ephemeral remotes can otherwise block creation with interactive SSH
+ * prompts after an earlier sandbox sync.
  *
  * Network failures (DNS resolution, SSH auth, remote unreachable) are caught
  * and returned as a clear `GIT_FETCH_FAILED` error. The error message includes
@@ -356,18 +304,65 @@ const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
       Effect.annotateLogs('module', logPrefix)
     )
 
-    const result = yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['git', 'fetch', '--all'], {
+    const remotesResult = yield* Effect.tryPromise({
+      try: () =>
+        spawnGit(['remote'], {
           cwd: repoPath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stdout = await new Response(proc.stdout).text()
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stdout, stderr }
-      },
+          readOnly: true,
+        }),
+      catch: (error) =>
+        new RpcError({
+          message: `Failed to list git remotes: ${String(error)}`,
+          code: 'GIT_FETCH_FAILED',
+        }),
+    })
+
+    if (remotesResult.exitCode !== 0) {
+      return yield* new RpcError({
+        message: `Failed to list git remotes (exit ${String(remotesResult.exitCode)}): ${remotesResult.stderr.trim()}`,
+        code: 'GIT_FETCH_FAILED',
+      })
+    }
+
+    const remoteNames = remotesResult.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    const fetchableRemoteNames = remoteNames.filter(
+      (remoteName) => !isSandboxRemoteName(remoteName)
+    )
+    const skippedRemoteNames = remoteNames.filter(isSandboxRemoteName)
+
+    if (skippedRemoteNames.length > 0) {
+      yield* Effect.logDebug(
+        `Skipping ephemeral sandbox remotes during fetch: ${skippedRemoteNames.join(', ')}`
+      ).pipe(Effect.annotateLogs('module', logPrefix))
+    }
+
+    if (fetchableRemoteNames.length === 0) {
+      yield* Effect.logDebug('No fetchable git remotes found').pipe(
+        Effect.annotateLogs('module', logPrefix)
+      )
+      return
+    }
+
+    const firstFetchableRemoteName = fetchableRemoteNames[0]
+    if (firstFetchableRemoteName === undefined) {
+      return
+    }
+
+    const fetchArgs =
+      fetchableRemoteNames.length === 1
+        ? ['fetch', firstFetchableRemoteName]
+        : ['fetch', '--multiple', ...fetchableRemoteNames]
+
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        spawnGit(fetchArgs, {
+          cwd: repoPath,
+          timeoutMs: 120_000,
+        }),
       catch: (error) =>
         new RpcError({
           message: `Failed to spawn git fetch: ${String(error)}`,
@@ -526,10 +521,21 @@ const validateWorktree = (
     // Normalize paths for comparison using realpathSync to resolve symlinks.
     // On macOS, /var is a symlink to /private/var — git resolves the symlink
     // but Node.js path.resolve() does not. realpathSync handles this.
-    const normalizedWorktree = realpathSync(worktreePath)
-    const normalizedToplevel = toplevelResult
-      ? realpathSync(toplevelResult)
-      : null
+    // Uses Effect.try so that a realpathSync failure (e.g. race condition
+    // where the directory was removed between existsSync and here) falls
+    // back to raw path comparison instead of killing the fiber with a defect.
+    const { normalizedToplevel, normalizedWorktree } = yield* Effect.try({
+      try: () => ({
+        normalizedWorktree: realpathSync(worktreePath),
+        normalizedToplevel: toplevelResult
+          ? realpathSync(toplevelResult)
+          : null,
+      }),
+      catch: () => ({
+        normalizedWorktree: worktreePath,
+        normalizedToplevel: toplevelResult,
+      }),
+    }).pipe(Effect.merge)
     return {
       directoryExists: true,
       isGitWorkTree: workTreeResult,
@@ -656,20 +662,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<readonly string[], RpcError>
 
     /**
-     * Start a container for an existing workspace.
+     * Start a sandbox for an existing workspace.
      *
-     * Converts a non-containerized workspace (typically one detected from
+     * Converts a non-sandboxed workspace (typically one detected from
      * an existing git worktree with origin 'external') into a fully
-     * containerized laborer workspace. Transitions the workspace to
-     * 'running' status, updates origin to 'laborer', and runs container
+     * sandboxed laborer workspace. Transitions the workspace to
+     * 'running' status, updates origin to 'laborer', and runs sandbox
      * setup as a background fiber.
      *
-     * @param workspaceId - ID of the workspace to containerize
+     * @param workspaceId - ID of the workspace to sandbox
      * @param onReady - Optional effect to run when workspace is ready
      *   (e.g. start diff/PR polling). Errors are logged but do not
      *   affect workspace status.
      */
-    readonly startContainer: (
+    readonly startSandbox: (
       workspaceId: string,
       onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
     ) => Effect.Effect<void, RpcError>
@@ -709,8 +715,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const { store } = yield* LaborerStore
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
-      const containerService = yield* ContainerService
-      const depsImageService = yield* DepsImageService
+      const sandboxProvider = yield* SandboxProvider
 
       /**
        * Create a git worktree, validate it, and run setup scripts.
@@ -941,112 +946,115 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         })
 
       /**
-       * Run background container setup (deps image build + container creation).
-       * Communicates progress via containerSetupStepChanged events.
-       * Follows the same pattern as the original container setup fiber.
+       * Run background sandbox setup by delegating to the configured
+       * SandboxProvider. The provider handles all provider-specific steps
+       * (e.g. Docker: deps image build + container creation; Daytona:
+       * sandbox creation + code push).
+       *
+       * Communicates progress via sandboxSetupStepChanged events emitted
+       * by the provider implementation.
        */
-      const performContainerSetup = (params: {
+      /**
+       * Get the remote origin URL for a repo path.
+       * Returns null if the remote cannot be resolved.
+       */
+      const getRepoRemoteUrl = (
+        repoPath: string
+      ): Effect.Effect<string | null> =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'remote', 'get-url', 'origin'], {
+              cwd: repoPath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            return exitCode === 0 ? stdout.trim() : null
+          },
+          catch: () => null as never,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+      /**
+       * Get the current branch name for a repo path.
+       * Returns null if the branch cannot be resolved (e.g. detached HEAD).
+       */
+      const getCurrentBranch = (
+        repoPath: string
+      ): Effect.Effect<string | null> =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
+              cwd: repoPath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            const branch = exitCode === 0 ? stdout.trim() : null
+            // rev-parse returns "HEAD" for detached HEAD state
+            return branch === 'HEAD' ? null : branch
+          },
+          catch: () => null as never,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
+      const performSandboxSetup = (params: {
         readonly id: string
         readonly branchName: string
         readonly worktreePath: string
-        readonly repoPath: string
         readonly projectName: string
-        readonly devServerImage: string
+        readonly repoUrl: string | null
+        readonly currentBranch: string | null
         readonly devServer: {
+          readonly autoOpen: { readonly value: boolean }
+          readonly autoStopInterval: { readonly value: number | null }
           readonly dockerfile: { readonly value: string | null }
+          readonly image: { readonly value: string | null }
           readonly installCommand: { readonly value: string | null }
           readonly network: { readonly value: string | null }
           readonly port: { readonly value: number | null }
+          readonly provider: {
+            readonly value: 'docker' | 'daytona' | null
+          }
+          readonly resources: {
+            readonly value: {
+              readonly cpu?: number | undefined
+              readonly disk?: number | undefined
+              readonly memory?: number | undefined
+            } | null
+          }
           readonly setupScripts: { readonly value: readonly string[] }
+          readonly startCommand: { readonly value: string | null }
           readonly workdir: { readonly value: string }
         }
+        readonly onReady?:
+          | ((workspaceId: string) => Effect.Effect<void, RpcError>)
+          | undefined
       }): Effect.Effect<void, RpcError> =>
         Effect.gen(function* () {
-          const { id, branchName, worktreePath, repoPath, projectName } = params
-
-          // Signal UI: building deps image
-          store.commit(
-            events.containerSetupStepChanged({
-              workspaceId: id,
-              step: 'building-image',
-            })
-          )
-
-          const depsResult = yield* depsImageService
-            .ensureDepsImage({
-              projectRoot: repoPath,
-              projectName,
-              baseImage: params.devServerImage,
+          yield* sandboxProvider.createSandbox({
+            workspaceId: params.id,
+            worktreePath: params.worktreePath,
+            branchName: params.branchName,
+            projectName: params.projectName,
+            repoUrl: params.repoUrl,
+            currentBranch: params.currentBranch,
+            devServerConfig: {
+              autoOpen: params.devServer.autoOpen.value,
+              autoStopInterval: params.devServer.autoStopInterval.value,
+              dockerfile: params.devServer.dockerfile.value,
+              image: params.devServer.image.value,
+              installCommand: params.devServer.installCommand.value,
+              network: params.devServer.network.value,
+              port: params.devServer.port.value,
+              provider: params.devServer.provider.value,
+              resources: params.devServer.resources.value,
+              setupScripts: params.devServer.setupScripts.value,
+              startCommand: params.devServer.startCommand.value,
               workdir: params.devServer.workdir.value,
-              worktreePath,
-              installCommand:
-                params.devServer.installCommand.value ?? undefined,
-              setupScripts:
-                params.devServer.setupScripts.value.length > 0
-                  ? params.devServer.setupScripts.value
-                  : undefined,
-              onProgress: (step) => {
-                store.commit(
-                  events.containerSetupStepChanged({
-                    workspaceId: id,
-                    step,
-                  })
-                )
-              },
-            })
-            .pipe(
-              Effect.catchAll((error: RpcError) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `Deps image build failed, falling back to base image: ${error.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-                  return null
-                })
-              )
-            )
-
-          // Signal UI: starting container
-          store.commit(
-            events.containerSetupStepChanged({
-              workspaceId: id,
-              step: 'starting-container',
-            })
-          )
-
-          yield* containerService
-            .createContainer({
-              workspaceId: id,
-              worktreePath,
-              branchName,
-              projectName,
-              depsImageName: depsResult?.imageName,
-              devServerConfig: {
-                image: params.devServerImage,
-                dockerfile: params.devServer.dockerfile.value,
-                network: params.devServer.network.value,
-                port: params.devServer.port.value,
-                workdir: params.devServer.workdir.value,
-              },
-            })
-            .pipe(
-              Effect.tapError((containerError) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `Container creation failed for workspace ${id}: ${containerError.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-
-                  // Clear setup step so the UI no longer shows a spinner
-                  store.commit(
-                    events.containerSetupStepChanged({
-                      workspaceId: id,
-                      step: null,
-                    })
-                  )
-                })
-              )
-            )
-
-          // containerStarted materializer clears containerSetupStep automatically
+            },
+            onReady: params.onReady,
+          })
         })
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
@@ -1076,9 +1084,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const resolvedBranch =
             branchName ?? `laborer/${crypto.randomUUID().slice(0, 8)}`
 
-          // 3. Compute worktree path from resolved config
+          // Determine the effective provider for this workspace
+          const effectiveProvider = resolvedConfig.devServer.provider.value
+
+          // 3. Compute worktree path from resolved config.
+          // For Daytona, there is no local worktree — code lives in the
+          // cloud sandbox. Use empty string as a placeholder.
+          const isDaytona = effectiveProvider === 'daytona'
           const worktreeDir = resolvedConfig.worktreeDir.value
-          const worktreePath = join(worktreeDir, slugify(resolvedBranch))
+          const worktreePath = isDaytona
+            ? ''
+            : join(worktreeDir, slugify(resolvedBranch))
 
           // 4. Generate workspace ID and commit to LiveStore immediately
           // with status 'creating'. The UI sees the workspace right away
@@ -1113,76 +1129,115 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           // 5. Fork the heavy setup work into a background fiber.
-          // This includes: git fetch, branch check, worktree creation,
-          // validation, setup scripts, and optional container setup.
-          // Progress is communicated via worktreeSetupStepChanged events.
+          // For Docker: git fetch, worktree creation, setup scripts, then container setup.
+          // For Daytona: skip worktree entirely, go straight to sandbox creation
+          //   (sandbox clones code from remote and creates branch internally).
+          // Progress is communicated via worktreeSetupStepChanged / sandboxSetupStepChanged events.
           const worktreeSetupEffect = Effect.gen(function* () {
-            // Phase 0: Wait for any in-flight destroy cleanup targeting the
-            // same worktree path. This blocks on the actual background fiber
-            // instead of polling with a timeout.
-            const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
-              worktreePath
-            )
-            if (inFlightDestroy !== undefined) {
-              yield* Effect.logInfo(
-                `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-              yield* Fiber.join(inFlightDestroy)
-              yield* Effect.logInfo(
-                `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-            }
+            if (isDaytona) {
+              // ── Daytona path ──────────────────────────────────────
+              // No local worktree needed. The Daytona sandbox clones
+              // the repo from the remote and creates the workspace
+              // branch inside the sandbox. This is much faster than
+              // creating a local worktree + pushing code via SSH.
 
-            // Phase 1: Create and validate worktree, run setup scripts
-            const baseSha = yield* performWorktreeSetup({
-              id,
-              branchName: resolvedBranch,
-              repoPath: project.repoPath,
-              worktreeDir,
-              worktreePath,
-              setupScripts: resolvedConfig.setupScripts.value,
-            })
+              // Resolve the remote origin URL and current branch so
+              // the Daytona provider can clone the repo in the sandbox.
+              const repoUrl = yield* getRepoRemoteUrl(project.repoPath)
+              const currentBranch = yield* getCurrentBranch(project.repoPath)
 
-            // Update baseSha now that we have it
-            if (baseSha !== null) {
-              store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
-            }
-
-            // Worktree setup complete — transition to 'running'.
-            // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
-            store.commit(
-              events.workspaceStatusChanged({ id, status: 'running' })
-            )
-
-            // Run the onReady callback (e.g. start diff/PR polling)
-            if (onReady) {
-              yield* onReady(id).pipe(
-                Effect.catchAll((err) =>
-                  Effect.logWarning(
-                    `onReady callback failed for workspace ${id}: ${err.message}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-                )
+              // Transition to 'running' immediately — the sandbox
+              // creation is the only setup work and it reports its
+              // own progress via sandboxSetupStepChanged events.
+              store.commit(
+                events.workspaceStatusChanged({ id, status: 'running' })
               )
-            }
 
-            // Phase 2: Start container if devServer config has an image
-            const devServerImage = resolvedConfig.devServer.image.value
-            if (devServerImage !== null) {
-              yield* performContainerSetup({
+              yield* performSandboxSetup({
                 id,
                 branchName: resolvedBranch,
                 worktreePath,
-                repoPath: project.repoPath,
                 projectName: project.name,
-                devServerImage,
+                repoUrl,
+                currentBranch,
                 devServer: resolvedConfig.devServer,
+                onReady,
               })
+            } else {
+              // ── Docker path (unchanged) ───────────────────────────
+              // Phase 0: Wait for any in-flight destroy cleanup targeting the
+              // same worktree path. This blocks on the actual background fiber
+              // instead of polling with a timeout.
+              const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+                worktreePath
+              )
+              if (inFlightDestroy !== undefined) {
+                yield* Effect.logInfo(
+                  `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+                yield* Fiber.join(inFlightDestroy)
+                yield* Effect.logInfo(
+                  `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+              }
+
+              // Phase 1: Create and validate worktree, run setup scripts
+              const baseSha = yield* performWorktreeSetup({
+                id,
+                branchName: resolvedBranch,
+                repoPath: project.repoPath,
+                worktreeDir,
+                worktreePath,
+                setupScripts: resolvedConfig.setupScripts.value,
+              })
+
+              // Update baseSha now that we have it
+              if (baseSha !== null) {
+                store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
+              }
+
+              // Worktree setup complete — transition to 'running'.
+              // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
+              store.commit(
+                events.workspaceStatusChanged({ id, status: 'running' })
+              )
+
+              // Run the onReady callback (e.g. start diff/PR polling)
+              if (onReady) {
+                yield* onReady(id).pipe(
+                  Effect.catchAll((err) =>
+                    Effect.logWarning(
+                      `onReady callback failed for workspace ${id}: ${err.message}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
+                )
+              }
+
+              // Phase 2: Start sandbox if devServer config has an image
+              const devServerImage = resolvedConfig.devServer.image.value
+              if (devServerImage !== null) {
+                yield* performSandboxSetup({
+                  id,
+                  branchName: resolvedBranch,
+                  worktreePath,
+                  projectName: project.name,
+                  repoUrl: null,
+                  currentBranch: null,
+                  devServer: resolvedConfig.devServer,
+                })
+              }
             }
           }).pipe(
-            Effect.catchAll((err) =>
+            // Use catchAllCause instead of catchAll so that both expected
+            // errors (RpcError) and unexpected defects (thrown exceptions,
+            // e.g. realpathSync failure) are caught. With plain catchAll,
+            // a defect would kill the background fiber silently and leave
+            // the workspace permanently stuck in 'creating' status.
+            Effect.catchAllCause((cause) =>
               Effect.gen(function* () {
+                const prettyMessage = Cause.pretty(cause)
                 yield* Effect.logWarning(
-                  `Background worktree setup failed for workspace ${id}: ${String(err)}`
+                  `Background worktree setup failed for workspace ${id}: ${prettyMessage}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
 
                 // Clear worktree setup step
@@ -1193,13 +1248,22 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   })
                 )
 
-                // Clear container setup step in case it was set
+                // Clear sandbox setup step in case it was set
                 store.commit(
-                  events.containerSetupStepChanged({
+                  events.sandboxSetupStepChanged({
                     workspaceId: id,
                     step: null,
                   })
                 )
+
+                // Extract a user-facing error message from the cause.
+                // For expected failures (RpcError), use the error message.
+                // For defects (thrown exceptions), use the pretty-printed cause.
+                const failureOption = Cause.failureOption(cause)
+                const errorMessage =
+                  failureOption._tag === 'Some'
+                    ? String(failureOption.value)
+                    : prettyMessage
 
                 // Set workspace to errored status so the user can decide
                 // whether to retry or destroy it. Never auto-destroy — the
@@ -1208,7 +1272,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   events.workspaceStatusChanged({
                     id,
                     status: 'errored',
-                    errorMessage: String(err),
+                    errorMessage,
                   })
                 )
               })
@@ -1380,38 +1444,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           const backgroundCleanup = Effect.gen(function* () {
-            const latestWorkspace =
-              store.query(tables.workspaces.where('id', workspaceId))[0] ??
-              workspace
-            const deterministicContainerName = containerName(
-              latestWorkspace.branchName,
-              project.name
-            ).name
-
-            // Destroy container if one exists (Issue #5)
-            // Container destruction happens before worktree removal so
-            // the container is stopped before its bind-mounted directory
-            // is deleted. Best-effort: logs warnings but continues cleanup.
-            if (latestWorkspace.containerId !== null) {
-              yield* Effect.logInfo(
-                `Destroying tracked container: ${latestWorkspace.containerId}`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-
-              yield* containerService
-                .destroyContainer(workspaceId)
-                .pipe(
-                  Effect.catchAll((error) =>
-                    Effect.logWarning(
-                      `Container destroy failed for workspace "${workspaceId}": ${error.message}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-                  )
+            // Destroy sandbox if one exists.
+            // Sandbox destruction happens before worktree removal so
+            // the sandbox is stopped before its bind-mounted directory
+            // (Docker) or linked code (Daytona) is deleted.
+            // Best-effort: logs warnings but continues cleanup.
+            yield* sandboxProvider
+              .destroySandbox(workspaceId)
+              .pipe(
+                Effect.catchAll((error) =>
+                  Effect.logWarning(
+                    `Sandbox destroy failed for workspace "${workspaceId}": ${String(error)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
                 )
-            } else if (latestWorkspace.origin === 'laborer') {
-              yield* destroyContainerByName(
-                deterministicContainerName,
-                workspaceId
               )
-            }
 
             // 4. Remove the git worktree and branch.
             //    Both laborer-managed and external workspaces have their
@@ -1628,7 +1674,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         }
       )
 
-      const startContainer = Effect.fn('WorkspaceProvider.startContainer')(
+      const startSandbox = Effect.fn('WorkspaceProvider.startSandbox')(
         function* (
           workspaceId: string,
           onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
@@ -1649,10 +1695,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           const workspace = workspaceOpt.value
 
-          // 2. Reject if workspace already has a container
-          if (workspace.containerId != null) {
+          // 2. Reject if workspace already has a sandbox
+          if (workspace.sandboxId != null) {
             return yield* new RpcError({
-              message: `Workspace ${workspaceId} already has a container`,
+              message: `Workspace ${workspaceId} already has a sandbox`,
               code: 'ALREADY_CONTAINERIZED',
             })
           }
@@ -1671,17 +1717,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
             )
 
+          // Docker requires an explicit image; Daytona uses a default image
+          // when none is configured. Only gate on missing image for Docker.
           const devServerImage = resolvedConfig.devServer.image.value
-          if (devServerImage === null) {
+          const effectiveProvider = resolvedConfig.devServer.provider.value
+          if (devServerImage === null && effectiveProvider !== 'daytona') {
             return yield* new RpcError({
               message:
-                'No devServer.image configured in laborer.json — cannot start container',
+                'No devServer.image configured in laborer.json — cannot start sandbox',
               code: 'NO_DEV_SERVER_IMAGE',
             })
           }
 
           yield* Effect.logInfo(
-            `Starting container for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
+            `Starting sandbox for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
           // 4. Transition workspace: update origin to 'laborer' and status
@@ -1703,37 +1752,37 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           }
 
-          // 5. Run the onReady callback (e.g. start diff/PR polling)
-          if (onReady) {
-            yield* onReady(workspaceId).pipe(
-              Effect.catchAll((err) =>
-                Effect.logWarning(
-                  `onReady callback failed for workspace ${workspaceId}: ${err.message}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              )
-            )
-          }
+          // 5. Resolve repo info for Daytona provider
+          const repoUrl =
+            effectiveProvider === 'daytona'
+              ? yield* getRepoRemoteUrl(project.repoPath)
+              : null
+          const currentBranch =
+            effectiveProvider === 'daytona'
+              ? yield* getCurrentBranch(project.repoPath)
+              : null
 
-          // 6. Fork container setup as a background fiber (same pattern
+          // 6. Fork sandbox setup as a background fiber (same pattern
           //    as createWorktree)
-          const containerSetupEffect = performContainerSetup({
+          const sandboxSetupEffect = performSandboxSetup({
             id: workspaceId,
             branchName: workspace.branchName,
             worktreePath: workspace.worktreePath,
-            repoPath: project.repoPath,
             projectName: project.name,
-            devServerImage,
+            repoUrl,
+            currentBranch,
             devServer: resolvedConfig.devServer,
+            onReady,
           }).pipe(
             Effect.catchAll((err) =>
               Effect.gen(function* () {
                 yield* Effect.logWarning(
-                  `Container setup failed for workspace ${workspaceId}: ${String(err)}`
+                  `Sandbox setup failed for workspace ${workspaceId}: ${String(err)}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
 
-                // Clear container setup step
+                // Clear sandbox setup step
                 store.commit(
-                  events.containerSetupStepChanged({
+                  events.sandboxSetupStepChanged({
                     workspaceId,
                     step: null,
                   })
@@ -1752,7 +1801,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           )
 
-          const fiber = yield* containerSetupEffect.pipe(Effect.forkIn(scope))
+          const fiber = yield* sandboxSetupEffect.pipe(Effect.forkIn(scope))
 
           // Track the fiber so destroyWorktree can interrupt it
           yield* Ref.update(setupFibers, (m) => {
@@ -1885,7 +1934,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       return WorkspaceProvider.of({
         createWorktree,
         destroyWorktree,
-        startContainer,
+        startSandbox,
         checkDirtyFiles,
         getWorkspaceEnv,
       })

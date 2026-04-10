@@ -1,11 +1,20 @@
 import type { ThreadId } from '@laborer/contracts/base'
+import {
+  buildProjectsSnapshot,
+  projectStoreEvents,
+  projectStoreTables,
+} from '@laborer/contracts/livestore'
 import type {
   Project,
   ProjectsEvent,
   ProjectsSnapshot,
   ProjectThread,
 } from '@laborer/contracts/projects'
-
+import { queryDb } from '@livestore/livestore'
+import {
+  getLoadedProjectsStore,
+  useProjectsStore,
+} from '@/livestore/projects-store'
 import type { WsRpcClient } from '@/ws-rpc-client'
 import {
   makeAppStateAtom,
@@ -15,26 +24,56 @@ import {
 } from './atom-registry'
 import { getServerWelcome } from './server-state'
 
-type ProjectsStateClient = Pick<WsRpcClient['projects'], 'list' | 'subscribe'>
+type ProjectsStateClient = Pick<WsRpcClient['projects'], 'subscribe'>
 
 const makeStateAtom = <Value>(label: string, initialValue: Value) =>
   makeAppStateAtom(label, initialValue)
 
-export const projectsSnapshotAtom = makeStateAtom<ProjectsSnapshot | null>(
-  'projects-snapshot',
-  null
+const allProjects$ = queryDb(
+  projectStoreTables.projects.select().orderBy('sortOrder', 'asc'),
+  {
+    label: 'projects.all',
+  }
 )
+const allProjectThreads$ = queryDb(
+  projectStoreTables.projectThreads.select().orderBy('sortOrder', 'asc'),
+  {
+    label: 'project-threads.all',
+  }
+)
+
 export const activeThreadIdAtom = makeStateAtom<ThreadId | null>(
   'active-thread-id',
   null
 )
+export const projectsSyncReadyAtom = makeStateAtom<boolean>(
+  'projects-sync-ready',
+  false
+)
 
 export function getProjectsSnapshot(): ProjectsSnapshot | null {
-  return readAppStateAtom(projectsSnapshotAtom)
+  const store = getLoadedProjectsStore()
+
+  if (store === null) {
+    return null
+  }
+
+  return buildProjectsSnapshot(
+    store.query(
+      projectStoreTables.projects.select().orderBy('sortOrder', 'asc')
+    ),
+    store.query(
+      projectStoreTables.projectThreads.select().orderBy('sortOrder', 'asc')
+    )
+  )
 }
 
 export function getActiveThreadId(): ThreadId | null {
   return readAppStateAtom(activeThreadIdAtom)
+}
+
+export function getProjectsSyncReady(): boolean {
+  return readAppStateAtom(projectsSyncReadyAtom)
 }
 
 export function setActiveThreadId(threadId: ThreadId | null): void {
@@ -42,43 +81,50 @@ export function setActiveThreadId(threadId: ThreadId | null): void {
 }
 
 export function setProjectsSnapshot(snapshot: ProjectsSnapshot): void {
-  writeAppStateAtom(projectsSnapshotAtom, snapshot)
+  const store = getLoadedProjectsStore()
+
+  if (store === null) {
+    return
+  }
+
+  store.commit(projectStoreEvents.snapshotReplaced({ snapshot }))
+  writeAppStateAtom(projectsSyncReadyAtom, true)
   ensureActiveThreadSelection(snapshot)
 }
 
 export function applyProjectsEvent(event: ProjectsEvent): void {
+  const store = getLoadedProjectsStore()
+
+  if (store === null) {
+    return
+  }
+
   switch (event.type) {
     case 'snapshot': {
       setProjectsSnapshot(event.snapshot)
       return
     }
     case 'projectAdded': {
-      const current = getProjectsSnapshot()
-      if (!current) {
-        return
-      }
-
-      setProjectsSnapshot({
-        projects: [event.payload.project, ...current.projects],
-      })
+      store.commit(
+        projectStoreEvents.projectAdded({
+          project: event.payload.project,
+          sortOrder: getNextProjectSortOrder(),
+        })
+      )
+      writeAppStateAtom(projectsSyncReadyAtom, true)
+      syncActiveThreadSelection()
       return
     }
     case 'threadAdded': {
-      const current = getProjectsSnapshot()
-      if (!current) {
-        return
-      }
-
-      setProjectsSnapshot({
-        projects: current.projects.map((project) =>
-          project.id === event.payload.projectId
-            ? {
-                ...project,
-                threads: [event.payload.thread, ...project.threads],
-              }
-            : project
-        ),
-      })
+      store.commit(
+        projectStoreEvents.threadAdded({
+          projectId: event.payload.projectId,
+          thread: event.payload.thread,
+          sortOrder: getNextThreadSortOrder(event.payload.projectId),
+        })
+      )
+      writeAppStateAtom(projectsSyncReadyAtom, true)
+      syncActiveThreadSelection()
       return
     }
     default: {
@@ -90,36 +136,32 @@ export function applyProjectsEvent(event: ProjectsEvent): void {
 export function startProjectsStateSync(
   client: ProjectsStateClient
 ): () => void {
-  let disposed = false
+  writeAppStateAtom(projectsSyncReadyAtom, false)
+
+  syncActiveThreadSelection()
   const unsubscribe = client.subscribe((event) => {
     applyProjectsEvent(event)
   })
 
-  if (getProjectsSnapshot() === null) {
-    client
-      .list()
-      .then((snapshot) => {
-        if (disposed || getProjectsSnapshot() !== null) {
-          return
-        }
-
-        setProjectsSnapshot(snapshot)
-      })
-      .catch(() => undefined)
-  }
-
   return () => {
-    disposed = true
     unsubscribe()
   }
 }
 
-export function useProjectsSnapshot(): ProjectsSnapshot | null {
-  return useAppStateValue(projectsSnapshotAtom)
+export function useProjectsSnapshot(): ProjectsSnapshot {
+  const store = useProjectsStore()
+  const projectRows = store.useQuery(allProjects$)
+  const threadRows = store.useQuery(allProjectThreads$)
+
+  return buildProjectsSnapshot(projectRows, threadRows)
 }
 
 export function useActiveThreadId(): ThreadId | null {
   return useAppStateValue(activeThreadIdAtom)
+}
+
+export function useProjectsSyncReady(): boolean {
+  return useAppStateValue(projectsSyncReadyAtom)
 }
 
 export function useActiveThreadInfo(): {
@@ -128,10 +170,6 @@ export function useActiveThreadInfo(): {
 } | null {
   const projectsSnapshot = useProjectsSnapshot()
   const activeThreadId = useActiveThreadId()
-
-  if (!projectsSnapshot) {
-    return null
-  }
 
   if (!activeThreadId) {
     return null
@@ -161,6 +199,51 @@ const ensureActiveThreadSelection = (snapshot: ProjectsSnapshot) => {
 
   const firstThread = snapshot.projects[0]?.threads[0]
   setActiveThreadId(firstThread?.id ?? null)
+}
+
+const syncActiveThreadSelection = () => {
+  const snapshot = getProjectsSnapshot()
+
+  if (snapshot === null) {
+    return
+  }
+
+  ensureActiveThreadSelection(snapshot)
+}
+
+const getNextProjectSortOrder = (): number => {
+  const store = getLoadedProjectsStore()
+
+  if (store === null) {
+    return 0
+  }
+
+  const [firstProject] = store.query(
+    projectStoreTables.projects
+      .select('sortOrder')
+      .orderBy('sortOrder', 'asc')
+      .limit(1)
+  )
+
+  return firstProject === undefined ? 0 : firstProject - 1
+}
+
+const getNextThreadSortOrder = (projectId: Project['id']): number => {
+  const store = getLoadedProjectsStore()
+
+  if (store === null) {
+    return 0
+  }
+
+  const [firstThread] = store.query(
+    projectStoreTables.projectThreads
+      .select('sortOrder')
+      .where({ projectId })
+      .orderBy('sortOrder', 'asc')
+      .limit(1)
+  )
+
+  return firstThread === undefined ? 0 : firstThread - 1
 }
 
 const findThreadInfo = (snapshot: ProjectsSnapshot, threadId: ThreadId) => {

@@ -1,6 +1,7 @@
 import { createRouter, type RouterHistory } from '@tanstack/react-router'
 import { createElement, type ReactNode } from 'react'
 
+import { ProjectsStoreProvider } from '@/livestore/projects-store'
 import { AppAtomRegistryProvider } from '@/rpc/atom-registry'
 import { routeTree } from './routeTree.gen'
 
@@ -15,7 +16,11 @@ export const getRouter = (
     defaultPendingComponent,
     context: {},
     Wrap: ({ children }) =>
-      createElement(AppAtomRegistryProvider, undefined, children),
+      createElement(
+        ProjectsStoreProvider,
+        undefined,
+        createElement(AppAtomRegistryProvider, undefined, children)
+      ),
   })
 
 export type AppRouter = ReturnType<typeof getRouter>

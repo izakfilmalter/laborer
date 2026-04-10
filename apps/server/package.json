@@ -13,6 +13,8 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/rpc": "catalog:",
+    "@livestore/adapter-node": "catalog:",
+    "@livestore/livestore": "catalog:",
     "@laborer/contracts": "workspace:*",
     "@laborer/shared": "workspace:*",
     "effect": "catalog:"

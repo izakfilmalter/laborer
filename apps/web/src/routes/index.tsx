@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
-import { useActiveThreadInfo, useProjectsSnapshot } from '@/rpc/project-state'
+import {
+  useActiveThreadInfo,
+  useProjectsSnapshot,
+  useProjectsSyncReady,
+} from '@/rpc/project-state'
 
 export const Route = createFileRoute('/')({
   component: HomeComponent,
@@ -10,7 +14,9 @@ export const Route = createFileRoute('/')({
 function HomeComponent() {
   const activeThreadInfo = useActiveThreadInfo()
   const projectsSnapshot = useProjectsSnapshot()
-  const isConnecting = projectsSnapshot === null
+  const isProjectsSyncReady = useProjectsSyncReady()
+  const isConnecting =
+    !isProjectsSyncReady && projectsSnapshot.projects.length === 0
   const mobileTitle =
     activeThreadInfo?.thread.title ??
     (isConnecting ? 'Connecting...' : 'Threads')

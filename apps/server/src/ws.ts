@@ -19,14 +19,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const lifecycle = yield* ServerLifecycleEvents
 
     return WsRpcGroup.of({
-      [WS_METHODS.projectsList]: () => projects.list,
+      [WS_METHODS.projectsList]: () => projects.list(),
       [WS_METHODS.projectsAdd]: (input) => projects.add(input),
       [WS_METHODS.projectsCreateThread]: (input) =>
         projects.createThread(input),
       [WS_METHODS.serverGetConfig]: () => Effect.succeed(config),
       [WS_METHODS.subscribeProjects]: () =>
         Stream.unwrap(
-          projects.list.pipe(
+          projects.list().pipe(
             Effect.map((snapshot) =>
               Stream.concat(
                 Stream.fromIterable([

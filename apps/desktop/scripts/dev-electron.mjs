@@ -6,7 +6,7 @@ import { desktopDir, resolveElectronPath } from './electron-launcher.mjs'
 import { waitForResources } from './wait-for-resources.mjs'
 
 const port = Number(
-  process.env.ELECTRON_RENDERER_PORT ?? process.env.PORT ?? 3001
+  process.env.ELECTRON_RENDERER_PORT ?? process.env.PORT ?? 2001
 )
 const devServerUrl = `http://localhost:${port}`
 const requiredFiles = ['dist-electron/main.js', 'dist-electron/preload.js']
@@ -62,6 +62,8 @@ function startApp() {
       cwd: desktopDir,
       env: {
         ...childEnv,
+        LABORER_SERVER_URL:
+          process.env.LABORER_SERVER_URL ?? 'ws://127.0.0.1:2773/ws',
         VITE_DEV_SERVER_URL: devServerUrl,
       },
       stdio: 'inherit',

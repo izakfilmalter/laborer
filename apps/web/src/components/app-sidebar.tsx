@@ -1,3 +1,4 @@
+import { formatDistanceToNow } from 'date-fns'
 import {
   ArrowUpDownIcon,
   ChevronRightIcon,
@@ -6,7 +7,8 @@ import {
   SettingsIcon,
   SquarePenIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 import {
   SidebarContent,
@@ -20,46 +22,16 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from '@/components/ui/sidebar'
+import { isElectron } from '@/env'
 import { cn } from '@/lib/utils'
+import {
+  setActiveThreadId,
+  useActiveThreadId,
+  useProjectsSnapshot,
+} from '@/rpc/project-state'
+import { getWsRpcClient } from '@/ws-rpc-client'
 
 const APP_STAGE_LABEL = 'Alpha'
-
-interface ShellThread {
-  id: string
-  title: string
-  updatedLabel: string
-}
-
-interface ShellProject {
-  id: string
-  name: string
-  threads: ShellThread[]
-}
-
-const INITIAL_PROJECTS: ShellProject[] = [
-  {
-    id: 'project-laborer',
-    name: 'laborer',
-    threads: [
-      {
-        id: 'thread-new',
-        title: 'New thread',
-        updatedLabel: '35d ago',
-      },
-    ],
-  },
-]
-
-function createShellId(prefix: string) {
-  if (
-    typeof crypto !== 'undefined' &&
-    typeof crypto.randomUUID === 'function'
-  ) {
-    return `${prefix}-${crypto.randomUUID()}`
-  }
-
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
-}
 
 function resolveThreadRowClassName(input: {
   isActive: boolean
@@ -95,6 +67,18 @@ function resolveThreadRowClassName(input: {
   )
 }
 
+function formatUpdatedLabel(updatedAt: string) {
+  return formatDistanceToNow(new Date(updatedAt), { addSuffix: true })
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  return 'Something went wrong while talking to the Laborer server.'
+}
+
 function T3Wordmark() {
   return (
     <svg
@@ -112,13 +96,27 @@ function T3Wordmark() {
 }
 
 export default function AppSidebar() {
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
+  const projectsSnapshot = useProjectsSnapshot()
+  const activeThreadId = useActiveThreadId()
+  const projects = projectsSnapshot?.projects ?? []
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
-    () => new Set(INITIAL_PROJECTS.map((project) => project.id))
+    () => new Set()
   )
   const [isAddingProject, setIsAddingProject] = useState(false)
+  const [isMutatingProject, setIsMutatingProject] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
-  const [projects, setProjects] = useState(INITIAL_PROJECTS)
+
+  useEffect(() => {
+    setExpandedProjectIds((current) => {
+      const next = new Set(current)
+
+      for (const project of projects) {
+        next.add(project.id)
+      }
+
+      return next
+    })
+  }, [projects])
 
   function toggleProject(projectId: string) {
     setExpandedProjectIds((current) => {
@@ -134,52 +132,63 @@ export default function AppSidebar() {
     })
   }
 
-  function addThread(projectId: string) {
-    const threadId = createShellId('thread')
-
-    setProjects((current) =>
-      current.map((project) => {
-        if (project.id !== projectId) {
-          return project
-        }
-
-        return {
-          ...project,
-          threads: [
-            {
-              id: threadId,
-              title: 'New thread',
-              updatedLabel: 'just now',
-            },
-            ...project.threads,
-          ],
-        }
-      })
-    )
-
-    setExpandedProjectIds((current) => new Set(current).add(projectId))
-    setActiveThreadId(threadId)
+  async function addThread(projectId: (typeof projects)[number]['id']) {
+    try {
+      const thread = await getWsRpcClient().projects.createThread({ projectId })
+      setExpandedProjectIds((current) => new Set(current).add(projectId))
+      setActiveThreadId(thread.id)
+    } catch (error) {
+      toast.error(errorMessage(error))
+    }
   }
 
-  function commitNewProject() {
+  async function addProjectByPath(workspaceRoot: string) {
+    const trimmedWorkspaceRoot = workspaceRoot.trim()
+
+    if (trimmedWorkspaceRoot.length === 0) {
+      return
+    }
+
+    setIsMutatingProject(true)
+
+    try {
+      await getWsRpcClient().projects.add({
+        workspaceRoot: trimmedWorkspaceRoot,
+      })
+      setExpandedProjectIds((current) => new Set(current))
+      setIsAddingProject(false)
+      setNewProjectName('')
+    } catch (error) {
+      toast.error(errorMessage(error))
+    } finally {
+      setIsMutatingProject(false)
+    }
+  }
+
+  async function commitNewProject() {
     const name = newProjectName.trim()
 
     if (name.length === 0) {
       return
     }
 
-    const projectId = createShellId('project')
+    await addProjectByPath(name)
+  }
 
-    setProjects((current) => [
-      {
-        id: projectId,
-        name,
-        threads: [],
-      },
-      ...current,
-    ])
-    setExpandedProjectIds((current) => new Set(current).add(projectId))
-    setIsAddingProject(false)
+  async function startAddProjectFlow() {
+    if (isElectron) {
+      try {
+        const workspaceRoot = await window.desktopBridge?.pickFolder()
+        if (workspaceRoot) {
+          await addProjectByPath(workspaceRoot)
+          return
+        }
+      } catch {
+        // Fall back to manual entry when the desktop bridge cannot open a picker.
+      }
+    }
+
+    setIsAddingProject((current) => !current)
     setNewProjectName('')
   }
 
@@ -224,9 +233,9 @@ export default function AppSidebar() {
                 }
                 aria-pressed={isAddingProject}
                 className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                disabled={isMutatingProject}
                 onClick={() => {
-                  setIsAddingProject((current) => !current)
-                  setNewProjectName('')
+                  startAddProjectFlow().catch(() => undefined)
                 }}
                 type="button"
               >
@@ -249,7 +258,7 @@ export default function AppSidebar() {
                   onChange={(event) => setNewProjectName(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
-                      commitNewProject()
+                      commitNewProject().catch(() => undefined)
                     }
 
                     if (event.key === 'Escape') {
@@ -262,11 +271,15 @@ export default function AppSidebar() {
                 />
                 <button
                   className="shrink-0 rounded-md bg-primary px-2.5 py-1 font-medium text-primary-foreground text-xs transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
-                  disabled={newProjectName.trim().length === 0}
-                  onClick={commitNewProject}
+                  disabled={
+                    isMutatingProject || newProjectName.trim().length === 0
+                  }
+                  onClick={() => {
+                    commitNewProject().catch(() => undefined)
+                  }}
                   type="button"
                 >
-                  Add
+                  {isMutatingProject ? 'Adding...' : 'Add'}
                 </button>
               </div>
             </div>
@@ -302,7 +315,7 @@ export default function AppSidebar() {
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
-                        addThread(project.id)
+                        addThread(project.id).catch(() => undefined)
                       }}
                       showOnHover
                     >
@@ -354,7 +367,7 @@ export default function AppSidebar() {
                                       : 'text-muted-foreground/40'
                                   )}
                                 >
-                                  {thread.updatedLabel}
+                                  {formatUpdatedLabel(thread.updatedAt)}
                                 </span>
                               </div>
                             </SidebarMenuSubButton>
@@ -366,6 +379,22 @@ export default function AppSidebar() {
                 </SidebarMenuItem>
               )
             })}
+
+            {projectsSnapshot === null ? (
+              <SidebarMenuItem>
+                <div className="flex h-7 items-center rounded-md px-2 text-muted-foreground/60 text-xs">
+                  Connecting...
+                </div>
+              </SidebarMenuItem>
+            ) : null}
+
+            {projectsSnapshot !== null && projects.length === 0 ? (
+              <SidebarMenuItem>
+                <div className="flex h-7 items-center rounded-md px-2 text-muted-foreground/60 text-xs">
+                  No projects yet
+                </div>
+              </SidebarMenuItem>
+            ) : null}
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>

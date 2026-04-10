@@ -13,7 +13,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3001,
+    port: 2001,
     strictPort: true,
     hmr: {
       host: 'localhost',

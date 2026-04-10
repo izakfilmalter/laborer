@@ -1,22 +1,17 @@
 {
-  "name": "@laborer/contracts",
+  "name": "@laborer/shared",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    "./base": "./src/base.ts",
-    "./desktop": "./src/desktop.ts",
-    "./projects": "./src/projects.ts",
-    "./rpc": "./src/rpc.ts",
+    "./net": "./src/net.ts",
     "./server": "./src/server.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "effect": "catalog:"
-  },
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "typescript": "catalog:"
   }
 }

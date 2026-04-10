@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { extname, join, posix, resolve, sep } from 'node:path'
 import type {
@@ -7,6 +8,12 @@ import type {
   DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from '@laborer/contracts/desktop'
+import { findAvailablePort } from '@laborer/shared/net'
+import {
+  DEFAULT_SERVER_HOST,
+  DEFAULT_SERVER_PORT,
+  resolveServerWsUrl,
+} from '@laborer/shared/server'
 import type { MenuItemConstructorOptions } from 'electron'
 import {
   app,
@@ -37,9 +44,16 @@ const APP_DISPLAY_NAME = isDevelopment ? 'Laborer (Dev)' : 'Laborer'
 const APP_USER_MODEL_ID = 'com.izakfilmalter.laborer'
 const USER_DATA_DIR_NAME = isDevelopment ? 'laborer-dev' : 'laborer'
 const LEADING_SLASHES = /^\/+/
+const BACKEND_STOP_TIMEOUT_MS = 2000
+const BACKEND_RESTART_DELAY_MS = 500
 
 let mainWindow: BrowserWindow | null = null
 let desktopProtocolRegistered = false
+let backendProcess: ChildProcess | null = null
+let backendPort = 0
+let backendRestartTimer: ReturnType<typeof setTimeout> | null = null
+let backendWsUrl: string | null = null
+let isQuitting = false
 
 const resolveRuntimeArch = (): DesktopUpdateState['hostArch'] => {
   if (process.arch === 'arm64') {
@@ -103,6 +117,115 @@ const formatErrorMessage = (error: unknown): string => {
   }
 
   return String(error)
+}
+
+const resolveServerEntry = (): string => {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'server', 'index.js')
+  }
+
+  return resolve(app.getAppPath(), '../server/dist/index.js')
+}
+
+const resolveServerProcessCwd = (): string => {
+  if (app.isPackaged) {
+    return app.getPath('home')
+  }
+
+  return resolve(app.getAppPath(), '../..')
+}
+
+const scheduleBackendRestart = (): void => {
+  if (isDevelopment || isQuitting || backendRestartTimer !== null) {
+    return
+  }
+
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = null
+    startBackend().catch(() => undefined)
+  }, BACKEND_RESTART_DELAY_MS)
+  backendRestartTimer.unref()
+}
+
+const startBackend = async (): Promise<void> => {
+  if (isDevelopment) {
+    backendWsUrl =
+      process.env.LABORER_SERVER_URL?.trim() ||
+      resolveServerWsUrl({
+        host: DEFAULT_SERVER_HOST,
+        port: DEFAULT_SERVER_PORT,
+      })
+    return
+  }
+
+  if (backendProcess !== null) {
+    return
+  }
+
+  const serverEntry = resolveServerEntry()
+  if (!existsSync(serverEntry)) {
+    throw new Error(`Laborer server entry not found at ${serverEntry}`)
+  }
+
+  backendPort =
+    backendPort > 0 ? backendPort : await findAvailablePort(DEFAULT_SERVER_PORT)
+  backendWsUrl = resolveServerWsUrl({
+    host: DEFAULT_SERVER_HOST,
+    port: backendPort,
+  })
+
+  const child = spawn(process.execPath, [serverEntry], {
+    cwd: resolveServerProcessCwd(),
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      LABORER_SERVER_HOST: DEFAULT_SERVER_HOST,
+      LABORER_SERVER_MODE: 'desktop',
+      LABORER_SERVER_PORT: String(backendPort),
+    },
+    stdio: 'inherit',
+  })
+
+  backendProcess = child
+
+  child.once('error', () => {
+    if (backendProcess === child) {
+      backendProcess = null
+    }
+
+    scheduleBackendRestart()
+  })
+
+  child.once('exit', () => {
+    if (backendProcess === child) {
+      backendProcess = null
+    }
+
+    scheduleBackendRestart()
+  })
+}
+
+const stopBackend = (): void => {
+  if (backendRestartTimer !== null) {
+    clearTimeout(backendRestartTimer)
+    backendRestartTimer = null
+  }
+
+  const child = backendProcess
+  backendProcess = null
+
+  if (!child) {
+    return
+  }
+
+  child.kill('SIGTERM')
+
+  const forceKillTimeout = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL')
+    }
+  }, BACKEND_STOP_TIMEOUT_MS)
+  forceKillTimeout.unref()
 }
 
 const getSafeExternalUrl = (rawUrl: unknown): string | null => {
@@ -303,7 +426,7 @@ const buildAppMenu = (): Menu => {
 const registerIpcHandlers = (): void => {
   ipcMain.removeAllListeners(GET_WS_URL_CHANNEL)
   ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
-    event.returnValue = null
+    event.returnValue = backendWsUrl
   })
 
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL)
@@ -577,8 +700,9 @@ const createWindow = (): BrowserWindow => {
   return window
 }
 
-const bootstrap = (): void => {
+const bootstrap = async (): Promise<void> => {
   registerDesktopProtocol()
+  await startBackend()
   registerIpcHandlers()
   Menu.setApplicationMenu(buildAppMenu())
   mainWindow = createWindow()
@@ -586,6 +710,11 @@ const bootstrap = (): void => {
 
 app.setAppUserModelId(APP_USER_MODEL_ID)
 app.setPath('userData', join(app.getPath('appData'), USER_DATA_DIR_NAME))
+
+app.on('before-quit', () => {
+  isQuitting = true
+  stopBackend()
+})
 
 app
   .whenReady()

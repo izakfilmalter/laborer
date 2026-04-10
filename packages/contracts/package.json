@@ -9,7 +9,9 @@
     "./livestore": "./src/livestore.ts",
     "./projects": "./src/projects.ts",
     "./rpc": "./src/rpc.ts",
-    "./server": "./src/server.ts"
+    "./shell": "./src/shell.ts",
+    "./server": "./src/server.ts",
+    "./terminal": "./src/terminal.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

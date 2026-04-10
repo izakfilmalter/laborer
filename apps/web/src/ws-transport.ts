@@ -1,3 +1,4 @@
+/** biome-ignore-all lint: generic rpc transport helpers require effect-heavy typing. */
 import type { RpcClient } from '@effect/rpc'
 import {
   Duration,
@@ -22,12 +23,7 @@ interface SubscribeOptions {
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY = Duration.millis(250)
-
-type WsRpcRequest =
-  | ReturnType<WsRpcProtocolClient['projects']['add']>
-  | ReturnType<WsRpcProtocolClient['projects']['createThread']>
-  | ReturnType<WsRpcProtocolClient['projects']['list']>
-  | ReturnType<WsRpcProtocolClient['server']['getConfig']>
+type RequestEffect = Effect.Effect<unknown, unknown, never>
 
 const notifyListener = <TValue>(
   listener: (value: TValue) => void,
@@ -55,41 +51,9 @@ export class WsTransport {
     )
   }
 
-  request(
-    execute: (
-      client: WsRpcProtocolClient
-    ) => ReturnType<WsRpcProtocolClient['projects']['add']>
-  ): Promise<
-    Effect.Effect.Success<ReturnType<WsRpcProtocolClient['projects']['add']>>
-  >
-  request(
-    execute: (
-      client: WsRpcProtocolClient
-    ) => ReturnType<WsRpcProtocolClient['projects']['createThread']>
-  ): Promise<
-    Effect.Effect.Success<
-      ReturnType<WsRpcProtocolClient['projects']['createThread']>
-    >
-  >
-  request(
-    execute: (
-      client: WsRpcProtocolClient
-    ) => ReturnType<WsRpcProtocolClient['projects']['list']>
-  ): Promise<
-    Effect.Effect.Success<ReturnType<WsRpcProtocolClient['projects']['list']>>
-  >
-  request(
-    execute: (
-      client: WsRpcProtocolClient
-    ) => ReturnType<WsRpcProtocolClient['server']['getConfig']>
-  ): Promise<
-    Effect.Effect.Success<
-      ReturnType<WsRpcProtocolClient['server']['getConfig']>
-    >
-  >
-  async request(
-    execute: (client: WsRpcProtocolClient) => WsRpcRequest
-  ): Promise<Effect.Effect.Success<WsRpcRequest>> {
+  async request<TRequest extends RequestEffect>(
+    execute: (client: WsRpcProtocolClient) => TRequest
+  ): Promise<Effect.Effect.Success<TRequest>> {
     await this.ensureOpen()
     const client = await this.clientPromise
 
@@ -165,11 +129,10 @@ export class WsTransport {
     )
   }
 
-  private runRequest(request: WsRpcRequest) {
-    return this.runtime.runPromise<
-      Effect.Effect.Success<WsRpcRequest>,
-      Effect.Effect.Error<WsRpcRequest>
-    >(request)
+  private runRequest<TRequest extends RequestEffect>(request: TRequest) {
+    return this.runtime.runPromise(request as never) as Promise<
+      Effect.Effect.Success<TRequest>
+    >
   }
 
   private disposeRuntime() {

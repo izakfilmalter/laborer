@@ -15,25 +15,53 @@ import {
   ServerConfigStreamEvent,
   ServerLifecycleStreamEvent,
 } from './server'
+import { ShellOpenInEditorError, ShellOpenInEditorInput } from './shell'
+import {
+  TerminalClearInput,
+  TerminalCloseInput,
+  TerminalError,
+  TerminalEvent,
+  TerminalOpenInput,
+  TerminalResizeInput,
+  TerminalRestartInput,
+  TerminalSessionSnapshot,
+  TerminalWriteInput,
+} from './terminal'
 
 interface WsMethods {
   readonly projectsAdd: 'projects.add'
   readonly projectsCreateThread: 'projects.createThread'
   readonly projectsList: 'projects.list'
   readonly serverGetConfig: 'server.getConfig'
+  readonly shellOpenInEditor: 'shell.openInEditor'
   readonly subscribeProjects: 'subscribeProjects'
   readonly subscribeServerConfig: 'subscribeServerConfig'
   readonly subscribeServerLifecycle: 'subscribeServerLifecycle'
+  readonly subscribeTerminalEvents: 'subscribeTerminalEvents'
+  readonly terminalClear: 'terminal.clear'
+  readonly terminalClose: 'terminal.close'
+  readonly terminalOpen: 'terminal.open'
+  readonly terminalResize: 'terminal.resize'
+  readonly terminalRestart: 'terminal.restart'
+  readonly terminalWrite: 'terminal.write'
 }
 
 export const WS_METHODS: WsMethods = {
   projectsList: 'projects.list',
   projectsAdd: 'projects.add',
   projectsCreateThread: 'projects.createThread',
+  shellOpenInEditor: 'shell.openInEditor',
   serverGetConfig: 'server.getConfig',
   subscribeProjects: 'subscribeProjects',
   subscribeServerConfig: 'subscribeServerConfig',
   subscribeServerLifecycle: 'subscribeServerLifecycle',
+  subscribeTerminalEvents: 'subscribeTerminalEvents',
+  terminalClear: 'terminal.clear',
+  terminalClose: 'terminal.close',
+  terminalOpen: 'terminal.open',
+  terminalResize: 'terminal.resize',
+  terminalRestart: 'terminal.restart',
+  terminalWrite: 'terminal.write',
 }
 
 const EmptyPayload = Schema.Struct({})
@@ -57,9 +85,51 @@ export const WsProjectsCreateThreadRpc = Rpc.make(
   }
 )
 
+export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
+  payload: ShellOpenInEditorInput,
+  success: EmptyPayload,
+  error: ShellOpenInEditorError,
+})
+
 export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: EmptyPayload,
   success: ServerConfig,
+})
+
+export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
+  payload: TerminalOpenInput,
+  success: TerminalSessionSnapshot,
+  error: TerminalError,
+})
+
+export const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
+  payload: TerminalWriteInput,
+  success: EmptyPayload,
+  error: TerminalError,
+})
+
+export const WsTerminalResizeRpc = Rpc.make(WS_METHODS.terminalResize, {
+  payload: TerminalResizeInput,
+  success: EmptyPayload,
+  error: TerminalError,
+})
+
+export const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
+  payload: TerminalClearInput,
+  success: EmptyPayload,
+  error: TerminalError,
+})
+
+export const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
+  payload: TerminalRestartInput,
+  success: TerminalSessionSnapshot,
+  error: TerminalError,
+})
+
+export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
+  payload: TerminalCloseInput,
+  success: EmptyPayload,
+  error: TerminalError,
 })
 
 export const WsSubscribeProjectsRpc = Rpc.make(WS_METHODS.subscribeProjects, {
@@ -86,12 +156,29 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(
   }
 )
 
+export const WsSubscribeTerminalEventsRpc = Rpc.make(
+  WS_METHODS.subscribeTerminalEvents,
+  {
+    payload: EmptyPayload,
+    success: TerminalEvent,
+    stream: true,
+  }
+)
+
 export const WsRpcGroup = RpcGroup.make(
   WsProjectsListRpc,
   WsProjectsAddRpc,
   WsProjectsCreateThreadRpc,
+  WsShellOpenInEditorRpc,
   WsServerGetConfigRpc,
+  WsTerminalOpenRpc,
+  WsTerminalWriteRpc,
+  WsTerminalResizeRpc,
+  WsTerminalClearRpc,
+  WsTerminalRestartRpc,
+  WsTerminalCloseRpc,
   WsSubscribeProjectsRpc,
   WsSubscribeServerConfigRpc,
-  WsSubscribeServerLifecycleRpc
+  WsSubscribeServerLifecycleRpc,
+  WsSubscribeTerminalEventsRpc
 )

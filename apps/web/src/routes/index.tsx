@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { ThreadTerminalWorkspace } from '@/components/thread-terminal-workspace'
 import { SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import {
   useActiveThreadInfo,
@@ -49,22 +50,20 @@ function HomeComponent() {
           </span>
         </div>
 
-        <div className="flex flex-1 items-center justify-center">
-          <div className="text-center">
-            {activeThreadInfo ? (
-              <>
-                <p className="font-medium text-foreground text-sm">
-                  {activeThreadInfo.thread.title}
-                </p>
-                <p className="mt-1 text-sm">
-                  Ready to work in `{activeThreadInfo.project.name}`.
-                </p>
-              </>
-            ) : (
+        {activeThreadInfo ? (
+          <ThreadTerminalWorkspace
+            cwd={activeThreadInfo.project.workspaceRoot}
+            projectName={activeThreadInfo.project.name}
+            threadId={activeThreadInfo.thread.id}
+            threadTitle={activeThreadInfo.thread.title}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
               <p className="text-sm">{emptyStateMessage}</p>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </SidebarInset>
   )

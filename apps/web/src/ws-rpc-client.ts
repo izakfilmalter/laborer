@@ -11,8 +11,21 @@ import type {
   ServerConfigStreamEvent,
   ServerLifecycleStreamEvent,
 } from '@laborer/contracts/server'
+import type { ShellOpenInEditorInput } from '@laborer/contracts/shell'
+import type {
+  TerminalClearInput,
+  TerminalCloseInput,
+  TerminalEvent,
+  TerminalOpenInput,
+  TerminalResizeInput,
+  TerminalRestartInput,
+  TerminalSessionSnapshot,
+  TerminalWriteInput,
+} from '@laborer/contracts/terminal'
 
 import { WsTransport } from './ws-transport'
+
+type EmptyResult = Record<string, never>
 
 export interface WsRpcClient {
   readonly dispose: () => Promise<void>
@@ -32,6 +45,24 @@ export interface WsRpcClient {
     readonly subscribeLifecycle: (
       listener: (event: ServerLifecycleStreamEvent) => void
     ) => () => void
+  }
+  readonly shell: {
+    readonly openInEditor: (
+      input: ShellOpenInEditorInput
+    ) => Promise<EmptyResult>
+  }
+  readonly terminal: {
+    readonly clear: (input: TerminalClearInput) => Promise<EmptyResult>
+    readonly close: (input: TerminalCloseInput) => Promise<EmptyResult>
+    readonly onEvent: (listener: (event: TerminalEvent) => void) => () => void
+    readonly open: (
+      input: TerminalOpenInput
+    ) => Promise<TerminalSessionSnapshot>
+    readonly resize: (input: TerminalResizeInput) => Promise<EmptyResult>
+    readonly restart: (
+      input: TerminalRestartInput
+    ) => Promise<TerminalSessionSnapshot>
+    readonly write: (input: TerminalWriteInput) => Promise<EmptyResult>
   }
 }
 
@@ -66,6 +97,10 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
           listener
         ),
     },
+    shell: {
+      openInEditor: (input) =>
+        transport.request((client) => client.shell.openInEditor(input)),
+    },
     server: {
       getConfig: () =>
         transport.request((client) => client.server.getConfig({})),
@@ -81,6 +116,26 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
             client.subscribeServerLifecycle({}, { asMailbox: false as const }),
           listener
         ),
+    },
+    terminal: {
+      clear: (input) =>
+        transport.request((client) => client.terminal.clear(input)),
+      close: (input) =>
+        transport.request((client) => client.terminal.close(input)),
+      onEvent: (listener) =>
+        transport.subscribe(
+          (client) =>
+            client.subscribeTerminalEvents({}, { asMailbox: false as const }),
+          listener
+        ),
+      open: (input) =>
+        transport.request((client) => client.terminal.open(input)),
+      resize: (input) =>
+        transport.request((client) => client.terminal.resize(input)),
+      restart: (input) =>
+        transport.request((client) => client.terminal.restart(input)),
+      write: (input) =>
+        transport.request((client) => client.terminal.write(input)),
     },
   }
 }

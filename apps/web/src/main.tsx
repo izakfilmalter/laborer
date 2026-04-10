@@ -5,6 +5,8 @@ import {
 } from '@tanstack/react-router'
 import ReactDOM from 'react-dom/client'
 
+import '@xterm/xterm/css/xterm.css'
+
 import Loader from './components/loader'
 import { isElectron } from './env'
 import { getRouter } from './router'

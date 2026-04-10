@@ -16,7 +16,17 @@ import {
   ServerLifecycleStreamEvent,
 } from './server'
 
-export const WS_METHODS = {
+interface WsMethods {
+  readonly projectsAdd: 'projects.add'
+  readonly projectsCreateThread: 'projects.createThread'
+  readonly projectsList: 'projects.list'
+  readonly serverGetConfig: 'server.getConfig'
+  readonly subscribeProjects: 'subscribeProjects'
+  readonly subscribeServerConfig: 'subscribeServerConfig'
+  readonly subscribeServerLifecycle: 'subscribeServerLifecycle'
+}
+
+export const WS_METHODS: WsMethods = {
   projectsList: 'projects.list',
   projectsAdd: 'projects.add',
   projectsCreateThread: 'projects.createThread',
@@ -24,7 +34,7 @@ export const WS_METHODS = {
   subscribeProjects: 'subscribeProjects',
   subscribeServerConfig: 'subscribeServerConfig',
   subscribeServerLifecycle: 'subscribeServerLifecycle',
-} as const
+}
 
 const EmptyPayload = Schema.Struct({})
 

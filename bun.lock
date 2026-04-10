@@ -11,6 +11,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "2.4.11",
+        "@catenarycloud/linteffect": "^0.0.4-0",
         "@effect/language-service": "^0.85.1",
         "dotenv-cli": "^11.0.0",
         "tsx": "^4.21.0",
@@ -243,6 +244,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.4.11", "", { "os": "win32", "cpu": "arm64" }, "sha512-RJhaTnY8byzxDt4bDVb7AFPHkPcjOPK3xBip4ZRTrN3TEfyhjLRm3r3mqknqydgVTB74XG8l4jMLwEACEeihVg=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.11", "", { "os": "win32", "cpu": "x64" }, "sha512-A8D3JM/00C2KQgUV3oj8Ba15EHEYwebAGCy5Sf9GAjr5Y3+kJIYOiESoqRDeuRZueuMdCsbLZIUqmPhpYXJE9A=="],
+
+    "@catenarycloud/linteffect": ["@catenarycloud/linteffect@0.0.4-0", "", { "dependencies": { "@biomejs/biome": "^2.2.4" }, "bin": { "linteffect": "bin/linteffect.mjs" } }, "sha512-UPB4IWhUCwIMbD/fqKRbpsYTB1BgZd8d5eBXaWh1qk1o/7WxhMTQnlTsYyHjKm3uGDUaS9SIaXkh0FXeREdkNQ=="],
 
     "@clack/core": ["@clack/core@1.2.0", "", { "dependencies": { "fast-wrap-ansi": "^0.1.3", "sisteransi": "^1.0.5" } }, "sha512-qfxof/3T3t9DPU/Rj3OmcFyZInceqj/NVtO9rwIuJqCUgh32gwPjpFQQp/ben07qKlhpwq7GzfWpST4qdJ5Drg=="],
 

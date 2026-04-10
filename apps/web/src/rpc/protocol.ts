@@ -1,24 +1,24 @@
 import { BrowserSocket } from '@effect/platform-browser'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { WsRpcGroup } from '@laborer/contracts/rpc'
-import { Layer } from 'effect'
+import { Layer, Match } from 'effect'
 import type * as Effect from 'effect/Effect'
 
 import { resolveServerUrl } from '@/lib/server-url'
 
 export const makeWsRpcProtocolClient = RpcClient.make(WsRpcGroup)
 
-type RpcClientFactory = typeof makeWsRpcProtocolClient
-
-export type WsRpcProtocolClient =
-  RpcClientFactory extends Effect.Effect<infer Client, never, unknown>
-    ? Client
-    : never
+export interface WsRpcProtocolClient
+  extends Effect.Effect.Success<typeof makeWsRpcProtocolClient> {}
 
 export function createWsRpcProtocolLayer(url?: string) {
+  const protocol = Match.value(window.location.protocol).pipe(
+    Match.when('https:', (): 'wss' => 'wss'),
+    Match.orElse((): 'ws' => 'ws')
+  )
   const resolvedUrl = resolveServerUrl({
     url,
-    protocol: window.location.protocol === 'https:' ? 'wss' : 'ws',
+    protocol,
     pathname: '/ws',
   })
   return RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(

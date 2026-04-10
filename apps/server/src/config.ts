@@ -6,7 +6,7 @@ import {
   DEFAULT_SERVER_PORT,
   resolveServerWsUrl,
 } from '@laborer/shared/server'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Layer, Match } from 'effect'
 
 export interface ServerRuntimeConfigShape {
   readonly cwd: string
@@ -20,32 +20,38 @@ export interface ServerRuntimeConfigShape {
 export class ServerRuntimeConfig extends Context.Tag(
   '@laborer/server/ServerRuntimeConfig'
 )<ServerRuntimeConfig, ServerRuntimeConfigShape>() {
-  static readonly layer = Layer.effect(
-    this,
-    Effect.sync(() => {
-      const host =
-        process.env.LABORER_SERVER_HOST?.trim() || DEFAULT_SERVER_HOST
-      const parsedPort = Number.parseInt(
-        process.env.LABORER_SERVER_PORT ?? '',
-        10
-      )
-      const port =
-        Number.isInteger(parsedPort) && parsedPort > 0
-          ? parsedPort
-          : DEFAULT_SERVER_PORT
-      const rawMode = process.env.LABORER_SERVER_MODE?.trim()
-      const mode: RuntimeMode = rawMode === 'desktop' ? 'desktop' : 'web'
-      const cwd = process.cwd()
-      const projectName = basename(cwd) || 'laborer'
+  static readonly layer = Layer.sync(this, createServerRuntimeConfig)
+}
 
-      return ServerRuntimeConfig.of({
-        cwd,
-        host,
-        port,
-        mode,
-        projectName,
-        wsUrl: resolveServerWsUrl({ host, port }),
-      })
-    })
+function createServerRuntimeConfig() {
+  const cwd = process.cwd()
+  const host = process.env.LABORER_SERVER_HOST?.trim() || DEFAULT_SERVER_HOST
+  const port = resolveServerPort(process.env.LABORER_SERVER_PORT)
+  const mode = resolveRuntimeMode(process.env.LABORER_SERVER_MODE)
+
+  return ServerRuntimeConfig.of({
+    cwd,
+    host,
+    mode,
+    port,
+    projectName: basename(cwd) || 'laborer',
+    wsUrl: resolveServerWsUrl({ host, port }),
+  })
+}
+
+function resolveRuntimeMode(rawMode: string | undefined): RuntimeMode {
+  return Match.value(rawMode?.trim()).pipe(
+    Match.when('desktop', (): RuntimeMode => 'desktop'),
+    Match.orElse((): RuntimeMode => 'web')
+  )
+}
+
+function resolveServerPort(rawPort: string | undefined): number {
+  return Match.value(Number.parseInt(rawPort ?? '', 10)).pipe(
+    Match.when(
+      (candidate) => Number.isInteger(candidate) && candidate > 0,
+      (candidate) => candidate
+    ),
+    Match.orElse(() => DEFAULT_SERVER_PORT)
   )
 }

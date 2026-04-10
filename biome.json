@@ -88,5 +88,10 @@
       "tailwindDirectives": true
     }
   },
-  "extends": ["ultracite/biome/core", "ultracite/biome/react"]
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "@catenarycloud/linteffect/core",
+    "@catenarycloud/linteffect/ts-type"
+  ]
 }

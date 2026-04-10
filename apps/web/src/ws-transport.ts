@@ -1,5 +1,13 @@
 import type { RpcClient } from '@effect/rpc'
-import { Duration, Effect, Exit, ManagedRuntime, Scope, Stream } from 'effect'
+import {
+  Duration,
+  Effect,
+  Exit,
+  ManagedRuntime,
+  Match,
+  Scope,
+  Stream,
+} from 'effect'
 import type { DurationInput } from 'effect/Duration'
 import type { CloseableScope } from 'effect/Scope'
 
@@ -14,6 +22,21 @@ interface SubscribeOptions {
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY = Duration.millis(250)
+
+type WsRpcRequest =
+  | ReturnType<WsRpcProtocolClient['projects']['add']>
+  | ReturnType<WsRpcProtocolClient['projects']['createThread']>
+  | ReturnType<WsRpcProtocolClient['projects']['list']>
+  | ReturnType<WsRpcProtocolClient['server']['getConfig']>
+
+const notifyListener = <TValue>(
+  listener: (value: TValue) => void,
+  value: TValue
+) =>
+  Effect.try({
+    try: () => listener(value),
+    catch: (error) => error,
+  }).pipe(Effect.ignore)
 
 export class WsTransport {
   private readonly runtime: ManagedRuntime.ManagedRuntime<
@@ -32,17 +55,45 @@ export class WsTransport {
     )
   }
 
-  async request<TSuccess>(
+  request(
     execute: (
       client: WsRpcProtocolClient
-    ) => Effect.Effect<TSuccess, Error, never>
-  ): Promise<TSuccess> {
-    if (this.disposed) {
-      throw new Error('Transport disposed')
-    }
-
+    ) => ReturnType<WsRpcProtocolClient['projects']['add']>
+  ): Promise<
+    Effect.Effect.Success<ReturnType<WsRpcProtocolClient['projects']['add']>>
+  >
+  request(
+    execute: (
+      client: WsRpcProtocolClient
+    ) => ReturnType<WsRpcProtocolClient['projects']['createThread']>
+  ): Promise<
+    Effect.Effect.Success<
+      ReturnType<WsRpcProtocolClient['projects']['createThread']>
+    >
+  >
+  request(
+    execute: (
+      client: WsRpcProtocolClient
+    ) => ReturnType<WsRpcProtocolClient['projects']['list']>
+  ): Promise<
+    Effect.Effect.Success<ReturnType<WsRpcProtocolClient['projects']['list']>>
+  >
+  request(
+    execute: (
+      client: WsRpcProtocolClient
+    ) => ReturnType<WsRpcProtocolClient['server']['getConfig']>
+  ): Promise<
+    Effect.Effect.Success<
+      ReturnType<WsRpcProtocolClient['server']['getConfig']>
+    >
+  >
+  async request(
+    execute: (client: WsRpcProtocolClient) => WsRpcRequest
+  ): Promise<Effect.Effect.Success<WsRpcRequest>> {
+    await this.ensureOpen()
     const client = await this.clientPromise
-    return await this.runtime.runPromise(Effect.suspend(() => execute(client)))
+
+    return await this.runRequest(execute(client))
   }
 
   async requestStream<TValue>(
@@ -51,20 +102,11 @@ export class WsTransport {
     ) => Stream.Stream<TValue, Error, never>,
     listener: (value: TValue) => void
   ): Promise<void> {
-    if (this.disposed) {
-      throw new Error('Transport disposed')
-    }
-
+    await this.ensureOpen()
     const client = await this.clientPromise
     await this.runtime.runPromise(
       Stream.runForEach(connect(client), (value) =>
-        Effect.sync(() => {
-          try {
-            listener(value)
-          } catch {
-            // Keep the stream alive if the consumer throws.
-          }
-        })
+        notifyListener(listener, value)
       )
     )
   }
@@ -76,36 +118,29 @@ export class WsTransport {
     listener: (value: TValue) => void,
     options?: SubscribeOptions
   ): () => void {
-    if (this.disposed) {
-      return () => undefined
-    }
+    return Match.value(this.disposed).pipe(
+      Match.when(true, () => () => undefined),
+      Match.orElse(() => this.startSubscription(connect, listener, options))
+    )
+  }
 
+  private startSubscription<TValue>(
+    connect: (
+      client: WsRpcProtocolClient
+    ) => Stream.Stream<TValue, Error, never>,
+    listener: (value: TValue) => void,
+    options?: SubscribeOptions
+  ) {
     let active = true
     const retryDelay = options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY
     const cancel = this.runtime.runCallback(
       Effect.promise(() => this.clientPromise).pipe(
         Effect.flatMap((client) =>
           Stream.runForEach(connect(client), (value) =>
-            Effect.sync(() => {
-              if (!active) {
-                return
-              }
-
-              try {
-                listener(value)
-              } catch {
-                // Keep the subscription alive if the consumer throws.
-              }
-            })
+            Effect.when(notifyListener(listener, value), () => active)
           )
         ),
-        Effect.catchAll(() => {
-          if (!active || this.disposed) {
-            return Effect.interrupt
-          }
-
-          return Effect.sleep(retryDelay)
-        }),
+        Effect.catchAll(() => this.retrySubscription(active, retryDelay)),
         Effect.forever
       )
     )
@@ -117,15 +152,39 @@ export class WsTransport {
   }
 
   async dispose() {
-    if (this.disposed) {
-      return
-    }
+    await Match.value(this.disposed).pipe(
+      Match.when(true, () => Promise.resolve()),
+      Match.orElse(() => this.disposeRuntime())
+    )
+  }
 
+  private ensureOpen() {
+    return Match.value(this.disposed).pipe(
+      Match.when(true, () => Promise.reject(new Error('Transport disposed'))),
+      Match.orElse(() => Promise.resolve())
+    )
+  }
+
+  private runRequest(request: WsRpcRequest) {
+    return this.runtime.runPromise<
+      Effect.Effect.Success<WsRpcRequest>,
+      Effect.Effect.Error<WsRpcRequest>
+    >(request)
+  }
+
+  private disposeRuntime() {
     this.disposed = true
-    await this.runtime
+    return this.runtime
       .runPromise(Scope.close(this.clientScope, Exit.void))
       .finally(() => {
         this.runtime.dispose()
       })
+  }
+
+  private retrySubscription(active: boolean, retryDelay: DurationInput) {
+    return Match.value(active && !this.disposed).pipe(
+      Match.when(true, () => Effect.sleep(retryDelay)),
+      Match.orElse(() => Effect.interrupt)
+    )
   }
 }

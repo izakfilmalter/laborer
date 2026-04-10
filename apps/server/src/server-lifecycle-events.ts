@@ -8,9 +8,15 @@ interface SnapshotState {
   readonly sequence: number
 }
 
+const getSnapshot = (state: Ref.Ref<SnapshotState>) => Ref.get(state)
+
+const streamLifecycleEvents = (
+  pubsub: PubSub.PubSub<ServerLifecycleStreamEvent>
+) => Stream.fromPubSub(pubsub)
+
 export interface ServerLifecycleEventsShape {
-  readonly snapshot: Effect.Effect<SnapshotState>
-  readonly stream: Stream.Stream<ServerLifecycleStreamEvent>
+  readonly snapshot: ReturnType<typeof getSnapshot>
+  readonly stream: ReturnType<typeof streamLifecycleEvents>
 }
 
 export class ServerLifecycleEvents extends Context.Tag(
@@ -46,8 +52,8 @@ export class ServerLifecycleEvents extends Context.Tag(
       })
 
       return ServerLifecycleEvents.of({
-        snapshot: Ref.get(state),
-        stream: Stream.fromPubSub(pubsub),
+        snapshot: getSnapshot(state),
+        stream: streamLifecycleEvents(pubsub),
       })
     })
   )

@@ -1,8 +1,10 @@
+/** biome-ignore-all lint/correctness/noNestedComponentDefinitions: shadcn code */
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
 } from 'lucide-react'
+// biome-ignore lint/performance/noNamespaceImport: shadcn code
 import * as React from 'react'
 import {
   type DayButton,

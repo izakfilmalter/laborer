@@ -27,7 +27,8 @@
       "!**/.source",
       "!**/convex/_generated",
       "!**/.reference",
-      "!**/.opencode"
+      "!**/.opencode",
+      "!**/release"
     ]
   },
   "formatter": {

@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/performance/noNamespaceImport: shadcn code */
 import * as React from 'react'
 import type { TooltipValueType } from 'recharts'
 import * as RechartsPrimitive from 'recharts'
@@ -21,6 +22,7 @@ export type ChartConfig = Record<
   )
 >
 
+// biome-ignore lint/style/useConsistentTypeDefinitions: shadcn code
 type ChartContextProps = {
   config: ChartConfig
 }
@@ -90,6 +92,7 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
 
   return (
     <style
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: shadcn code
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)
           .map(
@@ -197,6 +200,7 @@ function ChartTooltipContent({
       <div className="grid gap-1.5">
         {payload
           .filter((item) => item.type !== 'none')
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: shadcn code
           .map((item, index) => {
             const key = `${nameKey ?? item.name ?? item.dataKey ?? 'value'}`
             const itemConfig = getPayloadConfigFromPayload(config, item, key)
@@ -208,6 +212,7 @@ function ChartTooltipContent({
                   'flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5 [&>svg]:text-muted-foreground',
                   indicator === 'dot' && 'items-center'
                 )}
+                // biome-ignore lint/suspicious/noArrayIndexKey: shadcn code
                 key={index}
               >
                 {formatter && item?.value !== undefined && item.name ? (
@@ -305,6 +310,7 @@ function ChartLegendContent({
               className={cn(
                 'flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:text-muted-foreground'
               )}
+              // biome-ignore lint/suspicious/noArrayIndexKey: shadcn code
               key={index}
             >
               {itemConfig?.icon && !hideIcon ? (

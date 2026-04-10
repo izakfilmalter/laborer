@@ -12,7 +12,8 @@ function Slider({
 }: SliderPrimitive.Root.Props) {
   const _values = Array.isArray(value)
     ? value
-    : Array.isArray(defaultValue)
+    : // biome-ignore lint/style/noNestedTernary: shadcn code
+      Array.isArray(defaultValue)
       ? defaultValue
       : [min, max]
 
@@ -41,6 +42,7 @@ function Slider({
           <SliderPrimitive.Thumb
             className="relative block size-3 shrink-0 select-none rounded-md border border-ring bg-white ring-ring/30 transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-2 focus-visible:outline-hidden focus-visible:ring-2 active:ring-2 disabled:pointer-events-none disabled:opacity-50"
             data-slot="slider-thumb"
+            // biome-ignore lint/suspicious/noArrayIndexKey: shadcn code
             key={index}
           />
         ))}

@@ -1,0 +1,61 @@
+{
+  "name": "@laborer/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev:bundle": "tsdown --watch",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "build": "tsdown",
+    "start": "node scripts/start-electron.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@laborer/contracts": "workspace:*",
+    "@types/node": "^25.6.0",
+    "electron": "40.6.0",
+    "electron-builder": "^26.0.12",
+    "tsdown": "^0.20.3",
+    "typescript": "catalog:"
+  },
+  "productName": "Laborer",
+  "description": "Electron desktop shell for Laborer",
+  "author": "Izak Filmalter",
+  "build": {
+    "appId": "com.izakfilmalter.laborer",
+    "productName": "Laborer",
+    "asar": true,
+    "files": [
+      "dist-electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      }
+    ],
+    "directories": {
+      "output": "../../release"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

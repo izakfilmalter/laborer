@@ -51,7 +51,9 @@ function RootComponent() {
           <Toaster richColors />
         </TooltipProvider>
       </ThemeProvider>
-      <TanStackRouterDevtools position="bottom-right" />
+      {import.meta.env.DEV ? (
+        <TanStackRouterDevtools position="bottom-right" />
+      ) : null}
     </>
   )
 }

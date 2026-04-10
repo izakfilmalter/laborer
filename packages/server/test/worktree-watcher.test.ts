@@ -13,6 +13,7 @@ import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
+import { NoopSandboxProvider } from './helpers/test-sandbox-provider.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitForWithNudge } from './helpers/timing-helpers.js'
 
@@ -23,6 +24,7 @@ const TestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(ConfigService.layer),
   Layer.provide(TestFileWatcherClientRealLayer),
   Layer.provide(WorktreeReconciler.layer),
+  Layer.provide(NoopSandboxProvider),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
   Layer.provideMerge(TestLaborerStore)

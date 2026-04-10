@@ -26,6 +26,7 @@
  * @see Issue #17: LiveStore client adapter setup
  */
 
+import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { schema } from '@laborer/shared/schema'
 
 import { makePersistedAdapter } from '@livestore/adapter-web'
@@ -71,6 +72,18 @@ function createLiveStoreWorker(options: { name: string }): Worker {
   workerUrl = `${workerUrl}${separator}transport=messageport`
 
   const worker = new Worker(workerUrl, { type: 'module', name: options.name })
+
+  worker.addEventListener('message', (event: MessageEvent) => {
+    const data = event.data as { type?: string }
+    if (data?.type !== RPC_PORT_DEAD_EVENT) {
+      return
+    }
+
+    console.warn(
+      '[LiveStore.store] Worker reported dead RPC port — requesting runtime reset'
+    )
+    window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
+  })
 
   // Acquire a sync MessagePort from the server utility process and
   // transfer it to the worker. This happens asynchronously — the worker

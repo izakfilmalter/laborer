@@ -32,6 +32,7 @@ import {
 } from '../services/prd-storage-service.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
+import { SandboxProvider } from '../services/sandbox-provider.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -202,6 +203,92 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
       )
   })
 
+/** Validate optional string field. */
+const isOptionalString = (v: unknown): boolean =>
+  v === undefined || typeof v === 'string'
+
+/** Validate optional boolean field. */
+const isOptionalBoolean = (v: unknown): boolean =>
+  v === undefined || typeof v === 'boolean'
+
+/** Validate optional positive number field. */
+const isOptionalPositiveNumber = (v: unknown): boolean =>
+  v === undefined || (typeof v === 'number' && v > 0)
+
+/** Validate optional number field. */
+const isOptionalNumber = (v: unknown): boolean =>
+  v === undefined || typeof v === 'number'
+
+/** Validate optional string array field. */
+const isOptionalStringArray = (v: unknown): boolean =>
+  v === undefined || (Array.isArray(v) && v.every((s) => typeof s === 'string'))
+
+/** Validate sandbox resources object. */
+const isValidSandboxResources = (
+  r: { cpu?: unknown; disk?: unknown; memory?: unknown } | undefined
+): boolean => {
+  if (r === undefined) {
+    return true
+  }
+  if (typeof r !== 'object') {
+    return false
+  }
+  return (
+    isOptionalNumber(r.cpu) &&
+    isOptionalNumber(r.memory) &&
+    isOptionalNumber(r.disk)
+  )
+}
+
+/**
+ * Validate a devServer update payload.
+ * Returns true if the update is structurally valid (or undefined/absent).
+ */
+const validateDevServerUpdate = (
+  ds:
+    | {
+        autoOpen?: boolean | undefined
+        autoStopInterval?: number | undefined
+        dockerfile?: string | undefined
+        image?: string | undefined
+        port?: number | undefined
+        provider?: 'docker' | 'daytona' | undefined
+        resources?:
+          | {
+              cpu?: number | undefined
+              disk?: number | undefined
+              memory?: number | undefined
+            }
+          | undefined
+        setupScripts?: readonly string[] | undefined
+        startCommand?: string | undefined
+        workdir?: string | undefined
+      }
+    | undefined
+): boolean => {
+  if (ds === undefined) {
+    return true
+  }
+  if (typeof ds !== 'object') {
+    return false
+  }
+  const validProviders = ['docker', 'daytona']
+  const isValidProvider =
+    ds.provider === undefined || validProviders.includes(ds.provider)
+
+  return (
+    isOptionalBoolean(ds.autoOpen) &&
+    isOptionalPositiveNumber(ds.autoStopInterval) &&
+    isOptionalString(ds.image) &&
+    isOptionalString(ds.dockerfile) &&
+    isOptionalString(ds.startCommand) &&
+    isOptionalString(ds.workdir) &&
+    isOptionalStringArray(ds.setupScripts) &&
+    isValidProvider &&
+    isValidSandboxResources(ds.resources)
+  )
+}
+
 export const handleConfigUpdate = ({
   projectId,
   config,
@@ -212,8 +299,18 @@ export const handleConfigUpdate = ({
     devServer?:
       | {
           autoOpen?: boolean | undefined
+          autoStopInterval?: number | undefined
           dockerfile?: string | undefined
           image?: string | undefined
+          port?: number | undefined
+          provider?: 'docker' | 'daytona' | undefined
+          resources?:
+            | {
+                cpu?: number | undefined
+                disk?: number | undefined
+                memory?: number | undefined
+              }
+            | undefined
           setupScripts?: readonly string[] | undefined
           startCommand?: string | undefined
           workdir?: string | undefined
@@ -235,27 +332,7 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
-    const isValidDevServerSetupScripts =
-      config.devServer?.setupScripts === undefined ||
-      (Array.isArray(config.devServer.setupScripts) &&
-        config.devServer.setupScripts.every(
-          (script) => typeof script === 'string'
-        ))
-
-    const isValidDevServer =
-      config.devServer === undefined ||
-      (typeof config.devServer === 'object' &&
-        (config.devServer.autoOpen === undefined ||
-          typeof config.devServer.autoOpen === 'boolean') &&
-        (config.devServer.image === undefined ||
-          typeof config.devServer.image === 'string') &&
-        (config.devServer.dockerfile === undefined ||
-          typeof config.devServer.dockerfile === 'string') &&
-        isValidDevServerSetupScripts &&
-        (config.devServer.startCommand === undefined ||
-          typeof config.devServer.startCommand === 'string') &&
-        (config.devServer.workdir === undefined ||
-          typeof config.devServer.workdir === 'string'))
+    const isValidDevServer = validateDevServerUpdate(config.devServer)
 
     const isValidConfig =
       isValidAgent &&
@@ -288,6 +365,7 @@ export const handleGlobalConfigGet = () =>
     const globalConfig = yield* configService.readGlobalConfig()
     return {
       agent: globalConfig.agent,
+      defaultSandboxProvider: globalConfig.defaultSandboxProvider,
     }
   })
 
@@ -296,11 +374,31 @@ export const handleGlobalConfigUpdate = ({
 }: {
   config: {
     agent?: 'opencode' | 'claude' | 'codex' | undefined
+    defaultSandboxProvider?: 'docker' | 'daytona' | undefined
   }
 }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService
     yield* configService.writeGlobalConfig(config)
+  })
+
+export const handleSettingsGetDefaultProvider = () =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    const globalConfig = yield* configService.readGlobalConfig()
+    return {
+      provider: globalConfig.defaultSandboxProvider ?? null,
+    }
+  })
+
+export const handleSettingsSetDefaultProvider = ({
+  provider,
+}: {
+  provider: 'docker' | 'daytona'
+}) =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    yield* configService.writeGlobalConfig({ defaultSandboxProvider: provider })
   })
 
 export const handlePrdCreate = ({
@@ -786,6 +884,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'globalConfig.update': handleGlobalConfigUpdate,
 
     // -------------------------------------------------------------------
+    // Settings RPCs
+    // -------------------------------------------------------------------
+    'settings.getDefaultProvider': handleSettingsGetDefaultProvider,
+    'settings.setDefaultProvider': handleSettingsSetDefaultProvider,
+
+    // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)
     // -------------------------------------------------------------------
     'prd.create': handlePrdCreate,
@@ -892,7 +996,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             yield* prWatcher.startPolling(wsId)
             yield* workspaceSyncService.startPolling(wsId)
           })
-        yield* provider.startContainer(workspaceId, onReady)
+        yield* provider.startSandbox(workspaceId, onReady)
       }),
 
     // -------------------------------------------------------------------
@@ -934,22 +1038,193 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
                   yield* prWatcher.startPolling(wsId)
                   yield* workspaceSyncService.startPolling(wsId)
                 })
-              yield* provider.startContainer(workspaceId, onReady)
+              yield* provider.startSandbox(workspaceId, onReady)
             })
         )
       ),
 
     // -------------------------------------------------------------------
+    // Sandbox RPCs (provider-agnostic — canonical names going forward)
+    //
+    // These delegate to the SandboxProvider abstraction. The old
+    // container.* / docker.* handlers above are kept as backward-compat
+    // aliases that go through the Docker-specific services directly.
+    // -------------------------------------------------------------------
+    'sandbox.providerStatus': () =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        return yield* sandboxProvider.checkAvailability()
+      }),
+    'workspace.startSandbox': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const onReady = (wsId: string) =>
+          Effect.gen(function* () {
+            yield* prWatcher.startPolling(wsId)
+            yield* workspaceSyncService.startPolling(wsId)
+          })
+        yield* provider.startSandbox(workspaceId, onReady)
+      }),
+    'sandbox.setPort': ({ workspaceId, port }) =>
+      Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.sandboxPortChanged({
+            workspaceId,
+            sandboxPort: port,
+          })
+        )
+
+        // For Daytona workspaces, refresh the preview URL when the port
+        // changes. Daytona preview URLs are port-specific (e.g.,
+        // https://3000-abc123.preview.daytona.io) unlike Docker URLs
+        // where the port is simply appended to the hostname.
+        if (port !== null) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspace = pipe(
+            allWorkspaces,
+            Array.findFirst((w) => w.id === workspaceId)
+          )
+          if (
+            workspace._tag === 'Some' &&
+            workspace.value.sandboxProvider === 'daytona'
+          ) {
+            const sandboxProvider = yield* SandboxProvider
+            yield* sandboxProvider
+              .getPreviewUrl(workspaceId, port)
+              .pipe(Effect.catchAll(() => Effect.void))
+          }
+        }
+      }),
+    'sandbox.pause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.pauseSandbox(workspaceId)
+      }),
+    'sandbox.resume': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.resumeSandbox(workspaceId)
+      }).pipe(
+        Effect.catchIf(
+          (err) =>
+            err._tag === 'RpcError' && err.code === 'CONTAINER_NOT_FOUND',
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.logInfo(
+                `Sandbox not found for workspace "${workspaceId}", recreating`
+              )
+              const provider = yield* WorkspaceProvider
+              const prWatcher = yield* PrWatcher
+              const workspaceSyncService = yield* WorkspaceSyncService
+              const onReady = (wsId: string) =>
+                Effect.gen(function* () {
+                  yield* prWatcher.startPolling(wsId)
+                  yield* workspaceSyncService.startPolling(wsId)
+                })
+              yield* provider.startSandbox(workspaceId, onReady)
+            })
+        )
+      ),
+    'sandbox.setAutoStop': ({ workspaceId, interval }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.setAutoStopInterval(workspaceId, interval)
+      }),
+
+    'sandbox.openInVsCode': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+
+        // Look up workspace to verify it exists and uses Daytona
+        const allWorkspaces = store.query(tables.workspaces)
+        const workspaceOpt = pipe(
+          allWorkspaces,
+          Array.findFirst((w) => w.id === workspaceId)
+        )
+
+        if (workspaceOpt._tag === 'None') {
+          return yield* new RpcError({
+            message: `Workspace not found: ${workspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const workspace = workspaceOpt.value
+        if (workspace.sandboxProvider !== 'daytona') {
+          return yield* new RpcError({
+            message:
+              'Open in VS Code via SSH is only available for Daytona sandboxes',
+            code: 'INVALID_ARGUMENT',
+          })
+        }
+
+        if (
+          workspace.sandboxId === null ||
+          workspace.sandboxStatus !== 'running'
+        ) {
+          return yield* new RpcError({
+            message: 'Sandbox must be running to open in VS Code',
+            code: 'INVALID_ARGUMENT',
+          })
+        }
+
+        // Build and execute the VS Code remote command
+        const hostAlias = `laborer-${workspaceId}`
+        const remoteArg = `ssh-remote+${hostAlias}`
+        const projectDir = '/home/daytona/project'
+
+        yield* Effect.tryPromise({
+          try: async () => {
+            const { exec } = await import('node:child_process')
+            const { promisify } = await import('node:util')
+            const execAsync = promisify(exec)
+            await execAsync(`code --remote ${remoteArg} ${projectDir}`)
+          },
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to open VS Code: ${error instanceof Error ? error.message : String(error)}`,
+              code: 'INTERNAL_ERROR',
+            }),
+        })
+      }),
+
+    // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)
-    // Only terminal.spawn is handled here — it resolves workspace info
-    // (cwd, env) before delegating to the terminal service. All other
-    // terminal RPCs (write, resize, kill, remove, restart) are called
-    // directly from the web app to the terminal service.
+    // terminal.spawn resolves workspace info (cwd, env) before
+    // delegating to the terminal service.
+    //
+    // terminal.resize, terminal.kill, terminal.remove route through
+    // the SandboxProvider so Daytona terminals are handled by the
+    // server (PtyHandle WebSocket) while Docker/host terminals are
+    // forwarded to the terminal utility process. The web app sends
+    // these for Daytona terminals only (detected by `daytona:` prefix);
+    // local terminals are handled directly by TerminalServiceClient.
     // -------------------------------------------------------------------
     'terminal.spawn': ({ workspaceId, command, autoRun }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
+      }),
+
+    'terminal.resize': ({ id, cols, rows }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.resizeTerminal(id, cols, rows)
+      }),
+
+    'terminal.kill': ({ id }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.killTerminal(id)
+      }),
+
+    'terminal.remove': ({ id }) =>
+      Effect.gen(function* () {
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.removeTerminal(id)
       }),
 
     // -------------------------------------------------------------------

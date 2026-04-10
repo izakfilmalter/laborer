@@ -147,9 +147,13 @@ export const makeMessagePortSync =
       const isConnected = yield* SubscriptionRef.make(false)
 
       // Build the RPC client protocol layer over the MessagePort.
+      // Electron's dedicated sync port already gets explicit invalidation from
+      // the main process when the server utility exits. Disable the raw
+      // transport heartbeat here to avoid false dead-port detection on an
+      // otherwise healthy quiet live-pull channel.
       const ProtocolLive = Layer.scoped(
         RpcClient.Protocol,
-        makeClientProtocolMessagePort(port)
+        makeClientProtocolMessagePort(port, { heartbeatEnabled: false })
       )
 
       // Build the layer eagerly to tie it to the enclosing scope.

@@ -108,7 +108,7 @@ export function WorkspaceFrameHeaderContainer({
       }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
-    const isContainerized = workspace.containerId != null
+    const isContainerized = workspace.sandboxId != null
     return {
       projectName: project?.name,
       branchName: workspace.branchName,

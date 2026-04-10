@@ -30,7 +30,7 @@ export function SidecarRuntimeBoundary({
   const pendingRecoveryRef = useRef(new Set<SidecarName>())
 
   useEffect(() => {
-    if (!(isElectron() && import.meta.env.PROD)) {
+    if (!isElectron()) {
       return
     }
 
@@ -80,10 +80,20 @@ export function SidecarRuntimeBoundary({
     // recovery here. This ensures that when the sidecar next reports
     // healthy, the generation bumps and fresh ports are acquired.
     const handlePortDead = () => {
+      pendingRecoveryRef.current.add('server')
+
+      if (lastStatesRef.current.get('server') === 'healthy') {
+        console.warn(
+          '[sidecar-boundary] RPC port dead event received while server is healthy — bumping generation immediately'
+        )
+        resetTerminalListStore()
+        setGeneration((current) => current + 1)
+        return
+      }
+
       console.warn(
         '[sidecar-boundary] RPC port dead event received — marking server for recovery'
       )
-      pendingRecoveryRef.current.add('server')
     }
     window.addEventListener(RPC_PORT_DEAD_EVENT, handlePortDead)
 

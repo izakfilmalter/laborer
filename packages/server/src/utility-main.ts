@@ -54,6 +54,7 @@ import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
+import { handleDaytonaTerminalDataPort } from './services/daytona-terminal-data-channel.js'
 import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
@@ -76,6 +77,8 @@ import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
+import { SandboxProvider } from './services/sandbox-provider.js'
+import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
@@ -260,16 +263,28 @@ const DeferredLeafLayers = Layer.mergeAll(
 )
 
 /**
- * Deferred Group 1 — services depending on LaborerStore + leaf layers.
+ * Deferred Group 1a — services depending on LaborerStore + leaf layers.
+ * Does NOT include WorktreeReconciler because it needs SandboxProvider,
+ * which is built in Group 1b after ContainerService is available.
  */
-const DeferredGroup1Layers = Layer.mergeAll(
+const DeferredGroup1aLayers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
   PrdStorageService.layer,
   FileService.layer,
-  PrWatcher.layer,
-  WorktreeReconciler.layer
+  PrWatcher.layer
+)
+
+/**
+ * Deferred Group 1b — adds SandboxProvider (routed between Docker and
+ * Daytona) on top of Group 1a, then builds WorktreeReconciler which
+ * needs SandboxProvider for sandbox cleanup when removing stale
+ * workspaces.
+ */
+const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(
+  Layer.provideMerge(SandboxProviderRoutedLayer),
+  Layer.provideMerge(DeferredGroup1aLayers)
 )
 
 /**
@@ -295,6 +310,10 @@ const DeferredGroup2Layers = Layer.mergeAll(
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available
  * as outputs for higher layers to consume.
+ *
+ * `SandboxProvider` is already in the stack from Group 1b
+ * (via `SandboxProviderRoutedLayer`), so `WorkspaceProvider.layer`
+ * can consume it directly.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
@@ -374,6 +393,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     const workspaceSyncService =
       yield* makeRefDelegatingService(WorkspaceSyncService)
     const depsImageService = yield* makeRefDelegatingService(DepsImageService)
+    const sandboxProvider = yield* makeRefDelegatingService(SandboxProvider, {
+      // sandbox.providerStatus has no error channel — return valid placeholder
+      checkAvailability: () => Effect.succeed({ available: false }),
+    })
 
     // --- Fork background fiber to build real services ---
 
@@ -419,7 +442,11 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         const stackCtx = yield* Layer.build(
           DeferredServiceStack.pipe(
             Layer.provide(Layer.succeedContext(leafCtx)),
-            Layer.provide(CoreDeps)
+            Layer.provide(CoreDeps),
+            // SandboxProviderRoutedLayer needs TerminalClient — provide
+            // the deferred proxy so the real implementation is swapped in
+            // when the terminal fiber completes.
+            Layer.provide(Layer.succeed(TerminalClient, terminalClient.proxy))
           )
         )
         yield* Effect.logInfo(
@@ -460,6 +487,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           workspaceSyncService.ref,
           Context.get(stackCtx, WorkspaceSyncService)
         )
+        yield* Ref.set(
+          sandboxProvider.ref,
+          Context.get(stackCtx, SandboxProvider)
+        )
 
         // TODO: Build McpRegistrar after stack is ready (needs
         // ProjectRegistry + WorkspaceProvider from the stack context)
@@ -485,7 +516,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
             Layer.provide(
               Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
             ),
-            Layer.provide(Layer.succeed(ProjectRegistry, projectRegistry.proxy))
+            Layer.provide(
+              Layer.succeed(ProjectRegistry, projectRegistry.proxy)
+            ),
+            Layer.provide(Layer.succeed(SandboxProvider, sandboxProvider.proxy))
           )
         )
         yield* Effect.logInfo(
@@ -544,7 +578,8 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.add(TerminalClient, terminalClient.proxy),
       Context.add(WorkspaceProvider, workspaceProvider.proxy),
       Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
-      Context.add(DepsImageService, depsImageService.proxy)
+      Context.add(DepsImageService, depsImageService.proxy),
+      Context.add(SandboxProvider, sandboxProvider.proxy)
     )
   })
 )
@@ -666,6 +701,24 @@ async function main(): Promise<void> {
       fileWatcherPort.postMessage?.({ type: 'ping', timestamp: Date.now() })
       console.log('[server-utility] Sent ping to file-watcher port')
       resolveFileWatcherRpcPort?.(fileWatcherPort)
+    } else if (
+      data?.type === 'daytona-terminal-data-port' &&
+      typeof (data as { terminalId?: string }).terminalId === 'string' &&
+      event.ports.length > 0
+    ) {
+      // Daytona terminal data port — bridge MessagePort to Daytona PTY.
+      // The server process manages Daytona PTY WebSocket connections
+      // (via DaytonaSandboxProvider), so data ports for Daytona terminals
+      // are routed here instead of to the terminal utility process.
+      //
+      // @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
+      const dataPort = event.ports[0] as RpcMessagePort
+      const { terminalId } = data as { terminalId: string }
+      dataPort.start?.()
+      console.log(
+        `[server-utility] Received Daytona terminal data port for terminal "${terminalId}"`
+      )
+      handleDaytonaTerminalDataPort(dataPort, terminalId)
     } else if (data?.type === 'port' && event.ports.length > 0) {
       // Additional RPC port — serve LaborerRpcs on it.
       // This enables other utility processes (e.g., MCP) to call

@@ -33,6 +33,19 @@ import { Effect, Layer, Queue, Scope } from 'effect'
 import type { RpcMessagePort } from './rpc-transport-messageport.js'
 import { PING_MESSAGE, PONG_MESSAGE } from './rpc-transport-messageport.js'
 
+export interface MessagePortClientProtocolOptions {
+  /**
+   * Enable the transport-level raw ping/pong heartbeat.
+   *
+   * Some Electron `MessagePort` paths already have a stronger liveness signal
+   * from the main process closing renderer ports on utility exit. Those call
+   * sites can opt out when the raw ping/pong loop is known to be unreliable.
+   *
+   * @default true
+   */
+  readonly heartbeatEnabled?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Heartbeat constants
 // ---------------------------------------------------------------------------
@@ -120,7 +133,8 @@ export const RPC_PORT_DEAD_EVENT = 'laborer:rpc-port-dead'
  * @param port - The MessagePort to send RPC requests over
  */
 export const makeClientProtocolMessagePort = (
-  port: RpcMessagePort
+  port: RpcMessagePort,
+  options?: MessagePortClientProtocolOptions
 ): Effect.Effect<RpcClient.Protocol['Type'], never, Scope.Scope> =>
   RpcClient.Protocol.make(
     Effect.fnUntraced(function* (writeResponse) {
@@ -140,6 +154,7 @@ export const makeClientProtocolMessagePort = (
       // the OS suspended the process and we should forgive the missed pongs.
       let lastTickTimestamp = Date.now()
       let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+      const heartbeatEnabled = options?.heartbeatEnabled ?? true
 
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
@@ -253,49 +268,51 @@ export const makeClientProtocolMessagePort = (
       // sleep / lid close). In that case we reset the pong timestamp instead
       // of declaring the port dead — the utility process was suspended too
       // and couldn't have responded to pings.
-      heartbeatInterval = setInterval(() => {
-        if (portState.closed) {
-          return
-        }
+      if (heartbeatEnabled) {
+        heartbeatInterval = setInterval(() => {
+          if (portState.closed) {
+            return
+          }
 
-        const now = Date.now()
-        const tickGap = now - lastTickTimestamp
-        lastTickTimestamp = now
+          const now = Date.now()
+          const tickGap = now - lastTickTimestamp
+          lastTickTimestamp = now
 
-        // Detect system sleep: if the gap between this tick and the
-        // previous one is much larger than expected, the OS suspended
-        // the process. Forgive the missed pongs and reset liveness.
-        if (tickGap > HEARTBEAT_INTERVAL_MS * SLEEP_DETECTION_FACTOR) {
-          console.info(
-            `[rpc-client-transport] Detected system sleep (tick gap ${tickGap}ms, expected ~${HEARTBEAT_INTERVAL_MS}ms) — resetting heartbeat`
-          )
-          lastPongTimestamp = now
-          // Send a fresh ping so the server responds promptly after wake.
+          // Detect system sleep: if the gap between this tick and the
+          // previous one is much larger than expected, the OS suspended
+          // the process. Forgive the missed pongs and reset liveness.
+          if (tickGap > HEARTBEAT_INTERVAL_MS * SLEEP_DETECTION_FACTOR) {
+            console.info(
+              `[rpc-client-transport] Detected system sleep (tick gap ${tickGap}ms, expected ~${HEARTBEAT_INTERVAL_MS}ms) — resetting heartbeat`
+            )
+            lastPongTimestamp = now
+            // Send a fresh ping so the server responds promptly after wake.
+            try {
+              port.postMessage(PING_MESSAGE)
+            } catch {
+              closeHandler()
+            }
+            return
+          }
+
+          const elapsed = now - lastPongTimestamp
+          if (elapsed > HEARTBEAT_TIMEOUT_MS) {
+            console.warn(
+              `[rpc-client-transport] No pong received in ${elapsed}ms — declaring port dead`
+            )
+            closeHandler()
+            return
+          }
+
+          // Send ping. If the port is dead, postMessage will throw —
+          // catch and trigger close.
           try {
             port.postMessage(PING_MESSAGE)
           } catch {
             closeHandler()
           }
-          return
-        }
-
-        const elapsed = now - lastPongTimestamp
-        if (elapsed > HEARTBEAT_TIMEOUT_MS) {
-          console.warn(
-            `[rpc-client-transport] No pong received in ${elapsed}ms — declaring port dead`
-          )
-          closeHandler()
-          return
-        }
-
-        // Send ping. If the port is dead, postMessage will throw —
-        // catch and trigger close.
-        try {
-          port.postMessage(PING_MESSAGE)
-        } catch {
-          closeHandler()
-        }
-      }, HEARTBEAT_INTERVAL_MS)
+        }, HEARTBEAT_INTERVAL_MS)
+      }
 
       // Clean up listeners when the scope is finalized.
       yield* Scope.addFinalizer(

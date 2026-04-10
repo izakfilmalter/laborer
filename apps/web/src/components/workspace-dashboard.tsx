@@ -51,6 +51,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useTerminalList } from '@/hooks/use-terminal-list'
+import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -60,6 +61,12 @@ const dashboardWorkspaces$ = queryDb(workspaces, {
   label: 'dashboardWorkspaces',
 })
 const dashboardTasks$ = queryDb(tasks, { label: 'dashboardTasks' })
+
+/**
+ * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
+ * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
+ */
+const FULL_URL_RE = /^https?:\/\//u
 
 type WorkspaceStatus =
   | 'creating'
@@ -211,14 +218,14 @@ interface WorkspaceCounts {
  */
 function getDisplayStatus(ws: {
   readonly status: string
-  readonly containerId?: string | null
-  readonly containerStatus?: string | null
-  readonly containerUrl?: string | null
+  readonly sandboxId?: string | null
+  readonly sandboxStatus?: string | null
+  readonly sandboxUrl?: string | null
 }): string {
-  if (ws.containerId != null) {
-    return ws.containerStatus === 'paused' ? 'paused' : 'running'
+  if (ws.sandboxId != null) {
+    return ws.sandboxStatus === 'paused' ? 'paused' : 'running'
   }
-  if (ws.containerUrl != null) {
+  if (ws.sandboxUrl != null) {
     return 'stopped'
   }
   return ws.status
@@ -228,9 +235,9 @@ function getDisplayStatus(ws: {
 function computeWorkspaceCounts(
   wsList: ReadonlyArray<{
     readonly status: string
-    readonly containerId?: string | null
-    readonly containerStatus?: string | null
-    readonly containerUrl?: string | null
+    readonly sandboxId?: string | null
+    readonly sandboxStatus?: string | null
+    readonly sandboxUrl?: string | null
   }>
 ): WorkspaceCounts {
   let running = 0
@@ -326,10 +333,11 @@ interface ProjectSection {
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
-    readonly containerId: string | null
-    readonly containerUrl: string | null
-    readonly containerPort: number | null
-    readonly containerStatus: string | null
+    readonly sandboxId: string | null
+    readonly sandboxUrl: string | null
+    readonly sandboxPort: number | null
+    readonly sandboxStatus: string | null
+    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }>
 }
@@ -521,6 +529,60 @@ function ProjectDashboardSection({
   )
 }
 
+/**
+ * Builds the sandbox preview URL from the stored sandboxUrl + port.
+ * Daytona preview URLs are stored as full URLs (https://...).
+ * Docker sandbox URLs are hostnames (e.g., branch--project.orb.local)
+ * where the port is appended as :{port}.
+ */
+function buildSandboxLink(
+  sandboxUrl: string,
+  sandboxPort: number | null
+): string {
+  if (FULL_URL_RE.test(sandboxUrl)) {
+    return sandboxUrl
+  }
+  return `http://${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
+}
+
+/**
+ * Extracts a human-readable display label from a sandbox URL.
+ * For full URLs, strips the protocol. For Docker hostnames, shows
+ * hostname:port.
+ */
+function buildSandboxDisplayLabel(
+  sandboxUrl: string,
+  sandboxPort: number | null
+): string {
+  if (FULL_URL_RE.test(sandboxUrl)) {
+    return sandboxUrl.replace(FULL_URL_RE, '')
+  }
+  return `${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
+}
+
+/** Renders a sandbox preview URL as a clickable link. */
+function SandboxUrlLink({
+  sandboxUrl,
+  sandboxPort,
+}: {
+  readonly sandboxUrl: string
+  readonly sandboxPort: number | null
+}) {
+  const href = buildSandboxLink(sandboxUrl, sandboxPort)
+  const label = buildSandboxDisplayLabel(sandboxUrl, sandboxPort)
+  return (
+    <a
+      className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+      href={href}
+      rel="noopener"
+      target="_blank"
+      title={`Open ${href}`}
+    >
+      {label}
+    </a>
+  )
+}
+
 /** Compact workspace row in the dashboard. */
 function DashboardWorkspaceRow({
   workspace,
@@ -531,19 +593,20 @@ function DashboardWorkspaceRow({
     readonly branchName: string
     readonly status: string
     readonly origin: WorkspaceOrigin | string
-    readonly containerId: string | null
-    readonly containerUrl: string | null
-    readonly containerPort: number | null
-    readonly containerStatus: string | null
+    readonly sandboxId: string | null
+    readonly sandboxUrl: string | null
+    readonly sandboxPort: number | null
+    readonly sandboxStatus: string | null
+    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }
   readonly terminalCount: number
 }) {
   const isDetectedWorkspace =
     (workspace.origin as WorkspaceOrigin) === 'external'
-  const isContainerized = workspace.containerId != null
-  const isContainerPaused = workspace.containerStatus === 'paused'
-  const hasContainerConfig = workspace.containerUrl != null
+  const isContainerized = workspace.sandboxId != null
+  const isContainerPaused = workspace.sandboxStatus === 'paused'
+  const hasContainerConfig = workspace.sandboxUrl != null
   const displayStatus = (() => {
     if (isContainerized) {
       return isContainerPaused ? 'paused' : 'running'
@@ -565,21 +628,21 @@ function DashboardWorkspaceRow({
           Detected
         </span>
       )}
-      {isContainerized && workspace.containerUrl ? (
-        <a
-          className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-          href={`http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
-          rel="noopener"
-          target="_blank"
-          title={`Open http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
-        >
-          {workspace.containerUrl}
-          {workspace.containerPort != null ? `:${workspace.containerPort}` : ''}
-        </a>
+      {isContainerized && workspace.sandboxUrl ? (
+        <SandboxUrlLink
+          sandboxPort={workspace.sandboxPort}
+          sandboxUrl={workspace.sandboxUrl}
+        />
       ) : null}
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">
           {terminalCount} terminal{terminalCount !== 1 ? 's' : ''}
+        </span>
+      )}
+      {workspace.sandboxSetupStep != null && (
+        <span className="flex shrink-0 items-center gap-1 text-sky-500 text-xs">
+          <Spinner className="size-3 text-sky-500" />
+          {getSandboxSetupLabel(workspace.sandboxSetupStep)}
         </span>
       )}
       {displayStatus === 'errored' && workspace.errorMessage ? (

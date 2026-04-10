@@ -8,8 +8,8 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
-import { DockerStatusBanner } from '@/components/docker-status-banner'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { ProviderStatusBanner } from '@/components/provider-status-banner'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { SyncStatusBridge } from '@/components/sync-status-bridge'
 import { SyncStatusProvider } from '@/components/sync-status-context'
@@ -94,7 +94,7 @@ function RootComponent() {
                     <AppSettingsProvider>
                       <SyncStatusProvider>
                         <div className="grid h-svh grid-rows-[auto_1fr]">
-                          <DockerStatusBanner />
+                          <ProviderStatusBanner />
                           <LiveStoreProvider key={`livestore-${generation}`}>
                             <SyncStatusBridge />
                             <AppSettingsModal />

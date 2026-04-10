@@ -6,12 +6,15 @@ import { Context, Effect, Layer } from 'effect'
 import { LaborerStore } from './laborer-store.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { RepositoryIdentity } from './repository-identity.js'
+import { SandboxProvider } from './sandbox-provider.js'
 import { WorktreeDetector } from './worktree-detector.js'
 
 interface WorkspaceRecord {
   readonly branchName: string
   readonly id: string
   readonly projectId: string
+  /** Sandbox ID when a dev server sandbox is running. Null when no sandbox exists. */
+  readonly sandboxId: string | null
   readonly status: string
   readonly worktreePath: string
 }
@@ -153,6 +156,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
       const { store } = yield* LaborerStore
       const detector = yield* WorktreeDetector
       const repoIdentity = yield* RepositoryIdentity
+      const sandboxProvider = yield* SandboxProvider
 
       const reconcile = Effect.fn('WorktreeReconciler.reconcile')(function* (
         projectId: string,
@@ -183,15 +187,22 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           tables.workspaces.where('projectId', projectId)
         ) as readonly WorkspaceRecord[]
 
-        // Filter out destroyed and creating workspaces for the "remove"
-        // pass.  Destroyed workspaces are already gone.  Creating
-        // workspaces have been committed to the store but their
-        // `git worktree add` has not executed yet, so the directory
-        // will not appear in `git worktree list`.  Removing them here
-        // would race with the background setup fiber that is still
-        // running.
+        // Filter out workspaces that should not be candidates for removal:
+        //
+        // - **destroyed**: already gone — nothing to remove.
+        // - **creating**: committed to the store but `git worktree add`
+        //   has not executed yet, so the directory won't appear in
+        //   `git worktree list`. Removing would race with the background
+        //   setup fiber.
+        // - **empty worktreePath**: remote-only workspaces (e.g. Daytona
+        //   cloud sandboxes) have no local worktree on disk. Their code
+        //   lives entirely in the remote sandbox, so worktree-based
+        //   reconciliation does not apply to them.
         const existingWorkspaces = allWorkspaces.filter(
-          (w) => w.status !== 'destroyed' && w.status !== 'creating'
+          (w) =>
+            w.status !== 'destroyed' &&
+            w.status !== 'creating' &&
+            w.worktreePath !== ''
         )
 
         // Canonicalize existing workspace paths for comparison so that
@@ -265,6 +276,23 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           const canonicalWorkspacePath = canonicalize(workspace.worktreePath)
           if (detectedCanonicalPaths.has(canonicalWorkspacePath)) {
             continue
+          }
+
+          // If the workspace had an active sandbox (Docker container or
+          // Daytona cloud sandbox), tear it down before removing the
+          // LiveStore record. Without this, sandbox resources would be
+          // orphaned — the container/sandbox keeps running but the UI
+          // no longer shows the workspace.
+          if (workspace.sandboxId !== null) {
+            yield* sandboxProvider
+              .destroySandbox(workspace.id)
+              .pipe(
+                Effect.catchAll((error) =>
+                  Effect.logWarning(
+                    `[WorktreeReconciler] Failed to destroy sandbox for stale workspace ${workspace.id}: ${String(error)}`
+                  )
+                )
+              )
           }
 
           store.commit(events.workspaceDestroyed({ id: workspace.id }))

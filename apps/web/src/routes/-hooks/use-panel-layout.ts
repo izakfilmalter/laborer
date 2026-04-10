@@ -386,8 +386,18 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
 
-/** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
-const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
+/**
+ * Daytona terminal IDs are prefixed with `daytona:` so the correct
+ * RPC endpoint (server vs terminal utility process) can be selected.
+ */
+const DAYTONA_TERMINAL_PREFIX = 'daytona:'
+
+/** Mutation atom for removing local (Docker/host) terminals via the terminal utility process. */
+const localRemoveTerminalMutation =
+  TerminalServiceClient.mutation('terminal.remove')
+
+/** Mutation atom for removing Daytona terminals via the server (LaborerRpcs). */
+const daytonaRemoveTerminalMutation = LaborerClient.mutation('terminal.remove')
 
 /**
  * Manages the panel layout state, providing split and close actions
@@ -524,7 +534,10 @@ export function usePanelLayout() {
   const getConfig = useAtomSet(configGetMutation, {
     mode: 'promise',
   })
-  const removeTerminal = useAtomSet(removeTerminalMutation, {
+  const removeTerminalLocal = useAtomSet(localRemoveTerminalMutation, {
+    mode: 'promise',
+  })
+  const removeTerminalDaytona = useAtomSet(daytonaRemoveTerminalMutation, {
     mode: 'promise',
   })
   // Start as "reconciling" when a persisted layout exists — this prevents
@@ -538,6 +551,9 @@ export function usePanelLayout() {
   const removeTerminalOptimistically = useCallback(
     (terminalId: string, logContext: string) => {
       removeTerminalListItem(terminalId)
+      const removeTerminal = terminalId.startsWith(DAYTONA_TERMINAL_PREFIX)
+        ? removeTerminalDaytona
+        : removeTerminalLocal
       removeTerminal({ payload: { id: terminalId } }).catch((error) => {
         // Silently ignore "not found" — the terminal was already removed
         // by another close path (e.g., progressive close escalation).
@@ -550,7 +566,7 @@ export function usePanelLayout() {
         console.warn(`${logContext} terminal remove failed:`, error)
       })
     },
-    [removeTerminal]
+    [removeTerminalLocal, removeTerminalDaytona]
   )
 
   /**
@@ -1176,7 +1192,7 @@ export function usePanelLayout() {
     (workspaceId: string): boolean => {
       const wsList = store.query(allWorkspaces$)
       const ws = wsList.find((w) => w.id === workspaceId)
-      return ws?.containerId != null
+      return ws?.sandboxId != null
     },
     [store]
   )

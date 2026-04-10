@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { Plus, Settings, Trash2 } from 'lucide-react'
+import { Cloud, Container, Plus, Settings, Trash2 } from 'lucide-react'
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -12,6 +12,7 @@ import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -51,6 +52,7 @@ import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,
   getSettingsLoadErrorMessage,
+  type SandboxProviderType,
   type SetupScriptItem,
 } from './project-settings-modal.helpers'
 
@@ -63,6 +65,26 @@ const AGENT_OPTIONS: ReadonlyArray<{
   { label: 'OpenCode', value: 'opencode' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
+]
+
+const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
+  readonly label: string
+  readonly value: SandboxProviderType
+  readonly description: string
+  readonly Icon: typeof Container
+}> = [
+  {
+    label: 'Docker',
+    value: 'docker',
+    description: 'Local containers via OrbStack',
+    Icon: Container,
+  },
+  {
+    label: 'Daytona',
+    value: 'daytona',
+    description: 'Cloud sandboxes',
+    Icon: Cloud,
+  },
 ]
 
 const updateConfigMutation = LaborerClient.mutation('config.update')
@@ -117,6 +139,8 @@ function ProjectSettingsForm({
   const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
   const [devServerNetwork, setDevServerNetwork] = useState('')
   const [devServerAutoOpen, setDevServerAutoOpen] = useState(false)
+  const [devServerProvider, setDevServerProvider] =
+    useState<SandboxProviderType | null>(null)
   const [devServerSetupScripts, setDevServerSetupScripts] = useState<
     SetupScriptItem[]
   >([])
@@ -142,6 +166,7 @@ function ProjectSettingsForm({
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setBrrrConfig(configResult.value.brrrConfig.value ?? '')
     setDevServerAutoOpen(configResult.value.devServer.autoOpen.value)
+    setDevServerProvider(configResult.value.devServer.provider.value ?? null)
     setDevServerImage(configResult.value.devServer.image.value ?? '')
     setDevServerInstallCommand(
       configResult.value.devServer.installCommand.value ?? ''
@@ -201,6 +226,7 @@ function ProjectSettingsForm({
       devServerImage,
       devServerInstallCommand,
       devServerNetwork,
+      devServerProvider,
       devServerSetupScripts,
       devServerStartCommand,
       brrrConfig,
@@ -210,6 +236,7 @@ function ProjectSettingsForm({
         devServerImage: resolvedConfig.devServer.image.value,
         devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
         devServerNetwork: resolvedConfig.devServer.network.value,
+        devServerProvider: resolvedConfig.devServer.provider.value ?? null,
         devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
         brrrConfig: resolvedConfig.brrrConfig.value,
@@ -391,168 +418,6 @@ function ProjectSettingsForm({
           </Field>
 
           <Field>
-            <div className="flex items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <FieldLabel htmlFor={`dev-server-auto-open-${projectId}`}>
-                  Auto-open dev server
-                </FieldLabel>
-                <FieldDescription>
-                  Open the dev server on the right when spawning a workspace
-                  terminal.
-                </FieldDescription>
-                <FieldDescription className={provenanceClassName}>
-                  Source: {resolvedConfig.devServer.autoOpen.source}
-                </FieldDescription>
-              </div>
-              <Checkbox
-                checked={devServerAutoOpen}
-                id={`dev-server-auto-open-${projectId}`}
-                onCheckedChange={(checked) =>
-                  setDevServerAutoOpen(checked === true)
-                }
-              />
-            </div>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`dev-server-image-${projectId}`}>
-              Container image
-            </FieldLabel>
-            <Input
-              id={`dev-server-image-${projectId}`}
-              onChange={(event) => setDevServerImage(event.target.value)}
-              placeholder="oven/bun:latest"
-              value={devServerImage}
-            />
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.devServer.image.source}
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`dev-server-install-command-${projectId}`}>
-              Install command
-            </FieldLabel>
-            <Input
-              id={`dev-server-install-command-${projectId}`}
-              onChange={(event) =>
-                setDevServerInstallCommand(event.target.value)
-              }
-              placeholder="Auto-detected from lockfile (e.g. pnpm install --frozen-lockfile)"
-              value={devServerInstallCommand}
-            />
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.devServer.installCommand.source}
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`dev-server-network-${projectId}`}>
-              Docker network
-            </FieldLabel>
-            <Input
-              id={`dev-server-network-${projectId}`}
-              onChange={(event) => setDevServerNetwork(event.target.value)}
-              placeholder="e.g. myproject_default (leave empty for host network)"
-              value={devServerNetwork}
-            />
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.devServer.network.source}
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel>Container setup scripts</FieldLabel>
-            <div className="grid gap-2">
-              {devServerSetupScripts.length === 0 && (
-                <p className="text-muted-foreground text-xs">
-                  No container setup scripts configured.
-                </p>
-              )}
-              {devServerSetupScripts.map((script) => (
-                <div className="flex items-center gap-2" key={script.id}>
-                  <Input
-                    aria-label="Container setup script"
-                    className="truncate"
-                    id={`dev-server-setup-script-${projectId}-${script.id}`}
-                    onChange={(event) => {
-                      setDevServerSetupScripts((prev) => {
-                        return prev.map((item) => {
-                          if (item.id !== script.id) {
-                            return item
-                          }
-
-                          return {
-                            ...item,
-                            value: event.target.value,
-                          }
-                        })
-                      })
-                    }}
-                    placeholder="apt-get install -y python3"
-                    value={script.value}
-                  />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          aria-label="Remove container setup script"
-                          onClick={() => {
-                            setDevServerSetupScripts((prev) =>
-                              prev.filter((item) => item.id !== script.id)
-                            )
-                          }}
-                          size="icon-sm"
-                          type="button"
-                          variant="ghost"
-                        />
-                      }
-                    >
-                      <Trash2 className="size-3.5 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>Remove script</TooltipContent>
-                  </Tooltip>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <FieldDescription className={provenanceClassName}>
-                Source: {resolvedConfig.devServer.setupScripts.source}
-              </FieldDescription>
-              <Button
-                aria-label="Add container setup script"
-                onClick={() => {
-                  setDevServerSetupScripts((prev) => [
-                    ...prev,
-                    { id: globalThis.crypto.randomUUID(), value: '' },
-                  ])
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <Plus className="size-3.5" />
-                Add script
-              </Button>
-            </div>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`dev-server-start-command-${projectId}`}>
-              Dev command
-            </FieldLabel>
-            <Input
-              id={`dev-server-start-command-${projectId}`}
-              onChange={(event) => setDevServerStartCommand(event.target.value)}
-              placeholder="bun dev"
-              value={devServerStartCommand}
-            />
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.devServer.startCommand.source}
-            </FieldDescription>
-          </Field>
-
-          <Field>
             <FieldLabel htmlFor={`brrr-config-${projectId}`}>
               brrr config
             </FieldLabel>
@@ -567,6 +432,226 @@ function ProjectSettingsForm({
             </FieldDescription>
           </Field>
         </FieldSet>
+
+        <Card className="bg-muted/30">
+          <CardHeader>
+            <CardTitle>Sandbox</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldSet>
+              <Field>
+                <FieldLabel>Provider</FieldLabel>
+                <Select
+                  onValueChange={(value) =>
+                    setDevServerProvider(value as SandboxProviderType)
+                  }
+                  value={devServerProvider ?? ''}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Use global default">
+                      {(() => {
+                        const option = SANDBOX_PROVIDER_OPTIONS.find(
+                          (o) => o.value === devServerProvider
+                        )
+                        if (!option) {
+                          return 'Use global default'
+                        }
+                        return (
+                          <>
+                            <option.Icon className="size-3.5" />
+                            {option.label}
+                          </>
+                        )
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SANDBOX_PROVIDER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        <option.Icon className="size-3.5" />
+                        {option.label}
+                        <span className="ml-1 text-muted-foreground text-xs">
+                          {option.description}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.provider.source}
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="grid gap-1">
+                    <FieldLabel htmlFor={`dev-server-auto-open-${projectId}`}>
+                      Auto-open dev server
+                    </FieldLabel>
+                    <FieldDescription>
+                      Open the dev server on the right when spawning a workspace
+                      terminal.
+                    </FieldDescription>
+                    <FieldDescription className={provenanceClassName}>
+                      Source: {resolvedConfig.devServer.autoOpen.source}
+                    </FieldDescription>
+                  </div>
+                  <Checkbox
+                    checked={devServerAutoOpen}
+                    id={`dev-server-auto-open-${projectId}`}
+                    onCheckedChange={(checked) =>
+                      setDevServerAutoOpen(checked === true)
+                    }
+                  />
+                </div>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor={`dev-server-image-${projectId}`}>
+                  Image
+                </FieldLabel>
+                <Input
+                  id={`dev-server-image-${projectId}`}
+                  onChange={(event) => setDevServerImage(event.target.value)}
+                  placeholder="oven/bun:latest"
+                  value={devServerImage}
+                />
+                <FieldDescription>
+                  Required for Docker. Daytona uses a default image (Node 22,
+                  bun, git, Claude Code, OpenCode, Codex) when left empty.
+                </FieldDescription>
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.image.source}
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor={`dev-server-install-command-${projectId}`}>
+                  Install command
+                </FieldLabel>
+                <Input
+                  id={`dev-server-install-command-${projectId}`}
+                  onChange={(event) =>
+                    setDevServerInstallCommand(event.target.value)
+                  }
+                  placeholder="Auto-detected from lockfile (e.g. pnpm install --frozen-lockfile)"
+                  value={devServerInstallCommand}
+                />
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.installCommand.source}
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor={`dev-server-network-${projectId}`}>
+                  Docker network
+                </FieldLabel>
+                <Input
+                  id={`dev-server-network-${projectId}`}
+                  onChange={(event) => setDevServerNetwork(event.target.value)}
+                  placeholder="e.g. myproject_default (leave empty for host network)"
+                  value={devServerNetwork}
+                />
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.network.source}
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel>Setup scripts</FieldLabel>
+                <div className="grid gap-2">
+                  {devServerSetupScripts.length === 0 && (
+                    <p className="text-muted-foreground text-xs">
+                      No sandbox setup scripts configured.
+                    </p>
+                  )}
+                  {devServerSetupScripts.map((script) => (
+                    <div className="flex items-center gap-2" key={script.id}>
+                      <Input
+                        aria-label="Sandbox setup script"
+                        className="truncate"
+                        id={`dev-server-setup-script-${projectId}-${script.id}`}
+                        onChange={(event) => {
+                          setDevServerSetupScripts((prev) => {
+                            return prev.map((item) => {
+                              if (item.id !== script.id) {
+                                return item
+                              }
+
+                              return {
+                                ...item,
+                                value: event.target.value,
+                              }
+                            })
+                          })
+                        }}
+                        placeholder="apt-get install -y python3"
+                        value={script.value}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              aria-label="Remove sandbox setup script"
+                              onClick={() => {
+                                setDevServerSetupScripts((prev) =>
+                                  prev.filter((item) => item.id !== script.id)
+                                )
+                              }}
+                              size="icon-sm"
+                              type="button"
+                              variant="ghost"
+                            />
+                          }
+                        >
+                          <Trash2 className="size-3.5 text-muted-foreground" />
+                        </TooltipTrigger>
+                        <TooltipContent>Remove script</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <FieldDescription className={provenanceClassName}>
+                    Source: {resolvedConfig.devServer.setupScripts.source}
+                  </FieldDescription>
+                  <Button
+                    aria-label="Add sandbox setup script"
+                    onClick={() => {
+                      setDevServerSetupScripts((prev) => [
+                        ...prev,
+                        { id: globalThis.crypto.randomUUID(), value: '' },
+                      ])
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Plus className="size-3.5" />
+                    Add script
+                  </Button>
+                </div>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor={`dev-server-start-command-${projectId}`}>
+                  Dev command
+                </FieldLabel>
+                <Input
+                  id={`dev-server-start-command-${projectId}`}
+                  onChange={(event) =>
+                    setDevServerStartCommand(event.target.value)
+                  }
+                  placeholder="bun dev"
+                  value={devServerStartCommand}
+                />
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.startCommand.source}
+                </FieldDescription>
+              </Field>
+            </FieldSet>
+          </CardContent>
+        </Card>
       </div>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" />}>
@@ -614,8 +699,8 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure dev server, worktree path, setup scripts, and brrr config
-            for {projectName}.
+            Configure sandbox provider, dev server, worktree path, setup
+            scripts, and brrr config for {projectName}.
           </DialogDescription>
         </DialogHeader>
         {open && (

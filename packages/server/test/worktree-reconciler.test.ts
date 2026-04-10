@@ -7,17 +7,54 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
+import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
+import { SandboxProvider } from '../src/services/sandbox-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
+
+/** IDs passed to `destroySandbox` during tests. */
+const destroySandboxCalls: string[] = []
+
+/**
+ * Mock SandboxProvider that records `destroySandbox` calls.
+ * All other methods are stubs that return NOT_IMPLEMENTED errors.
+ */
+const notImplemented = (method: string) => () =>
+  Effect.fail(
+    new RpcError({
+      message: `${method} not implemented in test`,
+      code: 'NOT_IMPLEMENTED',
+    })
+  )
+const MockSandboxProvider = Layer.succeed(
+  SandboxProvider,
+  SandboxProvider.of({
+    createSandbox: notImplemented('createSandbox'),
+    destroySandbox: (workspaceId) =>
+      Effect.sync(() => {
+        destroySandboxCalls.push(workspaceId)
+      }),
+    pauseSandbox: notImplemented('pauseSandbox'),
+    resumeSandbox: notImplemented('resumeSandbox'),
+    getPreviewUrl: notImplemented('getPreviewUrl'),
+    spawnTerminal: notImplemented('spawnTerminal'),
+    resizeTerminal: notImplemented('resizeTerminal'),
+    killTerminal: notImplemented('killTerminal'),
+    removeTerminal: notImplemented('removeTerminal'),
+    reconcileState: () => Effect.void,
+    checkAvailability: () => Effect.succeed({ available: false }),
+    setAutoStopInterval: notImplemented('setAutoStopInterval'),
+  })
+)
 
 const getDefaultBranchForTest = (repoPath: string): string => {
   try {
@@ -44,6 +81,7 @@ const getDetectedWorktreePaths = (repoPath: string): string[] =>
 const TestLayer = WorktreeReconciler.layer.pipe(
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(WorktreeDetector.layer),
+  Layer.provideMerge(MockSandboxProvider),
   Layer.provideMerge(TestLaborerStore)
 )
 
@@ -269,6 +307,164 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(rows.length, 1)
       assert.strictEqual(rows[0]?.baseSha, expectedBaseSha)
     }).pipe(Effect.provide(TestLayer))
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Remote-only workspaces (Daytona) — no local worktree
+// ---------------------------------------------------------------------------
+
+describe('WorktreeReconciler remote-only workspaces', () => {
+  it.scoped(
+    'does not remove workspaces with empty worktreePath (Daytona sandbox)',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-daytona-skip', tempRoots)
+
+        const { store } = yield* LaborerStore
+
+        // Seed a Daytona workspace: empty worktreePath, running, with sandbox
+        store.commit(
+          events.workspaceCreated({
+            id: 'daytona-workspace-1',
+            projectId: 'project-daytona',
+            taskSource: null,
+            branchName: 'feature/daytona-test',
+            worktreePath: '',
+            status: 'running',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+        // Mark it as a Daytona sandbox
+        store.commit(
+          events.sandboxStarted({
+            workspaceId: 'daytona-workspace-1',
+            sandboxId: 'daytona-sandbox-abc',
+            sandboxUrl: 'https://preview.daytona.io',
+            sandboxImage: 'daytona-default',
+            sandboxProvider: 'daytona',
+          })
+        )
+
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile('project-daytona', repoPath)
+
+        // The Daytona workspace should NOT be removed (it has no local
+        // worktree to match against, but that's expected for remote sandboxes)
+        assert.strictEqual(result.removed, 0)
+
+        const rows = store.query(
+          tables.workspaces.where('projectId', 'project-daytona')
+        )
+
+        // The Daytona workspace should still exist + main worktree detected
+        assert.isTrue(
+          rows.some((row) => row.id === 'daytona-workspace-1'),
+          'Daytona workspace should not be removed'
+        )
+        assert.strictEqual(
+          rows.find((row) => row.id === 'daytona-workspace-1')?.status,
+          'running',
+          'Daytona workspace should still be running'
+        )
+      }).pipe(Effect.provide(TestLayer))
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Sandbox cleanup on stale workspace removal
+// ---------------------------------------------------------------------------
+
+describe('WorktreeReconciler sandbox cleanup', () => {
+  it.scoped(
+    'calls destroySandbox when removing a stale workspace that has a sandboxId',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-sandbox-cleanup', tempRoots)
+        const stalePath = join(repoPath, '.worktrees', 'gone-sandbox')
+
+        // Reset call log
+        destroySandboxCalls.length = 0
+
+        const { store } = yield* LaborerStore
+
+        // Seed a stale workspace with a running Docker sandbox
+        store.commit(
+          events.workspaceCreated({
+            id: 'stale-sandbox-workspace',
+            projectId: 'project-sandbox-cleanup',
+            taskSource: null,
+            branchName: 'feature/gone',
+            worktreePath: stalePath,
+            status: 'running',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+        store.commit(
+          events.sandboxStarted({
+            workspaceId: 'stale-sandbox-workspace',
+            sandboxId: 'docker-container-xyz',
+            sandboxUrl: 'http://localhost:3000',
+            sandboxImage: 'node:22',
+            sandboxProvider: 'docker',
+          })
+        )
+
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile(
+          'project-sandbox-cleanup',
+          repoPath
+        )
+
+        assert.strictEqual(result.removed, 1)
+
+        // destroySandbox should have been called for the stale workspace
+        assert.deepStrictEqual(destroySandboxCalls, ['stale-sandbox-workspace'])
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'does not call destroySandbox when removing a stale workspace without a sandbox',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-no-sandbox', tempRoots)
+        const stalePath = join(repoPath, '.worktrees', 'gone-plain')
+
+        // Reset call log
+        destroySandboxCalls.length = 0
+
+        const { store } = yield* LaborerStore
+
+        // Seed a stale workspace WITHOUT any sandbox
+        store.commit(
+          events.workspaceCreated({
+            id: 'stale-plain-workspace',
+            projectId: 'project-no-sandbox',
+            taskSource: null,
+            branchName: 'feature/gone-plain',
+            worktreePath: stalePath,
+            status: 'stopped',
+            origin: 'external',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile(
+          'project-no-sandbox',
+          repoPath
+        )
+
+        assert.strictEqual(result.removed, 1)
+
+        // destroySandbox should NOT have been called — no sandbox to clean up
+        assert.deepStrictEqual(destroySandboxCalls, [])
+      }).pipe(Effect.provide(TestLayer))
   )
 })
 

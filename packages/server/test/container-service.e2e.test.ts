@@ -140,13 +140,13 @@ describe('ContainerService e2e', () => {
           tables.workspaces.where('id', workspaceId)
         )
         assert.strictEqual(workspaceRows.length, 1)
-        assert.isNotNull(workspaceRows[0]?.containerId)
+        assert.isNotNull(workspaceRows[0]?.sandboxId)
         assert.strictEqual(
-          workspaceRows[0]?.containerUrl,
+          workspaceRows[0]?.sandboxUrl,
           'e2e-create--test-project.orb.local'
         )
-        assert.strictEqual(workspaceRows[0]?.containerImage, 'alpine:latest')
-        assert.strictEqual(workspaceRows[0]?.containerStatus, 'running')
+        assert.strictEqual(workspaceRows[0]?.sandboxImage, 'alpine:latest')
+        assert.strictEqual(workspaceRows[0]?.sandboxStatus, 'running')
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
   )
@@ -220,19 +220,19 @@ describe('ContainerService e2e', () => {
           'not-found'
         )
 
-        // Verify: LiveStore was updated — container runtime fields cleared,
-        // but containerUrl and containerImage are preserved for display
+        // Verify: LiveStore was updated — sandbox runtime fields cleared,
+        // but sandboxUrl and sandboxImage are preserved for display
         const workspaceRows = store.query(
           tables.workspaces.where('id', workspaceId)
         )
         assert.strictEqual(workspaceRows.length, 1)
-        assert.strictEqual(workspaceRows[0]?.containerId, null)
+        assert.strictEqual(workspaceRows[0]?.sandboxId, null)
         assert.strictEqual(
-          workspaceRows[0]?.containerUrl,
+          workspaceRows[0]?.sandboxUrl,
           'e2e-destroy--test-project.orb.local'
         )
-        assert.strictEqual(workspaceRows[0]?.containerImage, 'alpine:latest')
-        assert.strictEqual(workspaceRows[0]?.containerStatus, null)
+        assert.strictEqual(workspaceRows[0]?.sandboxImage, 'alpine:latest')
+        assert.strictEqual(workspaceRows[0]?.sandboxStatus, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
   )
@@ -300,7 +300,7 @@ describe('ContainerService e2e', () => {
         const workspaceRows = store.query(
           tables.workspaces.where('id', workspaceId)
         )
-        assert.strictEqual(workspaceRows[0]?.containerStatus, 'paused')
+        assert.strictEqual(workspaceRows[0]?.sandboxStatus, 'paused')
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
   )
@@ -378,7 +378,7 @@ describe('ContainerService e2e', () => {
         const workspaceRows = store.query(
           tables.workspaces.where('id', workspaceId)
         )
-        assert.strictEqual(workspaceRows[0]?.containerStatus, 'running')
+        assert.strictEqual(workspaceRows[0]?.sandboxStatus, 'running')
 
         // Verify: container is functional after unpause (can exec commands)
         const output = dockerExec('e2e-unpause--test-project', 'echo alive')
@@ -430,10 +430,10 @@ describe('ContainerService e2e', () => {
         const queryWorkspace = () =>
           store.query(tables.workspaces.where('id', workspaceId))[0]
 
-        // Step 1: Before container creation — no container fields
+        // Step 1: Before container creation — no sandbox fields
         const beforeCreate = queryWorkspace()
-        assert.strictEqual(beforeCreate?.containerId, null)
-        assert.strictEqual(beforeCreate?.containerStatus, null)
+        assert.strictEqual(beforeCreate?.sandboxId, null)
+        assert.strictEqual(beforeCreate?.sandboxStatus, null)
 
         // Step 2: Create container
         yield* containerService.createContainer({
@@ -453,12 +453,12 @@ describe('ContainerService e2e', () => {
 
         assert.strictEqual(containerStatus(containerName), 'running')
         const afterCreate = queryWorkspace()
-        assert.isNotNull(afterCreate?.containerId)
+        assert.isNotNull(afterCreate?.sandboxId)
         assert.strictEqual(
-          afterCreate?.containerUrl,
+          afterCreate?.sandboxUrl,
           `${containerName}.orb.local`
         )
-        assert.strictEqual(afterCreate?.containerStatus, 'running')
+        assert.strictEqual(afterCreate?.sandboxStatus, 'running')
 
         // Verify bind mount — file visible inside container
         const fileContent = dockerExec(containerName, 'cat /app/index.ts')
@@ -467,17 +467,14 @@ describe('ContainerService e2e', () => {
         // Step 3: Pause
         yield* containerService.pauseContainer(workspaceId)
         assert.strictEqual(containerStatus(containerName), 'paused')
-        assert.strictEqual(queryWorkspace()?.containerStatus, 'paused')
-        // Container ID should be preserved while paused
-        assert.strictEqual(
-          queryWorkspace()?.containerId,
-          afterCreate?.containerId
-        )
+        assert.strictEqual(queryWorkspace()?.sandboxStatus, 'paused')
+        // Sandbox ID should be preserved while paused
+        assert.strictEqual(queryWorkspace()?.sandboxId, afterCreate?.sandboxId)
 
         // Step 4: Unpause
         yield* containerService.unpauseContainer(workspaceId)
         assert.strictEqual(containerStatus(containerName), 'running')
-        assert.strictEqual(queryWorkspace()?.containerStatus, 'running')
+        assert.strictEqual(queryWorkspace()?.sandboxStatus, 'running')
 
         // Container is functional after unpause
         const postUnpause = dockerExec(containerName, 'echo ok')
@@ -486,12 +483,12 @@ describe('ContainerService e2e', () => {
         // Step 5: Destroy
         yield* containerService.destroyContainer(workspaceId)
         assert.strictEqual(containerStatus(containerName), 'not-found')
-        assert.strictEqual(queryWorkspace()?.containerId, null)
-        // containerUrl and containerImage are preserved after destroy
+        assert.strictEqual(queryWorkspace()?.sandboxId, null)
+        // sandboxUrl and sandboxImage are preserved after destroy
         // so the URL can still be shown in the UI
-        assert.ok(queryWorkspace()?.containerUrl != null)
-        assert.ok(queryWorkspace()?.containerImage != null)
-        assert.strictEqual(queryWorkspace()?.containerStatus, null)
+        assert.ok(queryWorkspace()?.sandboxUrl != null)
+        assert.ok(queryWorkspace()?.sandboxImage != null)
+        assert.strictEqual(queryWorkspace()?.sandboxStatus, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
   )
@@ -566,8 +563,8 @@ describe('ContainerService e2e', () => {
         const workspaceRows = store.query(
           tables.workspaces.where('id', workspaceId)
         )
-        assert.strictEqual(workspaceRows[0]?.containerId, null)
-        assert.strictEqual(workspaceRows[0]?.containerStatus, null)
+        assert.strictEqual(workspaceRows[0]?.sandboxId, null)
+        assert.strictEqual(workspaceRows[0]?.sandboxStatus, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
   )
@@ -603,7 +600,7 @@ describe('ContainerService e2e', () => {
           tables.workspaces.where('id', workspaceId)
         )
         assert.strictEqual(workspaceRows.length, 1)
-        assert.strictEqual(workspaceRows[0]?.containerId, null)
+        assert.strictEqual(workspaceRows[0]?.sandboxId, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 30_000 }
   )

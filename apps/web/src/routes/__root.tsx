@@ -7,10 +7,10 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AppSidebarLayout } from '@/components/app-sidebar-layout'
 import { ThemeProvider } from '@/components/theme-provider'
 import '../index.css'
-import { ProjectsStateBootstrap } from '@/rpc/project-state-bootstrap'
-import { ServerStateBootstrap } from '@/rpc/server-state-bootstrap'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { ProjectsStateBootstrap } from '@/rpc/project-state-bootstrap'
+import { ServerStateBootstrap } from '@/rpc/server-state-bootstrap'
 
 export type RouterAppContext = Record<string, never>
 

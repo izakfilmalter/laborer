@@ -1,34 +1,17 @@
 {
   "compilerOptions": {
     "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "noErrorTruncation": true,
     "esModuleInterop": true,
     "jsx": "react-jsx",
     "target": "ESNext",
-    "module": "preserve",
+    "module": "ESNext",
     "moduleResolution": "Bundler",
-    "moduleDetection": "force",
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "sourceMap": true,
-    "noEmit": true,
     "types": ["vite/client"],
     "rootDirs": ["."],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
-    },
-    "plugins": [
-      {
-        "name": "@effect/language-service"
-      }
-    ]
+    }
   }
 }

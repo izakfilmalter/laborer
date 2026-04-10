@@ -10,7 +10,6 @@
 
 # Testing
 /coverage
-/e2e/results
 
 # Build outputs
 /.next/

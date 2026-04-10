@@ -1,21 +1,16 @@
-import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  MoreHorizontalIcon,
-} from 'lucide-react'
-import type * as React from 'react'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import * as React from "react"
 
-function Pagination({ className, ...props }: React.ComponentProps<'nav'>) {
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-react"
+
+function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: shadcn/ui component
     <nav
-      aria-label="pagination"
-      className={cn('mx-auto flex w-full justify-center', className)}
-      data-slot="pagination"
-      // biome-ignore lint/a11y/noRedundantRoles: shadcn/ui component
       role="navigation"
+      aria-label="pagination"
+      data-slot="pagination"
+      className={cn("mx-auto flex w-full justify-center", className)}
       {...props}
     />
   )
@@ -24,59 +19,59 @@ function Pagination({ className, ...props }: React.ComponentProps<'nav'>) {
 function PaginationContent({
   className,
   ...props
-}: React.ComponentProps<'ul'>) {
+}: React.ComponentProps<"ul">) {
   return (
     <ul
-      className={cn('flex items-center gap-0.5', className)}
       data-slot="pagination-content"
+      className={cn("flex items-center gap-0.5", className)}
       {...props}
     />
   )
 }
 
-function PaginationItem({ ...props }: React.ComponentProps<'li'>) {
+function PaginationItem({ ...props }: React.ComponentProps<"li">) {
   return <li data-slot="pagination-item" {...props} />
 }
 
 type PaginationLinkProps = {
   isActive?: boolean
-} & Pick<React.ComponentProps<typeof Button>, 'size'> &
-  React.ComponentProps<'a'>
+} & Pick<React.ComponentProps<typeof Button>, "size"> &
+  React.ComponentProps<"a">
 
 function PaginationLink({
   className,
   isActive,
-  size = 'icon',
+  size = "icon",
   ...props
 }: PaginationLinkProps) {
   return (
     <Button
+      variant={isActive ? "outline" : "ghost"}
+      size={size}
       className={cn(className)}
       nativeButton={false}
       render={
         <a
-          aria-current={isActive ? 'page' : undefined}
-          data-active={isActive}
+          aria-current={isActive ? "page" : undefined}
           data-slot="pagination-link"
+          data-active={isActive}
           {...props}
         />
       }
-      size={size}
-      variant={isActive ? 'outline' : 'ghost'}
     />
   )
 }
 
 function PaginationPrevious({
   className,
-  text = 'Previous',
+  text = "Previous",
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
   return (
     <PaginationLink
       aria-label="Go to previous page"
-      className={cn('pl-1.5!', className)}
       size="default"
+      className={cn("pl-2!", className)}
       {...props}
     >
       <ChevronLeftIcon data-icon="inline-start" />
@@ -87,14 +82,14 @@ function PaginationPrevious({
 
 function PaginationNext({
   className,
-  text = 'Next',
+  text = "Next",
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
   return (
     <PaginationLink
       aria-label="Go to next page"
-      className={cn('pr-1.5!', className)}
       size="default"
+      className={cn("pr-2!", className)}
       {...props}
     >
       <span className="hidden sm:block">{text}</span>
@@ -106,18 +101,19 @@ function PaginationNext({
 function PaginationEllipsis({
   className,
   ...props
-}: React.ComponentProps<'span'>) {
+}: React.ComponentProps<"span">) {
   return (
     <span
       aria-hidden
+      data-slot="pagination-ellipsis"
       className={cn(
-        "flex size-8 items-center justify-center [&_svg:not([class*='size-'])]:size-4",
+        "flex size-7 items-center justify-center [&_svg:not([class*='size-'])]:size-3.5",
         className
       )}
-      data-slot="pagination-ellipsis"
       {...props}
     >
-      <MoreHorizontalIcon />
+      <MoreHorizontalIcon
+      />
       <span className="sr-only">More pages</span>
     </span>
   )

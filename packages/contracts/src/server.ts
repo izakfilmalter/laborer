@@ -5,8 +5,8 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
-  ThreadId,
   TrimmedNonEmptyString,
+  WorkspaceId,
 } from './base'
 
 export const RuntimeMode = Schema.Literal('web', 'desktop')
@@ -32,7 +32,7 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   projectName: TrimmedNonEmptyString,
   bootstrapProjectId: Schema.optional(ProjectId),
-  bootstrapThreadId: Schema.optional(ThreadId),
+  bootstrapWorkspaceId: Schema.optional(WorkspaceId),
 })
 export type ServerLifecycleWelcomePayload =
   typeof ServerLifecycleWelcomePayload.Type

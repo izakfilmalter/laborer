@@ -64,10 +64,10 @@ interface TerminalSessionState {
   rows: number
   status: TerminalSessionSnapshot['status']
   readonly terminalId: TerminalSessionSnapshot['terminalId']
-  readonly threadId: TerminalSessionSnapshot['threadId']
   unsubscribeData: (() => void) | null
   unsubscribeExit: (() => void) | null
   updatedAt: string
+  readonly workspaceId: TerminalSessionSnapshot['workspaceId']
 }
 
 type TerminalEventListener = (event: TerminalEvent) => void
@@ -135,7 +135,7 @@ function makeTerminalManager() {
     ) {
       yield* ensureDirectory(input.cwd)
 
-      const key = toSessionKey(input.threadId, input.terminalId)
+      const key = toSessionKey(input.workspaceId, input.terminalId)
       const existing = sessions.get(key)
 
       if (existing) {
@@ -164,11 +164,11 @@ function makeTerminalManager() {
         createSession({
           cwd: input.cwd,
           terminalId: input.terminalId,
-          threadId: input.threadId,
+          workspaceId: input.workspaceId,
           cols: input.cols ?? DEFAULT_TERMINAL_COLS,
           rows: input.rows ?? DEFAULT_TERMINAL_ROWS,
           history: yield* Effect.tryPromise(() =>
-            readHistory(input.threadId, input.terminalId)
+            readHistory(input.workspaceId, input.terminalId)
           ),
         })
 
@@ -199,7 +199,7 @@ function makeTerminalManager() {
       input: TerminalWriteInput
     ) {
       const session = yield* lookupRunningSession(
-        input.threadId,
+        input.workspaceId,
         input.terminalId
       )
 
@@ -212,7 +212,7 @@ function makeTerminalManager() {
       input: TerminalResizeInput
     ) {
       const session = yield* lookupRunningSession(
-        input.threadId,
+        input.workspaceId,
         input.terminalId
       )
 
@@ -226,14 +226,14 @@ function makeTerminalManager() {
     const clear = Effect.fn('TerminalManager.clear')(function* (
       input: TerminalClearInput
     ) {
-      const session = yield* lookupSession(input.threadId, input.terminalId)
+      const session = yield* lookupSession(input.workspaceId, input.terminalId)
 
       yield* Effect.tryPromise(() => {
         session.history = ''
         session.pendingHistoryControlSequence = ''
         session.updatedAt = new Date().toISOString()
         emitEvent(
-          makeTerminalEvent(input.threadId, input.terminalId, {
+          makeTerminalEvent(input.workspaceId, input.terminalId, {
             type: 'cleared',
           })
         )
@@ -246,7 +246,7 @@ function makeTerminalManager() {
     ) {
       yield* ensureDirectory(input.cwd)
 
-      const session = yield* lookupSession(input.threadId, input.terminalId)
+      const session = yield* lookupSession(input.workspaceId, input.terminalId)
 
       yield* Effect.tryPromise({
         try: async () => {
@@ -276,7 +276,7 @@ function makeTerminalManager() {
     const close = Effect.fn('TerminalManager.close')(function* (
       input: TerminalCloseInput
     ) {
-      const key = toSessionKey(input.threadId, input.terminalId)
+      const key = toSessionKey(input.workspaceId, input.terminalId)
       const session = sessions.get(key)
 
       if (!session) {
@@ -292,17 +292,17 @@ function makeTerminalManager() {
     })
 
     const lookupSession = Effect.fn('TerminalManager.lookupSession')(function* (
-      threadId: TerminalSessionSnapshot['threadId'],
+      workspaceId: TerminalSessionSnapshot['workspaceId'],
       terminalId: TerminalSessionSnapshot['terminalId']
     ) {
-      const session = sessions.get(toSessionKey(threadId, terminalId))
+      const session = sessions.get(toSessionKey(workspaceId, terminalId))
 
       return yield* Effect.fromNullable(session).pipe(
         Effect.orElseFail(() =>
           TerminalSessionLookupError.make({
-            threadId,
+            workspaceId,
             terminalId,
-            message: `Unknown terminal ${terminalId} for thread ${threadId}.`,
+            message: `Unknown terminal ${terminalId} for workspace ${workspaceId}.`,
           })
         )
       )
@@ -311,16 +311,16 @@ function makeTerminalManager() {
     const lookupRunningSession = Effect.fn(
       'TerminalManager.lookupRunningSession'
     )(function* (
-      threadId: TerminalSessionSnapshot['threadId'],
+      workspaceId: TerminalSessionSnapshot['workspaceId'],
       terminalId: TerminalSessionSnapshot['terminalId']
     ) {
-      const session = yield* lookupSession(threadId, terminalId)
+      const session = yield* lookupSession(workspaceId, terminalId)
 
       if (session.status !== 'running' || session.process === null) {
         yield* TerminalNotRunningError.make({
-          threadId,
+          workspaceId,
           terminalId,
-          message: `Terminal ${terminalId} is not running for thread ${threadId}.`,
+          message: `Terminal ${terminalId} is not running for workspace ${workspaceId}.`,
         })
       }
 
@@ -350,14 +350,14 @@ const buildSpawnFailureMessage = (cwd: string, cause: unknown) => {
 const createSession = (input: {
   cwd: TerminalSessionSnapshot['cwd']
   terminalId: TerminalSessionSnapshot['terminalId']
-  threadId: TerminalSessionSnapshot['threadId']
+  workspaceId: TerminalSessionSnapshot['workspaceId']
   cols: number
   rows: number
   history: string
 }): TerminalSessionState => ({
   cwd: input.cwd,
   terminalId: input.terminalId,
-  threadId: input.threadId,
+  workspaceId: input.workspaceId,
   cols: input.cols,
   exitCode: null,
   exitSignal: null,
@@ -394,31 +394,31 @@ const schedulePersist = (session: TerminalSessionState) => {
 const persistHistory = async (session: TerminalSessionState): Promise<void> => {
   await mkdir(TERMINAL_HISTORY_DIRECTORY, { recursive: true })
   await writeFile(
-    historyPath(session.threadId, session.terminalId),
+    historyPath(session.workspaceId, session.terminalId),
     session.history,
     'utf8'
   )
 }
 
 const readHistory = async (
-  threadId: string,
+  workspaceId: string,
   terminalId: string
 ): Promise<string> => {
   try {
-    return await readFile(historyPath(threadId, terminalId), 'utf8')
+    return await readFile(historyPath(workspaceId, terminalId), 'utf8')
   } catch {
     return ''
   }
 }
 
-const historyPath = (threadId: string, terminalId: string) =>
+const historyPath = (workspaceId: string, terminalId: string) =>
   path.join(
     TERMINAL_HISTORY_DIRECTORY,
-    `${encodeURIComponent(threadId)}_${encodeURIComponent(terminalId)}.log`
+    `${encodeURIComponent(workspaceId)}_${encodeURIComponent(terminalId)}.log`
   )
 
-const toSessionKey = (threadId: string, terminalId: string) =>
-  `${threadId}:${terminalId}`
+const toSessionKey = (workspaceId: string, terminalId: string) =>
+  `${workspaceId}:${terminalId}`
 
 const ensureDirectory = Effect.fn('TerminalManager.ensureDirectory')(function* (
   cwd: string
@@ -553,7 +553,7 @@ const startSession = async (
         }
         session.updatedAt = new Date().toISOString()
         emitEvent(
-          makeTerminalEvent(session.threadId, session.terminalId, {
+          makeTerminalEvent(session.workspaceId, session.terminalId, {
             type: 'output',
             data,
           })
@@ -576,7 +576,7 @@ const startSession = async (
         session.pendingHistoryControlSequence = ''
         schedulePersist(session)
         emitEvent(
-          makeTerminalEvent(session.threadId, session.terminalId, {
+          makeTerminalEvent(session.workspaceId, session.terminalId, {
             type: 'exited',
             exitCode: session.exitCode,
             exitSignal: session.exitSignal,
@@ -592,7 +592,7 @@ const startSession = async (
       }
 
       emitEvent(
-        makeTerminalEvent(session.threadId, session.terminalId, {
+        makeTerminalEvent(session.workspaceId, session.terminalId, {
           type: eventType,
           snapshot: snapshot(session),
         })
@@ -606,7 +606,7 @@ const startSession = async (
   session.status = 'error'
   session.updatedAt = new Date().toISOString()
   emitEvent(
-    makeTerminalEvent(session.threadId, session.terminalId, {
+    makeTerminalEvent(session.workspaceId, session.terminalId, {
       type: 'error',
       message: buildSpawnFailureMessage(session.cwd, lastError),
     })
@@ -647,7 +647,7 @@ const stopProcess = (session: TerminalSessionState) => {
 const snapshot = (session: TerminalSessionState): TerminalSessionSnapshot => ({
   cwd: session.cwd,
   terminalId: session.terminalId,
-  threadId: session.threadId,
+  workspaceId: session.workspaceId,
   status: session.status,
   pid: session.process?.pid ?? null,
   history: session.history,
@@ -658,7 +658,7 @@ const snapshot = (session: TerminalSessionState): TerminalSessionSnapshot => ({
 })
 
 const makeTerminalEvent = (
-  threadId: TerminalSessionSnapshot['threadId'],
+  workspaceId: TerminalSessionSnapshot['workspaceId'],
   terminalId: TerminalSessionSnapshot['terminalId'],
   event:
     | { type: 'activity'; hasRunningSubprocess: boolean }
@@ -672,7 +672,7 @@ const makeTerminalEvent = (
   ...event,
   createdAt: new Date().toISOString(),
   terminalId,
-  threadId,
+  workspaceId,
 })
 
 const pollSubprocessActivity = async (
@@ -694,7 +694,7 @@ const pollSubprocessActivity = async (
       session.hasRunningSubprocess = hasRunningSubprocess
       session.updatedAt = new Date().toISOString()
       emitEvent(
-        makeTerminalEvent(session.threadId, session.terminalId, {
+        makeTerminalEvent(session.workspaceId, session.terminalId, {
           type: 'activity',
           hasRunningSubprocess,
         })

@@ -1,3 +1,4 @@
+import type { Project } from '@laborer/contracts/projects'
 import { formatDistanceToNow } from 'date-fns'
 import {
   ArrowUpDownIcon,
@@ -7,9 +8,19 @@ import {
   SettingsIcon,
   SquarePenIcon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import {
   SidebarContent,
   SidebarFooter,
@@ -25,15 +36,15 @@ import {
 import { isElectron } from '@/env'
 import { cn } from '@/lib/utils'
 import {
-  setActiveThreadId,
-  useActiveThreadId,
+  setActiveWorkspaceId,
+  useActiveWorkspaceId,
   useProjectsSnapshot,
 } from '@/rpc/project-state'
 import { getWsRpcClient } from '@/ws-rpc-client'
 
 const APP_STAGE_LABEL = 'Alpha'
 
-function resolveThreadRowClassName(input: {
+function resolveWorkspaceRowClassName(input: {
   isActive: boolean
   isSelected: boolean
 }) {
@@ -79,6 +90,21 @@ function errorMessage(error: unknown) {
   return 'Something went wrong while talking to the Laborer server.'
 }
 
+function normalizeWorkspaceNameInput(value: string) {
+  return value
+    .toLowerCase()
+    .split('/')
+    .map((segment) =>
+      segment
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9_-]/g, '')
+        .replace(/^[-_]+|[-_]+$/g, '')
+    )
+    .filter((segment) => segment.length > 0)
+    .join('/')
+}
+
 function T3Wordmark() {
   return (
     <svg
@@ -97,14 +123,19 @@ function T3Wordmark() {
 
 export default function AppSidebar() {
   const projectsSnapshot = useProjectsSnapshot()
-  const activeThreadId = useActiveThreadId()
+  const activeWorkspaceId = useActiveWorkspaceId()
   const projects = projectsSnapshot?.projects ?? []
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set()
   )
   const [isAddingProject, setIsAddingProject] = useState(false)
   const [isMutatingProject, setIsMutatingProject] = useState(false)
+  const [isMutatingWorkspace, setIsMutatingWorkspace] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
+  const [newWorkspaceName, setNewWorkspaceName] = useState('')
+  const [workspaceDialogProjectId, setWorkspaceDialogProjectId] = useState<
+    Project['id'] | null
+  >(null)
 
   useEffect(() => {
     setExpandedProjectIds((current) => {
@@ -117,6 +148,16 @@ export default function AppSidebar() {
       return next
     })
   }, [projects])
+
+  const selectedWorkspaceProject = useMemo(
+    () =>
+      workspaceDialogProjectId
+        ? (projects.find(
+            (project) => project.id === workspaceDialogProjectId
+          ) ?? null)
+        : null,
+    [projects, workspaceDialogProjectId]
+  )
 
   function toggleProject(projectId: string) {
     setExpandedProjectIds((current) => {
@@ -132,13 +173,42 @@ export default function AppSidebar() {
     })
   }
 
-  async function addThread(projectId: (typeof projects)[number]['id']) {
+  function closeWorkspaceDialog() {
+    if (isMutatingWorkspace) {
+      return
+    }
+
+    setWorkspaceDialogProjectId(null)
+    setNewWorkspaceName('')
+  }
+
+  function openWorkspaceDialog(projectId: Project['id']) {
+    setWorkspaceDialogProjectId(projectId)
+    setNewWorkspaceName('')
+  }
+
+  async function createWorkspace(projectId: (typeof projects)[number]['id']) {
+    const name = newWorkspaceName.trim()
+
+    if (name.length === 0) {
+      return
+    }
+
+    setIsMutatingWorkspace(true)
+
     try {
-      const thread = await getWsRpcClient().projects.createThread({ projectId })
+      const workspace = await getWsRpcClient().projects.createWorkspace({
+        projectId,
+        name,
+      })
       setExpandedProjectIds((current) => new Set(current).add(projectId))
-      setActiveThreadId(thread.id)
+      setActiveWorkspaceId(workspace.id)
+      setWorkspaceDialogProjectId(null)
+      setNewWorkspaceName('')
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setIsMutatingWorkspace(false)
     }
   }
 
@@ -310,14 +380,14 @@ export default function AppSidebar() {
                     </button>
 
                     <SidebarMenuAction
-                      aria-label={`Create new thread in ${project.name}`}
+                      aria-label={`Create new workspace in ${project.name}`}
                       className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
                       data-project-id={project.id}
-                      data-testid="project-create-thread"
+                      data-testid="project-create-workspace"
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
-                        addThread(project.id).catch(() => undefined)
+                        openWorkspaceDialog(project.id)
                       }}
                       showOnHover
                     >
@@ -327,39 +397,39 @@ export default function AppSidebar() {
 
                   {isExpanded ? (
                     <ul className="mx-1 my-0 flex w-full min-w-0 translate-x-0 flex-col gap-0.5 overflow-hidden border-sidebar-border border-l px-1.5 py-0">
-                      {project.threads.length === 0 ? (
+                      {project.workspaces.length === 0 ? (
                         <li className="w-full">
                           <div className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60">
-                            <span>No threads yet</span>
+                            <span>No workspaces yet</span>
                           </div>
                         </li>
                       ) : null}
 
-                      {project.threads.map((thread) => {
-                        const isActive = activeThreadId === thread.id
+                      {project.workspaces.map((workspace) => {
+                        const isActive = activeWorkspaceId === workspace.id
                         const isSelected = false
                         const isHighlighted = isActive || isSelected
 
                         return (
                           <li
                             className="group/menu-sub-item relative w-full"
-                            key={thread.id}
+                            key={workspace.id}
                           >
                             <SidebarMenuSubButton
-                              className={`${resolveThreadRowClassName({
+                              className={`${resolveWorkspaceRowClassName({
                                 isActive,
                                 isSelected,
                               })} relative isolate`}
-                              data-testid="thread-row"
-                              data-thread-id={thread.id}
+                              data-testid="workspace-row"
+                              data-workspace-id={workspace.id}
                               isActive={isActive}
-                              onClick={() => setActiveThreadId(thread.id)}
+                              onClick={() => setActiveWorkspaceId(workspace.id)}
                               render={<button type="button" />}
                               size="sm"
                             >
                               <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
                                 <span className="min-w-0 flex-1 truncate text-xs">
-                                  {thread.title}
+                                  {workspace.name}
                                 </span>
                               </div>
                               <div className="ml-auto flex min-w-12 justify-end">
@@ -371,7 +441,7 @@ export default function AppSidebar() {
                                       : 'text-muted-foreground/40'
                                   )}
                                 >
-                                  {formatUpdatedLabel(thread.updatedAt)}
+                                  {formatUpdatedLabel(workspace.updatedAt)}
                                 </span>
                               </div>
                             </SidebarMenuSubButton>
@@ -417,6 +487,84 @@ export default function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            closeWorkspaceDialog()
+          }
+        }}
+        open={workspaceDialogProjectId !== null}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create workspace</DialogTitle>
+            <DialogDescription>
+              {selectedWorkspaceProject
+                ? `Create a new git worktree for ${selectedWorkspaceProject.name}.`
+                : 'Create a new git worktree.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <label
+              className="font-medium text-[11px] text-muted-foreground uppercase tracking-[0.16em]"
+              htmlFor="workspace-name"
+            >
+              Workspace name
+            </label>
+            <Input
+              autoFocus
+              disabled={isMutatingWorkspace}
+              id="workspace-name"
+              onChange={(event) => {
+                setNewWorkspaceName(
+                  normalizeWorkspaceNameInput(event.target.value)
+                )
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Enter' &&
+                  workspaceDialogProjectId &&
+                  !isMutatingWorkspace
+                ) {
+                  createWorkspace(workspaceDialogProjectId).catch(
+                    () => undefined
+                  )
+                }
+
+                if (event.key === 'Escape') {
+                  closeWorkspaceDialog()
+                }
+              }}
+              placeholder="laborer/my-feature"
+              value={newWorkspaceName}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button onClick={closeWorkspaceDialog} variant="outline">
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                isMutatingWorkspace ||
+                workspaceDialogProjectId === null ||
+                newWorkspaceName.trim().length === 0
+              }
+              onClick={() => {
+                if (workspaceDialogProjectId) {
+                  createWorkspace(workspaceDialogProjectId).catch(
+                    () => undefined
+                  )
+                }
+              }}
+            >
+              {isMutatingWorkspace ? 'Creating...' : 'Create workspace'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

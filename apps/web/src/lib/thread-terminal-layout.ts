@@ -1,28 +1,28 @@
 import { DEFAULT_TERMINAL_ID } from '@laborer/contracts/terminal'
 import { useEffect, useMemo, useState } from 'react'
 
-export interface ThreadTerminalGroup {
+export interface WorkspaceTerminalGroup {
   readonly id: string
   terminalIds: string[]
 }
 
-export interface ThreadTerminalLayout {
+export interface WorkspaceTerminalLayout {
   readonly activeTerminalGroupId: string
   readonly activeTerminalId: string
-  readonly terminalGroups: ThreadTerminalGroup[]
+  readonly terminalGroups: WorkspaceTerminalGroup[]
   readonly terminalIds: string[]
 }
 
 interface StoredLayouts {
-  readonly [threadId: string]: ThreadTerminalLayout | undefined
+  readonly [workspaceId: string]: WorkspaceTerminalLayout | undefined
 }
 
-const STORAGE_KEY = 'laborer.terminal-layout:v1'
+const STORAGE_KEY = 'laborer.terminal-layout:v2'
 export const MAX_TERMINALS_PER_GROUP = 4
 
 const defaultGroupId = (terminalId: string) => `group-${terminalId}`
 
-const createDefaultLayout = (): ThreadTerminalLayout => ({
+const createDefaultLayout = (): WorkspaceTerminalLayout => ({
   activeTerminalGroupId: defaultGroupId(DEFAULT_TERMINAL_ID),
   activeTerminalId: DEFAULT_TERMINAL_ID,
   terminalGroups: [
@@ -35,8 +35,8 @@ const createDefaultLayout = (): ThreadTerminalLayout => ({
 })
 
 const copyGroups = (
-  groups: readonly ThreadTerminalGroup[]
-): ThreadTerminalGroup[] =>
+  groups: readonly WorkspaceTerminalGroup[]
+): WorkspaceTerminalGroup[] =>
   groups.map((group) => ({
     id: group.id,
     terminalIds: [...group.terminalIds],
@@ -48,7 +48,7 @@ const normalizeTerminalIds = (terminalIds: readonly string[]): string[] => {
 }
 
 const findGroupIndexByTerminalId = (
-  terminalGroups: readonly ThreadTerminalGroup[],
+  terminalGroups: readonly WorkspaceTerminalGroup[],
   terminalId: string
 ): number =>
   terminalGroups.findIndex((group) => group.terminalIds.includes(terminalId))
@@ -70,13 +70,13 @@ const assignUniqueGroupId = (groupId: string, usedGroupIds: Set<string>) => {
 }
 
 const normalizeLayout = (
-  layout: ThreadTerminalLayout
-): ThreadTerminalLayout => {
+  layout: WorkspaceTerminalLayout
+): WorkspaceTerminalLayout => {
   const terminalIds = normalizeTerminalIds(layout.terminalIds)
   const validTerminalIdSet = new Set(terminalIds)
   const assignedTerminalIds = new Set<string>()
   const usedGroupIds = new Set<string>()
-  const terminalGroups: ThreadTerminalGroup[] = []
+  const terminalGroups: WorkspaceTerminalGroup[] = []
 
   for (const group of layout.terminalGroups) {
     const nextTerminalIds = [
@@ -138,7 +138,7 @@ const normalizeLayout = (
   }
 }
 
-const isDefaultLayout = (layout: ThreadTerminalLayout): boolean => {
+const isDefaultLayout = (layout: WorkspaceTerminalLayout): boolean => {
   const normalized = normalizeLayout(layout)
   const defaultLayout = createDefaultLayout()
 
@@ -147,14 +147,14 @@ const isDefaultLayout = (layout: ThreadTerminalLayout): boolean => {
 
 const updateLayouts = (
   layouts: StoredLayouts,
-  threadId: string,
-  updater: (layout: ThreadTerminalLayout) => ThreadTerminalLayout
+  workspaceId: string,
+  updater: (layout: WorkspaceTerminalLayout) => WorkspaceTerminalLayout
 ): StoredLayouts => {
-  if (threadId.trim().length === 0) {
+  if (workspaceId.trim().length === 0) {
     return layouts
   }
 
-  const current = normalizeLayout(layouts[threadId] ?? createDefaultLayout())
+  const current = normalizeLayout(layouts[workspaceId] ?? createDefaultLayout())
   const next = normalizeLayout(updater(current))
 
   if (JSON.stringify(current) === JSON.stringify(next)) {
@@ -162,13 +162,13 @@ const updateLayouts = (
   }
 
   if (isDefaultLayout(next)) {
-    const { [threadId]: _removed, ...rest } = layouts
+    const { [workspaceId]: _removed, ...rest } = layouts
     return rest
   }
 
   return {
     ...layouts,
-    [threadId]: next,
+    [workspaceId]: next,
   }
 }
 
@@ -203,10 +203,10 @@ const persistLayouts = (layouts: StoredLayouts) => {
 }
 
 const splitLayout = (
-  layout: ThreadTerminalLayout,
+  layout: WorkspaceTerminalLayout,
   terminalId: string,
   mode: 'new' | 'split'
-): ThreadTerminalLayout => {
+): WorkspaceTerminalLayout => {
   const normalized = normalizeLayout(layout)
   if (terminalId.trim().length === 0) {
     return normalized
@@ -311,9 +311,9 @@ const splitLayout = (
 }
 
 const closeLayoutTerminal = (
-  layout: ThreadTerminalLayout,
+  layout: WorkspaceTerminalLayout,
   terminalId: string
-): ThreadTerminalLayout => {
+): WorkspaceTerminalLayout => {
   const normalized = normalizeLayout(layout)
   if (!normalized.terminalIds.includes(terminalId)) {
     return normalized
@@ -359,7 +359,7 @@ const closeLayoutTerminal = (
 export const createTerminalId = (): string =>
   `terminal-${crypto.randomUUID().slice(0, 8)}`
 
-export const useThreadTerminalLayout = (threadId: string | null) => {
+export const useWorkspaceTerminalLayout = (workspaceId: string | null) => {
   const [layouts, setLayouts] = useState<StoredLayouts>(() =>
     readStoredLayouts()
   )
@@ -368,16 +368,19 @@ export const useThreadTerminalLayout = (threadId: string | null) => {
     persistLayouts(layouts)
   }, [layouts])
 
-  const resolvedThreadId = threadId ?? ''
+  const resolvedWorkspaceId = workspaceId ?? ''
   const layout = useMemo(
-    () => normalizeLayout(layouts[resolvedThreadId] ?? createDefaultLayout()),
-    [layouts, resolvedThreadId]
+    () =>
+      normalizeLayout(layouts[resolvedWorkspaceId] ?? createDefaultLayout()),
+    [layouts, resolvedWorkspaceId]
   )
 
   const update = (
-    updater: (layout: ThreadTerminalLayout) => ThreadTerminalLayout
+    updater: (layout: WorkspaceTerminalLayout) => WorkspaceTerminalLayout
   ) => {
-    setLayouts((current) => updateLayouts(current, resolvedThreadId, updater))
+    setLayouts((current) =>
+      updateLayouts(current, resolvedWorkspaceId, updater)
+    )
   }
 
   return {

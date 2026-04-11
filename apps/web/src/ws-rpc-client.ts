@@ -1,10 +1,10 @@
 import type {
   Project,
   ProjectsAddInput,
-  ProjectsCreateThreadInput,
+  ProjectsCreateWorkspaceInput,
   ProjectsEvent,
   ProjectsSnapshot,
-  ProjectThread,
+  ProjectWorkspace,
 } from '@laborer/contracts/projects'
 import type {
   ServerConfig,
@@ -31,9 +31,9 @@ export interface WsRpcClient {
   readonly dispose: () => Promise<void>
   readonly projects: {
     readonly add: (input: ProjectsAddInput) => Promise<Project>
-    readonly createThread: (
-      input: ProjectsCreateThreadInput
-    ) => Promise<ProjectThread>
+    readonly createWorkspace: (
+      input: ProjectsCreateWorkspaceInput
+    ) => Promise<ProjectWorkspace>
     readonly list: () => Promise<ProjectsSnapshot>
     readonly subscribe: (listener: (event: ProjectsEvent) => void) => () => void
   }
@@ -87,8 +87,8 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
     dispose: () => transport.dispose(),
     projects: {
       add: (input) => transport.request((client) => client.projects.add(input)),
-      createThread: (input) =>
-        transport.request((client) => client.projects.createThread(input)),
+      createWorkspace: (input) =>
+        transport.request((client) => client.projects.createWorkspace(input)),
       list: () => transport.request((client) => client.projects.list({})),
       subscribe: (listener) =>
         transport.subscribe(

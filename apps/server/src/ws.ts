@@ -47,7 +47,7 @@ const mapTerminalOpenError = (
   input: {
     readonly cwd: string
     readonly terminalId: string
-    readonly threadId: string
+    readonly workspaceId: string
   },
   error: unknown
 ) => {
@@ -63,7 +63,7 @@ const mapTerminalOpenError = (
     cwd: input.cwd,
     message: unknownMessage(
       error,
-      `Unable to open terminal ${input.terminalId} for thread ${input.threadId}.`
+      `Unable to open terminal ${input.terminalId} for workspace ${input.workspaceId}.`
     ),
     cause: error,
   })
@@ -72,7 +72,7 @@ const mapTerminalOpenError = (
 const mapTerminalSessionError = (
   input: {
     readonly terminalId: TerminalSessionSnapshot['terminalId']
-    readonly threadId: TerminalSessionSnapshot['threadId']
+    readonly workspaceId: TerminalSessionSnapshot['workspaceId']
   },
   error: unknown
 ) => {
@@ -85,11 +85,11 @@ const mapTerminalSessionError = (
   }
 
   return new TerminalSessionLookupError({
-    threadId: input.threadId,
+    workspaceId: input.workspaceId,
     terminalId: input.terminalId,
     message: unknownMessage(
       error,
-      `Unable to resolve terminal ${input.terminalId} for thread ${input.threadId}.`
+      `Unable to resolve terminal ${input.terminalId} for workspace ${input.workspaceId}.`
     ),
   })
 }
@@ -105,8 +105,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     return WsRpcGroup.of({
       [WS_METHODS.projectsList]: () => projects.list(),
       [WS_METHODS.projectsAdd]: (input) => projects.add(input),
-      [WS_METHODS.projectsCreateThread]: (input) =>
-        projects.createThread(input),
+      [WS_METHODS.projectsCreateWorkspace]: (input) =>
+        projects.createWorkspace(input),
       [WS_METHODS.shellOpenInEditor]: (input) =>
         editorOpener.openInEditor(input).pipe(
           Effect.catchAll((error) =>

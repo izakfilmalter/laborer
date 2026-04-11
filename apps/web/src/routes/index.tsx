@@ -1,9 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { ThreadTerminalWorkspace } from '@/components/thread-terminal-workspace'
+import { WorkspaceTerminalWorkspace } from '@/components/thread-terminal-workspace'
 import { SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import {
-  useActiveThreadInfo,
+  useActiveWorkspaceInfo,
   useProjectsSnapshot,
   useProjectsSyncReady,
 } from '@/rpc/project-state'
@@ -13,20 +13,21 @@ export const Route = createFileRoute('/')({
 })
 
 function HomeComponent() {
-  const activeThreadInfo = useActiveThreadInfo()
+  const activeWorkspaceInfo = useActiveWorkspaceInfo()
   const projectsSnapshot = useProjectsSnapshot()
   const isProjectsSyncReady = useProjectsSyncReady()
   const isConnecting =
     !isProjectsSyncReady && projectsSnapshot.projects.length === 0
   const mobileTitle =
-    activeThreadInfo?.thread.title ??
-    (isConnecting ? 'Connecting...' : 'Threads')
+    activeWorkspaceInfo?.workspace.name ??
+    (isConnecting ? 'Connecting...' : 'Workspaces')
 
-  let headerSubtitle = 'No active thread'
-  let emptyStateMessage = 'Select a thread or create a new one to get started.'
+  let headerSubtitle = 'No active workspace'
+  let emptyStateMessage =
+    'Select a workspace or create a new one to get started.'
 
-  if (activeThreadInfo) {
-    headerSubtitle = `${activeThreadInfo.project.name} · ${activeThreadInfo.project.workspaceRoot}`
+  if (activeWorkspaceInfo) {
+    headerSubtitle = `${activeWorkspaceInfo.project.name} · ${activeWorkspaceInfo.workspace.workspaceRoot}`
   } else if (isConnecting) {
     headerSubtitle = 'Connecting to the Laborer server...'
     emptyStateMessage = 'Connecting to the server...'
@@ -50,12 +51,12 @@ function HomeComponent() {
           </span>
         </div>
 
-        {activeThreadInfo ? (
-          <ThreadTerminalWorkspace
-            cwd={activeThreadInfo.project.workspaceRoot}
-            projectName={activeThreadInfo.project.name}
-            threadId={activeThreadInfo.thread.id}
-            threadTitle={activeThreadInfo.thread.title}
+        {activeWorkspaceInfo ? (
+          <WorkspaceTerminalWorkspace
+            cwd={activeWorkspaceInfo.workspace.workspaceRoot}
+            projectName={activeWorkspaceInfo.project.name}
+            workspaceId={activeWorkspaceInfo.workspace.id}
+            workspaceName={activeWorkspaceInfo.workspace.name}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center">

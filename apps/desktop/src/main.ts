@@ -387,9 +387,9 @@ const buildAppMenu = (): Menu => {
     label: 'File',
     submenu: [
       {
-        label: 'New Thread',
+        label: 'New Workspace',
         accelerator: 'CmdOrCtrl+N',
-        click: () => dispatchMenuAction('thread:new'),
+        click: () => dispatchMenuAction('workspace:new'),
       },
       { type: 'separator' },
       closeWindowMenu,

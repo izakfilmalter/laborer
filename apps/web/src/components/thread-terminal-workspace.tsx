@@ -1,5 +1,5 @@
 /** biome-ignore-all lint: xterm integration needs imperative DOM and process event wiring. */
-import type { ThreadId } from '@laborer/contracts/base'
+import type { WorkspaceId } from '@laborer/contracts/base'
 import type { TerminalSessionSnapshot } from '@laborer/contracts/terminal'
 import { FitAddon } from '@xterm/addon-fit'
 import { type ITheme, Terminal } from '@xterm/xterm'
@@ -13,17 +13,17 @@ import {
 } from '@/lib/terminal-links'
 import {
   createTerminalId,
-  type ThreadTerminalGroup,
-  useThreadTerminalLayout,
+  useWorkspaceTerminalLayout,
+  type WorkspaceTerminalGroup,
 } from '@/lib/thread-terminal-layout'
 import { cn } from '@/lib/utils'
 import { getWsRpcClient } from '@/ws-rpc-client'
 
-interface ThreadTerminalWorkspaceProps {
+interface WorkspaceTerminalWorkspaceProps {
   readonly cwd: string
   readonly projectName: string
-  readonly threadId: ThreadId
-  readonly threadTitle: string
+  readonly workspaceId: WorkspaceId
+  readonly workspaceName: string
 }
 
 interface TerminalRuntimeState {
@@ -37,7 +37,7 @@ interface TerminalViewportProps {
   readonly focusRequestId: number
   readonly onActivate: () => void
   readonly terminalId: string
-  readonly threadId: ThreadId
+  readonly workspaceId: WorkspaceId
 }
 
 const DEFAULT_OPEN_COLS = 120
@@ -171,7 +171,7 @@ function TerminalViewport({
   focusRequestId,
   onActivate,
   terminalId,
-  threadId,
+  workspaceId,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -221,7 +221,7 @@ function TerminalViewport({
           cols: activeTerminal.cols,
           rows: activeTerminal.rows,
           terminalId,
-          threadId,
+          workspaceId,
         })
       } catch {
         // Ignore resize races while the session is still starting.
@@ -255,7 +255,7 @@ function TerminalViewport({
           cwd,
           rows: activeTerminal.rows,
           terminalId,
-          threadId,
+          workspaceId,
         })
         if (!disposed) {
           renderSnapshot(snapshot)
@@ -336,7 +336,7 @@ function TerminalViewport({
     })
 
     const inputDisposable = terminal.onData((data) => {
-      api.terminal.write({ data, terminalId, threadId }).catch((error) => {
+      api.terminal.write({ data, terminalId, workspaceId }).catch((error) => {
         const activeTerminal = terminalRef.current
         if (!activeTerminal) {
           return
@@ -352,7 +352,10 @@ function TerminalViewport({
     })
 
     const unsubscribe = api.terminal.onEvent((event) => {
-      if (event.threadId !== threadId || event.terminalId !== terminalId) {
+      if (
+        event.workspaceId !== workspaceId ||
+        event.terminalId !== terminalId
+      ) {
         return
       }
 
@@ -439,7 +442,7 @@ function TerminalViewport({
       fitAddonRef.current = null
       terminal.dispose()
     }
-  }, [cwd, onActivate, terminalId, threadId])
+  }, [cwd, onActivate, terminalId, workspaceId])
 
   useEffect(() => {
     if (!autoFocus) {
@@ -469,19 +472,19 @@ function TerminalViewport({
   )
 }
 
-export function ThreadTerminalWorkspace({
+export function WorkspaceTerminalWorkspace({
   cwd,
   projectName,
-  threadId,
-  threadTitle,
-}: ThreadTerminalWorkspaceProps) {
+  workspaceId,
+  workspaceName,
+}: WorkspaceTerminalWorkspaceProps) {
   const {
     closeTerminal,
     layout,
     newTerminal,
     setActiveTerminal,
     splitTerminal,
-  } = useThreadTerminalLayout(threadId)
+  } = useWorkspaceTerminalLayout(workspaceId)
   const [focusRequestId, setFocusRequestId] = useState(0)
   const [runtimeByTerminalId, setRuntimeByTerminalId] = useState<
     Record<string, TerminalRuntimeState>
@@ -489,12 +492,12 @@ export function ThreadTerminalWorkspace({
 
   useEffect(() => {
     setFocusRequestId((current) => current + 1)
-  }, [layout.activeTerminalId, threadId])
+  }, [layout.activeTerminalId, workspaceId])
 
   useEffect(() => {
     const api = getWsRpcClient()
     const unsubscribe = api.terminal.onEvent((event) => {
-      if (event.threadId !== threadId) {
+      if (event.workspaceId !== workspaceId) {
         return
       }
 
@@ -547,7 +550,7 @@ export function ThreadTerminalWorkspace({
     return () => {
       unsubscribe()
     }
-  }, [threadId])
+  }, [workspaceId])
 
   useEffect(() => {
     const api = getWsRpcClient()
@@ -561,7 +564,7 @@ export function ThreadTerminalWorkspace({
             cwd,
             rows: DEFAULT_OPEN_ROWS,
             terminalId,
-            threadId,
+            workspaceId,
           })
 
           return [
@@ -587,7 +590,7 @@ export function ThreadTerminalWorkspace({
     return () => {
       cancelled = true
     }
-  }, [cwd, layout.terminalIds, threadId])
+  }, [cwd, layout.terminalIds, workspaceId])
 
   const terminalLabelById = useMemo(
     () =>
@@ -639,7 +642,7 @@ export function ThreadTerminalWorkspace({
     }
 
     getWsRpcClient()
-      .terminal.close({ terminalId, threadId })
+      .terminal.close({ terminalId, workspaceId })
       .catch(() => undefined)
 
     closeTerminal(terminalId)
@@ -651,7 +654,7 @@ export function ThreadTerminalWorkspace({
 
   const clearActiveTerminal = () => {
     getWsRpcClient()
-      .terminal.clear({ terminalId: layout.activeTerminalId, threadId })
+      .terminal.clear({ terminalId: layout.activeTerminalId, workspaceId })
       .catch(() => undefined)
   }
 
@@ -662,12 +665,15 @@ export function ThreadTerminalWorkspace({
         cwd,
         rows: DEFAULT_OPEN_ROWS,
         terminalId: layout.activeTerminalId,
-        threadId,
+        workspaceId,
       })
       .catch(() => undefined)
   }
 
-  const renderTerminalNav = (group: ThreadTerminalGroup, compact = false) => {
+  const renderTerminalNav = (
+    group: WorkspaceTerminalGroup,
+    compact = false
+  ) => {
     const groupActiveTerminalId = group.terminalIds.includes(
       layout.activeTerminalId
     )
@@ -759,7 +765,7 @@ export function ThreadTerminalWorkspace({
   return (
     <div
       className="flex h-full min-h-0 flex-1 flex-col bg-background"
-      data-testid="thread-terminal-workspace"
+      data-testid="workspace-terminal-workspace"
     >
       <div className="border-border border-b px-4 py-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -769,11 +775,11 @@ export function ThreadTerminalWorkspace({
                 className={cn('size-2 rounded-full', activeStatus.dotClassName)}
               />
               <h2 className="truncate font-semibold text-foreground text-sm">
-                {threadTitle}
+                {workspaceName}
               </h2>
               <span
                 className={cn('text-xs', activeStatus.labelClassName)}
-                data-testid="thread-terminal-status"
+                data-testid="workspace-terminal-status"
               >
                 {activeStatus.label}
               </span>
@@ -836,7 +842,7 @@ export function ThreadTerminalWorkspace({
                     focusRequestId={focusRequestId}
                     onActivate={() => setActiveTerminal(terminalId)}
                     terminalId={terminalId}
-                    threadId={threadId}
+                    workspaceId={workspaceId}
                   />
                 </div>
               ))}
@@ -859,7 +865,7 @@ export function ThreadTerminalWorkspace({
                   )
                 }
                 terminalId={visibleTerminalIds[0] ?? layout.activeTerminalId}
-                threadId={threadId}
+                workspaceId={workspaceId}
               />
             </div>
           )}

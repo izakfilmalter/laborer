@@ -1,10 +1,20 @@
 import { Events, makeSchema, State } from '@livestore/livestore'
 import { Schema } from 'effect'
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from './base'
-import { Project, ProjectsSnapshot, ProjectThread } from './projects'
+import {
+  IsoDateTime,
+  ProjectId,
+  TrimmedNonEmptyString,
+  WorkspaceId,
+} from './base'
+import {
+  Project,
+  ProjectsSnapshot,
+  ProjectWorkspace,
+  WorkspaceName,
+} from './projects'
 
-export const PROJECTS_LIVESTORE_ID = 'laborer-projects'
+export const PROJECTS_LIVESTORE_ID = 'laborer-projects-v2'
 
 export const projectStoreTables = {
   projects: State.SQLite.table({
@@ -16,12 +26,13 @@ export const projectStoreTables = {
       sortOrder: State.SQLite.integer({ default: 0 }),
     },
   }),
-  projectThreads: State.SQLite.table({
-    name: 'project_threads',
+  projectWorkspaces: State.SQLite.table({
+    name: 'project_workspaces',
     columns: {
-      id: State.SQLite.text({ primaryKey: true, schema: ThreadId }),
+      id: State.SQLite.text({ primaryKey: true, schema: WorkspaceId }),
       projectId: State.SQLite.text({ schema: ProjectId }),
-      title: State.SQLite.text({ schema: TrimmedNonEmptyString }),
+      name: State.SQLite.text({ schema: WorkspaceName }),
+      workspaceRoot: State.SQLite.text({ schema: TrimmedNonEmptyString }),
       updatedAt: State.SQLite.text({ schema: IsoDateTime }),
       sortOrder: State.SQLite.integer({ default: 0 }),
     },
@@ -30,8 +41,8 @@ export const projectStoreTables = {
 
 export type ProjectStoreProjectRow =
   typeof projectStoreTables.projects.rowSchema.Type
-export type ProjectStoreProjectThreadRow =
-  typeof projectStoreTables.projectThreads.rowSchema.Type
+export type ProjectStoreProjectWorkspaceRow =
+  typeof projectStoreTables.projectWorkspaces.rowSchema.Type
 
 export const projectStoreEvents = {
   snapshotReplaced: Events.synced({
@@ -47,11 +58,11 @@ export const projectStoreEvents = {
       sortOrder: Schema.Int,
     }),
   }),
-  threadAdded: Events.synced({
-    name: 'v1.ProjectThreadAdded',
+  workspaceAdded: Events.synced({
+    name: 'v1.ProjectWorkspaceAdded',
     schema: Schema.Struct({
       projectId: ProjectId,
-      thread: ProjectThread,
+      workspace: ProjectWorkspace,
       sortOrder: Schema.Int,
     }),
   }),
@@ -59,28 +70,28 @@ export const projectStoreEvents = {
 
 const materializers = State.SQLite.materializers(projectStoreEvents, {
   'v1.ProjectsSnapshotReplaced': ({ snapshot }) => [
-    projectStoreTables.projectThreads.delete(),
+    projectStoreTables.projectWorkspaces.delete(),
     projectStoreTables.projects.delete(),
     ...snapshot.projects.flatMap((project, projectIndex) => [
       projectStoreTables.projects.insert(toProjectRow(project, projectIndex)),
-      ...project.threads.map((thread, threadIndex) =>
-        projectStoreTables.projectThreads.insert(
-          toProjectThreadRow(project.id, thread, threadIndex)
+      ...project.workspaces.map((workspace, workspaceIndex) =>
+        projectStoreTables.projectWorkspaces.insert(
+          toProjectWorkspaceRow(project.id, workspace, workspaceIndex)
         )
       ),
     ]),
   ],
   'v1.ProjectAdded': ({ project, sortOrder }) => [
     projectStoreTables.projects.insert(toProjectRow(project, sortOrder)),
-    ...project.threads.map((thread, threadIndex) =>
-      projectStoreTables.projectThreads.insert(
-        toProjectThreadRow(project.id, thread, threadIndex)
+    ...project.workspaces.map((workspace, workspaceIndex) =>
+      projectStoreTables.projectWorkspaces.insert(
+        toProjectWorkspaceRow(project.id, workspace, workspaceIndex)
       )
     ),
   ],
-  'v1.ProjectThreadAdded': ({ projectId, thread, sortOrder }) =>
-    projectStoreTables.projectThreads.insert(
-      toProjectThreadRow(projectId, thread, sortOrder)
+  'v1.ProjectWorkspaceAdded': ({ projectId, workspace, sortOrder }) =>
+    projectStoreTables.projectWorkspaces.insert(
+      toProjectWorkspaceRow(projectId, workspace, sortOrder)
     ),
 })
 
@@ -96,21 +107,22 @@ export const projectStoreSchema = makeSchema({
 
 export const buildProjectsSnapshot = (
   projectRows: readonly ProjectStoreProjectRow[],
-  threadRows: readonly ProjectStoreProjectThreadRow[]
+  workspaceRows: readonly ProjectStoreProjectWorkspaceRow[]
 ): ProjectsSnapshot => {
-  const threadsByProjectId = new Map<
-    ProjectStoreProjectThreadRow['projectId'],
-    ProjectThread[]
+  const workspacesByProjectId = new Map<
+    ProjectStoreProjectWorkspaceRow['projectId'],
+    ProjectWorkspace[]
   >()
 
-  for (const threadRow of sortProjectThreadRows(threadRows)) {
-    const threads = threadsByProjectId.get(threadRow.projectId) ?? []
-    threads.push({
-      id: threadRow.id,
-      title: threadRow.title,
-      updatedAt: threadRow.updatedAt,
+  for (const workspaceRow of sortProjectWorkspaceRows(workspaceRows)) {
+    const workspaces = workspacesByProjectId.get(workspaceRow.projectId) ?? []
+    workspaces.push({
+      id: workspaceRow.id,
+      name: workspaceRow.name,
+      workspaceRoot: workspaceRow.workspaceRoot,
+      updatedAt: workspaceRow.updatedAt,
     })
-    threadsByProjectId.set(threadRow.projectId, threads)
+    workspacesByProjectId.set(workspaceRow.projectId, workspaces)
   }
 
   return {
@@ -118,7 +130,7 @@ export const buildProjectsSnapshot = (
       id: projectRow.id,
       name: projectRow.name,
       workspaceRoot: projectRow.workspaceRoot,
-      threads: threadsByProjectId.get(projectRow.id) ?? [],
+      workspaces: workspacesByProjectId.get(projectRow.id) ?? [],
     })),
   }
 }
@@ -130,15 +142,16 @@ const toProjectRow = (project: Project, sortOrder: number) => ({
   sortOrder,
 })
 
-const toProjectThreadRow = (
-  projectId: ProjectStoreProjectThreadRow['projectId'],
-  thread: ProjectThread,
+const toProjectWorkspaceRow = (
+  projectId: ProjectStoreProjectWorkspaceRow['projectId'],
+  workspace: ProjectWorkspace,
   sortOrder: number
 ) => ({
-  id: thread.id,
+  id: workspace.id,
   projectId,
-  title: thread.title,
-  updatedAt: thread.updatedAt,
+  name: workspace.name,
+  workspaceRoot: workspace.workspaceRoot,
+  updatedAt: workspace.updatedAt,
   sortOrder,
 })
 
@@ -147,7 +160,7 @@ const sortProjectRows = (
 ): ProjectStoreProjectRow[] =>
   [...projectRows].sort((left, right) => left.sortOrder - right.sortOrder)
 
-const sortProjectThreadRows = (
-  threadRows: readonly ProjectStoreProjectThreadRow[]
-): ProjectStoreProjectThreadRow[] =>
-  [...threadRows].sort((left, right) => left.sortOrder - right.sortOrder)
+const sortProjectWorkspaceRows = (
+  workspaceRows: readonly ProjectStoreProjectWorkspaceRow[]
+): ProjectStoreProjectWorkspaceRow[] =>
+  [...workspaceRows].sort((left, right) => left.sortOrder - right.sortOrder)

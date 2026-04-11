@@ -4,11 +4,11 @@ import { Schema } from 'effect'
 import {
   Project,
   ProjectsAddInput,
-  ProjectsCreateThreadError,
-  ProjectsCreateThreadInput,
+  ProjectsCreateWorkspaceError,
+  ProjectsCreateWorkspaceInput,
   ProjectsEvent,
   ProjectsSnapshot,
-  ProjectThread,
+  ProjectWorkspace,
 } from './projects'
 import {
   ServerConfig,
@@ -30,7 +30,7 @@ import {
 
 interface WsMethods {
   readonly projectsAdd: 'projects.add'
-  readonly projectsCreateThread: 'projects.createThread'
+  readonly projectsCreateWorkspace: 'projects.createWorkspace'
   readonly projectsList: 'projects.list'
   readonly serverGetConfig: 'server.getConfig'
   readonly shellOpenInEditor: 'shell.openInEditor'
@@ -49,7 +49,7 @@ interface WsMethods {
 export const WS_METHODS: WsMethods = {
   projectsList: 'projects.list',
   projectsAdd: 'projects.add',
-  projectsCreateThread: 'projects.createThread',
+  projectsCreateWorkspace: 'projects.createWorkspace',
   shellOpenInEditor: 'shell.openInEditor',
   serverGetConfig: 'server.getConfig',
   subscribeProjects: 'subscribeProjects',
@@ -76,12 +76,12 @@ export const WsProjectsAddRpc = Rpc.make(WS_METHODS.projectsAdd, {
   success: Project,
 })
 
-export const WsProjectsCreateThreadRpc = Rpc.make(
-  WS_METHODS.projectsCreateThread,
+export const WsProjectsCreateWorkspaceRpc = Rpc.make(
+  WS_METHODS.projectsCreateWorkspace,
   {
-    payload: ProjectsCreateThreadInput,
-    success: ProjectThread,
-    error: ProjectsCreateThreadError,
+    payload: ProjectsCreateWorkspaceInput,
+    success: ProjectWorkspace,
+    error: ProjectsCreateWorkspaceError,
   }
 )
 
@@ -168,7 +168,7 @@ export const WsSubscribeTerminalEventsRpc = Rpc.make(
 export const WsRpcGroup = RpcGroup.make(
   WsProjectsListRpc,
   WsProjectsAddRpc,
-  WsProjectsCreateThreadRpc,
+  WsProjectsCreateWorkspaceRpc,
   WsShellOpenInEditorRpc,
   WsServerGetConfigRpc,
   WsTerminalOpenRpc,

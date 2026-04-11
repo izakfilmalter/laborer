@@ -13,6 +13,7 @@ export const ProjectId = makeId('ProjectId')
 export type ProjectId = typeof ProjectId.Type
 export const makeProjectId = (value: string): ProjectId => value as ProjectId
 
-export const ThreadId = makeId('ThreadId')
-export type ThreadId = typeof ThreadId.Type
-export const makeThreadId = (value: string): ThreadId => value as ThreadId
+export const WorkspaceId = makeId('WorkspaceId')
+export type WorkspaceId = typeof WorkspaceId.Type
+export const makeWorkspaceId = (value: string): WorkspaceId =>
+  value as WorkspaceId

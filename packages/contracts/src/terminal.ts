@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from './base'
+import { IsoDateTime, TrimmedNonEmptyString, WorkspaceId } from './base'
 
 export const DEFAULT_TERMINAL_ID = 'default'
 
@@ -24,14 +24,14 @@ export const TerminalSessionStatus = Schema.Literal(
 )
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type
 
-export const TerminalThreadInput = Schema.Struct({
-  threadId: ThreadId,
+export const TerminalWorkspaceInput = Schema.Struct({
+  workspaceId: WorkspaceId,
   terminalId: TerminalId,
 })
-export type TerminalThreadInput = typeof TerminalThreadInput.Type
+export type TerminalWorkspaceInput = typeof TerminalWorkspaceInput.Type
 
 export const TerminalOpenInput = Schema.Struct({
-  ...TerminalThreadInput.fields,
+  ...TerminalWorkspaceInput.fields,
   cwd: TrimmedNonEmptyString,
   cols: Schema.optional(TerminalCols),
   rows: Schema.optional(TerminalRows),
@@ -39,34 +39,34 @@ export const TerminalOpenInput = Schema.Struct({
 export type TerminalOpenInput = typeof TerminalOpenInput.Type
 
 export const TerminalWriteInput = Schema.Struct({
-  ...TerminalThreadInput.fields,
+  ...TerminalWorkspaceInput.fields,
   data: Schema.String,
 })
 export type TerminalWriteInput = typeof TerminalWriteInput.Type
 
 export const TerminalResizeInput = Schema.Struct({
-  ...TerminalThreadInput.fields,
+  ...TerminalWorkspaceInput.fields,
   cols: TerminalCols,
   rows: TerminalRows,
 })
 export type TerminalResizeInput = typeof TerminalResizeInput.Type
 
-export const TerminalClearInput = TerminalThreadInput
+export const TerminalClearInput = TerminalWorkspaceInput
 export type TerminalClearInput = typeof TerminalClearInput.Type
 
 export const TerminalRestartInput = Schema.Struct({
-  ...TerminalThreadInput.fields,
+  ...TerminalWorkspaceInput.fields,
   cwd: TrimmedNonEmptyString,
   cols: TerminalCols,
   rows: TerminalRows,
 })
 export type TerminalRestartInput = typeof TerminalRestartInput.Type
 
-export const TerminalCloseInput = TerminalThreadInput
+export const TerminalCloseInput = TerminalWorkspaceInput
 export type TerminalCloseInput = typeof TerminalCloseInput.Type
 
 export const TerminalSessionSnapshot = Schema.Struct({
-  threadId: ThreadId,
+  workspaceId: WorkspaceId,
   terminalId: TerminalId,
   cwd: TrimmedNonEmptyString,
   status: TerminalSessionStatus,
@@ -80,7 +80,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type
 
 const TerminalEventBase = Schema.Struct({
-  threadId: ThreadId,
+  workspaceId: WorkspaceId,
   terminalId: TerminalId,
   createdAt: IsoDateTime,
 })
@@ -157,7 +157,7 @@ export class TerminalCwdError extends Schema.TaggedError<TerminalCwdError>()(
 export class TerminalSessionLookupError extends Schema.TaggedError<TerminalSessionLookupError>()(
   'TerminalSessionLookupError',
   {
-    threadId: ThreadId,
+    workspaceId: WorkspaceId,
     terminalId: TerminalId,
     message: TrimmedNonEmptyString,
   }
@@ -166,7 +166,7 @@ export class TerminalSessionLookupError extends Schema.TaggedError<TerminalSessi
 export class TerminalNotRunningError extends Schema.TaggedError<TerminalNotRunningError>()(
   'TerminalNotRunningError',
   {
-    threadId: ThreadId,
+    workspaceId: WorkspaceId,
     terminalId: TerminalId,
     message: TrimmedNonEmptyString,
   }

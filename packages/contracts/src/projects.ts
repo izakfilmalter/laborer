@@ -1,19 +1,33 @@
 import { Schema } from 'effect'
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from './base'
+import {
+  IsoDateTime,
+  ProjectId,
+  TrimmedNonEmptyString,
+  WorkspaceId,
+} from './base'
 
-export const ProjectThread = Schema.Struct({
-  id: ThreadId,
-  title: TrimmedNonEmptyString,
+const WorkspaceNamePattern =
+  /^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?(?:\/[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?)*$/
+
+export const WorkspaceName = TrimmedNonEmptyString.pipe(
+  Schema.pattern(WorkspaceNamePattern)
+)
+export type WorkspaceName = typeof WorkspaceName.Type
+
+export const ProjectWorkspace = Schema.Struct({
+  id: WorkspaceId,
+  name: WorkspaceName,
+  workspaceRoot: TrimmedNonEmptyString,
   updatedAt: IsoDateTime,
 })
-export type ProjectThread = typeof ProjectThread.Type
+export type ProjectWorkspace = typeof ProjectWorkspace.Type
 
 export const Project = Schema.Struct({
   id: ProjectId,
   name: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
-  threads: Schema.Array(ProjectThread),
+  workspaces: Schema.Array(ProjectWorkspace),
 })
 export type Project = typeof Project.Type
 
@@ -27,10 +41,12 @@ export const ProjectsAddInput = Schema.Struct({
 })
 export type ProjectsAddInput = typeof ProjectsAddInput.Type
 
-export const ProjectsCreateThreadInput = Schema.Struct({
+export const ProjectsCreateWorkspaceInput = Schema.Struct({
   projectId: ProjectId,
+  name: WorkspaceName,
 })
-export type ProjectsCreateThreadInput = typeof ProjectsCreateThreadInput.Type
+export type ProjectsCreateWorkspaceInput =
+  typeof ProjectsCreateWorkspaceInput.Type
 
 export const ProjectsEventSnapshot = Schema.Struct({
   version: Schema.Literal(1),
@@ -48,25 +64,26 @@ export const ProjectsEventProjectAdded = Schema.Struct({
 })
 export type ProjectsEventProjectAdded = typeof ProjectsEventProjectAdded.Type
 
-export const ProjectsEventThreadAdded = Schema.Struct({
+export const ProjectsEventWorkspaceAdded = Schema.Struct({
   version: Schema.Literal(1),
-  type: Schema.Literal('threadAdded'),
+  type: Schema.Literal('workspaceAdded'),
   payload: Schema.Struct({
     projectId: ProjectId,
-    thread: ProjectThread,
+    workspace: ProjectWorkspace,
   }),
 })
-export type ProjectsEventThreadAdded = typeof ProjectsEventThreadAdded.Type
+export type ProjectsEventWorkspaceAdded =
+  typeof ProjectsEventWorkspaceAdded.Type
 
 export const ProjectsEvent = Schema.Union(
   ProjectsEventSnapshot,
   ProjectsEventProjectAdded,
-  ProjectsEventThreadAdded
+  ProjectsEventWorkspaceAdded
 )
 export type ProjectsEvent = typeof ProjectsEvent.Type
 
-export class ProjectsCreateThreadError extends Schema.TaggedError<ProjectsCreateThreadError>()(
-  'ProjectsCreateThreadError',
+export class ProjectsCreateWorkspaceError extends Schema.TaggedError<ProjectsCreateWorkspaceError>()(
+  'ProjectsCreateWorkspaceError',
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

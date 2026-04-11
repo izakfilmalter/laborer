@@ -1,4 +1,4 @@
-import type { ThreadId } from '@laborer/contracts/base'
+import type { WorkspaceId } from '@laborer/contracts/base'
 import {
   buildProjectsSnapshot,
   projectStoreEvents,
@@ -8,7 +8,7 @@ import type {
   Project,
   ProjectsEvent,
   ProjectsSnapshot,
-  ProjectThread,
+  ProjectWorkspace,
 } from '@laborer/contracts/projects'
 import { queryDb } from '@livestore/livestore'
 import {
@@ -35,15 +35,15 @@ const allProjects$ = queryDb(
     label: 'projects.all',
   }
 )
-const allProjectThreads$ = queryDb(
-  projectStoreTables.projectThreads.select().orderBy('sortOrder', 'asc'),
+const allProjectWorkspaces$ = queryDb(
+  projectStoreTables.projectWorkspaces.select().orderBy('sortOrder', 'asc'),
   {
-    label: 'project-threads.all',
+    label: 'project-workspaces.all',
   }
 )
 
-export const activeThreadIdAtom = makeStateAtom<ThreadId | null>(
-  'active-thread-id',
+export const activeWorkspaceIdAtom = makeStateAtom<WorkspaceId | null>(
+  'active-workspace-id',
   null
 )
 export const projectsSyncReadyAtom = makeStateAtom<boolean>(
@@ -63,21 +63,21 @@ export function getProjectsSnapshot(): ProjectsSnapshot | null {
       projectStoreTables.projects.select().orderBy('sortOrder', 'asc')
     ),
     store.query(
-      projectStoreTables.projectThreads.select().orderBy('sortOrder', 'asc')
+      projectStoreTables.projectWorkspaces.select().orderBy('sortOrder', 'asc')
     )
   )
 }
 
-export function getActiveThreadId(): ThreadId | null {
-  return readAppStateAtom(activeThreadIdAtom)
+export function getActiveWorkspaceId(): WorkspaceId | null {
+  return readAppStateAtom(activeWorkspaceIdAtom)
 }
 
 export function getProjectsSyncReady(): boolean {
   return readAppStateAtom(projectsSyncReadyAtom)
 }
 
-export function setActiveThreadId(threadId: ThreadId | null): void {
-  writeAppStateAtom(activeThreadIdAtom, threadId)
+export function setActiveWorkspaceId(workspaceId: WorkspaceId | null): void {
+  writeAppStateAtom(activeWorkspaceIdAtom, workspaceId)
 }
 
 export function setProjectsSnapshot(snapshot: ProjectsSnapshot): void {
@@ -89,7 +89,7 @@ export function setProjectsSnapshot(snapshot: ProjectsSnapshot): void {
 
   store.commit(projectStoreEvents.snapshotReplaced({ snapshot }))
   writeAppStateAtom(projectsSyncReadyAtom, true)
-  ensureActiveThreadSelection(snapshot)
+  ensureActiveWorkspaceSelection(snapshot)
 }
 
 export function applyProjectsEvent(event: ProjectsEvent): void {
@@ -112,19 +112,19 @@ export function applyProjectsEvent(event: ProjectsEvent): void {
         })
       )
       writeAppStateAtom(projectsSyncReadyAtom, true)
-      syncActiveThreadSelection()
+      syncActiveWorkspaceSelection()
       return
     }
-    case 'threadAdded': {
+    case 'workspaceAdded': {
       store.commit(
-        projectStoreEvents.threadAdded({
+        projectStoreEvents.workspaceAdded({
           projectId: event.payload.projectId,
-          thread: event.payload.thread,
-          sortOrder: getNextThreadSortOrder(event.payload.projectId),
+          workspace: event.payload.workspace,
+          sortOrder: getNextWorkspaceSortOrder(event.payload.projectId),
         })
       )
       writeAppStateAtom(projectsSyncReadyAtom, true)
-      syncActiveThreadSelection()
+      syncActiveWorkspaceSelection()
       return
     }
     default: {
@@ -138,7 +138,7 @@ export function startProjectsStateSync(
 ): () => void {
   writeAppStateAtom(projectsSyncReadyAtom, false)
 
-  syncActiveThreadSelection()
+  syncActiveWorkspaceSelection()
   const unsubscribe = client.subscribe((event) => {
     applyProjectsEvent(event)
   })
@@ -151,64 +151,64 @@ export function startProjectsStateSync(
 export function useProjectsSnapshot(): ProjectsSnapshot {
   const store = useProjectsStore()
   const projectRows = store.useQuery(allProjects$)
-  const threadRows = store.useQuery(allProjectThreads$)
+  const workspaceRows = store.useQuery(allProjectWorkspaces$)
 
-  return buildProjectsSnapshot(projectRows, threadRows)
+  return buildProjectsSnapshot(projectRows, workspaceRows)
 }
 
-export function useActiveThreadId(): ThreadId | null {
-  return useAppStateValue(activeThreadIdAtom)
+export function useActiveWorkspaceId(): WorkspaceId | null {
+  return useAppStateValue(activeWorkspaceIdAtom)
 }
 
 export function useProjectsSyncReady(): boolean {
   return useAppStateValue(projectsSyncReadyAtom)
 }
 
-export function useActiveThreadInfo(): {
+export function useActiveWorkspaceInfo(): {
   readonly project: Project
-  readonly thread: ProjectThread
+  readonly workspace: ProjectWorkspace
 } | null {
   const projectsSnapshot = useProjectsSnapshot()
-  const activeThreadId = useActiveThreadId()
+  const activeWorkspaceId = useActiveWorkspaceId()
 
-  if (!activeThreadId) {
+  if (!activeWorkspaceId) {
     return null
   }
 
-  return findThreadInfo(projectsSnapshot, activeThreadId)
+  return findWorkspaceInfo(projectsSnapshot, activeWorkspaceId)
 }
 
-const ensureActiveThreadSelection = (snapshot: ProjectsSnapshot) => {
-  const currentActiveThreadId = getActiveThreadId()
-  const currentSelection = currentActiveThreadId
-    ? findThreadInfo(snapshot, currentActiveThreadId)
+const ensureActiveWorkspaceSelection = (snapshot: ProjectsSnapshot) => {
+  const currentActiveWorkspaceId = getActiveWorkspaceId()
+  const currentSelection = currentActiveWorkspaceId
+    ? findWorkspaceInfo(snapshot, currentActiveWorkspaceId)
     : null
 
   if (currentSelection !== null) {
     return
   }
 
-  const bootstrapThreadId = getServerWelcome()?.bootstrapThreadId
+  const bootstrapWorkspaceId = getServerWelcome()?.bootstrapWorkspaceId
   if (
-    bootstrapThreadId &&
-    findThreadInfo(snapshot, bootstrapThreadId) !== null
+    bootstrapWorkspaceId &&
+    findWorkspaceInfo(snapshot, bootstrapWorkspaceId) !== null
   ) {
-    setActiveThreadId(bootstrapThreadId)
+    setActiveWorkspaceId(bootstrapWorkspaceId)
     return
   }
 
-  const firstThread = snapshot.projects[0]?.threads[0]
-  setActiveThreadId(firstThread?.id ?? null)
+  const firstWorkspace = snapshot.projects[0]?.workspaces[0]
+  setActiveWorkspaceId(firstWorkspace?.id ?? null)
 }
 
-const syncActiveThreadSelection = () => {
+const syncActiveWorkspaceSelection = () => {
   const snapshot = getProjectsSnapshot()
 
   if (snapshot === null) {
     return
   }
 
-  ensureActiveThreadSelection(snapshot)
+  ensureActiveWorkspaceSelection(snapshot)
 }
 
 const getNextProjectSortOrder = (): number => {
@@ -228,31 +228,34 @@ const getNextProjectSortOrder = (): number => {
   return firstProject === undefined ? 0 : firstProject - 1
 }
 
-const getNextThreadSortOrder = (projectId: Project['id']): number => {
+const getNextWorkspaceSortOrder = (projectId: Project['id']): number => {
   const store = getLoadedProjectsStore()
 
   if (store === null) {
     return 0
   }
 
-  const [firstThread] = store.query(
-    projectStoreTables.projectThreads
+  const [firstWorkspace] = store.query(
+    projectStoreTables.projectWorkspaces
       .select('sortOrder')
       .where({ projectId })
       .orderBy('sortOrder', 'asc')
       .limit(1)
   )
 
-  return firstThread === undefined ? 0 : firstThread - 1
+  return firstWorkspace === undefined ? 0 : firstWorkspace - 1
 }
 
-const findThreadInfo = (snapshot: ProjectsSnapshot, threadId: ThreadId) => {
+const findWorkspaceInfo = (
+  snapshot: ProjectsSnapshot,
+  workspaceId: WorkspaceId
+) => {
   for (const project of snapshot.projects) {
-    const thread = project.threads.find(
-      (candidate) => candidate.id === threadId
+    const workspace = project.workspaces.find(
+      (candidate) => candidate.id === workspaceId
     )
-    if (thread) {
-      return { project, thread }
+    if (workspace) {
+      return { project, workspace }
     }
   }
 

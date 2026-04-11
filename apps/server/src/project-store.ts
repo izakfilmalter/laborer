@@ -1,6 +1,8 @@
-import { basename } from 'node:path'
+import { execFile } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
+import path, { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { makeProjectId, makeThreadId } from '@laborer/contracts/base'
+import { makeProjectId, makeWorkspaceId } from '@laborer/contracts/base'
 import {
   buildProjectsSnapshot,
   PROJECTS_LIVESTORE_ID,
@@ -11,11 +13,11 @@ import {
 import {
   type Project,
   type ProjectsAddInput,
-  ProjectsCreateThreadError,
-  type ProjectsCreateThreadInput,
+  ProjectsCreateWorkspaceError,
+  type ProjectsCreateWorkspaceInput,
   type ProjectsEvent,
   type ProjectsSnapshot,
-  type ProjectThread,
+  type ProjectWorkspace,
 } from '@laborer/contracts/projects'
 import { makeAdapter } from '@livestore/adapter-node'
 import { createStore, provideOtel, type Store } from '@livestore/livestore'
@@ -58,7 +60,7 @@ const makeAdd = (store: ProjectsStore, events: PubSub.PubSub<ProjectsEvent>) =>
           id: makeProjectId(crypto.randomUUID()),
           name: resolveProjectName(workspaceRoot),
           workspaceRoot,
-          threads: [],
+          workspaces: [],
         }) satisfies Project
     )
     const shouldPublishProject = Option.isNone(existingProjectOption)
@@ -86,51 +88,85 @@ const makeAdd = (store: ProjectsStore, events: PubSub.PubSub<ProjectsEvent>) =>
     return project
   })
 
-const makeCreateThread = (
+const makeCreateWorkspace = (
   store: ProjectsStore,
   events: PubSub.PubSub<ProjectsEvent>
 ) =>
-  Effect.fn('ProjectStore.createThread')(function* (
-    input: ProjectsCreateThreadInput
+  Effect.fn('ProjectStore.createWorkspace')(function* (
+    input: ProjectsCreateWorkspaceInput
   ) {
     const current = readProjectsSnapshot(store)
 
-    yield* Effect.fromNullable(
-      current.projects.find((project) => project.id === input.projectId)
+    const project = yield* Effect.fromNullable(
+      current.projects.find((candidate) => candidate.id === input.projectId)
     ).pipe(
       Effect.orElseFail(
         () =>
-          new ProjectsCreateThreadError({
-            message: 'Unable to create a thread for a missing project.',
+          new ProjectsCreateWorkspaceError({
+            message: 'Unable to create a workspace for a missing project.',
           })
       )
     )
 
-    const thread = {
-      id: makeThreadId(crypto.randomUUID()),
-      title: 'New thread',
+    const repoRoot = yield* Effect.tryPromise({
+      try: () => resolveGitRepositoryRoot(project.workspaceRoot),
+      catch: (cause) =>
+        new ProjectsCreateWorkspaceError({
+          message: buildCreateWorkspaceErrorMessage(input.name, cause),
+          cause,
+        }),
+    })
+    const currentBranch = yield* Effect.tryPromise({
+      try: () => resolveCurrentGitBranch(project.workspaceRoot),
+      catch: (cause) =>
+        new ProjectsCreateWorkspaceError({
+          message: buildCreateWorkspaceErrorMessage(input.name, cause),
+          cause,
+        }),
+    })
+    const workspaceRoot = resolveWorkspaceRoot(repoRoot, input.name)
+
+    yield* Effect.tryPromise({
+      try: () =>
+        createGitWorktree({
+          cwd: project.workspaceRoot,
+          currentBranch,
+          newBranch: input.name,
+          workspaceRoot,
+        }),
+      catch: (cause) =>
+        new ProjectsCreateWorkspaceError({
+          message: buildCreateWorkspaceErrorMessage(input.name, cause),
+          cause,
+        }),
+    })
+
+    const workspace = {
+      id: makeWorkspaceId(crypto.randomUUID()),
+      name: input.name,
+      workspaceRoot,
       updatedAt: new Date().toISOString(),
-    } satisfies ProjectThread
+    } satisfies ProjectWorkspace
 
     yield* Effect.sync(() => {
       store.commit(
-        projectStoreEvents.threadAdded({
+        projectStoreEvents.workspaceAdded({
           projectId: input.projectId,
-          thread,
-          sortOrder: getNextThreadSortOrder(store, input.projectId),
+          workspace,
+          sortOrder: getNextWorkspaceSortOrder(store, input.projectId),
         })
       )
     })
     yield* publishProjectEvent(events, {
       version: 1,
-      type: 'threadAdded',
+      type: 'workspaceAdded',
       payload: {
         projectId: input.projectId,
-        thread,
+        workspace,
       },
     })
 
-    return thread
+    return workspace
   })
 
 const makeList = (store: ProjectsStore) =>
@@ -143,7 +179,7 @@ const streamProjectEvents = (events: PubSub.PubSub<ProjectsEvent>) =>
 
 export interface ProjectStoreShape {
   readonly add: ReturnType<typeof makeAdd>
-  readonly createThread: ReturnType<typeof makeCreateThread>
+  readonly createWorkspace: ReturnType<typeof makeCreateWorkspace>
   readonly list: ReturnType<typeof makeList>
   readonly stream: ReturnType<typeof streamProjectEvents>
 }
@@ -165,7 +201,7 @@ export class ProjectStore extends Context.Tag('@laborer/server/ProjectStore')<
 
       return ProjectStore.of({
         add: makeAdd(store, events),
-        createThread: makeCreateThread(store, events),
+        createWorkspace: makeCreateWorkspace(store, events),
         list: makeList(store),
         stream: streamProjectEvents(events),
       })
@@ -195,7 +231,7 @@ const readProjectsSnapshot = (store: ProjectsStore): ProjectsSnapshot =>
       projectStoreTables.projects.select().orderBy('sortOrder', 'asc')
     ),
     store.query(
-      projectStoreTables.projectThreads.select().orderBy('sortOrder', 'asc')
+      projectStoreTables.projectWorkspaces.select().orderBy('sortOrder', 'asc')
     )
   )
 
@@ -213,20 +249,121 @@ const getNextProjectSortOrder = (store: ProjectsStore): number => {
   })
 }
 
-const getNextThreadSortOrder = (
+const getNextWorkspaceSortOrder = (
   store: ProjectsStore,
   projectId: Project['id']
 ): number => {
-  const [firstThread] = store.query(
-    projectStoreTables.projectThreads
+  const [firstWorkspace] = store.query(
+    projectStoreTables.projectWorkspaces
       .select('sortOrder')
       .where({ projectId })
       .orderBy('sortOrder', 'asc')
       .limit(1)
   )
 
-  return Option.match(Option.fromNullable(firstThread), {
+  return Option.match(Option.fromNullable(firstWorkspace), {
     onNone: () => 0,
     onSome: (sortOrder) => sortOrder - 1,
   })
 }
+
+const buildCreateWorkspaceErrorMessage = (
+  workspaceName: string,
+  cause: unknown
+): string =>
+  Match.value(cause).pipe(
+    Match.when(
+      (candidate: unknown): candidate is Error =>
+        candidate instanceof Error && candidate.message.trim().length > 0,
+      (error) => `Unable to create workspace ${workspaceName}: ${error.message}`
+    ),
+    Match.orElse(() => `Unable to create workspace ${workspaceName}.`)
+  )
+
+const resolveWorkspaceRoot = (
+  repoRoot: string,
+  workspaceName: string
+): string => {
+  const sanitizedBranch = workspaceName.replaceAll('/', '-')
+  return path.join(`${repoRoot}.worktrees`, sanitizedBranch)
+}
+
+const resolveGitRepositoryRoot = async (cwd: string): Promise<string> => {
+  const { stdout } = await runGitCommand(cwd, ['rev-parse', '--show-toplevel'])
+  return stdout.trim()
+}
+
+const resolveCurrentGitBranch = async (cwd: string): Promise<string> => {
+  const { stdout } = await runGitCommand(cwd, ['branch', '--show-current'])
+  const branch = stdout.trim()
+
+  return Match.value(branch).pipe(
+    Match.when(
+      (currentBranch) => currentBranch.length > 0,
+      (currentBranch) => currentBranch
+    ),
+    Match.orElse(() => {
+      throw new Error('Repository is not checked out on a branch.')
+    })
+  )
+}
+
+const buildGitCommandFailureMessage = (
+  args: readonly string[],
+  error: Error,
+  stderr: string
+) =>
+  Match.value({ error: error.message.trim(), stderr: stderr.trim() }).pipe(
+    Match.when(
+      (input) => input.stderr.length > 0,
+      (input) => input.stderr
+    ),
+    Match.when(
+      (input) => input.error.length > 0,
+      (input) => input.error
+    ),
+    Match.orElse(() => `git ${args.join(' ')} failed`)
+  )
+
+const createGitWorktree = async (input: {
+  readonly cwd: string
+  readonly currentBranch: string
+  readonly newBranch: string
+  readonly workspaceRoot: string
+}): Promise<void> => {
+  await mkdir(path.dirname(input.workspaceRoot), { recursive: true })
+  await runGitCommand(input.cwd, [
+    'worktree',
+    'add',
+    '-b',
+    input.newBranch,
+    input.workspaceRoot,
+    input.currentBranch,
+  ])
+}
+
+const runGitCommand = (
+  cwd: string,
+  args: readonly string[]
+): Promise<{ readonly stderr: string; readonly stdout: string }> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      args,
+      { cwd, maxBuffer: 1024 * 1024 },
+      (error, stdout, stderr) =>
+        Match.value(error).pipe(
+          Match.when(
+            (candidate): candidate is Error => candidate instanceof Error,
+            (gitError) => {
+              reject(
+                new Error(buildGitCommandFailureMessage(args, gitError, stderr))
+              )
+            }
+          ),
+          Match.orElse(() => {
+            resolve({ stderr, stdout })
+          })
+        )
+    )
+  })

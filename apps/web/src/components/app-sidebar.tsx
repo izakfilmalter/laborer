@@ -312,6 +312,8 @@ export default function AppSidebar() {
                     <SidebarMenuAction
                       aria-label={`Create new thread in ${project.name}`}
                       className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                      data-project-id={project.id}
+                      data-testid="project-create-thread"
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
@@ -348,6 +350,8 @@ export default function AppSidebar() {
                                 isActive,
                                 isSelected,
                               })} relative isolate`}
+                              data-testid="thread-row"
+                              data-thread-id={thread.id}
                               isActive={isActive}
                               onClick={() => setActiveThreadId(thread.id)}
                               render={<button type="button" />}

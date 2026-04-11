@@ -8,6 +8,8 @@
     "build": "vite build",
     "serve": "vite preview",
     "start": "vite",
+    "test": "playwright test",
+    "test:watch": "playwright test --ui",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -48,6 +50,7 @@
   "devDependencies": {
     "@tanstack/react-router-devtools": "^1.166.11",
     "@tanstack/router-plugin": "^1.167.12",
+    "@playwright/test": "^1.54.2",
     "@types/node": "^25.6.0",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

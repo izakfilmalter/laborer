@@ -19,9 +19,12 @@ import {
 import { Context, Effect, Layer, Match, Stream } from 'effect'
 import { type IPty, spawn as spawnPty } from 'node-pty'
 
-const TERMINAL_HISTORY_DIRECTORY = fileURLToPath(
+const DEFAULT_TERMINAL_HISTORY_DIRECTORY = fileURLToPath(
   new URL('../.terminal-history', import.meta.url)
 )
+const TERMINAL_HISTORY_DIRECTORY =
+  process.env.LABORER_TERMINAL_HISTORY_DIRECTORY?.trim() ||
+  DEFAULT_TERMINAL_HISTORY_DIRECTORY
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5000
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40

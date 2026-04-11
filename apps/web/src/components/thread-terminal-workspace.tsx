@@ -463,6 +463,7 @@ function TerminalViewport({
   return (
     <div
       className="h-full w-full overflow-hidden rounded-md"
+      data-testid="terminal-viewport"
       ref={containerRef}
     />
   )
@@ -676,6 +677,8 @@ export function ThreadTerminalWorkspace({
     return (
       <div
         className={cn('space-y-1', compact && 'min-w-44 shrink-0')}
+        data-group-id={group.id}
+        data-testid="terminal-group"
         key={group.id}
       >
         <button
@@ -712,6 +715,8 @@ export function ThreadTerminalWorkspace({
                     ? 'border-primary/40 bg-primary/8 text-foreground'
                     : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-accent/40 hover:text-foreground'
                 )}
+                data-terminal-id={terminalId}
+                data-testid="terminal-nav-item"
                 key={terminalId}
               >
                 <button
@@ -752,7 +757,10 @@ export function ThreadTerminalWorkspace({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-background">
+    <div
+      className="flex h-full min-h-0 flex-1 flex-col bg-background"
+      data-testid="thread-terminal-workspace"
+    >
       <div className="border-border border-b px-4 py-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
@@ -763,7 +771,10 @@ export function ThreadTerminalWorkspace({
               <h2 className="truncate font-semibold text-foreground text-sm">
                 {threadTitle}
               </h2>
-              <span className={cn('text-xs', activeStatus.labelClassName)}>
+              <span
+                className={cn('text-xs', activeStatus.labelClassName)}
+                data-testid="thread-terminal-status"
+              >
                 {activeStatus.label}
               </span>
             </div>
@@ -815,6 +826,8 @@ export function ThreadTerminalWorkspace({
                     terminalId === layout.activeTerminalId &&
                       'border-primary/40 shadow-[0_0_0_1px_rgba(168,85,247,0.12)]'
                   )}
+                  data-terminal-id={terminalId}
+                  data-testid="terminal-pane"
                   key={terminalId}
                 >
                   <TerminalViewport
@@ -829,7 +842,13 @@ export function ThreadTerminalWorkspace({
               ))}
             </div>
           ) : (
-            <div className="h-full rounded-lg border border-border/70 bg-card/40 p-1">
+            <div
+              className="h-full rounded-lg border border-border/70 bg-card/40 p-1"
+              data-terminal-id={
+                visibleTerminalIds[0] ?? layout.activeTerminalId
+              }
+              data-testid="terminal-pane"
+            >
               <TerminalViewport
                 autoFocus
                 cwd={cwd}
@@ -847,7 +866,10 @@ export function ThreadTerminalWorkspace({
         </div>
 
         {layout.terminalIds.length > 1 ? (
-          <aside className="hidden w-72 shrink-0 border-border border-l bg-muted/10 p-2 md:flex md:flex-col">
+          <aside
+            className="hidden w-72 shrink-0 border-border border-l bg-muted/10 p-2 md:flex md:flex-col"
+            data-testid="terminal-sidebar"
+          >
             <div className="mb-2 flex items-center justify-between px-2 py-1">
               <span className="font-medium text-[11px] text-muted-foreground uppercase tracking-[0.16em]">
                 Terminals

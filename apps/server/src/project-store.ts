@@ -21,9 +21,12 @@ import { makeAdapter } from '@livestore/adapter-node'
 import { createStore, provideOtel, type Store } from '@livestore/livestore'
 import { Context, Effect, Layer, Match, Option, PubSub, Stream } from 'effect'
 
-const PROJECT_STORE_STORAGE_DIRECTORY = fileURLToPath(
+const DEFAULT_PROJECT_STORE_STORAGE_DIRECTORY = fileURLToPath(
   new URL('../.livestore', import.meta.url)
 )
+const PROJECT_STORE_STORAGE_DIRECTORY =
+  process.env.LABORER_PROJECT_STORE_DIRECTORY?.trim() ||
+  DEFAULT_PROJECT_STORE_STORAGE_DIRECTORY
 
 const projectStoreAdapter = makeAdapter({
   storage: {

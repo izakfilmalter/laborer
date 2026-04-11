@@ -28,7 +28,10 @@
       "!**/convex/_generated",
       "!**/.reference",
       "!**/.opencode",
-      "!**/release"
+      "!**/.playwright",
+      "!**/playwright-report",
+      "!**/release",
+      "!**/test-results"
     ]
   },
   "formatter": {

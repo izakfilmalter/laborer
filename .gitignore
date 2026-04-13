@@ -49,6 +49,7 @@ coverage
 
 # LiveStore data (SQLite persistence)
 data/
+apps/server/.livestore/
 
 # Worktree
 .worktree-index

@@ -2,6 +2,7 @@
 import type { WorkspaceId } from '@laborer/contracts/base'
 import type { TerminalSessionSnapshot } from '@laborer/contracts/terminal'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { type ITheme, Terminal } from '@xterm/xterm'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -189,6 +190,9 @@ function TerminalViewport({
         '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
       fontSize: 12,
       lineHeight: 1.2,
+      // Match VS Code's terminal defaults for TUIs that rely on block, box-drawing,
+      // braille, and similar glyphs rendering as continuous shapes.
+      rescaleOverlappingGlyphs: true,
       scrollback: 5000,
       theme: resolveTerminalTheme(),
     })
@@ -197,6 +201,19 @@ function TerminalViewport({
     terminal.loadAddon(fitAddon)
     terminal.open(container)
     fitAddon.fit()
+
+    if (!navigator.webdriver) {
+      try {
+        const webglAddon = new WebglAddon()
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose()
+        })
+        terminal.loadAddon(webglAddon)
+        fitAddon.fit()
+      } catch {
+        // Fall back to xterm's default renderer when WebGL isn't available.
+      }
+    }
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
@@ -412,6 +429,16 @@ function TerminalViewport({
       refreshTerminalSize().catch(() => undefined)
     })
     resizeObserver.observe(container)
+
+    if (document.fonts) {
+      document.fonts.ready.then(() => {
+        if (disposed) {
+          return
+        }
+
+        refreshTerminalSize().catch(() => undefined)
+      })
+    }
 
     const themeObserver = new MutationObserver(() => {
       const activeTerminal = terminalRef.current

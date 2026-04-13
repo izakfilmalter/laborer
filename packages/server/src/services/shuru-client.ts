@@ -47,6 +47,8 @@ interface PendingTerminalNotification {
 }
 
 interface StartShuruSandboxParams {
+  readonly allowNet?: boolean | undefined
+  readonly fromCheckpoint?: string | null
   readonly portForward?: ShuruPortForward | null
   readonly workspaceId: string
   readonly worktreePath: string
@@ -67,6 +69,12 @@ interface SpawnShuruTerminalParams {
   readonly cwd?: string | undefined
   readonly env?: Record<string, string> | undefined
   readonly workspaceId: string
+}
+
+interface ExecShuruCommandResult {
+  readonly exitCode: number
+  readonly stderr: string
+  readonly stdout: string
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -112,6 +120,18 @@ const trimTerminalOutputBuffer = (output: string): string =>
 const isSpawnResult = (value: unknown): value is { readonly pid: string } =>
   isRecord(value) && typeof value.pid === 'string'
 
+const isExecResult = (
+  value: unknown
+): value is {
+  readonly exit_code: number
+  readonly stderr: string
+  readonly stdout: string
+} =>
+  isRecord(value) &&
+  typeof value.exit_code === 'number' &&
+  typeof value.stderr === 'string' &&
+  typeof value.stdout === 'string'
+
 const resolveShuruCommand = (): readonly string[] => {
   const configured = process.env.LABORER_SHURU_BIN?.trim()
   if (configured && configured.length > 0) {
@@ -123,11 +143,17 @@ const resolveShuruCommand = (): readonly string[] => {
 
 const buildShuruRunArgs = (
   worktreePath: string,
+  fromCheckpoint?: string | null,
+  allowNet?: boolean,
   portForward?: ShuruPortForward | null
 ): readonly string[] => [
   ...resolveShuruCommand(),
   'run',
   '--stdio',
+  ...(fromCheckpoint === undefined || fromCheckpoint === null
+    ? []
+    : ['--from', fromCheckpoint]),
+  ...(allowNet === true ? ['--allow-net'] : []),
   '--mount',
   `${worktreePath}:${SHURU_WORKSPACE_MOUNT}`,
   ...(portForward === undefined || portForward === null
@@ -599,6 +625,14 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
     readonly startSandbox: (
       params: StartShuruSandboxParams
     ) => Effect.Effect<ShuruSandboxHandle, RpcError>
+    readonly checkpointSandbox: (
+      workspaceId: string,
+      checkpointName: string
+    ) => Effect.Effect<void, RpcError>
+    readonly runCommand: (
+      workspaceId: string,
+      argv: readonly string[]
+    ) => Effect.Effect<ExecShuruCommandResult, RpcError>
     readonly spawnTerminal: (params: SpawnShuruTerminalParams) => Effect.Effect<
       {
         readonly command: string
@@ -655,6 +689,8 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
       )
 
       const startSandbox = Effect.fn('ShuruClient.startSandbox')(function* ({
+        allowNet,
+        fromCheckpoint,
         portForward,
         workspaceId,
         worktreePath,
@@ -666,7 +702,12 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
           })
         }
 
-        const args = buildShuruRunArgs(worktreePath, portForward)
+        const args = buildShuruRunArgs(
+          worktreePath,
+          fromCheckpoint,
+          allowNet,
+          portForward
+        )
         const runtime = yield* Effect.tryPromise({
           try: () => ShuruRpcProcess.start(args),
           catch: (error) =>
@@ -717,6 +758,70 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
           sandboxId: `shuru:${String(runtime.pid ?? crypto.randomUUID())}`,
         } satisfies ShuruSandboxHandle
       })
+
+      const runCommand = Effect.fn('ShuruClient.runCommand')(function* (
+        workspaceId: string,
+        argv: readonly string[]
+      ) {
+        const runtime = runtimes.get(workspaceId)
+        if (runtime === undefined) {
+          return yield* new RpcError({
+            message: `Cannot run a Shuru command: workspace "${workspaceId}" has no active sandbox.`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const response = yield* Effect.tryPromise({
+          try: () => runtime.request('exec', { argv: [...argv] }),
+          catch: (error) =>
+            new RpcError({
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to run a Shuru command for workspace "${workspaceId}".`,
+              code: 'SHURU_COMMAND_FAILED',
+            }),
+        })
+
+        if (!isExecResult(response.result)) {
+          return yield* new RpcError({
+            message: `Shuru returned an invalid exec response for workspace "${workspaceId}".`,
+            code: 'SHURU_COMMAND_FAILED',
+          })
+        }
+
+        return {
+          exitCode: response.result.exit_code,
+          stderr: response.result.stderr,
+          stdout: response.result.stdout,
+        } satisfies ExecShuruCommandResult
+      })
+
+      const checkpointSandbox = Effect.fn('ShuruClient.checkpointSandbox')(
+        function* (workspaceId: string, checkpointName: string) {
+          const runtime = runtimes.get(workspaceId)
+          if (runtime === undefined) {
+            return yield* new RpcError({
+              message: `Cannot checkpoint a Shuru sandbox: workspace "${workspaceId}" has no active sandbox.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          yield* Effect.tryPromise({
+            try: () => runtime.request('checkpoint', { name: checkpointName }),
+            catch: (error) =>
+              new RpcError({
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : `Failed to checkpoint the Shuru sandbox for workspace "${workspaceId}".`,
+                code: 'SHURU_CHECKPOINT_FAILED',
+              }),
+          })
+
+          yield* stopRuntime(workspaceId)
+        }
+      )
 
       const spawnTerminal = Effect.fn('ShuruClient.spawnTerminal')(function* ({
         argv,
@@ -812,8 +917,10 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
       })
 
       return ShuruClient.of({
+        checkpointSandbox,
         killTerminal,
         removeTerminal,
+        runCommand,
         startSandbox,
         spawnTerminal,
         stopSandbox: stopRuntime,

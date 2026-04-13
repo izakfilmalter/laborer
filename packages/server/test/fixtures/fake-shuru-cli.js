@@ -1,6 +1,14 @@
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const logPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+const checkpointDirOverride =
+  process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR?.trim()
+const checkpointDir =
+  checkpointDirOverride && checkpointDirOverride.length > 0
+    ? checkpointDirOverride
+    : join(homedir(), '.local', 'share', 'shuru', 'checkpoints')
 
 const record = (event) => {
   if (logPath === undefined || logPath.length === 0) {
@@ -120,6 +128,42 @@ const handleSpawnRequest = (message) => {
   })
 }
 
+const handleExecRequest = (message) => {
+  const stdout = process.env.LABORER_TEST_SHURU_EXEC_STDOUT ?? ''
+  const stderr = process.env.LABORER_TEST_SHURU_EXEC_STDERR ?? ''
+  const exitCode = Number.parseInt(
+    process.env.LABORER_TEST_SHURU_EXEC_EXIT_CODE ?? '0',
+    10
+  )
+
+  send({
+    jsonrpc: '2.0',
+    id: message.id,
+    result: {
+      stdout,
+      stderr,
+      exit_code: Number.isNaN(exitCode) ? 0 : exitCode,
+    },
+  })
+}
+
+const handleCheckpointRequest = (message) => {
+  const name = message.params?.name
+  if (typeof name !== 'string' || name.length === 0) {
+    return false
+  }
+
+  mkdirSync(checkpointDir, { recursive: true })
+  writeFileSync(join(checkpointDir, `${name}.ext4`), 'checkpoint-data')
+
+  send({
+    jsonrpc: '2.0',
+    id: message.id,
+    result: {},
+  })
+  return true
+}
+
 const handleKillRequest = (message) => {
   const pid = message.params?.pid
   if (typeof pid !== 'string') {
@@ -144,6 +188,15 @@ const handleRequest = (message) => {
 
   if (message.method === 'spawn') {
     handleSpawnRequest(message)
+    return
+  }
+
+  if (message.method === 'exec') {
+    handleExecRequest(message)
+    return
+  }
+
+  if (message.method === 'checkpoint' && handleCheckpointRequest(message)) {
     return
   }
 

@@ -43,6 +43,10 @@ const getSandboxSetupLabel = (step: string): string => {
       return 'Pushing code to sandbox...'
     case 'configuring-ssh':
       return 'Configuring SSH access...'
+    case 'restoring-checkpoint':
+      return 'Restoring shared checkpoint...'
+    case 'building-base-checkpoint':
+      return 'Building shared checkpoint...'
     case 'starting-sandbox':
       return 'Starting sandbox...'
     default:

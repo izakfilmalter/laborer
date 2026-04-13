@@ -55,6 +55,18 @@ describe('getSandboxSetupLabel', () => {
     )
   })
 
+  it('returns "Restoring shared checkpoint..." for restoring-checkpoint', () => {
+    expect(getSandboxSetupLabel('restoring-checkpoint')).toBe(
+      'Restoring shared checkpoint...'
+    )
+  })
+
+  it('returns "Building shared checkpoint..." for building-base-checkpoint', () => {
+    expect(getSandboxSetupLabel('building-base-checkpoint')).toBe(
+      'Building shared checkpoint...'
+    )
+  })
+
   it('returns "Starting sandbox..." for starting-sandbox', () => {
     expect(getSandboxSetupLabel('starting-sandbox')).toBe('Starting sandbox...')
   })

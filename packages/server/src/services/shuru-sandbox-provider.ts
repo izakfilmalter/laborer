@@ -1,9 +1,14 @@
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
 
 import { ConfigService } from './config-service.js'
+import { detectLockfile, sanitizeProjectSlug } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
 import type {
   CreateSandboxParams,
@@ -13,7 +18,23 @@ import { ShuruClient } from './shuru-client.js'
 import { ShuruDetection } from './shuru-detection.js'
 
 const logPrefix = 'ShuruSandboxProvider'
+const MAX_SHURU_CHECKPOINT_NAME_LENGTH = 63
+const SHURU_BASE_CHECKPOINT_NAME_PREFIX = 'laborer-shuru-base'
+const SHURU_CHECKPOINT_IMAGE_PREFIX = 'shuru-checkpoint:'
+const SHURU_CHECKPOINTS_DIR = join(
+  homedir(),
+  '.local',
+  'share',
+  'shuru',
+  'checkpoints'
+)
+const SHURU_DEFAULT_BOOTSTRAP_SCRIPT = 'exec bash'
 const SHURU_PREVIEW_HOST = '127.0.0.1'
+
+interface ShuruBaseCheckpointPlan {
+  readonly name: string
+  readonly scripts: readonly string[]
+}
 
 const shuruNotImplemented = (operation: string) =>
   new RpcError({
@@ -23,6 +44,108 @@ const shuruNotImplemented = (operation: string) =>
 
 const buildShuruPreviewUrl = (port: number): string =>
   `http://${SHURU_PREVIEW_HOST}:${String(port)}`
+
+const shellQuote = (value: string): string =>
+  `'${value.replaceAll("'", "'\\''")}'`
+
+const getShuruCheckpointDir = (): string => {
+  const override = process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR?.trim()
+  return override && override.length > 0 ? override : SHURU_CHECKPOINTS_DIR
+}
+
+const checkpointExists = (checkpointName: string): boolean => {
+  const checkpointDir = getShuruCheckpointDir()
+  return [
+    join(checkpointDir, `${checkpointName}.ext4`),
+    join(checkpointDir, `${checkpointName}.idx`),
+  ].some((path) => existsSync(path))
+}
+
+const buildShuruBaseCheckpointName = (
+  projectName: string,
+  cacheHash: string
+): string =>
+  `${SHURU_BASE_CHECKPOINT_NAME_PREFIX}-${sanitizeProjectSlug(projectName)}-${cacheHash}`.slice(
+    0,
+    MAX_SHURU_CHECKPOINT_NAME_LENGTH
+  )
+
+const buildShuruBaseCheckpointScripts = (params: {
+  readonly installCommand: string | null
+  readonly lockfileInstallCommand: string | null
+  readonly setupScripts: readonly string[]
+}): readonly string[] => {
+  const scripts = params.setupScripts
+    .map((script) => script.trim())
+    .filter(
+      (script) => script.length > 0 && script !== SHURU_DEFAULT_BOOTSTRAP_SCRIPT
+    )
+
+  const installCommand =
+    params.installCommand ??
+    (scripts.length === 0 ? params.lockfileInstallCommand : null)
+
+  if (
+    installCommand !== null &&
+    installCommand.trim().length > 0 &&
+    !scripts.includes(installCommand.trim())
+  ) {
+    scripts.push(installCommand.trim())
+  }
+
+  return scripts
+}
+
+const buildShuruBaseCheckpointPlan = (params: {
+  readonly installCommand: string | null
+  readonly lockfileHash: string | null
+  readonly lockfileInstallCommand: string | null
+  readonly projectName: string
+  readonly projectRepoPath: string
+  readonly setupScripts: readonly string[]
+  readonly workdir: string
+}): ShuruBaseCheckpointPlan | null => {
+  if (params.lockfileHash === null && params.installCommand === null) {
+    return null
+  }
+
+  const scripts = buildShuruBaseCheckpointScripts({
+    installCommand: params.installCommand,
+    lockfileInstallCommand: params.lockfileInstallCommand,
+    setupScripts: params.setupScripts,
+  })
+
+  if (scripts.length === 0) {
+    return null
+  }
+
+  const cacheHash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        installCommand: params.installCommand,
+        lockfileHash: params.lockfileHash,
+        projectRepoPath: params.projectRepoPath,
+        setupScripts: scripts,
+        workdir: params.workdir,
+      })
+    )
+    .digest('hex')
+    .slice(0, 12)
+
+  return {
+    name: buildShuruBaseCheckpointName(params.projectName, cacheHash),
+    scripts,
+  }
+}
+
+const buildShuruCheckpointCommand = (
+  scripts: readonly string[],
+  workdir: string
+): string => {
+  const lines = [`cd ${shellQuote(workdir)}`]
+  lines.push(...scripts)
+  return lines.join('\n')
+}
 
 const getEphemeralPort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -108,6 +231,111 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
           }
         })
 
+      const setSetupStep = (workspaceId: string, step: string | null) =>
+        Effect.sync(() => {
+          store.commit(events.sandboxSetupStepChanged({ workspaceId, step }))
+        })
+
+      const resolveBaseCheckpoint = Effect.fn(
+        'ShuruSandboxProvider.resolveBaseCheckpoint'
+      )(function* (params: CreateSandboxParams) {
+        const workspace = pipe(
+          store.query(tables.workspaces),
+          Arr.findFirst((candidate) => candidate.id === params.workspaceId)
+        )
+
+        const project =
+          workspace._tag === 'Some'
+            ? pipe(
+                store.query(tables.projects),
+                Arr.findFirst(
+                  (candidate) => candidate.id === workspace.value.projectId
+                )
+              )
+            : { _tag: 'None' as const }
+
+        const projectRepoPath =
+          project._tag === 'Some' ? project.value.repoPath : params.worktreePath
+
+        const lockfile = detectLockfile(params.worktreePath)
+        const checkpointPlan = buildShuruBaseCheckpointPlan({
+          installCommand: params.devServerConfig.installCommand,
+          lockfileHash: lockfile?.hash ?? null,
+          lockfileInstallCommand: lockfile?.installCommand ?? null,
+          projectName: params.projectName,
+          projectRepoPath,
+          setupScripts: params.devServerConfig.setupScripts,
+          workdir: params.devServerConfig.workdir,
+        })
+
+        if (checkpointPlan === null) {
+          return null
+        }
+
+        if (checkpointExists(checkpointPlan.name)) {
+          yield* Effect.logInfo(
+            `Reusing shared Shuru base checkpoint "${checkpointPlan.name}" for workspace "${params.workspaceId}"`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          yield* setSetupStep(params.workspaceId, 'restoring-checkpoint')
+          return checkpointPlan.name
+        }
+
+        yield* Effect.logInfo(
+          `Building shared Shuru base checkpoint "${checkpointPlan.name}" for workspace "${params.workspaceId}"`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        yield* setSetupStep(params.workspaceId, 'building-base-checkpoint')
+
+        const checkpointWorkspaceId = `${params.workspaceId}:base-checkpoint`
+        const checkpointCommand = buildShuruCheckpointCommand(
+          checkpointPlan.scripts,
+          params.devServerConfig.workdir
+        )
+
+        yield* shuruClient.startSandbox({
+          allowNet: true,
+          workspaceId: checkpointWorkspaceId,
+          worktreePath: params.worktreePath,
+        })
+
+        const commandResult = yield* shuruClient
+          .runCommand(checkpointWorkspaceId, ['sh', '-lc', checkpointCommand])
+          .pipe(
+            Effect.catchAll((error) =>
+              shuruClient.stopSandbox(checkpointWorkspaceId).pipe(
+                Effect.catchAll(() => Effect.void),
+                Effect.andThen(Effect.fail(error))
+              )
+            )
+          )
+
+        if (commandResult.exitCode !== 0) {
+          yield* shuruClient
+            .stopSandbox(checkpointWorkspaceId)
+            .pipe(Effect.catchAll(() => Effect.void))
+
+          return yield* new RpcError({
+            message: `Failed to build shared Shuru base checkpoint for workspace "${params.workspaceId}" (exit ${String(commandResult.exitCode)}): ${commandResult.stderr || commandResult.stdout || 'setup command failed'}`,
+            code: 'SHURU_CHECKPOINT_FAILED',
+          })
+        }
+
+        yield* shuruClient
+          .checkpointSandbox(checkpointWorkspaceId, checkpointPlan.name)
+          .pipe(
+            Effect.catchAll((error) =>
+              shuruClient.stopSandbox(checkpointWorkspaceId).pipe(
+                Effect.catchAll(() => Effect.void),
+                Effect.andThen(Effect.fail(error))
+              )
+            )
+          )
+
+        yield* setSetupStep(params.workspaceId, 'restoring-checkpoint')
+        return checkpointPlan.name
+      })
+
       const createSandbox = Effect.fn('ShuruSandboxProvider.createSandbox')(
         function* (params: CreateSandboxParams) {
           if (params.worktreePath.length === 0) {
@@ -140,8 +368,18 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             })
           }
 
+          const baseCheckpoint = yield* resolveBaseCheckpoint(params).pipe(
+            Effect.catchAll((error) =>
+              releasePreviewPort(params.workspaceId, previewPort).pipe(
+                Effect.andThen(setSetupStep(params.workspaceId, null)),
+                Effect.andThen(Effect.fail(error))
+              )
+            )
+          )
+
           const sandbox = yield* shuruClient
             .startSandbox({
+              fromCheckpoint: baseCheckpoint,
               portForward:
                 previewPort === null || params.devServerConfig.port === null
                   ? null
@@ -155,6 +393,7 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             .pipe(
               Effect.catchAll((error) =>
                 releasePreviewPort(params.workspaceId, previewPort).pipe(
+                  Effect.andThen(setSetupStep(params.workspaceId, null)),
                   Effect.andThen(Effect.fail(error))
                 )
               )
@@ -172,7 +411,10 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
               sandboxId: sandbox.sandboxId,
               sandboxPort: previewPort ?? undefined,
               sandboxUrl: previewPort === null ? '' : SHURU_PREVIEW_HOST,
-              sandboxImage: 'shuru',
+              sandboxImage:
+                baseCheckpoint === null
+                  ? 'shuru'
+                  : `${SHURU_CHECKPOINT_IMAGE_PREFIX}${baseCheckpoint}`,
               sandboxProvider: 'shuru',
             })
           )
@@ -312,7 +554,11 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             )
 
           const command = buildShuruTerminalCommand(
-            resolvedConfig.devServer.setupScripts.value,
+            workspace.value.sandboxImage?.startsWith(
+              SHURU_CHECKPOINT_IMAGE_PREFIX
+            ) === true
+              ? []
+              : resolvedConfig.devServer.setupScripts.value,
             opts.command ?? resolvedConfig.devServer.startCommand.value
           )
 

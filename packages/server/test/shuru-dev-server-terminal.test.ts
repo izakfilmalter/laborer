@@ -372,6 +372,8 @@ describe('Shuru dev-server terminals', () => {
       Effect.gen(function* () {
         const previousEnv = {
           LABORER_SHURU_BIN: process.env.LABORER_SHURU_BIN,
+          LABORER_TEST_SHURU_CHECKPOINT_DIR:
+            process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR,
           LABORER_TEST_SHURU_ECHO_INPUT:
             process.env.LABORER_TEST_SHURU_ECHO_INPUT,
           LABORER_TEST_SHURU_LOG_PATH: process.env.LABORER_TEST_SHURU_LOG_PATH,
@@ -531,6 +533,126 @@ describe('Shuru dev-server terminals', () => {
             (entry) => entry.type === 'request' && entry.method === 'kill'
           )
         )
+      }).pipe(Effect.provide(ShuruProviderTestLayer))
+  )
+
+  it.scopedLive(
+    'skips rerunning setup scripts when the Shuru sandbox was restored from a shared checkpoint',
+    () =>
+      Effect.gen(function* () {
+        const previousEnv = {
+          LABORER_SHURU_BIN: process.env.LABORER_SHURU_BIN,
+          LABORER_TEST_SHURU_CHECKPOINT_DIR:
+            process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR,
+          LABORER_TEST_SHURU_LOG_PATH: process.env.LABORER_TEST_SHURU_LOG_PATH,
+          LABORER_TEST_SHURU_SPAWN_STDERR:
+            process.env.LABORER_TEST_SHURU_SPAWN_STDERR,
+          LABORER_TEST_SHURU_SPAWN_STDOUT:
+            process.env.LABORER_TEST_SHURU_SPAWN_STDOUT,
+          LABORER_TEST_SHURU_STAT_ERROR:
+            process.env.LABORER_TEST_SHURU_STAT_ERROR,
+        }
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreEnv(previousEnv)
+          })
+        )
+
+        const repoPath = initRepo('shuru-dev-server-checkpoint', tempRoots)
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+        const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+        writeFileSync(
+          join(repoPath, 'package-lock.json'),
+          '{"lockfileVersion":1}'
+        )
+        writeFileSync(
+          join(repoPath, 'laborer.json'),
+          `{
+  "devServer": {
+    "provider": "shuru",
+    "setupScripts": ["echo preparing"],
+    "startCommand": "npm run dev",
+    "workdir": "/workspace"
+  }
+}`
+        )
+
+        process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+        process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+        process.env.LABORER_TEST_SHURU_SPAWN_STDERR = ''
+        process.env.LABORER_TEST_SHURU_SPAWN_STDOUT = ''
+        process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+        const projectId = crypto.randomUUID()
+        const workspaceId = crypto.randomUUID()
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: 'shuru-dev-server-checkpoint',
+            brrrConfig: null,
+          })
+        )
+        store.commit(
+          events.workspaceCreated({
+            id: workspaceId,
+            projectId,
+            taskSource: null,
+            branchName: 'feature/shuru-dev-server-checkpoint',
+            worktreePath: repoPath,
+            status: 'running',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const sandboxProvider = yield* SandboxProvider
+        yield* sandboxProvider.createSandbox({
+          workspaceId,
+          branchName: 'feature/shuru-dev-server-checkpoint',
+          currentBranch: null,
+          projectName: 'shuru-dev-server-checkpoint',
+          repoUrl: null,
+          worktreePath: repoPath,
+          devServerConfig: {
+            autoOpen: false,
+            autoStopInterval: null,
+            dockerfile: null,
+            image: null,
+            installCommand: null,
+            network: null,
+            port: null,
+            provider: 'shuru',
+            resources: null,
+            setupScripts: ['echo preparing'],
+            startCommand: 'npm run dev',
+            workdir: '/workspace',
+          },
+        })
+
+        const terminal = yield* sandboxProvider.spawnTerminal(workspaceId, {
+          autoRun: true,
+        })
+        yield* sandboxProvider.killTerminal(terminal.id)
+
+        const logEntries = readLogEntries(logPath)
+        const spawnRequest = logEntries.find(
+          (entry) => entry.type === 'request' && entry.method === 'spawn'
+        )
+
+        assert.deepStrictEqual(spawnRequest?.params, {
+          argv: ['sh', '-lc', 'npm run dev'],
+          cwd: '/workspace',
+          env: {
+            COLORTERM: 'truecolor',
+            TERM: 'xterm-256color',
+          },
+        })
       }).pipe(Effect.provide(ShuruProviderTestLayer))
   )
 })

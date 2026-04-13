@@ -198,18 +198,18 @@ TDD approach: Start with one cache-key behavior test that changes the lockfile h
 
 ### Acceptance criteria
 
-- [ ] Shuru sandbox setup can restore from a shared base checkpoint when one matches current inputs
-- [ ] Base checkpoint identity is derived from lockfile content and relevant sandbox config
-- [ ] Base checkpoints rebuild automatically when cache inputs change
-- [ ] Unchanged projects reuse the same base checkpoint across workspaces
-- [ ] Progress/state reporting distinguishes checkpoint restore from checkpoint rebuild
-- [ ] Tests cover both invalidation and reuse behavior
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] Shuru sandbox setup can restore from a shared base checkpoint when one matches current inputs
+- [x] Base checkpoint identity is derived from lockfile content and relevant sandbox config
+- [x] Base checkpoints rebuild automatically when cache inputs change
+- [x] Unchanged projects reuse the same base checkpoint across workspaces
+- [x] Progress/state reporting distinguishes checkpoint restore from checkpoint rebuild
+- [x] Tests cover both invalidation and reuse behavior
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 2 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -250,7 +250,7 @@ TDD approach: Start with one provider-level test that pauses a Shuru workspace a
 
 ### Blocked by
 
-- Blocked by "Shared base checkpoint cache with automatic invalidation" (Issue 5)
+None - Issue 5 is complete.
 
 ### User stories addressed
 

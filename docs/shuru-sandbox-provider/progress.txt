@@ -21,3 +21,9 @@
 - Routed only auto-run Shuru dev-server sessions through the sandbox provider while keeping manual workspace terminals host-local, added the Shuru terminal data-channel bridge across server/desktop/web boundaries, and covered stdout/stderr streaming, stdin forwarding, kill, and resize no-op behavior with targeted tests.
 - Hardened `ShuruClient` against early process notifications so sandbox output is buffered even if the CLI emits stream events before the terminal handle is fully registered.
 - Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-dev-server-terminal.test.ts test/shuru-sandbox-provider.test.ts`
+
+2026-04-13
+- Completed Issue 5 (shared base checkpoint cache with automatic invalidation) because it is the highest-priority unblocked slice and it unlocks pause/resume on top of a reusable Shuru base runtime.
+- Added shared Shuru base-checkpoint planning keyed by lockfile plus sandbox-relevant config, restored matching checkpoints into real sandbox boots, rebuilt the cache when the lockfile changed, and skipped rerunning setup scripts for checkpoint-backed Shuru dev-server sessions.
+- Added provider and terminal tests for checkpoint reuse, invalidation, and checkpoint-backed dev-server startup, and surfaced the new checkpoint progress states in the web sandbox setup labels.
+- Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd packages/server test -- test/shuru-dev-server-terminal.test.ts`; `bun --cwd apps/web test -- test/sandbox-setup-labels.test.ts`

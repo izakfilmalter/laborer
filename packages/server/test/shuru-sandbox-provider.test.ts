@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assert, describe, it } from '@effect/vitest'
@@ -100,6 +100,7 @@ afterAll(() => {
 
 const restoreEnv = (
   previousBin: string | undefined,
+  previousCheckpointDir: string | undefined,
   previousLogPath: string | undefined,
   previousStatError: string | undefined
 ): void => {
@@ -107,6 +108,12 @@ const restoreEnv = (
     process.env.LABORER_SHURU_BIN = EMPTY_ENV_VALUE
   } else {
     process.env.LABORER_SHURU_BIN = previousBin
+  }
+
+  if (previousCheckpointDir === undefined) {
+    process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = EMPTY_ENV_VALUE
+  } else {
+    process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = previousCheckpointDir
   }
 
   if (previousLogPath === undefined) {
@@ -128,18 +135,27 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
     () =>
       Effect.gen(function* () {
         const previousBin = process.env.LABORER_SHURU_BIN
+        const previousCheckpointDir =
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
         const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
         const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
 
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
-            restoreEnv(previousBin, previousLogPath, previousStatError)
+            restoreEnv(
+              previousBin,
+              previousCheckpointDir,
+              previousLogPath,
+              previousStatError
+            )
           })
         )
 
         const repoPath = initRepo('shuru-router', tempRoots)
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
         const logPath = join(repoPath, 'fake-shuru-log.ndjson')
         process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
         process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
         process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
 
@@ -249,18 +265,27 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
   it.scoped('cleans up the Shuru process when startup validation fails', () =>
     Effect.gen(function* () {
       const previousBin = process.env.LABORER_SHURU_BIN
+      const previousCheckpointDir =
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
       const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
       const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
 
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          restoreEnv(previousBin, previousLogPath, previousStatError)
+          restoreEnv(
+            previousBin,
+            previousCheckpointDir,
+            previousLogPath,
+            previousStatError
+          )
         })
       )
 
       const repoPath = initRepo('shuru-router-error', tempRoots)
+      const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
       const logPath = join(repoPath, 'fake-shuru-log.ndjson')
       process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+      process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
       process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
       process.env.LABORER_TEST_SHURU_STAT_ERROR = '1'
 
@@ -346,18 +371,27 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
     () =>
       Effect.gen(function* () {
         const previousBin = process.env.LABORER_SHURU_BIN
+        const previousCheckpointDir =
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
         const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
         const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
 
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
-            restoreEnv(previousBin, previousLogPath, previousStatError)
+            restoreEnv(
+              previousBin,
+              previousCheckpointDir,
+              previousLogPath,
+              previousStatError
+            )
           })
         )
 
         const repoPath = initRepo('shuru-router-preview', tempRoots)
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
         const logPath = join(repoPath, 'fake-shuru-log.ndjson')
         process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
         process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
         process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
 
@@ -481,6 +515,313 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
           '-p',
           `${String(secondWorkspace.sandboxPort)}:3000`,
         ])
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'reuses a shared base checkpoint across unchanged Shuru workspaces',
+    () =>
+      Effect.gen(function* () {
+        const previousBin = process.env.LABORER_SHURU_BIN
+        const previousCheckpointDir =
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
+        const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+        const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreEnv(
+              previousBin,
+              previousCheckpointDir,
+              previousLogPath,
+              previousStatError
+            )
+          })
+        )
+
+        const repoPath = initRepo('shuru-router-base-checkpoint', tempRoots)
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+        const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+        writeFileSync(
+          join(repoPath, 'package-lock.json'),
+          JSON.stringify({ lockfileVersion: 1, name: 'checkpoint-test' })
+        )
+
+        process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+        process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+        process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+        const projectId = crypto.randomUUID()
+        const firstWorkspaceId = crypto.randomUUID()
+        const secondWorkspaceId = crypto.randomUUID()
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: 'shuru-router-base-checkpoint',
+            brrrConfig: null,
+          })
+        )
+
+        for (const [workspaceId, branchName] of [
+          [firstWorkspaceId, 'feature/shuru-base-checkpoint-one'],
+          [secondWorkspaceId, 'feature/shuru-base-checkpoint-two'],
+        ] as const) {
+          store.commit(
+            events.workspaceCreated({
+              id: workspaceId,
+              projectId,
+              taskSource: null,
+              branchName,
+              worktreePath: repoPath,
+              status: 'running',
+              origin: 'laborer',
+              createdAt: new Date().toISOString(),
+              baseSha: null,
+            })
+          )
+        }
+
+        const sandboxProvider = yield* SandboxProvider
+        const createSandbox = (workspaceId: string, branchName: string) =>
+          sandboxProvider.createSandbox({
+            workspaceId,
+            branchName,
+            currentBranch: null,
+            projectName: 'shuru-router-base-checkpoint',
+            repoUrl: null,
+            worktreePath: repoPath,
+            devServerConfig: {
+              autoOpen: false,
+              autoStopInterval: null,
+              dockerfile: null,
+              image: null,
+              installCommand: null,
+              network: null,
+              port: null,
+              provider: 'shuru',
+              resources: null,
+              setupScripts: ['echo preparing'],
+              startCommand: null,
+              workdir: '/workspace',
+            },
+          })
+
+        yield* createSandbox(
+          firstWorkspaceId,
+          'feature/shuru-base-checkpoint-one'
+        )
+        yield* createSandbox(
+          secondWorkspaceId,
+          'feature/shuru-base-checkpoint-two'
+        )
+
+        const firstWorkspace = store.query(
+          tables.workspaces.where('id', firstWorkspaceId)
+        )[0]
+        const secondWorkspace = store.query(
+          tables.workspaces.where('id', secondWorkspaceId)
+        )[0]
+
+        assert.isDefined(firstWorkspace)
+        assert.isDefined(secondWorkspace)
+        if (firstWorkspace === undefined || secondWorkspace === undefined) {
+          assert.fail('Expected both checkpoint-backed workspaces to exist')
+        }
+
+        assert.isTrue(
+          firstWorkspace.sandboxImage?.startsWith('shuru-checkpoint:') === true
+        )
+        assert.strictEqual(
+          secondWorkspace.sandboxImage,
+          firstWorkspace.sandboxImage
+        )
+
+        const checkpointName = firstWorkspace.sandboxImage?.replace(
+          'shuru-checkpoint:',
+          ''
+        )
+
+        const logEntries = readLogEntries(logPath)
+        const argvEntries = logEntries.filter((entry) => entry.type === 'argv')
+        const execRequests = logEntries.filter(
+          (entry) => entry.type === 'request' && entry.method === 'exec'
+        )
+        const checkpointRequests = logEntries.filter(
+          (entry) => entry.type === 'request' && entry.method === 'checkpoint'
+        )
+
+        assert.strictEqual(execRequests.length, 1)
+        assert.strictEqual(checkpointRequests.length, 1)
+        assert.deepStrictEqual(argvEntries[0]?.argv, [
+          'run',
+          '--stdio',
+          '--allow-net',
+          '--mount',
+          `${repoPath}:/workspace:ro`,
+        ])
+        assert.deepStrictEqual(argvEntries[1]?.argv, [
+          'run',
+          '--stdio',
+          '--from',
+          checkpointName,
+          '--mount',
+          `${repoPath}:/workspace:ro`,
+        ])
+        assert.deepStrictEqual(argvEntries[2]?.argv, [
+          'run',
+          '--stdio',
+          '--from',
+          checkpointName,
+          '--mount',
+          `${repoPath}:/workspace:ro`,
+        ])
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'rebuilds the shared base checkpoint when the lockfile changes',
+    () =>
+      Effect.gen(function* () {
+        const previousBin = process.env.LABORER_SHURU_BIN
+        const previousCheckpointDir =
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
+        const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+        const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreEnv(
+              previousBin,
+              previousCheckpointDir,
+              previousLogPath,
+              previousStatError
+            )
+          })
+        )
+
+        const repoPath = initRepo(
+          'shuru-router-checkpoint-invalidation',
+          tempRoots
+        )
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+        const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+        writeFileSync(
+          join(repoPath, 'package-lock.json'),
+          JSON.stringify({ lockfileVersion: 1, name: 'checkpoint-test' })
+        )
+
+        process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+        process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+        process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+        const projectId = crypto.randomUUID()
+        const firstWorkspaceId = crypto.randomUUID()
+        const secondWorkspaceId = crypto.randomUUID()
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: 'shuru-router-checkpoint-invalidation',
+            brrrConfig: null,
+          })
+        )
+
+        const createWorkspace = (workspaceId: string, branchName: string) => {
+          store.commit(
+            events.workspaceCreated({
+              id: workspaceId,
+              projectId,
+              taskSource: null,
+              branchName,
+              worktreePath: repoPath,
+              status: 'running',
+              origin: 'laborer',
+              createdAt: new Date().toISOString(),
+              baseSha: null,
+            })
+          )
+        }
+
+        createWorkspace(firstWorkspaceId, 'feature/shuru-checkpoint-first')
+
+        const sandboxProvider = yield* SandboxProvider
+        const createSandbox = (workspaceId: string, branchName: string) =>
+          sandboxProvider.createSandbox({
+            workspaceId,
+            branchName,
+            currentBranch: null,
+            projectName: 'shuru-router-checkpoint-invalidation',
+            repoUrl: null,
+            worktreePath: repoPath,
+            devServerConfig: {
+              autoOpen: false,
+              autoStopInterval: null,
+              dockerfile: null,
+              image: null,
+              installCommand: null,
+              network: null,
+              port: null,
+              provider: 'shuru',
+              resources: null,
+              setupScripts: ['echo preparing'],
+              startCommand: null,
+              workdir: '/workspace',
+            },
+          })
+
+        yield* createSandbox(firstWorkspaceId, 'feature/shuru-checkpoint-first')
+
+        const firstWorkspace = store.query(
+          tables.workspaces.where('id', firstWorkspaceId)
+        )[0]
+        assert.isDefined(firstWorkspace)
+        if (firstWorkspace === undefined) {
+          assert.fail('Expected the first checkpoint-backed workspace to exist')
+        }
+
+        writeFileSync(
+          join(repoPath, 'package-lock.json'),
+          JSON.stringify({ lockfileVersion: 2, name: 'checkpoint-test' })
+        )
+
+        createWorkspace(secondWorkspaceId, 'feature/shuru-checkpoint-second')
+        yield* createSandbox(
+          secondWorkspaceId,
+          'feature/shuru-checkpoint-second'
+        )
+
+        const secondWorkspace = store.query(
+          tables.workspaces.where('id', secondWorkspaceId)
+        )[0]
+        assert.isDefined(secondWorkspace)
+        if (secondWorkspace === undefined) {
+          assert.fail(
+            'Expected the second checkpoint-backed workspace to exist'
+          )
+        }
+
+        assert.notStrictEqual(
+          firstWorkspace.sandboxImage,
+          secondWorkspace.sandboxImage
+        )
+
+        const logEntries = readLogEntries(logPath)
+        const execRequests = logEntries.filter(
+          (entry) => entry.type === 'request' && entry.method === 'exec'
+        )
+        const checkpointRequests = logEntries.filter(
+          (entry) => entry.type === 'request' && entry.method === 'checkpoint'
+        )
+
+        assert.strictEqual(execRequests.length, 2)
+        assert.strictEqual(checkpointRequests.length, 2)
       }).pipe(Effect.provide(TestLayer))
   )
 })

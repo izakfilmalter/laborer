@@ -2,6 +2,10 @@ import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { activePaneIdRef } = vi.hoisted(() => ({
+  activePaneIdRef: { current: null as string | null },
+}))
+
 vi.mock('@/components/ui/resizable', () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
   ResizablePanel: ({
@@ -29,7 +33,11 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/panes/terminal-pane', () => ({
   TerminalPane: ({ terminalId }: { terminalId: string }) => (
-    <div>terminal:{terminalId}</div>
+    <div>
+      <div>terminal:{terminalId}</div>
+      <canvas data-testid={`terminal-canvas-${terminalId}`} />
+      <textarea data-testid={`terminal-input-${terminalId}`} />
+    </div>
   ),
 }))
 
@@ -52,7 +60,7 @@ vi.mock('@/panes/review-pane', () => ({
 }))
 
 vi.mock('@/panels/panel-context', () => ({
-  useActivePaneId: () => null,
+  useActivePaneId: () => activePaneIdRef.current,
   useFullscreenPaneId: () => null,
   useFullscreenPortal: () => null,
   usePanelActions: () => null,
@@ -141,6 +149,7 @@ function createSplitNode(overrides: Partial<SplitNode> = {}): SplitNode {
 
 afterEach(() => {
   cleanup()
+  activePaneIdRef.current = null
 })
 
 // ---------- PanelManager tests ----------
@@ -168,6 +177,33 @@ describe('PanelRenderer', () => {
     const leaf = createTerminalLeaf()
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('terminal:term-1')).toBeTruthy()
+  })
+
+  it('focuses the terminal textarea for the active pane', () => {
+    activePaneIdRef.current = 'pane-1'
+
+    render(<PanelRenderer node={createTerminalLeaf()} />)
+
+    expect(document.activeElement).toBe(
+      screen.getByTestId('terminal-input-term-1')
+    )
+  })
+
+  it('re-focuses the active pane when a terminal is assigned after render', () => {
+    activePaneIdRef.current = 'pane-1'
+
+    const { rerender } = render(
+      <PanelRenderer node={createTerminalLeaf({ terminalId: undefined })} />
+    )
+
+    const pane = document.querySelector<HTMLElement>('[data-pane-id="pane-1"]')
+    expect(document.activeElement).toBe(pane)
+
+    rerender(<PanelRenderer node={createTerminalLeaf()} />)
+
+    expect(document.activeElement).toBe(
+      screen.getByTestId('terminal-input-term-1')
+    )
   })
 
   it('renders SplitNode with two children in horizontal layout', () => {

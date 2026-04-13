@@ -622,6 +622,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
 
   const isFullscreen = fullscreenPaneId === node.id
   const isActive = activePaneId === node.id
+  const isLiveTerminalPane = node.paneType === 'terminal' && !!node.terminalId
 
   // When this pane becomes active (via keyboard navigation, tab switch, or
   // split), transfer DOM focus to it. This ensures terminal panes receive
@@ -630,25 +631,41 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     if (!isActive) {
       return
     }
+    if (pendingPicker.paneId === node.id) {
+      return
+    }
+
     const container = paneContainerRef.current
     if (!container) {
       return
     }
-    // Check if focus is already inside this pane
-    if (container.contains(document.activeElement)) {
+
+    const activeElement = document.activeElement as HTMLElement | null
+    const focusableSelector = isLiveTerminalPane
+      ? 'textarea, input, button, [tabindex="0"]'
+      : 'button, input, textarea, [tabindex="0"]'
+    const focusable = container.querySelector<HTMLElement>(focusableSelector)
+
+    if (focusable) {
+      if (activeElement === focusable) {
+        return
+      }
+      if (
+        !container.contains(activeElement) ||
+        activeElement === container ||
+        activeElement === document.body
+      ) {
+        focusable.focus()
+      }
       return
     }
-    // Focus the first focusable element inside (xterm.js canvas for terminals,
-    // or the container itself for non-terminal panes).
-    const focusable = container.querySelector<HTMLElement>(
-      'canvas, textarea, input, [tabindex="0"]'
-    )
-    if (focusable) {
-      focusable.focus()
-    } else {
-      container.focus()
+
+    if (container.contains(activeElement)) {
+      return
     }
-  }, [isActive])
+
+    container.focus()
+  }, [isActive, isLiveTerminalPane, node.id, pendingPicker.paneId])
 
   /**
    * Auto-close the pane when the terminal process exits.

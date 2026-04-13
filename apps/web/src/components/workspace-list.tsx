@@ -826,6 +826,15 @@ function WorkspaceItem({
     }
     return `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
   })()
+  const sandboxLabel = (() => {
+    if (!(isSandboxed && workspace.sandboxUrl)) {
+      return null
+    }
+    if (FULL_URL_RE.test(workspace.sandboxUrl)) {
+      return workspace.sandboxUrl.replace(FULL_URL_RE, '')
+    }
+    return `${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
+  })()
 
   /**
    * Derive display status from the sandbox state. The badge reflects
@@ -873,9 +882,7 @@ function WorkspaceItem({
             target="_blank"
             title={`Open ${sandboxLink}`}
           >
-            {FULL_URL_RE.test(workspace.sandboxUrl ?? '')
-              ? (workspace.sandboxUrl ?? '').replace(FULL_URL_RE, '')
-              : workspace.sandboxUrl}
+            {sandboxLabel}
           </a>
           <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
             <CopyButton title="Copy URL" value={sandboxLink} />

@@ -40,12 +40,18 @@ interface PendingRequest {
 }
 
 interface StartShuruSandboxParams {
+  readonly portForward?: ShuruPortForward | null
   readonly workspaceId: string
   readonly worktreePath: string
 }
 
 interface ShuruSandboxHandle {
   readonly sandboxId: string
+}
+
+interface ShuruPortForward {
+  readonly guestPort: number
+  readonly hostPort: number
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -92,12 +98,21 @@ const resolveShuruCommand = (): readonly string[] => {
   return ['shuru']
 }
 
-const buildShuruRunArgs = (worktreePath: string): readonly string[] => [
+const buildShuruRunArgs = (
+  worktreePath: string,
+  portForward?: ShuruPortForward | null
+): readonly string[] => [
   ...resolveShuruCommand(),
   'run',
   '--stdio',
   '--mount',
   `${worktreePath}:${SHURU_WORKSPACE_MOUNT}`,
+  ...(portForward === undefined || portForward === null
+    ? []
+    : [
+        '-p',
+        `${String(portForward.hostPort)}:${String(portForward.guestPort)}`,
+      ]),
 ]
 
 class ShuruRpcProcess {
@@ -349,6 +364,7 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
       )
 
       const startSandbox = Effect.fn('ShuruClient.startSandbox')(function* ({
+        portForward,
         workspaceId,
         worktreePath,
       }: StartShuruSandboxParams) {
@@ -359,7 +375,7 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
           })
         }
 
-        const args = buildShuruRunArgs(worktreePath)
+        const args = buildShuruRunArgs(worktreePath, portForward)
         const runtime = yield* Effect.tryPromise({
           try: () => ShuruRpcProcess.start(args),
           catch: (error) =>

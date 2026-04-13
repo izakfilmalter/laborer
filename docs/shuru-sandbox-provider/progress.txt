@@ -9,3 +9,9 @@
 - Added a process-owned `ShuruClient` for `shuru run --stdio`, a routed `ShuruSandboxProvider` create/destroy path, a fake Shuru CLI fixture, and provider-level lifecycle coverage through the public `SandboxProvider` interface.
 - Tightened the JSON-RPC parsing and Effect typing around Shuru startup/cleanup so the lifecycle slice passes the repo feedback loops cleanly.
 - Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`
+
+2026-04-13
+- Completed Issue 3 (localhost previews with automatic host-port allocation) because it is the highest-priority unblocked slice and it directly unblocks the Shuru dev-server routing work in Issue 4.
+- Added host-port allocation and `-p HOST:GUEST` forwarding to the Shuru startup path, persisted `127.0.0.1` preview metadata into LiveStore, and implemented `getPreviewUrl()` for active Shuru workspaces.
+- Updated the existing workspace preview link rendering to display localhost previews with their allocated host port, and added provider/UI tests covering distinct host-port allocation for multiple Shuru workspaces on the same guest port.
+- Verification: `bun run format:fix`; `bun run typecheck`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd apps/web test -- test/workspace-card-layout.test.tsx`

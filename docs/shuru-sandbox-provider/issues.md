@@ -111,19 +111,19 @@ TDD approach: Start with one provider test that creates two Shuru workspaces con
 
 ### Acceptance criteria
 
-- [ ] Shuru sandbox creation allocates an available host port instead of assuming guest port reuse is possible
-- [ ] Host port forwarding is established during sandbox setup
-- [ ] `sandboxUrl` and `sandboxPort` reflect the localhost preview endpoint for Shuru workspaces
-- [ ] `getPreviewUrl()` returns `http://127.0.0.1:<hostPort>` for Shuru workspaces
-- [ ] Multiple Shuru workspaces can expose the same guest port without host-port collisions
-- [ ] Existing preview-link UI works for Shuru localhost previews
-- [ ] Tests cover both provider behavior and UI rendering
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] Shuru sandbox creation allocates an available host port instead of assuming guest port reuse is possible
+- [x] Host port forwarding is established during sandbox setup
+- [x] `sandboxUrl` and `sandboxPort` reflect the localhost preview endpoint for Shuru workspaces
+- [x] `getPreviewUrl()` returns `http://127.0.0.1:<hostPort>` for Shuru workspaces
+- [x] Multiple Shuru workspaces can expose the same guest port without host-port collisions
+- [x] Existing preview-link UI works for Shuru localhost previews
+- [x] Tests cover both provider behavior and UI rendering
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 2 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -165,7 +165,7 @@ TDD approach: Start with one routing test through `TerminalClient.spawnInWorkspa
 
 ### Blocked by
 
-- Blocked by "Localhost previews with automatic host-port allocation" (Issue 3)
+None - Issue 3 is complete.
 
 ### User stories addressed
 

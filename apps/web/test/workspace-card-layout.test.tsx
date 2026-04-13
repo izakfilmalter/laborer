@@ -222,6 +222,7 @@ const makeWorkspace = (
     createdAt: string
     taskSource: string | null
     sandboxId: string | null
+    sandboxPort: number | null
     sandboxUrl: string | null
     sandboxStatus: string | null
     sandboxSetupStep: string | null
@@ -241,6 +242,7 @@ const makeWorkspace = (
   createdAt: new Date().toISOString(),
   taskSource: null,
   sandboxId: null,
+  sandboxPort: null,
   sandboxUrl: null,
   sandboxStatus: null,
   sandboxSetupStep: null,
@@ -366,6 +368,22 @@ describe('Workspace card layout — Row 2 (Sandbox/Infra row)', () => {
 
     expect(screen.getByText('paused')).toBeTruthy()
     expect(screen.getByRole('button', { name: RESUME_SANDBOX_RE })).toBeTruthy()
+  })
+
+  it('renders localhost preview links with their allocated host port', () => {
+    mockStore([
+      makeWorkspace({
+        sandboxId: 'container-1',
+        sandboxPort: 45_673,
+        sandboxStatus: 'running',
+        sandboxUrl: '127.0.0.1',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    const previewLink = screen.getByRole('link', { name: '127.0.0.1:45673' })
+    expect(previewLink.getAttribute('href')).toBe('http://127.0.0.1:45673')
   })
 })
 

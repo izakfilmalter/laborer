@@ -22,6 +22,7 @@ const fakeShuruCliPath = fileURLToPath(
   new URL('./fixtures/fake-shuru-cli.js', import.meta.url)
 )
 const SHURU_ID_PATTERN = /^shuru:/
+const SHURU_PREVIEW_HOST = '127.0.0.1'
 
 const TestContainerService = Layer.succeed(
   ContainerService,
@@ -336,5 +337,148 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
       const logEntries = readLogEntries(logPath)
       assert.isTrue(logEntries.some((entry) => entry.type === 'stdin-end'))
     }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'allocates unique localhost preview ports for Shuru workspaces',
+    () =>
+      Effect.gen(function* () {
+        const previousBin = process.env.LABORER_SHURU_BIN
+        const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+        const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreEnv(previousBin, previousLogPath, previousStatError)
+          })
+        )
+
+        const repoPath = initRepo('shuru-router-preview', tempRoots)
+        const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+        process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+        process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+        const projectId = crypto.randomUUID()
+        const firstWorkspaceId = crypto.randomUUID()
+        const secondWorkspaceId = crypto.randomUUID()
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: 'shuru-router-preview',
+            brrrConfig: null,
+          })
+        )
+
+        for (const [workspaceId, branchName] of [
+          [firstWorkspaceId, 'feature/shuru-preview-one'],
+          [secondWorkspaceId, 'feature/shuru-preview-two'],
+        ] as const) {
+          store.commit(
+            events.workspaceCreated({
+              id: workspaceId,
+              projectId,
+              taskSource: null,
+              branchName,
+              worktreePath: repoPath,
+              status: 'running',
+              origin: 'laborer',
+              createdAt: new Date().toISOString(),
+              baseSha: null,
+            })
+          )
+        }
+
+        const sandboxProvider = yield* SandboxProvider
+        const createSandbox = (workspaceId: string, branchName: string) =>
+          sandboxProvider.createSandbox({
+            workspaceId,
+            branchName,
+            currentBranch: null,
+            projectName: 'shuru-router-preview',
+            repoUrl: null,
+            worktreePath: repoPath,
+            devServerConfig: {
+              autoOpen: false,
+              autoStopInterval: null,
+              dockerfile: null,
+              image: null,
+              installCommand: null,
+              network: null,
+              port: 3000,
+              provider: 'shuru',
+              resources: null,
+              setupScripts: [],
+              startCommand: null,
+              workdir: '/workspace',
+            },
+          })
+
+        yield* createSandbox(firstWorkspaceId, 'feature/shuru-preview-one')
+        yield* createSandbox(secondWorkspaceId, 'feature/shuru-preview-two')
+
+        const firstWorkspace = store.query(
+          tables.workspaces.where('id', firstWorkspaceId)
+        )[0]
+        const secondWorkspace = store.query(
+          tables.workspaces.where('id', secondWorkspaceId)
+        )[0]
+
+        assert.isDefined(firstWorkspace)
+        assert.isDefined(secondWorkspace)
+        if (firstWorkspace === undefined || secondWorkspace === undefined) {
+          assert.fail('Expected both Shuru workspaces to be materialized')
+        }
+
+        assert.strictEqual(firstWorkspace.sandboxUrl, SHURU_PREVIEW_HOST)
+        assert.strictEqual(secondWorkspace.sandboxUrl, SHURU_PREVIEW_HOST)
+        assert.isTrue(typeof firstWorkspace.sandboxPort === 'number')
+        assert.isTrue(typeof secondWorkspace.sandboxPort === 'number')
+        assert.notStrictEqual(
+          firstWorkspace.sandboxPort,
+          secondWorkspace.sandboxPort
+        )
+
+        const firstPreviewUrl = yield* sandboxProvider.getPreviewUrl(
+          firstWorkspaceId,
+          3000
+        )
+        const secondPreviewUrl = yield* sandboxProvider.getPreviewUrl(
+          secondWorkspaceId,
+          3000
+        )
+
+        assert.strictEqual(
+          firstPreviewUrl,
+          `http://${SHURU_PREVIEW_HOST}:${String(firstWorkspace.sandboxPort)}`
+        )
+        assert.strictEqual(
+          secondPreviewUrl,
+          `http://${SHURU_PREVIEW_HOST}:${String(secondWorkspace.sandboxPort)}`
+        )
+
+        const argvEntries = readLogEntries(logPath).filter(
+          (entry) => entry.type === 'argv'
+        )
+        assert.deepStrictEqual(argvEntries[0]?.argv, [
+          'run',
+          '--stdio',
+          '--mount',
+          `${repoPath}:/workspace:ro`,
+          '-p',
+          `${String(firstWorkspace.sandboxPort)}:3000`,
+        ])
+        assert.deepStrictEqual(argvEntries[1]?.argv, [
+          'run',
+          '--stdio',
+          '--mount',
+          `${repoPath}:/workspace:ro`,
+          '-p',
+          `${String(secondWorkspace.sandboxPort)}:3000`,
+        ])
+      }).pipe(Effect.provide(TestLayer))
   )
 })

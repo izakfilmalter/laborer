@@ -80,6 +80,7 @@ import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { ShuruDetection } from './services/shuru-detection.js'
+import { handleShuruTerminalDataPort } from './services/shuru-terminal-data-channel.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
@@ -664,79 +665,157 @@ async function main(): Promise<void> {
   //   same deferred services) via a new MessagePort. Used by MCP
   //   utility process to call server RPCs via MessagePort.
   //   @see Issue #15: MCP as utility process
+  const getIncomingPort = (event: {
+    data: unknown
+    ports: unknown[]
+  }): RpcMessagePort | null =>
+    event.ports.length > 0 ? (event.ports[0] as RpcMessagePort) : null
+
+  const handleServerManagedTerminalPort = (
+    terminalId: string,
+    port: RpcMessagePort,
+    label: string,
+    handler: (port: RpcMessagePort, terminalId: string) => void
+  ): void => {
+    port.start?.()
+    console.log(
+      `[server-utility] Received ${label} terminal data port for terminal "${terminalId}"`
+    )
+    handler(port, terminalId)
+  }
+
+  interface ParentMessage {
+    readonly terminalId?: string | undefined
+    readonly type?: string | undefined
+  }
+
+  const handleSyncPort = (port: RpcMessagePort | null): void => {
+    if (port === null) {
+      return
+    }
+
+    console.log('[server-utility] Received sync-port from main process')
+    // Do NOT call start() here — the RPC server transport will call
+    // start() after attaching its message listener to avoid losing
+    // messages (MessagePortMain doesn't buffer after start).
+    serveSyncOnPort(port)
+  }
+
+  const handleTerminalRpcPort = (port: RpcMessagePort | null): void => {
+    if (port === null) {
+      return
+    }
+
+    // Do NOT call start() here — the RPC client transport will call
+    // start() after attaching its message listener to avoid losing
+    // messages (MessagePortMain doesn't buffer after start).
+    console.log('[server-utility] Received terminal RPC port from main process')
+    resolveTerminalRpcPort?.(port)
+  }
+
+  const handleFileWatcherRpcPort = (port: RpcMessagePort | null): void => {
+    if (port === null) {
+      return
+    }
+
+    // Do NOT call start() here — same reason as above.
+    console.log(
+      '[server-utility] Received file-watcher RPC port from main process'
+    )
+    // Smoke test: send a test message and listen for response
+    port.on?.('message', (msg: unknown) => {
+      console.log(
+        '[server-utility] RECEIVED from file-watcher port:',
+        typeof msg,
+        JSON.stringify(msg)?.slice(0, 200)
+      )
+    })
+    port.start?.()
+    port.postMessage?.({ type: 'ping', timestamp: Date.now() })
+    console.log('[server-utility] Sent ping to file-watcher port')
+    resolveFileWatcherRpcPort?.(port)
+  }
+
+  const handleAdditionalRpcPort = (port: RpcMessagePort | null): void => {
+    if (port === null) {
+      return
+    }
+
+    // Additional RPC port — serve LaborerRpcs on it.
+    // This enables other utility processes (e.g., MCP) to call
+    // server RPCs via a direct MessagePort instead of HTTP.
+    port.start?.()
+    console.log(
+      '[server-utility] Serving LaborerRpcs on additional port (inter-process)'
+    )
+    // Dispatch to the Effect runtime where shared infrastructure is
+    // live, or buffer if the runtime isn't ready yet.
+    if (additionalPortHandler) {
+      additionalPortHandler(port)
+    } else {
+      additionalPortQueue.push(port)
+    }
+  }
+
+  const handleDaytonaDataPort = (
+    data: ParentMessage,
+    port: RpcMessagePort | null
+  ): void => {
+    if (port === null || typeof data.terminalId !== 'string') {
+      return
+    }
+
+    handleServerManagedTerminalPort(
+      data.terminalId,
+      port,
+      'Daytona',
+      handleDaytonaTerminalDataPort
+    )
+  }
+
+  const handleShuruDataPort = (
+    data: ParentMessage,
+    port: RpcMessagePort | null
+  ): void => {
+    if (port === null || typeof data.terminalId !== 'string') {
+      return
+    }
+
+    handleServerManagedTerminalPort(
+      data.terminalId,
+      port,
+      'Shuru',
+      handleShuruTerminalDataPort
+    )
+  }
+
+  const parentMessageHandlers: Record<
+    string,
+    (data: ParentMessage, port: RpcMessagePort | null) => void
+  > = {
+    'daytona-terminal-data-port': handleDaytonaDataPort,
+    'file-watcher-rpc-port': (_data, port) => {
+      handleFileWatcherRpcPort(port)
+    },
+    port: (_data, port) => {
+      handleAdditionalRpcPort(port)
+    },
+    'shuru-terminal-data-port': handleShuruDataPort,
+    'sync-port': (_data, port) => {
+      handleSyncPort(port)
+    },
+    'terminal-rpc-port': (_data, port) => {
+      handleTerminalRpcPort(port)
+    },
+  }
+
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
-    const data = event.data as { type?: string }
-    if (data?.type === 'sync-port' && event.ports.length > 0) {
-      const syncPort = event.ports[0] as RpcMessagePort
-      console.log('[server-utility] Received sync-port from main process')
-      // Do NOT call start() here — the RPC server transport will call
-      // start() after attaching its message listener to avoid losing
-      // messages (MessagePortMain doesn't buffer after start).
-      serveSyncOnPort(syncPort)
-    } else if (data?.type === 'terminal-rpc-port' && event.ports.length > 0) {
-      const terminalPort = event.ports[0] as RpcMessagePort
-      // Do NOT call start() here — the RPC client transport will call
-      // start() after attaching its message listener to avoid losing
-      // messages (MessagePortMain doesn't buffer after start).
-      console.log(
-        '[server-utility] Received terminal RPC port from main process'
-      )
-      resolveTerminalRpcPort?.(terminalPort)
-    } else if (
-      data?.type === 'file-watcher-rpc-port' &&
-      event.ports.length > 0
-    ) {
-      const fileWatcherPort = event.ports[0] as RpcMessagePort
-      // Do NOT call start() here — same reason as above.
-      console.log(
-        '[server-utility] Received file-watcher RPC port from main process'
-      )
-      // Smoke test: send a test message and listen for response
-      fileWatcherPort.on?.('message', (msg: unknown) => {
-        console.log(
-          '[server-utility] RECEIVED from file-watcher port:',
-          typeof msg,
-          JSON.stringify(msg)?.slice(0, 200)
-        )
-      })
-      fileWatcherPort.start?.()
-      fileWatcherPort.postMessage?.({ type: 'ping', timestamp: Date.now() })
-      console.log('[server-utility] Sent ping to file-watcher port')
-      resolveFileWatcherRpcPort?.(fileWatcherPort)
-    } else if (
-      data?.type === 'daytona-terminal-data-port' &&
-      typeof (data as { terminalId?: string }).terminalId === 'string' &&
-      event.ports.length > 0
-    ) {
-      // Daytona terminal data port — bridge MessagePort to Daytona PTY.
-      // The server process manages Daytona PTY WebSocket connections
-      // (via DaytonaSandboxProvider), so data ports for Daytona terminals
-      // are routed here instead of to the terminal utility process.
-      //
-      // @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
-      const dataPort = event.ports[0] as RpcMessagePort
-      const { terminalId } = data as { terminalId: string }
-      dataPort.start?.()
-      console.log(
-        `[server-utility] Received Daytona terminal data port for terminal "${terminalId}"`
-      )
-      handleDaytonaTerminalDataPort(dataPort, terminalId)
-    } else if (data?.type === 'port' && event.ports.length > 0) {
-      // Additional RPC port — serve LaborerRpcs on it.
-      // This enables other utility processes (e.g., MCP) to call
-      // server RPCs via a direct MessagePort instead of HTTP.
-      const additionalRpcPort = event.ports[0] as RpcMessagePort
-      additionalRpcPort.start?.()
-      console.log(
-        '[server-utility] Serving LaborerRpcs on additional port (inter-process)'
-      )
-      // Dispatch to the Effect runtime where shared infrastructure is
-      // live, or buffer if the runtime isn't ready yet.
-      if (additionalPortHandler) {
-        additionalPortHandler(additionalRpcPort)
-      } else {
-        additionalPortQueue.push(additionalRpcPort)
-      }
+    const data = event.data as ParentMessage
+    const handler =
+      data?.type === undefined ? undefined : parentMessageHandlers[data.type]
+
+    if (handler !== undefined) {
+      handler(data, getIncomingPort(event))
     }
   })
 

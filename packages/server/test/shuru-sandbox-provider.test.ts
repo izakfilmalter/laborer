@@ -5,6 +5,7 @@ import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
+import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
 import { DockerDetection } from '../src/services/docker-detection.js'
@@ -78,6 +79,7 @@ const TestLayer = SandboxProviderRoutedLayer.pipe(
   Layer.provideMerge(TestDockerDetection),
   Layer.provideMerge(TestDepsImageService),
   Layer.provideMerge(TestContainerService),
+  Layer.provideMerge(ConfigService.layer),
   Layer.provideMerge(TestLaborerStore)
 )
 

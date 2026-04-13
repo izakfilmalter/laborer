@@ -771,8 +771,9 @@ export function registerIpcHandlers(
   // @see Issue #8: Terminal PTY I/O data channel over MessagePort
   // -- Acquire terminal data port ------------------------------------------
   // Routes terminal data ports to the correct utility process:
-  // - Daytona terminals (prefixed with `daytona:`) → server utility process
-  //   (where the Daytona SDK and PTY WebSocket connections live)
+  // - Daytona and Shuru terminals (prefixed with `daytona:` / `shuru:`)
+  //   → server utility process
+  //   (where the Daytona SDK and Shuru process streams live)
   // - Docker/host terminals → terminal utility process
   //   (where node-pty sessions are managed)
   //
@@ -786,10 +787,21 @@ export function registerIpcHandlers(
 
     const { terminalId, nonce } = parsed
     const isDaytonaTerminal = terminalId.startsWith('daytona:')
-    const processName = isDaytonaTerminal ? 'server' : 'terminal'
-    const messageType = isDaytonaTerminal
-      ? 'daytona-terminal-data-port'
-      : 'terminal-data-port'
+    const isShuruTerminal = terminalId.startsWith('shuru:')
+    const processName =
+      isDaytonaTerminal || isShuruTerminal ? 'server' : 'terminal'
+    let messageType:
+      | 'daytona-terminal-data-port'
+      | 'shuru-terminal-data-port'
+      | 'terminal-data-port'
+
+    if (isDaytonaTerminal) {
+      messageType = 'daytona-terminal-data-port'
+    } else if (isShuruTerminal) {
+      messageType = 'shuru-terminal-data-port'
+    } else {
+      messageType = 'terminal-data-port'
+    }
 
     if (!utilityProcessManagerRef?.isRunning(processName)) {
       return

@@ -154,18 +154,18 @@ TDD approach: Start with one routing test through `TerminalClient.spawnInWorkspa
 
 ### Acceptance criteria
 
-- [ ] Auto-run dev-server sessions for Shuru workspaces execute inside the Shuru VM
-- [ ] Regular manual terminals for Shuru workspaces continue to run on the host
-- [ ] The Shuru dev-server session streams stdout/stderr through the terminal UI path
-- [ ] Stdin forwarding and kill/stop are supported for the Shuru dev-server session
-- [ ] Resize requests are handled safely as a no-op for Shuru-backed dev-server sessions
-- [ ] Terminal-routing tests prove that only dev-server sessions use Shuru
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] Auto-run dev-server sessions for Shuru workspaces execute inside the Shuru VM
+- [x] Regular manual terminals for Shuru workspaces continue to run on the host
+- [x] The Shuru dev-server session streams stdout/stderr through the terminal UI path
+- [x] Stdin forwarding and kill/stop are supported for the Shuru dev-server session
+- [x] Resize requests are handled safely as a no-op for Shuru-backed dev-server sessions
+- [x] Terminal-routing tests prove that only dev-server sessions use Shuru
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 3 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -290,7 +290,6 @@ TDD approach: Start with one RPC-level test that creates a new workspace resolve
 
 ### Blocked by
 
-- Blocked by "Shuru dev-server session with host-terminal routing unchanged" (Issue 4)
 - Blocked by "Workspace pause/resume via runtime checkpoint restore" (Issue 6)
 
 ### User stories addressed

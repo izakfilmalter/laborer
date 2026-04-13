@@ -8,9 +8,11 @@ import { Context, Effect, Layer } from 'effect'
 
 const SHURU_WORKSPACE_PATH = '/workspace'
 const SHURU_WORKSPACE_MOUNT = `${SHURU_WORKSPACE_PATH}:ro`
+const SHURU_TERMINAL_ID_PREFIX = 'shuru:'
 const READY_TIMEOUT_MS = 30_000
 const SHUTDOWN_TIMEOUT_MS = 5000
 const STDERR_TAIL_LIMIT = 4096
+const TERMINAL_OUTPUT_BUFFER_LIMIT = 64 * 1024
 const WHITESPACE_PATTERN = /\s+/
 
 interface JsonRpcErrorResponse {
@@ -39,6 +41,11 @@ interface PendingRequest {
   readonly resolve: (result: JsonRpcResult) => void
 }
 
+interface PendingTerminalNotification {
+  bufferedOutput: string
+  exitCode: number | null
+}
+
 interface StartShuruSandboxParams {
   readonly portForward?: ShuruPortForward | null
   readonly workspaceId: string
@@ -52,6 +59,14 @@ interface ShuruSandboxHandle {
 interface ShuruPortForward {
   readonly guestPort: number
   readonly hostPort: number
+}
+
+interface SpawnShuruTerminalParams {
+  readonly argv: readonly string[]
+  readonly command: string
+  readonly cwd?: string | undefined
+  readonly env?: Record<string, string> | undefined
+  readonly workspaceId: string
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -89,6 +104,14 @@ const formatShuruError = (message: string, stderrTail: string): string => {
   return `${message} ${trimmedStderr}`
 }
 
+const trimTerminalOutputBuffer = (output: string): string =>
+  output.length <= TERMINAL_OUTPUT_BUFFER_LIMIT
+    ? output
+    : output.slice(-TERMINAL_OUTPUT_BUFFER_LIMIT)
+
+const isSpawnResult = (value: unknown): value is { readonly pid: string } =>
+  isRecord(value) && typeof value.pid === 'string'
+
 const resolveShuruCommand = (): readonly string[] => {
   const configured = process.env.LABORER_SHURU_BIN?.trim()
   if (configured && configured.length > 0) {
@@ -115,6 +138,117 @@ const buildShuruRunArgs = (
       ]),
 ]
 
+class ShuruTerminalHandle {
+  private bufferedOutput = ''
+  private exitCode: number | null = null
+  private readonly exitListeners = new Set<(code: number) => void>()
+  private readonly outputListeners = new Set<(data: string) => void>()
+  readonly pid: string
+  private status: 'running' | 'stopped' = 'running'
+  readonly workspaceId: string
+  private readonly runtime: ShuruRpcProcess
+
+  constructor(runtime: ShuruRpcProcess, pid: string, workspaceId: string) {
+    this.runtime = runtime
+    this.pid = pid
+    this.workspaceId = workspaceId
+  }
+
+  getBufferedOutput(): string {
+    return this.bufferedOutput
+  }
+
+  getExitCode(): number | null {
+    return this.exitCode
+  }
+
+  getStatus(): 'running' | 'stopped' {
+    return this.status
+  }
+
+  onExit(listener: (code: number) => void): () => void {
+    this.exitListeners.add(listener)
+    return () => {
+      this.exitListeners.delete(listener)
+    }
+  }
+
+  onOutput(listener: (data: string) => void): () => void {
+    this.outputListeners.add(listener)
+    return () => {
+      this.outputListeners.delete(listener)
+    }
+  }
+
+  handleExit(code: number): void {
+    if (this.status === 'stopped') {
+      return
+    }
+
+    this.status = 'stopped'
+    this.exitCode = code
+
+    for (const listener of this.exitListeners) {
+      listener(code)
+    }
+  }
+
+  handleOutput(text: string): void {
+    if (text.length === 0) {
+      return
+    }
+
+    this.bufferedOutput = trimTerminalOutputBuffer(
+      `${this.bufferedOutput}${text}`
+    )
+
+    for (const listener of this.outputListeners) {
+      listener(text)
+    }
+  }
+
+  kill(): Promise<void> {
+    if (this.status === 'stopped') {
+      return Promise.resolve()
+    }
+
+    return this.runtime.request('kill', { pid: this.pid }).then(() => undefined)
+  }
+
+  write(data: string): void {
+    if (this.status === 'stopped') {
+      return
+    }
+
+    this.runtime.sendNotification('input', {
+      pid: this.pid,
+      data: Buffer.from(data).toString('base64'),
+    })
+  }
+}
+
+const shuruTerminalHandles = new Map<string, ShuruTerminalHandle>()
+
+const getShuruTerminalHandle = (
+  terminalId: string
+): ShuruTerminalHandle | undefined => shuruTerminalHandles.get(terminalId)
+
+const clearShuruTerminalHandles = (): void => {
+  shuruTerminalHandles.clear()
+}
+
+const removeShuruTerminalHandle = (terminalId: string): void => {
+  shuruTerminalHandles.delete(terminalId)
+}
+
+const removeWorkspaceTerminalHandles = (workspaceId: string): void => {
+  for (const [terminalId, handle] of shuruTerminalHandles) {
+    if (handle.workspaceId === workspaceId) {
+      shuruTerminalHandles.delete(terminalId)
+    }
+  }
+}
+
 class ShuruRpcProcess {
   static async start(args: readonly string[]): Promise<ShuruRpcProcess> {
     const [command, ...commandArgs] = args
@@ -138,6 +272,11 @@ class ShuruRpcProcess {
   private onReadyError: ((error: Error) => void) | null = null
   private onReadySuccess: (() => void) | null = null
   private readonly pending = new Map<number, PendingRequest>()
+  private readonly pendingProcessNotifications = new Map<
+    string,
+    PendingTerminalNotification
+  >()
+  private readonly processHandles = new Map<string, ShuruTerminalHandle>()
   private readonly readyPromise: Promise<void>
   private stderrTail = ''
 
@@ -207,6 +346,46 @@ class ShuruRpcProcess {
     })
   }
 
+  sendNotification(method: string, params: Record<string, unknown>): void {
+    if (this.closed || this.child.stdin.destroyed) {
+      return
+    }
+
+    const payload = JSON.stringify({ jsonrpc: '2.0', method, params })
+    this.child.stdin.write(`${payload}\n`)
+  }
+
+  async spawnProcess({
+    argv,
+    cwd,
+    env,
+    workspaceId,
+  }: {
+    readonly argv: readonly string[]
+    readonly cwd?: string | undefined
+    readonly env?: Record<string, string> | undefined
+    readonly workspaceId: string
+  }): Promise<ShuruTerminalHandle> {
+    const response = await this.request('spawn', {
+      argv: [...argv],
+      cwd,
+      env,
+    })
+
+    if (!isSpawnResult(response.result)) {
+      throw new Error('Shuru returned an invalid spawn response')
+    }
+
+    const handle = new ShuruTerminalHandle(
+      this,
+      response.result.pid,
+      workspaceId
+    )
+    this.processHandles.set(response.result.pid, handle)
+    this.replayPendingProcessNotifications(response.result.pid, handle)
+    return handle
+  }
+
   async stop(): Promise<void> {
     if (this.closed) {
       await this.closePromise
@@ -254,6 +433,12 @@ class ShuruRpcProcess {
       request.reject(error)
     }
     this.pending.clear()
+
+    for (const handle of this.processHandles.values()) {
+      handle.handleExit(1)
+    }
+    this.pendingProcessNotifications.clear()
+    this.processHandles.clear()
   }
 
   private handleLine(line: string): void {
@@ -269,11 +454,7 @@ class ShuruRpcProcess {
     }
 
     if (isJsonRpcNotification(message)) {
-      if (message.method === 'ready' && this.onReadySuccess !== null) {
-        this.onReadySuccess()
-        this.onReadySuccess = null
-        this.onReadyError = null
-      }
+      this.handleNotification(message)
       return
     }
 
@@ -301,6 +482,99 @@ class ShuruRpcProcess {
     request.resolve(message)
   }
 
+  private handleNotification(message: JsonRpcNotification): void {
+    if (message.method === 'ready' && this.onReadySuccess !== null) {
+      this.onReadySuccess()
+      this.onReadySuccess = null
+      this.onReadyError = null
+      return
+    }
+
+    if (!isRecord(message.params)) {
+      return
+    }
+
+    if (message.method === 'output') {
+      this.handleOutputNotification(message.params)
+      return
+    }
+
+    if (message.method === 'exit') {
+      this.handleExitNotification(message.params)
+    }
+  }
+
+  private handleOutputNotification(params: Record<string, unknown>): void {
+    if (typeof params.pid !== 'string' || typeof params.data !== 'string') {
+      return
+    }
+
+    const output = Buffer.from(params.data, 'base64').toString('utf8')
+    const handle = this.processHandles.get(params.pid)
+    if (handle !== undefined) {
+      handle.handleOutput(output)
+      return
+    }
+
+    const pending = this.getOrCreatePendingProcessNotification(params.pid)
+    pending.bufferedOutput = trimTerminalOutputBuffer(
+      `${pending.bufferedOutput}${output}`
+    )
+  }
+
+  private handleExitNotification(params: Record<string, unknown>): void {
+    if (typeof params.pid !== 'string' || typeof params.code !== 'number') {
+      return
+    }
+
+    const handle = this.processHandles.get(params.pid)
+    if (handle !== undefined) {
+      handle.handleExit(params.code)
+      this.processHandles.delete(params.pid)
+      return
+    }
+
+    const pending = this.getOrCreatePendingProcessNotification(params.pid)
+    pending.exitCode = params.code
+  }
+
+  private getOrCreatePendingProcessNotification(
+    pid: string
+  ): PendingTerminalNotification {
+    const existing = this.pendingProcessNotifications.get(pid)
+    if (existing !== undefined) {
+      return existing
+    }
+
+    const pending: PendingTerminalNotification = {
+      bufferedOutput: '',
+      exitCode: null,
+    }
+    this.pendingProcessNotifications.set(pid, pending)
+    return pending
+  }
+
+  private replayPendingProcessNotifications(
+    pid: string,
+    handle: ShuruTerminalHandle
+  ): void {
+    const pending = this.pendingProcessNotifications.get(pid)
+    if (pending === undefined) {
+      return
+    }
+
+    this.pendingProcessNotifications.delete(pid)
+
+    if (pending.bufferedOutput.length > 0) {
+      handle.handleOutput(pending.bufferedOutput)
+    }
+
+    if (pending.exitCode !== null) {
+      handle.handleExit(pending.exitCode)
+      this.processHandles.delete(pid)
+    }
+  }
+
   private async waitUntilReady(): Promise<void> {
     const timeout = new Promise<never>((_, reject) => {
       setTimeout(() => {
@@ -325,6 +599,19 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
     readonly startSandbox: (
       params: StartShuruSandboxParams
     ) => Effect.Effect<ShuruSandboxHandle, RpcError>
+    readonly spawnTerminal: (params: SpawnShuruTerminalParams) => Effect.Effect<
+      {
+        readonly command: string
+        readonly id: string
+        readonly status: 'running' | 'stopped'
+        readonly workspaceId: string
+      },
+      RpcError
+    >
+    readonly killTerminal: (terminalId: string) => Effect.Effect<void, RpcError>
+    readonly removeTerminal: (
+      terminalId: string
+    ) => Effect.Effect<void, RpcError>
     readonly stopSandbox: (workspaceId: string) => Effect.Effect<void, RpcError>
   }
 >() {
@@ -355,12 +642,16 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
           })
 
           runtimes.delete(workspaceId)
+          removeWorkspaceTerminalHandles(workspaceId)
         })
 
       yield* Effect.addFinalizer(() =>
         Effect.forEach(Array.from(runtimes.keys()), (workspaceId) =>
           stopRuntime(workspaceId).pipe(Effect.catchAll(() => Effect.void))
-        ).pipe(Effect.asVoid)
+        ).pipe(
+          Effect.andThen(Effect.sync(clearShuruTerminalHandles)),
+          Effect.asVoid
+        )
       )
 
       const startSandbox = Effect.fn('ShuruClient.startSandbox')(function* ({
@@ -427,12 +718,114 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
         } satisfies ShuruSandboxHandle
       })
 
+      const spawnTerminal = Effect.fn('ShuruClient.spawnTerminal')(function* ({
+        argv,
+        command,
+        cwd,
+        env,
+        workspaceId,
+      }: SpawnShuruTerminalParams) {
+        const runtime = runtimes.get(workspaceId)
+        if (runtime === undefined) {
+          return yield* new RpcError({
+            message: `Cannot spawn a Shuru terminal: workspace "${workspaceId}" has no active sandbox.`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const handle = yield* Effect.tryPromise({
+          try: () => runtime.spawnProcess({ argv, cwd, env, workspaceId }),
+          catch: (error) =>
+            new RpcError({
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to spawn a Shuru process for workspace "${workspaceId}".`,
+              code: 'SHURU_TERMINAL_FAILED',
+            }),
+        })
+
+        const terminalId = `${SHURU_TERMINAL_ID_PREFIX}${crypto.randomUUID()}`
+        yield* Effect.sync(() => {
+          shuruTerminalHandles.set(terminalId, handle)
+        })
+
+        return {
+          command,
+          id: terminalId,
+          status: handle.getStatus(),
+          workspaceId,
+        } as const
+      })
+
+      const killTerminal = Effect.fn('ShuruClient.killTerminal')(function* (
+        terminalId: string
+      ) {
+        const handle = getShuruTerminalHandle(terminalId)
+        if (handle === undefined) {
+          return yield* new RpcError({
+            message: `Shuru terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+
+        yield* Effect.tryPromise({
+          try: () => handle.kill(),
+          catch: (error) =>
+            new RpcError({
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to stop Shuru terminal "${terminalId}".`,
+              code: 'SHURU_TERMINAL_FAILED',
+            }),
+        })
+      })
+
+      const removeTerminal = Effect.fn('ShuruClient.removeTerminal')(function* (
+        terminalId: string
+      ) {
+        const handle = getShuruTerminalHandle(terminalId)
+        if (handle === undefined) {
+          return
+        }
+
+        yield* Effect.sync(() => {
+          removeShuruTerminalHandle(terminalId)
+        })
+
+        if (handle.getStatus() === 'stopped') {
+          return
+        }
+
+        yield* Effect.tryPromise({
+          try: () => handle.kill(),
+          catch: (error) =>
+            new RpcError({
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to remove Shuru terminal "${terminalId}".`,
+              code: 'SHURU_TERMINAL_FAILED',
+            }),
+        }).pipe(Effect.catchAll(() => Effect.void))
+      })
+
       return ShuruClient.of({
+        killTerminal,
+        removeTerminal,
         startSandbox,
+        spawnTerminal,
         stopSandbox: stopRuntime,
       })
     })
   )
 }
 
-export { SHURU_WORKSPACE_PATH, ShuruClient }
+export {
+  SHURU_TERMINAL_ID_PREFIX,
+  SHURU_WORKSPACE_PATH,
+  ShuruClient,
+  getShuruTerminalHandle,
+  removeShuruTerminalHandle,
+}

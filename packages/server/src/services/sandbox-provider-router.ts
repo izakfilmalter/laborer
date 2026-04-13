@@ -34,7 +34,7 @@ import { DockerSandboxProvider } from './docker-sandbox-provider.js'
 import { LaborerStore } from './laborer-store.js'
 import type { CreateSandboxParams } from './sandbox-provider.js'
 import { SandboxProvider } from './sandbox-provider.js'
-import { ShuruClient } from './shuru-client.js'
+import { SHURU_TERMINAL_ID_PREFIX, ShuruClient } from './shuru-client.js'
 import { ShuruDetection } from './shuru-detection.js'
 import { ShuruSandboxProvider } from './shuru-sandbox-provider.js'
 
@@ -226,13 +226,13 @@ const SandboxProviderRouterLayer: Layer.Layer<
     })
 
     // ── Terminal lifecycle routing ──────────────────────────────
-    // Terminal operations are routed by checking the `daytona:` prefix
-    // on the terminal ID. This mirrors the data port routing in the
-    // Electron main process (ipc.ts).
+    // Terminal operations are routed by checking the terminal ID prefix.
+    // Daytona and Shuru terminal sessions are managed in the server
+    // process; Docker/host terminals stay in the terminal utility process.
 
     /**
      * Resolve the provider for a terminal operation by checking the
-     * terminal ID prefix. Daytona terminal IDs start with `daytona:`.
+     * terminal ID prefix.
      */
     const resolveForTerminal = (
       terminalId: string
@@ -245,6 +245,9 @@ const SandboxProviderRouterLayer: Layer.Layer<
           return docker
         }
         return daytona
+      }
+      if (terminalId.startsWith(SHURU_TERMINAL_ID_PREFIX)) {
+        return shuru
       }
       return docker
     }
@@ -348,6 +351,7 @@ const SandboxProviderRoutedLayer: Layer.Layer<
   SandboxProvider | DockerSandboxProvider,
   never,
   | LaborerStore
+  | import('./config-service.js').ConfigService
   | import('./container-service.js').ContainerService
   | import('./deps-image-service.js').DepsImageService
   | import('./docker-detection.js').DockerDetection

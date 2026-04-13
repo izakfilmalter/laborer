@@ -15,3 +15,9 @@
 - Added host-port allocation and `-p HOST:GUEST` forwarding to the Shuru startup path, persisted `127.0.0.1` preview metadata into LiveStore, and implemented `getPreviewUrl()` for active Shuru workspaces.
 - Updated the existing workspace preview link rendering to display localhost previews with their allocated host port, and added provider/UI tests covering distinct host-port allocation for multiple Shuru workspaces on the same guest port.
 - Verification: `bun run format:fix`; `bun run typecheck`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd apps/web test -- test/workspace-card-layout.test.tsx`
+
+2026-04-13
+- Completed Issue 4 (Shuru dev-server session with host-terminal routing unchanged) because it was the highest-priority unblocked slice and it unlocks the remaining Shuru workspace workflow integration.
+- Routed only auto-run Shuru dev-server sessions through the sandbox provider while keeping manual workspace terminals host-local, added the Shuru terminal data-channel bridge across server/desktop/web boundaries, and covered stdout/stderr streaming, stdin forwarding, kill, and resize no-op behavior with targeted tests.
+- Hardened `ShuruClient` against early process notifications so sandbox output is buffered even if the CLI emits stream events before the terminal handle is fully registered.
+- Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-dev-server-terminal.test.ts test/shuru-sandbox-provider.test.ts`

@@ -1197,10 +1197,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // delegating to the terminal service.
     //
     // terminal.resize, terminal.kill, terminal.remove route through
-    // the SandboxProvider so Daytona terminals are handled by the
-    // server (PtyHandle WebSocket) while Docker/host terminals are
-    // forwarded to the terminal utility process. The web app sends
-    // these for Daytona terminals only (detected by `daytona:` prefix);
+    // the SandboxProvider so server-managed terminals (Daytona PTYs and
+    // Shuru dev-server sessions) are handled by the server while
+    // Docker/host terminals are forwarded to the terminal utility process.
+    // The web app sends these only for server-managed terminal IDs;
     // local terminals are handled directly by TerminalServiceClient.
     // -------------------------------------------------------------------
     'terminal.spawn': ({ workspaceId, command, autoRun }) =>

@@ -977,9 +977,9 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   /**
-   * Resize a Daytona terminal's PTY session.
+   * Resize a server-managed terminal session.
    *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
+   * The web app sends this RPC for terminals with the `daytona:` or `shuru:` prefix.
    * Local (Docker/host) terminals are resized directly via the terminal
    * utility process's `TerminalRpcs.terminal.resize`.
    *
@@ -995,9 +995,9 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   /**
-   * Kill a Daytona terminal's PTY session (stop the process).
+   * Kill a server-managed terminal session (stop the process).
    *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
+   * The web app sends this RPC for terminals with the `daytona:` or `shuru:` prefix.
    * Local terminals are killed via `TerminalRpcs.terminal.kill`.
    */
   Rpc.make('terminal.kill', {
@@ -1008,9 +1008,9 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   /**
-   * Remove a Daytona terminal — kills the PTY (if running) and cleans up.
+   * Remove a server-managed terminal — kills the process (if running) and cleans up.
    *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
+   * The web app sends this RPC for terminals with the `daytona:` or `shuru:` prefix.
    * Local terminals are removed via `TerminalRpcs.terminal.remove`.
    */
   Rpc.make('terminal.remove', {

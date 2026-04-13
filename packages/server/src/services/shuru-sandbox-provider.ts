@@ -3,6 +3,7 @@ import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
 
+import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import type {
   CreateSandboxParams,
@@ -16,7 +17,7 @@ const SHURU_PREVIEW_HOST = '127.0.0.1'
 
 const shuruNotImplemented = (operation: string) =>
   new RpcError({
-    message: `Shuru ${operation} lands in a later slice. This iteration supports sandbox create/destroy plus localhost preview URLs.`,
+    message: `Shuru ${operation} lands in a later slice. This iteration supports sandbox create/destroy, localhost preview URLs, and the sandboxed dev-server session.`,
     code: 'SHURU_NOT_IMPLEMENTED',
   })
 
@@ -59,6 +60,22 @@ const allocatePreviewPort = async (
   }
 }
 
+const buildShuruTerminalCommand = (
+  setupScripts: readonly string[],
+  startCommand: string | null
+): string | null => {
+  const lines = [...setupScripts]
+  if (startCommand !== null) {
+    lines.push(startCommand)
+  }
+
+  if (lines.length === 0) {
+    return null
+  }
+
+  return lines.join('\n')
+}
+
 class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
   ShuruSandboxProvider,
   SandboxProvider['Type']
@@ -66,10 +83,11 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
   static readonly layer: Layer.Layer<
     ShuruSandboxProvider,
     never,
-    LaborerStore | ShuruClient | ShuruDetection
+    ConfigService | LaborerStore | ShuruClient | ShuruDetection
   > = Layer.effect(
     ShuruSandboxProvider,
     Effect.gen(function* () {
+      const configService = yield* ConfigService
       const { store } = yield* LaborerStore
       const shuruClient = yield* ShuruClient
       const shuruDetection = yield* ShuruDetection
@@ -240,26 +258,104 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
       )
 
       const spawnTerminal = Effect.fn('ShuruSandboxProvider.spawnTerminal')(
-        function* () {
-          return yield* shuruNotImplemented('dev-server terminals')
+        function* (workspaceId: string, opts) {
+          if (opts?.autoRun !== true) {
+            return yield* new RpcError({
+              message:
+                'Shuru only supports sandboxed dev-server sessions in v1. Use a regular workspace terminal for host-local shells.',
+              code: 'SHURU_NOT_IMPLEMENTED',
+            })
+          }
+
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspace = pipe(
+            allWorkspaces,
+            Arr.findFirst((candidate) => candidate.id === workspaceId)
+          )
+
+          if (
+            workspace._tag === 'None' ||
+            workspace.value.sandboxId === null ||
+            workspace.value.sandboxProvider !== 'shuru'
+          ) {
+            return yield* new RpcError({
+              message: `Cannot spawn a Shuru dev-server session: workspace "${workspaceId}" has no active Shuru sandbox.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const allProjects = store.query(tables.projects)
+          const project = pipe(
+            allProjects,
+            Arr.findFirst(
+              (candidate) => candidate.id === workspace.value.projectId
+            )
+          )
+
+          if (project._tag === 'None') {
+            return yield* new RpcError({
+              message: `Cannot spawn a Shuru dev-server session: project for workspace "${workspaceId}" was not found.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.value.repoPath, project.value.name)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new RpcError({
+                    message: error.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
+
+          const command = buildShuruTerminalCommand(
+            resolvedConfig.devServer.setupScripts.value,
+            opts.command ?? resolvedConfig.devServer.startCommand.value
+          )
+
+          if (command === null) {
+            return yield* new RpcError({
+              message:
+                'No devServer.startCommand is configured, so Laborer cannot start a sandboxed Shuru dev-server session.',
+              code: 'SHURU_CONFIG_ERROR',
+            })
+          }
+
+          return yield* shuruClient.spawnTerminal({
+            argv: ['sh', '-lc', command],
+            command:
+              opts.command ??
+              resolvedConfig.devServer.startCommand.value ??
+              'sh -lc',
+            cwd: resolvedConfig.devServer.workdir.value,
+            env: {
+              COLORTERM: 'truecolor',
+              TERM: 'xterm-256color',
+            },
+            workspaceId,
+          })
         }
       )
 
       const resizeTerminal = Effect.fn('ShuruSandboxProvider.resizeTerminal')(
         function* () {
-          return yield* shuruNotImplemented('terminal resize')
+          // Shuru spawn sessions are stream-backed rather than PTY-backed.
+          // Resize requests are intentionally ignored.
         }
       )
 
       const killTerminal = Effect.fn('ShuruSandboxProvider.killTerminal')(
-        function* () {
-          return yield* shuruNotImplemented('terminal kill')
+        function* (terminalId: string) {
+          yield* shuruClient.killTerminal(terminalId)
         }
       )
 
       const removeTerminal = Effect.fn('ShuruSandboxProvider.removeTerminal')(
-        function* () {
-          return yield* shuruNotImplemented('terminal removal')
+        function* (terminalId: string) {
+          yield* shuruClient.removeTerminal(terminalId)
         }
       )
 

@@ -63,18 +63,23 @@ import { openExternalUrl } from '@/lib/desktop'
 import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
 
 /**
- * Daytona terminal IDs are prefixed with `daytona:` so the correct
+ * Server-managed terminal IDs are prefixed with `daytona:` or `shuru:` so the correct
  * RPC endpoint (server vs terminal utility process) can be selected.
  * Mirrors the routing logic in the Electron main process (ipc.ts)
  * and the server's SandboxProviderRouter.
  */
 const DAYTONA_TERMINAL_PREFIX = 'daytona:'
+const SHURU_TERMINAL_PREFIX = 'shuru:'
+
+const isServerManagedTerminalId = (terminalId: string): boolean =>
+  terminalId.startsWith(DAYTONA_TERMINAL_PREFIX) ||
+  terminalId.startsWith(SHURU_TERMINAL_PREFIX)
 
 /** Mutation atom for resizing local (Docker/host) terminals via the terminal utility process. */
 const localResizeMutation = TerminalServiceClient.mutation('terminal.resize')
 
-/** Mutation atom for resizing Daytona terminals via the server (LaborerRpcs). */
-const daytonaResizeMutation = LaborerClient.mutation('terminal.resize')
+/** Mutation atom for resizing server-managed terminals via the server (LaborerRpcs). */
+const serverResizeMutation = LaborerClient.mutation('terminal.resize')
 
 /**
  * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
@@ -405,9 +410,9 @@ function TerminalPaneRenderer({
     terminalStatus,
   } = connection
   const resizeLocal = useAtomSet(localResizeMutation)
-  const resizeDaytona = useAtomSet(daytonaResizeMutation)
-  const resizeTerminal = terminalId.startsWith(DAYTONA_TERMINAL_PREFIX)
-    ? resizeDaytona
+  const resizeServer = useAtomSet(serverResizeMutation)
+  const resizeTerminal = isServerManagedTerminalId(terminalId)
+    ? resizeServer
     : resizeLocal
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)

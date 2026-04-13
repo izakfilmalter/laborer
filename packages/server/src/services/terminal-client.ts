@@ -789,15 +789,24 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 1b. Daytona workspace: delegate to SandboxProvider.spawnTerminal
-          //     Daytona workspaces have no local worktree — code lives in
-          //     the cloud sandbox. Skip worktree directory validation and
-          //     route directly to the Daytona PTY (WebSocket session in
-          //     the server process, not via docker exec).
+          // 1b. Server-managed sandbox terminal: delegate to SandboxProvider.
+          //     Daytona PTYs and Shuru dev-server sessions both live in the
+          //     server process instead of the terminal utility process.
           //     @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
           if (
             workspace.sandboxProvider === 'daytona' &&
             workspace.sandboxId != null
+          ) {
+            return yield* sandboxProvider.spawnTerminal(workspaceId, {
+              command,
+              autoRun,
+            })
+          }
+
+          if (
+            workspace.sandboxProvider === 'shuru' &&
+            workspace.sandboxId != null &&
+            autoRun === true
           ) {
             return yield* sandboxProvider.spawnTerminal(workspaceId, {
               command,

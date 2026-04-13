@@ -142,6 +142,15 @@ export interface DaytonaTerminalDataPortMessage {
   readonly type: 'daytona-terminal-data-port'
 }
 
+/**
+ * Sent by the main process to transfer a per-terminal data channel
+ * MessagePort to the server utility process for Shuru dev-server sessions.
+ */
+export interface ShuruTerminalDataPortMessage {
+  readonly terminalId: string
+  readonly type: 'shuru-terminal-data-port'
+}
+
 /** All messages the main process can send to a utility process. */
 export type UtilityProcessParentMessage =
   | PortTransferMessage
@@ -151,3 +160,4 @@ export type UtilityProcessParentMessage =
   | FileWatcherRpcPortMessage
   | McpServerRpcPortMessage
   | DaytonaTerminalDataPortMessage
+  | ShuruTerminalDataPortMessage

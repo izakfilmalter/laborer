@@ -1,8 +1,12 @@
 import type { WindowLayout, WindowTab } from '@laborer/shared/types'
 import { useMemo, useState } from 'react'
-import { FullscreenPortalContext } from '@/panels/panel-context'
+import {
+  FullscreenPortalContext,
+  usePendingCloseWindowTab,
+} from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { findPaneAcrossAllTabs } from '@/panels/window-layout-utils'
+import { WindowTabCloseConfirmDialog } from './close-dialogs'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 import { EmptyWindowTabState, WorkspaceFrames } from './workspace-frames'
 
@@ -43,12 +47,16 @@ function WindowTabContent({
   readonly treeWorkspaceId: string | null
 }) {
   const layout = tab.workspaceLayout
+  const pendingCloseWindowTab = usePendingCloseWindowTab()
   if (!layout) {
     return null
   }
+
+  const isClosingTab = pendingCloseWindowTab.tabId === tab.id
+
   return (
     <div
-      className={isActive ? 'h-full w-full' : undefined}
+      className={isActive ? 'relative h-full w-full' : 'relative'}
       data-window-tab-id={tab.id}
       style={isActive ? undefined : { display: 'none' }}
     >
@@ -61,6 +69,12 @@ function WindowTabContent({
         treeWorkspaceId={isActive && treePaneOpen ? treeWorkspaceId : null}
         workspaceTileLayout={layout}
       />
+      {isClosingTab && (
+        <WindowTabCloseConfirmDialog
+          onCancel={pendingCloseWindowTab.onCancel}
+          onConfirm={pendingCloseWindowTab.onConfirm}
+        />
+      )}
     </div>
   )
 }

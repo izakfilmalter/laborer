@@ -646,6 +646,7 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
     readonly removeTerminal: (
       terminalId: string
     ) => Effect.Effect<void, RpcError>
+    readonly hasSandbox: (workspaceId: string) => Effect.Effect<boolean>
     readonly stopSandbox: (workspaceId: string) => Effect.Effect<void, RpcError>
   }
 >() {
@@ -916,8 +917,12 @@ class ShuruClient extends Context.Tag('@laborer/ShuruClient')<
         }).pipe(Effect.catchAll(() => Effect.void))
       })
 
+      const hasSandbox = (workspaceId: string): Effect.Effect<boolean> =>
+        Effect.sync(() => runtimes.has(workspaceId))
+
       return ShuruClient.of({
         checkpointSandbox,
+        hasSandbox,
         killTerminal,
         removeTerminal,
         runCommand,

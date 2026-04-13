@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assert, describe, it } from '@effect/vitest'
+import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
@@ -74,15 +75,20 @@ const TestTerminalClient = Layer.succeed(
   })
 )
 
-const TestLayer = SandboxProviderRoutedLayer.pipe(
-  Layer.provideMerge(TestTerminalClient),
-  Layer.provideMerge(TestShuruDetection),
-  Layer.provideMerge(TestDockerDetection),
-  Layer.provideMerge(TestDepsImageService),
-  Layer.provideMerge(TestContainerService),
-  Layer.provideMerge(ConfigService.layer),
-  Layer.provideMerge(TestLaborerStore)
-)
+const makeSandboxProviderTestLayer = (
+  laborerStoreLayer: Layer.Layer<LaborerStore>
+) =>
+  SandboxProviderRoutedLayer.pipe(
+    Layer.provideMerge(TestTerminalClient),
+    Layer.provideMerge(TestShuruDetection),
+    Layer.provideMerge(TestDockerDetection),
+    Layer.provideMerge(TestDepsImageService),
+    Layer.provideMerge(TestContainerService),
+    Layer.provideMerge(ConfigService.layer),
+    Layer.provideMerge(laborerStoreLayer)
+  )
+
+const TestLayer = makeSandboxProviderTestLayer(TestLaborerStore)
 
 const readLogEntries = (logPath: string) =>
   readFileSync(logPath, 'utf8')
@@ -1144,14 +1150,8 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
           ''
         )
 
-        const freshProviderLayer = SandboxProviderRoutedLayer.pipe(
-          Layer.provideMerge(TestTerminalClient),
-          Layer.provideMerge(TestShuruDetection),
-          Layer.provideMerge(TestDockerDetection),
-          Layer.provideMerge(TestDepsImageService),
-          Layer.provideMerge(TestContainerService),
-          Layer.provideMerge(ConfigService.layer),
-          Layer.provideMerge(Layer.succeed(LaborerStore, laborerStore))
+        const freshProviderLayer = makeSandboxProviderTestLayer(
+          Layer.succeed(LaborerStore, laborerStore)
         )
 
         const restoredState = yield* Effect.gen(function* () {
@@ -1188,5 +1188,216 @@ describe('SandboxProviderRouter shuru lifecycle', () => {
           `${repoPath}:/workspace:ro`,
         ])
       }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'pauses stale running Shuru workspaces on provider startup and keeps them resumable',
+    () =>
+      Effect.gen(function* () {
+        const previousBin = process.env.LABORER_SHURU_BIN
+        const previousCheckpointDir =
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
+        const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+        const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreEnv(
+              previousBin,
+              previousCheckpointDir,
+              previousLogPath,
+              previousStatError
+            )
+          })
+        )
+
+        const repoPath = initRepo('shuru-router-reconcile', tempRoots)
+        const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+        const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+        process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+        process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+        process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+        const projectId = crypto.randomUUID()
+        const workspaceId = crypto.randomUUID()
+        const laborerStore = yield* LaborerStore
+        const { store } = laborerStore
+
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: 'shuru-router-reconcile',
+            brrrConfig: null,
+          })
+        )
+        store.commit(
+          events.workspaceCreated({
+            id: workspaceId,
+            projectId,
+            taskSource: null,
+            branchName: 'feature/shuru-reconcile',
+            worktreePath: repoPath,
+            status: 'running',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+        store.commit(
+          events.sandboxStarted({
+            workspaceId,
+            sandboxId: 'shuru:stale-runtime',
+            sandboxUrl: '',
+            sandboxImage: 'shuru',
+            sandboxProvider: 'shuru',
+          })
+        )
+
+        const freshProviderLayer = makeSandboxProviderTestLayer(
+          Layer.succeed(LaborerStore, laborerStore)
+        )
+
+        yield* Effect.gen(function* () {
+          const freshProvider = yield* SandboxProvider
+
+          const reconciledWorkspace = store.query(
+            tables.workspaces.where('id', workspaceId)
+          )[0]
+          assert.isDefined(reconciledWorkspace)
+          if (reconciledWorkspace === undefined) {
+            assert.fail('Expected the stale Shuru workspace to exist.')
+          }
+
+          assert.strictEqual(reconciledWorkspace.sandboxStatus, 'paused')
+          assert.strictEqual(
+            reconciledWorkspace.sandboxId,
+            'shuru:stale-runtime'
+          )
+
+          yield* freshProvider.resumeSandbox(workspaceId)
+
+          const resumedWorkspace = store.query(
+            tables.workspaces.where('id', workspaceId)
+          )[0]
+          assert.isDefined(resumedWorkspace)
+          if (resumedWorkspace === undefined) {
+            assert.fail('Expected the reconciled Shuru workspace to resume.')
+          }
+
+          assert.strictEqual(resumedWorkspace.sandboxStatus, 'running')
+          assert.match(resumedWorkspace.sandboxId ?? '', SHURU_ID_PATTERN)
+        }).pipe(Effect.provide(freshProviderLayer))
+      }).pipe(Effect.provide(TestLaborerStore))
+  )
+
+  it.scoped('cleans up Shuru runtime state when post-start setup fails', () =>
+    Effect.gen(function* () {
+      const previousBin = process.env.LABORER_SHURU_BIN
+      const previousCheckpointDir =
+        process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR
+      const previousLogPath = process.env.LABORER_TEST_SHURU_LOG_PATH
+      const previousStatError = process.env.LABORER_TEST_SHURU_STAT_ERROR
+
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          restoreEnv(
+            previousBin,
+            previousCheckpointDir,
+            previousLogPath,
+            previousStatError
+          )
+        })
+      )
+
+      const repoPath = initRepo('shuru-router-onready-failure', tempRoots)
+      const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+      const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+      process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+      process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+      process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+      process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+      const projectId = crypto.randomUUID()
+      const workspaceId = crypto.randomUUID()
+
+      const { store } = yield* LaborerStore
+      store.commit(
+        events.projectCreated({
+          id: projectId,
+          repoPath,
+          name: 'shuru-router-onready-failure',
+          brrrConfig: null,
+        })
+      )
+      store.commit(
+        events.workspaceCreated({
+          id: workspaceId,
+          projectId,
+          taskSource: null,
+          branchName: 'feature/shuru-onready-failure',
+          worktreePath: repoPath,
+          status: 'running',
+          origin: 'laborer',
+          createdAt: new Date().toISOString(),
+          baseSha: null,
+        })
+      )
+
+      const sandboxProvider = yield* SandboxProvider
+      const result = yield* sandboxProvider
+        .createSandbox({
+          workspaceId,
+          branchName: 'feature/shuru-onready-failure',
+          currentBranch: null,
+          projectName: 'shuru-router-onready-failure',
+          repoUrl: null,
+          worktreePath: repoPath,
+          devServerConfig: {
+            autoOpen: false,
+            autoStopInterval: null,
+            dockerfile: null,
+            image: null,
+            installCommand: null,
+            network: null,
+            port: null,
+            provider: 'shuru',
+            resources: null,
+            setupScripts: [],
+            startCommand: null,
+            workdir: '/workspace',
+          },
+          onReady: () =>
+            Effect.fail(
+              new RpcError({
+                message: 'post-start Shuru setup failed',
+                code: 'TEST_ON_READY_FAILED',
+              })
+            ),
+        })
+        .pipe(Effect.either)
+
+      assert.isTrue(result._tag === 'Left')
+      if (result._tag !== 'Left') {
+        assert.fail('Expected createSandbox to fail when onReady fails')
+      }
+
+      assert.strictEqual(result.left.code, 'TEST_ON_READY_FAILED')
+
+      const failedWorkspace = store.query(
+        tables.workspaces.where('id', workspaceId)
+      )[0]
+      assert.isDefined(failedWorkspace)
+      if (failedWorkspace === undefined) {
+        assert.fail('Expected the Shuru workspace row to remain after failure.')
+      }
+
+      assert.isNull(failedWorkspace.sandboxId)
+      assert.isNull(failedWorkspace.sandboxStatus)
+
+      const logEntries = readLogEntries(logPath)
+      assert.isTrue(logEntries.some((entry) => entry.type === 'stdin-end'))
+    }).pipe(Effect.provide(TestLayer))
   )
 })

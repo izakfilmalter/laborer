@@ -229,6 +229,12 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
       const workspaceRuntimeCheckpoints = new Map<string, string>()
       const workspacePreviewPorts = new Map<string, number>()
 
+      const findWorkspace = (workspaceId: string) =>
+        pipe(
+          store.query(tables.workspaces),
+          Arr.findFirst((candidate) => candidate.id === workspaceId)
+        )
+
       const releasePreviewPort = (
         workspaceId: string,
         fallbackPort: number | null
@@ -240,6 +246,37 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
 
           if (allocatedPort !== null) {
             allocatedPreviewPorts.delete(allocatedPort)
+          }
+        })
+
+      const stopSandboxBestEffort = (workspaceId: string, context: string) =>
+        shuruClient
+          .stopSandbox(workspaceId)
+          .pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `${context}: failed to stop Shuru runtime for workspace "${workspaceId}": ${error.message}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            )
+          )
+
+      const stopPersistedSandboxIfPresent = (workspaceId: string) =>
+        Effect.sync(() => {
+          const workspace = findWorkspace(workspaceId)
+          if (workspace._tag === 'Some' && workspace.value.sandboxId !== null) {
+            store.commit(events.sandboxStopped({ workspaceId }))
+          }
+        })
+
+      const pausePersistedSandboxIfNeeded = (workspaceId: string) =>
+        Effect.sync(() => {
+          const workspace = findWorkspace(workspaceId)
+          if (
+            workspace._tag === 'Some' &&
+            workspace.value.sandboxId !== null &&
+            workspace.value.sandboxStatus !== 'paused'
+          ) {
+            store.commit(events.sandboxPaused({ workspaceId }))
           }
         })
 
@@ -411,10 +448,35 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             })
           }
 
-          yield* setSetupStep(params.workspaceId, 'starting-shuru')
+          let sandboxStarted = false
+          let setupCompleted = false
 
-          const sandbox = yield* shuruClient
-            .startSandbox({
+          const cleanupIncompleteSetup = Effect.sync(() => setupCompleted).pipe(
+            Effect.flatMap((isCompleted) =>
+              isCompleted
+                ? Effect.void
+                : (sandboxStarted
+                    ? stopSandboxBestEffort(
+                        params.workspaceId,
+                        'Cleaning up failed Shuru sandbox setup'
+                      )
+                    : Effect.void
+                  ).pipe(
+                    Effect.andThen(
+                      releasePreviewPort(params.workspaceId, previewPort)
+                    ),
+                    Effect.andThen(setSetupStep(params.workspaceId, null)),
+                    Effect.andThen(
+                      stopPersistedSandboxIfPresent(params.workspaceId)
+                    )
+                  )
+            )
+          )
+
+          yield* Effect.gen(function* () {
+            yield* setSetupStep(params.workspaceId, 'starting-shuru')
+
+            const sandbox = yield* shuruClient.startSandbox({
               fromCheckpoint: baseCheckpoint,
               portForward:
                 previewPort === null || params.devServerConfig.port === null
@@ -426,38 +488,35 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
               workspaceId: params.workspaceId,
               worktreePath: params.worktreePath,
             })
-            .pipe(
-              Effect.catchAll((error) =>
-                releasePreviewPort(params.workspaceId, previewPort).pipe(
-                  Effect.andThen(setSetupStep(params.workspaceId, null)),
-                  Effect.andThen(Effect.fail(error))
-                )
-              )
+
+            sandboxStarted = true
+
+            if (previewPort !== null) {
+              yield* Effect.sync(() => {
+                workspacePreviewPorts.set(params.workspaceId, previewPort)
+              })
+            }
+
+            store.commit(
+              events.sandboxStarted({
+                workspaceId: params.workspaceId,
+                sandboxId: sandbox.sandboxId,
+                sandboxPort: previewPort ?? undefined,
+                sandboxUrl: previewPort === null ? '' : SHURU_PREVIEW_HOST,
+                sandboxImage:
+                  baseCheckpoint === null
+                    ? 'shuru'
+                    : buildShuruCheckpointImage(baseCheckpoint),
+                sandboxProvider: 'shuru',
+              })
             )
 
-          if (previewPort !== null) {
-            yield* Effect.sync(() => {
-              workspacePreviewPorts.set(params.workspaceId, previewPort)
-            })
-          }
+            if (params.onReady !== undefined) {
+              yield* params.onReady(params.workspaceId)
+            }
 
-          store.commit(
-            events.sandboxStarted({
-              workspaceId: params.workspaceId,
-              sandboxId: sandbox.sandboxId,
-              sandboxPort: previewPort ?? undefined,
-              sandboxUrl: previewPort === null ? '' : SHURU_PREVIEW_HOST,
-              sandboxImage:
-                baseCheckpoint === null
-                  ? 'shuru'
-                  : buildShuruCheckpointImage(baseCheckpoint),
-              sandboxProvider: 'shuru',
-            })
-          )
-
-          if (params.onReady !== undefined) {
-            yield* params.onReady(params.workspaceId)
-          }
+            setupCompleted = true
+          }).pipe(Effect.ensuring(cleanupIncompleteSetup))
         }
       )
 
@@ -598,33 +657,63 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             })
           }
 
-          const sandbox = yield* shuruClient.startSandbox({
-            fromCheckpoint: checkpointName,
-            portForward:
-              sandboxPort === null ||
-              resolvedConfig.devServer.port.value === null
-                ? null
-                : {
-                    guestPort: resolvedConfig.devServer.port.value,
-                    hostPort: sandboxPort,
-                  },
-            workspaceId,
-            worktreePath: workspace.value.worktreePath,
-          })
+          let sandboxStarted = false
+          let resumeCompleted = false
 
-          store.commit(
-            events.sandboxStarted({
-              workspaceId,
-              sandboxId: sandbox.sandboxId,
-              sandboxPort: sandboxPort ?? undefined,
-              sandboxUrl: sandboxPort === null ? '' : SHURU_PREVIEW_HOST,
-              sandboxImage:
-                checkpointName === null
-                  ? 'shuru'
-                  : buildShuruCheckpointImage(checkpointName),
-              sandboxProvider: 'shuru',
-            })
+          const cleanupInterruptedResume = Effect.sync(
+            () => resumeCompleted
+          ).pipe(
+            Effect.flatMap((isCompleted) =>
+              isCompleted
+                ? Effect.void
+                : (sandboxStarted
+                    ? stopSandboxBestEffort(
+                        workspaceId,
+                        'Cleaning up interrupted Shuru sandbox resume'
+                      )
+                    : Effect.void
+                  ).pipe(
+                    Effect.andThen(
+                      releasePreviewPort(workspaceId, sandboxPort)
+                    ),
+                    Effect.andThen(pausePersistedSandboxIfNeeded(workspaceId))
+                  )
+            )
           )
+
+          yield* Effect.gen(function* () {
+            const sandbox = yield* shuruClient.startSandbox({
+              fromCheckpoint: checkpointName,
+              portForward:
+                sandboxPort === null ||
+                resolvedConfig.devServer.port.value === null
+                  ? null
+                  : {
+                      guestPort: resolvedConfig.devServer.port.value,
+                      hostPort: sandboxPort,
+                    },
+              workspaceId,
+              worktreePath: workspace.value.worktreePath,
+            })
+
+            sandboxStarted = true
+
+            store.commit(
+              events.sandboxStarted({
+                workspaceId,
+                sandboxId: sandbox.sandboxId,
+                sandboxPort: sandboxPort ?? undefined,
+                sandboxUrl: sandboxPort === null ? '' : SHURU_PREVIEW_HOST,
+                sandboxImage:
+                  checkpointName === null
+                    ? 'shuru'
+                    : buildShuruCheckpointImage(checkpointName),
+                sandboxProvider: 'shuru',
+              })
+            )
+
+            resumeCompleted = true
+          }).pipe(Effect.ensuring(cleanupInterruptedResume))
         }
       )
 
@@ -766,11 +855,75 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
         }
       )
 
+      const reconcileOneWorkspace = Effect.fn(
+        'ShuruSandboxProvider.reconcileOneWorkspace'
+      )(function* (workspace: {
+        readonly id: string
+        readonly sandboxId: string
+        readonly sandboxPort: number | null
+        readonly sandboxStatus: string | null
+      }) {
+        const hasLiveRuntime = yield* shuruClient.hasSandbox(workspace.id)
+
+        if (hasLiveRuntime) {
+          if (workspace.sandboxStatus !== 'running') {
+            yield* Effect.logInfo(
+              `Reconcile: workspace "${workspace.id}" has a live Shuru runtime in this session, marking the sandbox as running.`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            store.commit(events.sandboxResumed({ workspaceId: workspace.id }))
+          }
+
+          return
+        }
+
+        yield* releasePreviewPort(workspace.id, workspace.sandboxPort)
+
+        if (workspace.sandboxStatus === 'running') {
+          yield* Effect.logInfo(
+            `Reconcile: stale Shuru sandbox "${workspace.sandboxId}" has no live runtime in this session, marking workspace "${workspace.id}" as paused.`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          store.commit(events.sandboxPaused({ workspaceId: workspace.id }))
+        }
+      })
+
+      const runReconciliationPass = Effect.fn(
+        'ShuruSandboxProvider.runReconciliationPass'
+      )(function* () {
+        const shuruWorkspaces = pipe(
+          store.query(tables.workspaces),
+          Arr.filter(
+            (workspace) =>
+              workspace.sandboxProvider === 'shuru' &&
+              workspace.sandboxId !== null
+          )
+        )
+
+        if (shuruWorkspaces.length === 0) {
+          return
+        }
+
+        yield* Effect.logDebug(
+          `Reconciling Shuru state for ${String(shuruWorkspaces.length)} workspace(s)`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        yield* Effect.forEach(
+          shuruWorkspaces,
+          (workspace) =>
+            reconcileOneWorkspace({
+              id: workspace.id,
+              sandboxId: workspace.sandboxId as string,
+              sandboxPort: workspace.sandboxPort,
+              sandboxStatus: workspace.sandboxStatus,
+            }),
+          { discard: true }
+        )
+      })
+
       const reconcileState = Effect.fn('ShuruSandboxProvider.reconcileState')(
         function* () {
-          yield* Effect.logDebug(
-            'Shuru reconciliation is a no-op until the stale-runtime slice lands.'
-          ).pipe(Effect.annotateLogs('module', logPrefix))
+          yield* runReconciliationPass()
         }
       )
 
@@ -785,6 +938,11 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
       )(function* () {
         // Shuru does not currently expose a provider-managed auto-stop setting.
       })
+
+      yield* Effect.logInfo(
+        'Running initial Shuru state reconciliation pass'
+      ).pipe(Effect.annotateLogs('module', logPrefix))
+      yield* runReconciliationPass()
 
       return ShuruSandboxProvider.of({
         createSandbox,

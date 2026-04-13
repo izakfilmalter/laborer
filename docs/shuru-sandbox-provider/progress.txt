@@ -39,3 +39,9 @@
 - Routed `workspace.create` through eager Shuru sandbox startup after local worktree setup, added Shuru-specific progress steps (`checking-shuru`, `allocating-port`, `starting-shuru`) to the existing sandbox setup channel, and preserved retryability by clearing failed setup state before `workspace.startSandbox` retries.
 - Added focused RPC coverage for eager Shuru boot during workspace creation plus failed-boot recovery through `workspace.startSandbox`, and updated the web setup-step labels for the new Shuru progress states.
 - Verification: `bun run typecheck`; `bun run format:fix`; `bun --cwd packages/server test -- test/rpc/workspace-management.test.ts`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd apps/web test -- test/sandbox-setup-labels.test.ts`
+
+2026-04-13
+- Completed Issue 8 (reconcile stale Shuru state and clean up failed sessions) because it is the highest-priority remaining slice and it closes the Shuru provider reliability work.
+- Added initial Shuru startup reconciliation that demotes stale `running` sandboxes to `paused` when no live runtime exists in the current server session, while keeping the workspace resumable through the existing provider path.
+- Hardened Shuru startup and resume cleanup so failed post-start setup and interrupted resume/setup flows stop the microVM best-effort, release preview-port bookkeeping, and clear or restore LiveStore sandbox state instead of leaving misleading runtime metadata behind.
+- Verification: `bun run format:fix`; `bun run typecheck`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`

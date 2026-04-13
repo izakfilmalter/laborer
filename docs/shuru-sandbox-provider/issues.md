@@ -323,17 +323,17 @@ TDD approach: Start with one reconciliation test that seeds LiveStore with a `ru
 
 ### Acceptance criteria
 
-- [ ] Shuru provider participates in startup reconciliation
-- [ ] Stale `running` Shuru workspaces are corrected when no live runtime exists in the current session
-- [ ] Reconciliation leaves workspaces retryable or resumable rather than destroyed
-- [ ] Failed or interrupted setup cleans up child-process/runtime metadata best-effort
-- [ ] Reconciliation behavior is covered by public-interface tests
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] Shuru provider participates in startup reconciliation
+- [x] Stale `running` Shuru workspaces are corrected when no live runtime exists in the current session
+- [x] Reconciliation leaves workspaces retryable or resumable rather than destroyed
+- [x] Failed or interrupted setup cleans up child-process/runtime metadata best-effort
+- [x] Reconciliation behavior is covered by public-interface tests
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 7 is complete.
+None - completed.
 
 ### User stories addressed
 

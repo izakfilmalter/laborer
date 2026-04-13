@@ -148,7 +148,11 @@ const ConfigResolvedValueNullableNumber = Schema.Struct({
   source: Schema.String,
 })
 
-export const SandboxProviderTypeSchema = Schema.Literal('docker', 'daytona')
+export const SandboxProviderTypeSchema = Schema.Literal(
+  'docker',
+  'daytona',
+  'shuru'
+)
 
 export type SandboxProviderType = typeof SandboxProviderTypeSchema.Type
 
@@ -903,6 +907,9 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('sandbox.providerStatus', {
     success: ProviderStatusResponse,
+    payload: {
+      provider: Schema.optional(SandboxProviderTypeSchema),
+    },
   }),
 
   Rpc.make('workspace.startSandbox', {

@@ -16,6 +16,7 @@ import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { SandboxProviderRoutedLayer } from '../src/services/sandbox-provider-router.js'
+import { ShuruDetection } from '../src/services/shuru-detection.js'
 import { TerminalClient } from '../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -51,9 +52,17 @@ const TestTerminalClient = Layer.succeed(
   })
 )
 
+const TestShuruDetection = Layer.succeed(
+  ShuruDetection,
+  ShuruDetection.of({
+    check: () => Effect.succeed({ available: false }),
+  })
+)
+
 const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provide(SandboxProviderRoutedLayer),
   Layer.provideMerge(TestTerminalClient),
+  Layer.provideMerge(TestShuruDetection),
   Layer.provideMerge(DockerDetection.layer),
   Layer.provideMerge(DepsImageService.layer),
   Layer.provideMerge(ContainerService.layer),

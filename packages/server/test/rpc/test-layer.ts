@@ -20,6 +20,7 @@ import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { SandboxProviderRoutedLayer } from '../../src/services/sandbox-provider-router.js'
+import { ShuruDetection } from '../../src/services/shuru-detection.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -105,6 +106,13 @@ const TestDockerDetection = Layer.succeed(
   })
 )
 
+const TestShuruDetection = Layer.succeed(
+  ShuruDetection,
+  ShuruDetection.of({
+    check: () => Effect.succeed({ available: false }),
+  })
+)
+
 /**
  * Test stub for DepsImageService — always returns null (no lockfile found).
  * Prevents Docker commands from running in test workers, which would crash
@@ -142,7 +150,8 @@ const DeferredLeafLayers = Layer.mergeAll(
   TestFileWatcherClientLayer,
   WorktreeDetector.layer,
   TestDepsImageService,
-  TestDockerDetection
+  TestDockerDetection,
+  TestShuruDetection
 )
 
 /**

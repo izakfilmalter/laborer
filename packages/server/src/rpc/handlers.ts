@@ -252,7 +252,7 @@ const validateDevServerUpdate = (
         dockerfile?: string | undefined
         image?: string | undefined
         port?: number | undefined
-        provider?: 'docker' | 'daytona' | undefined
+        provider?: 'docker' | 'daytona' | 'shuru' | undefined
         resources?:
           | {
               cpu?: number | undefined
@@ -272,7 +272,7 @@ const validateDevServerUpdate = (
   if (typeof ds !== 'object') {
     return false
   }
-  const validProviders = ['docker', 'daytona']
+  const validProviders = ['docker', 'daytona', 'shuru']
   const isValidProvider =
     ds.provider === undefined || validProviders.includes(ds.provider)
 
@@ -303,7 +303,7 @@ export const handleConfigUpdate = ({
           dockerfile?: string | undefined
           image?: string | undefined
           port?: number | undefined
-          provider?: 'docker' | 'daytona' | undefined
+          provider?: 'docker' | 'daytona' | 'shuru' | undefined
           resources?:
             | {
                 cpu?: number | undefined
@@ -374,7 +374,7 @@ export const handleGlobalConfigUpdate = ({
 }: {
   config: {
     agent?: 'opencode' | 'claude' | 'codex' | undefined
-    defaultSandboxProvider?: 'docker' | 'daytona' | undefined
+    defaultSandboxProvider?: 'docker' | 'daytona' | 'shuru' | undefined
   }
 }) =>
   Effect.gen(function* () {
@@ -394,7 +394,7 @@ export const handleSettingsGetDefaultProvider = () =>
 export const handleSettingsSetDefaultProvider = ({
   provider,
 }: {
-  provider: 'docker' | 'daytona'
+  provider: 'docker' | 'daytona' | 'shuru'
 }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService
@@ -1050,10 +1050,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // container.* / docker.* handlers above are kept as backward-compat
     // aliases that go through the Docker-specific services directly.
     // -------------------------------------------------------------------
-    'sandbox.providerStatus': () =>
+    'sandbox.providerStatus': ({ provider }) =>
       Effect.gen(function* () {
         const sandboxProvider = yield* SandboxProvider
-        return yield* sandboxProvider.checkAvailability()
+        return yield* sandboxProvider.checkAvailability(provider)
       }),
     'workspace.startSandbox': ({ workspaceId }) =>
       Effect.gen(function* () {

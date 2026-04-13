@@ -1,0 +1,5 @@
+2026-04-13
+- Completed Issue 1 (surface `shuru` as a selectable provider with real availability gating).
+- Added `shuru` across config/RPC/provider enums, global default storage, and project config round-trips.
+- Added local Shuru availability detection for macOS 14+ Apple Silicon plus `shuru` on `PATH`, and surfaced the reason in project/app settings while keeping the option visible but disabled when unavailable.
+- Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/rpc/config-management.test.ts`; `bun --cwd apps/web test -- test/project-settings-modal.helpers.test.ts test/project-settings-modal.test.tsx`

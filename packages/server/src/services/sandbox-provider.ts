@@ -35,8 +35,8 @@ interface CreateSandboxParams {
     readonly network: string | null
     /** Port the dev server listens on. */
     readonly port: number | null
-    /** Sandbox provider for this project ("docker" or "daytona"). */
-    readonly provider: 'docker' | 'daytona' | null
+    /** Sandbox provider for this project ("docker", "daytona", or "shuru"). */
+    readonly provider: 'docker' | 'daytona' | 'shuru' | null
     /** Daytona sandbox resource limits (CPU, memory, disk). */
     readonly resources: {
       readonly cpu?: number | undefined
@@ -224,7 +224,9 @@ class SandboxProvider extends Context.Tag('@laborer/SandboxProvider')<
      * Check whether the provider is available (e.g. Docker running,
      * Daytona API key configured and reachable).
      */
-    readonly checkAvailability: () => Effect.Effect<ProviderStatus>
+    readonly checkAvailability: (
+      provider?: 'docker' | 'daytona' | 'shuru' | undefined
+    ) => Effect.Effect<ProviderStatus>
 
     /**
      * Set the auto-stop interval for a sandbox (minutes of inactivity).

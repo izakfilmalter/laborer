@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { Cloud, Container, Plus, Settings, Trash2 } from 'lucide-react'
+import { Plus, Settings, Trash2 } from 'lucide-react'
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/tooltip'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isMetaEnter } from '@/lib/dialog-keys'
+import { SANDBOX_PROVIDER_OPTIONS } from '@/lib/sandbox-provider-options'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import {
@@ -65,26 +66,6 @@ const AGENT_OPTIONS: ReadonlyArray<{
   { label: 'OpenCode', value: 'opencode' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
-]
-
-const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
-  readonly label: string
-  readonly value: SandboxProviderType
-  readonly description: string
-  readonly Icon: typeof Container
-}> = [
-  {
-    label: 'Docker',
-    value: 'docker',
-    description: 'Local containers via OrbStack',
-    Icon: Container,
-  },
-  {
-    label: 'Daytona',
-    value: 'daytona',
-    description: 'Cloud sandboxes',
-    Icon: Cloud,
-  },
 ]
 
 const updateConfigMutation = LaborerClient.mutation('config.update')
@@ -119,15 +100,15 @@ function ProjectSettingsForm({
       ),
     [projectId]
   )
+  const shuruStatus$ = useMemo(
+    () =>
+      LaborerClient.query('sandbox.providerStatus', {
+        provider: 'shuru',
+      }),
+    []
+  )
   const configResult = useAtomValue(configGet$)
-
-  useEffect(() => {
-    const waiting =
-      'waiting' in configResult ? String(configResult.waiting) : 'n/a'
-    console.log(
-      `[project-settings] configResult._tag=${configResult._tag} waiting=${waiting}`
-    )
-  }, [configResult])
+  const shuruStatusResult = useAtomValue(shuruStatus$)
 
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
@@ -154,6 +135,11 @@ function ProjectSettingsForm({
   const loadErrorMessage =
     configResult._tag === 'Failure'
       ? getSettingsLoadErrorMessage(extractErrorMessage(configResult.cause))
+      : null
+  const shuruUnavailableReason =
+    shuruStatusResult._tag === 'Success' && !shuruStatusResult.value.available
+      ? (shuruStatusResult.value.error ??
+        'Shuru is not available on this machine.')
       : null
 
   useEffect(() => {
@@ -467,7 +453,14 @@ function ProjectSettingsForm({
                   </SelectTrigger>
                   <SelectContent>
                     {SANDBOX_PROVIDER_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
+                      <SelectItem
+                        disabled={
+                          option.value === 'shuru' &&
+                          shuruUnavailableReason !== null
+                        }
+                        key={option.value}
+                        value={option.value}
+                      >
                         <option.Icon className="size-3.5" />
                         {option.label}
                         <span className="ml-1 text-muted-foreground text-xs">
@@ -480,6 +473,11 @@ function ProjectSettingsForm({
                 <FieldDescription className={provenanceClassName}>
                   Source: {resolvedConfig.devServer.provider.source}
                 </FieldDescription>
+                {shuruUnavailableReason ? (
+                  <FieldDescription className="text-destructive text-xs">
+                    Shuru is unavailable: {shuruUnavailableReason}
+                  </FieldDescription>
+                ) : null}
               </Field>
 
               <Field>

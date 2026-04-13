@@ -3,7 +3,7 @@ interface SetupScriptItem {
   readonly value: string
 }
 
-type SandboxProviderType = 'docker' | 'daytona'
+type SandboxProviderType = 'docker' | 'daytona' | 'shuru'
 
 interface ResolvedConfigSnapshot {
   readonly agent: 'opencode' | 'claude' | 'codex'

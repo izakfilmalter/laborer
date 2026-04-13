@@ -1,19 +1,16 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { appSettings, events } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
-import {
-  Check,
-  Cloud,
-  Container,
-  ExternalLink,
-  Github,
-  Loader2,
-} from 'lucide-react'
+import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
+import {
+  SANDBOX_PROVIDER_OPTIONS,
+  type SandboxProviderType,
+} from '@/lib/sandbox-provider-options'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -48,28 +45,6 @@ const AGENT_OPTIONS: ReadonlyArray<{
   { label: 'Codex', value: 'codex' },
 ]
 
-type SandboxProvider = 'docker' | 'daytona'
-
-const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
-  readonly label: string
-  readonly value: SandboxProvider
-  readonly description: string
-  readonly Icon: typeof Container
-}> = [
-  {
-    label: 'Docker',
-    value: 'docker',
-    description: 'Local containers via OrbStack',
-    Icon: Container,
-  },
-  {
-    label: 'Daytona',
-    value: 'daytona',
-    description: 'Cloud sandboxes',
-    Icon: Cloud,
-  },
-]
-
 /** Sub-component extracted to reduce AppSettingsModal complexity. */
 function SandboxProviderSetting({
   isLoading,
@@ -77,12 +52,25 @@ function SandboxProviderSetting({
   onSave,
 }: {
   isLoading: boolean
-  initialProvider: SandboxProvider
-  onSave: (provider: SandboxProvider) => Promise<void>
+  initialProvider: SandboxProviderType
+  onSave: (provider: SandboxProviderType) => Promise<void>
 }) {
+  const shuruStatus$ = useMemo(
+    () =>
+      LaborerClient.query('sandbox.providerStatus', {
+        provider: 'shuru',
+      }),
+    []
+  )
+  const shuruStatusResult = useAtomValue(shuruStatus$)
   const [sandboxProvider, setSandboxProvider] =
-    useState<SandboxProvider>(initialProvider)
+    useState<SandboxProviderType>(initialProvider)
   const [isSaving, setIsSaving] = useState(false)
+  const shuruUnavailableReason =
+    shuruStatusResult._tag === 'Success' && !shuruStatusResult.value.available
+      ? (shuruStatusResult.value.error ??
+        'Shuru is not available on this machine.')
+      : null
 
   // Sync when the parent re-initializes after modal reopen
   useEffect(() => {
@@ -115,7 +103,7 @@ function SandboxProviderSetting({
             <div className="flex-1">
               <Select
                 onValueChange={(value) =>
-                  setSandboxProvider(value as SandboxProvider)
+                  setSandboxProvider(value as SandboxProviderType)
                 }
                 value={sandboxProvider}
               >
@@ -128,7 +116,14 @@ function SandboxProviderSetting({
                 </SelectTrigger>
                 <SelectContent>
                   {SANDBOX_PROVIDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
+                    <SelectItem
+                      disabled={
+                        option.value === 'shuru' &&
+                        shuruUnavailableReason !== null
+                      }
+                      key={option.value}
+                      value={option.value}
+                    >
                       <option.Icon className="size-3.5" />
                       {option.label}
                     </SelectItem>
@@ -149,9 +144,14 @@ function SandboxProviderSetting({
         )}
         <FieldDescription>
           Where new workspaces run by default. Docker uses local containers via
-          OrbStack, Daytona uses cloud sandboxes. Projects can override this in
-          their laborer.json.
+          OrbStack, Daytona uses cloud sandboxes, and Shuru uses local microVMs.
+          Projects can override this in their laborer.json.
         </FieldDescription>
+        {shuruUnavailableReason ? (
+          <FieldDescription className="text-destructive text-xs">
+            Shuru is unavailable: {shuruUnavailableReason}
+          </FieldDescription>
+        ) : null}
       </Field>
     </FieldSet>
   )
@@ -194,7 +194,7 @@ export function AppSettingsModal() {
 
   const [agent, setAgent] = useState<AgentProvider>('opencode')
   const [resolvedProvider, setResolvedProvider] =
-    useState<SandboxProvider>('docker')
+    useState<SandboxProviderType>('docker')
   const [agentInitialized, setAgentInitialized] = useState(false)
   const [isSavingAgent, setIsSavingAgent] = useState(false)
 
@@ -206,7 +206,7 @@ export function AppSettingsModal() {
     setAgent(globalConfigResult.value.agent ?? 'opencode')
     setResolvedProvider(
       (globalConfigResult.value.defaultSandboxProvider as
-        | SandboxProvider
+        | SandboxProviderType
         | undefined) ?? 'docker'
     )
     setAgentInitialized(true)
@@ -229,7 +229,7 @@ export function AppSettingsModal() {
   }, [agent, updateGlobalConfig])
 
   const handleSaveProvider = useCallback(
-    async (provider: SandboxProvider) => {
+    async (provider: SandboxProviderType) => {
       await updateGlobalConfig({
         payload: {
           config: { defaultSandboxProvider: provider },

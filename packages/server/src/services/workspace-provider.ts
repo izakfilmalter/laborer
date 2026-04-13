@@ -1014,7 +1014,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           readonly network: { readonly value: string | null }
           readonly port: { readonly value: number | null }
           readonly provider: {
-            readonly value: 'docker' | 'daytona' | null
+            readonly value: 'docker' | 'daytona' | 'shuru' | null
           }
           readonly resources: {
             readonly value: {
@@ -1056,6 +1056,44 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             onReady: params.onReady,
           })
         })
+
+      const maybePerformSandboxSetup = (params: {
+        readonly id: string
+        readonly branchName: string
+        readonly worktreePath: string
+        readonly projectName: string
+        readonly repoUrl: string | null
+        readonly currentBranch: string | null
+        readonly devServer: {
+          readonly autoOpen: { readonly value: boolean }
+          readonly autoStopInterval: { readonly value: number | null }
+          readonly dockerfile: { readonly value: string | null }
+          readonly image: { readonly value: string | null }
+          readonly installCommand: { readonly value: string | null }
+          readonly network: { readonly value: string | null }
+          readonly port: { readonly value: number | null }
+          readonly provider: {
+            readonly value: 'docker' | 'daytona' | 'shuru' | null
+          }
+          readonly resources: {
+            readonly value: {
+              readonly cpu?: number | undefined
+              readonly disk?: number | undefined
+              readonly memory?: number | undefined
+            } | null
+          }
+          readonly setupScripts: { readonly value: readonly string[] }
+          readonly startCommand: { readonly value: string | null }
+          readonly workdir: { readonly value: string }
+        }
+        readonly onReady?:
+          | ((workspaceId: string) => Effect.Effect<void, RpcError>)
+          | undefined
+      }): Effect.Effect<void, RpcError> =>
+        params.devServer.image.value === null ||
+        params.devServer.provider.value === 'shuru'
+          ? Effect.void
+          : performSandboxSetup(params)
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (
@@ -1214,18 +1252,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }
 
               // Phase 2: Start sandbox if devServer config has an image
-              const devServerImage = resolvedConfig.devServer.image.value
-              if (devServerImage !== null) {
-                yield* performSandboxSetup({
-                  id,
-                  branchName: resolvedBranch,
-                  worktreePath,
-                  projectName: project.name,
-                  repoUrl: null,
-                  currentBranch: null,
-                  devServer: resolvedConfig.devServer,
-                })
-              }
+              yield* maybePerformSandboxSetup({
+                id,
+                branchName: resolvedBranch,
+                worktreePath,
+                projectName: project.name,
+                repoUrl: null,
+                currentBranch: null,
+                devServer: resolvedConfig.devServer,
+              })
             }
           }).pipe(
             // Use catchAllCause instead of catchAll so that both expected
@@ -1721,6 +1756,13 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // when none is configured. Only gate on missing image for Docker.
           const devServerImage = resolvedConfig.devServer.image.value
           const effectiveProvider = resolvedConfig.devServer.provider.value
+          if (effectiveProvider === 'shuru') {
+            return yield* new RpcError({
+              message:
+                'Shuru sandbox lifecycle is not implemented yet. Provider selection is available, but starting Shuru sandboxes lands in the next slice.',
+              code: 'SHURU_NOT_IMPLEMENTED',
+            })
+          }
           if (devServerImage === null && effectiveProvider !== 'daytona') {
             return yield* new RpcError({
               message:

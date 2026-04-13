@@ -52,6 +52,10 @@ interface ConfigResult {
         readonly value: string | null
         readonly source: string
       }
+      readonly provider: {
+        readonly value: 'docker' | 'daytona' | 'shuru' | null
+        readonly source: string
+      }
       readonly setupScripts: {
         readonly value: readonly string[]
         readonly source: string
@@ -65,6 +69,15 @@ interface ConfigResult {
 }
 
 let configResult: ConfigResult
+let shuruStatusResult:
+  | {
+      readonly _tag: 'Success'
+      readonly value: {
+        readonly available: boolean
+        readonly error?: string | undefined
+      }
+    }
+  | { readonly _tag: 'Initial'; readonly waiting?: boolean }
 
 vi.mock('@/atoms/laborer-client', () => ({
   ConfigReactivityKeys: ['config'],
@@ -111,8 +124,18 @@ vi.mock('@/components/ui/select', () => ({
   SelectContent: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
-  SelectItem: ({ children }: { children: React.ReactNode; value: string }) => (
-    <div>{children}</div>
+  SelectItem: ({
+    children,
+    disabled,
+    value,
+  }: {
+    children: React.ReactNode
+    disabled?: boolean
+    value: string
+  }) => (
+    <div data-disabled={disabled ? 'true' : 'false'} data-value={value}>
+      {children}
+    </div>
   ),
   SelectTrigger: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
@@ -139,16 +162,27 @@ describe('ProjectSettingsModal', () => {
           image: { value: null, source: 'default' },
           installCommand: { value: null, source: 'default' },
           network: { value: null, source: 'default' },
+          provider: { value: null, source: 'default' },
           setupScripts: { value: [], source: 'default' },
           startCommand: { value: null, source: 'default' },
         },
       },
     }
 
-    queryMock.mockReturnValue({ _tag: 'MockQuery' })
+    shuruStatusResult = {
+      _tag: 'Success',
+      value: {
+        available: false,
+        error: 'Shuru CLI not found on PATH.',
+      },
+    }
+
+    queryMock.mockImplementation((name: string) => ({ name }))
     mutationMock.mockReturnValue({ _tag: 'MockMutation' })
     useAtomSetMock.mockReturnValue(updateConfigMock)
-    useAtomValueMock.mockImplementation(() => configResult)
+    useAtomValueMock.mockImplementation((query: { name?: string }) =>
+      query.name === 'sandbox.providerStatus' ? shuruStatusResult : configResult
+    )
     updateConfigMock.mockResolvedValue(undefined)
     buildConfigUpdatesMock.mockReturnValue({
       worktreeDir: '~/dev/worktrees',
@@ -171,6 +205,26 @@ describe('ProjectSettingsModal', () => {
       { projectId: 'project-1' },
       { reactivityKeys: ['config'] }
     )
+    expect(queryMock).toHaveBeenCalledWith('sandbox.providerStatus', {
+      provider: 'shuru',
+    })
+  })
+
+  it('shows Shuru as disabled with the server-provided reason', async () => {
+    render(<ProjectSettingsModal projectId="project-1" projectName="Laborer" />)
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Open settings for Laborer' }))
+
+    expect(
+      screen.getAllByText('Shuru is unavailable: Shuru CLI not found on PATH.')
+        .length
+    ).toBeGreaterThan(0)
+    expect(
+      document.querySelectorAll('[data-value="shuru"][data-disabled="true"]')
+        .length
+    ).toBeGreaterThan(0)
   })
 
   it('saves updated fields and shows success toast', async () => {

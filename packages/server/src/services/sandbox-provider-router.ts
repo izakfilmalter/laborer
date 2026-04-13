@@ -20,7 +20,7 @@
  * Issue 23: End-to-end integration — Daytona workspace creation flow
  */
 
-import { RpcError } from '@laborer/shared/rpc'
+import { RpcError, type SandboxProviderType } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, Layer, Option, pipe } from 'effect'
 
@@ -34,6 +34,7 @@ import { DockerSandboxProvider } from './docker-sandbox-provider.js'
 import { LaborerStore } from './laborer-store.js'
 import type { CreateSandboxParams } from './sandbox-provider.js'
 import { SandboxProvider } from './sandbox-provider.js'
+import { ShuruDetection } from './shuru-detection.js'
 
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'SandboxProviderRouter'
@@ -47,6 +48,12 @@ const daytonaUnavailableError = new RpcError({
   message:
     'Daytona provider is not available. Set DAYTONA_API_KEY in your environment to enable cloud sandboxes.',
   code: 'DAYTONA_UNAVAILABLE',
+})
+
+const shuruNotImplementedError = new RpcError({
+  message:
+    'Shuru provider selection is available, but sandbox lifecycle support lands in the next slice.',
+  code: 'SHURU_NOT_IMPLEMENTED',
 })
 
 // ---------------------------------------------------------------------------
@@ -68,12 +75,13 @@ const daytonaUnavailableError = new RpcError({
 const SandboxProviderRouterLayer: Layer.Layer<
   SandboxProvider,
   never,
-  DockerSandboxProvider | LaborerStore
+  DockerSandboxProvider | LaborerStore | ShuruDetection
 > = Layer.effect(
   SandboxProvider,
   Effect.gen(function* () {
     const docker = yield* DockerSandboxProvider
     const { store } = yield* LaborerStore
+    const shuruDetection = yield* ShuruDetection
 
     // Try to get the Daytona provider. It may not be available if
     // DAYTONA_API_KEY is not set — in that case, `daytona` is null
@@ -83,22 +91,38 @@ const SandboxProviderRouterLayer: Layer.Layer<
     const daytonaOption = yield* Effect.serviceOption(DaytonaSandboxProvider)
     const daytona = Option.getOrNull(daytonaOption)
 
-    if (daytona !== null) {
+    const hasDaytona = daytona !== null
+    if (hasDaytona) {
       yield* Effect.logInfo(
-        'SandboxProviderRouter initialized with Docker + Daytona providers'
+        'SandboxProviderRouter initialized with Docker, Daytona, and Shuru detection'
       ).pipe(Effect.annotateLogs('module', logPrefix))
     } else {
       yield* Effect.logInfo(
-        'SandboxProviderRouter initialized with Docker provider only (DAYTONA_API_KEY not configured)'
+        'SandboxProviderRouter initialized with Docker + Shuru detection (DAYTONA_API_KEY not configured)'
       ).pipe(Effect.annotateLogs('module', logPrefix))
     }
+
+    const failWithShuruUnavailable = Effect.fn(
+      'SandboxProviderRouter.failWithShuruUnavailable'
+    )(function* () {
+      const status = yield* shuruDetection.check()
+      if (!status.available) {
+        return yield* new RpcError({
+          message: status.error ?? 'Shuru is not available on this machine.',
+          code: 'SHURU_UNAVAILABLE',
+        })
+      }
+
+      return yield* shuruNotImplementedError
+    })
 
     // ── Provider resolution ─────────────────────────────────────
 
     /**
      * Resolve the provider for a workspace by looking up `sandboxProvider`
      * in LiveStore. Returns Docker for Docker workspaces (or unknown),
-     * and Daytona for Daytona workspaces.
+     * Daytona for Daytona workspaces, and an explicit error for Shuru
+     * until the lifecycle slice lands.
      */
     const resolveForWorkspace = (
       workspaceId: string
@@ -124,6 +148,9 @@ const SandboxProviderRouterLayer: Layer.Layer<
           }
           return daytona
         }
+        if (workspace.sandboxProvider === 'shuru') {
+          return yield* failWithShuruUnavailable()
+        }
 
         // Default to Docker for null, 'docker', or any unknown value
         return docker
@@ -143,6 +170,9 @@ const SandboxProviderRouterLayer: Layer.Layer<
             return yield* daytonaUnavailableError
           }
           return daytona
+        }
+        if (provider === 'shuru') {
+          return yield* failWithShuruUnavailable()
         }
         // Default to Docker for null or 'docker'
         return docker
@@ -261,13 +291,25 @@ const SandboxProviderRouterLayer: Layer.Layer<
     )
 
     /**
-     * Check availability of the Docker provider (the primary provider).
-     * Daytona availability is separately checked via Issue 12's enhanced
-     * `checkAvailability` on the Daytona provider.
+     * Check availability for a specific provider.
      */
     const checkAvailability = Effect.fn(
       'SandboxProviderRouter.checkAvailability'
-    )(function* () {
+    )(function* (provider?: SandboxProviderType) {
+      if (provider === 'daytona') {
+        if (daytona === null) {
+          return {
+            available: false,
+            error: daytonaUnavailableError.message,
+          }
+        }
+        return yield* daytona.checkAvailability()
+      }
+
+      if (provider === 'shuru') {
+        return yield* shuruDetection.check()
+      }
+
       return yield* docker.checkAvailability()
     })
 
@@ -312,6 +354,7 @@ const SandboxProviderRoutedLayer: Layer.Layer<
   | import('./container-service.js').ContainerService
   | import('./deps-image-service.js').DepsImageService
   | import('./docker-detection.js').DockerDetection
+  | ShuruDetection
   | import('./terminal-client.js').TerminalClient
 > = SandboxProviderRouterLayer.pipe(
   // Provide DockerSandboxProvider (always available)

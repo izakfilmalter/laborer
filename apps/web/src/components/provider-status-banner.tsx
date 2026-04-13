@@ -18,11 +18,7 @@ import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 
-const providerStatus$ = LaborerClient.query(
-  'sandbox.providerStatus',
-  // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-  undefined as void
-)
+const providerStatus$ = LaborerClient.query('sandbox.providerStatus', {})
 
 /**
  * Detect whether the error message indicates a Daytona-specific issue.

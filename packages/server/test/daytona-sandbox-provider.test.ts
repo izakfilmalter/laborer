@@ -521,7 +521,7 @@ const dsc = (
     'installCommand' in overrides ? (overrides.installCommand ?? null) : null,
   network: null,
   port: 'port' in overrides ? (overrides.port ?? null) : null,
-  provider: null as 'docker' | 'daytona' | null,
+  provider: null as 'docker' | 'daytona' | 'shuru' | null,
   resources: null as {
     readonly cpu?: number | undefined
     readonly disk?: number | undefined

@@ -79,6 +79,7 @@ import { RepositoryWatchCoordinator } from './services/repository-watch-coordina
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
+import { ShuruDetection } from './services/shuru-detection.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
@@ -259,7 +260,8 @@ const DeferredLeafLayers = Layer.mergeAll(
   FileWatcherClient.layer,
   WorktreeDetector.layer,
   DepsImageService.layer,
-  DockerDetection.layer
+  DockerDetection.layer,
+  ShuruDetection.layer
 )
 
 /**

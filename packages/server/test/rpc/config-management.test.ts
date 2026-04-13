@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect, Either, type Scope } from 'effect'
+import { GLOBAL_CONFIG_PATH } from '../../src/services/config-service.js'
 import { createTempDir, git } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
@@ -148,14 +149,14 @@ describe('LaborerRpcs config management', () => {
           // defaultSandboxProvider has a valid structure regardless of value
           assert.isString(config.defaultSandboxProvider.source)
           assert.include(
-            [null, 'docker', 'daytona'],
+            [null, 'docker', 'daytona', 'shuru'],
             config.defaultSandboxProvider.value
           )
           // devServer.provider falls back to defaultSandboxProvider when
           // no per-project provider is set (Issue 6)
           assert.isString(config.devServer.provider.source)
           assert.include(
-            [null, 'docker', 'daytona'],
+            [null, 'docker', 'daytona', 'shuru'],
             config.devServer.provider.value
           )
         })
@@ -285,9 +286,68 @@ describe('LaborerRpcs config management', () => {
           // devServer.provider is env-dependent (Issue 6 fallback)
           assert.isString(resolved.devServer.provider.source)
           assert.include(
-            [null, 'docker', 'daytona'],
+            [null, 'docker', 'daytona', 'shuru'],
             resolved.devServer.provider.value
           )
+        })
+      )
+  )
+
+  it.scoped(
+    'config.update round-trips shuru as the project sandbox provider',
+    () =>
+      runWithRpcTestContext(({ client }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = createTempDir('rpc-config-update-shuru', tempRoots)
+          initRepoAt(repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+
+          yield* client.config.update({
+            projectId: project.id,
+            config: {
+              devServer: {
+                provider: 'shuru',
+              },
+            },
+          })
+
+          const resolved = yield* client.config.get({ projectId: project.id })
+          assert.strictEqual(resolved.devServer.provider.value, 'shuru')
+        })
+      )
+  )
+
+  it.scoped(
+    'globalConfig.update stores shuru as the default sandbox provider',
+    () =>
+      runWithRpcTestContext(({ client }) =>
+        Effect.gen(function* () {
+          const globalConfigBackup = existsSync(GLOBAL_CONFIG_PATH)
+            ? readFileSync(GLOBAL_CONFIG_PATH, 'utf-8')
+            : null
+
+          try {
+            yield* client.globalConfig.update({
+              config: {
+                defaultSandboxProvider: 'shuru',
+              },
+            })
+
+            const globalConfig = yield* client.globalConfig.get()
+            assert.strictEqual(globalConfig.defaultSandboxProvider, 'shuru')
+          } finally {
+            if (globalConfigBackup !== null) {
+              writeFileSync(GLOBAL_CONFIG_PATH, globalConfigBackup)
+            } else if (existsSync(GLOBAL_CONFIG_PATH)) {
+              rmSync(GLOBAL_CONFIG_PATH)
+            }
+          }
         })
       )
   )

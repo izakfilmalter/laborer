@@ -22,14 +22,14 @@ TDD approach: Start with one behavior test that resolves a project configured wi
 
 ### Acceptance criteria
 
-- [ ] `shuru` is accepted anywhere the app currently accepts `docker` or `daytona` as a sandbox provider value
-- [ ] Global default provider settings can store and return `shuru`
-- [ ] Availability checks can distinguish supported+installed from unsupported/uninstalled Shuru environments
-- [ ] The UI shows `shuru` as an option even when unavailable
-- [ ] Unavailable `shuru` states are disabled and include a concrete reason
-- [ ] Provider selection tests cover both per-project and global-default cases
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] `shuru` is accepted anywhere the app currently accepts `docker` or `daytona` as a sandbox provider value
+- [x] Global default provider settings can store and return `shuru`
+- [x] Availability checks can distinguish supported+installed from unsupported/uninstalled Shuru environments
+- [x] The UI shows `shuru` as an option even when unavailable
+- [x] Unavailable `shuru` states are disabled and include a concrete reason
+- [x] Provider selection tests cover both per-project and global-default cases
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
@@ -78,7 +78,7 @@ TDD approach: Write one provider-level integration test that creates a Shuru-bac
 
 ### Blocked by
 
-- Blocked by "Surface `shuru` as a selectable provider with real availability gating" (Issue 1)
+None - Issue 1 is complete.
 
 ### User stories addressed
 

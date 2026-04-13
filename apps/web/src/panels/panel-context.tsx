@@ -398,6 +398,62 @@ interface PendingCloseState {
 }
 
 /**
+ * State for a panel-tab-scoped close confirmation dialog.
+ * Rendered inline within the active panel tab content area.
+ */
+interface PendingClosePanelTabState {
+  /** Cancel the close — dismisses the dialog. */
+  readonly onCancel: () => void
+  /** Confirm the close — removes the panel tab. */
+  readonly onConfirm: () => void
+  /** The tab ID awaiting close confirmation, or null if none. */
+  readonly tabId: string | null
+  /** The workspace containing the tab, or null if none. */
+  readonly workspaceId: string | null
+}
+
+/**
+ * State for a window-tab-scoped close confirmation dialog.
+ * Rendered inline within the active window tab content area.
+ */
+interface PendingCloseWindowTabState {
+  /** Cancel the close — dismisses the dialog. */
+  readonly onCancel: () => void
+  /** Confirm the close — removes the window tab. */
+  readonly onConfirm: () => void
+  /** The window tab ID awaiting close confirmation, or null if none. */
+  readonly tabId: string | null
+}
+
+/**
+ * State for a workspace-scoped close confirmation dialog.
+ * Rendered inline within the workspace frame being closed.
+ */
+interface PendingCloseWorkspaceState {
+  /** Cancel the close — dismisses the dialog. */
+  readonly onCancel: () => void
+  /** Confirm the close — closes the workspace. */
+  readonly onConfirm: () => void
+  /** The workspace ID awaiting close confirmation, or null if none. */
+  readonly workspaceId: string | null
+}
+
+/**
+ * State for the workspace destroy-on-close dialog.
+ * Rendered inline within the workspace frame when that workspace is visible.
+ */
+interface PendingDestroyOnCloseWorkspaceState {
+  /** Cancel the dialog — keep the workspace intact. */
+  readonly onCancel: () => void
+  /** Confirm close and destroy the workspace. */
+  readonly onCloseAndDestroy: () => void
+  /** Confirm close without destroying the workspace. */
+  readonly onConfirm: () => void
+  /** The workspace ID awaiting destroy-on-close confirmation, or null if none. */
+  readonly workspaceId: string | null
+}
+
+/**
  * State for the panel type picker overlay.
  * When active, the picker is shown on the pane (for split operations)
  * or on the workspace frame (for new tab). On selection, the appropriate
@@ -423,6 +479,33 @@ const defaultPendingClose: PendingCloseState = {
   onCancel: noop,
 }
 
+const defaultPendingClosePanelTab: PendingClosePanelTabState = {
+  tabId: null,
+  workspaceId: null,
+  onConfirm: noop,
+  onCancel: noop,
+}
+
+const defaultPendingCloseWindowTab: PendingCloseWindowTabState = {
+  tabId: null,
+  onConfirm: noop,
+  onCancel: noop,
+}
+
+const defaultPendingCloseWorkspace: PendingCloseWorkspaceState = {
+  workspaceId: null,
+  onConfirm: noop,
+  onCancel: noop,
+}
+
+const defaultPendingDestroyOnCloseWorkspace: PendingDestroyOnCloseWorkspaceState =
+  {
+    workspaceId: null,
+    onConfirm: noop,
+    onCancel: noop,
+    onCloseAndDestroy: noop,
+  }
+
 const defaultPendingPicker: PendingPickerState = {
   paneId: null,
   onSelect: noop,
@@ -431,6 +514,23 @@ const defaultPendingPicker: PendingPickerState = {
 
 const PendingClosePaneContext =
   createContext<PendingCloseState>(defaultPendingClose)
+
+const PendingClosePanelTabContext = createContext<PendingClosePanelTabState>(
+  defaultPendingClosePanelTab
+)
+
+const PendingCloseWindowTabContext = createContext<PendingCloseWindowTabState>(
+  defaultPendingCloseWindowTab
+)
+
+const PendingCloseWorkspaceContext = createContext<PendingCloseWorkspaceState>(
+  defaultPendingCloseWorkspace
+)
+
+const PendingDestroyOnCloseWorkspaceContext =
+  createContext<PendingDestroyOnCloseWorkspaceState>(
+    defaultPendingDestroyOnCloseWorkspace
+  )
 
 const PendingPickerContext =
   createContext<PendingPickerState>(defaultPendingPicker)
@@ -458,6 +558,10 @@ function PanelActionsProvider({
   children,
   fullscreenPaneId,
   pendingClose,
+  pendingClosePanelTab,
+  pendingCloseWindowTab,
+  pendingCloseWorkspace,
+  pendingDestroyOnCloseWorkspace,
   pendingPicker,
   value,
 }: {
@@ -466,6 +570,12 @@ function PanelActionsProvider({
   readonly children: React.ReactNode
   readonly fullscreenPaneId: string | null
   readonly pendingClose?: PendingCloseState | undefined
+  readonly pendingClosePanelTab?: PendingClosePanelTabState | undefined
+  readonly pendingCloseWindowTab?: PendingCloseWindowTabState | undefined
+  readonly pendingCloseWorkspace?: PendingCloseWorkspaceState | undefined
+  readonly pendingDestroyOnCloseWorkspace?:
+    | PendingDestroyOnCloseWorkspaceState
+    | undefined
   readonly pendingPicker?: PendingPickerState | undefined
   readonly value: PanelActions
 }) {
@@ -477,11 +587,32 @@ function PanelActionsProvider({
             <PendingClosePaneContext.Provider
               value={pendingClose ?? defaultPendingClose}
             >
-              <PendingPickerContext.Provider
-                value={pendingPicker ?? defaultPendingPicker}
+              <PendingClosePanelTabContext.Provider
+                value={pendingClosePanelTab ?? defaultPendingClosePanelTab}
               >
-                {children}
-              </PendingPickerContext.Provider>
+                <PendingCloseWindowTabContext.Provider
+                  value={pendingCloseWindowTab ?? defaultPendingCloseWindowTab}
+                >
+                  <PendingCloseWorkspaceContext.Provider
+                    value={
+                      pendingCloseWorkspace ?? defaultPendingCloseWorkspace
+                    }
+                  >
+                    <PendingDestroyOnCloseWorkspaceContext.Provider
+                      value={
+                        pendingDestroyOnCloseWorkspace ??
+                        defaultPendingDestroyOnCloseWorkspace
+                      }
+                    >
+                      <PendingPickerContext.Provider
+                        value={pendingPicker ?? defaultPendingPicker}
+                      >
+                        {children}
+                      </PendingPickerContext.Provider>
+                    </PendingDestroyOnCloseWorkspaceContext.Provider>
+                  </PendingCloseWorkspaceContext.Provider>
+                </PendingCloseWindowTabContext.Provider>
+              </PendingClosePanelTabContext.Provider>
             </PendingClosePaneContext.Provider>
           </FullscreenPaneIdContext.Provider>
         </ActiveWorkspaceIdContext.Provider>
@@ -533,6 +664,42 @@ function usePendingClosePane(): PendingCloseState {
 }
 
 /**
+ * Hook to read the pending panel tab close confirmation state.
+ * Used by WorkspaceContent to render an inline confirmation dialog
+ * within the active panel tab area.
+ */
+function usePendingClosePanelTab(): PendingClosePanelTabState {
+  return useContext(PendingClosePanelTabContext)
+}
+
+/**
+ * Hook to read the pending window tab close confirmation state.
+ * Used by WindowTabContent to render an inline confirmation dialog
+ * within the active window tab area.
+ */
+function usePendingCloseWindowTab(): PendingCloseWindowTabState {
+  return useContext(PendingCloseWindowTabContext)
+}
+
+/**
+ * Hook to read the pending workspace close confirmation state.
+ * Used by WorkspaceFrame to render an inline confirmation dialog
+ * within the workspace being closed.
+ */
+function usePendingCloseWorkspace(): PendingCloseWorkspaceState {
+  return useContext(PendingCloseWorkspaceContext)
+}
+
+/**
+ * Hook to read the pending destroy-on-close workspace state.
+ * Used by WorkspaceFrame to render the merged-PR destroy prompt inline
+ * when the referenced workspace is currently visible.
+ */
+function usePendingDestroyOnCloseWorkspace(): PendingDestroyOnCloseWorkspaceState {
+  return useContext(PendingDestroyOnCloseWorkspaceContext)
+}
+
+/**
  * Hook to read the pending panel type picker state.
  * Used by LeafPaneRenderer to render an inline picker overlay
  * within the pane that triggered a split or new tab action.
@@ -559,12 +726,20 @@ export {
   useFullscreenPortal,
   usePanelActions,
   usePendingClosePane,
+  usePendingClosePanelTab,
+  usePendingCloseWindowTab,
+  usePendingCloseWorkspace,
+  usePendingDestroyOnCloseWorkspace,
   usePendingPicker,
 }
 export type {
   AssignTerminalToPaneOptions,
   PanelActions,
   PendingCloseState,
+  PendingClosePanelTabState,
+  PendingCloseWindowTabState,
+  PendingCloseWorkspaceState,
+  PendingDestroyOnCloseWorkspaceState,
   PendingPickerState,
   PickerMode,
 }

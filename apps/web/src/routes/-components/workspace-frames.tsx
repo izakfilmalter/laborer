@@ -37,7 +37,12 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
-import { usePanelActions } from '@/panels/panel-context'
+import {
+  usePanelActions,
+  usePendingClosePanelTab,
+  usePendingCloseWorkspace,
+  usePendingDestroyOnCloseWorkspace,
+} from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { containsPane, getFirstLeafId } from '@/panels/panel-tree-utils'
 import {
@@ -49,6 +54,11 @@ import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { TreePane } from '@/panes/tree-pane'
+import {
+  PanelTabCloseConfirmDialog,
+  WorkspaceCloseConfirmDialog,
+  WorkspaceDestroyOnCloseConfirmDialog,
+} from './close-dialogs'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 
 // ---------------------------------------------------------------------------
@@ -370,6 +380,7 @@ function WorkspacePickerItem({
 function WorkspaceContent({
   isEmptyWorkspace,
   workspaceId,
+  panelTabId,
   hasSidePanels,
   effectiveLayout,
   mainPanelSize,
@@ -385,6 +396,7 @@ function WorkspaceContent({
 }: {
   readonly isEmptyWorkspace: boolean
   readonly workspaceId: string | undefined
+  readonly panelTabId?: string | undefined
   readonly hasSidePanels: boolean
   readonly effectiveLayout: PanelNode | null
   readonly mainPanelSize: string
@@ -401,14 +413,30 @@ function WorkspaceContent({
   readonly tabBar?: React.ReactNode
 }) {
   const actions = usePanelActions()
+  const pendingClosePanelTab = usePendingClosePanelTab()
+  const isClosingPanelTab =
+    panelTabId !== undefined &&
+    pendingClosePanelTab.tabId === panelTabId &&
+    pendingClosePanelTab.workspaceId === workspaceId
 
-  if (isEmptyWorkspace) {
-    return (
+  const mainPanel = (
+    <div className="relative flex h-full min-h-0 flex-col">
+      {tabBar}
       <div className="min-h-0 flex-1">
-        <EmptyWorkspaceState workspaceId={workspaceId} />
+        {isEmptyWorkspace ? (
+          <EmptyWorkspaceState workspaceId={workspaceId} />
+        ) : (
+          <PanelManager layout={effectiveLayout ?? undefined} />
+        )}
       </div>
-    )
-  }
+      {isClosingPanelTab && (
+        <PanelTabCloseConfirmDialog
+          onCancel={pendingClosePanelTab.onCancel}
+          onConfirm={pendingClosePanelTab.onConfirm}
+        />
+      )}
+    </div>
+  )
 
   if (hasSidePanels) {
     return (
@@ -429,12 +457,7 @@ function WorkspaceContent({
           </>
         )}
         <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
-          <div className="flex h-full min-h-0 flex-col">
-            {tabBar}
-            <div className="min-h-0 flex-1">
-              <PanelManager layout={effectiveLayout ?? undefined} />
-            </div>
-          </div>
+          {mainPanel}
         </ResizablePanel>
         {showDiff && diffWorkspaceId !== null && (
           <>
@@ -470,10 +493,51 @@ function WorkspaceContent({
     )
   }
 
+  return <div className="min-h-0 flex-1">{mainPanel}</div>
+}
+
+function WorkspaceFrameCloseDialog({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const pendingCloseWorkspace = usePendingCloseWorkspace()
+
+  if (
+    workspaceId === undefined ||
+    pendingCloseWorkspace.workspaceId !== workspaceId
+  ) {
+    return null
+  }
+
   return (
-    <div className="min-h-0 flex-1">
-      <PanelManager layout={effectiveLayout ?? undefined} />
-    </div>
+    <WorkspaceCloseConfirmDialog
+      onCancel={pendingCloseWorkspace.onCancel}
+      onConfirm={pendingCloseWorkspace.onConfirm}
+    />
+  )
+}
+
+function WorkspaceFrameDestroyOnCloseDialog({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const pendingDestroyOnCloseWorkspace = usePendingDestroyOnCloseWorkspace()
+
+  if (
+    workspaceId === undefined ||
+    pendingDestroyOnCloseWorkspace.workspaceId !== workspaceId
+  ) {
+    return null
+  }
+
+  return (
+    <WorkspaceDestroyOnCloseConfirmDialog
+      onCancel={pendingDestroyOnCloseWorkspace.onCancel}
+      onCloseAndDestroy={pendingDestroyOnCloseWorkspace.onCloseAndDestroy}
+      onConfirm={pendingDestroyOnCloseWorkspace.onConfirm}
+    />
   )
 }
 
@@ -800,6 +864,7 @@ function WorkspaceFrame({
     <div
       className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col ${isDragging ? 'opacity-40' : ''}`}
       data-testid="workspace-frame"
+      data-workspace-id={workspaceId}
       ref={frameRef}
     >
       {closestEdge === 'top' && (
@@ -820,7 +885,6 @@ function WorkspaceFrame({
         treeIsOpen={showTree}
         workspaceId={workspaceId}
       />
-      {!(isMinimized || hasSidePanels) && tabBarElement}
       {!isMinimized && (
         <WorkspaceContent
           closeSidePanel={closeSidePanel}
@@ -829,16 +893,19 @@ function WorkspaceFrame({
           hasSidePanels={hasSidePanels}
           isEmptyWorkspace={isEmptyWorkspace}
           mainPanelSize={mainPanelSize}
+          panelTabId={tileLeaf?.activePanelTabId}
           reviewWorkspaceId={reviewWorkspaceId}
           showDiff={showDiff}
           showReview={showReview}
           showTree={showTree}
           sidePanelSize={sidePanelSize}
-          tabBar={hasSidePanels ? tabBarElement : undefined}
+          tabBar={tabBarElement}
           treeWorkspaceId={treeWorkspaceId}
           workspaceId={workspaceId}
         />
       )}
+      <WorkspaceFrameCloseDialog workspaceId={workspaceId} />
+      <WorkspaceFrameDestroyOnCloseDialog workspaceId={workspaceId} />
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
       )}

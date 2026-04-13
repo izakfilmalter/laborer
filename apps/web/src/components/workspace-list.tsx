@@ -55,9 +55,12 @@ import {
   type ReactNode,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
@@ -73,11 +76,9 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -140,6 +141,7 @@ const PLAN_BRANCH_PREFIX = 'plan/'
  * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
  */
 const FULL_URL_RE = /^https?:\/\//u
+const DIALOG_TEXT_CLASS = 'text-balance text-muted-foreground text-xs/relaxed'
 
 type WorkspaceStatus =
   | 'creating'
@@ -478,7 +480,7 @@ function SandboxPortButton({
  * displays any uncommitted files and active terminal sessions that will
  * be lost. When there are no warnings, shows a generic confirmation.
  */
-function DestroyDialogDescription({
+function DestroyDialogBody({
   activeTerminals,
   branchName,
   dirtyFiles,
@@ -512,7 +514,7 @@ function DestroyDialogDescription({
 
   if (isChecking && !hasWarnings) {
     return (
-      <AlertDialogDescription>
+      <div className="flex flex-col items-center gap-2 text-center text-muted-foreground text-xs/relaxed">
         <span className="flex flex-col items-center gap-2">
           <Spinner className="size-3" />
           <span>
@@ -521,19 +523,19 @@ function DestroyDialogDescription({
             for uncommitted changes...
           </span>
         </span>
-      </AlertDialogDescription>
+      </div>
     )
   }
 
   if (hasWarnings) {
     return (
       <>
-        <AlertDialogDescription>
+        <p className={DIALOG_TEXT_CLASS}>
           Workspace{' '}
           <strong className="font-mono text-foreground">{branchName}</strong>{' '}
           has {warningsSummary.join(' and')} that will be lost. Are you sure you
           want to force destroy it?
-        </AlertDialogDescription>
+        </p>
         {additionalChecksLabel && (
           <p className="flex items-center gap-2 text-muted-foreground text-xs">
             <Spinner className="size-3" />
@@ -566,12 +568,136 @@ function DestroyDialogDescription({
   }
 
   return (
-    <AlertDialogDescription>
+    <p className={DIALOG_TEXT_CLASS}>
       This will permanently destroy workspace{' '}
       <strong className="font-mono text-foreground">{branchName}</strong>. All
       running processes (terminals, dev servers, agents) will be killed, the git
       worktree will be removed. This action cannot be undone.
-    </AlertDialogDescription>
+    </p>
+  )
+}
+
+function findVisibleWorkspaceFrameElement(
+  workspaceId: string
+): HTMLElement | null {
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  const frames = document.querySelectorAll<HTMLElement>(
+    '[data-testid="workspace-frame"]'
+  )
+
+  for (const frame of frames) {
+    if (frame.dataset.workspaceId !== workspaceId) {
+      continue
+    }
+
+    if (frame.getClientRects().length === 0) {
+      continue
+    }
+
+    return frame
+  }
+
+  return null
+}
+
+function InlineDestroyWorkspaceDialog({
+  activeTerminals,
+  branchName,
+  dirtyFiles,
+  hasWarnings,
+  isCheckingDirtyFiles,
+  isCheckingDestroyState,
+  isCheckingTerminals,
+  onCancel,
+  onConfirm,
+}: {
+  readonly activeTerminals: readonly ActiveTerminal[]
+  readonly branchName: string
+  readonly dirtyFiles: readonly string[]
+  readonly hasWarnings: boolean
+  readonly isCheckingDirtyFiles: boolean
+  readonly isCheckingDestroyState: boolean
+  readonly isCheckingTerminals: boolean
+  readonly onCancel: () => void
+  readonly onConfirm: () => void
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    dialogRef.current?.focus()
+  }, [])
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onCancel()
+        return
+      }
+
+      if (isExactEnter(event.nativeEvent)) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+
+      if (isMetaEnter(event.nativeEvent) && !isCheckingDestroyState) {
+        event.preventDefault()
+        event.stopPropagation()
+        onConfirm()
+      }
+    },
+    [isCheckingDestroyState, onCancel, onConfirm]
+  )
+
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Dialog container needs keyboard event handling for Escape and Cmd+Enter shortcuts
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center"
+      onKeyDown={handleKeyDown}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel()
+        }
+      }}
+      ref={dialogRef}
+      role="alertdialog"
+      tabIndex={-1}
+    >
+      <div className="absolute inset-0 bg-foreground/10 supports-backdrop-filter:backdrop-blur-xs" />
+      <div className="relative z-10 grid w-full max-w-sm gap-4 bg-background p-4 ring-1 ring-foreground/10">
+        <div className="grid gap-1.5 text-left">
+          <h2 className="font-medium text-sm">
+            {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
+          </h2>
+          <DestroyDialogBody
+            activeTerminals={activeTerminals}
+            branchName={branchName}
+            dirtyFiles={dirtyFiles}
+            isCheckingDirtyFiles={isCheckingDirtyFiles}
+            isCheckingTerminals={isCheckingTerminals}
+          />
+        </div>
+        <div className="flex flex-row justify-end gap-2">
+          <Button onClick={onCancel} variant="outline">
+            Cancel <Kbd>Esc</Kbd>
+          </Button>
+          <Button
+            disabled={isCheckingDestroyState}
+            onClick={onConfirm}
+            variant="destructive"
+          >
+            {hasWarnings ? 'Force Destroy' : 'Destroy'}
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -672,57 +798,73 @@ function DestroyWorkspaceButton({
 
   const hasWarnings = dirtyFiles.length > 0 || activeTerminals.length > 0
   const isCheckingDestroyState = isCheckingDirtyFiles || isCheckingTerminals
+  const visibleWorkspaceFrameElement = dialogOpen
+    ? findVisibleWorkspaceFrameElement(workspaceId)
+    : null
 
-  const handleDialogOpen = (open: boolean) => {
-    setDialogOpen(open)
-    if (!open) {
+  const handleDialogOpen = useCallback(
+    (open: boolean) => {
+      setDialogOpen(open)
+      if (!open) {
+        resetDestroyChecks()
+        return
+      }
+
+      startChecks()
+    },
+    [resetDestroyChecks, startChecks]
+  )
+
+  const handleDestroy = useCallback(
+    (force?: boolean) => {
+      // Close dialog immediately and run destruction in the background
+      setDialogOpen(false)
       resetDestroyChecks()
-      return
-    }
 
-    startChecks()
-  }
+      const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
 
-  const handleDestroy = (force?: boolean) => {
-    // Close dialog immediately and run destruction in the background
-    setDialogOpen(false)
-    resetDestroyChecks()
-
-    const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
-
-    destroyWorkspace({
-      payload: { workspaceId, force },
-    })
-      .then(() => {
-        // Use forceCloseWorkspace to bypass the running-process confirmation
-        // gate — the user already confirmed destruction in this dialog which
-        // warned about active terminals.
-        panelActions?.forceCloseWorkspace(workspaceId)
-        toast.success(`Workspace "${branchName}" destroyed successfully`, {
-          id: toastId,
+      destroyWorkspace({
+        payload: { workspaceId, force },
+      })
+        .then(() => {
+          // Use forceCloseWorkspace to bypass the running-process confirmation
+          // gate — the user already confirmed destruction in this dialog which
+          // warned about active terminals.
+          panelActions?.forceCloseWorkspace(workspaceId)
+          toast.success(`Workspace "${branchName}" destroyed successfully`, {
+            id: toastId,
+          })
         })
-      })
-      .catch((error: unknown) => {
-        const message = extractErrorMessage(error)
-        toast.error(message, { id: toastId })
-      })
-  }
+        .catch((error: unknown) => {
+          const message = extractErrorMessage(error)
+          toast.error(message, { id: toastId })
+        })
+    },
+    [
+      branchName,
+      destroyWorkspace,
+      panelActions,
+      resetDestroyChecks,
+      workspaceId,
+    ]
+  )
+
+  const handleConfirmDestroy = useCallback(() => {
+    handleDestroy(hasWarnings ? true : undefined)
+  }, [handleDestroy, hasWarnings])
 
   return (
-    <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
+    <>
       <Tooltip>
         <TooltipTrigger
           render={
-            <AlertDialogTrigger
-              render={
-                <Button
-                  aria-label={`Destroy workspace ${branchName}`}
-                  disabled={!isServerReady}
-                  size="icon-xs"
-                  title={isServerReady ? undefined : 'Connecting to server...'}
-                  variant="ghost"
-                />
-              }
+            <Button
+              aria-label={`Destroy workspace ${branchName}`}
+              disabled={!isServerReady}
+              onClick={() => handleDialogOpen(true)}
+              size="icon-xs"
+              title={isServerReady ? undefined : 'Connecting to server...'}
+              variant="ghost"
             />
           }
         >
@@ -730,47 +872,68 @@ function DestroyWorkspaceButton({
         </TooltipTrigger>
         <TooltipContent>Destroy workspace</TooltipContent>
       </Tooltip>
-      <AlertDialogContent
-        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-          if (isExactEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (isMetaEnter(event.nativeEvent) && !isCheckingDestroyState) {
-            event.preventDefault()
-            handleDestroy(hasWarnings ? true : undefined)
-          }
-        }}
+      {dialogOpen && visibleWorkspaceFrameElement
+        ? createPortal(
+            <InlineDestroyWorkspaceDialog
+              activeTerminals={activeTerminals}
+              branchName={branchName}
+              dirtyFiles={dirtyFiles}
+              hasWarnings={hasWarnings}
+              isCheckingDestroyState={isCheckingDestroyState}
+              isCheckingDirtyFiles={isCheckingDirtyFiles}
+              isCheckingTerminals={isCheckingTerminals}
+              onCancel={() => handleDialogOpen(false)}
+              onConfirm={handleConfirmDestroy}
+            />,
+            visibleWorkspaceFrameElement
+          )
+        : null}
+      <AlertDialog
+        onOpenChange={handleDialogOpen}
+        open={dialogOpen && visibleWorkspaceFrameElement === null}
       >
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
-          </AlertDialogTitle>
-          <DestroyDialogDescription
-            activeTerminals={activeTerminals}
-            branchName={branchName}
-            dirtyFiles={dirtyFiles}
-            isCheckingDirtyFiles={isCheckingDirtyFiles}
-            isCheckingTerminals={isCheckingTerminals}
-          />
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            Cancel <Kbd>Esc</Kbd>
-          </AlertDialogCancel>
-          <AlertDialogAction
-            disabled={isCheckingDestroyState}
-            onClick={() => handleDestroy(hasWarnings ? true : undefined)}
-            variant="destructive"
-          >
-            {hasWarnings ? 'Force Destroy' : 'Destroy'}
-            <Kbd>⌘</Kbd>
-            <Kbd>↵</Kbd>
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+        <AlertDialogContent
+          onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+            if (isExactEnter(event.nativeEvent)) {
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+            if (isMetaEnter(event.nativeEvent) && !isCheckingDestroyState) {
+              event.preventDefault()
+              handleConfirmDestroy()
+            }
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
+            </AlertDialogTitle>
+            <DestroyDialogBody
+              activeTerminals={activeTerminals}
+              branchName={branchName}
+              dirtyFiles={dirtyFiles}
+              isCheckingDirtyFiles={isCheckingDirtyFiles}
+              isCheckingTerminals={isCheckingTerminals}
+            />
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              Cancel <Kbd>Esc</Kbd>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isCheckingDestroyState}
+              onClick={handleConfirmDestroy}
+              variant="destructive"
+            >
+              {hasWarnings ? 'Force Destroy' : 'Destroy'}
+              <Kbd>⌘</Kbd>
+              <Kbd>↵</Kbd>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 

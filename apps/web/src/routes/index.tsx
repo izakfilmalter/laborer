@@ -33,7 +33,11 @@ import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
+  type PendingClosePanelTabState,
   type PendingCloseState,
+  type PendingCloseWindowTabState,
+  type PendingCloseWorkspaceState,
+  type PendingDestroyOnCloseWorkspaceState,
   type PendingPickerState,
   type PickerMode,
 } from '@/panels/panel-context'
@@ -54,9 +58,6 @@ import {
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import {
   CloseAppDialog,
-  ClosePanelTabDialog,
-  CloseWindowTabDialog,
-  CloseWorkspaceDialog,
   DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
@@ -391,6 +392,18 @@ function HomeComponent() {
     useState(false)
   const destroyOnCloseWorkspaceIdRef = useRef<string | null>(null)
   const destroyOnClosePaneIdRef = useRef<string | null>(null)
+  const pendingDestroyOnCloseWorkspaceId = destroyOnCloseDialogOpen
+    ? destroyOnCloseWorkspaceIdRef.current
+    : null
+  const isDestroyOnCloseWorkspaceVisible = useMemo(() => {
+    if (!(pendingDestroyOnCloseWorkspaceId && workspaceTileLayout)) {
+      return false
+    }
+
+    return getWorkspaceTileLeaves(workspaceTileLayout).some(
+      (leaf) => leaf.workspaceId === pendingDestroyOnCloseWorkspaceId
+    )
+  }, [pendingDestroyOnCloseWorkspaceId, workspaceTileLayout])
 
   /**
    * Destroy a workspace worktree and close all its panes.
@@ -494,6 +507,7 @@ function HomeComponent() {
       // Fallback: just close the pane
       panelActions.closePane(paneId)
     }
+    setDestroyOnCloseDialogOpen(false)
     destroyOnCloseWorkspaceIdRef.current = null
     destroyOnClosePaneIdRef.current = null
   }, [handleDestroyWorkspaceAndClose, panelActions])
@@ -504,9 +518,28 @@ function HomeComponent() {
     if (paneId) {
       panelActions.closePane(paneId)
     }
+    setDestroyOnCloseDialogOpen(false)
     destroyOnCloseWorkspaceIdRef.current = null
     destroyOnClosePaneIdRef.current = null
   }, [panelActions])
+
+  const handleCancelDestroyOnClose = useCallback(() => {
+    setDestroyOnCloseDialogOpen(false)
+    destroyOnCloseWorkspaceIdRef.current = null
+    destroyOnClosePaneIdRef.current = null
+  }, [])
+
+  const handleDestroyOnCloseDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setDestroyOnCloseDialogOpen(true)
+        return
+      }
+
+      handleCancelDestroyOnClose()
+    },
+    [handleCancelDestroyOnClose]
+  )
 
   /** Context value for the pane-scoped close confirmation dialog. */
   const pendingCloseState: PendingCloseState = useMemo(
@@ -555,10 +588,10 @@ function HomeComponent() {
     [windowLayout, gatedClosePane, panelActions]
   )
 
-  // Close-workspace confirmation dialog state
-  const [closeWorkspaceDialogOpen, setCloseWorkspaceDialogOpen] =
-    useState(false)
-  const pendingCloseWorkspaceIdRef = useRef<string | null>(null)
+  // Close-workspace confirmation state
+  const [pendingCloseWorkspaceId, setPendingCloseWorkspaceId] = useState<
+    string | null
+  >(null)
 
   /**
    * Gated closeWorkspace that checks if any terminal in the workspace has
@@ -577,8 +610,7 @@ function HomeComponent() {
           liveTerminals
         ) === 'confirm'
       ) {
-        pendingCloseWorkspaceIdRef.current = workspaceId
-        setCloseWorkspaceDialogOpen(true)
+        setPendingCloseWorkspaceId(workspaceId)
         return
       }
       panelActions.closeWorkspace(workspaceId)
@@ -587,17 +619,21 @@ function HomeComponent() {
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {
-    const workspaceId = pendingCloseWorkspaceIdRef.current
-    if (workspaceId) {
-      panelActions.closeWorkspace(workspaceId)
-      pendingCloseWorkspaceIdRef.current = null
+    if (!pendingCloseWorkspaceId) {
+      return
     }
-  }, [panelActions])
 
-  // Close-panel-tab confirmation dialog state — shown when the progressive
+    panelActions.closeWorkspace(pendingCloseWorkspaceId)
+    setPendingCloseWorkspaceId(null)
+  }, [panelActions, pendingCloseWorkspaceId])
+
+  const handleCancelCloseWorkspace = useCallback(() => {
+    setPendingCloseWorkspaceId(null)
+  }, [])
+
+  // Close-panel-tab confirmation state — shown when the progressive
   // close chain attempts to close a panel tab that has running processes.
-  const [closePanelTabDialogOpen, setClosePanelTabDialogOpen] = useState(false)
-  const pendingClosePanelTabRef = useRef<{
+  const [pendingClosePanelTab, setPendingClosePanelTab] = useState<{
     workspaceId: string
     tabId: string
   } | null>(null)
@@ -624,8 +660,7 @@ function HomeComponent() {
       const leaf = leaves.find((l) => l.workspaceId === workspaceId)
       const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
       if (panelTab && shouldConfirmClosePanelTab(panelTab, liveTerminals)) {
-        pendingClosePanelTabRef.current = { workspaceId, tabId }
-        setClosePanelTabDialogOpen(true)
+        setPendingClosePanelTab({ workspaceId, tabId })
         return
       }
       panelActions.removePanelTab?.(workspaceId, tabId)
@@ -634,17 +669,26 @@ function HomeComponent() {
   )
 
   const handleConfirmClosePanelTab = useCallback(() => {
-    const pending = pendingClosePanelTabRef.current
-    if (pending) {
-      panelActions.removePanelTab?.(pending.workspaceId, pending.tabId)
-      pendingClosePanelTabRef.current = null
+    if (!pendingClosePanelTab) {
+      return
     }
-  }, [panelActions])
 
-  // Close-window-tab confirmation dialog state — shown when closing a
+    panelActions.removePanelTab?.(
+      pendingClosePanelTab.workspaceId,
+      pendingClosePanelTab.tabId
+    )
+    setPendingClosePanelTab(null)
+  }, [panelActions, pendingClosePanelTab])
+
+  const handleCancelClosePanelTab = useCallback(() => {
+    setPendingClosePanelTab(null)
+  }, [])
+
+  // Close-window-tab confirmation state — shown when closing a
   // window tab that has terminals with running processes.
-  const [closeWindowTabDialogOpen, setCloseWindowTabDialogOpen] =
-    useState(false)
+  const [pendingCloseWindowTabId, setPendingCloseWindowTabId] = useState<
+    string | null
+  >(null)
 
   /**
    * Gated closeWindowTab that checks if any terminal across all workspaces
@@ -658,15 +702,86 @@ function HomeComponent() {
     }
     const activeTab = getActiveWindowTab(windowLayout)
     if (activeTab && shouldConfirmCloseWindowTab(activeTab, liveTerminals)) {
-      setCloseWindowTabDialogOpen(true)
+      setPendingCloseWindowTabId(activeTab.id)
       return
     }
     panelActions.closeWindowTab?.()
   }, [panelActions, liveTerminals])
 
   const handleConfirmCloseWindowTab = useCallback(() => {
+    if (!pendingCloseWindowTabId) {
+      return
+    }
+
+    if (panelActions.windowLayout?.activeTabId !== pendingCloseWindowTabId) {
+      panelActions.switchWindowTab?.(pendingCloseWindowTabId)
+    }
     panelActions.closeWindowTab?.()
-  }, [panelActions])
+    setPendingCloseWindowTabId(null)
+  }, [panelActions, pendingCloseWindowTabId])
+
+  const handleCancelCloseWindowTab = useCallback(() => {
+    setPendingCloseWindowTabId(null)
+  }, [])
+
+  const pendingCloseWorkspaceState: PendingCloseWorkspaceState = useMemo(
+    () => ({
+      workspaceId: pendingCloseWorkspaceId,
+      onConfirm: handleConfirmCloseWorkspace,
+      onCancel: handleCancelCloseWorkspace,
+    }),
+    [
+      pendingCloseWorkspaceId,
+      handleConfirmCloseWorkspace,
+      handleCancelCloseWorkspace,
+    ]
+  )
+
+  const pendingClosePanelTabState: PendingClosePanelTabState = useMemo(
+    () => ({
+      workspaceId: pendingClosePanelTab?.workspaceId ?? null,
+      tabId: pendingClosePanelTab?.tabId ?? null,
+      onConfirm: handleConfirmClosePanelTab,
+      onCancel: handleCancelClosePanelTab,
+    }),
+    [
+      pendingClosePanelTab,
+      handleConfirmClosePanelTab,
+      handleCancelClosePanelTab,
+    ]
+  )
+
+  const pendingCloseWindowTabState: PendingCloseWindowTabState = useMemo(
+    () => ({
+      tabId: pendingCloseWindowTabId,
+      onConfirm: handleConfirmCloseWindowTab,
+      onCancel: handleCancelCloseWindowTab,
+    }),
+    [
+      pendingCloseWindowTabId,
+      handleConfirmCloseWindowTab,
+      handleCancelCloseWindowTab,
+    ]
+  )
+
+  const pendingDestroyOnCloseWorkspaceState: PendingDestroyOnCloseWorkspaceState =
+    useMemo(
+      () => ({
+        workspaceId: isDestroyOnCloseWorkspaceVisible
+          ? pendingDestroyOnCloseWorkspaceId
+          : null,
+        onConfirm: handleDestroyOnCloseJustClose,
+        onCancel: handleCancelDestroyOnClose,
+        onCloseAndDestroy: handleDestroyOnCloseConfirm,
+      }),
+      [
+        isDestroyOnCloseWorkspaceVisible,
+        pendingDestroyOnCloseWorkspaceId,
+        handleDestroyOnCloseJustClose,
+        handleCancelDestroyOnClose,
+        handleDestroyOnCloseConfirm,
+      ]
+    )
 
   // Panel type picker state — when set, shows the picker overlay on the
   // specified pane. On type selection, the pending action (split/new tab)
@@ -944,24 +1059,13 @@ function HomeComponent() {
         activeWorkspaceId={activeWorkspaceId}
         fullscreenPaneId={fullscreenPaneId}
         pendingClose={pendingCloseState}
+        pendingClosePanelTab={pendingClosePanelTabState}
+        pendingCloseWindowTab={pendingCloseWindowTabState}
+        pendingCloseWorkspace={pendingCloseWorkspaceState}
+        pendingDestroyOnCloseWorkspace={pendingDestroyOnCloseWorkspaceState}
         pendingPicker={pendingPickerState}
         value={gatedPanelActions}
       >
-        <CloseWorkspaceDialog
-          onConfirm={handleConfirmCloseWorkspace}
-          onOpenChange={setCloseWorkspaceDialogOpen}
-          open={closeWorkspaceDialogOpen}
-        />
-        <ClosePanelTabDialog
-          onConfirm={handleConfirmClosePanelTab}
-          onOpenChange={setClosePanelTabDialogOpen}
-          open={closePanelTabDialogOpen}
-        />
-        <CloseWindowTabDialog
-          onConfirm={handleConfirmCloseWindowTab}
-          onOpenChange={setCloseWindowTabDialogOpen}
-          open={closeWindowTabDialogOpen}
-        />
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}
           open={isCloseAppDialogOpen}
@@ -969,8 +1073,8 @@ function HomeComponent() {
         <DestroyWorkspaceOnCloseDialog
           onCloseAndDestroy={handleDestroyOnCloseConfirm}
           onConfirm={handleDestroyOnCloseJustClose}
-          onOpenChange={setDestroyOnCloseDialogOpen}
-          open={destroyOnCloseDialogOpen}
+          onOpenChange={handleDestroyOnCloseDialogOpenChange}
+          open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
         />
         <ResizablePanelGroup
           orientation="horizontal"

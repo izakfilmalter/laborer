@@ -130,6 +130,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/xterm/` — [xterm.js](https://github.com/xtermjs/xterm.js) terminal emulator for the browser
 - `.reference/desktop/` — [GitHub Desktop](https://github.com/desktop/desktop) Git GUI client (Electron, TypeScript, React)
 - `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
+- `.reference/superhq/` — [SuperHQ](https://github.com/superhq-ai/superhq) sandboxed AI agent orchestration platform (Rust, GPUI, isolated coding agents)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

@@ -129,6 +129,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/xterm/` — [xterm.js](https://github.com/xtermjs/xterm.js) terminal emulator for the browser
 - `.reference/desktop/` — [GitHub Desktop](https://github.com/desktop/desktop) Git GUI client (Electron, TypeScript, React)
 - `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
+- `.reference/superhq/` — [SuperHQ](https://github.com/superhq-ai/superhq) sandboxed AI agent orchestration platform (Rust, GPUI, isolated coding agents)
 - `.reference/cmux/` — [cmux](https://github.com/manaflow-ai/cmux) terminal multiplexer
 - `.reference/brrr/` — [brrr](https://github.com/hsubra89/brrr) autonomous AI development loop CLI (ralph-loops, task orchestration)
 - `.reference/ghostty/` — [Ghostty](https://github.com/ghostty-org/ghostty) fast, native terminal emulator (Zig, GPU-accelerated rendering, platform integration)

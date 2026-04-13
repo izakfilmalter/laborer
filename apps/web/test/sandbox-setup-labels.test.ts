@@ -55,6 +55,12 @@ describe('getSandboxSetupLabel', () => {
     )
   })
 
+  it('returns "Checking Shuru availability..." for checking-shuru', () => {
+    expect(getSandboxSetupLabel('checking-shuru')).toBe(
+      'Checking Shuru availability...'
+    )
+  })
+
   it('returns "Restoring shared checkpoint..." for restoring-checkpoint', () => {
     expect(getSandboxSetupLabel('restoring-checkpoint')).toBe(
       'Restoring shared checkpoint...'
@@ -64,6 +70,18 @@ describe('getSandboxSetupLabel', () => {
   it('returns "Building shared checkpoint..." for building-base-checkpoint', () => {
     expect(getSandboxSetupLabel('building-base-checkpoint')).toBe(
       'Building shared checkpoint...'
+    )
+  })
+
+  it('returns "Allocating localhost preview port..." for allocating-port', () => {
+    expect(getSandboxSetupLabel('allocating-port')).toBe(
+      'Allocating localhost preview port...'
+    )
+  })
+
+  it('returns "Starting Shuru sandbox..." for starting-shuru', () => {
+    expect(getSandboxSetupLabel('starting-shuru')).toBe(
+      'Starting Shuru sandbox...'
     )
   })
 

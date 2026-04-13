@@ -109,7 +109,15 @@ const TestDockerDetection = Layer.succeed(
 const TestShuruDetection = Layer.succeed(
   ShuruDetection,
   ShuruDetection.of({
-    check: () => Effect.succeed({ available: false }),
+    check: () =>
+      Effect.succeed(
+        process.env.LABORER_TEST_SHURU_AVAILABLE === '1'
+          ? { available: true }
+          : {
+              available: false,
+              error: 'Shuru is disabled in the default RPC test layer.',
+            }
+      ),
   })
 )
 

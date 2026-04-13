@@ -43,10 +43,16 @@ const getSandboxSetupLabel = (step: string): string => {
       return 'Pushing code to sandbox...'
     case 'configuring-ssh':
       return 'Configuring SSH access...'
+    case 'checking-shuru':
+      return 'Checking Shuru availability...'
     case 'restoring-checkpoint':
       return 'Restoring shared checkpoint...'
     case 'building-base-checkpoint':
       return 'Building shared checkpoint...'
+    case 'allocating-port':
+      return 'Allocating localhost preview port...'
+    case 'starting-shuru':
+      return 'Starting Shuru sandbox...'
     case 'starting-sandbox':
       return 'Starting sandbox...'
     default:

@@ -280,17 +280,17 @@ TDD approach: Start with one RPC-level test that creates a new workspace resolve
 
 ### Acceptance criteria
 
-- [ ] Workspace creation eagerly starts Shuru sandbox setup when `provider = 'shuru'`
-- [ ] `workspace.startSandbox` works for Shuru workspaces that need retry/manual start behavior
-- [ ] Shuru-specific setup steps are emitted through existing sandbox setup progress mechanisms
-- [ ] Failed Shuru setup clears progress state and leaves the workspace retryable
-- [ ] RPC- and service-level tests cover both eager boot and retry flows
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] Workspace creation eagerly starts Shuru sandbox setup when `provider = 'shuru'`
+- [x] `workspace.startSandbox` works for Shuru workspaces that need retry/manual start behavior
+- [x] Shuru-specific setup steps are emitted through existing sandbox setup progress mechanisms
+- [x] Failed Shuru setup clears progress state and leaves the workspace retryable
+- [x] RPC- and service-level tests cover both eager boot and retry flows
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 6 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -333,7 +333,7 @@ TDD approach: Start with one reconciliation test that seeds LiveStore with a `ru
 
 ### Blocked by
 
-- Blocked by "Eager boot on workspace creation and retry/start flows" (Issue 7)
+None - Issue 7 is complete.
 
 ### User stories addressed
 

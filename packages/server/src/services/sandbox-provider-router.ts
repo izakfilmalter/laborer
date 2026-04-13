@@ -21,7 +21,7 @@
  */
 
 import { RpcError, type SandboxProviderType } from '@laborer/shared/rpc'
-import { tables } from '@laborer/shared/schema'
+import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, Layer, Option, pipe } from 'effect'
 
 import {
@@ -167,6 +167,12 @@ const SandboxProviderRouterLayer: Layer.Layer<
           return daytona
         }
         if (provider === 'shuru') {
+          store.commit(
+            events.sandboxSetupStepChanged({
+              workspaceId: params.workspaceId,
+              step: 'checking-shuru',
+            })
+          )
           yield* ensureShuruAvailable()
           return shuru
         }

@@ -387,17 +387,23 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             `Creating Shuru sandbox for workspace "${params.workspaceId}" from worktree "${params.worktreePath}"`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
+          const baseCheckpoint = yield* resolveBaseCheckpoint(params)
+
           const previewPort =
             params.devServerConfig.port === null
               ? null
-              : yield* Effect.tryPromise({
-                  try: () => allocatePreviewPort(allocatedPreviewPorts),
-                  catch: (error) =>
-                    new RpcError({
-                      message: `Failed to allocate a localhost preview port for workspace "${params.workspaceId}": ${error instanceof Error ? error.message : String(error)}`,
-                      code: 'SHURU_START_FAILED',
-                    }),
-                })
+              : yield* setSetupStep(params.workspaceId, 'allocating-port').pipe(
+                  Effect.andThen(
+                    Effect.tryPromise({
+                      try: () => allocatePreviewPort(allocatedPreviewPorts),
+                      catch: (error) =>
+                        new RpcError({
+                          message: `Failed to allocate a localhost preview port for workspace "${params.workspaceId}": ${error instanceof Error ? error.message : String(error)}`,
+                          code: 'SHURU_START_FAILED',
+                        }),
+                    })
+                  )
+                )
 
           if (previewPort !== null) {
             yield* Effect.sync(() => {
@@ -405,14 +411,7 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             })
           }
 
-          const baseCheckpoint = yield* resolveBaseCheckpoint(params).pipe(
-            Effect.catchAll((error) =>
-              releasePreviewPort(params.workspaceId, previewPort).pipe(
-                Effect.andThen(setSetupStep(params.workspaceId, null)),
-                Effect.andThen(Effect.fail(error))
-              )
-            )
-          )
+          yield* setSetupStep(params.workspaceId, 'starting-shuru')
 
           const sandbox = yield* shuruClient
             .startSandbox({

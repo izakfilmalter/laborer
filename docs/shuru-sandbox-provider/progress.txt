@@ -33,3 +33,9 @@
 - Added real Shuru `pauseSandbox()` and `resumeSandbox()` behavior on top of workspace runtime checkpoints, restoring paused sandboxes from the latest runtime checkpoint when available and falling back to the shared base checkpoint when only base metadata survives.
 - Extended the fake Shuru CLI plus provider tests to prove VM-private state survives pause/resume through the public sandbox path, while a fresh provider process correctly falls back to the shared base checkpoint.
 - Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`
+
+2026-04-13
+- Completed Issue 7 (eager boot on workspace creation and retry/start flows) because it is the highest-priority unblocked slice and it unlocks the final Shuru reconciliation work in Issue 8.
+- Routed `workspace.create` through eager Shuru sandbox startup after local worktree setup, added Shuru-specific progress steps (`checking-shuru`, `allocating-port`, `starting-shuru`) to the existing sandbox setup channel, and preserved retryability by clearing failed setup state before `workspace.startSandbox` retries.
+- Added focused RPC coverage for eager Shuru boot during workspace creation plus failed-boot recovery through `workspace.startSandbox`, and updated the web setup-step labels for the new Shuru progress states.
+- Verification: `bun run typecheck`; `bun run format:fix`; `bun --cwd packages/server test -- test/rpc/workspace-management.test.ts`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd apps/web test -- test/sandbox-setup-labels.test.ts`

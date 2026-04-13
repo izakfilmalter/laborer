@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Either, Ref, type Scope } from 'effect'
@@ -10,6 +11,29 @@ type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
 const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
+const SHURU_ID_PATTERN = /^shuru:/
+const EMPTY_ENV_VALUE = ''
+const fakeShuruCliPath = fileURLToPath(
+  new URL('../fixtures/fake-shuru-cli.js', import.meta.url)
+)
+
+interface WorkspaceTestRow {
+  readonly errorMessage: string | null
+  readonly sandboxId: string | null
+  readonly sandboxPort: number | null
+  readonly sandboxProvider: string | null
+  readonly sandboxSetupStep: string | null
+  readonly sandboxStatus: string | null
+  readonly sandboxUrl: string | null
+  readonly status: string
+}
+
+interface TestStoreEvent {
+  readonly args?: {
+    readonly step?: string | null
+  }
+  readonly name?: string
+}
 
 /**
  * Poll until the workspace row is removed from LiveStore.
@@ -32,12 +56,50 @@ const waitForWorkspaceRemoval = (
     assert.fail('Timed out waiting for workspace row to be removed')
   })
 
+const waitForWorkspaceRow = (
+  store: RpcTestContext['store'],
+  workspaceId: string,
+  predicate: (row: WorkspaceTestRow) => boolean,
+  failureMessage: string
+) =>
+  Effect.gen(function* () {
+    const maxAttempts = 200
+    for (let i = 0; i < maxAttempts; i++) {
+      yield* Effect.sleep('100 millis')
+      const row = store.query(tables.workspaces.where('id', workspaceId))[0] as
+        | WorkspaceTestRow
+        | undefined
+      if (row !== undefined && predicate(row)) {
+        return row
+      }
+    }
+
+    assert.fail(failureMessage)
+  })
+
 const cleanupTempRoots = (tempRoots: readonly string[]) => {
   for (const root of tempRoots) {
     if (existsSync(root)) {
       rmSync(root, { recursive: true, force: true })
     }
   }
+}
+
+const restoreShuruTestEnv = (previous: {
+  readonly available: string | undefined
+  readonly bin: string | undefined
+  readonly checkpointDir: string | undefined
+  readonly logPath: string | undefined
+  readonly statError: string | undefined
+}) => {
+  process.env.LABORER_TEST_SHURU_AVAILABLE =
+    previous.available ?? EMPTY_ENV_VALUE
+  process.env.LABORER_SHURU_BIN = previous.bin ?? EMPTY_ENV_VALUE
+  process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR =
+    previous.checkpointDir ?? EMPTY_ENV_VALUE
+  process.env.LABORER_TEST_SHURU_LOG_PATH = previous.logPath ?? EMPTY_ENV_VALUE
+  process.env.LABORER_TEST_SHURU_STAT_ERROR =
+    previous.statError ?? EMPTY_ENV_VALUE
 }
 
 const runWithRpcTestContext = <A, E>(
@@ -546,6 +608,205 @@ describe('LaborerRpcs workspace management', () => {
               'Timed out waiting for workspace to transition to errored'
             )
           })
+        })
+      )
+  )
+
+  it.scopedLive(
+    'workspace.create eagerly boots a Shuru sandbox and emits Shuru setup steps',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const previousEnv = {
+            available: process.env.LABORER_TEST_SHURU_AVAILABLE,
+            bin: process.env.LABORER_SHURU_BIN,
+            checkpointDir: process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR,
+            logPath: process.env.LABORER_TEST_SHURU_LOG_PATH,
+            statError: process.env.LABORER_TEST_SHURU_STAT_ERROR,
+          }
+          const tempRoots: string[] = []
+
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              restoreShuruTestEnv(previousEnv)
+              cleanupTempRoots(tempRoots)
+            })
+          )
+
+          const repoPath = initRepo('rpc-workspace-create-shuru', tempRoots)
+          const worktreeRoot = createTempDir(
+            'rpc-workspace-create-shuru-root',
+            tempRoots
+          )
+          const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+          const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+          const observedSandboxSteps: Array<string | null> = []
+          const originalCommit = store.commit.bind(store)
+          const mutableStore = store as { commit: typeof store.commit }
+
+          process.env.LABORER_TEST_SHURU_AVAILABLE = '1'
+          process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+          process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+          process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+          mutableStore.commit = ((event: unknown, ...rest: unknown[]) => {
+            const trackedEvent = event as TestStoreEvent
+
+            if (trackedEvent.name === 'v2.SandboxSetupStepChanged') {
+              observedSandboxSteps.push(trackedEvent.args?.step ?? null)
+            }
+
+            return (originalCommit as (...args: unknown[]) => void)(
+              event,
+              ...rest
+            )
+          }) as typeof store.commit
+
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              mutableStore.commit = originalCommit as typeof store.commit
+            })
+          )
+
+          writeLaborerConfig(repoPath, {
+            devServer: {
+              installCommand: 'true',
+              port: 3000,
+              provider: 'shuru',
+            },
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add shuru laborer config"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const workspace = yield* client.workspace.create({
+            branchName: 'feature/rpc-create-shuru',
+            projectId: project.id,
+          })
+
+          assert.strictEqual(workspace.status, 'creating')
+
+          const workspaceRow = yield* waitForWorkspaceRow(
+            store,
+            workspace.id,
+            (row) => row.sandboxStatus === 'running' && row.sandboxId !== null,
+            'Timed out waiting for eager Shuru sandbox boot during workspace.create'
+          )
+
+          assert.strictEqual(workspaceRow.status, 'running')
+          assert.strictEqual(workspaceRow.sandboxProvider, 'shuru')
+          assert.strictEqual(workspaceRow.sandboxUrl, '127.0.0.1')
+          assert.strictEqual(typeof workspaceRow.sandboxPort, 'number')
+          assert.match(workspaceRow.sandboxId ?? '', SHURU_ID_PATTERN)
+          assert.isTrue(existsSync(workspace.worktreePath))
+
+          assert.isTrue(observedSandboxSteps.includes('checking-shuru'))
+          assert.isTrue(
+            observedSandboxSteps.includes('building-base-checkpoint')
+          )
+          assert.isTrue(observedSandboxSteps.includes('restoring-checkpoint'))
+          assert.isTrue(observedSandboxSteps.includes('allocating-port'))
+          assert.isTrue(observedSandboxSteps.includes('starting-shuru'))
+
+          const argvEntries = readFileSync(logPath, 'utf-8')
+            .trim()
+            .split('\n')
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((entry) => entry.type === 'argv')
+
+          assert.strictEqual(argvEntries.length >= 2, true)
+        })
+      )
+  )
+
+  it.scopedLive(
+    'workspace.startSandbox retries a failed Shuru eager boot after progress is cleared',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const previousEnv = {
+            available: process.env.LABORER_TEST_SHURU_AVAILABLE,
+            bin: process.env.LABORER_SHURU_BIN,
+            checkpointDir: process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR,
+            logPath: process.env.LABORER_TEST_SHURU_LOG_PATH,
+            statError: process.env.LABORER_TEST_SHURU_STAT_ERROR,
+          }
+          const tempRoots: string[] = []
+
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              restoreShuruTestEnv(previousEnv)
+              cleanupTempRoots(tempRoots)
+            })
+          )
+
+          const repoPath = initRepo('rpc-workspace-start-shuru', tempRoots)
+          const worktreeRoot = createTempDir(
+            'rpc-workspace-start-shuru-root',
+            tempRoots
+          )
+          const checkpointDir = join(repoPath, 'fake-shuru-checkpoints')
+          const logPath = join(repoPath, 'fake-shuru-log.ndjson')
+
+          process.env.LABORER_TEST_SHURU_AVAILABLE = '1'
+          process.env.LABORER_SHURU_BIN = `node ${fakeShuruCliPath}`
+          process.env.LABORER_TEST_SHURU_CHECKPOINT_DIR = checkpointDir
+          process.env.LABORER_TEST_SHURU_LOG_PATH = logPath
+          process.env.LABORER_TEST_SHURU_STAT_ERROR = '1'
+
+          writeLaborerConfig(repoPath, {
+            devServer: {
+              port: 3000,
+              provider: 'shuru',
+            },
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add failing shuru laborer config"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const workspace = yield* client.workspace.create({
+            branchName: 'feature/rpc-start-shuru',
+            projectId: project.id,
+          })
+
+          const erroredRow = yield* waitForWorkspaceRow(
+            store,
+            workspace.id,
+            (row) => row.status === 'errored',
+            'Timed out waiting for the failed eager Shuru boot to mark the workspace errored'
+          )
+
+          assert.isNull(erroredRow.sandboxId)
+          assert.isNull(erroredRow.sandboxSetupStep)
+          assert.include(erroredRow.errorMessage ?? '', 'mount unavailable')
+
+          process.env.LABORER_TEST_SHURU_STAT_ERROR = EMPTY_ENV_VALUE
+
+          yield* client.workspace.startSandbox({ workspaceId: workspace.id })
+
+          const recoveredRow = yield* waitForWorkspaceRow(
+            store,
+            workspace.id,
+            (row) => row.sandboxStatus === 'running' && row.sandboxId !== null,
+            'Timed out waiting for workspace.startSandbox to recover the Shuru workspace'
+          )
+
+          assert.strictEqual(recoveredRow.status, 'running')
+          assert.strictEqual(recoveredRow.sandboxProvider, 'shuru')
+          assert.match(recoveredRow.sandboxId ?? '', SHURU_ID_PATTERN)
+
+          const argvEntries = readFileSync(logPath, 'utf-8')
+            .trim()
+            .split('\n')
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((entry) => entry.type === 'argv')
+
+          assert.strictEqual(argvEntries.length >= 2, true)
         })
       )
   )

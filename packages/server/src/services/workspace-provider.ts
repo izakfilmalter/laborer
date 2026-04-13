@@ -1088,10 +1088,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           | ((workspaceId: string) => Effect.Effect<void, RpcError>)
           | undefined
       }): Effect.Effect<void, RpcError> =>
-        params.devServer.image.value === null ||
-        params.devServer.provider.value === 'shuru'
-          ? Effect.void
-          : performSandboxSetup(params)
+        params.devServer.provider.value === 'shuru' ||
+        params.devServer.image.value !== null
+          ? performSandboxSetup(params)
+          : Effect.void
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (
@@ -1249,7 +1249,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 )
               }
 
-              // Phase 2: Start sandbox if devServer config has an image
+              // Phase 2: Start sandbox for providers that require eager boot.
               yield* maybePerformSandboxSetup({
                 id,
                 branchName: resolvedBranch,

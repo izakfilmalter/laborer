@@ -973,7 +973,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             return exitCode === 0 ? stdout.trim() : null
           },
           catch: () => null as never,
-        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+        })
 
       /**
        * Get the current branch name for a repo path.
@@ -996,7 +996,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             return branch === 'HEAD' ? null : branch
           },
           catch: () => null as never,
-        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+        })
 
       const performSandboxSetup = (params: {
         readonly id: string
@@ -1031,30 +1031,28 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           | ((workspaceId: string) => Effect.Effect<void, RpcError>)
           | undefined
       }): Effect.Effect<void, RpcError> =>
-        Effect.gen(function* () {
-          yield* sandboxProvider.createSandbox({
-            workspaceId: params.id,
-            worktreePath: params.worktreePath,
-            branchName: params.branchName,
-            projectName: params.projectName,
-            repoUrl: params.repoUrl,
-            currentBranch: params.currentBranch,
-            devServerConfig: {
-              autoOpen: params.devServer.autoOpen.value,
-              autoStopInterval: params.devServer.autoStopInterval.value,
-              dockerfile: params.devServer.dockerfile.value,
-              image: params.devServer.image.value,
-              installCommand: params.devServer.installCommand.value,
-              network: params.devServer.network.value,
-              port: params.devServer.port.value,
-              provider: params.devServer.provider.value,
-              resources: params.devServer.resources.value,
-              setupScripts: params.devServer.setupScripts.value,
-              startCommand: params.devServer.startCommand.value,
-              workdir: params.devServer.workdir.value,
-            },
-            onReady: params.onReady,
-          })
+        sandboxProvider.createSandbox({
+          workspaceId: params.id,
+          worktreePath: params.worktreePath,
+          branchName: params.branchName,
+          projectName: params.projectName,
+          repoUrl: params.repoUrl,
+          currentBranch: params.currentBranch,
+          devServerConfig: {
+            autoOpen: params.devServer.autoOpen.value,
+            autoStopInterval: params.devServer.autoStopInterval.value,
+            dockerfile: params.devServer.dockerfile.value,
+            image: params.devServer.image.value,
+            installCommand: params.devServer.installCommand.value,
+            network: params.devServer.network.value,
+            port: params.devServer.port.value,
+            provider: params.devServer.provider.value,
+            resources: params.devServer.resources.value,
+            setupScripts: params.devServer.setupScripts.value,
+            startCommand: params.devServer.startCommand.value,
+            workdir: params.devServer.workdir.value,
+          },
+          onReady: params.onReady,
         })
 
       const maybePerformSandboxSetup = (params: {
@@ -1752,18 +1750,14 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
             )
 
-          // Docker requires an explicit image; Daytona uses a default image
-          // when none is configured. Only gate on missing image for Docker.
+          // Docker requires an explicit image; Daytona and Shuru do not.
           const devServerImage = resolvedConfig.devServer.image.value
           const effectiveProvider = resolvedConfig.devServer.provider.value
-          if (effectiveProvider === 'shuru') {
-            return yield* new RpcError({
-              message:
-                'Shuru sandbox lifecycle is not implemented yet. Provider selection is available, but starting Shuru sandboxes lands in the next slice.',
-              code: 'SHURU_NOT_IMPLEMENTED',
-            })
-          }
-          if (devServerImage === null && effectiveProvider !== 'daytona') {
+          if (
+            devServerImage === null &&
+            effectiveProvider !== 'daytona' &&
+            effectiveProvider !== 'shuru'
+          ) {
             return yield* new RpcError({
               message:
                 'No devServer.image configured in laborer.json — cannot start sandbox',

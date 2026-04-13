@@ -3,3 +3,9 @@
 - Added `shuru` across config/RPC/provider enums, global default storage, and project config round-trips.
 - Added local Shuru availability detection for macOS 14+ Apple Silicon plus `shuru` on `PATH`, and surfaced the reason in project/app settings while keeping the option visible but disabled when unavailable.
 - Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/rpc/config-management.test.ts`; `bun --cwd apps/web test -- test/project-settings-modal.helpers.test.ts test/project-settings-modal.test.tsx`
+
+2026-04-13
+- Completed Issue 2 (hello-world Shuru sandbox lifecycle through `SandboxProvider`) because it is the highest-priority remaining slice and unblocks previews, checkpoint caching, and broader workflow integration.
+- Added a process-owned `ShuruClient` for `shuru run --stdio`, a routed `ShuruSandboxProvider` create/destroy path, a fake Shuru CLI fixture, and provider-level lifecycle coverage through the public `SandboxProvider` interface.
+- Tightened the JSON-RPC parsing and Effect typing around Shuru startup/cleanup so the lifecycle slice passes the repo feedback loops cleanly.
+- Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`

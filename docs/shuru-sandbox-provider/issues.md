@@ -66,19 +66,19 @@ TDD approach: Write one provider-level integration test that creates a Shuru-bac
 
 ### Acceptance criteria
 
-- [ ] A Shuru client module can spawn and speak to `shuru run --stdio`
-- [ ] `ShuruSandboxProvider` implements `createSandbox` and `destroySandbox`
-- [ ] The provider mounts the local worktree into `/workspace` using read-only Shuru mounts
-- [ ] `SandboxProviderRouter` can route `provider = 'shuru'` workspaces to the Shuru provider
-- [ ] Creating a Shuru sandbox records provider-appropriate `sandboxId`, `sandboxStatus`, and provider metadata in LiveStore
-- [ ] Destroying a Shuru sandbox clears sandbox runtime state cleanly
-- [ ] Provider behavior is tested through public service interfaces
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] A Shuru client module can spawn and speak to `shuru run --stdio`
+- [x] `ShuruSandboxProvider` implements `createSandbox` and `destroySandbox`
+- [x] The provider mounts the local worktree into `/workspace` using read-only Shuru mounts
+- [x] `SandboxProviderRouter` can route `provider = 'shuru'` workspaces to the Shuru provider
+- [x] Creating a Shuru sandbox records provider-appropriate `sandboxId`, `sandboxStatus`, and provider metadata in LiveStore
+- [x] Destroying a Shuru sandbox clears sandbox runtime state cleanly
+- [x] Provider behavior is tested through public service interfaces
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 1 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -123,7 +123,7 @@ TDD approach: Start with one provider test that creates two Shuru workspaces con
 
 ### Blocked by
 
-- Blocked by "Hello-world Shuru sandbox lifecycle through `SandboxProvider`" (Issue 2)
+None - Issue 2 is complete.
 
 ### User stories addressed
 
@@ -209,7 +209,7 @@ TDD approach: Start with one cache-key behavior test that changes the lockfile h
 
 ### Blocked by
 
-- Blocked by "Hello-world Shuru sandbox lifecycle through `SandboxProvider`" (Issue 2)
+None - Issue 2 is complete.
 
 ### User stories addressed
 

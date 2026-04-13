@@ -27,3 +27,9 @@
 - Added shared Shuru base-checkpoint planning keyed by lockfile plus sandbox-relevant config, restored matching checkpoints into real sandbox boots, rebuilt the cache when the lockfile changed, and skipped rerunning setup scripts for checkpoint-backed Shuru dev-server sessions.
 - Added provider and terminal tests for checkpoint reuse, invalidation, and checkpoint-backed dev-server startup, and surfaced the new checkpoint progress states in the web sandbox setup labels.
 - Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`; `bun --cwd packages/server test -- test/shuru-dev-server-terminal.test.ts`; `bun --cwd apps/web test -- test/sandbox-setup-labels.test.ts`
+
+2026-04-13
+- Completed Issue 6 (workspace pause/resume via runtime checkpoint restore) because it is the highest-priority unblocked slice and it unlocks the Shuru workspace-start and retry flows in Issue 7.
+- Added real Shuru `pauseSandbox()` and `resumeSandbox()` behavior on top of workspace runtime checkpoints, restoring paused sandboxes from the latest runtime checkpoint when available and falling back to the shared base checkpoint when only base metadata survives.
+- Extended the fake Shuru CLI plus provider tests to prove VM-private state survives pause/resume through the public sandbox path, while a fresh provider process correctly falls back to the shared base checkpoint.
+- Verification: `bun run typecheck`; `bun run format`; `bun --cwd packages/server test -- test/shuru-sandbox-provider.test.ts`

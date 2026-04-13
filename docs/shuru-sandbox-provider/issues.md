@@ -239,18 +239,18 @@ TDD approach: Start with one provider-level test that pauses a Shuru workspace a
 
 ### Acceptance criteria
 
-- [ ] `pauseSandbox()` creates a workspace runtime checkpoint and stops the VM
-- [ ] `resumeSandbox()` restores from the workspace checkpoint when present
-- [ ] `resumeSandbox()` falls back to the shared base checkpoint when no workspace checkpoint exists
-- [ ] Sandbox status transitions correctly between `running` and `paused`
-- [ ] VM-private state survives pause/resume as expected
-- [ ] Tests cover both restore-from-runtime and fallback-to-base behavior
-- [ ] Type checks pass
-- [ ] Formatting passes
+- [x] `pauseSandbox()` creates a workspace runtime checkpoint and stops the VM
+- [x] `resumeSandbox()` restores from the workspace checkpoint when present
+- [x] `resumeSandbox()` falls back to the shared base checkpoint when no workspace checkpoint exists
+- [x] Sandbox status transitions correctly between `running` and `paused`
+- [x] VM-private state survives pause/resume as expected
+- [x] Tests cover both restore-from-runtime and fallback-to-base behavior
+- [x] Type checks pass
+- [x] Formatting passes
 
 ### Blocked by
 
-None - Issue 5 is complete.
+None - completed.
 
 ### User stories addressed
 
@@ -290,7 +290,7 @@ TDD approach: Start with one RPC-level test that creates a new workspace resolve
 
 ### Blocked by
 
-- Blocked by "Workspace pause/resume via runtime checkpoint restore" (Issue 6)
+None - Issue 6 is complete.
 
 ### User stories addressed
 

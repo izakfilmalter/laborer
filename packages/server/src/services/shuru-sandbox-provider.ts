@@ -20,6 +20,7 @@ import { ShuruDetection } from './shuru-detection.js'
 const logPrefix = 'ShuruSandboxProvider'
 const MAX_SHURU_CHECKPOINT_NAME_LENGTH = 63
 const SHURU_BASE_CHECKPOINT_NAME_PREFIX = 'laborer-shuru-base'
+const SHURU_RUNTIME_CHECKPOINT_NAME_PREFIX = 'laborer-shuru-runtime'
 const SHURU_CHECKPOINT_IMAGE_PREFIX = 'shuru-checkpoint:'
 const SHURU_CHECKPOINTS_DIR = join(
   homedir(),
@@ -36,14 +37,18 @@ interface ShuruBaseCheckpointPlan {
   readonly scripts: readonly string[]
 }
 
-const shuruNotImplemented = (operation: string) =>
-  new RpcError({
-    message: `Shuru ${operation} lands in a later slice. This iteration supports sandbox create/destroy, localhost preview URLs, and the sandboxed dev-server session.`,
-    code: 'SHURU_NOT_IMPLEMENTED',
-  })
-
 const buildShuruPreviewUrl = (port: number): string =>
   `http://${SHURU_PREVIEW_HOST}:${String(port)}`
+
+const buildShuruCheckpointImage = (checkpointName: string): string =>
+  `${SHURU_CHECKPOINT_IMAGE_PREFIX}${checkpointName}`
+
+const getCheckpointNameFromImage = (
+  sandboxImage: string | null
+): string | null =>
+  sandboxImage?.startsWith(SHURU_CHECKPOINT_IMAGE_PREFIX) === true
+    ? sandboxImage.slice(SHURU_CHECKPOINT_IMAGE_PREFIX.length)
+    : null
 
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", "'\\''")}'`
@@ -66,6 +71,12 @@ const buildShuruBaseCheckpointName = (
   cacheHash: string
 ): string =>
   `${SHURU_BASE_CHECKPOINT_NAME_PREFIX}-${sanitizeProjectSlug(projectName)}-${cacheHash}`.slice(
+    0,
+    MAX_SHURU_CHECKPOINT_NAME_LENGTH
+  )
+
+const buildShuruRuntimeCheckpointName = (workspaceId: string): string =>
+  `${SHURU_RUNTIME_CHECKPOINT_NAME_PREFIX}-${workspaceId}`.slice(
     0,
     MAX_SHURU_CHECKPOINT_NAME_LENGTH
   )
@@ -215,6 +226,7 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
       const shuruClient = yield* ShuruClient
       const shuruDetection = yield* ShuruDetection
       const allocatedPreviewPorts = new Set<number>()
+      const workspaceRuntimeCheckpoints = new Map<string, string>()
       const workspacePreviewPorts = new Map<string, number>()
 
       const releasePreviewPort = (
@@ -336,6 +348,31 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
         return checkpointPlan.name
       })
 
+      const resolveResumeCheckpoint = Effect.fn(
+        'ShuruSandboxProvider.resolveResumeCheckpoint'
+      )(function* (workspaceId: string, sandboxImage: string | null) {
+        const runtimeCheckpoint = workspaceRuntimeCheckpoints.get(workspaceId)
+        if (
+          runtimeCheckpoint !== undefined &&
+          checkpointExists(runtimeCheckpoint)
+        ) {
+          return runtimeCheckpoint
+        }
+
+        if (runtimeCheckpoint !== undefined) {
+          yield* Effect.sync(() => {
+            workspaceRuntimeCheckpoints.delete(workspaceId)
+          })
+        }
+
+        const baseCheckpoint = getCheckpointNameFromImage(sandboxImage)
+        if (baseCheckpoint !== null && checkpointExists(baseCheckpoint)) {
+          return baseCheckpoint
+        }
+
+        return null
+      })
+
       const createSandbox = Effect.fn('ShuruSandboxProvider.createSandbox')(
         function* (params: CreateSandboxParams) {
           if (params.worktreePath.length === 0) {
@@ -414,7 +451,7 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
               sandboxImage:
                 baseCheckpoint === null
                   ? 'shuru'
-                  : `${SHURU_CHECKPOINT_IMAGE_PREFIX}${baseCheckpoint}`,
+                  : buildShuruCheckpointImage(baseCheckpoint),
               sandboxProvider: 'shuru',
             })
           )
@@ -442,7 +479,16 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
             Effect.either,
             Effect.tap((result) =>
               result._tag === 'Right'
-                ? releasePreviewPort(workspaceId, workspace.value.sandboxPort)
+                ? releasePreviewPort(
+                    workspaceId,
+                    workspace.value.sandboxPort
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        workspaceRuntimeCheckpoints.delete(workspaceId)
+                      })
+                    )
+                  )
                 : Effect.logWarning(
                     `Failed to stop Shuru runtime for workspace "${workspaceId}": ${result.left.message}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -456,14 +502,130 @@ class ShuruSandboxProvider extends Context.Tag('@laborer/ShuruSandboxProvider')<
       )
 
       const pauseSandbox = Effect.fn('ShuruSandboxProvider.pauseSandbox')(
-        function* () {
-          return yield* shuruNotImplemented('pause/resume')
+        function* (workspaceId: string) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspace = pipe(
+            allWorkspaces,
+            Arr.findFirst((candidate) => candidate.id === workspaceId)
+          )
+
+          if (
+            workspace._tag === 'None' ||
+            workspace.value.sandboxId === null ||
+            workspace.value.sandboxProvider !== 'shuru'
+          ) {
+            return yield* new RpcError({
+              message: `Cannot pause: workspace "${workspaceId}" has no active Shuru sandbox.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          if (workspace.value.sandboxStatus === 'paused') {
+            return
+          }
+
+          const checkpointName = buildShuruRuntimeCheckpointName(workspaceId)
+
+          yield* shuruClient.checkpointSandbox(workspaceId, checkpointName)
+
+          yield* Effect.sync(() => {
+            workspaceRuntimeCheckpoints.set(workspaceId, checkpointName)
+          })
+
+          store.commit(events.sandboxPaused({ workspaceId }))
         }
       )
 
       const resumeSandbox = Effect.fn('ShuruSandboxProvider.resumeSandbox')(
-        function* () {
-          return yield* shuruNotImplemented('pause/resume')
+        function* (workspaceId: string) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspace = pipe(
+            allWorkspaces,
+            Arr.findFirst((candidate) => candidate.id === workspaceId)
+          )
+
+          if (
+            workspace._tag === 'None' ||
+            workspace.value.sandboxId === null ||
+            workspace.value.sandboxProvider !== 'shuru'
+          ) {
+            return yield* new RpcError({
+              message: `Cannot resume: workspace "${workspaceId}" has no paused Shuru sandbox.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          if (workspace.value.sandboxStatus === 'running') {
+            return
+          }
+
+          const allProjects = store.query(tables.projects)
+          const project = pipe(
+            allProjects,
+            Arr.findFirst(
+              (candidate) => candidate.id === workspace.value.projectId
+            )
+          )
+
+          if (project._tag === 'None') {
+            return yield* new RpcError({
+              message: `Cannot resume: project for workspace "${workspaceId}" was not found.`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.value.repoPath, project.value.name)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new RpcError({
+                    message: error.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
+
+          const checkpointName = yield* resolveResumeCheckpoint(
+            workspaceId,
+            workspace.value.sandboxImage
+          )
+          const sandboxPort = workspace.value.sandboxPort
+
+          if (sandboxPort !== null) {
+            yield* Effect.sync(() => {
+              allocatedPreviewPorts.add(sandboxPort)
+              workspacePreviewPorts.set(workspaceId, sandboxPort)
+            })
+          }
+
+          const sandbox = yield* shuruClient.startSandbox({
+            fromCheckpoint: checkpointName,
+            portForward:
+              sandboxPort === null ||
+              resolvedConfig.devServer.port.value === null
+                ? null
+                : {
+                    guestPort: resolvedConfig.devServer.port.value,
+                    hostPort: sandboxPort,
+                  },
+            workspaceId,
+            worktreePath: workspace.value.worktreePath,
+          })
+
+          store.commit(
+            events.sandboxStarted({
+              workspaceId,
+              sandboxId: sandbox.sandboxId,
+              sandboxPort: sandboxPort ?? undefined,
+              sandboxUrl: sandboxPort === null ? '' : SHURU_PREVIEW_HOST,
+              sandboxImage:
+                checkpointName === null
+                  ? 'shuru'
+                  : buildShuruCheckpointImage(checkpointName),
+              sandboxProvider: 'shuru',
+            })
+          )
         }
       )
 

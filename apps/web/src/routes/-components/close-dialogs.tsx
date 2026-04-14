@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,6 +15,10 @@ import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { isElectron } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter, isMetaShiftEnter } from '@/lib/dialog-keys'
+import {
+  useFullscreenPaneId,
+  useFullscreenPortal,
+} from '@/panels/panel-context'
 
 interface InlineCloseConfirmDialogProps {
   readonly confirmLabel: string
@@ -26,12 +31,15 @@ interface InlineCloseConfirmDialogProps {
    */
   readonly onCloseAndDestroy?: (() => void) | undefined
   readonly onConfirm: () => void
+  readonly portalToFullscreen?: boolean | undefined
   readonly title: string
 }
 
 /**
  * Inline close confirmation dialog rendered directly inside the bounds of the
- * thing being closed, rather than portaling across the whole app window.
+ * thing being closed. When fullscreen is active, callers can reuse the shared
+ * fullscreen container so the dialog tracks the expanded pane bounds instead
+ * of the hidden underlying workspace frame.
  */
 function InlineCloseConfirmDialog({
   confirmLabel,
@@ -39,9 +47,14 @@ function InlineCloseConfirmDialog({
   onCancel,
   onCloseAndDestroy,
   onConfirm,
+  portalToFullscreen = false,
   title,
 }: InlineCloseConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const fullscreenPaneId = useFullscreenPaneId()
+  const fullscreenPortal = useFullscreenPortal()
+  const shouldPortalToFullscreen =
+    portalToFullscreen && fullscreenPaneId !== null && fullscreenPortal !== null
 
   // Auto-focus the dialog container when it mounts so keyboard events
   // are captured immediately without requiring a click.
@@ -77,7 +90,7 @@ function InlineCloseConfirmDialog({
     [onCancel, onCloseAndDestroy, onConfirm]
   )
 
-  return (
+  const dialog = (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Dialog container needs keyboard event handling for Escape and Cmd+Enter shortcuts
     <div
       className="absolute inset-0 z-50 flex items-center justify-center"
@@ -120,6 +133,12 @@ function InlineCloseConfirmDialog({
       </div>
     </div>
   )
+
+  if (shouldPortalToFullscreen && fullscreenPortal) {
+    return createPortal(dialog, fullscreenPortal)
+  }
+
+  return dialog
 }
 
 /**
@@ -162,6 +181,7 @@ export function PanelTabCloseConfirmDialog({
       description="This tab has terminals with running processes. Closing the tab will kill all of them."
       onCancel={onCancel}
       onConfirm={onConfirm}
+      portalToFullscreen
       title="Close tab?"
     />
   )
@@ -183,6 +203,7 @@ export function WorkspaceCloseConfirmDialog({
       description="This workspace has terminals with running processes. Closing the workspace will kill all of them."
       onCancel={onCancel}
       onConfirm={onConfirm}
+      portalToFullscreen
       title="Close workspace?"
     />
   )
@@ -204,6 +225,7 @@ export function WindowTabCloseConfirmDialog({
       description="This window tab has terminals with running processes. Closing the tab will kill all of them."
       onCancel={onCancel}
       onConfirm={onConfirm}
+      portalToFullscreen
       title="Close window tab?"
     />
   )
@@ -228,6 +250,7 @@ export function WorkspaceDestroyOnCloseConfirmDialog({
       onCancel={onCancel}
       onCloseAndDestroy={onCloseAndDestroy}
       onConfirm={onConfirm}
+      portalToFullscreen
       title="Destroy workspace?"
     />
   )

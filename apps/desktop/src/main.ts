@@ -1,6 +1,7 @@
 import { watch } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor, shell } from 'electron'
+import { resolveDesktopAppName } from './app-name.js'
 import {
   broadcastUpdateStateToWindow,
   configureAutoUpdater,
@@ -33,7 +34,6 @@ import {
   registerSchemeAsPrivileged,
   resolveStaticRoot,
 } from './protocol.js'
-import { resolveDesktopAppName } from './app-name.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
@@ -243,6 +243,9 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   const window = new BrowserWindow({
     ...savedState.bounds,
+    // Let the first click into an inactive Labor window reach the clicked
+    // terminal pane instead of only activating the window.
+    acceptFirstMouse: true,
     minWidth: 840,
     minHeight: 620,
     show: false,

@@ -19,7 +19,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isPrefixKey, shouldBypassTerminal } from '../src/lib/keybinds'
+import {
+  IS_MAC,
+  isPrefixKey,
+  isTerminalFindNextShortcut,
+  isTerminalFindPreviousShortcut,
+  isTerminalFindShortcut,
+  shouldBypassTerminal,
+} from '../src/lib/keybinds'
 
 /** Regex patterns hoisted to module level for biome lint/performance. */
 const ATTACH_HANDLER_RE = /attachCustomKeyEventHandler/
@@ -33,9 +40,14 @@ const PREFIX_MODE_REF_RE = /prefixModeRef\.current/
 const IMPORT_KEYBINDS_RE = /from ['"]@\/lib\/keybinds['"]/
 const SHOULD_BYPASS_WORD_RE = /shouldBypassTerminal/
 const IS_PREFIX_KEY_WORD_RE = /isPrefixKey/
+const TERMINAL_FIND_IMPORT_RE = /isTerminalFindShortcut/
+const TERMINAL_FIND_NEXT_IMPORT_RE = /isTerminalFindNextShortcut/
+const TERMINAL_FIND_PREV_IMPORT_RE = /isTerminalFindPreviousShortcut/
 const TERMINAL_ATTACH_CALL_RE = /terminal\.attachCustomKeyEventHandler\(/
 const PREFIX_MODE_CONDITIONAL_RE = /prefixMode\s*&&/
 const CTRL_B_LABEL_RE = /Ctrl\+B/
+const SEARCH_ADDON_IMPORT_RE = /@xterm\/addon-search/
+const TERMINAL_FIND_OVERLAY_RE = /Find in terminal/
 
 /** Helper — create a minimal KeyboardEvent-shaped object for testing. */
 function makeKeyEvent(
@@ -53,6 +65,17 @@ function makeKeyEvent(
   } as KeyboardEvent
 }
 
+function makePlatformModKeyEvent(
+  key: string,
+  overrides: Partial<KeyboardEvent> & { type?: string } = {}
+): KeyboardEvent {
+  return makeKeyEvent(
+    IS_MAC
+      ? { key, metaKey: true, ...overrides }
+      : { key, ctrlKey: true, ...overrides }
+  )
+}
+
 /**
  * Simulates the prefix mode state machine as implemented in terminal-pane.tsx.
  * This mirrors the exact logic from the attachCustomKeyEventHandler callback.
@@ -61,10 +84,13 @@ function makeKeyEvent(
  * - Return `true` -> xterm.js handles the key (normal terminal input)
  * - Return `false` -> xterm.js ignores the key (it bubbles to document)
  */
-function createPrefixModeHandler() {
+function createTerminalShortcutHandler() {
   let prefixMode = false
   let prefixTimeout: ReturnType<typeof setTimeout> | null = null
   const PREFIX_TIMEOUT_MS = 1500
+  let findOpenCount = 0
+  let findNextCount = 0
+  let findPreviousCount = 0
 
   const enterPrefixMode = () => {
     prefixMode = true
@@ -99,10 +125,31 @@ function createPrefixModeHandler() {
       exitPrefixMode()
       return false
     }
+
+    if (isTerminalFindShortcut(event)) {
+      findOpenCount += 1
+      return false
+    }
+
+    if (isTerminalFindPreviousShortcut(event)) {
+      findPreviousCount += 1
+      return false
+    }
+
+    if (isTerminalFindNextShortcut(event)) {
+      findNextCount += 1
+      return false
+    }
+
     return true
   }
 
   return {
+    getFindCounts: () => ({
+      next: findNextCount,
+      open: findOpenCount,
+      previous: findPreviousCount,
+    }),
     handler,
     isPrefixMode: () => prefixMode,
     cleanup: () => {
@@ -127,6 +174,9 @@ describe('keyboard bypass and prefix mode', () => {
       expect(terminalPaneSrc).toMatch(IMPORT_KEYBINDS_RE)
       expect(terminalPaneSrc).toMatch(SHOULD_BYPASS_WORD_RE)
       expect(terminalPaneSrc).toMatch(IS_PREFIX_KEY_WORD_RE)
+      expect(terminalPaneSrc).toMatch(TERMINAL_FIND_IMPORT_RE)
+      expect(terminalPaneSrc).toMatch(TERMINAL_FIND_NEXT_IMPORT_RE)
+      expect(terminalPaneSrc).toMatch(TERMINAL_FIND_PREV_IMPORT_RE)
     })
 
     it('calls attachCustomKeyEventHandler on the terminal', () => {
@@ -163,16 +213,21 @@ describe('keyboard bypass and prefix mode', () => {
       expect(terminalPaneSrc).toMatch(PREFIX_MODE_CONDITIONAL_RE)
       expect(terminalPaneSrc).toMatch(CTRL_B_LABEL_RE)
     })
+
+    it('loads the xterm search addon and renders the find overlay UI', () => {
+      expect(terminalPaneSrc).toMatch(SEARCH_ADDON_IMPORT_RE)
+      expect(terminalPaneSrc).toMatch(TERMINAL_FIND_OVERLAY_RE)
+    })
   })
 
   // ---------------------------------------------------------------------------
   // Bypass handler behavior (functional tests)
   // ---------------------------------------------------------------------------
   describe('bypass handler returns false (bypass) for intercepted keys', () => {
-    let ctx: ReturnType<typeof createPrefixModeHandler>
+    let ctx: ReturnType<typeof createTerminalShortcutHandler>
 
     beforeEach(() => {
-      ctx = createPrefixModeHandler()
+      ctx = createTerminalShortcutHandler()
     })
 
     afterEach(() => {
@@ -196,6 +251,23 @@ describe('keyboard bypass and prefix mode', () => {
     it('returns false for Ctrl+B keydown (bypass — enters prefix mode)', () => {
       const event = makeKeyEvent({ key: 'b', ctrlKey: true })
       expect(ctx.handler(event)).toBe(false)
+    })
+
+    it('returns false for the platform find shortcut', () => {
+      expect(ctx.handler(makePlatformModKeyEvent('f'))).toBe(false)
+      expect(ctx.getFindCounts().open).toBe(1)
+    })
+
+    it('returns false for the platform next-match shortcut', () => {
+      expect(ctx.handler(makePlatformModKeyEvent('g'))).toBe(false)
+      expect(ctx.getFindCounts().next).toBe(1)
+    })
+
+    it('returns false for the platform previous-match shortcut', () => {
+      expect(
+        ctx.handler(makePlatformModKeyEvent('g', { shiftKey: true }))
+      ).toBe(false)
+      expect(ctx.getFindCounts().previous).toBe(1)
     })
 
     it('returns true for normal printable keys (handled — terminal input)', () => {
@@ -230,11 +302,11 @@ describe('keyboard bypass and prefix mode', () => {
   // Prefix mode state machine
   // ---------------------------------------------------------------------------
   describe('prefix mode state machine', () => {
-    let ctx: ReturnType<typeof createPrefixModeHandler>
+    let ctx: ReturnType<typeof createTerminalShortcutHandler>
 
     beforeEach(() => {
       vi.useFakeTimers()
-      ctx = createPrefixModeHandler()
+      ctx = createTerminalShortcutHandler()
     })
 
     afterEach(() => {
@@ -315,6 +387,17 @@ describe('keyboard bypass and prefix mode', () => {
       const result = ctx.handler(makeKeyEvent({ key: '1', type: 'keyup' }))
       expect(result).toBe(true)
       expect(ctx.isPrefixMode()).toBe(true)
+    })
+
+    it('prefix mode consumes the next key even when it matches terminal find', () => {
+      ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
+      expect(ctx.isPrefixMode()).toBe(true)
+
+      const result = ctx.handler(makePlatformModKeyEvent('f'))
+
+      expect(result).toBe(false)
+      expect(ctx.isPrefixMode()).toBe(false)
+      expect(ctx.getFindCounts().open).toBe(0)
     })
 
     it('multiple Ctrl+B -> action sequences work correctly', () => {

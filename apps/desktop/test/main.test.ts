@@ -289,6 +289,7 @@ describe('main multi-window restore', () => {
     )
 
     expect(BrowserWindow.instances[0]?.options).toMatchObject({
+      acceptFirstMouse: true,
       x: 10,
       y: 20,
       width: 800,

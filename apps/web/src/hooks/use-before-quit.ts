@@ -3,9 +3,8 @@
  * signal and responds with a veto decision.
  *
  * When the main process wants to quit (Cmd+Q, tray Quit, app.quit()), it
- * sends a `BeforeQuitPayload` to every renderer window via IPC. Each window
- * must respond with `respondToQuit(id, veto)`. If any window sets `veto: true`,
- * the quit is cancelled.
+ * sends a `BeforeQuitPayload` to the renderer window participating in quit
+ * negotiation. That window must respond with `respondToQuit(id, veto)`.
  *
  * This hook:
  * 1. Subscribes to `onBeforeQuit` via the DesktopBridge.

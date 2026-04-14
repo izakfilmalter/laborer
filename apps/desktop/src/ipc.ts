@@ -315,11 +315,12 @@ export function setUtilityProcessManager(
 // ---------------------------------------------------------------------------
 
 /**
- * Ask all renderer windows whether they're ready to quit.
+ * Ask renderer windows whether they're ready to quit.
  *
- * Sends a `BeforeQuitPayload` to every non-destroyed `BrowserWindow` and
- * waits for each to respond via `QUIT_REPLY_CHANNEL`. Any window can veto
- * the quit by responding with `{ veto: true }`.
+ * For app quits, only the focused window participates in the veto flow so we
+ * show at most one confirmation dialog. If no window is focused, we fall back
+ * to the first eligible window. Non-quit reasons still broadcast to all
+ * windows.
  *
  * Returns `true` if the quit was vetoed (i.e., the app should NOT exit).
  */
@@ -331,7 +332,17 @@ export async function askRenderersBeforeQuit(
     (w) => !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()
   )
 
-  if (windows.length === 0) {
+  let targetWindows = windows
+
+  if (reason === 'quit') {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    targetWindows =
+      focusedWindow !== null && windows.includes(focusedWindow)
+        ? [focusedWindow]
+        : windows.slice(0, 1)
+  }
+
+  if (targetWindows.length === 0) {
     return false
   }
 
@@ -362,7 +373,7 @@ export async function askRenderersBeforeQuit(
       }
 
       repliesReceived++
-      if (repliesReceived >= windows.length) {
+      if (repliesReceived >= targetWindows.length) {
         ipcMain.removeListener(QUIT_REPLY_CHANNEL, onReply)
         resolve(vetoed)
       }
@@ -377,8 +388,8 @@ export async function askRenderersBeforeQuit(
     }, timeoutMs).unref()
   })
 
-  // Broadcast the before-quit payload to all renderer windows.
-  for (const window of windows) {
+  // Broadcast the before-quit payload to the selected renderer windows.
+  for (const window of targetWindows) {
     window.webContents.send(BEFORE_QUIT_CHANNEL, payload)
   }
 

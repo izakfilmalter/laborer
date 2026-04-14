@@ -107,9 +107,9 @@ export interface DesktopUpdateActionResult {
 export type QuitReason = 'quit' | 'reload'
 
 /**
- * Payload sent from the main process to each renderer when a quit is requested.
- * The renderer must call `respondToQuit` with `veto: true` to block the quit
- * or `veto: false` to allow it.
+ * Payload sent from the main process to the renderer participating in quit
+ * negotiation. The renderer must call `respondToQuit` with `veto: true` to
+ * block the quit or `veto: false` to allow it.
  */
 export interface BeforeQuitPayload {
   /** Unique ID for this quit request, used to correlate the response. */

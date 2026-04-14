@@ -42,6 +42,7 @@ import { dirname, extname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import desktopPkg from '../apps/desktop/package.json' with { type: 'json' }
+import { resolveDesktopAppName } from '../apps/desktop/src/app-name.js'
 import rootPkg from '../package.json' with { type: 'json' }
 import fileWatcherPkg from '../packages/file-watcher/package.json' with {
   type: 'json',
@@ -51,8 +52,6 @@ import serverPkg from '../packages/server/package.json' with { type: 'json' }
 import terminalPkg from '../packages/terminal/package.json' with {
   type: 'json',
 }
-
-import { resolveDesktopAppName } from '../apps/desktop/src/app-name.js'
 import { resolveCatalogDependencies } from './lib/resolve-catalog.js'
 
 // ---------------------------------------------------------------------------

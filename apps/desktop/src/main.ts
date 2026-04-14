@@ -33,6 +33,7 @@ import {
   registerSchemeAsPrivileged,
   resolveStaticRoot,
 } from './protocol.js'
+import { resolveDesktopAppName } from './app-name.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
@@ -149,6 +150,14 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
  * Utility processes are forked in both dev and production modes.
  */
 const isDev = Boolean(VITE_DEV_SERVER_URL)
+
+const desktopAppName = resolveDesktopAppName({
+  isDevelopment: isDev,
+  version: app.getVersion(),
+})
+
+app.setName(desktopAppName)
+process.title = desktopAppName
 
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 12, y: 10 } as const

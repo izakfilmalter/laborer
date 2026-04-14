@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const originalProcessTitle = process.title
+
 interface MockWindowRecord {
   readonly bounds: {
     readonly x: number
@@ -105,11 +107,14 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
 
   const BrowserWindow = createBrowserWindowMock()
   const appOn = vi.fn()
+  const setName = vi.fn()
   const track = vi.fn()
   const registerIpcHandlersMock = vi.fn()
 
   vi.doMock('electron', () => ({
     app: {
+      getVersion: () => '1.2.3',
+      setName,
       whenReady: () => Promise.resolve(),
       on: appOn,
       once: vi.fn(),
@@ -233,10 +238,12 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     track,
     removeWindowRecord,
     appOn,
+    setName,
   }
 }
 
 afterEach(() => {
+  process.title = originalProcessTitle
   vi.resetModules()
   vi.unstubAllEnvs()
   vi.unmock('electron')
@@ -244,6 +251,13 @@ afterEach(() => {
 })
 
 describe('main multi-window restore', () => {
+  it('sets the app name to Laborer-dev while running in dev mode', async () => {
+    const { setName } = await loadMainWithRecords([])
+
+    expect(setName).toHaveBeenCalledWith('Laborer-dev')
+    expect(process.title).toBe('Laborer-dev')
+  })
+
   it('restores every saved window on relaunch with its own window bootstrap context', async () => {
     const savedWindowRecords = [
       {

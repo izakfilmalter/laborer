@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Either, Ref, type Scope } from 'effect'
+import { vi } from 'vitest'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
@@ -352,6 +353,61 @@ describe('LaborerRpcs workspace management', () => {
             yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
             [externalWorkspace.id]
           )
+        })
+      )
+  )
+
+  it.scopedLive(
+    'workspace.destroy does not emit duplicate destroy events after the workspace is already gone',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo(
+            'rpc-workspace-destroy-idempotent',
+            tempRoots
+          )
+          const worktreeRoot = createTempDir(
+            'rpc-workspace-destroy-idempotent-root',
+            tempRoots
+          )
+          const branchName = 'feature/rpc-destroy-idempotent'
+
+          writeLaborerConfig(repoPath, {
+            worktreeDir: worktreeRoot,
+            devServer: { image: null },
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add laborer config"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const workspace = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          const commitSpy = vi.spyOn(store, 'commit')
+
+          yield* client.workspace.destroy({ workspaceId: workspace.id })
+          yield* waitForWorkspaceRemoval(store, workspace.id)
+
+          yield* client.workspace.destroy({ workspaceId: workspace.id })
+
+          const workspaceDestroyedCommits = commitSpy.mock.calls.filter(
+            ([event]) =>
+              typeof event === 'object' &&
+              event !== null &&
+              'name' in event &&
+              event.name === 'v1.WorkspaceDestroyed'
+          )
+
+          assert.strictEqual(workspaceDestroyedCommits.length, 1)
+
+          commitSpy.mockRestore()
         })
       )
   )

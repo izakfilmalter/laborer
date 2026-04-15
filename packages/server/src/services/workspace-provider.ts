@@ -1315,20 +1315,27 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           if (workspaceOpt._tag === 'None') {
-            // The workspace row is already gone from LiveStore. This can
-            // happen when a previous destroy partially completed (e.g. the
-            // WorkspaceDestroyed event was committed but the UI still held
-            // a stale reference). Commit a no-op destroy event (SQL DELETE
-            // with WHERE is idempotent) and return successfully so the UI
-            // can clear the stale entry.
-            yield* Effect.logWarning(
-              `Workspace ${workspaceId} not found in LiveStore — committing idempotent WorkspaceDestroyed to clean up stale UI reference`
+            // A previous destroy already removed the workspace row.
+            // Return success without emitting another WorkspaceDestroyed event,
+            // otherwise duplicate destroys can replay the same delete into
+            // sync clients and destabilize downstream subscriptions.
+            yield* Effect.logInfo(
+              `Workspace ${workspaceId} already removed from LiveStore — skipping duplicate destroy`
             ).pipe(Effect.annotateLogs('module', logPrefix))
-            store.commit(events.workspaceDestroyed({ id: workspaceId }))
             return
           }
 
           const workspace = workspaceOpt.value
+
+          const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+            workspace.worktreePath
+          )
+          if (inFlightDestroy !== undefined) {
+            yield* Effect.logInfo(
+              `Destroy already in progress for workspace ${workspaceId} at ${workspace.worktreePath} — skipping duplicate destroy`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            return
+          }
 
           // Interrupt any in-flight background container setup fiber for
           // this workspace and wait for it to fully stop. This prevents

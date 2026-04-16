@@ -132,6 +132,14 @@ const reconcileDirs = (
   return result
 }
 
+/** Format nodes for @pierre/trees, which uses a trailing slash for folders. */
+const toTreePath = (node: FileNode): string => {
+  if (node.type !== 'directory' || node.path.endsWith('/')) {
+    return node.path
+  }
+  return `${node.path}/`
+}
+
 /** Walk the directory tree depth-first to build a flat file list. */
 const buildFileList = (state: TreeState): readonly string[] => {
   const result: string[] = []
@@ -154,7 +162,7 @@ const buildFileList = (state: TreeState): readonly string[] => {
         continue
       }
 
-      result.push(node.path)
+      result.push(toTreePath(node))
 
       if (node.type === 'directory' && state.dirs[childPath]?.loaded) {
         walk(childPath)

@@ -641,8 +641,8 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   )
 
   const renderHeaderMetadata = useCallback(
-    (props: { fileDiff?: FileDiffMetadata }) => {
-      const fileName = props.fileDiff?.name
+    (fileDiff: FileDiffMetadata) => {
+      const fileName = fileDiff.name
       if (!fileName) {
         return null
       }

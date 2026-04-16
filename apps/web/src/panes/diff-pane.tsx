@@ -44,7 +44,7 @@ import {
 } from '@effect-atom/atom-react/Hooks'
 import type { FileInfo } from '@laborer/shared/rpc'
 import type { AnnotationSide, FileDiffMetadata, Hunk } from '@pierre/diffs'
-import { diffAcceptRejectHunk, parsePatchFiles } from '@pierre/diffs'
+import { diffAcceptRejectHunk } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
 import { Check, ExternalLink, FileCode2, RefreshCw, X } from 'lucide-react'
 import {
@@ -67,6 +67,7 @@ import {
 } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { parseFileDiff } from '@/lib/file-diff'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
@@ -266,7 +267,7 @@ function DiffPaneLoading({
             Computing diff...
           </p>
           <p className="text-muted-foreground/70 text-xs">
-            Fetching changed files from the workspace
+            Fetching changed files and building patches
           </p>
         </div>
       </div>
@@ -280,7 +281,11 @@ function DiffPaneLoading({
 
 interface DiffStoreResult {
   readonly changedFiles: readonly FileInfo[]
-  readonly fetchFileDiff: (path: string) => Promise<void>
+  readonly diffsLoading: boolean
+  readonly fetchFileDiff: (
+    path: string,
+    status?: FileInfo['status']
+  ) => Promise<void>
   readonly orderedFileDiffs: readonly FileDiffMetadata[]
   readonly statusLoading: boolean
 }
@@ -297,10 +302,13 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
   const fetchFileRead = useAtomSet(fileReadMutation, { mode: 'promise' })
 
   const [statusLoading, setStatusLoading] = useState(true)
+  const [diffsLoading, setDiffsLoading] = useState(true)
   const [changedFiles, setChangedFiles] = useState<readonly FileInfo[]>([])
   const [fileDiffs, setFileDiffs] = useState<Map<string, FileDiffData>>(
     new Map()
   )
+  const changedFilesRef = useRef(changedFiles)
+  changedFilesRef.current = changedFiles
 
   // --- Fetch file status ---
   const refreshFileStatus = useCallback(async (): Promise<
@@ -323,7 +331,7 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
 
   // --- Fetch a single file's diff ---
   const fetchFileDiff = useCallback(
-    async (filePath: string) => {
+    async (filePath: string, status?: FileInfo['status']) => {
       setFileDiffs((prev) => {
         const next = new Map(prev)
         next.set(filePath, {
@@ -340,12 +348,14 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
           payload: { workspaceId, filePath },
         })) as { type: string; content: string; diff?: string }
 
-        let parsedFileDiff: FileDiffMetadata | null = null
-        if (result.diff) {
-          const parsed = parsePatchFiles(result.diff)
-          const allFiles = parsed.flatMap((p) => p.files)
-          parsedFileDiff = allFiles[0] ?? null
-        }
+        const parsedFileDiff = parseFileDiff({
+          filePath,
+          result,
+          status:
+            status ??
+            changedFilesRef.current.find((file) => file.path === filePath)
+              ?.status,
+        })
 
         setFileDiffs((prev) => {
           const next = new Map(prev)
@@ -382,11 +392,17 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
   useEffect(() => {
     let cancelled = false
     const load = async () => {
+      setDiffsLoading(true)
       const files = await refreshFileStatus()
       if (cancelled) {
         return
       }
-      await Promise.all(files.map((f) => fetchFileDiff(f.path)))
+      await Promise.all(
+        files.map((file) => fetchFileDiff(file.path, file.status))
+      )
+      if (!cancelled) {
+        setDiffsLoading(false)
+      }
     }
     load()
     return () => {
@@ -400,8 +416,6 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
   const watcherResult = useAtomValue(watcherAtom)
 
   const lastProcessedIndexRef = useRef(0)
-  const changedFilesRef = useRef(changedFiles)
-  changedFilesRef.current = changedFiles
 
   useEffect(() => {
     if (!Result.isSuccess(watcherResult)) {
@@ -429,7 +443,7 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
         const currentPaths = new Set(displayedPaths)
         for (const f of newFiles) {
           if (!currentPaths.has(f.path)) {
-            fetchFileDiffRef.current(f.path)
+            fetchFileDiffRef.current(f.path, f.status)
           }
         }
       })
@@ -448,7 +462,13 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
     return result
   }, [changedFiles, fileDiffs])
 
-  return { changedFiles, fetchFileDiff, orderedFileDiffs, statusLoading }
+  return {
+    changedFiles,
+    diffsLoading,
+    fetchFileDiff,
+    orderedFileDiffs,
+    statusLoading,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -516,7 +536,7 @@ function useAnnotatedDiffs(
 function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
 
-  const { changedFiles, orderedFileDiffs, statusLoading } =
+  const { changedFiles, diffsLoading, orderedFileDiffs, statusLoading } =
     useDiffStore(workspaceId)
 
   const { annotatedDiffs, effectiveFileDiffs, handleHunkAction } =
@@ -748,6 +768,14 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     return <DiffPaneLoading onClose={onClose} />
   }
 
+  if (
+    diffsLoading &&
+    changedFiles.length > 0 &&
+    orderedFileDiffs.length === 0
+  ) {
+    return <DiffPaneLoading onClose={onClose} />
+  }
+
   // --- Empty state ---
   if (changedFiles.length === 0) {
     return (
@@ -763,6 +791,28 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
               <EmptyDescription>
                 No file changes detected in this workspace. Changes will appear
                 here automatically as the agent modifies files.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+      </div>
+    )
+  }
+
+  if (orderedFileDiffs.length === 0) {
+    return (
+      <div className="flex h-full w-full flex-col bg-background">
+        <DiffPaneHeader onClose={onClose} />
+        <div className="flex flex-1 items-center justify-center">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <FileCode2 />
+              </EmptyMedia>
+              <EmptyTitle>No renderable text diffs</EmptyTitle>
+              <EmptyDescription>
+                The workspace has changes, but none produced a text diff
+                preview.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

@@ -29,7 +29,7 @@ import {
   pipe,
   Ref,
 } from 'effect'
-import { spawn } from '../lib/spawn.js'
+import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
 import { LaborerStore } from './laborer-store.js'
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
@@ -128,26 +128,14 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
        * Run `gh pr view` in a worktree directory and parse the JSON output.
        * Returns EMPTY_PR if no PR is found (exit code 1) or on any error.
        */
-      const runGhPrView = Effect.fn('PrWatcher.runGhPrView')(function* (
+      const loadPrData = Effect.fn('PrWatcher.loadPrData')(function* (
         worktreePath: string
       ) {
-        const spawnResult = yield* Effect.tryPromise({
-          try: async () => {
-            const proc = spawn(
-              ['gh', 'pr', 'view', '--json', 'number,url,title,state'],
-              {
-                cwd: worktreePath,
-                stdout: 'pipe',
-                stderr: 'pipe',
-              }
-            )
-            const exitCode = await proc.exited
-            const stdout = await new Response(proc.stdout).text()
-            const stderr = await new Response(proc.stderr).text()
-            return { exitCode, stdout, stderr }
-          },
-          catch: () => 'gh-spawn-failed' as const,
-        }).pipe(
+        const spawnResult = yield* runGhPrViewWithOriginFallback(
+          worktreePath,
+          'number,url,title,state',
+          () => 'gh-spawn-failed' as const
+        ).pipe(
           Effect.catchAll((tag) => {
             return Effect.logWarning(
               `[PrWatcher] Failed to run gh pr view: ${tag}`
@@ -220,7 +208,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return EMPTY_PR
         }
 
-        const prData = yield* runGhPrView(workspace.worktreePath)
+        const prData = yield* loadPrData(workspace.worktreePath)
 
         // Deduplicate: only commit event if PR state changed
         const serialized = serializePrData(prData)
@@ -280,13 +268,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
           yield* checkPr(workspaceId)
           yield* Effect.sleep(Duration.millis(interval))
-        }).pipe(
-          Effect.catchAll(() =>
-            Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
-          ),
-          Effect.forever,
-          Effect.asVoid
-        )
+        }).pipe(Effect.forever, Effect.asVoid)
 
         const fiber = yield* Effect.forkDaemon(pollEffect)
 

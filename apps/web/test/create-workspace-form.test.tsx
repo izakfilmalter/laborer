@@ -95,7 +95,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
   it('autofocuses the branch name input', () => {
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -105,19 +105,19 @@ describe('CreateWorkspaceForm — branch name mask', () => {
   it('renders the branch name input with correct placeholder', () => {
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="my-app" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
     expect(input).toBeTruthy()
-    expect(input.getAttribute('placeholder')).toBe('laborer/my-feature')
+    expect(input.getAttribute('placeholder')).toBe('my-app/my-feature')
   })
 
   it('converts spaces to hyphens', async () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -133,7 +133,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -149,7 +149,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -165,7 +165,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -181,7 +181,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -205,7 +205,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
 
@@ -235,7 +235,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()
@@ -273,7 +273,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
     render(
       <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
       </ReadyPhaseWrapper>
     )
     const input = getBranchInput()

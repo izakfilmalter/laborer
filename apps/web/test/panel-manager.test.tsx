@@ -1,9 +1,10 @@
 import type { LeafNode, SplitNode } from '@laborer/shared/types'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { activePaneIdRef } = vi.hoisted(() => ({
+const { activePaneIdRef, setActivePaneIdMock } = vi.hoisted(() => ({
   activePaneIdRef: { current: null as string | null },
+  setActivePaneIdMock: vi.fn(),
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
@@ -43,7 +44,7 @@ vi.mock('@/panes/terminal-pane', () => ({
 
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div>diff:{workspaceId}</div>
+    <div data-pane-text-selectable>diff:{workspaceId}</div>
   ),
 }))
 
@@ -63,7 +64,9 @@ vi.mock('@/panels/panel-context', () => ({
   useActivePaneId: () => activePaneIdRef.current,
   useFullscreenPaneId: () => null,
   useFullscreenPortal: () => null,
-  usePanelActions: () => null,
+  usePanelActions: () => ({
+    setActivePaneId: setActivePaneIdMock,
+  }),
   usePendingClosePane: () => ({
     paneId: null,
     onConfirm: () => undefined,
@@ -150,6 +153,7 @@ function createSplitNode(overrides: Partial<SplitNode> = {}): SplitNode {
 afterEach(() => {
   cleanup()
   activePaneIdRef.current = null
+  setActivePaneIdMock.mockReset()
 })
 
 // ---------- PanelManager tests ----------
@@ -322,6 +326,36 @@ describe('PanelRenderer', () => {
     }
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('diff:ws-1')).toBeTruthy()
+  })
+
+  it('does not activate the pane on mouse down inside text-selectable diff content', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(<PanelRenderer node={leaf} />)
+
+    fireEvent.mouseDown(screen.getByText('diff:ws-1'))
+
+    expect(setActivePaneIdMock).not.toHaveBeenCalled()
+  })
+
+  it('activates the pane on click inside text-selectable diff content', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(<PanelRenderer node={leaf} />)
+
+    fireEvent.click(screen.getByText('diff:ws-1'))
+
+    expect(setActivePaneIdMock).toHaveBeenCalledWith('diff-pane')
   })
 
   it('renders review pane type', () => {

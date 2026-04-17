@@ -51,6 +51,10 @@ vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
 
+vi.mock('@/panes/tree-pane', () => ({
+  TreePane: () => <div data-testid="tree-pane" />,
+}))
+
 vi.mock('@livestore/livestore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@livestore/livestore')>()
   return {
@@ -85,6 +89,7 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
       toggleDiffPane: vi.fn(() => false),
       toggleFullscreenPane: vi.fn(),
       toggleReviewPane: vi.fn(() => false),
+      toggleTreePane: vi.fn(() => false),
       addPanelTab: vi.fn(),
       addWorkspaceToCurrentTab: vi.fn(),
       addWindowTab: vi.fn(),
@@ -105,11 +110,23 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
 
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   WorkspaceFrameHeaderContainer: ({
+    diffIsOpen,
+    reviewIsOpen,
+    treeIsOpen,
     workspaceId,
   }: {
+    diffIsOpen?: boolean
+    reviewIsOpen?: boolean
+    treeIsOpen?: boolean
     workspaceId: string | undefined
   }) => (
-    <div data-testid="workspace-frame-header" data-workspace-id={workspaceId}>
+    <div
+      data-diff-open={diffIsOpen ? 'true' : 'false'}
+      data-review-open={reviewIsOpen ? 'true' : 'false'}
+      data-testid="workspace-frame-header"
+      data-tree-open={treeIsOpen ? 'true' : 'false'}
+      data-workspace-id={workspaceId}
+    >
       Header {workspaceId}
     </div>
   ),
@@ -298,6 +315,39 @@ describe('Workspace header visibility during fullscreen', () => {
     const header = screen.getByTestId('fullscreen-workspace-header')
     expect(header).toBeTruthy()
     expect(header.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+
+  it('keeps fullscreen side panels mounted and reports their open state in the fullscreen header', () => {
+    render(
+      <PanelContent
+        activePaneId="pane-1"
+        activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
+        diffPaneOpen
+        diffWorkspaceId="workspace-1"
+        fullscreenPaneId="pane-1"
+        isReconciling={false}
+        reviewPaneOpen
+        reviewWorkspaceId="workspace-1"
+        treePaneOpen
+        treeWorkspaceId="workspace-1"
+        windowLayout={SINGLE_WINDOW_LAYOUT}
+        windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
+      />
+    )
+
+    expect(screen.getAllByTestId('tree-pane')).toHaveLength(1)
+    expect(screen.getAllByTestId('diff-pane')).toHaveLength(1)
+    expect(screen.getAllByTestId('review-pane')).toHaveLength(1)
+
+    const header = screen.getByTestId('fullscreen-workspace-header')
+    expect(header.getAttribute('data-workspace-id')).toBe('workspace-1')
+
+    const headerContent = header.querySelector(
+      '[data-testid="workspace-frame-header"]'
+    )
+    expect(headerContent?.getAttribute('data-tree-open')).toBe('true')
+    expect(headerContent?.getAttribute('data-diff-open')).toBe('true')
+    expect(headerContent?.getAttribute('data-review-open')).toBe('true')
   })
 
   it('does not render the fullscreen workspace header when no pane is fullscreened', () => {

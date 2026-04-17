@@ -97,39 +97,61 @@ vi.mock('@/panes/diff-pane', () => ({
   ),
 }))
 
-vi.mock('@/panels/panel-context', () => ({
-  usePanelActions: () => ({
-    assignTerminalToPane: vi.fn(),
-    closePane: vi.fn(),
-    closeTerminalPane: vi.fn(),
-    closeWorkspace: vi.fn(),
-    forceCloseWorkspace: vi.fn(),
-    reorderWorkspaces: vi.fn(),
-    resizePane: vi.fn(),
-    setActivePaneId: vi.fn(),
-    showPanelTypePicker: vi.fn(),
-    splitPane: vi.fn(),
-    updatePaneType: vi.fn(),
-    toggleDevServerPane: vi.fn(async () => false),
-    toggleDiffPane: toggleDiffPaneMock,
-    toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: toggleReviewPaneMock,
-    addPanelTab: vi.fn(),
-    addWorkspaceToCurrentTab: vi.fn(),
-    addWindowTab: vi.fn(),
-    closeWindowTab: vi.fn(),
-    removePanelTab: vi.fn(),
-    reorderPanelTabsDnd: vi.fn(),
-    switchPanelTab: vi.fn(),
-    switchPanelTabByIndex: vi.fn(),
-    switchPanelTabRelative: vi.fn(),
-    switchWindowTab: vi.fn(),
-    switchWindowTabByIndex: vi.fn(),
-    switchWindowTabRelative: vi.fn(),
-    reorderWindowTabsDnd: vi.fn(),
-    windowLayout: undefined,
-  }),
+vi.mock('@/panes/tree-pane', () => ({
+  TreePane: ({
+    onClose,
+    workspaceId,
+  }: {
+    onClose?: () => void
+    workspaceId: string
+  }) => (
+    <div data-testid="tree-pane" data-workspace-id={workspaceId}>
+      <button onClick={onClose} type="button">
+        Close file tree
+      </button>
+      Tree Panel Content
+    </div>
+  ),
 }))
+
+vi.mock('@/panels/panel-context', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/panels/panel-context')>()
+  return {
+    ...actual,
+    usePanelActions: () => ({
+      assignTerminalToPane: vi.fn(),
+      closePane: vi.fn(),
+      closeTerminalPane: vi.fn(),
+      closeWorkspace: vi.fn(),
+      forceCloseWorkspace: vi.fn(),
+      reorderWorkspaces: vi.fn(),
+      resizePane: vi.fn(),
+      setActivePaneId: vi.fn(),
+      showPanelTypePicker: vi.fn(),
+      splitPane: vi.fn(),
+      updatePaneType: vi.fn(),
+      toggleDevServerPane: vi.fn(async () => false),
+      toggleDiffPane: toggleDiffPaneMock,
+      toggleFullscreenPane: vi.fn(),
+      toggleReviewPane: toggleReviewPaneMock,
+      toggleTreePane: vi.fn(() => false),
+      addPanelTab: vi.fn(),
+      addWorkspaceToCurrentTab: vi.fn(),
+      addWindowTab: vi.fn(),
+      closeWindowTab: vi.fn(),
+      removePanelTab: vi.fn(),
+      reorderPanelTabsDnd: vi.fn(),
+      switchPanelTab: vi.fn(),
+      switchPanelTabByIndex: vi.fn(),
+      switchPanelTabRelative: vi.fn(),
+      switchWindowTab: vi.fn(),
+      switchWindowTabByIndex: vi.fn(),
+      switchWindowTabRelative: vi.fn(),
+      reorderWindowTabsDnd: vi.fn(),
+      windowLayout: undefined,
+    }),
+  }
+})
 
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   WorkspaceFrameHeaderContainer: ({

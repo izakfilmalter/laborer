@@ -1,6 +1,6 @@
+import type { FileNode } from '@laborer/shared/rpc'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { FileNode } from '@laborer/shared/rpc'
 import { useFileTreeStore } from '../src/panes/file-tree/use-file-tree-store'
 
 afterEach(() => {

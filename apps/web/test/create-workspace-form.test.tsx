@@ -2,9 +2,10 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createWorkspaceFn, mutationMap } = vi.hoisted(() => ({
+const { createWorkspaceFn, mutationMap, panelActionsMock } = vi.hoisted(() => ({
   createWorkspaceFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  panelActionsMock: { addPanelTab: vi.fn() },
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -27,6 +28,10 @@ vi.mock('@/atoms/laborer-client', () => ({
 
 vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
+}))
+
+vi.mock('@/panels/panel-context', () => ({
+  usePanelActions: () => panelActionsMock,
 }))
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -220,6 +225,10 @@ describe('CreateWorkspaceForm — branch name mask', () => {
           projectId: 'project-1',
         },
       })
+      expect(panelActionsMock.addPanelTab).toHaveBeenCalledWith(
+        'ws-new',
+        'agent'
+      )
     })
   })
 

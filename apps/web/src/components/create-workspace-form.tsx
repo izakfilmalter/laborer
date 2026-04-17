@@ -125,11 +125,17 @@ function getErrorIcon(code: string | undefined) {
 interface CreateWorkspaceFormProps {
   /** The project to create a workspace in. */
   readonly projectId: string
+  /** The project name shown in the sidebar. */
+  readonly projectName: string
   /** Custom trigger element. Defaults to a "Create Workspace" button. */
   readonly trigger?: ReactNode | undefined
 }
 
-function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
+function CreateWorkspaceForm({
+  projectId,
+  projectName,
+  trigger,
+}: CreateWorkspaceFormProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [open, setOpen] = useState(false)
   const [creationError, setCreationError] =
@@ -252,7 +258,7 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
                     name={field.name}
                     onAccept={(value) => field.handleChange(value)}
                     onBlur={field.handleBlur}
-                    placeholder="laborer/my-feature"
+                    placeholder={`${projectName}/my-feature`}
                     prepare={(str) =>
                       pipe(str, Str.toLowerCase, Str.replaceAll(' ', '-'))
                     }

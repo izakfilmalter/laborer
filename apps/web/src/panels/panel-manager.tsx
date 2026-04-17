@@ -393,6 +393,25 @@ interface PaneContentProps {
   readonly onTerminalExit?: (() => void) | undefined
 }
 
+function isTextSelectablePaneEvent(
+  event: React.MouseEvent<HTMLDivElement>
+): boolean {
+  const path = event.nativeEvent.composedPath?.() ?? []
+  for (const target of path) {
+    if (
+      target instanceof HTMLElement &&
+      target.hasAttribute('data-pane-text-selectable')
+    ) {
+      return true
+    }
+  }
+
+  return (
+    event.target instanceof HTMLElement &&
+    event.target.closest('[data-pane-text-selectable]') !== null
+  )
+}
+
 /**
  * Renders the content of a single pane based on its type and assigned IDs.
  */
@@ -737,18 +756,39 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     borderClass = 'ring-1 ring-primary/50'
   }
 
+  const handleMouseDownCapture = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (isTextSelectablePaneEvent(event)) {
+        return
+      }
+      actions?.setActivePaneId(node.id)
+    },
+    [actions, node.id]
+  )
+
+  const handleClickCapture = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!isTextSelectablePaneEvent(event)) {
+        return
+      }
+      actions?.setActivePaneId(node.id)
+    },
+    [actions, node.id]
+  )
+
   const paneContent = (
     // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
     <div
       className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
       data-pane-id={node.id}
+      onClickCapture={handleClickCapture}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onFocusCapture={() => actions?.setActivePaneId(node.id)}
-      onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
+      onMouseDownCapture={handleMouseDownCapture}
       ref={paneContainerRef}
       role="region"
       tabIndex={-1}

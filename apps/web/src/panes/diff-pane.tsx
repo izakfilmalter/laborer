@@ -843,12 +843,14 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
       )}
 
       <div
-        className="min-h-0 flex-1 overflow-auto"
+        className="min-h-0 flex-1 select-text overflow-auto"
+        data-pane-text-selectable
         onScroll={handleScroll}
         ref={scrollContainerRef}
       >
         {deferredFileDiffs.map((fileDiffMeta, index) => (
           <FileDiff
+            className="select-text"
             fileDiff={fileDiffMeta}
             key={fileDiffMeta.name ?? index}
             options={diffOptions}

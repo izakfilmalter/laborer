@@ -29,22 +29,16 @@ function WindowTabContent({
   tab,
   isActive,
   activePaneId,
-  diffPaneOpen,
-  diffWorkspaceId,
-  reviewPaneOpen,
-  reviewWorkspaceId,
-  treePaneOpen,
-  treeWorkspaceId,
+  diffWorkspaceIds,
+  reviewWorkspaceIds,
+  treeWorkspaceIds,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
-  readonly diffPaneOpen: boolean
-  readonly diffWorkspaceId: string | null
-  readonly reviewPaneOpen: boolean
-  readonly reviewWorkspaceId: string | null
-  readonly treePaneOpen: boolean
-  readonly treeWorkspaceId: string | null
+  readonly diffWorkspaceIds: readonly string[]
+  readonly reviewWorkspaceIds: readonly string[]
+  readonly treeWorkspaceIds: readonly string[]
 }) {
   const layout = tab.workspaceLayout
   const pendingCloseWindowTab = usePendingCloseWindowTab()
@@ -62,11 +56,9 @@ function WindowTabContent({
     >
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
-        diffWorkspaceId={isActive && diffPaneOpen ? diffWorkspaceId : null}
-        reviewWorkspaceId={
-          isActive && reviewPaneOpen ? reviewWorkspaceId : null
-        }
-        treeWorkspaceId={isActive && treePaneOpen ? treeWorkspaceId : null}
+        diffWorkspaceIds={isActive ? diffWorkspaceIds : []}
+        reviewWorkspaceIds={isActive ? reviewWorkspaceIds : []}
+        treeWorkspaceIds={isActive ? treeWorkspaceIds : []}
         workspaceTileLayout={layout}
       />
       {isClosingTab && (
@@ -82,16 +74,13 @@ function WindowTabContent({
 interface PanelContentProps {
   readonly activePaneId: string | null
   readonly activeTabId?: string | undefined
-  readonly diffPaneOpen?: boolean
-  readonly diffWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
   readonly fullscreenPaneId: string | null
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
-  readonly reviewPaneOpen?: boolean
-  readonly reviewWorkspaceId?: string | null
-  readonly treePaneOpen?: boolean
-  readonly treeWorkspaceId?: string | null
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   /** The hierarchical window layout — used for fullscreen pane workspace resolution. */
   readonly windowLayout?: WindowLayout | undefined
   /** All window tabs — rendered with display:none for inactive tabs to keep terminals alive. */
@@ -119,12 +108,9 @@ export function PanelContent({
   windowLayout,
   windowTabs,
   isEmptyWindowTab = false,
-  reviewPaneOpen = false,
-  reviewWorkspaceId = null,
-  treePaneOpen = false,
-  treeWorkspaceId = null,
-  diffPaneOpen = false,
-  diffWorkspaceId = null,
+  reviewWorkspaceIds = [],
+  treeWorkspaceIds = [],
+  diffWorkspaceIds = [],
 }: PanelContentProps) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
 
@@ -189,15 +175,12 @@ export function PanelContent({
             {tabsToRender.map((tab) => (
               <WindowTabContent
                 activePaneId={activePaneId}
-                diffPaneOpen={diffPaneOpen}
-                diffWorkspaceId={diffWorkspaceId}
+                diffWorkspaceIds={diffWorkspaceIds}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
-                reviewPaneOpen={reviewPaneOpen}
-                reviewWorkspaceId={reviewWorkspaceId}
+                reviewWorkspaceIds={reviewWorkspaceIds}
                 tab={tab}
-                treePaneOpen={treePaneOpen}
-                treeWorkspaceId={treeWorkspaceId}
+                treeWorkspaceIds={treeWorkspaceIds}
               />
             ))}
             {/* Fullscreen portal target — panes portal into this overlay

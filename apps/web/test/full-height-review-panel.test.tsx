@@ -129,6 +129,23 @@ vi.mock('@/panels/panel-context', () => ({
     reorderWindowTabsDnd: vi.fn(),
     windowLayout: undefined,
   }),
+  usePendingClosePanelTab: () => ({
+    onCancel: vi.fn(),
+    onConfirm: vi.fn(),
+    tabId: null,
+    workspaceId: null,
+  }),
+  usePendingCloseWorkspace: () => ({
+    onCancel: vi.fn(),
+    onConfirm: vi.fn(),
+    workspaceId: null,
+  }),
+  usePendingDestroyOnCloseWorkspace: () => ({
+    onCancel: vi.fn(),
+    onCloseAndDestroy: vi.fn(),
+    onConfirm: vi.fn(),
+    workspaceId: null,
+  }),
 }))
 
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
@@ -260,7 +277,7 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        reviewWorkspaceId="workspace-1"
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -271,11 +288,11 @@ describe('Workspace-scoped review panel', () => {
     expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-1')
   })
 
-  it('does not render review panel when reviewWorkspaceId is null', () => {
+  it('does not render review panel when reviewWorkspaceIds is empty', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        reviewWorkspaceId={null}
+        reviewWorkspaceIds={[]}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -287,7 +304,7 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        reviewWorkspaceId="workspace-1"
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
@@ -317,7 +334,7 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        reviewWorkspaceId="workspace-2"
+        reviewWorkspaceIds={['workspace-2']}
         workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
@@ -339,7 +356,7 @@ describe('Workspace-scoped diff panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -349,11 +366,11 @@ describe('Workspace-scoped diff panel', () => {
     expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-1')
   })
 
-  it('does not render diff panel when diffWorkspaceId is null', () => {
+  it('does not render diff panel when diffWorkspaceIds is empty', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId={null}
+        diffWorkspaceIds={[]}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -365,7 +382,7 @@ describe('Workspace-scoped diff panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-2"
+        diffWorkspaceIds={['workspace-2']}
         workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
@@ -373,6 +390,21 @@ describe('Workspace-scoped diff panel', () => {
     const diffPanes = screen.getAllByTestId('diff-pane')
     expect(diffPanes).toHaveLength(1)
     expect(diffPanes[0]?.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+  it('renders diff panels for multiple workspaces at once', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceIds={['workspace-1', 'workspace-2']}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
+      />
+    )
+
+    const diffWorkspaceIds = screen
+      .getAllByTestId('diff-pane')
+      .map((pane) => pane.getAttribute('data-workspace-id'))
+
+    expect(diffWorkspaceIds).toEqual(['workspace-1', 'workspace-2'])
   })
 })
 
@@ -388,8 +420,8 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-1"
-        reviewWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-1']}
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -402,8 +434,8 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-1"
-        reviewWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-1']}
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -421,7 +453,7 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -437,7 +469,7 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        reviewWorkspaceId="workspace-1"
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
@@ -451,8 +483,8 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="workspace-2"
-        reviewWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-2']}
+        reviewWorkspaceIds={['workspace-1']}
         workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
@@ -462,6 +494,21 @@ describe('Both panels in same workspace', () => {
 
     expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-1')
     expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+  it('renders review panels for multiple workspaces at once', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        reviewWorkspaceIds={['workspace-1', 'workspace-2']}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
+      />
+    )
+
+    const reviewWorkspaceIds = screen
+      .getAllByTestId('review-pane')
+      .map((pane) => pane.getAttribute('data-workspace-id'))
+
+    expect(reviewWorkspaceIds).toEqual(['workspace-1', 'workspace-2'])
   })
 })
 
@@ -497,8 +544,7 @@ describe('PanelContent passes through side panel state', () => {
         activePaneId="pane-1"
         fullscreenPaneId={null}
         isReconciling={true}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
+        reviewWorkspaceIds={['workspace-1']}
       />
     )
 

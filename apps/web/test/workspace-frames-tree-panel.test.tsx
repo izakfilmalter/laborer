@@ -96,6 +96,23 @@ vi.mock('@/panels/panel-context', () => {
   }
   return {
     usePanelActions: () => actions,
+    usePendingClosePanelTab: () => ({
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+      tabId: null,
+      workspaceId: null,
+    }),
+    usePendingCloseWorkspace: () => ({
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+      workspaceId: null,
+    }),
+    usePendingDestroyOnCloseWorkspace: () => ({
+      onCancel: vi.fn(),
+      onCloseAndDestroy: vi.fn(),
+      onConfirm: vi.fn(),
+      workspaceId: null,
+    }),
   }
 })
 
@@ -155,16 +172,44 @@ const singleLeafLayout: WorkspaceTileNode = {
   ],
 }
 
+const twoLeafLayout: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
+  direction: 'vertical',
+  children: [
+    singleLeafLayout,
+    {
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-leaf-2',
+      workspaceId: 'ws-2',
+      activePanelTabId: 'tab-2',
+      panelTabs: [
+        {
+          id: 'tab-2',
+          panelLayout: {
+            _tag: 'LeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'ws-2',
+          },
+        },
+      ],
+    },
+  ],
+  sizes: [50, 50],
+}
+
 describe('WorkspaceFrames tree panel positioning', () => {
   afterEach(() => {
     cleanup()
   })
 
-  it('renders tree pane on the LEFT side of main content when treeWorkspaceId matches', () => {
+  it('renders tree pane on the LEFT side of main content when treeWorkspaceIds includes the workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        treeWorkspaceId="ws-1"
+        treeWorkspaceIds={['ws-1']}
         workspaceTileLayout={singleLeafLayout}
       />
     )
@@ -187,11 +232,11 @@ describe('WorkspaceFrames tree panel positioning', () => {
     expect(treeIndex).toBeLessThan(managerIndex)
   })
 
-  it('does NOT render tree pane when treeWorkspaceId is null', () => {
+  it('does NOT render tree pane when treeWorkspaceIds is empty', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        treeWorkspaceId={null}
+        treeWorkspaceIds={[]}
         workspaceTileLayout={singleLeafLayout}
       />
     )
@@ -199,16 +244,32 @@ describe('WorkspaceFrames tree panel positioning', () => {
     expect(screen.queryByTestId('tree-pane')).toBeNull()
   })
 
-  it('does NOT render tree pane when treeWorkspaceId does not match workspace', () => {
+  it('does NOT render tree pane when treeWorkspaceIds does not include the workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        treeWorkspaceId="ws-other"
+        treeWorkspaceIds={['ws-other']}
         workspaceTileLayout={singleLeafLayout}
       />
     )
 
     expect(screen.queryByTestId('tree-pane')).toBeNull()
+  })
+
+  it('renders tree panes for every workspace listed in treeWorkspaceIds', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        treeWorkspaceIds={['ws-1', 'ws-2']}
+        workspaceTileLayout={twoLeafLayout}
+      />
+    )
+
+    const treeWorkspaceIds = screen
+      .getAllByTestId('tree-pane')
+      .map((pane) => pane.getAttribute('data-workspace-id'))
+
+    expect(treeWorkspaceIds).toEqual(['ws-1', 'ws-2'])
   })
 })
 
@@ -241,8 +302,8 @@ describe('WorkspaceFrames tree + diff panel positioning', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceId="ws-1"
-        treeWorkspaceId="ws-1"
+        diffWorkspaceIds={['ws-1']}
+        treeWorkspaceIds={['ws-1']}
         workspaceTileLayout={singleLeafLayout}
       />
     )

@@ -40,8 +40,6 @@ import {
 import type { FileNode } from '@laborer/shared/rpc'
 import { workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
-import type { FileTreeSelectionItem } from '@pierre/trees'
-import { FileTree } from '@pierre/trees/react'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -58,24 +56,11 @@ import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { invalidateFromWatcher } from '@/panes/file-tree/invalidate-from-watcher'
+import {
+  FileTreeView,
+  type TreeViewSelectionItem,
+} from '@/panes/file-tree/tree-view'
 import { useFileTreeStore } from '@/panes/file-tree/use-file-tree-store'
-
-/**
- * Options for the @pierre/trees FileTree component.
- * Configured once and reused across renders.
- *
- * - `flattenEmptyDirectories`: Collapses single-child directories
- *   (e.g., `src/components/` shown as one row when `components/`
- *   has no siblings), matching VS Code's compact folder display.
- * - `sort`: Alphabetical ordering, folders first.
- * - `virtualize`: Enables virtualized rendering for large repos,
- *   only rendering visible rows when the file count exceeds the threshold.
- */
-const fileTreeOptions = {
-  flattenEmptyDirectories: true,
-  sort: true,
-  virtualize: { threshold: 200 },
-} as const
 
 interface TreePaneProps {
   /** Callback to close the tree pane. */
@@ -122,7 +107,7 @@ function FileTreeContextMenuContent({
   workspaceId,
   worktreePath,
 }: {
-  readonly item: FileTreeSelectionItem
+  readonly item: TreeViewSelectionItem
   readonly workspaceId: string
   readonly worktreePath: string
 }) {
@@ -387,63 +372,50 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     refreshGitStatus,
   ])
 
-  // --- Context menu state ---
-  // Track the most recently selected items from @pierre/trees so we know
-  // which file/folder to target when a right-click occurs.
-  const selectionRef = useRef<FileTreeSelectionItem[]>([])
+  // --- Selection + context menu state ---
+  const contextMenuItemRef = useRef<TreeViewSelectionItem | null>(null)
   const [contextMenuItem, setContextMenuItem] =
-    useState<FileTreeSelectionItem | null>(null)
+    useState<TreeViewSelectionItem | null>(null)
+  const [selectedItem, setSelectedItem] =
+    useState<TreeViewSelectionItem | null>(null)
 
-  const handleSelection = useCallback((items: FileTreeSelectionItem[]) => {
-    selectionRef.current = items
+  const handleSelect = useCallback((item: TreeViewSelectionItem) => {
+    setSelectedItem(item)
+  }, [])
+
+  const handleContextMenuItem = useCallback((item: TreeViewSelectionItem) => {
+    contextMenuItemRef.current = item
+    setContextMenuItem(item)
   }, [])
 
   // Validate that a right-click landed on a tree item before allowing
-  // the context menu to open. Walks the composed path (crosses shadow
-  // DOM boundaries from @pierre/trees) to find a `data-type="item"` element.
+  // the context menu to open.
   const handleOpenChange = useCallback(
     (
       open: boolean,
       details: { cancel: () => void; event: Event; reason: string }
     ) => {
       if (!open) {
+        contextMenuItemRef.current = null
         setContextMenuItem(null)
         return
       }
 
-      // Validate the right-click target is a tree item.
-      const event = details.event
-      if (!('composedPath' in event)) {
+      const target = details.event.target
+      if (!(target instanceof Element)) {
         details.cancel()
         return
       }
 
-      const composedPath = (event as MouseEvent).composedPath()
-      let isTreeItem = false
-      for (const el of composedPath) {
-        if (
-          el instanceof HTMLElement &&
-          el.getAttribute('data-type') === 'item'
-        ) {
-          isTreeItem = true
-          break
-        }
-      }
-
-      if (!isTreeItem) {
+      if (target.closest('[data-tree-item="true"]') === null) {
         details.cancel()
         return
       }
 
-      // Use the current selection — @pierre/trees fires onSelection
-      // before the contextmenu event, so selectionRef is up-to-date.
-      const firstSelected = selectionRef.current[0]
-      if (firstSelected === undefined) {
+      if (contextMenuItemRef.current === null) {
         details.cancel()
         return
       }
-
-      setContextMenuItem(firstSelected)
     },
     []
   )
@@ -469,18 +441,12 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   return (
     <ContextMenu onOpenChange={handleOpenChange}>
       <ContextMenuTrigger className="h-full">
-        <FileTree
-          className="h-full"
-          files={treeStore.files as string[]}
-          gitStatus={
-            gitStatus as {
-              path: string
-              status: 'added' | 'deleted' | 'modified'
-            }[]
-          }
-          onExpandedItemsChange={treeStore.onExpandedItemsChange}
-          onSelection={handleSelection}
-          options={fileTreeOptions}
+        <FileTreeView
+          gitStatus={gitStatus}
+          onContextMenuItem={handleContextMenuItem}
+          onSelect={handleSelect}
+          selectedPath={selectedItem?.path ?? null}
+          store={treeStore}
         />
       </ContextMenuTrigger>
       {contextMenuItem !== null && (

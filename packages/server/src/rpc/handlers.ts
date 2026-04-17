@@ -21,6 +21,7 @@ import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { FileService } from '../services/file-service.js'
+import { runGhPrViewWithOriginFallback } from '../services/github-pr-view.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -125,24 +126,15 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
   }
 
   // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
-  const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
-    try: async () => {
-      const proc = spawn(['gh', 'pr', 'view', '--json', 'number'], {
-        cwd: workspace.worktreePath,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const exitCode = await proc.exited
-      const stdout = await new Response(proc.stdout).text()
-      const stderr = await new Response(proc.stderr).text()
-      return { exitCode, stdout, stderr }
-    },
-    catch: (error) =>
+  const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
+    workspace.worktreePath,
+    'number',
+    (error) =>
       new RpcError({
         message: `Failed to run gh pr view: ${String(error)}`,
         code: 'GH_COMMAND_FAILED',
-      }),
-  })
+      })
+  )
 
   if (exitCode !== 0) {
     return yield* new RpcError({

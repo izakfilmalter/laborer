@@ -67,6 +67,7 @@ import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-containe
 
 /** No-op callback for the PanelTypePicker's cancel handler in embedded contexts. */
 const noop = () => undefined
+const EMPTY_WORKSPACE_IDS: readonly string[] = []
 
 /**
  * Empty state shown when all panel tabs in a workspace have been closed.
@@ -388,9 +389,6 @@ function WorkspaceContent({
   showDiff,
   showReview,
   showTree,
-  diffWorkspaceId,
-  reviewWorkspaceId,
-  treeWorkspaceId,
   closeSidePanel,
   tabBar,
 }: {
@@ -404,9 +402,6 @@ function WorkspaceContent({
   readonly showDiff: boolean
   readonly showReview: boolean
   readonly showTree: boolean
-  readonly diffWorkspaceId: string | null
-  readonly reviewWorkspaceId: string | null
-  readonly treeWorkspaceId: string | null
   readonly closeSidePanel: (
     togglePanel: ((paneId: string) => boolean) | undefined
   ) => void
@@ -441,7 +436,7 @@ function WorkspaceContent({
   if (hasSidePanels) {
     return (
       <ResizablePanelGroup className="h-full" orientation="horizontal">
-        {showTree && treeWorkspaceId !== null && (
+        {showTree && workspaceId !== undefined && (
           <>
             <ResizablePanel
               className="h-full overflow-hidden"
@@ -450,7 +445,7 @@ function WorkspaceContent({
             >
               <TreePane
                 onClose={() => closeSidePanel(actions?.toggleTreePane)}
-                workspaceId={treeWorkspaceId}
+                workspaceId={workspaceId}
               />
             </ResizablePanel>
             <ResizableHandle withHandle />
@@ -459,7 +454,7 @@ function WorkspaceContent({
         <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
           {mainPanel}
         </ResizablePanel>
-        {showDiff && diffWorkspaceId !== null && (
+        {showDiff && workspaceId !== undefined && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
@@ -469,12 +464,12 @@ function WorkspaceContent({
             >
               <DiffPane
                 onClose={() => closeSidePanel(actions?.toggleDiffPane)}
-                workspaceId={diffWorkspaceId}
+                workspaceId={workspaceId}
               />
             </ResizablePanel>
           </>
         )}
-        {showReview && reviewWorkspaceId !== null && (
+        {showReview && workspaceId !== undefined && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
@@ -484,7 +479,7 @@ function WorkspaceContent({
             >
               <ReviewPane
                 onClose={() => closeSidePanel(actions?.toggleReviewPane)}
-                workspaceId={reviewWorkspaceId}
+                workspaceId={workspaceId}
               />
             </ResizablePanel>
           </>
@@ -581,9 +576,9 @@ function WorkspaceFrame({
   index,
   isCollapsible = false,
   panelRef,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-  treeWorkspaceId = null,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   tileLeaf,
   parentDirection,
 }: {
@@ -595,9 +590,9 @@ function WorkspaceFrame({
   readonly panelRef?:
     | { readonly current: PanelImperativeHandle | null }
     | undefined
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-  readonly treeWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
   readonly parentDirection?: SplitDirection | undefined
 }) {
@@ -722,10 +717,12 @@ function WorkspaceFrame({
     )
   }, [workspaceId, index, isHorizontal])
 
-  const showDiff = diffWorkspaceId !== null && diffWorkspaceId === workspaceId
+  const showDiff =
+    workspaceId !== undefined && diffWorkspaceIds.includes(workspaceId)
   const showReview =
-    reviewWorkspaceId !== null && reviewWorkspaceId === workspaceId
-  const showTree = treeWorkspaceId !== null && treeWorkspaceId === workspaceId
+    workspaceId !== undefined && reviewWorkspaceIds.includes(workspaceId)
+  const showTree =
+    workspaceId !== undefined && treeWorkspaceIds.includes(workspaceId)
   const hasSidePanels = showDiff || showReview || showTree
   const workspacePaneId = useMemo(() => {
     if (activePaneInFrame) {
@@ -888,19 +885,16 @@ function WorkspaceFrame({
       {!isMinimized && (
         <WorkspaceContent
           closeSidePanel={closeSidePanel}
-          diffWorkspaceId={diffWorkspaceId}
           effectiveLayout={effectiveLayout}
           hasSidePanels={hasSidePanels}
           isEmptyWorkspace={isEmptyWorkspace}
           mainPanelSize={mainPanelSize}
           panelTabId={tileLeaf?.activePanelTabId}
-          reviewWorkspaceId={reviewWorkspaceId}
           showDiff={showDiff}
           showReview={showReview}
           showTree={showTree}
           sidePanelSize={sidePanelSize}
           tabBar={tabBarElement}
-          treeWorkspaceId={treeWorkspaceId}
           workspaceId={workspaceId}
         />
       )}
@@ -960,9 +954,9 @@ function WorkspaceTileLeafFrame({
   leaf,
   activePaneId,
   index,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-  treeWorkspaceId = null,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
   isCollapsible = false,
   panelRef,
@@ -970,9 +964,9 @@ function WorkspaceTileLeafFrame({
   readonly leaf: WorkspaceTileLeaf
   readonly activePaneId: string | null
   readonly index: number
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-  readonly treeWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
   readonly isCollapsible?: boolean | undefined
   readonly panelRef?:
@@ -1000,15 +994,15 @@ function WorkspaceTileLeafFrame({
   return (
     <WorkspaceFrame
       activePaneId={activePaneId}
-      diffWorkspaceId={diffWorkspaceId}
+      diffWorkspaceIds={diffWorkspaceIds}
       index={index}
       isCollapsible={isCollapsible}
       panelRef={panelRef}
       parentDirection={parentDirection}
-      reviewWorkspaceId={reviewWorkspaceId}
+      reviewWorkspaceIds={reviewWorkspaceIds}
       subLayout={subLayout}
       tileLeaf={leaf}
-      treeWorkspaceId={treeWorkspaceId}
+      treeWorkspaceIds={treeWorkspaceIds}
       workspaceId={leaf.workspaceId}
     />
   )
@@ -1023,18 +1017,18 @@ function WorkspaceTileResizableChild({
   activePaneId,
   defaultSize,
   index,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-  treeWorkspaceId = null,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-  readonly treeWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
 }) {
   const panelRef = useRef<PanelImperativeHandle | null>(null)
@@ -1052,14 +1046,14 @@ function WorkspaceTileResizableChild({
       >
         <WorkspaceTileRenderer
           activePaneId={activePaneId}
-          diffWorkspaceId={diffWorkspaceId}
+          diffWorkspaceIds={diffWorkspaceIds}
           index={index}
           isCollapsible={isLeaf}
           panelRef={isLeaf ? panelRef : undefined}
           parentDirection={parentDirection}
-          reviewWorkspaceId={reviewWorkspaceId}
+          reviewWorkspaceIds={reviewWorkspaceIds}
           tileNode={tileNode}
-          treeWorkspaceId={treeWorkspaceId}
+          treeWorkspaceIds={treeWorkspaceIds}
         />
       </ResizablePanel>
     </>
@@ -1081,9 +1075,9 @@ function WorkspaceTileRenderer({
   tileNode,
   activePaneId,
   index = 0,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-  treeWorkspaceId = null,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
   isCollapsible = false,
   panelRef,
@@ -1091,9 +1085,9 @@ function WorkspaceTileRenderer({
   readonly tileNode: WorkspaceTileNode
   readonly activePaneId: string | null
   readonly index?: number
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-  readonly treeWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
   readonly isCollapsible?: boolean | undefined
   readonly panelRef?:
@@ -1105,14 +1099,14 @@ function WorkspaceTileRenderer({
       <TabErrorBoundary label={tileNode.workspaceId}>
         <WorkspaceTileLeafFrame
           activePaneId={activePaneId}
-          diffWorkspaceId={diffWorkspaceId}
+          diffWorkspaceIds={diffWorkspaceIds}
           index={index}
           isCollapsible={isCollapsible}
           leaf={tileNode}
           panelRef={panelRef}
           parentDirection={parentDirection}
-          reviewWorkspaceId={reviewWorkspaceId}
-          treeWorkspaceId={treeWorkspaceId}
+          reviewWorkspaceIds={reviewWorkspaceIds}
+          treeWorkspaceIds={treeWorkspaceIds}
         />
       </TabErrorBoundary>
     )
@@ -1132,13 +1126,13 @@ function WorkspaceTileRenderer({
           <WorkspaceTileResizableChild
             activePaneId={activePaneId}
             defaultSize={size}
-            diffWorkspaceId={diffWorkspaceId}
+            diffWorkspaceIds={diffWorkspaceIds}
             index={childIndex}
             key={child.id}
             parentDirection={tileNode.direction}
-            reviewWorkspaceId={reviewWorkspaceId}
+            reviewWorkspaceIds={reviewWorkspaceIds}
             tileNode={child}
-            treeWorkspaceId={treeWorkspaceId}
+            treeWorkspaceIds={treeWorkspaceIds}
           />
         )
       })}
@@ -1163,15 +1157,15 @@ function WorkspaceTileRenderer({
 export function WorkspaceFrames({
   activePaneId,
   workspaceTileLayout,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-  treeWorkspaceId = null,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
 }: {
   readonly activePaneId: string | null
   readonly workspaceTileLayout: WorkspaceTileNode
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-  readonly treeWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
 }) {
   // Wire up a monitor for workspace frame drag-and-drop reordering.
   // This must run unconditionally (React hooks rule) so it covers both
@@ -1227,10 +1221,10 @@ export function WorkspaceFrames({
   return (
     <WorkspaceTileRenderer
       activePaneId={activePaneId}
-      diffWorkspaceId={diffWorkspaceId}
-      reviewWorkspaceId={reviewWorkspaceId}
+      diffWorkspaceIds={diffWorkspaceIds}
+      reviewWorkspaceIds={reviewWorkspaceIds}
       tileNode={workspaceTileLayout}
-      treeWorkspaceId={treeWorkspaceId}
+      treeWorkspaceIds={treeWorkspaceIds}
     />
   )
 }

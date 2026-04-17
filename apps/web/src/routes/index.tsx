@@ -51,6 +51,7 @@ import {
   findPaneInActiveTab,
   getActiveTabLeafNodes,
   getActiveWindowTab,
+  getAllWorkspaceTileLeaves,
   resolveActiveWorkspaceId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
@@ -93,6 +94,25 @@ const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 const sidebarWorkspaces$ = queryDb(workspaces, {
   label: 'sidebarWorkspaces',
 })
+
+const toggleWorkspacePanel = (
+  workspaceIds: readonly string[],
+  workspaceId: string
+): readonly string[] =>
+  workspaceIds.includes(workspaceId)
+    ? workspaceIds.filter((id) => id !== workspaceId)
+    : [...workspaceIds, workspaceId]
+
+const filterOpenWorkspacePanels = (
+  workspaceIds: readonly string[],
+  openWorkspaceIds: ReadonlySet<string>
+): readonly string[] => {
+  const nextWorkspaceIds = workspaceIds.filter((id) => openWorkspaceIds.has(id))
+
+  return nextWorkspaceIds.length === workspaceIds.length
+    ? workspaceIds
+    : nextWorkspaceIds
+}
 
 function HomeComponent() {
   const {
@@ -205,70 +225,61 @@ function HomeComponent() {
   }, [activePaneId])
 
   // Review panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height review panel is shown
-  // alongside all workspace frames. The panel spans the full height of
-  // the panel area, not just a single workspace.
-  const [reviewPaneWorkspaceId, setReviewPaneWorkspaceId] = useState<
-    string | null
-  >(null)
+  // Each workspace manages its own review pane visibility independently.
+  const [reviewPaneWorkspaceIds, setReviewPaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
   // Diff panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height diff panel is shown
-  // alongside all workspace frames. The panel spans the full height of
-  // the panel area, not just a single workspace.
-  const [diffPaneWorkspaceId, setDiffPaneWorkspaceId] = useState<string | null>(
-    null
-  )
+  // Each workspace manages its own diff viewer visibility independently.
+  const [diffPaneWorkspaceIds, setDiffPaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
   // Tree panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height file tree panel is shown
-  // on the LEFT side of the workspace frames. Unlike diff/review which
-  // are forced to the right, the tree panel is forced to the left.
-  const [treePaneWorkspaceId, setTreePaneWorkspaceId] = useState<string | null>(
-    null
-  )
+  // Each workspace manages its own file tree visibility independently.
+  const [treePaneWorkspaceIds, setTreePaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
-  // Auto-close review/diff/tree panels when the workspace no longer exists
-  // in the layout (e.g., if the workspace was closed while a side panel was open).
+  // Auto-close review/diff/tree panels when their workspace no longer exists
+  // anywhere in the window layout (e.g., if the workspace was closed).
   useEffect(() => {
     if (
       !(
-        (reviewPaneWorkspaceId || diffPaneWorkspaceId || treePaneWorkspaceId) &&
+        (reviewPaneWorkspaceIds.length > 0 ||
+          diffPaneWorkspaceIds.length > 0 ||
+          treePaneWorkspaceIds.length > 0) &&
         windowLayout
       )
     ) {
       return
     }
-    const leaves = getActiveTabLeafNodes(windowLayout)
-    if (reviewPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === reviewPaneWorkspaceId)
-      if (!exists) {
-        setReviewPaneWorkspaceId(null)
-      }
-    }
-    if (diffPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === diffPaneWorkspaceId)
-      if (!exists) {
-        setDiffPaneWorkspaceId(null)
-      }
-    }
-    if (treePaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === treePaneWorkspaceId)
-      if (!exists) {
-        setTreePaneWorkspaceId(null)
-      }
-    }
+
+    const openWorkspaceIds = new Set(
+      getAllWorkspaceTileLeaves(windowLayout).map((leaf) => leaf.workspaceId)
+    )
+
+    setReviewPaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
+    setDiffPaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
+    setTreePaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
   }, [
-    reviewPaneWorkspaceId,
-    diffPaneWorkspaceId,
-    treePaneWorkspaceId,
+    reviewPaneWorkspaceIds,
+    diffPaneWorkspaceIds,
+    treePaneWorkspaceIds,
     windowLayout,
   ])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
-   * If the review panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own review pane, so toggling one workspace
+   * does not affect any others.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the review panel is now open
@@ -286,25 +297,21 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setReviewPaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing review panel for this workspace — close it
-          return null
-        }
-        // Open review panel for this workspace
-        return workspaceId
-      })
+      const isOpen = reviewPaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return reviewPaneWorkspaceId !== workspaceId
+      setReviewPaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, reviewPaneWorkspaceId]
+    [windowLayout, reviewPaneWorkspaceIds]
   )
 
   /**
    * Toggle the full-height diff panel for the workspace of the given pane.
-   * If the diff panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own diff viewer, so toggling one workspace
+   * does not affect any others.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the diff panel is now open
@@ -322,25 +329,21 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setDiffPaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing diff panel for this workspace — close it
-          return null
-        }
-        // Open diff panel for this workspace
-        return workspaceId
-      })
+      const isOpen = diffPaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return diffPaneWorkspaceId !== workspaceId
+      setDiffPaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, diffPaneWorkspaceId]
+    [windowLayout, diffPaneWorkspaceIds]
   )
 
   /**
    * Toggle the full-height file tree panel for the workspace of the given pane.
-   * If the tree panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own file tree, so toggling one workspace
+   * does not affect any others.
    *
    * The tree panel is forced to the left side, unlike diff/review.
    *
@@ -360,19 +363,15 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setTreePaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing tree panel for this workspace — close it
-          return null
-        }
-        // Open tree panel for this workspace
-        return workspaceId
-      })
+      const isOpen = treePaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return treePaneWorkspaceId !== workspaceId
+      setTreePaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, treePaneWorkspaceId]
+    [windowLayout, treePaneWorkspaceIds]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -1204,15 +1203,12 @@ function HomeComponent() {
                     <PanelContent
                       activePaneId={activePaneId}
                       activeTabId={windowLayout?.activeTabId}
-                      diffPaneOpen={diffPaneWorkspaceId !== null}
-                      diffWorkspaceId={diffPaneWorkspaceId}
+                      diffWorkspaceIds={diffPaneWorkspaceIds}
                       fullscreenPaneId={fullscreenPaneId}
                       isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
-                      reviewPaneOpen={reviewPaneWorkspaceId !== null}
-                      reviewWorkspaceId={reviewPaneWorkspaceId}
-                      treePaneOpen={treePaneWorkspaceId !== null}
-                      treeWorkspaceId={treePaneWorkspaceId}
+                      reviewWorkspaceIds={reviewPaneWorkspaceIds}
+                      treeWorkspaceIds={treePaneWorkspaceIds}
                       windowLayout={windowLayout}
                       windowTabs={windowLayout?.tabs}
                     />

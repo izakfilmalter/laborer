@@ -152,22 +152,16 @@ function WindowTabContent({
   tab,
   isActive,
   activePaneId,
-  diffPaneOpen,
-  diffWorkspaceId,
-  reviewPaneOpen,
-  reviewWorkspaceId,
-  treePaneOpen,
-  treeWorkspaceId,
+  diffWorkspaceIds,
+  reviewWorkspaceIds,
+  treeWorkspaceIds,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
-  readonly diffPaneOpen: boolean
-  readonly diffWorkspaceId: string | null
-  readonly reviewPaneOpen: boolean
-  readonly reviewWorkspaceId: string | null
-  readonly treePaneOpen: boolean
-  readonly treeWorkspaceId: string | null
+  readonly diffWorkspaceIds: readonly string[]
+  readonly reviewWorkspaceIds: readonly string[]
+  readonly treeWorkspaceIds: readonly string[]
 }) {
   const layout = tab.workspaceLayout
   const pendingCloseWindowTab = usePendingCloseWindowTab()
@@ -185,11 +179,9 @@ function WindowTabContent({
     >
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
-        diffWorkspaceId={isActive && diffPaneOpen ? diffWorkspaceId : null}
-        reviewWorkspaceId={
-          isActive && reviewPaneOpen ? reviewWorkspaceId : null
-        }
-        treeWorkspaceId={isActive && treePaneOpen ? treeWorkspaceId : null}
+        diffWorkspaceIds={isActive ? diffWorkspaceIds : []}
+        reviewWorkspaceIds={isActive ? reviewWorkspaceIds : []}
+        treeWorkspaceIds={isActive ? treeWorkspaceIds : []}
         workspaceTileLayout={layout}
       />
       {isClosingTab && (
@@ -205,16 +197,13 @@ function WindowTabContent({
 interface PanelContentProps {
   readonly activePaneId: string | null
   readonly activeTabId?: string | undefined
-  readonly diffPaneOpen?: boolean
-  readonly diffWorkspaceId?: string | null
+  readonly diffWorkspaceIds?: readonly string[]
   readonly fullscreenPaneId: string | null
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
-  readonly reviewPaneOpen?: boolean
-  readonly reviewWorkspaceId?: string | null
-  readonly treePaneOpen?: boolean
-  readonly treeWorkspaceId?: string | null
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
   /** The hierarchical window layout — used for fullscreen pane workspace resolution. */
   readonly windowLayout?: WindowLayout | undefined
   /** All window tabs — rendered with display:none for inactive tabs to keep terminals alive. */
@@ -225,8 +214,8 @@ interface PanelContentProps {
  * Renders the main panel area content, handling the reconciling/loading,
  * workspace frames, empty window tab state, or empty state.
  *
- * Side panels (review and/or diff) are rendered inside each workspace frame
- * that matches the panel's workspaceId, spanning the full height of that
+ * Side panels are rendered inside each workspace frame whose workspace ID is
+ * included in the corresponding panel list, spanning the full height of that
  * workspace rather than sitting outside all workspaces.
  *
  * Provides a fullscreen portal target: when a pane is fullscreened, it
@@ -242,12 +231,9 @@ export function PanelContent({
   windowLayout,
   windowTabs,
   isEmptyWindowTab = false,
-  reviewPaneOpen = false,
-  reviewWorkspaceId = null,
-  treePaneOpen = false,
-  treeWorkspaceId = null,
-  diffPaneOpen = false,
-  diffWorkspaceId = null,
+  reviewWorkspaceIds = [],
+  treeWorkspaceIds = [],
+  diffWorkspaceIds = [],
 }: PanelContentProps) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
   const handlePortalRef = useCallback((element: HTMLDivElement | null) => {
@@ -269,21 +255,34 @@ export function PanelContent({
 
   const fullscreenShowsDiff =
     fullscreenWorkspaceId !== undefined &&
-    diffWorkspaceId === fullscreenWorkspaceId
+    diffWorkspaceIds.includes(fullscreenWorkspaceId)
   const fullscreenShowsReview =
     fullscreenWorkspaceId !== undefined &&
-    reviewWorkspaceId === fullscreenWorkspaceId
+    reviewWorkspaceIds.includes(fullscreenWorkspaceId)
   const fullscreenShowsTree =
     fullscreenWorkspaceId !== undefined &&
-    treeWorkspaceId === fullscreenWorkspaceId
+    treeWorkspaceIds.includes(fullscreenWorkspaceId)
+
   // Hide side panels for the fullscreened workspace in the normal tree so we
   // don't duplicate expensive panel instances underneath the fullscreen overlay.
-  const inlineDiffWorkspaceId =
-    diffWorkspaceId === fullscreenWorkspaceId ? null : diffWorkspaceId
-  const inlineReviewWorkspaceId =
-    reviewWorkspaceId === fullscreenWorkspaceId ? null : reviewWorkspaceId
-  const inlineTreeWorkspaceId =
-    treeWorkspaceId === fullscreenWorkspaceId ? null : treeWorkspaceId
+  const inlineDiffWorkspaceIds =
+    fullscreenWorkspaceId === undefined
+      ? diffWorkspaceIds
+      : diffWorkspaceIds.filter(
+          (workspaceId) => workspaceId !== fullscreenWorkspaceId
+        )
+  const inlineReviewWorkspaceIds =
+    fullscreenWorkspaceId === undefined
+      ? reviewWorkspaceIds
+      : reviewWorkspaceIds.filter(
+          (workspaceId) => workspaceId !== fullscreenWorkspaceId
+        )
+  const inlineTreeWorkspaceIds =
+    fullscreenWorkspaceId === undefined
+      ? treeWorkspaceIds
+      : treeWorkspaceIds.filter(
+          (workspaceId) => workspaceId !== fullscreenWorkspaceId
+        )
 
   if (isReconciling) {
     return (
@@ -334,15 +333,12 @@ export function PanelContent({
             {tabsToRender.map((tab) => (
               <WindowTabContent
                 activePaneId={activePaneId}
-                diffPaneOpen={diffPaneOpen}
-                diffWorkspaceId={inlineDiffWorkspaceId}
+                diffWorkspaceIds={inlineDiffWorkspaceIds}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
-                reviewPaneOpen={reviewPaneOpen}
-                reviewWorkspaceId={inlineReviewWorkspaceId}
+                reviewWorkspaceIds={inlineReviewWorkspaceIds}
                 tab={tab}
-                treePaneOpen={treePaneOpen}
-                treeWorkspaceId={inlineTreeWorkspaceId}
+                treeWorkspaceIds={inlineTreeWorkspaceIds}
               />
             ))}
             {/* Fullscreen portal target — panes portal into this overlay

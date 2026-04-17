@@ -99,6 +99,23 @@ vi.mock('@/panels/panel-context', () => {
   }
   return {
     usePanelActions: () => actions,
+    usePendingClosePanelTab: () => ({
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+      tabId: null,
+      workspaceId: null,
+    }),
+    usePendingCloseWorkspace: () => ({
+      onCancel: vi.fn(),
+      onConfirm: vi.fn(),
+      workspaceId: null,
+    }),
+    usePendingDestroyOnCloseWorkspace: () => ({
+      onCancel: vi.fn(),
+      onCloseAndDestroy: vi.fn(),
+      onConfirm: vi.fn(),
+      workspaceId: null,
+    }),
   }
 })
 

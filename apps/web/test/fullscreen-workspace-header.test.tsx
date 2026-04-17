@@ -322,14 +322,11 @@ describe('Workspace header visibility during fullscreen', () => {
       <PanelContent
         activePaneId="pane-1"
         activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
-        diffPaneOpen
-        diffWorkspaceId="workspace-1"
+        diffWorkspaceIds={['workspace-1']}
         fullscreenPaneId="pane-1"
         isReconciling={false}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
-        treePaneOpen
-        treeWorkspaceId="workspace-1"
+        reviewWorkspaceIds={['workspace-1']}
+        treeWorkspaceIds={['workspace-1']}
         windowLayout={SINGLE_WINDOW_LAYOUT}
         windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
       />

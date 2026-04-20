@@ -100,7 +100,7 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
           branchName,
         },
       })
-      panelActions?.addPanelTab?.(result.id, 'agent')
+      panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
       // The RPC now returns immediately with status 'creating'.
       // The workspace card will show setup progress via worktreeSetupStep.
       toast.success(`Workspace "${result.branchName}" is being set up`)

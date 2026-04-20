@@ -93,6 +93,16 @@ interface PanelActions {
     paneId?: string,
     options?: AssignTerminalToPaneOptions
   ) => void
+
+  /**
+   * Queue an agent tab to open once the workspace finishes setup.
+   *
+   * Used by new-workspace flows so agent terminals are only spawned after
+   * the worktree directory and startup scripts are ready.
+   *
+   * @param workspaceId - The workspace whose agent should open when ready
+   */
+  readonly autoOpenAgentWhenWorkspaceReady?: (workspaceId: string) => void
   /**
    * Close a pane and remove it from the layout.
    * If it's the last pane, the layout becomes empty.

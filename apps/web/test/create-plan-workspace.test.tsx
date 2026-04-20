@@ -8,14 +8,13 @@ const {
   panelActionsMock,
   queryDbMock,
   useLaborerStoreMock,
-} =
-  vi.hoisted(() => ({
-    createWorkspaceFn: vi.fn(),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    panelActionsMock: { addPanelTab: vi.fn() },
-    queryDbMock: vi.fn((_table, options: { label: string }) => options),
-    useLaborerStoreMock: vi.fn(),
-  }))
+} = vi.hoisted(() => ({
+  createWorkspaceFn: vi.fn(),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
+  queryDbMock: vi.fn((_table, options: { label: string }) => options),
+  useLaborerStoreMock: vi.fn(),
+}))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
@@ -214,10 +213,9 @@ describe('CreatePlanWorkspace', () => {
         branchName: 'plan/my-test-plan',
       },
     })
-    expect(panelActionsMock.addPanelTab).toHaveBeenCalledWith(
-      'ws-new',
-      'agent'
-    )
+    expect(
+      panelActionsMock.autoOpenAgentWhenWorkspaceReady
+    ).toHaveBeenCalledWith('ws-new')
   })
 
   it('renders nothing when the PRD is not found', () => {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { createWorkspaceFn, mutationMap, panelActionsMock } = vi.hoisted(() => ({
   createWorkspaceFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  panelActionsMock: { addPanelTab: vi.fn() },
+  panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -225,10 +225,9 @@ describe('CreateWorkspaceForm — branch name mask', () => {
           projectId: 'project-1',
         },
       })
-      expect(panelActionsMock.addPanelTab).toHaveBeenCalledWith(
-        'ws-new',
-        'agent'
-      )
+      expect(
+        panelActionsMock.autoOpenAgentWhenWorkspaceReady
+      ).toHaveBeenCalledWith('ws-new')
     })
   })
 

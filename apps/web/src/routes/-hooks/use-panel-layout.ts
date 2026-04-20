@@ -442,6 +442,8 @@ export function usePanelLayout() {
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
+  const workspaceList = store.useQuery(allWorkspaces$)
+  const pendingAgentAutoOpenWorkspaceIdsRef = useRef<Set<string>>(new Set())
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >
@@ -1990,6 +1992,45 @@ export function usePanelLayout() {
     ]
   )
 
+  const handleAutoOpenAgentWhenWorkspaceReady = useCallback(
+    (workspaceId: string) => {
+      const workspace = workspaceList.find((ws) => ws.id === workspaceId)
+      if (workspace?.status === 'running') {
+        handleAddPanelTab(workspaceId, 'agent')
+        return
+      }
+      if (
+        workspace?.status === 'errored' ||
+        workspace?.status === 'destroyed'
+      ) {
+        return
+      }
+      pendingAgentAutoOpenWorkspaceIdsRef.current.add(workspaceId)
+    },
+    [workspaceList, handleAddPanelTab]
+  )
+
+  useEffect(() => {
+    if (pendingAgentAutoOpenWorkspaceIdsRef.current.size === 0) {
+      return
+    }
+
+    for (const workspaceId of pendingAgentAutoOpenWorkspaceIdsRef.current) {
+      const workspace = workspaceList.find((ws) => ws.id === workspaceId)
+      if (!workspace) {
+        continue
+      }
+      if (workspace.status === 'running') {
+        pendingAgentAutoOpenWorkspaceIdsRef.current.delete(workspaceId)
+        handleAddPanelTab(workspaceId, 'agent')
+        continue
+      }
+      if (workspace.status === 'errored' || workspace.status === 'destroyed') {
+        pendingAgentAutoOpenWorkspaceIdsRef.current.delete(workspaceId)
+      }
+    }
+  }, [workspaceList, handleAddPanelTab])
+
   /**
    * When removing a panel tab leaves the workspace empty (zero tabs),
    * auto-close the workspace by removing the workspace tile from the layout.
@@ -2162,6 +2203,7 @@ export function usePanelLayout() {
   const panelActions = useMemo(
     () => ({
       addPanelTab: handleAddPanelTab,
+      autoOpenAgentWhenWorkspaceReady: handleAutoOpenAgentWhenWorkspaceReady,
       assignTerminalToPane: handleAssignTerminalToPane,
       splitPane: handleSplitPane,
       updatePaneType: handleUpdatePaneType,
@@ -2194,6 +2236,7 @@ export function usePanelLayout() {
     }),
     [
       handleAddPanelTab,
+      handleAutoOpenAgentWhenWorkspaceReady,
       handleAssignTerminalToPane,
       handleSplitPane,
       handleUpdatePaneType,

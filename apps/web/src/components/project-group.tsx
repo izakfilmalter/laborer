@@ -118,6 +118,7 @@ function ProjectGroup({
         <div className="flex shrink-0 items-center gap-0.5">
           <CreateWorkspaceForm
             projectId={project.id}
+            projectName={project.name}
             trigger={
               <Tooltip>
                 <TooltipTrigger

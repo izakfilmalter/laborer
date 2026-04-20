@@ -2,13 +2,19 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createWorkspaceFn, mutationMap, queryDbMock, useLaborerStoreMock } =
-  vi.hoisted(() => ({
-    createWorkspaceFn: vi.fn(),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    queryDbMock: vi.fn((_table, options: { label: string }) => options),
-    useLaborerStoreMock: vi.fn(),
-  }))
+const {
+  createWorkspaceFn,
+  mutationMap,
+  panelActionsMock,
+  queryDbMock,
+  useLaborerStoreMock,
+} = vi.hoisted(() => ({
+  createWorkspaceFn: vi.fn(),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
+  queryDbMock: vi.fn((_table, options: { label: string }) => options),
+  useLaborerStoreMock: vi.fn(),
+}))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
@@ -43,6 +49,10 @@ vi.mock('@laborer/shared/schema', () => ({
 
 vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
+}))
+
+vi.mock('@/panels/panel-context', () => ({
+  usePanelActions: () => panelActionsMock,
 }))
 
 // Mock the tooltip since @base-ui/react tooltip uses portal which isn't
@@ -203,6 +213,9 @@ describe('CreatePlanWorkspace', () => {
         branchName: 'plan/my-test-plan',
       },
     })
+    expect(
+      panelActionsMock.autoOpenAgentWhenWorkspaceReady
+    ).toHaveBeenCalledWith('ws-new')
   })
 
   it('renders nothing when the PRD is not found', () => {

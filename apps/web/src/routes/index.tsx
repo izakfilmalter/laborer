@@ -33,7 +33,11 @@ import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
+  type PendingClosePanelTabState,
   type PendingCloseState,
+  type PendingCloseWindowTabState,
+  type PendingCloseWorkspaceState,
+  type PendingDestroyOnCloseWorkspaceState,
   type PendingPickerState,
   type PickerMode,
 } from '@/panels/panel-context'
@@ -47,6 +51,7 @@ import {
   findPaneInActiveTab,
   getActiveTabLeafNodes,
   getActiveWindowTab,
+  getAllWorkspaceTileLeaves,
   resolveActiveWorkspaceId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
@@ -54,9 +59,6 @@ import {
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import {
   CloseAppDialog,
-  ClosePanelTabDialog,
-  CloseWindowTabDialog,
-  CloseWorkspaceDialog,
   DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
@@ -92,6 +94,25 @@ const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 const sidebarWorkspaces$ = queryDb(workspaces, {
   label: 'sidebarWorkspaces',
 })
+
+const toggleWorkspacePanel = (
+  workspaceIds: readonly string[],
+  workspaceId: string
+): readonly string[] =>
+  workspaceIds.includes(workspaceId)
+    ? workspaceIds.filter((id) => id !== workspaceId)
+    : [...workspaceIds, workspaceId]
+
+const filterOpenWorkspacePanels = (
+  workspaceIds: readonly string[],
+  openWorkspaceIds: ReadonlySet<string>
+): readonly string[] => {
+  const nextWorkspaceIds = workspaceIds.filter((id) => openWorkspaceIds.has(id))
+
+  return nextWorkspaceIds.length === workspaceIds.length
+    ? workspaceIds
+    : nextWorkspaceIds
+}
 
 function HomeComponent() {
   const {
@@ -204,70 +225,61 @@ function HomeComponent() {
   }, [activePaneId])
 
   // Review panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height review panel is shown
-  // alongside all workspace frames. The panel spans the full height of
-  // the panel area, not just a single workspace.
-  const [reviewPaneWorkspaceId, setReviewPaneWorkspaceId] = useState<
-    string | null
-  >(null)
+  // Each workspace manages its own review pane visibility independently.
+  const [reviewPaneWorkspaceIds, setReviewPaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
   // Diff panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height diff panel is shown
-  // alongside all workspace frames. The panel spans the full height of
-  // the panel area, not just a single workspace.
-  const [diffPaneWorkspaceId, setDiffPaneWorkspaceId] = useState<string | null>(
-    null
-  )
+  // Each workspace manages its own diff viewer visibility independently.
+  const [diffPaneWorkspaceIds, setDiffPaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
   // Tree panel state — transient UI mode (not persisted to LiveStore).
-  // When set to a workspace ID, the full-height file tree panel is shown
-  // on the LEFT side of the workspace frames. Unlike diff/review which
-  // are forced to the right, the tree panel is forced to the left.
-  const [treePaneWorkspaceId, setTreePaneWorkspaceId] = useState<string | null>(
-    null
-  )
+  // Each workspace manages its own file tree visibility independently.
+  const [treePaneWorkspaceIds, setTreePaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
 
-  // Auto-close review/diff/tree panels when the workspace no longer exists
-  // in the layout (e.g., if the workspace was closed while a side panel was open).
+  // Auto-close review/diff/tree panels when their workspace no longer exists
+  // anywhere in the window layout (e.g., if the workspace was closed).
   useEffect(() => {
     if (
       !(
-        (reviewPaneWorkspaceId || diffPaneWorkspaceId || treePaneWorkspaceId) &&
+        (reviewPaneWorkspaceIds.length > 0 ||
+          diffPaneWorkspaceIds.length > 0 ||
+          treePaneWorkspaceIds.length > 0) &&
         windowLayout
       )
     ) {
       return
     }
-    const leaves = getActiveTabLeafNodes(windowLayout)
-    if (reviewPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === reviewPaneWorkspaceId)
-      if (!exists) {
-        setReviewPaneWorkspaceId(null)
-      }
-    }
-    if (diffPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === diffPaneWorkspaceId)
-      if (!exists) {
-        setDiffPaneWorkspaceId(null)
-      }
-    }
-    if (treePaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === treePaneWorkspaceId)
-      if (!exists) {
-        setTreePaneWorkspaceId(null)
-      }
-    }
+
+    const openWorkspaceIds = new Set(
+      getAllWorkspaceTileLeaves(windowLayout).map((leaf) => leaf.workspaceId)
+    )
+
+    setReviewPaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
+    setDiffPaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
+    setTreePaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
   }, [
-    reviewPaneWorkspaceId,
-    diffPaneWorkspaceId,
-    treePaneWorkspaceId,
+    reviewPaneWorkspaceIds,
+    diffPaneWorkspaceIds,
+    treePaneWorkspaceIds,
     windowLayout,
   ])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
-   * If the review panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own review pane, so toggling one workspace
+   * does not affect any others.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the review panel is now open
@@ -285,25 +297,21 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setReviewPaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing review panel for this workspace — close it
-          return null
-        }
-        // Open review panel for this workspace
-        return workspaceId
-      })
+      const isOpen = reviewPaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return reviewPaneWorkspaceId !== workspaceId
+      setReviewPaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, reviewPaneWorkspaceId]
+    [windowLayout, reviewPaneWorkspaceIds]
   )
 
   /**
    * Toggle the full-height diff panel for the workspace of the given pane.
-   * If the diff panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own diff viewer, so toggling one workspace
+   * does not affect any others.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the diff panel is now open
@@ -321,25 +329,21 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setDiffPaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing diff panel for this workspace — close it
-          return null
-        }
-        // Open diff panel for this workspace
-        return workspaceId
-      })
+      const isOpen = diffPaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return diffPaneWorkspaceId !== workspaceId
+      setDiffPaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, diffPaneWorkspaceId]
+    [windowLayout, diffPaneWorkspaceIds]
   )
 
   /**
    * Toggle the full-height file tree panel for the workspace of the given pane.
-   * If the tree panel is already open for that workspace, closes it.
-   * If it's open for a different workspace, switches to the new workspace.
+   * Each workspace manages its own file tree, so toggling one workspace
+   * does not affect any others.
    *
    * The tree panel is forced to the left side, unlike diff/review.
    *
@@ -359,19 +363,15 @@ function HomeComponent() {
 
       const workspaceId = found.workspaceId
 
-      setTreePaneWorkspaceId((current) => {
-        if (current === workspaceId) {
-          // Already showing tree panel for this workspace — close it
-          return null
-        }
-        // Open tree panel for this workspace
-        return workspaceId
-      })
+      const isOpen = treePaneWorkspaceIds.includes(workspaceId)
 
-      // Return true if the panel will be open after this toggle
-      return treePaneWorkspaceId !== workspaceId
+      setTreePaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
     },
-    [windowLayout, treePaneWorkspaceId]
+    [windowLayout, treePaneWorkspaceIds]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -391,6 +391,18 @@ function HomeComponent() {
     useState(false)
   const destroyOnCloseWorkspaceIdRef = useRef<string | null>(null)
   const destroyOnClosePaneIdRef = useRef<string | null>(null)
+  const pendingDestroyOnCloseWorkspaceId = destroyOnCloseDialogOpen
+    ? destroyOnCloseWorkspaceIdRef.current
+    : null
+  const isDestroyOnCloseWorkspaceVisible = useMemo(() => {
+    if (!(pendingDestroyOnCloseWorkspaceId && workspaceTileLayout)) {
+      return false
+    }
+
+    return getWorkspaceTileLeaves(workspaceTileLayout).some(
+      (leaf) => leaf.workspaceId === pendingDestroyOnCloseWorkspaceId
+    )
+  }, [pendingDestroyOnCloseWorkspaceId, workspaceTileLayout])
 
   /**
    * Destroy a workspace worktree and close all its panes.
@@ -494,6 +506,7 @@ function HomeComponent() {
       // Fallback: just close the pane
       panelActions.closePane(paneId)
     }
+    setDestroyOnCloseDialogOpen(false)
     destroyOnCloseWorkspaceIdRef.current = null
     destroyOnClosePaneIdRef.current = null
   }, [handleDestroyWorkspaceAndClose, panelActions])
@@ -504,9 +517,28 @@ function HomeComponent() {
     if (paneId) {
       panelActions.closePane(paneId)
     }
+    setDestroyOnCloseDialogOpen(false)
     destroyOnCloseWorkspaceIdRef.current = null
     destroyOnClosePaneIdRef.current = null
   }, [panelActions])
+
+  const handleCancelDestroyOnClose = useCallback(() => {
+    setDestroyOnCloseDialogOpen(false)
+    destroyOnCloseWorkspaceIdRef.current = null
+    destroyOnClosePaneIdRef.current = null
+  }, [])
+
+  const handleDestroyOnCloseDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setDestroyOnCloseDialogOpen(true)
+        return
+      }
+
+      handleCancelDestroyOnClose()
+    },
+    [handleCancelDestroyOnClose]
+  )
 
   /** Context value for the pane-scoped close confirmation dialog. */
   const pendingCloseState: PendingCloseState = useMemo(
@@ -555,10 +587,10 @@ function HomeComponent() {
     [windowLayout, gatedClosePane, panelActions]
   )
 
-  // Close-workspace confirmation dialog state
-  const [closeWorkspaceDialogOpen, setCloseWorkspaceDialogOpen] =
-    useState(false)
-  const pendingCloseWorkspaceIdRef = useRef<string | null>(null)
+  // Close-workspace confirmation state
+  const [pendingCloseWorkspaceId, setPendingCloseWorkspaceId] = useState<
+    string | null
+  >(null)
 
   /**
    * Gated closeWorkspace that checks if any terminal in the workspace has
@@ -577,8 +609,7 @@ function HomeComponent() {
           liveTerminals
         ) === 'confirm'
       ) {
-        pendingCloseWorkspaceIdRef.current = workspaceId
-        setCloseWorkspaceDialogOpen(true)
+        setPendingCloseWorkspaceId(workspaceId)
         return
       }
       panelActions.closeWorkspace(workspaceId)
@@ -587,17 +618,21 @@ function HomeComponent() {
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {
-    const workspaceId = pendingCloseWorkspaceIdRef.current
-    if (workspaceId) {
-      panelActions.closeWorkspace(workspaceId)
-      pendingCloseWorkspaceIdRef.current = null
+    if (!pendingCloseWorkspaceId) {
+      return
     }
-  }, [panelActions])
 
-  // Close-panel-tab confirmation dialog state — shown when the progressive
+    panelActions.closeWorkspace(pendingCloseWorkspaceId)
+    setPendingCloseWorkspaceId(null)
+  }, [panelActions, pendingCloseWorkspaceId])
+
+  const handleCancelCloseWorkspace = useCallback(() => {
+    setPendingCloseWorkspaceId(null)
+  }, [])
+
+  // Close-panel-tab confirmation state — shown when the progressive
   // close chain attempts to close a panel tab that has running processes.
-  const [closePanelTabDialogOpen, setClosePanelTabDialogOpen] = useState(false)
-  const pendingClosePanelTabRef = useRef<{
+  const [pendingClosePanelTab, setPendingClosePanelTab] = useState<{
     workspaceId: string
     tabId: string
   } | null>(null)
@@ -624,8 +659,7 @@ function HomeComponent() {
       const leaf = leaves.find((l) => l.workspaceId === workspaceId)
       const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
       if (panelTab && shouldConfirmClosePanelTab(panelTab, liveTerminals)) {
-        pendingClosePanelTabRef.current = { workspaceId, tabId }
-        setClosePanelTabDialogOpen(true)
+        setPendingClosePanelTab({ workspaceId, tabId })
         return
       }
       panelActions.removePanelTab?.(workspaceId, tabId)
@@ -634,17 +668,26 @@ function HomeComponent() {
   )
 
   const handleConfirmClosePanelTab = useCallback(() => {
-    const pending = pendingClosePanelTabRef.current
-    if (pending) {
-      panelActions.removePanelTab?.(pending.workspaceId, pending.tabId)
-      pendingClosePanelTabRef.current = null
+    if (!pendingClosePanelTab) {
+      return
     }
-  }, [panelActions])
 
-  // Close-window-tab confirmation dialog state — shown when closing a
+    panelActions.removePanelTab?.(
+      pendingClosePanelTab.workspaceId,
+      pendingClosePanelTab.tabId
+    )
+    setPendingClosePanelTab(null)
+  }, [panelActions, pendingClosePanelTab])
+
+  const handleCancelClosePanelTab = useCallback(() => {
+    setPendingClosePanelTab(null)
+  }, [])
+
+  // Close-window-tab confirmation state — shown when closing a
   // window tab that has terminals with running processes.
-  const [closeWindowTabDialogOpen, setCloseWindowTabDialogOpen] =
-    useState(false)
+  const [pendingCloseWindowTabId, setPendingCloseWindowTabId] = useState<
+    string | null
+  >(null)
 
   /**
    * Gated closeWindowTab that checks if any terminal across all workspaces
@@ -658,15 +701,86 @@ function HomeComponent() {
     }
     const activeTab = getActiveWindowTab(windowLayout)
     if (activeTab && shouldConfirmCloseWindowTab(activeTab, liveTerminals)) {
-      setCloseWindowTabDialogOpen(true)
+      setPendingCloseWindowTabId(activeTab.id)
       return
     }
     panelActions.closeWindowTab?.()
   }, [panelActions, liveTerminals])
 
   const handleConfirmCloseWindowTab = useCallback(() => {
+    if (!pendingCloseWindowTabId) {
+      return
+    }
+
+    if (panelActions.windowLayout?.activeTabId !== pendingCloseWindowTabId) {
+      panelActions.switchWindowTab?.(pendingCloseWindowTabId)
+    }
     panelActions.closeWindowTab?.()
-  }, [panelActions])
+    setPendingCloseWindowTabId(null)
+  }, [panelActions, pendingCloseWindowTabId])
+
+  const handleCancelCloseWindowTab = useCallback(() => {
+    setPendingCloseWindowTabId(null)
+  }, [])
+
+  const pendingCloseWorkspaceState: PendingCloseWorkspaceState = useMemo(
+    () => ({
+      workspaceId: pendingCloseWorkspaceId,
+      onConfirm: handleConfirmCloseWorkspace,
+      onCancel: handleCancelCloseWorkspace,
+    }),
+    [
+      pendingCloseWorkspaceId,
+      handleConfirmCloseWorkspace,
+      handleCancelCloseWorkspace,
+    ]
+  )
+
+  const pendingClosePanelTabState: PendingClosePanelTabState = useMemo(
+    () => ({
+      workspaceId: pendingClosePanelTab?.workspaceId ?? null,
+      tabId: pendingClosePanelTab?.tabId ?? null,
+      onConfirm: handleConfirmClosePanelTab,
+      onCancel: handleCancelClosePanelTab,
+    }),
+    [
+      pendingClosePanelTab,
+      handleConfirmClosePanelTab,
+      handleCancelClosePanelTab,
+    ]
+  )
+
+  const pendingCloseWindowTabState: PendingCloseWindowTabState = useMemo(
+    () => ({
+      tabId: pendingCloseWindowTabId,
+      onConfirm: handleConfirmCloseWindowTab,
+      onCancel: handleCancelCloseWindowTab,
+    }),
+    [
+      pendingCloseWindowTabId,
+      handleConfirmCloseWindowTab,
+      handleCancelCloseWindowTab,
+    ]
+  )
+
+  const pendingDestroyOnCloseWorkspaceState: PendingDestroyOnCloseWorkspaceState =
+    useMemo(
+      () => ({
+        workspaceId: isDestroyOnCloseWorkspaceVisible
+          ? pendingDestroyOnCloseWorkspaceId
+          : null,
+        onConfirm: handleDestroyOnCloseJustClose,
+        onCancel: handleCancelDestroyOnClose,
+        onCloseAndDestroy: handleDestroyOnCloseConfirm,
+      }),
+      [
+        isDestroyOnCloseWorkspaceVisible,
+        pendingDestroyOnCloseWorkspaceId,
+        handleDestroyOnCloseJustClose,
+        handleCancelDestroyOnClose,
+        handleDestroyOnCloseConfirm,
+      ]
+    )
 
   // Panel type picker state — when set, shows the picker overlay on the
   // specified pane. On type selection, the pending action (split/new tab)
@@ -944,24 +1058,13 @@ function HomeComponent() {
         activeWorkspaceId={activeWorkspaceId}
         fullscreenPaneId={fullscreenPaneId}
         pendingClose={pendingCloseState}
+        pendingClosePanelTab={pendingClosePanelTabState}
+        pendingCloseWindowTab={pendingCloseWindowTabState}
+        pendingCloseWorkspace={pendingCloseWorkspaceState}
+        pendingDestroyOnCloseWorkspace={pendingDestroyOnCloseWorkspaceState}
         pendingPicker={pendingPickerState}
         value={gatedPanelActions}
       >
-        <CloseWorkspaceDialog
-          onConfirm={handleConfirmCloseWorkspace}
-          onOpenChange={setCloseWorkspaceDialogOpen}
-          open={closeWorkspaceDialogOpen}
-        />
-        <ClosePanelTabDialog
-          onConfirm={handleConfirmClosePanelTab}
-          onOpenChange={setClosePanelTabDialogOpen}
-          open={closePanelTabDialogOpen}
-        />
-        <CloseWindowTabDialog
-          onConfirm={handleConfirmCloseWindowTab}
-          onOpenChange={setCloseWindowTabDialogOpen}
-          open={closeWindowTabDialogOpen}
-        />
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}
           open={isCloseAppDialogOpen}
@@ -969,8 +1072,8 @@ function HomeComponent() {
         <DestroyWorkspaceOnCloseDialog
           onCloseAndDestroy={handleDestroyOnCloseConfirm}
           onConfirm={handleDestroyOnCloseJustClose}
-          onOpenChange={setDestroyOnCloseDialogOpen}
-          open={destroyOnCloseDialogOpen}
+          onOpenChange={handleDestroyOnCloseDialogOpenChange}
+          open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
         />
         <ResizablePanelGroup
           orientation="horizontal"
@@ -1100,15 +1203,12 @@ function HomeComponent() {
                     <PanelContent
                       activePaneId={activePaneId}
                       activeTabId={windowLayout?.activeTabId}
-                      diffPaneOpen={diffPaneWorkspaceId !== null}
-                      diffWorkspaceId={diffPaneWorkspaceId}
+                      diffWorkspaceIds={diffPaneWorkspaceIds}
                       fullscreenPaneId={fullscreenPaneId}
                       isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
-                      reviewPaneOpen={reviewPaneWorkspaceId !== null}
-                      reviewWorkspaceId={reviewPaneWorkspaceId}
-                      treePaneOpen={treePaneWorkspaceId !== null}
-                      treeWorkspaceId={treePaneWorkspaceId}
+                      reviewWorkspaceIds={reviewPaneWorkspaceIds}
+                      treeWorkspaceIds={treePaneWorkspaceIds}
                       windowLayout={windowLayout}
                       windowTabs={windowLayout?.tabs}
                     />

@@ -30,6 +30,7 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { usePanelActions } from '@/panels/panel-context'
 
 const allPrds$ = queryDb(prds, { label: 'createPlanWorkspace.prds' })
 const allWorkspaces$ = queryDb(workspaces, {
@@ -50,6 +51,7 @@ function planBranchName(slug: string): string {
 
 function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const panelActions = usePanelActions()
   const store = useLaborerStore()
   const prdList = store.useQuery(allPrds$)
   const workspaceList = store.useQuery(allWorkspaces$)
@@ -98,6 +100,7 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
           branchName,
         },
       })
+      panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
       // The RPC now returns immediately with status 'creating'.
       // The workspace card will show setup progress via worktreeSetupStep.
       toast.success(`Workspace "${result.branchName}" is being set up`)

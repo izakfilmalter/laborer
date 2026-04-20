@@ -1,5 +1,5 @@
 import type { PanelNode } from '@laborer/shared/types'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -14,6 +14,7 @@ const {
   storeUseQueryMock,
   terminalListRef,
   upsertTerminalListItemMock,
+  workspaceRowsRef,
   windowLayoutUpdatedMock,
 } = vi.hoisted(() => ({
   currentWindowIdRef: { current: 'window-a' as string | null },
@@ -45,6 +46,9 @@ const {
     },
   },
   upsertTerminalListItemMock: vi.fn(),
+  workspaceRowsRef: {
+    current: [] as Record<string, unknown>[],
+  },
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -183,6 +187,7 @@ describe('usePanelLayout', () => {
     currentWindowIdRef.current = 'window-a'
     initialLayoutRef.current = undefined
     persistedRowsRef.current = []
+    workspaceRowsRef.current = []
     terminalListRef.current = { isLoading: false, terminals: [] }
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
@@ -202,8 +207,18 @@ describe('usePanelLayout', () => {
     storeCommitMock.mockImplementation((event: PersistedLayoutEvent) => {
       applyPersistedLayoutEvent(event)
     })
-    storeUseQueryMock.mockImplementation(() => persistedRowsRef.current)
-    storeQueryMock.mockImplementation(() => persistedRowsRef.current)
+    storeUseQueryMock.mockImplementation(
+      (query: { options?: { label?: string } }) =>
+        query.options?.label === 'homePanelWorkspaces'
+          ? workspaceRowsRef.current
+          : persistedRowsRef.current
+    )
+    storeQueryMock.mockImplementation(
+      (query: { options?: { label?: string } }) =>
+        query.options?.label === 'homePanelWorkspaces'
+          ? workspaceRowsRef.current
+          : persistedRowsRef.current
+    )
   })
 
   afterEach(() => {
@@ -356,5 +371,83 @@ describe('usePanelLayout', () => {
     expect(panelTab?.panelLayout._tag).toBe('LeafNode')
     expect(panelTab?.panelLayout.terminalId).toBe('terminal-1')
     expect(panelTab?.panelLayout.paneType).toBe('terminal')
+  })
+
+  it('waits to auto-open a new workspace agent until the workspace is running', async () => {
+    persistedRowsRef.current = [
+      {
+        windowId: 'window-a',
+        windowLayout: {
+          tabs: [
+            {
+              id: 'win-tab-1',
+              label: 'Tab 1',
+              workspaceLayout: {
+                _tag: 'WorkspaceTileLeaf' as const,
+                id: 'ws-tile-existing',
+                workspaceId: 'workspace-existing',
+                panelTabs: [
+                  {
+                    id: 'panel-tab-existing',
+                    label: 'Terminal',
+                    panelLayout: {
+                      _tag: 'LeafNode' as const,
+                      id: 'pane-existing',
+                      paneType: 'terminal' as const,
+                      terminalId: 'terminal-existing',
+                    },
+                  },
+                ],
+                activePanelTabId: 'panel-tab-existing',
+              },
+            },
+          ],
+          activeTabId: 'win-tab-1',
+        },
+      },
+    ]
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-new',
+        projectId: 'project-1',
+        branchName: 'feature/new-workspace',
+        worktreePath: '/tmp/workspace-new',
+        status: 'creating',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    const { result, rerender } = renderHook(() => usePanelLayout())
+
+    act(() => {
+      result.current.panelActions.autoOpenAgentWhenWorkspaceReady?.(
+        'workspace-new'
+      )
+    })
+
+    expect(spawnTerminalMock).not.toHaveBeenCalled()
+
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-new',
+        projectId: 'project-1',
+        branchName: 'feature/new-workspace',
+        worktreePath: '/tmp/workspace-new',
+        status: 'running',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    act(() => {
+      rerender()
+    })
+
+    await waitFor(() => {
+      expect(spawnTerminalMock).toHaveBeenCalledWith({
+        payload: { workspaceId: 'workspace-new', command: 'opencode' },
+      })
+    })
   })
 })

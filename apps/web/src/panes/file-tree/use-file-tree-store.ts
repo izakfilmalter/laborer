@@ -132,6 +132,14 @@ const reconcileDirs = (
   return result
 }
 
+/** Format nodes for @pierre/trees, which uses a trailing slash for folders. */
+const toTreePath = (node: FileNode): string => {
+  if (node.type !== 'directory' || node.path.endsWith('/')) {
+    return node.path
+  }
+  return `${node.path}/`
+}
+
 /** Walk the directory tree depth-first to build a flat file list. */
 const buildFileList = (state: TreeState): readonly string[] => {
   const result: string[] = []
@@ -154,7 +162,7 @@ const buildFileList = (state: TreeState): readonly string[] => {
         continue
       }
 
-      result.push(node.path)
+      result.push(toTreePath(node))
 
       if (node.type === 'directory' && state.dirs[childPath]?.loaded) {
         walk(childPath)
@@ -176,6 +184,8 @@ interface UseFileTreeStoreOptions {
 }
 
 export interface FileTreeStore {
+  /** Get direct child nodes for a directory path. */
+  readonly children: (dir: string) => readonly FileNode[]
   /** Mark a directory as collapsed. */
   readonly collapseDir: (dir: string) => void
   /** Error message if the root directory failed to load. */
@@ -186,6 +196,8 @@ export interface FileTreeStore {
   readonly files: readonly string[]
   /** Check whether a node exists. */
   readonly hasNode: (path: string) => boolean
+  /** Check whether a directory is currently expanded. */
+  readonly isDirExpanded: (dir: string) => boolean
   /** Check whether a directory has been loaded. */
   readonly isDirLoaded: (dir: string) => boolean
   /** Whether the root directory is still loading. */
@@ -336,6 +348,22 @@ export const useFileTreeStore = (
     [state.dirs]
   )
 
+  const isDirExpanded = useCallback(
+    (dir: string): boolean => state.dirs[dir]?.expanded === true,
+    [state.dirs]
+  )
+
+  const children = useCallback(
+    (dir: string): readonly FileNode[] => {
+      const childPaths = state.dirs[dir]?.children ?? []
+      return childPaths.flatMap((path) => {
+        const node = state.nodes[path]
+        return node === undefined ? [] : [node]
+      })
+    },
+    [state.dirs, state.nodes]
+  )
+
   const onExpandedItemsChange = useCallback(
     (items: string[]) => {
       const next = new Set(items)
@@ -365,12 +393,14 @@ export const useFileTreeStore = (
   const error = rootDir?.error ?? null
 
   return {
+    children,
     collapseDir,
     error,
     expandDir,
     files,
     hasNode,
     isDirLoaded,
+    isDirExpanded,
     isLoading,
     listDir,
     nodeType,

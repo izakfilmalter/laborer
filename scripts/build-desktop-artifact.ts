@@ -42,6 +42,7 @@ import { dirname, extname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import desktopPkg from '../apps/desktop/package.json' with { type: 'json' }
+import { resolveDesktopAppName } from '../apps/desktop/src/app-name.js'
 import rootPkg from '../package.json' with { type: 'json' }
 import fileWatcherPkg from '../packages/file-watcher/package.json' with {
   type: 'json',
@@ -51,7 +52,6 @@ import serverPkg from '../packages/server/package.json' with { type: 'json' }
 import terminalPkg from '../packages/terminal/package.json' with {
   type: 'json',
 }
-
 import { resolveCatalogDependencies } from './lib/resolve-catalog.js'
 
 // ---------------------------------------------------------------------------
@@ -293,7 +293,10 @@ function resolveGitHubPublishConfig():
 function createBuildConfig(): Record<string, unknown> {
   const config: Record<string, unknown> = {
     appId: 'com.izakfilmalter.laborer',
-    productName: 'Laborer',
+    productName: resolveDesktopAppName({
+      isDevelopment: false,
+      version: BUILD_VERSION,
+    }),
     artifactName: ARTIFACT_NAME,
     directories: {
       buildResources: 'apps/desktop/resources',

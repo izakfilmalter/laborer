@@ -51,6 +51,7 @@ import {
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { usePanelActions } from '@/panels/panel-context'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
 
@@ -125,12 +126,19 @@ function getErrorIcon(code: string | undefined) {
 interface CreateWorkspaceFormProps {
   /** The project to create a workspace in. */
   readonly projectId: string
+  /** The project name shown in the sidebar. */
+  readonly projectName: string
   /** Custom trigger element. Defaults to a "Create Workspace" button. */
   readonly trigger?: ReactNode | undefined
 }
 
-function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
+function CreateWorkspaceForm({
+  projectId,
+  projectName,
+  trigger,
+}: CreateWorkspaceFormProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const panelActions = usePanelActions()
   const [open, setOpen] = useState(false)
   const [creationError, setCreationError] =
     useState<WorkspaceCreationError | null>(null)
@@ -167,6 +175,7 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
             ...(sanitized ? { branchName: sanitized } : {}),
           },
         })
+        panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
         // The RPC now returns immediately with status 'creating'.
         // The workspace card will show setup progress via worktreeSetupStep.
         toast.success(`Workspace "${result.branchName}" is being set up`)
@@ -252,7 +261,7 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
                     name={field.name}
                     onAccept={(value) => field.handleChange(value)}
                     onBlur={field.handleBlur}
-                    placeholder="laborer/my-feature"
+                    placeholder={`${projectName}/my-feature`}
                     prepare={(str) =>
                       pipe(str, Str.toLowerCase, Str.replaceAll(' ', '-'))
                     }

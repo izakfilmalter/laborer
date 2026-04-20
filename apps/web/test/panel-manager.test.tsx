@@ -1,6 +1,11 @@
 import type { LeafNode, SplitNode } from '@laborer/shared/types'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { activePaneIdRef, setActivePaneIdMock } = vi.hoisted(() => ({
+  activePaneIdRef: { current: null as string | null },
+  setActivePaneIdMock: vi.fn(),
+}))
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
@@ -29,13 +34,17 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/panes/terminal-pane', () => ({
   TerminalPane: ({ terminalId }: { terminalId: string }) => (
-    <div>terminal:{terminalId}</div>
+    <div>
+      <div>terminal:{terminalId}</div>
+      <canvas data-testid={`terminal-canvas-${terminalId}`} />
+      <textarea data-testid={`terminal-input-${terminalId}`} />
+    </div>
   ),
 }))
 
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div>diff:{workspaceId}</div>
+    <div data-pane-text-selectable>diff:{workspaceId}</div>
   ),
 }))
 
@@ -52,10 +61,12 @@ vi.mock('@/panes/review-pane', () => ({
 }))
 
 vi.mock('@/panels/panel-context', () => ({
-  useActivePaneId: () => null,
+  useActivePaneId: () => activePaneIdRef.current,
   useFullscreenPaneId: () => null,
   useFullscreenPortal: () => null,
-  usePanelActions: () => null,
+  usePanelActions: () => ({
+    setActivePaneId: setActivePaneIdMock,
+  }),
   usePendingClosePane: () => ({
     paneId: null,
     onConfirm: () => undefined,
@@ -141,6 +152,8 @@ function createSplitNode(overrides: Partial<SplitNode> = {}): SplitNode {
 
 afterEach(() => {
   cleanup()
+  activePaneIdRef.current = null
+  setActivePaneIdMock.mockReset()
 })
 
 // ---------- PanelManager tests ----------
@@ -168,6 +181,33 @@ describe('PanelRenderer', () => {
     const leaf = createTerminalLeaf()
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('terminal:term-1')).toBeTruthy()
+  })
+
+  it('focuses the terminal textarea for the active pane', () => {
+    activePaneIdRef.current = 'pane-1'
+
+    render(<PanelRenderer node={createTerminalLeaf()} />)
+
+    expect(document.activeElement).toBe(
+      screen.getByTestId('terminal-input-term-1')
+    )
+  })
+
+  it('re-focuses the active pane when a terminal is assigned after render', () => {
+    activePaneIdRef.current = 'pane-1'
+
+    const { rerender } = render(
+      <PanelRenderer node={createTerminalLeaf({ terminalId: undefined })} />
+    )
+
+    const pane = document.querySelector<HTMLElement>('[data-pane-id="pane-1"]')
+    expect(document.activeElement).toBe(pane)
+
+    rerender(<PanelRenderer node={createTerminalLeaf()} />)
+
+    expect(document.activeElement).toBe(
+      screen.getByTestId('terminal-input-term-1')
+    )
   })
 
   it('renders SplitNode with two children in horizontal layout', () => {
@@ -286,6 +326,36 @@ describe('PanelRenderer', () => {
     }
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('diff:ws-1')).toBeTruthy()
+  })
+
+  it('does not activate the pane on mouse down inside text-selectable diff content', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(<PanelRenderer node={leaf} />)
+
+    fireEvent.mouseDown(screen.getByText('diff:ws-1'))
+
+    expect(setActivePaneIdMock).not.toHaveBeenCalled()
+  })
+
+  it('activates the pane on click inside text-selectable diff content', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(<PanelRenderer node={leaf} />)
+
+    fireEvent.click(screen.getByText('diff:ws-1'))
+
+    expect(setActivePaneIdMock).toHaveBeenCalledWith('diff-pane')
   })
 
   it('renders review pane type', () => {

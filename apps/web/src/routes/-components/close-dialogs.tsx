@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,22 +15,14 @@ import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { isElectron } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter, isMetaShiftEnter } from '@/lib/dialog-keys'
+import {
+  useFullscreenPaneId,
+  useFullscreenPortal,
+} from '@/panels/panel-context'
 
-/**
- * Inline pane-scoped close confirmation dialog.
- *
- * Renders directly within the terminal pane's container (no portal),
- * using absolute positioning so the backdrop and dialog are constrained
- * to the pane's visual bounds. This gives a scoped UX where only the
- * affected terminal pane is overlaid, rather than the entire application.
- *
- * @see CloseWorkspaceDialog for the workspace-level equivalent (still portaled)
- */
-export function PaneCloseConfirmDialog({
-  onCancel,
-  onCloseAndDestroy,
-  onConfirm,
-}: {
+interface InlineCloseConfirmDialogProps {
+  readonly confirmLabel: string
+  readonly description: string
   readonly onCancel: () => void
   /**
    * Optional handler for "Close & Destroy" action.
@@ -38,8 +31,30 @@ export function PaneCloseConfirmDialog({
    */
   readonly onCloseAndDestroy?: (() => void) | undefined
   readonly onConfirm: () => void
-}) {
+  readonly portalToFullscreen?: boolean | undefined
+  readonly title: string
+}
+
+/**
+ * Inline close confirmation dialog rendered directly inside the bounds of the
+ * thing being closed. When fullscreen is active, callers can reuse the shared
+ * fullscreen container so the dialog tracks the expanded pane bounds instead
+ * of the hidden underlying workspace frame.
+ */
+function InlineCloseConfirmDialog({
+  confirmLabel,
+  description,
+  onCancel,
+  onCloseAndDestroy,
+  onConfirm,
+  portalToFullscreen = false,
+  title,
+}: InlineCloseConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const fullscreenPaneId = useFullscreenPaneId()
+  const fullscreenPortal = useFullscreenPortal()
+  const shouldPortalToFullscreen =
+    portalToFullscreen && fullscreenPaneId !== null && fullscreenPortal !== null
 
   // Auto-focus the dialog container when it mounts so keyboard events
   // are captured immediately without requiring a click.
@@ -75,7 +90,7 @@ export function PaneCloseConfirmDialog({
     [onCancel, onCloseAndDestroy, onConfirm]
   )
 
-  return (
+  const dialog = (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Dialog container needs keyboard event handling for Escape and Cmd+Enter shortcuts
     <div
       className="absolute inset-0 z-50 flex items-center justify-center"
@@ -90,16 +105,12 @@ export function PaneCloseConfirmDialog({
       role="alertdialog"
       tabIndex={-1}
     >
-      {/* Backdrop — covers only the pane */}
+      {/* Backdrop — covers only the scoped container */}
       <div className="absolute inset-0 bg-foreground/10 supports-backdrop-filter:backdrop-blur-xs" />
-      {/* Dialog content */}
       <div className="relative z-10 grid w-full max-w-sm gap-4 bg-background p-4 ring-1 ring-foreground/10">
         <div className="grid gap-1.5 text-left">
-          <h2 className="font-medium text-sm">Close terminal?</h2>
-          <p className="text-muted-foreground text-xs/relaxed">
-            This terminal has a running process. Closing the pane will kill the
-            process.
-          </p>
+          <h2 className="font-medium text-sm">{title}</h2>
+          <p className="text-muted-foreground text-xs/relaxed">{description}</p>
         </div>
         <div className="flex flex-row justify-end gap-2">
           <Button onClick={onCancel} variant="outline">
@@ -114,7 +125,7 @@ export function PaneCloseConfirmDialog({
             </Button>
           )}
           <Button onClick={onConfirm}>
-            Close
+            {confirmLabel}
             <Kbd>⌘</Kbd>
             <Kbd>↵</Kbd>
           </Button>
@@ -122,62 +133,126 @@ export function PaneCloseConfirmDialog({
       </div>
     </div>
   )
+
+  if (shouldPortalToFullscreen && fullscreenPortal) {
+    return createPortal(dialog, fullscreenPortal)
+  }
+
+  return dialog
 }
 
 /**
- * Confirmation dialog shown when attempting to close a workspace that has
- * terminals with running processes. Warns the user that all terminals in
- * the workspace will be killed.
+ * Inline pane-scoped close confirmation dialog.
  */
-export function CloseWorkspaceDialog({
-  open,
-  onOpenChange,
+export function PaneCloseConfirmDialog({
+  onCancel,
+  onCloseAndDestroy,
   onConfirm,
 }: {
-  readonly open: boolean
-  readonly onOpenChange: (open: boolean) => void
+  readonly onCancel: () => void
+  readonly onCloseAndDestroy?: (() => void) | undefined
   readonly onConfirm: () => void
 }) {
-  const handleConfirm = useCallback(() => {
-    onConfirm()
-    onOpenChange(false)
-  }, [onConfirm, onOpenChange])
-
   return (
-    <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent
-        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-          if (isExactEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (isMetaEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            handleConfirm()
-          }
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Close workspace?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This workspace has terminals with running processes. Closing the
-            workspace will kill all of them.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            Cancel <Kbd>Esc</Kbd>
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm}>
-            Close workspace
-            <Kbd>⌘</Kbd>
-            <Kbd>↵</Kbd>
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <InlineCloseConfirmDialog
+      confirmLabel="Close"
+      description="This terminal has a running process. Closing the pane will kill the process."
+      onCancel={onCancel}
+      onCloseAndDestroy={onCloseAndDestroy}
+      onConfirm={onConfirm}
+      title="Close terminal?"
+    />
+  )
+}
+
+/**
+ * Inline panel-tab close confirmation dialog.
+ */
+export function PanelTabCloseConfirmDialog({
+  onCancel,
+  onConfirm,
+}: {
+  readonly onCancel: () => void
+  readonly onConfirm: () => void
+}) {
+  return (
+    <InlineCloseConfirmDialog
+      confirmLabel="Close tab"
+      description="This tab has terminals with running processes. Closing the tab will kill all of them."
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      portalToFullscreen
+      title="Close tab?"
+    />
+  )
+}
+
+/**
+ * Inline workspace close confirmation dialog.
+ */
+export function WorkspaceCloseConfirmDialog({
+  onCancel,
+  onConfirm,
+}: {
+  readonly onCancel: () => void
+  readonly onConfirm: () => void
+}) {
+  return (
+    <InlineCloseConfirmDialog
+      confirmLabel="Close workspace"
+      description="This workspace has terminals with running processes. Closing the workspace will kill all of them."
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      portalToFullscreen
+      title="Close workspace?"
+    />
+  )
+}
+
+/**
+ * Inline window-tab close confirmation dialog.
+ */
+export function WindowTabCloseConfirmDialog({
+  onCancel,
+  onConfirm,
+}: {
+  readonly onCancel: () => void
+  readonly onConfirm: () => void
+}) {
+  return (
+    <InlineCloseConfirmDialog
+      confirmLabel="Close window tab"
+      description="This window tab has terminals with running processes. Closing the tab will kill all of them."
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      portalToFullscreen
+      title="Close window tab?"
+    />
+  )
+}
+
+/**
+ * Inline destroy-on-close confirmation dialog for merged workspaces.
+ */
+export function WorkspaceDestroyOnCloseConfirmDialog({
+  onCancel,
+  onCloseAndDestroy,
+  onConfirm,
+}: {
+  readonly onCancel: () => void
+  readonly onCloseAndDestroy: () => void
+  readonly onConfirm: () => void
+}) {
+  return (
+    <InlineCloseConfirmDialog
+      confirmLabel="Close"
+      description="The PR for this workspace has been merged. Would you like to destroy the worktree? This will remove the git worktree, delete the branch, and free the allocated port."
+      onCancel={onCancel}
+      onCloseAndDestroy={onCloseAndDestroy}
+      onConfirm={onConfirm}
+      portalToFullscreen
+      title="Destroy workspace?"
+    />
   )
 }
 
@@ -260,120 +335,6 @@ export function DestroyWorkspaceOnCloseDialog({
             Close & Destroy
             <Kbd>⌘</Kbd>
             <Kbd>⇧</Kbd>
-            <Kbd>↵</Kbd>
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-/**
- * Confirmation dialog shown when attempting to close a panel tab that has
- * terminals with running processes. Warns the user that terminals in the
- * tab will be killed.
- */
-export function ClosePanelTabDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-}: {
-  readonly open: boolean
-  readonly onOpenChange: (open: boolean) => void
-  readonly onConfirm: () => void
-}) {
-  const handleConfirm = useCallback(() => {
-    onConfirm()
-    onOpenChange(false)
-  }, [onConfirm, onOpenChange])
-
-  return (
-    <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent
-        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-          if (isExactEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (isMetaEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            handleConfirm()
-          }
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Close tab?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This tab has terminals with running processes. Closing the tab will
-            kill all of them.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            Cancel <Kbd>Esc</Kbd>
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm}>
-            Close tab
-            <Kbd>⌘</Kbd>
-            <Kbd>↵</Kbd>
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-/**
- * Confirmation dialog shown when attempting to close a window tab that has
- * terminals with running processes across any workspace. Warns the user
- * that all terminals in all workspaces within the tab will be killed.
- */
-export function CloseWindowTabDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-}: {
-  readonly open: boolean
-  readonly onOpenChange: (open: boolean) => void
-  readonly onConfirm: () => void
-}) {
-  const handleConfirm = useCallback(() => {
-    onConfirm()
-    onOpenChange(false)
-  }, [onConfirm, onOpenChange])
-
-  return (
-    <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent
-        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-          if (isExactEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (isMetaEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            handleConfirm()
-          }
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Close window tab?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This window tab has terminals with running processes. Closing the
-            tab will kill all of them.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            Cancel <Kbd>Esc</Kbd>
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm}>
-            Close window tab
-            <Kbd>⌘</Kbd>
             <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>

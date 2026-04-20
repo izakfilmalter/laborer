@@ -1,6 +1,7 @@
 import { watch } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor, shell } from 'electron'
+import { resolveDesktopAppName } from './app-name.js'
 import {
   broadcastUpdateStateToWindow,
   configureAutoUpdater,
@@ -150,6 +151,14 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
  */
 const isDev = Boolean(VITE_DEV_SERVER_URL)
 
+const desktopAppName = resolveDesktopAppName({
+  isDevelopment: isDev,
+  version: app.getVersion(),
+})
+
+app.setName(desktopAppName)
+process.title = desktopAppName
+
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 12, y: 10 } as const
 
@@ -234,6 +243,9 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   const window = new BrowserWindow({
     ...savedState.bounds,
+    // Let the first click into an inactive Labor window reach the clicked
+    // terminal pane instead of only activating the window.
+    acceptFirstMouse: true,
     minWidth: 840,
     minHeight: 620,
     show: false,

@@ -27,6 +27,7 @@ import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, Option, pipe } from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
 import { parseGithubRepo } from './github-task-importer.js'
 import { LaborerStore } from './laborer-store.js'
 
@@ -892,24 +893,15 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
  */
 const detectPrNumber = Effect.fn('ReviewCommentFetcher.detectPrNumber')(
   function* (worktreePath: string) {
-    const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['gh', 'pr', 'view', '--json', 'number'], {
-          cwd: worktreePath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stdout = await new Response(proc.stdout).text()
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stdout, stderr }
-      },
-      catch: (error) =>
+    const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
+      worktreePath,
+      'number',
+      (error) =>
         new RpcError({
           message: `Failed to run gh pr view: ${String(error)}`,
           code: 'GH_COMMAND_FAILED',
-        }),
-    })
+        })
+    )
 
     if (exitCode !== 0) {
       return yield* new RpcError({

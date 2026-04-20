@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  IS_MAC,
   isPrefixKey,
+  isTerminalFindNextShortcut,
+  isTerminalFindPreviousShortcut,
+  isTerminalFindShortcut,
   KEYBINDS,
   matchesKeybind,
   shouldBypassTerminal,
@@ -33,6 +37,17 @@ function makeKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
     altKey: false,
     ...overrides,
   } as KeyboardEvent
+}
+
+function makePlatformModKeyEvent(
+  key: string,
+  overrides: Partial<KeyboardEvent> = {}
+): KeyboardEvent {
+  return makeKeyEvent(
+    IS_MAC
+      ? { key, metaKey: true, ...overrides }
+      : { key, ctrlKey: true, ...overrides }
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +306,52 @@ describe('shouldBypassTerminal', () => {
   it('does not bypass Cmd+C (copy handled natively by xterm.js)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'c', metaKey: true }))
+    ).toBe(false)
+  })
+
+  it('does not bypass terminal-local find shortcuts', () => {
+    expect(shouldBypassTerminal(makePlatformModKeyEvent('f'))).toBe(false)
+    expect(shouldBypassTerminal(makePlatformModKeyEvent('g'))).toBe(false)
+    expect(
+      shouldBypassTerminal(makePlatformModKeyEvent('g', { shiftKey: true }))
+    ).toBe(false)
+  })
+})
+
+describe('terminal-local find shortcuts', () => {
+  it('matches the platform find shortcut', () => {
+    expect(isTerminalFindShortcut(makePlatformModKeyEvent('f'))).toBe(true)
+  })
+
+  it('matches the platform next-match shortcut', () => {
+    expect(isTerminalFindNextShortcut(makePlatformModKeyEvent('g'))).toBe(true)
+  })
+
+  it('matches the platform previous-match shortcut', () => {
+    expect(
+      isTerminalFindPreviousShortcut(
+        makePlatformModKeyEvent('g', { shiftKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('does not treat bare Ctrl+F on macOS as terminal find', () => {
+    if (!IS_MAC) {
+      return
+    }
+
+    expect(
+      isTerminalFindShortcut(makeKeyEvent({ key: 'f', ctrlKey: true }))
+    ).toBe(false)
+  })
+
+  it('does not treat bare Meta+F on non-macOS as terminal find', () => {
+    if (IS_MAC) {
+      return
+    }
+
+    expect(
+      isTerminalFindShortcut(makeKeyEvent({ key: 'f', metaKey: true }))
     ).toBe(false)
   })
 })

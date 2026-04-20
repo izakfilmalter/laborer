@@ -41,15 +41,30 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { FitAddon } from '@xterm/addon-fit'
 import { ImageAddon } from '@xterm/addon-image'
+import { type ISearchResultChangeEvent, SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupText,
+} from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import type {
@@ -60,7 +75,13 @@ import type {
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { openExternalUrl } from '@/lib/desktop'
-import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
+import {
+  isPrefixKey,
+  isTerminalFindNextShortcut,
+  isTerminalFindPreviousShortcut,
+  isTerminalFindShortcut,
+  shouldBypassTerminal,
+} from '@/lib/keybinds'
 
 /**
  * Server-managed terminal IDs are prefixed with `daytona:` or `shuru:` so the correct
@@ -87,6 +108,23 @@ const serverResizeMutation = LaborerClient.mutation('terminal.resize')
  * within this window, prefix mode exits and the terminal resumes normal input.
  */
 const PREFIX_MODE_TIMEOUT = 1500
+
+/** Search highlight limit. Matches VS Code's higher-than-default threshold. */
+const TERMINAL_FIND_HIGHLIGHT_LIMIT = 20_000
+
+const EMPTY_TERMINAL_FIND_RESULTS = {
+  resultCount: 0,
+  resultIndex: -1,
+} as const satisfies ISearchResultChangeEvent
+
+const TERMINAL_FIND_DECORATIONS = {
+  activeMatchBackground: '#facc15',
+  activeMatchBorder: '#fde047',
+  activeMatchColorOverviewRuler: '#facc15',
+  matchBackground: '#1d4ed8',
+  matchBorder: '#60a5fa',
+  matchOverviewRuler: '#60a5fa',
+} as const
 
 /**
  * Debounce delay for horizontal (column) resize (ms).
@@ -416,6 +454,21 @@ function TerminalPaneRenderer({
     : resizeLocal
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const searchAddonRef = useRef<SearchAddon | null>(null)
+  const findInputRef = useRef<HTMLInputElement>(null)
+
+  const [isFindVisible, setIsFindVisible] = useState(false)
+  const isFindVisibleRef = useRef(isFindVisible)
+  isFindVisibleRef.current = isFindVisible
+
+  const [findQuery, setFindQuery] = useState('')
+  const findQueryRef = useRef(findQuery)
+  findQueryRef.current = findQuery
+
+  const [findResults, setFindResults] = useState<ISearchResultChangeEvent>(
+    EMPTY_TERMINAL_FIND_RESULTS
+  )
+  const pendingFindInputFocusRef = useRef<'focus' | 'select' | null>(null)
 
   /**
    * Ref to hold the latest resizeTerminal function so the ResizeObserver
@@ -471,6 +524,228 @@ function TerminalPaneRenderer({
   /** Ref for onTitleChange to avoid stale closures in terminal event callbacks. */
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
+
+  const requestTerminalFindInputFocus = useCallback((selectQuery: boolean) => {
+    const input = findInputRef.current
+    if (input) {
+      input.focus()
+      if (selectQuery) {
+        input.select()
+      }
+      return
+    }
+
+    pendingFindInputFocusRef.current = selectQuery ? 'select' : 'focus'
+  }, [])
+
+  useEffect(() => {
+    if (!isFindVisible) {
+      pendingFindInputFocusRef.current = null
+      return
+    }
+
+    const request = pendingFindInputFocusRef.current
+    const input = findInputRef.current
+    if (!(request && input)) {
+      return
+    }
+
+    input.focus()
+    if (request === 'select') {
+      input.select()
+    }
+    pendingFindInputFocusRef.current = null
+  }, [isFindVisible])
+
+  const performTerminalFindSearch = useCallback(
+    (
+      direction: 'next' | 'previous',
+      query: string,
+      options: { readonly incremental?: boolean } = {}
+    ) => {
+      const searchAddon = searchAddonRef.current
+      if (!searchAddon) {
+        return false
+      }
+
+      if (query.length === 0) {
+        searchAddon.clearDecorations()
+        setFindResults(EMPTY_TERMINAL_FIND_RESULTS)
+        return false
+      }
+
+      const didMatch =
+        direction === 'previous'
+          ? searchAddon.findPrevious(query, {
+              decorations: TERMINAL_FIND_DECORATIONS,
+            })
+          : searchAddon.findNext(query, {
+              decorations: TERMINAL_FIND_DECORATIONS,
+              incremental: options.incremental ?? false,
+            })
+
+      if (!didMatch) {
+        setFindResults(EMPTY_TERMINAL_FIND_RESULTS)
+      }
+
+      return didMatch
+    },
+    []
+  )
+
+  const closeTerminalFind = useCallback(
+    (refocusTerminal: boolean) => {
+      searchAddonRef.current?.clearDecorations()
+      setIsFindVisible(false)
+
+      if (refocusTerminal) {
+        requestAnimationFrame(() => {
+          terminalRef.current?.focus()
+        })
+      }
+    },
+    [terminalRef]
+  )
+
+  const getTerminalFindSeedQuery = useCallback(() => {
+    const selection = terminalRef.current?.getSelection() ?? ''
+    if (
+      selection.length === 0 ||
+      selection.includes('\n') ||
+      selection.includes('\r')
+    ) {
+      return ''
+    }
+    return selection
+  }, [terminalRef])
+
+  const openTerminalFind = useCallback(
+    (focusInput: boolean) => {
+      const wasVisible = isFindVisibleRef.current
+      const currentQuery = findQueryRef.current
+      const nextQuery =
+        currentQuery.length > 0 ? currentQuery : getTerminalFindSeedQuery()
+      const queryChanged = nextQuery !== currentQuery
+
+      setIsFindVisible(true)
+
+      if (focusInput) {
+        requestTerminalFindInputFocus(true)
+      }
+
+      if (wasVisible) {
+        return
+      }
+
+      if (queryChanged) {
+        setFindQuery(nextQuery)
+        if (nextQuery.length === 0) {
+          searchAddonRef.current?.clearDecorations()
+          setFindResults(EMPTY_TERMINAL_FIND_RESULTS)
+        }
+        return
+      }
+
+      if (nextQuery.length === 0) {
+        searchAddonRef.current?.clearDecorations()
+        setFindResults(EMPTY_TERMINAL_FIND_RESULTS)
+        return
+      }
+
+      performTerminalFindSearch('next', nextQuery, { incremental: true })
+    },
+    [
+      getTerminalFindSeedQuery,
+      performTerminalFindSearch,
+      requestTerminalFindInputFocus,
+    ]
+  )
+
+  const navigateTerminalFind = useCallback(
+    (direction: 'next' | 'previous') => {
+      const query = findQueryRef.current
+      if (query.length === 0) {
+        return
+      }
+
+      if (!isFindVisibleRef.current) {
+        setIsFindVisible(true)
+      }
+
+      performTerminalFindSearch(direction, query)
+    },
+    [performTerminalFindSearch]
+  )
+
+  useEffect(() => {
+    if (!isFindVisibleRef.current) {
+      return
+    }
+
+    if (findQuery.length === 0) {
+      searchAddonRef.current?.clearDecorations()
+      setFindResults(EMPTY_TERMINAL_FIND_RESULTS)
+      return
+    }
+
+    performTerminalFindSearch('next', findQuery, { incremental: true })
+  }, [findQuery, performTerminalFindSearch])
+
+  const openTerminalFindRef = useRef(openTerminalFind)
+  openTerminalFindRef.current = openTerminalFind
+
+  const navigateTerminalFindRef = useRef(navigateTerminalFind)
+  navigateTerminalFindRef.current = navigateTerminalFind
+
+  const handleTerminalFindBarKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLFormElement>) => {
+      if (isTerminalFindShortcut(event.nativeEvent)) {
+        event.preventDefault()
+        event.stopPropagation()
+        openTerminalFind(true)
+        return
+      }
+
+      if (isTerminalFindPreviousShortcut(event.nativeEvent)) {
+        event.preventDefault()
+        event.stopPropagation()
+        navigateTerminalFind('previous')
+        return
+      }
+
+      if (isTerminalFindNextShortcut(event.nativeEvent)) {
+        event.preventDefault()
+        event.stopPropagation()
+        navigateTerminalFind('next')
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeTerminalFind(true)
+      }
+    },
+    [closeTerminalFind, navigateTerminalFind, openTerminalFind]
+  )
+
+  const handleTerminalFindInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeTerminalFind(true)
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        navigateTerminalFind(event.shiftKey ? 'previous' : 'next')
+      }
+    },
+    [closeTerminalFind, navigateTerminalFind]
+  )
 
   useEffect(() => {
     if (replayStatus !== 'complete') {
@@ -553,8 +828,20 @@ function TerminalPaneRenderer({
     terminal.loadAddon(fitAddon)
     fitAddonRef.current = fitAddon
 
+    const searchAddon = new SearchAddon({
+      highlightLimit: TERMINAL_FIND_HIGHLIGHT_LIMIT,
+    })
+    terminal.loadAddon(searchAddon)
+    searchAddonRef.current = searchAddon
+
     // Open terminal in the container
     terminal.open(container)
+
+    const onDidChangeSearchResultsDisposable = searchAddon.onDidChangeResults(
+      (event) => {
+        setFindResults(event)
+      }
+    )
 
     // Track first data receipt to dismiss the loading overlay.
     // Must be registered here (after Terminal creation) rather than in a
@@ -660,6 +947,31 @@ function TerminalPaneRenderer({
       }
     }
 
+    const handleTerminalFindShortcut = (event: KeyboardEvent) => {
+      if (isTerminalFindShortcut(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        openTerminalFindRef.current(true)
+        return true
+      }
+
+      if (isTerminalFindPreviousShortcut(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        navigateTerminalFindRef.current('previous')
+        return true
+      }
+
+      if (isTerminalFindNextShortcut(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        navigateTerminalFindRef.current('next')
+        return true
+      }
+
+      return false
+    }
+
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       // Only intercept keydown events — keyup should pass through
       // to avoid breaking key state tracking in the browser.
@@ -681,6 +993,10 @@ function TerminalPaneRenderer({
       // This is the second key in the Ctrl+B -> action sequence.
       if (prefixModeRef.current) {
         exitPrefixMode()
+        return false
+      }
+
+      if (handleTerminalFindShortcut(event)) {
         return false
       }
 
@@ -712,10 +1028,12 @@ function TerminalPaneRenderer({
 
     // Cleanup on unmount
     return () => {
+      onDidChangeSearchResultsDisposable.dispose()
       onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
       terminal.dispose()
+      searchAddonRef.current = null
       terminalRef.current = null
       fitAddonRef.current = null
       // Clear prefix mode timeout to prevent stale state updates
@@ -776,6 +1094,27 @@ function TerminalPaneRenderer({
       {/* xterm.js container */}
       <div className="h-full w-full" ref={containerRef} />
 
+      {isFindVisible && (
+        <TerminalFindOverlay
+          inputRef={findInputRef}
+          onClose={() => {
+            closeTerminalFind(true)
+          }}
+          onFindNext={() => {
+            navigateTerminalFind('next')
+          }}
+          onFindPrevious={() => {
+            navigateTerminalFind('previous')
+          }}
+          onInputKeyDown={handleTerminalFindInputKeyDown}
+          onKeyDown={handleTerminalFindBarKeyDown}
+          onQueryChange={setFindQuery}
+          query={findQuery}
+          resultCount={findResults.resultCount}
+          resultIndex={findResults.resultIndex}
+        />
+      )}
+
       {/* Loading overlay — shown while the PTY is spawning
           and no output has arrived yet. Covers the blank terminal canvas
           with a spinner and message. Disappears on first data frame.
@@ -821,6 +1160,121 @@ function TerminalPaneRenderer({
         </div>
       )}
     </div>
+  )
+}
+
+interface TerminalFindOverlayProps {
+  readonly inputRef: React.RefObject<HTMLInputElement | null>
+  readonly onClose: () => void
+  readonly onFindNext: () => void
+  readonly onFindPrevious: () => void
+  readonly onInputKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLFormElement>) => void
+  readonly onQueryChange: (query: string) => void
+  readonly query: string
+  readonly resultCount: number
+  readonly resultIndex: number
+}
+
+function formatTerminalFindResults(
+  query: string,
+  resultCount: number,
+  resultIndex: number
+): string {
+  if (query.length === 0) {
+    return ''
+  }
+  if (resultCount === 0) {
+    return '0/0'
+  }
+  if (resultIndex < 0) {
+    return `?/${resultCount}`
+  }
+  return `${resultIndex + 1}/${resultCount}`
+}
+
+function TerminalFindOverlay({
+  inputRef,
+  onClose,
+  onFindNext,
+  onFindPrevious,
+  onInputKeyDown,
+  onKeyDown,
+  onQueryChange,
+  query,
+  resultCount,
+  resultIndex,
+}: TerminalFindOverlayProps) {
+  const resultLabel = formatTerminalFindResults(query, resultCount, resultIndex)
+
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: The wrapper owns shared find shortcuts while focus moves between its descendants.
+    <form
+      className="absolute top-1 right-1 z-30 w-80 max-w-[calc(100%-0.5rem)]"
+      data-testid="terminal-find-overlay"
+      onKeyDown={onKeyDown}
+      onSubmit={(event) => {
+        event.preventDefault()
+      }}
+    >
+      <InputGroup className="h-7 border-border/70 bg-background/90 shadow-sm backdrop-blur-sm dark:bg-background/90">
+        <InputGroupAddon align="inline-start" className="gap-1.5">
+          <Search className="size-3.5" />
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-label="Find in terminal"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          onChange={(event) => {
+            onQueryChange(event.target.value)
+          }}
+          onKeyDown={onInputKeyDown}
+          placeholder="Find"
+          ref={inputRef}
+          spellCheck={false}
+          type="search"
+          value={query}
+        />
+        <InputGroupAddon align="inline-end" className="gap-0.5">
+          {resultLabel.length > 0 && (
+            <InputGroupText className="min-w-9 justify-end tabular-nums">
+              {resultLabel}
+            </InputGroupText>
+          )}
+          <InputGroupButton
+            aria-label="Previous match"
+            onClick={onFindPrevious}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <ChevronUp className="size-3.5" />
+          </InputGroupButton>
+          <InputGroupButton
+            aria-label="Next match"
+            onClick={onFindNext}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <ChevronDown className="size-3.5" />
+          </InputGroupButton>
+          <InputGroupButton
+            aria-label="Close find"
+            onClick={onClose}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <X className="size-3.5" />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </form>
   )
 }
 

@@ -115,9 +115,26 @@ const writeLaborerConfig = (
   dirPath: string,
   config: Record<string, unknown>
 ): void => {
+  const devServer = config.devServer
+  const normalizedConfig =
+    devServer !== undefined &&
+    typeof devServer === 'object' &&
+    devServer !== null &&
+    !Array.isArray(devServer) &&
+    !('provider' in devServer)
+      ? {
+          ...config,
+          // Keep these tests isolated from any user-level default sandbox provider.
+          devServer: {
+            provider: 'docker',
+            ...(devServer as Record<string, unknown>),
+          },
+        }
+      : config
+
   writeFileSync(
     join(dirPath, 'laborer.json'),
-    `${JSON.stringify(config, null, 2)}\n`
+    `${JSON.stringify(normalizedConfig, null, 2)}\n`
   )
 }
 

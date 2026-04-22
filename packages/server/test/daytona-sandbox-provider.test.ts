@@ -12,9 +12,10 @@
  * already-destroyed sandboxes, graceful skip when workspace is missing or has no
  * sandboxId, and best-effort cleanup when delete fails.
  *
- * Issue 15: Verifies git sync — pushing worktree HEAD to sandbox via SSH.
- * Tests that createSshAccess is called, git init is executed in the sandbox,
- * local git remote is added/pushed/cleaned up, and checkout is executed.
+ * Issue 15: Verifies clone-based repo sync inside the sandbox.
+ * Tests that the repo is cloned via the Daytona git API, the workspace
+ * branch is created and checked out in the sandbox, and no local git shell
+ * commands are needed for sandbox creation.
  *
  * Issue 16: Verifies spawnTerminal — PTY session creation via Daytona SDK.
  * Tests that createPty is called with correct parameters, waitForConnection
@@ -49,8 +50,8 @@ import { initRepo } from './helpers/git-helpers.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 // ---------------------------------------------------------------------------
-// Mock spawnGit to prevent real SSH connections during unit tests.
-// The mock records calls and returns success exit codes.
+// Mock spawnGit so tests can verify clone-based setup does not shell out to
+// local git during Daytona sandbox creation.
 // ---------------------------------------------------------------------------
 
 const spawnGitCalls: Array<{ args: readonly string[]; cwd: string }> = []
@@ -135,7 +136,20 @@ const makeMockSandbox = (log?: MockCallRecord[]): DaytonaSandbox =>
     networkBlockAll: false,
     toolboxProxyUrl: 'https://toolbox.test',
     fs: {} as DaytonaSandbox['fs'],
-    git: {} as DaytonaSandbox['git'],
+    git: {
+      clone: (...args: unknown[]) => {
+        log?.push({ method: 'sandbox.git.clone', args })
+        return Promise.resolve()
+      },
+      createBranch: (...args: unknown[]) => {
+        log?.push({ method: 'sandbox.git.createBranch', args })
+        return Promise.resolve()
+      },
+      checkoutBranch: (...args: unknown[]) => {
+        log?.push({ method: 'sandbox.git.checkoutBranch', args })
+        return Promise.resolve()
+      },
+    } as unknown as DaytonaSandbox['git'],
     process: {
       executeCommand: (...args: unknown[]) => {
         log?.push({ method: 'sandbox.process.executeCommand', args })
@@ -539,6 +553,9 @@ const TEST_REPO_URL = 'https://github.com/test/repo.git'
 /** Default currentBranch for tests. */
 const TEST_CURRENT_BRANCH = 'main'
 
+/** Default checkout directory inside Daytona sandboxes. */
+const TEST_DAYTONA_PROJECT_DIR = '/home/daytona/project'
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -690,7 +707,7 @@ describe('DaytonaSandboxProvider', () => {
     )
 
     it.scoped(
-      'calls createSshAccess on the sandbox during git sync (Issue 15)',
+      'clones the repo into the sandbox at the current branch (Issue 15)',
       () =>
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
@@ -710,18 +727,21 @@ describe('DaytonaSandboxProvider', () => {
               devServerConfig: dsc(),
             })
 
-            const sshCalls = log.filter(
-              (c) => c.method === 'sandbox.createSshAccess'
+            const cloneCalls = log.filter(
+              (c) => c.method === 'sandbox.git.clone'
             )
-            assert.strictEqual(sshCalls.length, 1)
-            // Token expiry should be 10 minutes
-            assert.strictEqual((sshCalls[0]?.args as unknown[])[0], 10)
+            assert.strictEqual(cloneCalls.length, 1)
+            assert.deepStrictEqual(cloneCalls[0]?.args, [
+              TEST_REPO_URL,
+              TEST_DAYTONA_PROJECT_DIR,
+              TEST_CURRENT_BRANCH,
+            ])
           }).pipe(Effect.provide(makeLayer(log)))
         })
     )
 
     it.scoped(
-      'executes git init in sandbox before pushing code (Issue 15)',
+      'creates the workspace branch inside the sandbox (Issue 15)',
       () =>
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
@@ -741,21 +761,20 @@ describe('DaytonaSandboxProvider', () => {
               devServerConfig: dsc(),
             })
 
-            const execCalls = log.filter(
-              (c) => c.method === 'sandbox.process.executeCommand'
+            const createBranchCalls = log.filter(
+              (c) => c.method === 'sandbox.git.createBranch'
             )
-            // Should have at least 2 calls: git init + git checkout
-            assert.isTrue(execCalls.length >= 2)
-            // First call should be git init
-            const initCmd = (execCalls[0]?.args as unknown[])[0] as string
-            assert.isTrue(initCmd.includes('git init'))
-            assert.isTrue(initCmd.includes('receive.denyCurrentBranch ignore'))
+            assert.strictEqual(createBranchCalls.length, 1)
+            assert.deepStrictEqual(createBranchCalls[0]?.args, [
+              TEST_DAYTONA_PROJECT_DIR,
+              'feature/git-init',
+            ])
           }).pipe(Effect.provide(makeLayer(log)))
         })
     )
 
     it.scoped(
-      'executes git checkout in sandbox after pushing code (Issue 15)',
+      'checks out the workspace branch inside the sandbox (Issue 15)',
       () =>
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
@@ -775,18 +794,20 @@ describe('DaytonaSandboxProvider', () => {
               devServerConfig: dsc(),
             })
 
-            const execCalls = log.filter(
-              (c) => c.method === 'sandbox.process.executeCommand'
+            const checkoutCalls = log.filter(
+              (c) => c.method === 'sandbox.git.checkoutBranch'
             )
-            // Last executeCommand call should be the checkout
-            const lastCmd = (execCalls.at(-1)?.args as unknown[])[0] as string
-            assert.isTrue(lastCmd.includes('git checkout -f main'))
+            assert.strictEqual(checkoutCalls.length, 1)
+            assert.deepStrictEqual(checkoutCalls[0]?.args, [
+              TEST_DAYTONA_PROJECT_DIR,
+              'feature/git-checkout',
+            ])
           }).pipe(Effect.provide(makeLayer(log)))
         })
     )
 
     it.scoped(
-      'reports pushing-code setup step during git sync (Issue 15)',
+      'clears the setup step after clone-based sync completes (Issue 15)',
       () =>
         Effect.gen(function* () {
           const log: MockCallRecord[] = []
@@ -813,35 +834,30 @@ describe('DaytonaSandboxProvider', () => {
         })
     )
 
-    it.scoped('calls git remote remove to clean up after push (Issue 15)', () =>
-      Effect.gen(function* () {
-        const log: MockCallRecord[] = []
-        yield* Effect.gen(function* () {
-          const sp = yield* DaytonaSandboxProvider
-          const { store } = yield* LaborerStore
-          const wid = crypto.randomUUID()
-          const worktreePath = seedWorkspace(store as never, wid)
+    it.scoped(
+      'does not shell out to local git during clone sync (Issue 15)',
+      () =>
+        Effect.gen(function* () {
+          const log: MockCallRecord[] = []
+          yield* Effect.gen(function* () {
+            const sp = yield* DaytonaSandboxProvider
+            const { store } = yield* LaborerStore
+            const wid = crypto.randomUUID()
+            const worktreePath = seedWorkspace(store as never, wid)
 
-          yield* sp.createSandbox({
-            workspaceId: wid,
-            branchName: 'feature/cleanup',
-            projectName: 'cleanup-project',
-            worktreePath,
-            repoUrl: TEST_REPO_URL,
-            currentBranch: TEST_CURRENT_BRANCH,
-            devServerConfig: dsc(),
-          })
+            yield* sp.createSandbox({
+              workspaceId: wid,
+              branchName: 'feature/cleanup',
+              projectName: 'cleanup-project',
+              worktreePath,
+              repoUrl: TEST_REPO_URL,
+              currentBranch: TEST_CURRENT_BRANCH,
+              devServerConfig: dsc(),
+            })
 
-          // Verify spawnGit was called with 'remote remove' to clean up
-          const removeCalls = spawnGitCalls.filter(
-            (c) => c.args[0] === 'remote' && c.args[1] === 'remove'
-          )
-          assert.strictEqual(removeCalls.length, 1)
-          assert.isTrue(
-            (removeCalls[0]?.args[2] as string).includes(`sandbox-${wid}`)
-          )
-        }).pipe(Effect.provide(makeLayer(log)))
-      })
+            assert.strictEqual(spawnGitCalls.length, 0)
+          }).pipe(Effect.provide(makeLayer(log)))
+        })
     )
 
     // ── Issue 21: Snapshot caching tests ──────────────────────
@@ -1467,7 +1483,7 @@ describe('DaytonaSandboxProvider', () => {
             yield* sp.resumeSandbox(wid)
 
             // get was called, but start was NOT called
-            assert.strictEqual(log.filter((c) => c.method === 'get').length, 1)
+            assert.isTrue(log.some((c) => c.method === 'get'))
             assert.strictEqual(
               log.filter((c) => c.method === 'start').length,
               0
@@ -2476,17 +2492,11 @@ describe('DaytonaSandboxProvider', () => {
               onReady: undefined,
             })
 
-            // Verify SSH access was requested twice:
-            // 1st call: git sync (10-minute token)
-            // 2nd call: SSH config for VS Code (60-minute token)
             const sshAccessCalls = log.filter(
               (c) => c.method === 'sandbox.createSshAccess'
             )
-            assert.isTrue(sshAccessCalls.length >= 2)
-            // First call: git push (10 min)
-            assert.deepStrictEqual(sshAccessCalls[0]?.args, [10])
-            // Second call: SSH config (60 min)
-            assert.deepStrictEqual(sshAccessCalls[1]?.args, [60])
+            assert.strictEqual(sshAccessCalls.length, 1)
+            assert.deepStrictEqual(sshAccessCalls[0]?.args, [60])
           }).pipe(Effect.provide(makeLayer(log)))
         })
     )
@@ -2517,12 +2527,11 @@ describe('DaytonaSandboxProvider', () => {
             const [ws] = store.query(tables.workspaces.where('id', wid))
             assert.strictEqual(ws?.sandboxSetupStep, null)
 
-            // The SSH config step is verified implicitly: if createSshAccess(60)
-            // was called, the configuring-ssh step must have been reported
             const sshAccessCalls = log.filter(
               (c) => c.method === 'sandbox.createSshAccess'
             )
-            assert.isTrue(sshAccessCalls.length >= 2)
+            assert.strictEqual(sshAccessCalls.length, 1)
+            assert.deepStrictEqual(sshAccessCalls[0]?.args, [60])
           }).pipe(Effect.provide(makeLayer(log)))
         })
     )

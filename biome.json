@@ -23,6 +23,7 @@
       "!**/.wrangler",
       "!**/.alchemy",
       "!**/.svelte-kit",
+      "!**/release",
       "!**/wrangler.jsonc",
       "!**/.source",
       "!**/convex/_generated",

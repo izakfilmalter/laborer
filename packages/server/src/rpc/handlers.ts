@@ -128,6 +128,7 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
   // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
   const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
     workspace.worktreePath,
+    workspace.branchName,
     'number',
     (error) =>
       new RpcError({

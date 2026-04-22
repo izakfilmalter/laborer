@@ -64,6 +64,7 @@ const resolveOriginRepoSlug = Effect.fn('GithubPrView.resolveOriginRepoSlug')(
 
 const runGhPrViewWithOriginFallback = <E>(
   worktreePath: string,
+  branchName: string,
   jsonFields: string,
   onError: (error: unknown) => E
 ): Effect.Effect<GhPrViewResult, E> =>
@@ -72,7 +73,16 @@ const runGhPrViewWithOriginFallback = <E>(
 
     if (originRepoSlug !== null) {
       const originResult = yield* runGhPrViewCommand(
-        ['gh', 'pr', 'view', '--json', jsonFields, '--repo', originRepoSlug],
+        [
+          'gh',
+          'pr',
+          'view',
+          branchName,
+          '--json',
+          jsonFields,
+          '--repo',
+          originRepoSlug,
+        ],
         worktreePath,
         onError
       )
@@ -83,7 +93,7 @@ const runGhPrViewWithOriginFallback = <E>(
     }
 
     return yield* runGhPrViewCommand(
-      ['gh', 'pr', 'view', '--json', jsonFields],
+      ['gh', 'pr', 'view', branchName, '--json', jsonFields],
       worktreePath,
       onError
     )

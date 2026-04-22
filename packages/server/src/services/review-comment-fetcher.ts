@@ -497,7 +497,7 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
           const prNumber =
             typeof workspace.prNumber === 'number' && workspace.prNumber > 0
               ? workspace.prNumber
-              : yield* detectPrNumber(worktreePath)
+              : yield* detectPrNumber(worktreePath, workspace.branchName)
 
           // 3. Detect owner/repo from git remote
           const { owner, repo } = yield* detectOwnerRepo(worktreePath)
@@ -646,7 +646,7 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
           const prNumber =
             typeof workspace.prNumber === 'number' && workspace.prNumber > 0
               ? workspace.prNumber
-              : yield* detectPrNumber(worktreePath)
+              : yield* detectPrNumber(worktreePath, workspace.branchName)
 
           // 3. Detect owner/repo from git remote
           const { owner, repo } = yield* detectOwnerRepo(worktreePath)
@@ -697,7 +697,7 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
         const prNumber =
           typeof workspace.prNumber === 'number' && workspace.prNumber > 0
             ? workspace.prNumber
-            : yield* detectPrNumber(worktreePath)
+            : yield* detectPrNumber(worktreePath, workspace.branchName)
 
         return { owner, prNumber, repo, worktreePath }
       })
@@ -892,9 +892,10 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
  * Detect PR number from the workspace's worktree using `gh pr view`.
  */
 const detectPrNumber = Effect.fn('ReviewCommentFetcher.detectPrNumber')(
-  function* (worktreePath: string) {
+  function* (worktreePath: string, branchName: string) {
     const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
       worktreePath,
+      branchName,
       'number',
       (error) =>
         new RpcError({

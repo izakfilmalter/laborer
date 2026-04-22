@@ -109,7 +109,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view --json number,url,title,state': {
+            'gh pr view feature/fork-pr --json number,url,title,state': {
               stdout: '',
               stderr: 'no pull requests found',
               exitCode: 1,
@@ -141,7 +141,10 @@ describe('PrWatcher fork origin PR lookup', () => {
 
         const ghCalls = spawnMock.mock.calls.filter(([cmd]) => cmd[0] === 'gh')
         assert.strictEqual(ghCalls.length, 1)
-        assert.include(ghCalls[0]?.[0].join(' '), '--repo acme/fork')
+        assert.include(
+          ghCalls[0]?.[0].join(' '),
+          'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+        )
       })
   )
 
@@ -159,7 +162,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view --json number,url,title,state': {
+            'gh pr view feature/fork-pr --json number,url,title,state': {
               stdout: JSON.stringify({
                 number: 7,
                 state: 'OPEN',
@@ -191,7 +194,14 @@ describe('PrWatcher fork origin PR lookup', () => {
 
         const ghCalls = spawnMock.mock.calls.filter(([cmd]) => cmd[0] === 'gh')
         assert.strictEqual(ghCalls.length, 2)
-        assert.include(ghCalls[0]?.[0].join(' '), '--repo acme/fork')
+        assert.include(
+          ghCalls[0]?.[0].join(' '),
+          'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+        )
+        assert.include(
+          ghCalls[1]?.[0].join(' ') ?? '',
+          'gh pr view feature/fork-pr --json number,url,title,state'
+        )
         assert.notInclude(ghCalls[1]?.[0].join(' ') ?? '', '--repo')
       })
   )

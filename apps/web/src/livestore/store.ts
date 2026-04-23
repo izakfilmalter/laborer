@@ -33,16 +33,27 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import { acquireSyncPort } from '../lib/desktop'
+import { acquireSyncPort, isElectron } from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
+import {
+  consumePendingPersistenceReset,
+  LIVESTORE_FATAL_ERROR_MESSAGE,
+  schedulePersistenceResetRecovery,
+} from './recovery'
 
 /**
  * Whether to reset persistence on load. In dev mode, append `?reset`
  * to the URL to clear the local OPFS databases and start fresh.
+ * Production recovery can also request a one-shot reset after a fatal
+ * persisted-state boot failure.
  */
+const resetPersistenceFromRecovery = consumePendingPersistenceReset()
+
 const resetPersistence =
   import.meta.env.DEV &&
   new URLSearchParams(globalThis.location.search).get('reset') !== null
+
+const shouldResetPersistence = resetPersistence || resetPersistenceFromRecovery
 
 if (resetPersistence) {
   const searchParams = new URLSearchParams(globalThis.location.search)
@@ -51,6 +62,12 @@ if (resetPersistence) {
     null,
     '',
     `${globalThis.location.pathname}?${searchParams.toString()}`
+  )
+}
+
+if (resetPersistenceFromRecovery) {
+  console.warn(
+    '[LiveStore.store] Resetting persisted LiveStore cache after a previous fatal boot error'
   )
 }
 
@@ -74,14 +91,40 @@ function createLiveStoreWorker(options: { name: string }): Worker {
   const worker = new Worker(workerUrl, { type: 'module', name: options.name })
 
   worker.addEventListener('message', (event: MessageEvent) => {
-    const data = event.data as { type?: string }
-    if (data?.type !== RPC_PORT_DEAD_EVENT) {
+    const data = event.data as {
+      cause?: string
+      recoverablePersistenceError?: boolean
+      type?: string
+    }
+
+    if (data?.type === RPC_PORT_DEAD_EVENT) {
+      console.warn(
+        '[LiveStore.store] Worker reported dead RPC port — requesting runtime reset'
+      )
+      window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
       return
     }
 
-    console.warn(
-      '[LiveStore.store] Worker reported dead RPC port — requesting runtime reset'
+    if (data?.type !== LIVESTORE_FATAL_ERROR_MESSAGE) {
+      return
+    }
+
+    console.error(
+      '[LiveStore.store] Worker exited with fatal error',
+      data.cause ?? 'Unknown worker failure'
     )
+
+    if (
+      data.recoverablePersistenceError === true &&
+      schedulePersistenceResetRecovery()
+    ) {
+      console.warn(
+        '[LiveStore.store] Fatal persisted-state error detected — reloading once with a cleared local LiveStore cache'
+      )
+      globalThis.location.reload()
+      return
+    }
+
     window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
   })
 
@@ -115,7 +158,13 @@ const adapter = makePersistedAdapter({
   storage: { type: 'opfs' },
   worker: createLiveStoreWorker,
   sharedWorker: LiveStoreSharedWorker,
-  resetPersistence,
+  experimental: {
+    // The OPFS fast path can render from a stale snapshot before the leader
+    // worker validates the eventlog. In Electron that leaves the UI mounted
+    // against a dead LiveStore session if boot later fails.
+    disableFastPath: isElectron(),
+  },
+  resetPersistence: shouldResetPersistence,
 })
 
 /**

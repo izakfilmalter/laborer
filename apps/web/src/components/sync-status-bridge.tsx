@@ -15,10 +15,20 @@
  * @see apps/web/src/components/sync-status-context.tsx — the context being updated
  */
 
+import { projects, workspaces } from '@laborer/shared/schema'
+import { queryDb } from '@livestore/livestore'
 import { Effect, Fiber, Stream } from 'effect'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useSyncStatusUpdate } from '@/components/sync-status-context'
 import { useLaborerStore } from '@/livestore/store'
+
+const syncStatusBridgeProjects$ = queryDb(projects, {
+  label: 'syncStatusBridgeProjects',
+})
+
+const syncStatusBridgeWorkspaces$ = queryDb(workspaces, {
+  label: 'syncStatusBridgeWorkspaces',
+})
 
 /**
  * Renderless component that bridges LiveStore sync status to the
@@ -28,6 +38,29 @@ function SyncStatusBridge(): null {
   const store = useLaborerStore()
   const setSyncState = useSyncStatusUpdate()
   const mountedRef = useRef(true)
+  const projectList = store.useQuery(syncStatusBridgeProjects$)
+  const workspaceList = store.useQuery(syncStatusBridgeWorkspaces$)
+  const liveStoreSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        projectCount: projectList.length,
+        projects: [...projectList]
+          .map((project) => ({ id: project.id, name: project.name }))
+          .sort((left, right) => left.id.localeCompare(right.id)),
+        workspaceCount: workspaceList.length,
+        workspaces: [...workspaceList]
+          .map((workspace) => ({
+            id: workspace.id,
+            projectId: workspace.projectId,
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id)),
+      }),
+    [projectList, workspaceList]
+  )
+
+  useEffect(() => {
+    console.info(`[SyncStatusBridge] LiveStore snapshot ${liveStoreSnapshot}`)
+  }, [liveStoreSnapshot])
 
   useEffect(() => {
     mountedRef.current = true

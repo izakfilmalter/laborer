@@ -14,9 +14,52 @@
 
 import { StoreRegistry } from '@livestore/livestore'
 import { StoreRegistryProvider } from '@livestore/react'
-import { Suspense, useEffect, useState } from 'react'
+import { Component, Suspense, useEffect, useState } from 'react'
 
 import Loader from '@/components/loader'
+import {
+  isRecoverablePersistenceError,
+  schedulePersistenceResetRecovery,
+} from '@/livestore/recovery'
+
+class LiveStoreBootBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  override state = { hasError: false }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true }
+  }
+
+  override componentDidCatch(error: unknown) {
+    const cause =
+      error instanceof Error
+        ? `${error.message}\n${error.stack ?? ''}`
+        : String(error)
+
+    if (
+      isRecoverablePersistenceError(cause) &&
+      schedulePersistenceResetRecovery()
+    ) {
+      console.warn(
+        '[LiveStoreProvider] Recoverable LiveStore boot error detected — reloading once with a cleared local cache'
+      )
+      globalThis.location.reload()
+      return
+    }
+
+    console.error('[LiveStoreProvider] LiveStore boot failed', error)
+  }
+
+  override render() {
+    if (this.state.hasError) {
+      return <Loader />
+    }
+
+    return this.props.children
+  }
+}
 
 const LiveStoreProvider = ({ children }: { children: React.ReactNode }) => {
   const [storeRegistry] = useState(() => new StoreRegistry())
@@ -38,7 +81,9 @@ const LiveStoreProvider = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <StoreRegistryProvider storeRegistry={storeRegistry}>
-      <Suspense fallback={<Loader />}>{children}</Suspense>
+      <LiveStoreBootBoundary>
+        <Suspense fallback={<Loader />}>{children}</Suspense>
+      </LiveStoreBootBoundary>
     </StoreRegistryProvider>
   )
 }

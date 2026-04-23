@@ -997,6 +997,25 @@ function HomeComponent() {
     return { filteredProjects: filtered, matchingProjectIds: matching }
   }, [searchQuery, projectList, workspaceList])
 
+  const homeSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        filteredProjectCount: filteredProjects.length,
+        hasProjects,
+        matchingProjectCount: matchingProjectIds.size,
+        projectCount: projectList.length,
+        projectIds: [...projectList]
+          .map((project) => project.id)
+          .sort((left, right) => left.localeCompare(right)),
+        workspaceCount: workspaceList.length,
+      }),
+    [filteredProjects, hasProjects, matchingProjectIds, projectList, workspaceList]
+  )
+
+  useEffect(() => {
+    console.info(`[HomeRoute] Snapshot ${homeSnapshot}`)
+  }, [homeSnapshot])
+
   // When search is active, auto-expand matching projects (override collapse state).
   // When search is cleared, the stored collapse state is naturally restored.
   const isSearchActive = searchQuery.trim().length > 0

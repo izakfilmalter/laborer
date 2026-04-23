@@ -20,11 +20,12 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFile,
   writeFileSync,
 } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
@@ -63,6 +64,8 @@ const EventEncoded = Schema.Struct({
 })
 
 type EventEncodedType = typeof EventEncoded.Type
+
+type SqlJsModule = Awaited<ReturnType<typeof initSqlJs>>
 
 const PullResPageInfo = Schema.Union(
   Schema.TaggedStruct('MoreUnknown', {}),
@@ -173,6 +176,174 @@ const makeSyncMetadata = (createdAt: string): typeof SyncMetadata.Type => ({
 // ---------------------------------------------------------------------------
 
 const MAX_PULL_EVENTS_PER_PAGE = 256
+const SERVER_EVENTLOG_FILE_PATTERN = /^eventlog@\d+\.db$/
+const FALLBACK_SYNC_CREATED_AT = '1970-01-01T00:00:00.000Z'
+
+interface ServerEventlogRow {
+  argsJson: string
+  clientId: string
+  name: string
+  parentSeqNumGlobal: number
+  seqNumGlobal: number
+  sessionId: string
+  syncMetadataJson: string
+}
+
+interface SyncStorageBackfillResult {
+  importedCount: number
+  nextHead: number
+}
+
+const readSyncStorageNumber = (
+  db: SqlJsDatabase,
+  sql: string
+): number => {
+  const stmt = db.prepare(sql)
+
+  let value = 0
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as Record<string, number | null>
+    const firstValue = Object.values(row)[0]
+    value = typeof firstValue === 'number' ? firstValue : 0
+  }
+
+  stmt.free()
+  return value
+}
+
+const extractCreatedAtFromSyncMetadata = (syncMetadataJson: string): string => {
+  try {
+    const decoded = JSON.parse(syncMetadataJson) as {
+      _tag?: string
+      value?: { createdAt?: string; _tag?: string }
+    }
+
+    if (
+      decoded._tag === 'Some' &&
+      typeof decoded.value?.createdAt === 'string' &&
+      decoded.value.createdAt.length > 0
+    ) {
+      return decoded.value.createdAt
+    }
+  } catch {
+    // Fall back to a stable timestamp if legacy metadata can't be decoded.
+  }
+
+  return FALLBACK_SYNC_CREATED_AT
+}
+
+const resolveServerEventlogPath = (
+  dataDir: string,
+  storeId: string
+): string | null => {
+  const storeDirectory = join(dataDir, storeId)
+  if (!existsSync(storeDirectory)) {
+    return null
+  }
+
+  const [eventlogFile] = readdirSync(storeDirectory)
+    .filter((entry) => SERVER_EVENTLOG_FILE_PATTERN.test(entry))
+    .sort((left, right) => right.localeCompare(left))
+
+  return eventlogFile === undefined ? null : join(storeDirectory, eventlogFile)
+}
+
+const backfillSyncStorageFromServerEventlog = ({
+  SQL,
+  backendId,
+  dataDir,
+  db,
+  storeId,
+  tableName,
+}: {
+  SQL: SqlJsModule
+  backendId: string
+  dataDir: string
+  db: SqlJsDatabase
+  storeId: string
+  tableName: string
+}): SyncStorageBackfillResult => {
+  const eventlogPath = resolveServerEventlogPath(dataDir, storeId)
+  if (eventlogPath === null) {
+    return { importedCount: 0, nextHead: 0 }
+  }
+
+  const syncCountBefore = readSyncStorageNumber(
+    db,
+    `SELECT COUNT(*) FROM "${tableName}"`
+  )
+
+  const sourceDb = new SQL.Database(readFileSync(eventlogPath))
+
+  try {
+    const eventlogExists = readSyncStorageNumber(
+      sourceDb,
+      "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'eventlog'"
+    )
+
+    if (eventlogExists === 0) {
+      return {
+        importedCount: 0,
+        nextHead: readSyncStorageNumber(
+          db,
+          `SELECT COALESCE(MAX(seqNum), 0) FROM "${tableName}"`
+        ),
+      }
+    }
+
+    const stmt = sourceDb.prepare(
+      'SELECT seqNumGlobal, parentSeqNumGlobal, name, argsJson, clientId, sessionId, syncMetadataJson FROM eventlog ORDER BY seqNumGlobal ASC'
+    )
+
+    db.run('BEGIN TRANSACTION')
+    try {
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as unknown as ServerEventlogRow
+
+        db.run(
+          `INSERT OR IGNORE INTO "${tableName}" (seqNum, parentSeqNum, args, name, createdAt, clientId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            row.seqNumGlobal,
+            row.parentSeqNumGlobal,
+            row.argsJson,
+            row.name,
+            extractCreatedAtFromSyncMetadata(row.syncMetadataJson),
+            row.clientId,
+            row.sessionId,
+          ]
+        )
+      }
+
+      db.run('COMMIT')
+    } catch (error) {
+      db.run('ROLLBACK')
+      throw error
+    } finally {
+      stmt.free()
+    }
+  } finally {
+    sourceDb.close()
+  }
+
+  const syncCountAfter = readSyncStorageNumber(
+    db,
+    `SELECT COUNT(*) FROM "${tableName}"`
+  )
+  const nextHead = readSyncStorageNumber(
+    db,
+    `SELECT COALESCE(MAX(seqNum), 0) FROM "${tableName}"`
+  )
+
+  db.run(
+    `INSERT OR REPLACE INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`,
+    [storeId, nextHead, backendId]
+  )
+
+  return {
+    importedCount: Math.max(syncCountAfter - syncCountBefore, 0),
+    nextHead,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // SQLite Storage (sql.js WASM)
@@ -317,6 +488,24 @@ const makeSyncStorage = async (dataDir: string, storeId: string) => {
     const buffer = Buffer.from(data)
     writeFileSync(dbPath, buffer)
     dirty = false
+  }
+
+  const { importedCount, nextHead } = backfillSyncStorageFromServerEventlog({
+    SQL,
+    backendId,
+    dataDir,
+    db,
+    storeId,
+    tableName,
+  })
+
+  if (importedCount > 0) {
+    currentHead = nextHead
+    dirty = true
+    flushToDiskSync()
+    console.log(
+      `[sync-backend] Backfilled ${String(importedCount)} missing event(s) from server eventlog (head=${String(currentHead)})`
+    )
   }
 
   // Start periodic flush timer.
@@ -1014,8 +1203,14 @@ const makeInProcessSyncBackend = () => {
 
         /**
          * Fetches the backendId from the sync backend by issuing a
-         * non-live pull with no cursor. Called during ping and lazily
-         * during pull if the backendId hasn't been learned yet.
+         * non-live pull with no cursor. This is only needed when we are
+         * resuming from a known upstream cursor and must include the
+         * backendId in that cursor.
+         *
+         * We intentionally do not call this from `connect()`. Doing so
+         * starts a second full-history pull on the same port during boot,
+         * which can race with the real live pull and discard early pages
+         * before they are materialized into state.
          */
         const fetchBackendId = Effect.gen(function* () {
           if (currentBackendId._tag === 'Some') {
@@ -1036,13 +1231,7 @@ const makeInProcessSyncBackend = () => {
           })
         })
 
-        const ping = Effect.gen(function* () {
-          yield* fetchBackendId
-          yield* SubscriptionRef.set(isConnected, true)
-        }).pipe(
-          Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
-          Effect.asVoid
-        )
+        const ping = SubscriptionRef.set(isConnected, true).pipe(Effect.asVoid)
 
         return {
           isConnected,
@@ -1130,4 +1319,8 @@ const makeInProcessSyncBackend = () => {
   return syncBackendConstructor(clientPort as unknown as RpcMessagePort)
 }
 
-export { makeInProcessSyncBackend, serveSyncOnPort }
+export {
+  backfillSyncStorageFromServerEventlog,
+  makeInProcessSyncBackend,
+  serveSyncOnPort,
+}

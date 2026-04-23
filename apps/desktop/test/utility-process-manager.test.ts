@@ -28,8 +28,10 @@ const {
   MockPort,
   MockMessageChannelMain,
   MockUtilityProcess,
+  appendFileSyncMock,
   forkedProcesses,
   createdChannels,
+  mkdirSyncMock,
   mockFork,
 } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -151,15 +153,27 @@ const {
     }
   )
 
+  const hoistedAppendFileSyncMock = vi.fn()
+  const hoistedMkdirSyncMock = vi.fn()
+
   return {
     MockPort: HoistedMockPort,
     MockMessageChannelMain: HoistedMockMessageChannelMain,
     MockUtilityProcess: HoistedMockUtilityProcess,
+    appendFileSyncMock: hoistedAppendFileSyncMock,
     forkedProcesses: hoistedForkedProcesses,
     createdChannels: hoistedCreatedChannels,
+    mkdirSyncMock: hoistedMkdirSyncMock,
     mockFork: hoistedMockFork,
   }
 })
+
+vi.mock('node:fs', () => ({
+  appendFileSync: (...args: unknown[]) =>
+    appendFileSyncMock(...(args as [string, string, BufferEncoding])),
+  mkdirSync: (...args: unknown[]) =>
+    mkdirSyncMock(...(args as [string, { recursive: boolean }])),
+}))
 
 vi.mock('electron', () => ({
   app: {
@@ -223,6 +237,8 @@ describe('UtilityProcessManager', () => {
     manager = new UtilityProcessManager()
     forkedProcesses.length = 0
     createdChannels.length = 0
+    appendFileSyncMock.mockClear()
+    mkdirSyncMock.mockClear()
     mockFork.mockClear()
   })
 
@@ -582,6 +598,29 @@ describe('UtilityProcessManager', () => {
       const lastStderr = exitHandler.mock.calls[0]?.[2] ?? ''
       expect(lastStderr).toContain('Error: something went wrong')
       expect(lastStderr).toContain('Stack trace line 1')
+    })
+
+    it('writes utility stdout and stderr to the service log file', async () => {
+      manager.fork('server')
+      const child = getProcess(0)
+      child.simulateSpawn(4321)
+
+      child.stdout?.write('sync backend initialized\n')
+      child.stderr?.write('warning: stale cursor\n')
+
+      await flushMicrotasks()
+
+      expect(mkdirSyncMock).toHaveBeenCalledWith(
+        '/mock/appData/logs/utility-processes',
+        { recursive: true }
+      )
+
+      const logWrites = appendFileSyncMock.mock.calls
+        .filter(([filePath]) => filePath === '/mock/appData/logs/utility-processes/server.log')
+        .map(([, line]) => String(line))
+
+      expect(logWrites.some((line) => line.includes('[stdout] sync backend initialized'))).toBe(true)
+      expect(logWrites.some((line) => line.includes('[stderr] warning: stale cursor'))).toBe(true)
     })
   })
 

@@ -1,0 +1,164 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { assert, describe, it } from '@effect/vitest'
+import initSqlJs from 'sql.js'
+import { afterAll } from 'vitest'
+import { backfillSyncStorageFromServerEventlog } from '../src/services/sync-backend.js'
+
+const tempDirs: string[] = []
+
+afterAll(() => {
+  for (const tempDir of tempDirs) {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+})
+
+describe('sync-backend startup backfill', () => {
+  it('backfills missing history from the server eventlog', async () => {
+    const SQL = await initSqlJs()
+    const dataDir = mkdtempSync(join(tmpdir(), 'laborer-sync-backfill-'))
+    tempDirs.push(dataDir)
+
+    const storeId = 'laborer'
+    const tableName = 'eventlog_1_laborer'
+    const backendId = 'backend-1'
+    const serverStoreDir = join(dataDir, storeId)
+
+    mkdirSync(serverStoreDir, { recursive: true })
+
+    const serverEventlogDb = new SQL.Database()
+    serverEventlogDb.run(`
+      CREATE TABLE eventlog (
+        seqNumGlobal INTEGER NOT NULL,
+        seqNumClient INTEGER NOT NULL,
+        seqNumRebaseGeneration INTEGER NOT NULL,
+        parentSeqNumGlobal INTEGER NOT NULL,
+        parentSeqNumClient INTEGER NOT NULL,
+        parentSeqNumRebaseGeneration INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        argsJson TEXT NOT NULL,
+        clientId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        schemaHash INTEGER NOT NULL,
+        syncMetadataJson TEXT NOT NULL,
+        PRIMARY KEY (seqNumGlobal, seqNumClient, seqNumRebaseGeneration)
+      )
+    `)
+
+    const createdAt =
+      '{"_tag":"Some","value":{"_tag":"SyncMessage.SyncMetadata","createdAt":"2026-04-23T00:00:00.000Z"}}'
+
+    serverEventlogDb.run(
+      `INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        'v1.ProjectCreated',
+        JSON.stringify({
+          id: 'project-1',
+          name: 'laborer',
+          repoPath: '/repo/laborer',
+        }),
+        'server',
+        'static',
+        1,
+        createdAt,
+      ]
+    )
+
+    serverEventlogDb.run(
+      `INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        2,
+        2,
+        0,
+        1,
+        1,
+        0,
+        'v1.WorkspaceCreated',
+        JSON.stringify({
+          id: 'workspace-1',
+          projectId: 'project-1',
+          branchName: 'main',
+        }),
+        'server',
+        'static',
+        1,
+        createdAt,
+      ]
+    )
+
+    writeFileSync(
+      join(serverStoreDir, 'eventlog@6.db'),
+      Buffer.from(serverEventlogDb.export())
+    )
+    serverEventlogDb.close()
+
+    const syncDb = new SQL.Database()
+    syncDb.run(`
+      CREATE TABLE "${tableName}" (
+        seqNum INTEGER PRIMARY KEY,
+        parentSeqNum INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        args TEXT,
+        createdAt TEXT NOT NULL,
+        clientId TEXT NOT NULL,
+        sessionId TEXT NOT NULL
+      )
+    `)
+    syncDb.run(`
+      CREATE TABLE context_1 (
+        storeId TEXT PRIMARY KEY,
+        currentHead INTEGER NOT NULL,
+        backendId TEXT NOT NULL
+      )
+    `)
+    syncDb.run(
+      `INSERT INTO context_1 (storeId, currentHead, backendId) VALUES (?, ?, ?)`,
+      [storeId, 2, backendId]
+    )
+    syncDb.run(
+      `INSERT INTO "${tableName}" (seqNum, parentSeqNum, name, args, createdAt, clientId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        2,
+        1,
+        'v1.WorkspaceCreated',
+        JSON.stringify({ id: 'workspace-1', projectId: 'project-1' }),
+        '2026-04-23T00:00:00.000Z',
+        'server',
+        'static',
+      ]
+    )
+
+    const result = backfillSyncStorageFromServerEventlog({
+      SQL,
+      backendId,
+      dataDir,
+      db: syncDb,
+      storeId,
+      tableName,
+    })
+
+    assert.deepStrictEqual(result, { importedCount: 1, nextHead: 2 })
+
+    const rows = syncDb.exec(
+      `SELECT seqNum, name FROM "${tableName}" ORDER BY seqNum ASC`
+    )[0]
+    assert.deepStrictEqual(rows?.values, [
+      [1, 'v1.ProjectCreated'],
+      [2, 'v1.WorkspaceCreated'],
+    ])
+
+    const context = syncDb.exec(
+      `SELECT currentHead, backendId FROM context_1 WHERE storeId = 'laborer'`
+    )[0]
+    assert.deepStrictEqual(context?.values, [[2, backendId]])
+
+    syncDb.close()
+  })
+})

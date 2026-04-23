@@ -186,14 +186,14 @@ export const makeMessagePortSync =
 
       /**
        * Fetches the backendId from the sync backend by issuing a
-       * non-live pull with no cursor. Called during ping and lazily
-       * during pull if the backendId hasn't been learned yet.
+       * non-live pull with no cursor. This is only needed when we are
+       * resuming from a known upstream cursor and must include the
+       * backendId in that cursor.
        *
-       * Without a valid backendId, cursored pulls fall back to
-       * cursor=None which causes the server to return ALL events
-       * from the beginning. LiveStore's SyncState.merge then rejects
-       * them as "incoming events must be greater than upstream head",
-       * which kills the pull fiber permanently.
+       * We intentionally do not call this from `connect()`. Doing so
+       * starts a second full-history pull on the same port during boot,
+       * which can race with the real live pull and discard the earliest
+       * history pages before the store materializes them.
        */
       const fetchBackendId = Effect.gen(function* () {
         if (currentBackendId._tag === 'Some') {
@@ -214,13 +214,7 @@ export const makeMessagePortSync =
         })
       })
 
-      const ping = Effect.gen(function* () {
-        yield* fetchBackendId
-        yield* SubscriptionRef.set(isConnected, true)
-      }).pipe(
-        Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
-        Effect.asVoid
-      )
+      const ping = SubscriptionRef.set(isConnected, true).pipe(Effect.asVoid)
 
       return {
         isConnected,

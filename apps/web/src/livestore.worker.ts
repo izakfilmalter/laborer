@@ -29,9 +29,14 @@
 
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { schema } from '@laborer/shared/schema'
-import { makeWorker } from '@livestore/adapter-web/worker'
+import { makeWorkerEffect } from '@livestore/adapter-web/worker'
 import type { makeWsSync } from '@livestore/sync-cf/client'
+import { Cause, Effect, Exit } from 'effect'
 import { makeMessagePortSync } from './livestore/messageport-sync'
+import {
+  isRecoverablePersistenceError,
+  LIVESTORE_FATAL_ERROR_MESSAGE,
+} from './livestore/recovery'
 
 // The sync transport runs inside this worker, so transport-level port death
 // events would otherwise stay trapped here. Relay them to the main thread so
@@ -39,6 +44,52 @@ import { makeMessagePortSync } from './livestore/messageport-sync'
 self.addEventListener(RPC_PORT_DEAD_EVENT, () => {
   self.postMessage({ type: RPC_PORT_DEAD_EVENT })
 })
+
+const reportFatalWorkerError = (cause: string) => {
+  self.postMessage({
+    cause,
+    recoverablePersistenceError: isRecoverablePersistenceError(cause),
+    type: LIVESTORE_FATAL_ERROR_MESSAGE,
+  })
+}
+
+const formatConsoleArg = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (value instanceof Error) {
+    return `${value.message}\n${value.stack ?? ''}`
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+let didReportRecoverableBootError = false
+
+const maybeReportRecoverableBootError = (...args: readonly unknown[]) => {
+  if (didReportRecoverableBootError) {
+    return
+  }
+
+  const cause = args.map((value) => formatConsoleArg(value)).join(' ')
+  if (!isRecoverablePersistenceError(cause)) {
+    return
+  }
+
+  didReportRecoverableBootError = true
+  reportFatalWorkerError(cause)
+}
+
+const originalConsoleError = console.error.bind(console)
+console.error = (...args: unknown[]) => {
+  maybeReportRecoverableBootError(...args)
+  originalConsoleError(...args)
+}
 
 /**
  * Wait for a MessagePort from the main thread.
@@ -77,12 +128,28 @@ waitForSyncPort().then((port) => {
   // onmessage signature due to browser vs generic typing).
   const typedPort = port as unknown as Parameters<typeof makeMessagePortSync>[0]
 
-  makeWorker({
-    schema,
-    sync: {
-      backend: makeMessagePortSync(typedPort) as unknown as ReturnType<
-        typeof makeWsSync
-      >,
-    },
+  const runWorker = async () => {
+    const exit = await Effect.runPromiseExit(
+      makeWorkerEffect({
+        schema,
+        sync: {
+          backend: makeMessagePortSync(typedPort) as unknown as ReturnType<
+            typeof makeWsSync
+          >,
+        },
+      })
+    )
+
+    if (Exit.isFailure(exit)) {
+      const cause = Cause.pretty(exit.cause)
+      console.error('[LiveStore.worker] fatal exit', cause)
+      reportFatalWorkerError(cause)
+    }
+  }
+
+  runWorker().catch((error: unknown) => {
+    const cause = error instanceof Error ? error.message : String(error)
+    console.error('[LiveStore.worker] failed to start', cause)
+    reportFatalWorkerError(cause)
   })
 })

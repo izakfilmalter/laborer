@@ -17,6 +17,7 @@
  * @see .reference/vscode/src/vs/platform/utilityProcess/electron-main/utilityProcess.ts
  */
 
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -77,6 +78,8 @@ export type ProcessMessageHandler = (
 interface TrackedProcess {
   /** Whether the process was intentionally stopped (not a crash). */
   intentionallyStopped: boolean
+  /** File where utility stdout/stderr is persisted for debugging. */
+  readonly logFilePath: string
   /** Service name. */
   readonly name: ServiceName
   /** Process ID (set after 'spawn' event). */
@@ -88,6 +91,8 @@ interface TrackedProcess {
   /** Ring buffer of recent stderr lines for crash diagnostics. */
   readonly stderrLines: string[]
 }
+
+type LogStream = 'stderr' | 'stdout'
 
 // ---------------------------------------------------------------------------
 // Entry point resolution
@@ -181,6 +186,26 @@ function buildProcessEnv(name: ServiceName): Record<string, string> {
   return env
 }
 
+function resolveUtilityLogDirectory(): string {
+  return join(app.getPath('userData'), 'logs', 'utility-processes')
+}
+
+function resolveUtilityLogPath(name: ServiceName): string {
+  return join(resolveUtilityLogDirectory(), `${name}.log`)
+}
+
+function appendUtilityLogLine(logFilePath: string, line: string): void {
+  try {
+    appendFileSync(logFilePath, `${line}\n`, 'utf8')
+  } catch {
+    // Logging must never interfere with the utility process lifecycle.
+  }
+}
+
+function formatUtilityLogLine(message: string): string {
+  return `${new Date().toISOString()} ${message}`
+}
+
 // ---------------------------------------------------------------------------
 // UtilityProcessManager
 // ---------------------------------------------------------------------------
@@ -252,6 +277,7 @@ export class UtilityProcessManager {
     const { port1: mainPort, port2: utilityPort } = new MessageChannelMain()
 
     const tracked: TrackedProcess = {
+      logFilePath: resolveUtilityLogPath(name),
       name,
       process: child,
       port: mainPort,
@@ -280,11 +306,33 @@ export class UtilityProcessManager {
   ): void {
     const { name, process: child } = tracked
 
+    try {
+      mkdirSync(resolveUtilityLogDirectory(), { recursive: true })
+    } catch {
+      // Logging must never interfere with the utility process lifecycle.
+    }
+    appendUtilityLogLine(
+      tracked.logFilePath,
+      formatUtilityLogLine(`[utility:${name}] Forked utility process`)
+    )
+
+    const appendProcessStreamLog = (stream: LogStream, line: string) => {
+      appendUtilityLogLine(
+        tracked.logFilePath,
+        formatUtilityLogLine(`[${stream}] ${line}`)
+      )
+    }
+
+    const appendLifecycleLog = (message: string) => {
+      appendUtilityLogLine(tracked.logFilePath, formatUtilityLogLine(message))
+    }
+
     // Stream stdout to console (line-by-line).
     if (child.stdout) {
       const rl = createInterface({ input: child.stdout })
       rl.on('line', (line: string) => {
         console.info(`[${name}:stdout] ${line}`)
+        appendProcessStreamLog('stdout', line)
       })
     }
 
@@ -293,6 +341,7 @@ export class UtilityProcessManager {
       const rl = createInterface({ input: child.stderr })
       rl.on('line', (line: string) => {
         console.warn(`[${name}:stderr] ${line}`)
+        appendProcessStreamLog('stderr', line)
         tracked.stderrLines.push(line)
         if (tracked.stderrLines.length > MAX_STDERR_LINES) {
           tracked.stderrLines.shift()
@@ -304,6 +353,7 @@ export class UtilityProcessManager {
     child.once('spawn', () => {
       tracked.pid = child.pid
       console.info(`[utility:${name}] Spawned with PID ${child.pid}`)
+      appendLifecycleLog(`[utility:${name}] Spawned with PID ${child.pid}`)
 
       // Transfer the utility-side port to the child process.
       // The bootstrap/service can receive this via process.parentPort's
@@ -316,8 +366,12 @@ export class UtilityProcessManager {
       const msg = message as UtilityProcessBootstrapMessage
       if (msg?.type === 'ready') {
         console.info(`[utility:${name}] Service ready`)
+        appendLifecycleLog(`[utility:${name}] Service ready`)
       } else if (msg?.type === 'error') {
         console.error(`[utility:${name}] Bootstrap error: ${msg.message}`)
+        appendLifecycleLog(
+          `[utility:${name}] Bootstrap error: ${msg.message}`
+        )
       }
 
       // Forward all typed messages to the message handler (LifecycleMonitor).
@@ -329,6 +383,7 @@ export class UtilityProcessManager {
     // Monitor for exit.
     child.once('exit', (code: number) => {
       console.info(`[utility:${name}] Exited with code ${code}`)
+      appendLifecycleLog(`[utility:${name}] Exited with code ${code}`)
 
       const current = this.processes.get(name)
       if (!current || current.process !== child) {

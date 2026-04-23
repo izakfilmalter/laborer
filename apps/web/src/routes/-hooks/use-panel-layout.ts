@@ -674,6 +674,7 @@ export function usePanelLayout() {
     respawnStaleTerminals({
       staleLeaves: staleLeavesToRespawn,
       spawnFn: (payload) => spawnTerminal({ payload }),
+      spawnRetryOptions: { attemptTimeoutMs: 5000 },
       liveIds,
       commitReconciledLayouts: (effectiveLiveIds, respawnedIds) => {
         commitReconciledLayouts(effectiveLiveIds, respawnedIds)

@@ -129,10 +129,12 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
        * Returns EMPTY_PR if no PR is found (exit code 1) or on any error.
        */
       const loadPrData = Effect.fn('PrWatcher.loadPrData')(function* (
-        worktreePath: string
+        worktreePath: string,
+        branchName: string
       ) {
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
+          branchName,
           'number,url,title,state',
           () => 'gh-spawn-failed' as const
         ).pipe(
@@ -208,7 +210,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return EMPTY_PR
         }
 
-        const prData = yield* loadPrData(workspace.worktreePath)
+        const prData = yield* loadPrData(
+          workspace.worktreePath,
+          workspace.branchName
+        )
 
         // Deduplicate: only commit event if PR state changed
         const serialized = serializePrData(prData)

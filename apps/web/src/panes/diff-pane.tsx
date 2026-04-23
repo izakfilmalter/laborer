@@ -43,7 +43,12 @@ import {
   useAtomValue,
 } from '@effect-atom/atom-react/Hooks'
 import type { FileInfo } from '@laborer/shared/rpc'
-import type { AnnotationSide, FileDiffMetadata, Hunk } from '@pierre/diffs'
+import type {
+  AnnotationSide,
+  FileDiffMetadata,
+  Hunk,
+  RenderHeaderMetadataProps,
+} from '@pierre/diffs'
 import { diffAcceptRejectHunk } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
 import { Check, ExternalLink, FileCode2, RefreshCw, X } from 'lucide-react'
@@ -641,8 +646,8 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   )
 
   const renderHeaderMetadata = useCallback(
-    (fileDiff: FileDiffMetadata) => {
-      const fileName = fileDiff.name
+    ({ fileDiff }: RenderHeaderMetadataProps) => {
+      const fileName = fileDiff?.name
       if (!fileName) {
         return null
       }

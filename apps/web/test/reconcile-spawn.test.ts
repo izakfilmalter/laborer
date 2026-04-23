@@ -65,6 +65,25 @@ describe('retryOnInitializing', () => {
     expect(result).toBeUndefined()
     expect(fn).toHaveBeenCalledTimes(1)
   })
+
+  it('returns undefined when a spawn attempt times out', async () => {
+    const warnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined)
+    const fn = vi.fn(() => new Promise<string>(() => undefined))
+
+    try {
+      await expect(
+        retryOnInitializing(fn, {
+          maxRetries: 0,
+          attemptTimeoutMs: 10,
+        })
+      ).resolves.toBeUndefined()
+      expect(fn).toHaveBeenCalledTimes(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -319,6 +338,35 @@ describe('respawnStaleTerminals', () => {
     // Only the third leaf with both IDs should trigger a spawn
     expect(spawnFn).toHaveBeenCalledTimes(1)
     expect(spawnFn).toHaveBeenCalledWith({ workspaceId: 'ws-2' })
+  })
+
+  it('commits reconciliation when a stale terminal spawn hangs', async () => {
+    const warnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined)
+    const staleLeaves = [{ workspaceId: 'ws-1', terminalId: 'term-stale-1' }]
+    const spawnFn = vi.fn(() => new Promise<SpawnResult>(() => undefined))
+    const commitFn = vi.fn()
+
+    try {
+      await respawnStaleTerminals({
+        staleLeaves,
+        spawnFn,
+        liveIds: new Set<string>(),
+        commitReconciledLayouts: commitFn,
+        spawnRetryOptions: { maxRetries: 0, attemptTimeoutMs: 10 },
+      })
+
+      expect(commitFn).toHaveBeenCalledTimes(1)
+      const [effectiveLiveIds, respawnedIds] = commitFn.mock.calls[0] as [
+        ReadonlySet<string>,
+        ReadonlyMap<string, string>,
+      ]
+      expect(effectiveLiveIds.has('term-stale-1')).toBe(true)
+      expect(respawnedIds.size).toBe(0)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 

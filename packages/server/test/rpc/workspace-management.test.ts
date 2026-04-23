@@ -117,7 +117,7 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/rpc-create'
 
           writeLaborerConfig(repoPath, {
-            devServer: { image: null },
+            devServer: { image: null, provider: 'docker' },
             setupScripts: [
               `printf '%s' "$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
             ],
@@ -268,7 +268,7 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null },
+            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -379,7 +379,7 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null },
+            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -431,7 +431,7 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null },
+            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -547,7 +547,7 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/rpc-setup-fail'
 
           writeLaborerConfig(repoPath, {
-            devServer: { image: null },
+            devServer: { image: null, provider: 'docker' },
             setupScripts: ['exit 42'],
             worktreeDir: worktreeRoot,
           })

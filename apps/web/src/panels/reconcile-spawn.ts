@@ -22,10 +22,44 @@ interface SpawnResult {
 
 /** Options for controlling retry behaviour. */
 interface SpawnRetryOptions {
+  /** Timeout in ms for a single spawn attempt. */
+  readonly attemptTimeoutMs?: number
   /** Base delay in ms for exponential backoff (default: 500). */
   readonly baseDelayMs?: number
   /** Maximum number of retry attempts (default: 5). */
   readonly maxRetries?: number
+}
+
+class SpawnTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Terminal spawn timed out after ${timeoutMs}ms`)
+    this.name = 'SpawnTimeoutError'
+  }
+}
+
+const runWithAttemptTimeout = <T>(
+  fn: () => Promise<T>,
+  timeoutMs: number | undefined
+): Promise<T> => {
+  if (timeoutMs === undefined) {
+    return fn()
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new SpawnTimeoutError(timeoutMs))
+    }, timeoutMs)
+
+    fn()
+      .then((value) => {
+        clearTimeout(timeoutId)
+        resolve(value)
+      })
+      .catch((error: unknown) => {
+        clearTimeout(timeoutId)
+        reject(error)
+      })
+  })
 }
 
 /**
@@ -45,11 +79,16 @@ async function retryOnInitializing<T>(
 ): Promise<T | undefined> {
   const maxRetries = options?.maxRetries ?? 5
   const baseDelayMs = options?.baseDelayMs ?? 500
+  const attemptTimeoutMs = options?.attemptTimeoutMs
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await fn()
+      return await runWithAttemptTimeout(fn, attemptTimeoutMs)
     } catch (error) {
+      if (error instanceof SpawnTimeoutError) {
+        console.warn(`[reconcile-spawn] ${error.message}`)
+      }
+
       const isInitializing =
         error instanceof Error && error.message.includes('still initializing')
       if (isInitializing && attempt < maxRetries) {

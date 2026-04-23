@@ -52,6 +52,10 @@ interface ConfigResult {
         readonly value: string | null
         readonly source: string
       }
+      readonly provider: {
+        readonly value: 'docker' | 'daytona' | null
+        readonly source: string
+      }
       readonly setupScripts: {
         readonly value: readonly string[]
         readonly source: string
@@ -139,6 +143,7 @@ describe('ProjectSettingsModal', () => {
           image: { value: null, source: 'default' },
           installCommand: { value: null, source: 'default' },
           network: { value: null, source: 'default' },
+          provider: { value: null, source: 'default' },
           setupScripts: { value: [], source: 'default' },
           startCommand: { value: null, source: 'default' },
         },

@@ -1146,13 +1146,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               const repoUrl = yield* getRepoRemoteUrl(project.repoPath)
               const currentBranch = yield* getCurrentBranch(project.repoPath)
 
-              // Transition to 'running' immediately — the sandbox
-              // creation is the only setup work and it reports its
-              // own progress via sandboxSetupStepChanged events.
-              store.commit(
-                events.workspaceStatusChanged({ id, status: 'running' })
-              )
-
               yield* performSandboxSetup({
                 id,
                 branchName: resolvedBranch,
@@ -1163,6 +1156,13 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 devServer: resolvedConfig.devServer,
                 onReady,
               })
+
+              // Daytona workspaces have no local worktree. Keep them in
+              // 'creating' until the provider has committed sandbox metadata
+              // so terminal auto-open routes to the sandbox instead of the host.
+              store.commit(
+                events.workspaceStatusChanged({ id, status: 'running' })
+              )
             } else {
               // ── Docker path (unchanged) ───────────────────────────
               // Phase 0: Wait for any in-flight destroy cleanup targeting the

@@ -147,6 +147,50 @@ const RESIZE_COLS_DEBOUNCE_MS = 100
  */
 const START_DEBOUNCING_THRESHOLD = 200
 
+const normalizeTerminalDimension = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+
+  return Math.max(0, Math.floor(value))
+}
+
+const normalizeTerminalDimensions = ({
+  cols,
+  rows,
+}: {
+  cols: number
+  rows: number
+}): { cols: number; rows: number } => ({
+  cols: normalizeTerminalDimension(cols),
+  rows: normalizeTerminalDimension(rows),
+})
+
+const hasTerminalDimensions = ({
+  cols,
+  rows,
+}: {
+  cols: number
+  rows: number
+}): boolean => cols > 0 && rows > 0
+
+const getProposedTerminalDimensions = (
+  fitAddon: FitAddon
+): { cols: number; rows: number } | undefined => {
+  try {
+    const proposedDimensions = fitAddon.proposeDimensions()
+    if (!proposedDimensions) {
+      return undefined
+    }
+
+    const dims = normalizeTerminalDimensions(proposedDimensions)
+    return hasTerminalDimensions(dims) ? dims : undefined
+  } catch {
+    // Container may have 0 dimensions during layout transitions.
+    return undefined
+  }
+}
+
 /**
  * Terminal resize debouncer — applies VS Code's independent X/Y resize
  * strategy to prevent ghost/duplicate rendering during resize operations.
@@ -166,8 +210,39 @@ const createResizeDebouncer = (
   terminalId: string
 ) => {
   let colsDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let serverResizeTimer: ReturnType<typeof setTimeout> | null = null
   /** Latest desired cols — updated on each observation, applied when debounce fires. */
   let latestCols = 0
+  let latestServerDimensions: { cols: number; rows: number } | null = null
+  let lastSentServerDimensions: { cols: number; rows: number } | null = null
+
+  const flushServerResize = () => {
+    serverResizeTimer = null
+    const dimensions = latestServerDimensions
+    if (!dimensions) {
+      return
+    }
+    if (
+      lastSentServerDimensions?.cols === dimensions.cols &&
+      lastSentServerDimensions.rows === dimensions.rows
+    ) {
+      return
+    }
+
+    lastSentServerDimensions = dimensions
+    resizeTerminalRef.current({
+      payload: { id: terminalId, ...dimensions },
+    })
+  }
+
+  const scheduleServerResize = (dimensions: { cols: number; rows: number }) => {
+    latestServerDimensions = dimensions
+    if (serverResizeTimer !== null) {
+      return
+    }
+
+    serverResizeTimer = setTimeout(flushServerResize, RESIZE_COLS_DEBOUNCE_MS)
+  }
 
   /**
    * Apply new dimensions to the xterm.js terminal and send a resize
@@ -175,13 +250,13 @@ const createResizeDebouncer = (
    */
   const applyResize = (cols: number, rows: number) => {
     const terminal = terminalRef.current
-    if (!terminal || cols <= 0 || rows <= 0) {
+    const dimensions = normalizeTerminalDimensions({ cols, rows })
+    if (!(terminal && hasTerminalDimensions(dimensions))) {
       return
     }
-    terminal.resize(cols, rows)
-    resizeTerminalRef.current({
-      payload: { id: terminalId, cols, rows },
-    })
+
+    terminal.resize(dimensions.cols, dimensions.rows)
+    scheduleServerResize(dimensions)
   }
 
   /** Schedule a debounced column resize. */
@@ -205,16 +280,8 @@ const createResizeDebouncer = (
       return
     }
 
-    // Use proposeDimensions() to calculate target cols/rows from the
-    // container's pixel dimensions WITHOUT applying them yet.
-    let dims: { cols: number; rows: number } | undefined
-    try {
-      dims = fitAddon.proposeDimensions()
-    } catch {
-      // Container may have 0 dimensions during layout transitions
-      return
-    }
-    if (!dims || dims.cols <= 0 || dims.rows <= 0) {
+    const dims = getProposedTerminalDimensions(fitAddon)
+    if (!dims) {
       return
     }
 
@@ -253,6 +320,10 @@ const createResizeDebouncer = (
     if (colsDebounceTimer !== null) {
       clearTimeout(colsDebounceTimer)
       colsDebounceTimer = null
+    }
+    if (serverResizeTimer !== null) {
+      clearTimeout(serverResizeTimer)
+      flushServerResize()
     }
   }
 
@@ -365,11 +436,15 @@ function TerminalPaneMessagePort({
       }
 
       for (const frame of replayEvent.events) {
+        const dimensions = normalizeTerminalDimensions(frame)
+        if (!hasTerminalDimensions(dimensions)) {
+          continue
+        }
         if (
-          activeTerminal.cols !== frame.cols ||
-          activeTerminal.rows !== frame.rows
+          activeTerminal.cols !== dimensions.cols ||
+          activeTerminal.rows !== dimensions.rows
         ) {
-          activeTerminal.resize(frame.cols, frame.rows)
+          activeTerminal.resize(dimensions.cols, dimensions.rows)
         }
         if (frame.data.length > 0) {
           activeTerminal.write(frame.data)

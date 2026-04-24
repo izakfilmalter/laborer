@@ -805,6 +805,13 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
+          if (workspace.worktreePath.trim() === '') {
+            return yield* new RpcError({
+              message: `Workspace ${workspaceId} is not ready for terminal spawn yet. Wait for sandbox setup to finish.`,
+              code: 'INVALID_STATE',
+            })
+          }
+
           // 1c. Verify worktree directory exists on disk (Docker / host only)
           if (!existsSync(workspace.worktreePath)) {
             return yield* new RpcError({

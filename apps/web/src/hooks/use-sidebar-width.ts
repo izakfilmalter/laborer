@@ -1,14 +1,14 @@
 /**
  * Hook to persist the sidebar panel width to localStorage.
  *
- * Reads the stored width on mount and provides it as the `defaultSize`
+ * Reads the stored pixel width on mount and provides it as the `defaultSize`
  * for the sidebar ResizablePanel. Persists width changes via a debounced
  * write to avoid excessive localStorage writes during drag-resize.
  *
- * If no stored value exists, returns `undefined` so the caller can fall
- * back to the responsive default from `useResponsiveLayout`.
+ * If no stored value exists, uses the responsive default from
+ * `useResponsiveLayout` as the initial pixel width.
  *
- * Collapsing the sidebar (0% width) does not overwrite the stored value,
+ * Collapsing the sidebar (0px width) does not overwrite the stored value,
  * so restoring uses the last non-collapsed width.
  *
  * @see Issue #174: Persist sidebar width in localStorage
@@ -22,10 +22,10 @@ const STORAGE_KEY = 'laborer:sidebar-width'
 const DEBOUNCE_MS = 200
 
 /**
- * Read the persisted sidebar width (percentage) from localStorage.
+ * Read the persisted sidebar width (pixels) from localStorage.
  * Returns undefined if nothing is stored or the stored value is invalid.
  */
-function readStoredWidth(): number | undefined {
+function readStoredWidth(viewportWidth: number): number | undefined {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) {
@@ -33,6 +33,9 @@ function readStoredWidth(): number | undefined {
     }
     const parsed = Number.parseFloat(raw)
     if (Number.isFinite(parsed) && parsed > 0) {
+      if (parsed <= 100) {
+        return (parsed / 100) * viewportWidth
+      }
       return parsed
     }
     return undefined
@@ -42,11 +45,11 @@ function readStoredWidth(): number | undefined {
 }
 
 /**
- * Persist the sidebar width (percentage) to localStorage.
+ * Persist the sidebar width (pixels) to localStorage.
  */
-function writeStoredWidth(percent: number): void {
+function writeStoredWidth(px: number): void {
   try {
-    localStorage.setItem(STORAGE_KEY, String(percent))
+    localStorage.setItem(STORAGE_KEY, String(Math.round(px)))
   } catch {
     // Silently ignore storage errors (e.g. quota exceeded)
   }
@@ -58,11 +61,13 @@ interface SidebarWidthState {
    * Debounces writes to localStorage. Ignores collapsed (0%) values.
    */
   readonly handleResize: (sizePercent: number) => void
+  /** Re-apply this percentage after viewport resizes to preserve pixel width. */
+  readonly resizePercent: string | undefined
   /**
    * The stored sidebar width as a percentage string (e.g. "15%"),
-   * or undefined if no stored value exists (use responsive default).
+   * falling back to the responsive default if no stored value exists.
    */
-  readonly storedDefault: string | undefined
+  readonly storedDefault: string
 }
 
 /**
@@ -72,20 +77,26 @@ interface SidebarWidthState {
  *   Used to clamp the restored value to valid bounds when the viewport has changed
  *   between sessions.
  * @param maxPercent - Current maximum sidebar percentage (from responsive layout).
+ * @param defaultPercent - Current default sidebar percentage (from responsive layout).
  */
 function useSidebarWidth(
   minPercent: number,
-  maxPercent: number
+  maxPercent: number,
+  defaultPercent: number
 ): SidebarWidthState {
+  const viewportWidth = window.innerWidth
+  const minPx = (minPercent / 100) * viewportWidth
+  const maxPx = (maxPercent / 100) * viewportWidth
+  const defaultPx = (defaultPercent / 100) * viewportWidth
+
   // Read from localStorage once on mount, clamped to current bounds.
-  const [storedDefault] = useState<string | undefined>(() => {
-    const stored = readStoredWidth()
+  const [preferredPx, setPreferredPx] = useState<number>(() => {
+    const stored = readStoredWidth(viewportWidth)
     if (stored === undefined) {
-      return undefined
+      return defaultPx
     }
     // Clamp to current min/max bounds (viewport may have changed between sessions)
-    const clamped = Math.min(Math.max(stored, minPercent), maxPercent)
-    return `${clamped}%`
+    return Math.min(Math.max(stored, minPx), maxPx)
   })
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -97,7 +108,9 @@ function useSidebarWidth(
       return
     }
 
-    latestRef.current = sizePercent
+    const nextPx = (sizePercent / 100) * window.innerWidth
+    latestRef.current = nextPx
+    setPreferredPx(nextPx)
 
     // Debounce writes to localStorage during drag
     if (timerRef.current) {
@@ -124,7 +137,10 @@ function useSidebarWidth(
     }
   }, [])
 
-  return { storedDefault, handleResize }
+  const clampedStoredPx = Math.min(Math.max(preferredPx, minPx), maxPx)
+  const storedDefault = `${(clampedStoredPx / viewportWidth) * 100}%`
+
+  return { storedDefault, resizePercent: storedDefault, handleResize }
 }
 
 export { useSidebarWidth }

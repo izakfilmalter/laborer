@@ -1063,12 +1063,18 @@ function HomeComponent() {
 
   useEffect(() => {
     const panel = sidebarPanelRef.current
-    if (!(panel && sidebarWidth.resizePercent) || panel.isCollapsed()) {
+    if (!sidebarWidth.resizePercent) {
+      return
+    }
+
+    if (!(panel && !panel.isCollapsed())) {
+      sidebarWidth.handleViewportResizeApplied()
       return
     }
 
     panel.resize(Number.parseFloat(sidebarWidth.resizePercent))
-  }, [sidebarWidth.resizePercent])
+    sidebarWidth.handleViewportResizeApplied()
+  }, [sidebarWidth.resizePercent, sidebarWidth.handleViewportResizeApplied])
 
   const toggleSidebar = useCallback(() => {
     const panel = sidebarPanelRef.current

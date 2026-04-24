@@ -61,6 +61,8 @@ interface SidebarWidthState {
    * Debounces writes to localStorage. Ignores collapsed (0%) values.
    */
   readonly handleResize: (sizePercent: number) => void
+  /** Call after applying a viewport-driven resize. */
+  readonly handleViewportResizeApplied: () => void
   /** Re-apply this percentage after viewport resizes to preserve pixel width. */
   readonly resizePercent: string | undefined
   /**
@@ -101,9 +103,16 @@ function useSidebarWidth(
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const preferredPxRef = useRef(initialPreferredPx)
+  const storedDefaultRef = useRef(
+    `${(Math.min(Math.max(initialPreferredPx, minPx), maxPx) / viewportWidth) * 100}%`
+  )
   const previousViewportWidthRef = useRef(viewportWidth)
 
   const handleResize = useCallback((sizePercent: number) => {
+    if (window.innerWidth !== previousViewportWidthRef.current) {
+      return
+    }
+
     // Don't persist collapsed state (0%) — preserve the last non-collapsed width
     if (sizePercent <= 0) {
       return
@@ -122,6 +131,10 @@ function useSidebarWidth(
     }, DEBOUNCE_MS)
   }, [])
 
+  const handleViewportResizeApplied = useCallback(() => {
+    previousViewportWidthRef.current = window.innerWidth
+  }, [])
+
   // Cleanup timer on unmount
   useEffect(() => {
     return () => {
@@ -137,17 +150,17 @@ function useSidebarWidth(
     Math.max(preferredPxRef.current, minPx),
     maxPx
   )
-  const storedDefault = `${(clampedStoredPx / viewportWidth) * 100}%`
   const resizePercent =
     previousViewportWidthRef.current === viewportWidth
       ? undefined
-      : storedDefault
+      : `${(clampedStoredPx / viewportWidth) * 100}%`
 
-  useEffect(() => {
-    previousViewportWidthRef.current = viewportWidth
-  })
-
-  return { storedDefault, resizePercent, handleResize }
+  return {
+    storedDefault: storedDefaultRef.current,
+    resizePercent,
+    handleResize,
+    handleViewportResizeApplied,
+  }
 }
 
 export { useSidebarWidth }

@@ -90,7 +90,7 @@ function useSidebarWidth(
   const defaultPx = (defaultPercent / 100) * viewportWidth
 
   // Read from localStorage once on mount, clamped to current bounds.
-  const [preferredPx, setPreferredPx] = useState<number>(() => {
+  const [initialPreferredPx] = useState<number>(() => {
     const stored = readStoredWidth(viewportWidth)
     if (stored === undefined) {
       return defaultPx
@@ -100,7 +100,7 @@ function useSidebarWidth(
   })
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const latestRef = useRef<number | null>(null)
+  const preferredPxRef = useRef(initialPreferredPx)
   const previousViewportWidthRef = useRef(viewportWidth)
 
   const handleResize = useCallback((sizePercent: number) => {
@@ -110,17 +110,14 @@ function useSidebarWidth(
     }
 
     const nextPx = (sizePercent / 100) * window.innerWidth
-    latestRef.current = nextPx
-    setPreferredPx(nextPx)
+    preferredPxRef.current = nextPx
 
     // Debounce writes to localStorage during drag
     if (timerRef.current) {
       clearTimeout(timerRef.current)
     }
     timerRef.current = setTimeout(() => {
-      if (latestRef.current !== null) {
-        writeStoredWidth(latestRef.current)
-      }
+      writeStoredWidth(preferredPxRef.current)
       timerRef.current = null
     }, DEBOUNCE_MS)
   }, [])
@@ -131,14 +128,15 @@ function useSidebarWidth(
       if (timerRef.current) {
         clearTimeout(timerRef.current)
         // Flush the latest value before unmounting
-        if (latestRef.current !== null) {
-          writeStoredWidth(latestRef.current)
-        }
+        writeStoredWidth(preferredPxRef.current)
       }
     }
   }, [])
 
-  const clampedStoredPx = Math.min(Math.max(preferredPx, minPx), maxPx)
+  const clampedStoredPx = Math.min(
+    Math.max(preferredPxRef.current, minPx),
+    maxPx
+  )
   const storedDefault = `${(clampedStoredPx / viewportWidth) * 100}%`
   const resizePercent =
     previousViewportWidthRef.current === viewportWidth

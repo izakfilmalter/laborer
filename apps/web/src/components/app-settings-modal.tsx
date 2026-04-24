@@ -13,6 +13,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
@@ -167,22 +169,42 @@ const allAppSettings$ = queryDb(appSettings, {
 
 const exchangeCodeMutation = LaborerClient.mutation('github.exchangeOAuthCode')
 const updateGlobalConfigMutation = LaborerClient.mutation('globalConfig.update')
+const globalConfigGet$ = LaborerClient.query(
+  'globalConfig.get',
+  // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+  undefined as void
+)
+
+function GlobalConfigInitializer({
+  onResolved,
+}: {
+  readonly onResolved: (config: {
+    readonly agent?: string | undefined
+    readonly defaultSandboxProvider?: string | undefined
+  }) => void
+}) {
+  const globalConfigResult = useAtomValue(globalConfigGet$)
+
+  useEffect(() => {
+    if (globalConfigResult._tag !== 'Success') {
+      return
+    }
+
+    onResolved(globalConfigResult.value)
+  }, [globalConfigResult, onResolved])
+
+  return null
+}
 
 export function AppSettingsModal() {
   const { open, onOpenChange } = useAppSettings()
   const store = useLaborerStore()
   const settings = store.useQuery(allAppSettings$)
   const exchangeCode = useAtomSet(exchangeCodeMutation, { mode: 'promise' })
-
-  const globalConfigGet$ = useMemo(
-    // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-    () => LaborerClient.query('globalConfig.get', undefined as void),
-    []
-  )
-  const globalConfigResult = useAtomValue(globalConfigGet$)
   const updateGlobalConfig = useAtomSet(updateGlobalConfigMutation, {
     mode: 'promise',
   })
+  const isEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
 
   const githubToken = settings.find((s) => s.key === 'github_desktop_token')
   const hasToken = Boolean(githubToken?.value)
@@ -198,19 +220,34 @@ export function AppSettingsModal() {
   const [agentInitialized, setAgentInitialized] = useState(false)
   const [isSavingAgent, setIsSavingAgent] = useState(false)
 
+  const handleGlobalConfigResolved = useCallback(
+    (config: {
+      readonly agent?: string | undefined
+      readonly defaultSandboxProvider?: string | undefined
+    }) => {
+      if (agentInitialized) {
+        return
+      }
+
+      setAgent((config.agent as AgentProvider | undefined) ?? 'opencode')
+      setResolvedProvider(
+        (config.defaultSandboxProvider as SandboxProvider | undefined) ??
+          'docker'
+      )
+      setAgentInitialized(true)
+    },
+    [agentInitialized]
+  )
+
   useEffect(() => {
-    if (globalConfigResult._tag !== 'Success' || agentInitialized) {
+    if (!open) {
       return
     }
 
-    setAgent(globalConfigResult.value.agent ?? 'opencode')
-    setResolvedProvider(
-      (globalConfigResult.value.defaultSandboxProvider as
-        | SandboxProvider
-        | undefined) ?? 'docker'
-    )
-    setAgentInitialized(true)
-  }, [globalConfigResult, agentInitialized])
+    if (!isEventuallyReady) {
+      setAgentInitialized(false)
+    }
+  }, [open, isEventuallyReady])
 
   const handleSaveAgent = useCallback(async () => {
     setIsSavingAgent(true)
@@ -359,9 +396,7 @@ export function AppSettingsModal() {
   const AgentIcon =
     agent in AGENT_ICONS ? AGENT_ICONS[agent] : AGENT_ICONS.opencode
 
-  const isLoadingAgent =
-    globalConfigResult._tag !== 'Success' &&
-    (globalConfigResult._tag === 'Initial' || globalConfigResult.waiting)
+  const isLoadingAgent = open && !agentInitialized
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
@@ -372,6 +407,10 @@ export function AppSettingsModal() {
             Configure app-wide settings for laborer.
           </DialogDescription>
         </DialogHeader>
+
+        {open && isEventuallyReady && (
+          <GlobalConfigInitializer onResolved={handleGlobalConfigResolved} />
+        )}
 
         <div className="space-y-6 py-2">
           {/* Default Agent Section */}

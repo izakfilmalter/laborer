@@ -13,6 +13,7 @@ const {
   updateConfigMock,
   useAtomSetMock,
   useAtomValueMock,
+  useWhenPhaseMock,
 } = vi.hoisted(() => ({
   mutationMock: vi.fn(),
   queryMock: vi.fn(),
@@ -23,6 +24,7 @@ const {
   updateConfigMock: vi.fn(),
   useAtomSetMock: vi.fn(),
   useAtomValueMock: vi.fn(),
+  useWhenPhaseMock: vi.fn(),
 }))
 
 interface ConfigResult {
@@ -81,6 +83,10 @@ vi.mock('@/atoms/laborer-client', () => ({
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: useAtomSetMock,
   useAtomValue: useAtomValueMock,
+}))
+
+vi.mock('@/hooks/use-when-phase', () => ({
+  useWhenPhase: useWhenPhaseMock,
 }))
 
 vi.mock('@/components/project-settings-modal.helpers', () => ({
@@ -154,6 +160,7 @@ describe('ProjectSettingsModal', () => {
     mutationMock.mockReturnValue({ _tag: 'MockMutation' })
     useAtomSetMock.mockReturnValue(updateConfigMock)
     useAtomValueMock.mockImplementation(() => configResult)
+    useWhenPhaseMock.mockReturnValue(true)
     updateConfigMock.mockResolvedValue(undefined)
     buildConfigUpdatesMock.mockReturnValue({
       worktreeDir: '~/dev/worktrees',
@@ -163,6 +170,13 @@ describe('ProjectSettingsModal', () => {
   it('opens the modal and renders resolved config values', async () => {
     render(<ProjectSettingsModal projectId="project-1" projectName="Laborer" />)
 
+    expect(queryMock).toHaveBeenCalledWith(
+      'config.get',
+      { projectId: 'project-1' },
+      { reactivityKeys: ['config'] }
+    )
+    expect(useAtomValueMock).not.toHaveBeenCalled()
+
     await userEvent
       .setup()
       .click(screen.getByRole('button', { name: 'Open settings for Laborer' }))
@@ -171,11 +185,19 @@ describe('ProjectSettingsModal', () => {
     expect(screen.getByDisplayValue('/tmp/worktrees')).toBeTruthy()
     expect(screen.getByDisplayValue('bun install')).toBeTruthy()
     expect(screen.getByDisplayValue('.brrr/config.toml')).toBeTruthy()
-    expect(queryMock).toHaveBeenCalledWith(
-      'config.get',
-      { projectId: 'project-1' },
-      { reactivityKeys: ['config'] }
-    )
+  })
+
+  it('waits for eventual server readiness before starting the config query', async () => {
+    useWhenPhaseMock.mockReturnValue(false)
+
+    render(<ProjectSettingsModal projectId="project-1" projectName="Laborer" />)
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Open settings for Laborer' }))
+
+    expect(screen.getByText('Waiting for project services...')).toBeTruthy()
+    expect(useAtomValueMock).not.toHaveBeenCalled()
   })
 
   it('saves updated fields and shows success toast', async () => {

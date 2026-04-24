@@ -39,13 +39,43 @@ interface FixFindingsFormProps {
   readonly workspaceId: string
 }
 
-function FixFindingsForm({
+function FixFindingsButton({
+  disabled,
+  isSubmitting,
+  onClick,
+}: {
+  readonly disabled?: boolean
+  readonly isSubmitting: boolean
+  readonly onClick?: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Fix Findings"
+            disabled={disabled || isSubmitting}
+            onClick={onClick}
+            size="icon-xs"
+            variant="ghost"
+          />
+        }
+      >
+        <Wrench className="size-3.5 text-warning" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {disabled ? 'No PR found for this branch' : 'Fix Findings'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function FixFindingsFormReady({
   projectId,
   workspaceId,
   onTerminalSpawned,
   disabled,
 }: FixFindingsFormProps) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
@@ -92,25 +122,22 @@ function FixFindingsForm({
   ])
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label="Fix Findings"
-            disabled={!isServerReady || disabled || isSubmitting}
-            onClick={handleClick}
-            size="icon-xs"
-            variant="ghost"
-          />
-        }
-      >
-        <Wrench className="size-3.5 text-warning" />
-      </TooltipTrigger>
-      <TooltipContent>
-        {disabled ? 'No PR found for this branch' : 'Fix Findings'}
-      </TooltipContent>
-    </Tooltip>
+    <FixFindingsButton
+      disabled={Boolean(disabled)}
+      isSubmitting={isSubmitting}
+      onClick={handleClick}
+    />
   )
+}
+
+function FixFindingsForm(props: FixFindingsFormProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isServerReady) {
+    return <FixFindingsButton disabled isSubmitting={false} />
+  }
+
+  return <FixFindingsFormReady {...props} />
 }
 
 export { FixFindingsForm }

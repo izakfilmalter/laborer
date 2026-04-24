@@ -143,6 +143,46 @@ function TerminalSpawnButtons({
   )
 }
 
+type TerminalSpawnButtonProps = Omit<
+  Parameters<typeof TerminalSpawnButtons>[0],
+  'agentProvider'
+>
+
+function ConfiguredTerminalSpawnButtons({
+  projectId,
+  ...props
+}: TerminalSpawnButtonProps & { readonly projectId: string }) {
+  const configGet$ = useMemo(
+    () =>
+      LaborerClient.query(
+        'config.get',
+        { projectId },
+        { reactivityKeys: ConfigReactivityKeys }
+      ),
+    [projectId]
+  )
+  const configResult = useAtomValue(configGet$)
+  const agentProvider =
+    configResult._tag === 'Success'
+      ? configResult.value.agent.value
+      : 'opencode'
+
+  return <TerminalSpawnButtons {...props} agentProvider={agentProvider} />
+}
+
+function ConfigAwareTerminalSpawnButtons({
+  projectId,
+  ...props
+}: TerminalSpawnButtonProps & { readonly projectId: string }) {
+  const isEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isEventuallyReady) {
+    return <TerminalSpawnButtons {...props} agentProvider="opencode" />
+  }
+
+  return <ConfiguredTerminalSpawnButtons {...props} projectId={projectId} />
+}
+
 function TerminalList({
   onAgentStatusChange,
   projectId,
@@ -162,21 +202,6 @@ function TerminalList({
   const [isSpawning] = useState(false)
   const [isSpawningAgent] = useState(false)
 
-  // Fetch the project config to determine which agent to use
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [projectId]
-  )
-  const configResult = useAtomValue(configGet$)
-  const agentProvider =
-    configResult._tag === 'Success'
-      ? configResult.value.agent.value
-      : 'opencode'
   // Filter terminals for this workspace and derive aggregate agent status
   const workspaceTerminals = terminalList.filter(
     (t) => t.workspaceId === workspaceId
@@ -312,13 +337,13 @@ function TerminalList({
         {unavailableAlert}
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground/70 text-xs">No terminals</span>
-          <TerminalSpawnButtons
-            agentProvider={agentProvider}
+          <ConfigAwareTerminalSpawnButtons
             isServiceAvailable={isServiceAvailable}
             isSpawning={isSpawning}
             isSpawningAgent={isSpawningAgent}
             onSpawnAgent={handleSpawnAgent}
             onSpawnTerminal={handleSpawnTerminal}
+            projectId={projectId}
           />
         </div>
       </div>
@@ -332,13 +357,13 @@ function TerminalList({
         <span className="font-medium text-muted-foreground text-xs">
           Terminals ({workspaceTerminals.length})
         </span>
-        <TerminalSpawnButtons
-          agentProvider={agentProvider}
+        <ConfigAwareTerminalSpawnButtons
           isServiceAvailable={isServiceAvailable}
           isSpawning={isSpawning}
           isSpawningAgent={isSpawningAgent}
           onSpawnAgent={handleSpawnAgent}
           onSpawnTerminal={handleSpawnTerminal}
+          projectId={projectId}
         />
       </div>
       {workspaceTerminals.map((terminal) => (

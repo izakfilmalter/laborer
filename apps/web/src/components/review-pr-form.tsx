@@ -39,13 +39,43 @@ interface ReviewPrFormProps {
   readonly workspaceId: string
 }
 
-function ReviewPrForm({
+function ReviewPrButton({
+  disabled,
+  isSubmitting,
+  onClick,
+}: {
+  readonly disabled?: boolean
+  readonly isSubmitting: boolean
+  readonly onClick?: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Review PR"
+            disabled={disabled || isSubmitting}
+            onClick={onClick}
+            size="icon-xs"
+            variant="ghost"
+          />
+        }
+      >
+        <Eye className="size-3.5 text-chart-4" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {disabled ? 'No PR found for this branch' : 'Review PR'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ReviewPrFormReady({
   projectId,
   workspaceId,
   onTerminalSpawned,
   disabled,
 }: ReviewPrFormProps) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
@@ -92,25 +122,22 @@ function ReviewPrForm({
   ])
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label="Review PR"
-            disabled={!isServerReady || disabled || isSubmitting}
-            onClick={handleClick}
-            size="icon-xs"
-            variant="ghost"
-          />
-        }
-      >
-        <Eye className="size-3.5 text-chart-4" />
-      </TooltipTrigger>
-      <TooltipContent>
-        {disabled ? 'No PR found for this branch' : 'Review PR'}
-      </TooltipContent>
-    </Tooltip>
+    <ReviewPrButton
+      disabled={Boolean(disabled)}
+      isSubmitting={isSubmitting}
+      onClick={handleClick}
+    />
   )
+}
+
+function ReviewPrForm(props: ReviewPrFormProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isServerReady) {
+    return <ReviewPrButton disabled isSubmitting={false} />
+  }
+
+  return <ReviewPrFormReady {...props} />
 }
 
 export { ReviewPrForm }

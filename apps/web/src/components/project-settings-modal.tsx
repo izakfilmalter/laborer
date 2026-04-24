@@ -90,6 +90,17 @@ const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
 const updateConfigMutation = LaborerClient.mutation('config.update')
 const provenanceClassName = 'text-[11px] leading-tight text-muted-foreground/70'
 
+const createConfigGetQuery = (projectId: string) =>
+  LaborerClient.query(
+    'config.get',
+    { projectId },
+    {
+      reactivityKeys: ConfigReactivityKeys,
+    }
+  )
+
+type ConfigGetQuery = ReturnType<typeof createConfigGetQuery>
+
 interface ProjectSettingsModalProps {
   readonly projectId: string
   readonly projectName: string
@@ -102,32 +113,17 @@ const toSetupScriptItems = (scripts: readonly string[]): SetupScriptItem[] =>
   }))
 
 function ProjectSettingsForm({
+  configGet$,
   projectId,
   projectName,
   onSaved,
 }: {
+  readonly configGet$: ConfigGetQuery
   readonly projectId: string
   readonly projectName: string
   readonly onSaved: () => void
 }) {
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [projectId]
-  )
   const configResult = useAtomValue(configGet$)
-
-  useEffect(() => {
-    const waiting =
-      'waiting' in configResult ? String(configResult.waiting) : 'n/a'
-    console.log(
-      `[project-settings] configResult._tag=${configResult._tag} waiting=${waiting}`
-    )
-  }, [configResult])
 
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
@@ -673,6 +669,8 @@ function ProjectSettingsModal({
   projectName,
 }: ProjectSettingsModalProps) {
   const [open, setOpen] = useState(false)
+  const configGet$ = useMemo(() => createConfigGetQuery(projectId), [projectId])
+  const isServerEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
@@ -703,8 +701,15 @@ function ProjectSettingsModal({
             scripts, and brrr config for {projectName}.
           </DialogDescription>
         </DialogHeader>
-        {open && (
+        {open && !isServerEventuallyReady && (
+          <div className="flex items-center gap-2 py-6 text-muted-foreground text-sm">
+            <Spinner className="size-4" />
+            Waiting for project services...
+          </div>
+        )}
+        {open && isServerEventuallyReady && (
           <ProjectSettingsForm
+            configGet$={configGet$}
             onSaved={() => setOpen(false)}
             projectId={projectId}
             projectName={projectName}

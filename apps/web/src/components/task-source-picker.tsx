@@ -2,12 +2,14 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
   canImportTasks,
   type TaskSourceFilter,
 } from '@/components/task-source-picker.helpers'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 
@@ -37,6 +39,7 @@ function TaskSourcePicker({
   })
   const [isImporting, setIsImporting] = useState(false)
   const hasAutoImportedRef = useRef<string | null>(null)
+  const isEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
 
   const runImport = useCallback(
     async (source: TaskSourceFilter) => {
@@ -74,7 +77,7 @@ function TaskSourcePicker({
   )
 
   useEffect(() => {
-    if (!canImportTasks(activeSource, projectId)) {
+    if (!(isEventuallyReady && canImportTasks(activeSource, projectId))) {
       hasAutoImportedRef.current = null
       return
     }
@@ -88,7 +91,7 @@ function TaskSourcePicker({
     runImport(activeSource).catch(() => {
       // Errors are surfaced inside runImport.
     })
-  }, [projectId, activeSource, runImport])
+  }, [projectId, activeSource, isEventuallyReady, runImport])
 
   return (
     <div className="grid gap-2">
@@ -110,7 +113,7 @@ function TaskSourcePicker({
         </Tabs>
 
         <Button
-          disabled={isImporting}
+          disabled={!isEventuallyReady || isImporting}
           onClick={() => {
             runImport(activeSource).catch(() => {
               // Errors are surfaced inside runImport.

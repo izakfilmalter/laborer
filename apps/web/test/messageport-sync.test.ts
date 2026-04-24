@@ -1,19 +1,19 @@
-import { describe, expect, it } from 'vitest'
-import { Effect, Option, Stream } from 'effect'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { Effect, Option, Stream } from 'effect'
+import { describe, expect, it } from 'vitest'
 import { makeMessagePortSync } from '@/livestore/messageport-sync'
 
 const makeFakePort = () => {
   const postedMessages: unknown[] = []
 
   const port: RpcMessagePort = {
-    close: () => {},
+    close: () => undefined,
     onclose: null,
     onmessage: null,
     postMessage: (value) => {
       postedMessages.push(value)
     },
-    start: () => {},
+    start: () => undefined,
   }
 
   return { port, postedMessages }

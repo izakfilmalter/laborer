@@ -959,7 +959,8 @@ function HomeComponent() {
   // Sidebar width persistence — restore from localStorage, debounced writes
   const sidebarWidth = useSidebarWidth(
     Number.parseFloat(responsiveSizes.sidebarMin),
-    Number.parseFloat(responsiveSizes.sidebarMax)
+    Number.parseFloat(responsiveSizes.sidebarMax),
+    Number.parseFloat(responsiveSizes.sidebarDefault)
   )
 
   // Project collapse state — persisted to localStorage
@@ -1009,7 +1010,13 @@ function HomeComponent() {
           .sort((left, right) => left.localeCompare(right)),
         workspaceCount: workspaceList.length,
       }),
-    [filteredProjects, hasProjects, matchingProjectIds, projectList, workspaceList]
+    [
+      filteredProjects,
+      hasProjects,
+      matchingProjectIds,
+      projectList,
+      workspaceList,
+    ]
   )
 
   useEffect(() => {
@@ -1042,15 +1049,26 @@ function HomeComponent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const handleSidebarResize = useCallback(
-    (panelSize: { asPercentage: number }) => {
+    (panelSize: number | { asPercentage: number }) => {
       const panel = sidebarPanelRef.current
       if (panel) {
         setSidebarCollapsed(panel.isCollapsed())
       }
-      sidebarWidth.handleResize(panelSize.asPercentage)
+      const sizePercent =
+        typeof panelSize === 'number' ? panelSize : panelSize.asPercentage
+      sidebarWidth.handleResize(sizePercent)
     },
     [sidebarWidth.handleResize]
   )
+
+  useEffect(() => {
+    const panel = sidebarPanelRef.current
+    if (!(panel && sidebarWidth.resizePercent) || panel.isCollapsed()) {
+      return
+    }
+
+    panel.resize(Number.parseFloat(sidebarWidth.resizePercent))
+  }, [sidebarWidth.resizePercent])
 
   const toggleSidebar = useCallback(() => {
     const panel = sidebarPanelRef.current
@@ -1102,9 +1120,7 @@ function HomeComponent() {
           <ResizablePanel
             collapsedSize="0%"
             collapsible={responsiveSizes.canCollapseSidebar}
-            defaultSize={
-              sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault
-            }
+            defaultSize={sidebarWidth.storedDefault}
             maxSize={responsiveSizes.sidebarMax}
             minSize={responsiveSizes.sidebarMin}
             onResize={handleSidebarResize}

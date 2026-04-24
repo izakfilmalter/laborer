@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
       console.log(
         `[preload] ipcMessagePort.acquire(${responseChannel}, ${nonce})`
       )
+      let timeout: ReturnType<typeof setTimeout> | null = null
       const listener = (
         _event: Electron.IpcRendererEvent,
         responseNonce: unknown
@@ -76,6 +77,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
         if (responseNonce !== nonce) {
           return
         }
+        if (timeout !== null) {
+          clearTimeout(timeout)
+          timeout = null
+        }
         ipcRenderer.off(responseChannel, listener)
         console.log(
           `[preload] Relaying ${_event.ports.length} port(s) via window.postMessage nonce=${nonce}`
@@ -83,6 +88,13 @@ contextBridge.exposeInMainWorld('desktopBridge', {
         window.postMessage(nonce, '*', _event.ports)
       }
       ipcRenderer.on(responseChannel, listener)
+      timeout = setTimeout(() => {
+        ipcRenderer.off(responseChannel, listener)
+        timeout = null
+        console.warn(
+          `[preload] Timed out waiting for ${responseChannel} nonce=${nonce}; removed IPC relay listener`
+        )
+      }, 10_000)
     },
   },
 

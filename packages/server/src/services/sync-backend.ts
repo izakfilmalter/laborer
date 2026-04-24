@@ -989,11 +989,16 @@ const serveSyncOnPort = (port: RpcMessagePort) => {
   // We need the livePort reference synchronously for the message interceptor.
   // Initialize it via a callback from the Effect.
   let livePort: LivePullPort | null = null
+  const pendingLivePullRequestIds = new Set<string>()
   Effect.runFork(
     registerLivePort.pipe(
       Effect.tap((lp) =>
         Effect.sync(() => {
           livePort = lp
+          for (const requestId of pendingLivePullRequestIds) {
+            lp.pullRequestIds.add(requestId)
+          }
+          pendingLivePullRequestIds.clear()
         })
       )
     )
@@ -1004,7 +1009,7 @@ const serveSyncOnPort = (port: RpcMessagePort) => {
    * Called for every inbound message before the RPC server processes it.
    */
   const interceptMessage = (data: unknown): void => {
-    if (livePort === null || typeof data !== 'object' || data === null) {
+    if (typeof data !== 'object' || data === null) {
       return
     }
     const msg = data as Record<string, unknown>
@@ -1015,19 +1020,24 @@ const serveSyncOnPort = (port: RpcMessagePort) => {
     ) {
       const payload = msg.payload as Record<string, unknown> | undefined
       if (payload?.live === true) {
-        livePort.pullRequestIds.add(msg.id)
+        if (livePort === null) {
+          pendingLivePullRequestIds.add(msg.id)
+        } else {
+          livePort.pullRequestIds.add(msg.id)
+        }
         console.log(
-          `[sync-backend] Live pull REGISTERED: port=${portId} requestId=${msg.id} (total: ${String(livePort.pullRequestIds.size)})`
+          `[sync-backend] Live pull REGISTERED: port=${portId} requestId=${msg.id}`
         )
       }
-    } else if (
-      msg._tag === 'Interrupt' &&
-      typeof msg.requestId === 'string' &&
-      livePort.pullRequestIds.delete(msg.requestId)
-    ) {
-      console.log(
-        `[sync-backend] Live pull UNREGISTERED: port=${portId} requestId=${msg.requestId} (total: ${String(livePort.pullRequestIds.size)})`
-      )
+    } else if (msg._tag === 'Interrupt' && typeof msg.requestId === 'string') {
+      const wasRegistered =
+        pendingLivePullRequestIds.delete(msg.requestId) ||
+        livePort?.pullRequestIds.delete(msg.requestId) === true
+      if (wasRegistered) {
+        console.log(
+          `[sync-backend] Live pull UNREGISTERED: port=${portId} requestId=${msg.requestId} (total: ${String(livePort?.pullRequestIds.size ?? pendingLivePullRequestIds.size)})`
+        )
+      }
     }
   }
 

@@ -139,10 +139,12 @@ function createLiveStoreWorker(options: { name: string }): Worker {
         console.warn(
           '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
         )
+        window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
       }
     })
     .catch((error: unknown) => {
       console.error('[LiveStore.store] Error acquiring sync port:', error)
+      window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
     })
 
   return worker

@@ -101,6 +101,7 @@ function useSidebarWidth(
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestRef = useRef<number | null>(null)
+  const previousViewportWidthRef = useRef(viewportWidth)
 
   const handleResize = useCallback((sizePercent: number) => {
     // Don't persist collapsed state (0%) — preserve the last non-collapsed width
@@ -139,8 +140,16 @@ function useSidebarWidth(
 
   const clampedStoredPx = Math.min(Math.max(preferredPx, minPx), maxPx)
   const storedDefault = `${(clampedStoredPx / viewportWidth) * 100}%`
+  const resizePercent =
+    previousViewportWidthRef.current === viewportWidth
+      ? undefined
+      : storedDefault
 
-  return { storedDefault, resizePercent: storedDefault, handleResize }
+  useEffect(() => {
+    previousViewportWidthRef.current = viewportWidth
+  })
+
+  return { storedDefault, resizePercent, handleResize }
 }
 
 export { useSidebarWidth }

@@ -17,7 +17,6 @@
  * - Environment variable injection (watcher scoping, etc.) for workspace processes
  * - Setup script execution after worktree creation (Issue #35)
  * - Full rollback on setup script failure (Issue #37)
- * - Git fetch failure handling (Issue #39)
  *
  * Setup scripts are defined in `laborer.json` and resolved via ConfigService:
  * ```json
@@ -47,7 +46,6 @@
  * Issue #35: run setup scripts in worktree
  * Issue #37: handle setup script failure (rollback)
  * Issue #38: handle dirty git state error
- * Issue #39: handle git fetch failure
  * Issue #43: destroyWorktree method
  */
 
@@ -66,7 +64,6 @@ import {
   pipe,
   Ref,
 } from 'effect'
-import { isSandboxRemoteName } from '../lib/git-sync.js'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
@@ -281,118 +278,6 @@ const buildSetupFailureMessage = (failure: {
 }
 
 /**
- * Fetch the latest remote refs before worktree creation.
- *
- * Only persistent repository remotes are fetched. Temporary Daytona
- * `sandbox-*` remotes are skipped because git config is shared across worktrees,
- * and those ephemeral remotes can otherwise block creation with interactive SSH
- * prompts after an earlier sandbox sync.
- *
- * Network failures (DNS resolution, SSH auth, remote unreachable) are caught
- * and returned as a clear `GIT_FETCH_FAILED` error. The error message includes
- * the git stderr output for diagnosis (e.g., "Could not resolve host" or
- * "Permission denied").
- *
- * This step is placed early so no resources need cleanup
- * on failure — matching the design of the dirty state check (Issue #38).
- *
- * @param repoPath - Path to the git repository to fetch in
- */
-const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
-  Effect.gen(function* () {
-    yield* Effect.logDebug('Fetching latest remote refs...').pipe(
-      Effect.annotateLogs('module', logPrefix)
-    )
-
-    const remotesResult = yield* Effect.tryPromise({
-      try: () =>
-        spawnGit(['remote'], {
-          cwd: repoPath,
-          readOnly: true,
-        }),
-      catch: (error) =>
-        new RpcError({
-          message: `Failed to list git remotes: ${String(error)}`,
-          code: 'GIT_FETCH_FAILED',
-        }),
-    })
-
-    if (remotesResult.exitCode !== 0) {
-      return yield* new RpcError({
-        message: `Failed to list git remotes (exit ${String(remotesResult.exitCode)}): ${remotesResult.stderr.trim()}`,
-        code: 'GIT_FETCH_FAILED',
-      })
-    }
-
-    const remoteNames = remotesResult.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-
-    const fetchableRemoteNames = remoteNames.filter(
-      (remoteName) => !isSandboxRemoteName(remoteName)
-    )
-    const skippedRemoteNames = remoteNames.filter(isSandboxRemoteName)
-
-    if (skippedRemoteNames.length > 0) {
-      yield* Effect.logDebug(
-        `Skipping ephemeral sandbox remotes during fetch: ${skippedRemoteNames.join(', ')}`
-      ).pipe(Effect.annotateLogs('module', logPrefix))
-    }
-
-    if (fetchableRemoteNames.length === 0) {
-      yield* Effect.logDebug('No fetchable git remotes found').pipe(
-        Effect.annotateLogs('module', logPrefix)
-      )
-      return
-    }
-
-    const firstFetchableRemoteName = fetchableRemoteNames[0]
-    if (firstFetchableRemoteName === undefined) {
-      return
-    }
-
-    const fetchArgs =
-      fetchableRemoteNames.length === 1
-        ? ['fetch', firstFetchableRemoteName]
-        : ['fetch', '--multiple', ...fetchableRemoteNames]
-
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        spawnGit(fetchArgs, {
-          cwd: repoPath,
-          timeoutMs: 120_000,
-        }),
-      catch: (error) =>
-        new RpcError({
-          message: `Failed to spawn git fetch: ${String(error)}`,
-          code: 'GIT_FETCH_FAILED',
-        }),
-    })
-
-    if (result.exitCode !== 0) {
-      const stderrTrimmed = result.stderr.trim()
-      const isNetworkError = detectNetworkError(stderrTrimmed)
-      const guidance = isNetworkError
-        ? 'Check your network connection and try again.'
-        : 'Verify the remote is accessible and your credentials are valid.'
-
-      yield* Effect.logWarning(
-        `git fetch failed (exit ${result.exitCode}): ${stderrTrimmed}`
-      ).pipe(Effect.annotateLogs('module', logPrefix))
-
-      return yield* new RpcError({
-        message: `Failed to fetch remote updates (exit ${result.exitCode}): ${stderrTrimmed}. ${guidance}`,
-        code: 'GIT_FETCH_FAILED',
-      })
-    }
-
-    yield* Effect.logDebug('Remote refs fetched successfully').pipe(
-      Effect.annotateLogs('module', logPrefix)
-    )
-  })
-
-/**
  * Result of validating a worktree after creation. Contains detailed
  * validation checks for directory existence, git working tree status,
  * correct branch, and git toplevel isolation.
@@ -581,25 +466,6 @@ const buildValidationErrorMessage = (
   return `Worktree validation failed: ${failures.join('; ')}`
 }
 
-/**
- * Detect whether a git stderr message indicates a network-related failure.
- * Used to provide more specific guidance in error messages.
- */
-const detectNetworkError = (stderr: string): boolean => {
-  const lowerStderr = stderr.toLowerCase()
-  return (
-    lowerStderr.includes('could not resolve host') ||
-    lowerStderr.includes('unable to access') ||
-    lowerStderr.includes('connection refused') ||
-    lowerStderr.includes('connection timed out') ||
-    lowerStderr.includes('network is unreachable') ||
-    lowerStderr.includes('no route to host') ||
-    lowerStderr.includes('ssh_exchange_identification') ||
-    lowerStderr.includes('could not read from remote repository') ||
-    lowerStderr.includes('the requested url returned error')
-  )
-}
-
 class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
   WorkspaceProvider,
   {
@@ -607,7 +473,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      * Create a new git worktree for a project.
      *
      * Returns immediately with a workspace in 'creating' status.
-     * The heavy setup (git fetch, worktree creation, setup scripts,
+     * The heavy setup (worktree creation, setup scripts,
      * optional container setup) runs as a background fiber. Progress
      * is communicated via `worktreeSetupStepChanged` LiveStore events.
      * Once the worktree exists and validates, the workspace transitions
@@ -733,14 +599,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         Effect.gen(function* () {
           const { id, branchName, repoPath, worktreeDir, worktreePath } = params
 
-          // Signal UI: fetching remote refs
-          store.commit(
-            events.worktreeSetupStepChanged({
-              workspaceId: id,
-              step: 'fetching-remote',
-            })
-          )
-
           // Check if a branch with this name already exists
           const branchExists = yield* Effect.tryPromise({
             try: async () => {
@@ -758,9 +616,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 code: 'GIT_CHECK_FAILED',
               }),
           })
-
-          // Fetch latest remote refs (Issue #39)
-          yield* fetchRemote(repoPath)
 
           // Signal UI: creating worktree
           store.commit(
@@ -1143,7 +998,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           // 5. Fork the heavy setup work into a background fiber.
-          // For Docker: git fetch, worktree creation, setup scripts, then container setup.
+          // For Docker: worktree creation, setup scripts, then container setup.
           // For Daytona: skip worktree entirely, go straight to sandbox creation
           //   (sandbox clones code from remote and creates branch internally).
           // Progress is communicated via worktreeSetupStepChanged / sandboxSetupStepChanged events.

@@ -182,6 +182,21 @@ const applyPersistedLayoutEvent = (event: PersistedLayoutEvent) => {
   }
 }
 
+const layoutContainsTerminal = (
+  value: unknown,
+  terminalId: string
+): boolean => {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  if ('terminalId' in value && value.terminalId === terminalId) {
+    return true
+  }
+  return Object.values(value).some((child) =>
+    layoutContainsTerminal(child, terminalId)
+  )
+}
+
 describe('usePanelLayout', () => {
   beforeEach(() => {
     currentWindowIdRef.current = 'window-a'
@@ -448,6 +463,13 @@ describe('usePanelLayout', () => {
       expect(spawnTerminalMock).toHaveBeenCalledWith({
         payload: { workspaceId: 'workspace-new', command: 'opencode' },
       })
+    })
+
+    await waitFor(() => {
+      const lastCall = windowLayoutUpdatedMock.mock.calls.at(-1)?.[0]
+      expect(
+        layoutContainsTerminal(lastCall?.windowLayout, 'spawned-terminal')
+      ).toBe(true)
     })
   })
 })

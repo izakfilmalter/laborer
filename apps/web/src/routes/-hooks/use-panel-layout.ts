@@ -1958,21 +1958,14 @@ export function usePanelLayout() {
               )
               return
             }
-            // Assign the terminal to the pane in the hierarchical layout.
-            const updated = updateWorkspaceTileLeaf(
+            // Assign and focus using the shared terminal placement helper.
+            // This keeps auto-opened agent panes aligned with terminal events
+            // even when layout commits and terminal spawn complete close together.
+            const { layout: updated } = assignTerminalInWorkspace(
               currentWindowLayout,
               workspaceId,
-              (leaf) => ({
-                ...leaf,
-                panelTabs: leaf.panelTabs.map((tab) => ({
-                  ...tab,
-                  panelLayout: assignTerminalInPanelTree(
-                    tab.panelLayout,
-                    paneId,
-                    result.id
-                  ),
-                })),
-              })
+              result.id,
+              paneId
             )
             commitPanelTabLayout('panel-tab-terminal-assigned', updated)
           })

@@ -142,8 +142,8 @@ describe('LaborerRpcs workspace management', () => {
             join(worktreeRoot, 'feature-rpc-create')
           )
 
-          // Wait for the background setup fiber to finish and transition
-          // the workspace to 'running' before asserting on side effects.
+          // Wait for the worktree-ready checkpoint. Setup scripts may still
+          // be running after the workspace transitions to 'running'.
           // The fiber is forked into the layer scope so we poll the store,
           // yielding via Effect.sleep to let the background fiber progress.
           yield* Effect.gen(function* () {
@@ -178,6 +178,28 @@ describe('LaborerRpcs workspace management', () => {
             git(`branch --list ${branchName}`, repoPath),
             CREATE_BRANCH_PATTERN
           )
+
+          // Wait for setup scripts to complete before asserting on their
+          // side effects.
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const rows = store.query(
+                tables.workspaces.where('id', workspace.id)
+              )
+              const row = rows[0]
+              if (row?.status === 'errored') {
+                return assert.fail(
+                  `Workspace errored during setup scripts: ${row.errorMessage ?? ''}`
+                )
+              }
+              if (row?.worktreeSetupStep === null) {
+                return
+              }
+            }
+            assert.fail('Timed out waiting for setup scripts to complete')
+          })
 
           const setupEnvContents = readFileSync(
             join(workspace.worktreePath, SETUP_ENV_FILE),
@@ -562,8 +584,8 @@ describe('LaborerRpcs workspace management', () => {
 
           assert.strictEqual(workspace.status, 'creating')
 
-          // Wait for the background setup fiber to fail and transition
-          // the workspace to 'errored' status.
+          // Wait for the setup script phase to fail. The workspace may hit
+          // 'running' first because the worktree itself is already ready.
           yield* Effect.gen(function* () {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
@@ -591,11 +613,6 @@ describe('LaborerRpcs workspace management', () => {
                 assert.isString(row.errorMessage)
                 assert.include(row.errorMessage ?? '', 'exit 42')
                 return
-              }
-              if (row.status === 'running') {
-                return assert.fail(
-                  'Workspace reached running — expected it to error from failing setup script'
-                )
               }
             }
             assert.fail(

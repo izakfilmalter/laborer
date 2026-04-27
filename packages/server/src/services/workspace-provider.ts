@@ -610,7 +610,8 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      * The heavy setup (git fetch, worktree creation, setup scripts,
      * optional container setup) runs as a background fiber. Progress
      * is communicated via `worktreeSetupStepChanged` LiveStore events.
-     * When setup completes, the workspace transitions to 'running'.
+     * Once the worktree exists and validates, the workspace transitions
+     * to 'running' so agents can open while setup scripts continue.
      *
      * @param projectId - ID of the registered project
      * @param branchName - Optional branch name (auto-generated if omitted)
@@ -718,7 +719,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const sandboxProvider = yield* SandboxProvider
 
       /**
-       * Create a git worktree, validate it, and run setup scripts.
+       * Create and validate a git worktree.
        * Returns the base SHA on success. Communicates progress via
        * worktreeSetupStepChanged events.
        */
@@ -728,7 +729,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         readonly repoPath: string
         readonly worktreeDir: string
         readonly worktreePath: string
-        readonly setupScripts: readonly string[]
       }): Effect.Effect<string | null, RpcError> =>
         Effect.gen(function* () {
           const { id, branchName, repoPath, worktreeDir, worktreePath } = params
@@ -913,35 +913,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             `Worktree validated: directory exists, git work tree, branch=${branchName}, toplevel=${worktreePath}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // Run setup scripts from resolved config (Issue #35, #37, #156)
-          const scriptEnv = {
-            LABORER_WORKSPACE_ID: id,
-            LABORER_WORKSPACE_PATH: worktreePath,
-            LABORER_BRANCH: branchName,
-          }
-
-          if (params.setupScripts.length > 0) {
-            store.commit(
-              events.worktreeSetupStepChanged({
-                workspaceId: id,
-                step: 'running-setup-scripts',
-              })
-            )
-          }
-
-          const setupResult = yield* runProjectSetupScripts(
-            params.setupScripts,
-            worktreePath,
-            scriptEnv
-          )
-
-          if (setupResult._tag === 'Failure') {
-            return yield* new RpcError({
-              message: buildSetupFailureMessage(setupResult),
-              code: 'SETUP_SCRIPT_FAILED',
-            })
-          }
-
           return baseSha
         })
 
@@ -1055,6 +1026,49 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             },
             onReady: params.onReady,
           })
+        })
+
+      const runPostWorktreeSetup = (params: {
+        readonly id: string
+        readonly branchName: string
+        readonly setupScripts: readonly string[]
+        readonly worktreePath: string
+      }): Effect.Effect<void, RpcError> =>
+        Effect.gen(function* () {
+          const scriptEnv = {
+            LABORER_WORKSPACE_ID: params.id,
+            LABORER_WORKSPACE_PATH: params.worktreePath,
+            LABORER_BRANCH: params.branchName,
+          }
+
+          if (params.setupScripts.length > 0) {
+            store.commit(
+              events.worktreeSetupStepChanged({
+                workspaceId: params.id,
+                step: 'running-setup-scripts',
+              })
+            )
+          }
+
+          const setupResult = yield* runProjectSetupScripts(
+            params.setupScripts,
+            params.worktreePath,
+            scriptEnv
+          )
+
+          if (setupResult._tag === 'Failure') {
+            return yield* new RpcError({
+              message: buildSetupFailureMessage(setupResult),
+              code: 'SETUP_SCRIPT_FAILED',
+            })
+          }
+
+          store.commit(
+            events.worktreeSetupStepChanged({
+              workspaceId: params.id,
+              step: null,
+            })
+          )
         })
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
@@ -1181,14 +1195,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 ).pipe(Effect.annotateLogs('module', logPrefix))
               }
 
-              // Phase 1: Create and validate worktree, run setup scripts
+              // Phase 1: Create and validate worktree. This is the first
+              // checkpoint: once it succeeds, agents can open in the
+              // workspace directory even if later setup is still running.
               const baseSha = yield* performWorktreeSetup({
                 id,
                 branchName: resolvedBranch,
                 repoPath: project.repoPath,
                 worktreeDir,
                 worktreePath,
-                setupScripts: resolvedConfig.setupScripts.value,
               })
 
               // Update baseSha now that we have it
@@ -1202,7 +1217,8 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 events.workspaceStatusChanged({ id, status: 'running' })
               )
 
-              // Run the onReady callback (e.g. start diff/PR polling)
+              // Run the onReady callback (e.g. start diff/PR polling,
+              // open agent panels) as soon as the worktree directory is ready.
               if (onReady) {
                 yield* onReady(id).pipe(
                   Effect.catchAll((err) =>
@@ -1212,6 +1228,16 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   )
                 )
               }
+
+              // Phase 1b: Run project setup scripts after the worktree-ready
+              // checkpoint. The UI can show progress while agents are already
+              // available in the worktree directory.
+              yield* runPostWorktreeSetup({
+                id,
+                branchName: resolvedBranch,
+                setupScripts: resolvedConfig.setupScripts.value,
+                worktreePath,
+              })
 
               // Phase 2: Start sandbox if devServer config has an image
               const devServerImage = resolvedConfig.devServer.image.value

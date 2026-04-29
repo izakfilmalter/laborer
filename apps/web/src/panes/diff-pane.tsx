@@ -47,7 +47,6 @@ import type {
   AnnotationSide,
   FileDiffMetadata,
   Hunk,
-  RenderHeaderMetadataProps,
 } from '@pierre/diffs'
 import { diffAcceptRejectHunk } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
@@ -646,7 +645,7 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   )
 
   const renderHeaderMetadata = useCallback(
-    ({ fileDiff }: RenderHeaderMetadataProps) => {
+    (fileDiff: FileDiffMetadata) => {
       const fileName = fileDiff?.name
       if (!fileName) {
         return null

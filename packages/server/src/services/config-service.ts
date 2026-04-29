@@ -77,12 +77,13 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 const logPrefix = 'ConfigService'
 
 /** Valid sandbox provider values. */
-type SandboxProviderType = 'docker' | 'daytona'
+type SandboxProviderType = 'docker' | 'daytona' | 'none'
 
 /** All valid sandbox provider values for runtime validation. */
 const VALID_SANDBOX_PROVIDERS: readonly SandboxProviderType[] = [
   'docker',
   'daytona',
+  'none',
 ]
 
 /** Resource limits for Daytona sandboxes. */
@@ -114,7 +115,7 @@ interface DevServerConfig {
   readonly network?: string | undefined
   /** Port the dev server listens on inside the container. Appended to the .orb.local URL so the workspace card link works. */
   readonly port?: number | undefined
-  /** Sandbox provider for this project ("docker" or "daytona"). */
+  /** Sandbox provider for this project ("docker", "daytona", or "none"). */
   readonly provider?: SandboxProviderType | undefined
   /** Daytona sandbox resource limits (CPU, memory, disk). */
   readonly resources?: SandboxResources | undefined
@@ -742,7 +743,7 @@ const validateDevServerConfig = (
     devServer.provider.value !== null &&
     !VALID_SANDBOX_PROVIDERS.includes(devServer.provider.value)
   ) {
-    return `devServer.provider must be "docker" or "daytona", got "${String(devServer.provider.value)}" from ${devServer.provider.source}`
+    return `devServer.provider must be "docker", "daytona", or "none", got "${String(devServer.provider.value)}" from ${devServer.provider.source}`
   }
   return undefined
 }

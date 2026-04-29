@@ -49,6 +49,11 @@ const daytonaUnavailableError = new RpcError({
   code: 'DAYTONA_UNAVAILABLE',
 })
 
+const noSandboxConfiguredError = new RpcError({
+  message: 'This workspace is configured with no sandbox provider.',
+  code: 'NO_SANDBOX_CONFIGURED',
+})
+
 // ---------------------------------------------------------------------------
 // Router layer
 // ---------------------------------------------------------------------------
@@ -125,6 +130,10 @@ const SandboxProviderRouterLayer: Layer.Layer<
           return daytona
         }
 
+        if (workspace.sandboxProvider === 'none') {
+          return yield* noSandboxConfiguredError
+        }
+
         // Default to Docker for null, 'docker', or any unknown value
         return docker
       })
@@ -143,6 +152,9 @@ const SandboxProviderRouterLayer: Layer.Layer<
             return yield* daytonaUnavailableError
           }
           return daytona
+        }
+        if (provider === 'none') {
+          return yield* noSandboxConfiguredError
         }
         // Default to Docker for null or 'docker'
         return docker

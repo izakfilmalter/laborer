@@ -840,7 +840,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           readonly network: { readonly value: string | null }
           readonly port: { readonly value: number | null }
           readonly provider: {
-            readonly value: 'docker' | 'daytona' | null
+            readonly value: 'docker' | 'daytona' | 'none' | null
           }
           readonly resources: {
             readonly value: {
@@ -958,6 +958,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // For Daytona, there is no local worktree — code lives in the
           // cloud sandbox. Use empty string as a placeholder.
           const isDaytona = effectiveProvider === 'daytona'
+          const shouldStartSandbox =
+            effectiveProvider !== 'none' &&
+            resolvedConfig.devServer.image.value !== null
           const worktreeDir = resolvedConfig.worktreeDir.value
           const worktreePath = isDaytona
             ? ''
@@ -992,6 +995,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               origin: workspace.origin,
               createdAt: workspace.createdAt,
               baseSha: workspace.baseSha,
+              sandboxProvider: effectiveProvider,
             })
           )
 
@@ -1031,7 +1035,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 events.workspaceStatusChanged({ id, status: 'running' })
               )
             } else {
-              // ── Docker path (unchanged) ───────────────────────────
+              // ── Local worktree path (Docker / no sandbox) ──────────
               // Phase 0: Wait for any in-flight destroy cleanup targeting the
               // same worktree path. This blocks on the actual background fiber
               // instead of polling with a timeout.
@@ -1093,8 +1097,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               })
 
               // Phase 2: Start sandbox if devServer config has an image
-              const devServerImage = resolvedConfig.devServer.image.value
-              if (devServerImage !== null) {
+              if (shouldStartSandbox) {
                 yield* performSandboxSetup({
                   id,
                   branchName: resolvedBranch,
@@ -1335,15 +1338,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             // the sandbox is stopped before its bind-mounted directory
             // (Docker) or linked code (Daytona) is deleted.
             // Best-effort: logs warnings but continues cleanup.
-            yield* sandboxProvider
-              .destroySandbox(workspaceId)
-              .pipe(
-                Effect.catchAll((error) =>
-                  Effect.logWarning(
-                    `Sandbox destroy failed for workspace "${workspaceId}": ${String(error)}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
+            if (workspace.sandboxProvider !== 'none') {
+              yield* sandboxProvider
+                .destroySandbox(workspaceId)
+                .pipe(
+                  Effect.catchAll((error) =>
+                    Effect.logWarning(
+                      `Sandbox destroy failed for workspace "${workspaceId}": ${String(error)}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
                 )
-              )
+            }
 
             // 4. Remove the git worktree and branch.
             //    Both laborer-managed and external workspaces have their
@@ -1607,6 +1612,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // when none is configured. Only gate on missing image for Docker.
           const devServerImage = resolvedConfig.devServer.image.value
           const effectiveProvider = resolvedConfig.devServer.provider.value
+          if (effectiveProvider === 'none') {
+            return yield* new RpcError({
+              message: 'This workspace is configured with no sandbox provider',
+              code: 'NO_SANDBOX_CONFIGURED',
+            })
+          }
           if (devServerImage === null && effectiveProvider !== 'daytona') {
             return yield* new RpcError({
               message:

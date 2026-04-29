@@ -3,6 +3,7 @@ import { appSettings, events } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import {
   Check,
+  CircleSlash,
   Cloud,
   Container,
   ExternalLink,
@@ -50,7 +51,7 @@ const AGENT_OPTIONS: ReadonlyArray<{
   { label: 'Codex', value: 'codex' },
 ]
 
-type SandboxProvider = 'docker' | 'daytona'
+type SandboxProvider = 'docker' | 'daytona' | 'none'
 
 const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
   readonly label: string
@@ -69,6 +70,12 @@ const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
     value: 'daytona',
     description: 'Cloud sandboxes',
     Icon: Cloud,
+  },
+  {
+    label: 'None',
+    value: 'none',
+    description: 'Local worktrees only',
+    Icon: CircleSlash,
   },
 ]
 

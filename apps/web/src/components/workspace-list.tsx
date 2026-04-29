@@ -937,6 +937,49 @@ function DestroyWorkspaceButton({
   )
 }
 
+function SandboxActions({
+  currentPort,
+  isDaytonaSandbox,
+  isNoSandbox,
+  isPaused,
+  isSandboxed,
+  isStartingSandbox,
+  onStartSandbox,
+  workspaceId,
+}: {
+  readonly currentPort: number | null
+  readonly isDaytonaSandbox: boolean
+  readonly isNoSandbox: boolean
+  readonly isPaused: boolean
+  readonly isSandboxed: boolean
+  readonly isStartingSandbox: boolean
+  readonly onStartSandbox: () => void
+  readonly workspaceId: string
+}) {
+  if (isNoSandbox) {
+    return null
+  }
+
+  if (!isSandboxed) {
+    return (
+      <StartSandboxButton
+        isStarting={isStartingSandbox}
+        onClick={onStartSandbox}
+      />
+    )
+  }
+
+  return (
+    <>
+      {isDaytonaSandbox && !isPaused && (
+        <OpenInVsCodeButton workspaceId={workspaceId} />
+      )}
+      <SandboxPauseButton isPaused={isPaused} workspaceId={workspaceId} />
+      <SandboxPortButton currentPort={currentPort} workspaceId={workspaceId} />
+    </>
+  )
+}
+
 function WorkspaceItem({
   workspace,
   associatedPrdId,
@@ -973,6 +1016,9 @@ function WorkspaceItem({
   const isDaytonaSandbox =
     (workspace as { sandboxProvider?: string | null }).sandboxProvider ===
     'daytona'
+  const isNoSandbox =
+    (workspace as { sandboxProvider?: string | null }).sandboxProvider ===
+    'none'
   const hasSandboxConfig = workspace.sandboxUrl != null
   // Only show the sandbox link when a sandbox actually exists.
   // sandboxUrl is intentionally preserved after sandbox destruction
@@ -1168,26 +1214,16 @@ function WorkspaceItem({
                   {displayStatus}
                 </Badge>
               )}
-              {isSandboxed ? (
-                <>
-                  {isDaytonaSandbox && !isSandboxPaused && (
-                    <OpenInVsCodeButton workspaceId={workspace.id} />
-                  )}
-                  <SandboxPauseButton
-                    isPaused={isSandboxPaused}
-                    workspaceId={workspace.id}
-                  />
-                  <SandboxPortButton
-                    currentPort={workspace.sandboxPort}
-                    workspaceId={workspace.id}
-                  />
-                </>
-              ) : (
-                <StartSandboxButton
-                  isStarting={isStartingSandbox}
-                  onClick={handleStartSandbox}
-                />
-              )}
+              <SandboxActions
+                currentPort={workspace.sandboxPort}
+                isDaytonaSandbox={isDaytonaSandbox}
+                isNoSandbox={isNoSandbox}
+                isPaused={isSandboxPaused}
+                isSandboxed={isSandboxed}
+                isStartingSandbox={isStartingSandbox}
+                onStartSandbox={handleStartSandbox}
+                workspaceId={workspace.id}
+              />
             </div>
           </div>
         )}

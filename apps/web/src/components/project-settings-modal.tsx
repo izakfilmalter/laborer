@@ -1,5 +1,12 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { Cloud, Container, Plus, Settings, Trash2 } from 'lucide-react'
+import {
+  CircleSlash,
+  Cloud,
+  Container,
+  Plus,
+  Settings,
+  Trash2,
+} from 'lucide-react'
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -84,6 +91,12 @@ const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
     value: 'daytona',
     description: 'Cloud sandboxes',
     Icon: Cloud,
+  },
+  {
+    label: 'None',
+    value: 'none',
+    description: 'Local worktrees only',
+    Icon: CircleSlash,
   },
 ]
 

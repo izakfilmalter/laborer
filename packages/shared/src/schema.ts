@@ -42,7 +42,7 @@ export const workspaces = State.SQLite.table({
     sandboxStatus: State.SQLite.text({ nullable: true }),
     /** Current step of the background sandbox setup process. Null when setup is complete or not started. */
     sandboxSetupStep: State.SQLite.text({ nullable: true }),
-    /** Which sandbox provider was used: 'docker' or 'daytona'. Null for workspaces created before provider support. */
+    /** Which sandbox provider was used: 'docker', 'daytona', or 'none'. Null for workspaces created before provider support. */
     sandboxProvider: State.SQLite.text({ nullable: true }),
     /** Current step of the background worktree setup process (git fetch, worktree add, setup scripts). Null when setup is complete or not started. */
     worktreeSetupStep: State.SQLite.text({ nullable: true }),
@@ -200,6 +200,8 @@ export const workspaceCreated = Events.synced({
     baseSha: Schema.optionalWith(Schema.NullOr(Schema.String), {
       default: () => null,
     }),
+    /** Provider selected when creating the workspace. Optional for backward compatibility with old events. */
+    sandboxProvider: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 })
 
@@ -648,6 +650,7 @@ const materializers = State.SQLite.materializers(events, {
     origin,
     createdAt,
     baseSha,
+    sandboxProvider,
   }) =>
     workspaces.insert({
       id,
@@ -664,7 +667,7 @@ const materializers = State.SQLite.materializers(events, {
       sandboxImage: null,
       sandboxStatus: null,
       sandboxSetupStep: null,
-      sandboxProvider: null,
+      sandboxProvider: sandboxProvider ?? null,
       worktreeSetupStep: null,
       prNumber: null,
       prUrl: null,

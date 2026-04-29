@@ -259,7 +259,7 @@ const validateDevServerUpdate = (
         dockerfile?: string | undefined
         image?: string | undefined
         port?: number | undefined
-        provider?: 'docker' | 'daytona' | undefined
+        provider?: 'docker' | 'daytona' | 'none' | undefined
         resources?:
           | {
               cpu?: number | undefined
@@ -279,7 +279,7 @@ const validateDevServerUpdate = (
   if (typeof ds !== 'object') {
     return false
   }
-  const validProviders = ['docker', 'daytona']
+  const validProviders = ['docker', 'daytona', 'none']
   const isValidProvider =
     ds.provider === undefined || validProviders.includes(ds.provider)
 
@@ -310,7 +310,7 @@ export const handleConfigUpdate = ({
           dockerfile?: string | undefined
           image?: string | undefined
           port?: number | undefined
-          provider?: 'docker' | 'daytona' | undefined
+          provider?: 'docker' | 'daytona' | 'none' | undefined
           resources?:
             | {
                 cpu?: number | undefined
@@ -380,7 +380,7 @@ export const handleGlobalConfigUpdate = ({
 }: {
   config: {
     agent?: 'opencode' | 'claude' | 'codex' | undefined
-    defaultSandboxProvider?: 'docker' | 'daytona' | undefined
+    defaultSandboxProvider?: 'docker' | 'daytona' | 'none' | undefined
   }
 }) =>
   Effect.gen(function* () {
@@ -400,7 +400,7 @@ export const handleSettingsGetDefaultProvider = () =>
 export const handleSettingsSetDefaultProvider = ({
   provider,
 }: {
-  provider: 'docker' | 'daytona'
+  provider: 'docker' | 'daytona' | 'none'
 }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService

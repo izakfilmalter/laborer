@@ -246,6 +246,98 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
+  it.scopedLive(
+    'workspace.create with no sandbox creates only a local worktree',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo(
+            'rpc-workspace-create-no-sandbox',
+            tempRoots
+          )
+          const worktreeRoot = createTempDir(
+            'rpc-worktree-root-no-sandbox',
+            tempRoots
+          )
+          const branchName = 'feature/rpc-no-sandbox'
+
+          writeLaborerConfig(repoPath, {
+            devServer: {
+              image: 'node:lts',
+              provider: 'none',
+              setupScripts: ['touch should-not-run-devserver-setup'],
+              startCommand: 'touch should-not-start-devserver',
+            },
+            setupScripts: [`printf 'ran' > ${SETUP_ENV_FILE}`],
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add no sandbox config"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const workspace = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const row = store.query(
+                tables.workspaces.where('id', workspace.id)
+              )[0]
+              if (row?.status === 'errored') {
+                return assert.fail(
+                  `Workspace errored during no-sandbox setup: ${row.errorMessage ?? ''}`
+                )
+              }
+              if (row?.status === 'running' && row.worktreeSetupStep === null) {
+                return
+              }
+            }
+            assert.fail('Timed out waiting for no-sandbox workspace setup')
+          })
+
+          assert.isTrue(existsSync(workspace.worktreePath))
+          assert.strictEqual(
+            readFileSync(join(workspace.worktreePath, SETUP_ENV_FILE), 'utf-8'),
+            'ran'
+          )
+          assert.isFalse(
+            existsSync(
+              join(workspace.worktreePath, 'should-not-run-devserver-setup')
+            )
+          )
+          assert.isFalse(
+            existsSync(
+              join(workspace.worktreePath, 'should-not-start-devserver')
+            )
+          )
+
+          const workspaceRow = store.query(
+            tables.workspaces.where('id', workspace.id)
+          )[0]
+          assert.isDefined(workspaceRow)
+          if (workspaceRow === undefined) {
+            assert.fail('Expected no-sandbox workspace row to exist')
+          }
+
+          assert.strictEqual(workspaceRow.sandboxProvider, 'none')
+          assert.isNull(workspaceRow.sandboxId)
+          assert.isNull(workspaceRow.sandboxUrl)
+          assert.isNull(workspaceRow.sandboxImage)
+          assert.isNull(workspaceRow.sandboxStatus)
+          assert.isNull(workspaceRow.sandboxSetupStep)
+        })
+      )
+  )
+
   it.scoped('workspace.create returns NOT_FOUND for an unknown project', () =>
     runWithRpcTestContext(({ client, store }) =>
       Effect.gen(function* () {

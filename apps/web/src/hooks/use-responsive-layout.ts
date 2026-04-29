@@ -5,17 +5,17 @@
  * to ensure the layout works well from 1080p to 5K displays.
  *
  * At 1080p (1920px):
- * - Sidebar: 220px min, 280px default, 90% max
+ * - Sidebar: 360px min, 360px default, 90% max
  * - Pane minimum: ~100px (usable terminal with ~12 columns)
  *
  * At 1440p (2560px):
- * - Sidebar: 240px min, 320px default, 90% max
+ * - Sidebar: 360px min, 360px default, 90% max
  *
  * At 4K (3840px):
- * - Sidebar: 280px min, 400px default, 90% max
+ * - Sidebar: 360px min, 400px default, 90% max
  *
  * At 5K (5120px):
- * - Sidebar: 300px min, 440px default, 90% max
+ * - Sidebar: 360px min, 440px default, 90% max
  *
  * Pixel values are converted to percentages because react-resizable-panels
  * uses percentage-based sizing.
@@ -31,11 +31,11 @@ const MIN_PANE_WIDTH_PX = 100
 /** Sidebar sizing breakpoints (in viewport width pixels). */
 const SIDEBAR_CONFIG = {
   /** Minimum sidebar width in pixels. */
-  minPx: 220,
+  minPx: 360,
   /** Maximum sidebar width in pixels. */
   maxPx: 480,
   /** Default sidebar width in pixels. */
-  defaultPx: 280,
+  defaultPx: 360,
   /** Additional pixels per 1000px of viewport width beyond 1920px. */
   scalePerKPx: 50,
 } as const
@@ -88,11 +88,7 @@ function computeSidebarPx(viewportWidth: number): {
       SIDEBAR_CONFIG.minPx,
       SIDEBAR_CONFIG.maxPx
     ),
-    minPx: clamp(
-      SIDEBAR_CONFIG.minPx + scale * 0.4,
-      SIDEBAR_CONFIG.minPx,
-      SIDEBAR_CONFIG.maxPx
-    ),
+    minPx: SIDEBAR_CONFIG.minPx,
   }
 }
 

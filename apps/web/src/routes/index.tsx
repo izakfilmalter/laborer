@@ -3,8 +3,8 @@ import { projects, workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
+import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
@@ -14,11 +14,6 @@ import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ProjectGroup } from '@/components/project-group'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
@@ -1044,47 +1039,71 @@ function HomeComponent() {
     setMainView('panels')
   }, [])
 
-  // Sidebar collapse via imperative panel ref
-  const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
+  // Sidebar width is pixel-based, matching t3code's CSS-variable approach so
+  // viewport resizes do not proportionally scale the sidebar.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const sidebarResizeRef = useRef<{
+    startWidth: number
+    startX: number
+  } | null>(null)
 
-  const handleSidebarResize = useCallback(
-    (panelSize: number | { asPercentage: number }) => {
-      const panel = sidebarPanelRef.current
-      if (panel) {
-        setSidebarCollapsed(panel.isCollapsed())
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((collapsed) => !collapsed)
+  }, [])
+
+  const handleSidebarResizeStart = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      if (sidebarCollapsed || event.button !== 0) {
+        return
       }
-      const sizePercent =
-        typeof panelSize === 'number' ? panelSize : panelSize.asPercentage
-      sidebarWidth.handleResize(sizePercent)
+
+      event.preventDefault()
+      sidebarResizeRef.current = {
+        startWidth: sidebarWidth.widthPx,
+        startX: event.clientX,
+      }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
     },
-    [sidebarWidth.handleResize]
+    [sidebarCollapsed, sidebarWidth.widthPx]
+  )
+
+  const handleSidebarResizeMove = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const resizeState = sidebarResizeRef.current
+      if (!resizeState) {
+        return
+      }
+
+      event.preventDefault()
+      sidebarWidth.setWidthPx(
+        resizeState.startWidth + event.clientX - resizeState.startX
+      )
+    },
+    [sidebarWidth.setWidthPx]
+  )
+
+  const handleSidebarResizeEnd = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      if (!sidebarResizeRef.current) {
+        return
+      }
+
+      sidebarResizeRef.current = null
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      document.body.style.removeProperty('cursor')
+      document.body.style.removeProperty('user-select')
+    },
+    []
   )
 
   useEffect(() => {
-    const panel = sidebarPanelRef.current
-    if (!sidebarWidth.resizePercent) {
-      return
-    }
-
-    if (!(panel && !panel.isCollapsed())) {
-      sidebarWidth.handleViewportResizeApplied()
-      return
-    }
-
-    panel.resize(Number.parseFloat(sidebarWidth.resizePercent))
-    sidebarWidth.handleViewportResizeApplied()
-  }, [sidebarWidth.resizePercent, sidebarWidth.handleViewportResizeApplied])
-
-  const toggleSidebar = useCallback(() => {
-    const panel = sidebarPanelRef.current
-    if (!panel) {
-      return
-    }
-    if (panel.isCollapsed()) {
-      panel.expand()
-    } else {
-      panel.collapse()
+    return () => {
+      document.body.style.removeProperty('cursor')
+      document.body.style.removeProperty('user-select')
     }
   }, [])
 
@@ -1118,19 +1137,11 @@ function HomeComponent() {
           onOpenChange={handleDestroyOnCloseDialogOpenChange}
           open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
         />
-        <ResizablePanelGroup
-          orientation="horizontal"
-          style={{ height: '100vh' }}
-        >
+        <div className="flex h-screen min-w-0">
           {/* Sidebar — search, project groups, workspace list, health check */}
-          <ResizablePanel
-            collapsedSize="0%"
-            collapsible={responsiveSizes.canCollapseSidebar}
-            defaultSize={sidebarWidth.storedDefault}
-            maxSize={responsiveSizes.sidebarMax}
-            minSize={responsiveSizes.sidebarMin}
-            onResize={handleSidebarResize}
-            panelRef={sidebarPanelRef}
+          <aside
+            className="min-h-0 shrink-0 overflow-hidden border-r"
+            style={{ width: sidebarCollapsed ? 0 : sidebarWidth.widthPx }}
           >
             <div className="flex h-full min-h-0 flex-col">
               {/* Search bar + Add Project — shared top row */}
@@ -1177,12 +1188,25 @@ function HomeComponent() {
               </ScrollArea>
               <SidebarFooter />
             </div>
-          </ResizablePanel>
+          </aside>
 
-          <ResizableHandle withHandle />
+          {!sidebarCollapsed && (
+            <button
+              aria-label="Resize sidebar"
+              className="relative z-10 flex w-px shrink-0 cursor-col-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              onPointerCancel={handleSidebarResizeEnd}
+              onPointerDown={handleSidebarResizeStart}
+              onPointerMove={handleSidebarResizeMove}
+              onPointerUp={handleSidebarResizeEnd}
+              tabIndex={-1}
+              type="button"
+            >
+              <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-sm bg-border" />
+            </button>
+          )}
 
           {/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
-          <ResizablePanel defaultSize="75%" minSize="10%">
+          <main className="min-w-0 flex-1">
             {!hasProjects && <WelcomeEmptyState />}
             {hasProjects && mainView === 'plan' && selectedPlanId && (
               <div className="flex h-full flex-col border-2 border-transparent">
@@ -1264,8 +1288,8 @@ function HomeComponent() {
                 )}
               </div>
             )}
-          </ResizablePanel>
-        </ResizablePanelGroup>
+          </main>
+        </div>
       </PanelActionsProvider>
     </DiffScrollProvider>
   )

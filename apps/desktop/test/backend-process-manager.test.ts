@@ -4,6 +4,7 @@ const {
   mockCreateWriteStream,
   mockExistsSync,
   mockMkdirSync,
+  MockSocket,
   mockSpawn,
   spawnedProcesses,
 } = vi.hoisted(() => {
@@ -55,7 +56,18 @@ const {
     }
   )
 
+  class MockSocket extends EventEmitter {
+    connect(): void {
+      queueMicrotask(() => this.emit('connect'))
+    }
+
+    destroy(): void {}
+
+    setTimeout(_timeout: number, _callback: () => void): void {}
+  }
+
   return {
+    MockSocket,
     mockCreateWriteStream: vi.fn(() => ({ end: vi.fn(), write: vi.fn() })),
     mockExistsSync: vi.fn(() => true),
     mockMkdirSync: vi.fn(),
@@ -72,6 +84,10 @@ vi.mock('node:fs', () => ({
 
 vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
+}))
+
+vi.mock('node:net', () => ({
+  Socket: MockSocket,
 }))
 
 vi.mock('electron', () => ({
@@ -103,7 +119,7 @@ describe('BackendProcessManager', () => {
       port: 17_321,
     })
 
-    const endpoint = manager.start()
+    const endpoint = await manager.start()
 
     expect(endpoint.wsUrl).toBe('ws://127.0.0.1:17321/?token=secret-token')
     expect(mockSpawn).toHaveBeenCalledOnce()
@@ -161,9 +177,9 @@ describe('BackendProcessManager', () => {
         port: 24_680,
       })
 
-      expect(manager.start().wsUrl).toBe(
-        'ws://127.0.0.1:24680/?token=stable-token'
-      )
+      await expect(manager.start()).resolves.toMatchObject({
+        wsUrl: 'ws://127.0.0.1:24680/?token=stable-token',
+      })
       spawnedProcesses[0]?.emit('exit', 1, null)
 
       await vi.advanceTimersByTimeAsync(500)
@@ -175,9 +191,9 @@ describe('BackendProcessManager', () => {
       ).toHaveBeenCalledWith(
         `${JSON.stringify({ authToken: 'stable-token', host: '127.0.0.1', port: 24_680 })}\n`
       )
-      expect(manager.start().wsUrl).toBe(
-        'ws://127.0.0.1:24680/?token=stable-token'
-      )
+      await expect(manager.start()).resolves.toMatchObject({
+        wsUrl: 'ws://127.0.0.1:24680/?token=stable-token',
+      })
 
       manager.stop()
     } finally {

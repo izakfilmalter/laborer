@@ -17,9 +17,36 @@ import {
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Duration, Effect, Layer, Schedule } from 'effect'
 
 import { getBackendRpcWsUrl } from '@/lib/desktop'
+
+const WS_RECONNECT_INITIAL_DELAY_MS = 1000
+const WS_RECONNECT_BACKOFF_FACTOR = 2
+const WS_RECONNECT_MAX_DELAY_MS = 64_000
+const WS_RECONNECT_MAX_RETRIES = 7
+
+function getWsReconnectDelayMsForRetry(retryIndex: number): number | null {
+  if (
+    !Number.isInteger(retryIndex) ||
+    retryIndex < 0 ||
+    retryIndex >= WS_RECONNECT_MAX_RETRIES
+  ) {
+    return null
+  }
+
+  return Math.min(
+    Math.round(
+      WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** retryIndex
+    ),
+    WS_RECONNECT_MAX_DELAY_MS
+  )
+}
+
+const retryPolicy = Schedule.addDelay(
+  Schedule.recurs(WS_RECONNECT_MAX_RETRIES),
+  (retryCount) => Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)
+)
 
 const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
   RpcClient.Protocol,
@@ -34,6 +61,7 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
       Layer.provide(layerWebSocketConstructorGlobal)
     )
     const protocol = yield* RpcClient.layerProtocolSocket({
+      retrySchedule: retryPolicy,
       retryTransientErrors: true,
     }).pipe(
       Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),

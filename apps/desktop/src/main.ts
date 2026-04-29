@@ -378,7 +378,7 @@ async function startServerBackend(): Promise<void> {
     authToken: crypto.randomUUID(),
     port,
   })
-  backendWsUrl = backendProcessManager.start().wsUrl
+  backendWsUrl = (await backendProcessManager.start()).wsUrl
 }
 
 /**

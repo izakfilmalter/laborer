@@ -5,6 +5,7 @@ import {
   mkdirSync,
   type WriteStream,
 } from 'node:fs'
+import { Socket } from 'node:net'
 import { join } from 'node:path'
 import { app } from 'electron'
 
@@ -18,6 +19,8 @@ export interface BackendProcessManagerOptions {
 }
 
 const KILL_GRACE_MS = 2000
+const READY_CHECK_INTERVAL_MS = 100
+const READY_TIMEOUT_MS = 10_000
 const RESTART_BASE_DELAY_MS = 500
 const RESTART_MAX_DELAY_MS = 10_000
 
@@ -63,10 +66,12 @@ export class BackendProcessManager {
     this.#port = options.port
   }
 
-  start(): BackendEndpoint {
+  async start(): Promise<BackendEndpoint> {
     if (!this.#process) {
       this.#spawnBackend()
     }
+
+    await waitForTcpPort(this.#port)
 
     return {
       wsUrl: `ws://127.0.0.1:${String(this.#port)}/?token=${encodeURIComponent(this.#authToken)}`,
@@ -198,6 +203,46 @@ export class BackendProcessManager {
     this.#backendLogStream?.end()
     this.#backendLogStream = null
   }
+}
+
+function waitForTcpPort(port: number): Promise<void> {
+  const startedAt = Date.now()
+
+  return new Promise((resolve, reject) => {
+    const tryConnect = () => {
+      const socket = new Socket()
+      let settled = false
+
+      const finish = (error?: Error) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        socket.destroy()
+
+        if (!error) {
+          resolve()
+          return
+        }
+
+        if (Date.now() - startedAt >= READY_TIMEOUT_MS) {
+          reject(error)
+          return
+        }
+
+        setTimeout(tryConnect, READY_CHECK_INTERVAL_MS)
+      }
+
+      socket.once('connect', () => finish())
+      socket.once('error', (error) => finish(error))
+      socket.setTimeout(READY_CHECK_INTERVAL_MS, () =>
+        finish(new Error(`Timed out connecting to backend port ${String(port)}`))
+      )
+      socket.connect(port, '127.0.0.1')
+    }
+
+    tryConnect()
+  })
 }
 
 function backendChildEnv(): NodeJS.ProcessEnv {

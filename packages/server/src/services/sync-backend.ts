@@ -652,7 +652,10 @@ const handlePull = (
         ? req.cursor.value.eventSequenceNumber
         : undefined
 
-    const shouldReplayStoredEvents = !(req.live && cursorSeqNum === undefined)
+    // LiveStore performs catch-up with non-live pulls before opening the live
+    // subscription. Replaying stored events from a live pull can race with live
+    // push chunks for the same client and crash SQLite changeset application.
+    const shouldReplayStoredEvents = !req.live
     const total = shouldReplayStoredEvents
       ? storage.countEvents(cursorSeqNum)
       : 0

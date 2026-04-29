@@ -1,3 +1,6 @@
+/** biome-ignore-all lint/suspicious/noArrayIndexKey: shadcn */
+/** biome-ignore-all lint/a11y/useSemanticElements: shadcn */
+/** biome-ignore-all lint/suspicious/noDoubleEquals: shadcn */
 'use client'
 
 import { cva, type VariantProps } from 'class-variance-authority'
@@ -27,7 +30,7 @@ function FieldLegend({
   return (
     <legend
       className={cn(
-        'mb-2.5 font-medium data-[variant=label]:text-xs data-[variant=legend]:text-sm',
+        'mb-1.5 font-medium data-[variant=label]:text-sm data-[variant=legend]:text-base',
         className
       )}
       data-slot="field-legend"
@@ -74,7 +77,6 @@ function Field({
   ...props
 }: React.ComponentProps<'div'> & VariantProps<typeof fieldVariants>) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: shadcn/ui component
     <div
       className={cn(fieldVariants({ orientation }), className)}
       data-orientation={orientation}
@@ -105,7 +107,7 @@ function FieldLabel({
   return (
     <Label
       className={cn(
-        'group/field-label peer/field-label flex w-fit gap-2 leading-snug has-[>[data-slot=field]]:rounded-none has-[>[data-slot=field]]:border has-data-checked:border-primary/30 has-data-checked:bg-primary/5 *:data-[slot=field]:p-2 group-data-[disabled=true]/field:opacity-50 dark:has-data-checked:border-primary/20 dark:has-data-checked:bg-primary/10',
+        'group/field-label peer/field-label flex w-fit gap-2 leading-snug has-[>[data-slot=field]]:rounded-lg has-[>[data-slot=field]]:border has-data-checked:border-primary/30 has-data-checked:bg-primary/5 *:data-[slot=field]:p-2.5 group-data-[disabled=true]/field:opacity-50 dark:has-data-checked:border-primary/20 dark:has-data-checked:bg-primary/10',
         'has-[>[data-slot=field]]:w-full has-[>[data-slot=field]]:flex-col',
         className
       )}
@@ -119,7 +121,7 @@ function FieldTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'flex w-fit items-center gap-2 text-xs/relaxed leading-snug group-data-[disabled=true]/field:opacity-50',
+        'flex w-fit items-center gap-2 font-medium text-sm group-data-[disabled=true]/field:opacity-50',
         className
       )}
       data-slot="field-label"
@@ -132,7 +134,7 @@ function FieldDescription({ className, ...props }: React.ComponentProps<'p'>) {
   return (
     <p
       className={cn(
-        'text-left font-normal text-muted-foreground text-xs/relaxed leading-normal group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5',
+        'text-left font-normal text-muted-foreground text-sm leading-normal group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5',
         'nth-last-2:-mt-1 last:mt-0',
         '[&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4',
         className
@@ -153,7 +155,7 @@ function FieldSeparator({
   return (
     <div
       className={cn(
-        'relative -my-2 h-5 text-xs group-data-[variant=outline]/field-group:-mb-2',
+        'relative -my-2 h-5 text-sm group-data-[variant=outline]/field-group:-mb-2',
         className
       )}
       data-content={!!children}
@@ -194,7 +196,6 @@ function FieldError({
       ...new Map(errors.map((error) => [error?.message, error])).values(),
     ]
 
-    // biome-ignore lint/suspicious/noDoubleEquals: shadcn/ui component
     if (uniqueErrors?.length == 1) {
       return uniqueErrors[0]?.message
     }
@@ -203,10 +204,7 @@ function FieldError({
       <ul className="ml-4 flex list-disc flex-col gap-1">
         {uniqueErrors.map(
           (error, index) =>
-            error?.message && (
-              // biome-ignore lint/suspicious/noArrayIndexKey: shadcn/ui component
-              <li key={index}>{error.message}</li>
-            )
+            error?.message && <li key={index}>{error.message}</li>
         )}
       </ul>
     )
@@ -218,7 +216,7 @@ function FieldError({
 
   return (
     <div
-      className={cn('font-normal text-destructive text-xs', className)}
+      className={cn('font-normal text-destructive text-sm', className)}
       data-slot="field-error"
       role="alert"
       {...props}

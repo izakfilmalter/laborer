@@ -1,3 +1,5 @@
+/** biome-ignore-all lint/correctness/noNestedComponentDefinitions: shadcn */
+/** biome-ignore-all lint/performance/noNamespaceImport: shadcn */
 'use client'
 
 import {
@@ -5,7 +7,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from 'lucide-react'
-// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from 'react'
 import {
   type DayButton,
@@ -35,7 +36,7 @@ function Calendar({
     <DayPicker
       captionLayout={captionLayout}
       className={cn(
-        'group/calendar bg-background in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent p-2 [--cell-size:--spacing(7)]',
+        'group/calendar bg-background in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent p-2 [--cell-radius:var(--radius-md)] [--cell-size:--spacing(7)]',
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
         String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
         className
@@ -70,7 +71,7 @@ function Calendar({
           defaultClassNames.dropdowns
         ),
         dropdown_root: cn(
-          'relative rounded-(--cell-radius)',
+          'cn-calendar-dropdown-root relative rounded-(--cell-radius)',
           defaultClassNames.dropdown_root
         ),
         dropdown: cn(
@@ -80,8 +81,8 @@ function Calendar({
         caption_label: cn(
           'select-none font-medium',
           captionLayout === 'label'
-            ? 'text-sm'
-            : 'flex items-center gap-1 rounded-(--cell-radius) text-sm [&>svg]:size-3.5 [&>svg]:text-muted-foreground',
+            ? 'cn-calendar-caption text-sm'
+            : 'cn-calendar-caption-label flex items-center gap-1 rounded-(--cell-radius) text-sm [&>svg]:size-3.5 [&>svg]:text-muted-foreground',
           defaultClassNames.caption_label
         ),
         table: 'w-full border-collapse',
@@ -131,7 +132,6 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        // biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
         Root: ({ className, rootRef, ...props }) => {
           return (
             <div
@@ -142,18 +142,20 @@ function Calendar({
             />
           )
         },
-        // biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
         Chevron: ({ className, orientation, ...props }) => {
           if (orientation === 'left') {
             return (
-              <ChevronLeftIcon className={cn('size-4', className)} {...props} />
+              <ChevronLeftIcon
+                className={cn('cn-rtl-flip size-4', className)}
+                {...props}
+              />
             )
           }
 
           if (orientation === 'right') {
             return (
               <ChevronRightIcon
-                className={cn('size-4', className)}
+                className={cn('cn-rtl-flip size-4', className)}
                 {...props}
               />
             )
@@ -163,11 +165,9 @@ function Calendar({
             <ChevronDownIcon className={cn('size-4', className)} {...props} />
           )
         },
-        // biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
         DayButton: ({ ...props }) => (
           <CalendarDayButton locale={locale} {...props} />
         ),
-        // biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
         WeekNumber: ({ children, ...props }) => {
           return (
             <td {...props}>
@@ -197,9 +197,7 @@ function CalendarDayButton({
   modifiers,
   locale,
   ...props
-}: React.ComponentProps<typeof DayButton> & {
-  locale?: Partial<Locale> | undefined
-}) {
+}: React.ComponentProps<typeof DayButton> & { locale?: Partial<Locale> }) {
   const defaultClassNames = getDefaultClassNames()
 
   const ref = React.useRef<HTMLButtonElement>(null)

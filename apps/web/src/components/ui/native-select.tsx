@@ -1,5 +1,6 @@
 import { ChevronDownIcon } from 'lucide-react'
 import type * as React from 'react'
+
 import { cn } from '@/lib/utils'
 
 type NativeSelectProps = Omit<React.ComponentProps<'select'>, 'size'> & {
@@ -21,7 +22,7 @@ function NativeSelect({
       data-slot="native-select-wrapper"
     >
       <select
-        className="h-8 w-full min-w-0 select-none appearance-none rounded-none border border-input bg-transparent py-1 pr-8 pl-2.5 text-xs outline-none transition-colors selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20 data-[size=sm]:h-7 data-[size=sm]:rounded-none data-[size=sm]:py-0.5 dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 dark:hover:bg-input/50"
+        className="h-8 w-full min-w-0 select-none appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm outline-none transition-colors selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),10px)] data-[size=sm]:py-0.5 dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 dark:hover:bg-input/50"
         data-size={size}
         data-slot="native-select"
         {...props}
@@ -35,8 +36,17 @@ function NativeSelect({
   )
 }
 
-function NativeSelectOption({ ...props }: React.ComponentProps<'option'>) {
-  return <option data-slot="native-select-option" {...props} />
+function NativeSelectOption({
+  className,
+  ...props
+}: React.ComponentProps<'option'>) {
+  return (
+    <option
+      className={cn('bg-[Canvas] text-[CanvasText]', className)}
+      data-slot="native-select-option"
+      {...props}
+    />
+  )
 }
 
 function NativeSelectOptGroup({
@@ -45,7 +55,7 @@ function NativeSelectOptGroup({
 }: React.ComponentProps<'optgroup'>) {
   return (
     <optgroup
-      className={cn(className)}
+      className={cn('bg-[Canvas] text-[CanvasText]', className)}
       data-slot="native-select-optgroup"
       {...props}
     />

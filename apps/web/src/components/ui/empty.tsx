@@ -6,7 +6,7 @@ function Empty({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'flex w-full min-w-0 flex-1 flex-col items-center justify-center gap-4 text-balance rounded-none border-dashed p-6 text-center',
+        'flex w-full min-w-0 flex-1 flex-col items-center justify-center gap-4 text-balance rounded-xl border-dashed p-6 text-center',
         className
       )}
       data-slot="empty"
@@ -31,7 +31,7 @@ const emptyMediaVariants = cva(
     variants: {
       variant: {
         default: 'bg-transparent',
-        icon: "flex size-8 shrink-0 items-center justify-center rounded-none bg-muted text-foreground [&_svg:not([class*='size-'])]:size-4",
+        icon: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-4",
       },
     },
     defaultVariants: {
@@ -58,7 +58,10 @@ function EmptyMedia({
 function EmptyTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
-      className={cn('font-medium text-sm', className)}
+      className={cn(
+        'cn-font-heading font-medium text-sm tracking-tight',
+        className
+      )}
       data-slot="empty-title"
       {...props}
     />
@@ -69,7 +72,7 @@ function EmptyDescription({ className, ...props }: React.ComponentProps<'p'>) {
   return (
     <div
       className={cn(
-        'text-muted-foreground text-xs/relaxed [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4',
+        'text-muted-foreground text-sm/relaxed [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4',
         className
       )}
       data-slot="empty-description"
@@ -82,7 +85,7 @@ function EmptyContent({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'flex w-full min-w-0 max-w-sm flex-col items-center gap-2.5 text-balance text-xs',
+        'flex w-full min-w-0 max-w-sm flex-col items-center gap-2.5 text-balance text-sm',
         className
       )}
       data-slot="empty-content"

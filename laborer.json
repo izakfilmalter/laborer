@@ -1,6 +1,7 @@
 {
   "devServer": {
-    "startCommand": "bun dev"
+    "startCommand": "bun dev",
+    "provider": "docker"
   },
   "setupScripts": ["sh ./scripts/worktree-setup.sh --no-ports"],
   "agent": "opencode",

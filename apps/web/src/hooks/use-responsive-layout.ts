@@ -17,8 +17,8 @@
  * At 5K (5120px):
  * - Sidebar: 360px min, 440px default, 90% max
  *
- * Pixel values are converted to percentages because react-resizable-panels
- * uses percentage-based sizing.
+ * Sidebar values are exposed as pixels so the sidebar does not scale when the
+ * viewport width changes.
  *
  * @see Issue #81: Panel responsive layout
  */
@@ -45,12 +45,12 @@ interface ResponsiveLayoutSizes {
   readonly canCollapseSidebar: boolean
   /** Minimum pane size as a percentage string (e.g., "5%"). */
   readonly paneMin: string
-  /** Sidebar default size as a percentage string (e.g., "25%"). */
-  readonly sidebarDefault: string
-  /** Sidebar maximum size as a percentage string (e.g., "35%"). */
-  readonly sidebarMax: string
-  /** Sidebar minimum size as a percentage string (e.g., "12%"). */
-  readonly sidebarMin: string
+  /** Sidebar default size in pixels. */
+  readonly sidebarDefaultPx: number
+  /** Sidebar maximum size in pixels. */
+  readonly sidebarMaxPx: number
+  /** Sidebar minimum size in pixels. */
+  readonly sidebarMinPx: number
   /** Current viewport width in pixels. */
   readonly viewportWidth: number
 }
@@ -60,15 +60,6 @@ interface ResponsiveLayoutSizes {
  */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-/**
- * Convert a pixel value to a percentage of the viewport width,
- * formatted as a string with "%" suffix for react-resizable-panels.
- */
-function pxToPercent(px: number, viewportWidth: number): string {
-  const percent = (px / viewportWidth) * 100
-  return `${Math.round(percent)}%`
 }
 
 /**
@@ -109,9 +100,9 @@ function useResponsiveLayout(): ResponsiveLayoutSizes {
     const paneMinPercent = clamp((MIN_PANE_WIDTH_PX / vw) * 100, 3, 15)
 
     return {
-      sidebarDefault: pxToPercent(sidebar.defaultPx, vw),
-      sidebarMin: pxToPercent(sidebar.minPx, vw),
-      sidebarMax: '90%',
+      sidebarDefaultPx: sidebar.defaultPx,
+      sidebarMinPx: sidebar.minPx,
+      sidebarMaxPx: Math.round(vw * 0.9),
       paneMin: `${Math.round(paneMinPercent)}%`,
       canCollapseSidebar: vw < 1280,
       viewportWidth: vw,

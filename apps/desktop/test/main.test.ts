@@ -14,8 +14,7 @@ interface MockWindowRecord {
 }
 
 const waitForBootstrap = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
+  await vi.dynamicImportSettled()
 }
 
 const noop = (): void => undefined
@@ -104,6 +103,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   vi.resetModules()
 
   vi.stubEnv('VITE_DEV_SERVER_URL', 'http://127.0.0.1:5173')
+  vi.stubEnv('LABORER_SKIP_WATCH', '1')
 
   const BrowserWindow = createBrowserWindowMock()
   const appOn = vi.fn()
@@ -147,6 +147,12 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     triggerDownloadUpdate: vi.fn(),
     triggerInstallUpdate: vi.fn(),
   }))
+  vi.doMock('../src/backend-process-manager.js', () => ({
+    BackendProcessManager: class {
+      start = vi.fn(() => ({ wsUrl: 'ws://127.0.0.1:12345/?token=test' }))
+      stop = vi.fn()
+    },
+  }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
   vi.doMock('../src/ipc.js', () => ({
     askRenderersBeforeQuit: vi.fn(async () => false),
@@ -155,6 +161,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     QUIT_CONFIRMED_CHANNEL: 'desktop:quit-confirmed',
     registerIpcHandlers: registerIpcHandlersMock,
     setDownloadUpdateHandler: vi.fn(),
+    setGetBackendWsUrlHandler: vi.fn(),
     setGetSidecarStatusesHandler: vi.fn(),
     setGetUpdateStateHandler: vi.fn(),
     setInstallUpdateHandler: vi.fn(),

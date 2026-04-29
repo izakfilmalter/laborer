@@ -953,9 +953,9 @@ function HomeComponent() {
 
   // Sidebar width persistence — restore from localStorage, debounced writes
   const sidebarWidth = useSidebarWidth(
-    Number.parseFloat(responsiveSizes.sidebarMin),
-    Number.parseFloat(responsiveSizes.sidebarMax),
-    Number.parseFloat(responsiveSizes.sidebarDefault)
+    responsiveSizes.sidebarMinPx,
+    responsiveSizes.sidebarMaxPx,
+    responsiveSizes.sidebarDefaultPx
   )
 
   // Project collapse state — persisted to localStorage

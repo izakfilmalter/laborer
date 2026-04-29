@@ -36,14 +36,10 @@ interface SidebarWidthState {
 }
 
 function useSidebarWidth(
-  minPercent: number,
-  maxPercent: number,
-  defaultPercent: number
+  minPx: number,
+  maxPx: number,
+  defaultPx: number
 ): SidebarWidthState {
-  const viewportWidth = window.innerWidth
-  const minPx = (minPercent / 100) * viewportWidth
-  const maxPx = (maxPercent / 100) * viewportWidth
-  const defaultPx = (defaultPercent / 100) * viewportWidth
   const preferredPxRef = useRef<number | null>(null)
 
   const [widthPx, setWidthPxState] = useState(() => {

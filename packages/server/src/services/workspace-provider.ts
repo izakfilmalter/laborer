@@ -798,7 +798,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             const stdout = await new Response(proc.stdout).text()
             return exitCode === 0 ? stdout.trim() : null
           },
-          catch: () => null as never,
+          catch: () => null,
         }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
       /**
@@ -821,7 +821,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             // rev-parse returns "HEAD" for detached HEAD state
             return branch === 'HEAD' ? null : branch
           },
-          catch: () => null as never,
+          catch: () => null,
         }).pipe(Effect.catchAll(() => Effect.succeed(null)))
 
       const performSandboxSetup = (params: {
@@ -857,30 +857,28 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           | ((workspaceId: string) => Effect.Effect<void, RpcError>)
           | undefined
       }): Effect.Effect<void, RpcError> =>
-        Effect.gen(function* () {
-          yield* sandboxProvider.createSandbox({
-            workspaceId: params.id,
-            worktreePath: params.worktreePath,
-            branchName: params.branchName,
-            projectName: params.projectName,
-            repoUrl: params.repoUrl,
-            currentBranch: params.currentBranch,
-            devServerConfig: {
-              autoOpen: params.devServer.autoOpen.value,
-              autoStopInterval: params.devServer.autoStopInterval.value,
-              dockerfile: params.devServer.dockerfile.value,
-              image: params.devServer.image.value,
-              installCommand: params.devServer.installCommand.value,
-              network: params.devServer.network.value,
-              port: params.devServer.port.value,
-              provider: params.devServer.provider.value,
-              resources: params.devServer.resources.value,
-              setupScripts: params.devServer.setupScripts.value,
-              startCommand: params.devServer.startCommand.value,
-              workdir: params.devServer.workdir.value,
-            },
-            onReady: params.onReady,
-          })
+        sandboxProvider.createSandbox({
+          workspaceId: params.id,
+          worktreePath: params.worktreePath,
+          branchName: params.branchName,
+          projectName: params.projectName,
+          repoUrl: params.repoUrl,
+          currentBranch: params.currentBranch,
+          devServerConfig: {
+            autoOpen: params.devServer.autoOpen.value,
+            autoStopInterval: params.devServer.autoStopInterval.value,
+            dockerfile: params.devServer.dockerfile.value,
+            image: params.devServer.image.value,
+            installCommand: params.devServer.installCommand.value,
+            network: params.devServer.network.value,
+            port: params.devServer.port.value,
+            provider: params.devServer.provider.value,
+            resources: params.devServer.resources.value,
+            setupScripts: params.devServer.setupScripts.value,
+            startCommand: params.devServer.startCommand.value,
+            workdir: params.devServer.workdir.value,
+          },
+          onReady: params.onReady,
         })
 
       const runPostWorktreeSetup = (params: {

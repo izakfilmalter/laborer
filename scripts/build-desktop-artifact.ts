@@ -329,6 +329,7 @@ interface StagePackageJson {
   readonly laborerCommitHash: string
   readonly main: string
   readonly name: string
+  readonly overrides?: Record<string, unknown>
   readonly private: true
   readonly version: string
 }
@@ -338,7 +339,7 @@ interface StagePackageJson {
  *
  *   <stage>/app/
  *     package.json              <- generated production package.json
- *     node_modules/             <- installed via `bun install --production`
+ *     node_modules/             <- installed via `bun install --production --omit optional`
  *     apps/
  *       desktop/
  *         dist-electron/        <- main.cjs, preload.cjs, utility-process-bootstrap.cjs
@@ -446,6 +447,7 @@ function stage(stageRoot: string): void {
     devDependencies: {
       electron: electronVersion,
     },
+    overrides: rootPkg.overrides,
   }
 
   writeFileSync(
@@ -455,7 +457,9 @@ function stage(stageRoot: string): void {
 
   // Install production dependencies in the staging directory.
   log('Installing staged production dependencies...')
-  run('bun', ['install', '--production'], { cwd: stageAppDir })
+  run('bun', ['install', '--production', '--omit', 'optional'], {
+    cwd: stageAppDir,
+  })
 
   // Run electron-builder.
   log(`Building mac/dmg+zip (arch=${ARCH}, version=${appVersion})...`)

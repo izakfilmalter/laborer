@@ -196,7 +196,7 @@ describe('ProjectSettingsModal', () => {
       .setup()
       .click(screen.getByRole('button', { name: 'Open settings for Laborer' }))
 
-    expect(screen.getByText('Waiting for project services...')).toBeTruthy()
+    expect(screen.getByText('Connecting to server...')).toBeTruthy()
     expect(useAtomValueMock).not.toHaveBeenCalled()
   })
 

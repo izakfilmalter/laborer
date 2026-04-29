@@ -1,4 +1,5 @@
 import { watch } from 'node:fs'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor, shell } from 'electron'
 import { resolveDesktopAppName } from './app-name.js'
@@ -10,6 +11,7 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
+import { BackendProcessManager } from './backend-process-manager.js'
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
@@ -19,6 +21,7 @@ import {
   QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
   setDownloadUpdateHandler,
+  setGetBackendWsUrlHandler,
   setGetSidecarStatusesHandler,
   setGetUpdateStateHandler,
   setInstallUpdateHandler,
@@ -38,6 +41,13 @@ import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
+
+if (process.env.LABORER_BACKEND_CHILD === '1') {
+  console.error(
+    '[main] Refusing to launch desktop app from backend child process environment'
+  )
+  process.exit(1)
+}
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -183,6 +193,12 @@ let lifecycleMonitor: LifecycleMonitor | null = null
  * Only created in dev mode, unless `LABORER_SKIP_WATCH=1` is set.
  */
 let devWatcher: DevWatcher | null = null
+
+/** Server backend child process manager. */
+let backendProcessManager: BackendProcessManager | null = null
+
+/** Current server backend WebSocket URL exposed to renderer clients. */
+let backendWsUrl: string | null = null
 
 /** System tray icon manager. */
 const trayManager = new TrayManager()
@@ -331,6 +347,40 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   return window
 }
 
+function reserveLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (typeof address === 'object' && address !== null) {
+        const { port } = address
+        server.close(() => resolve(port))
+        return
+      }
+      server.close(() => reject(new Error('Failed to reserve backend port')))
+    })
+  })
+}
+
+async function startServerBackend(): Promise<void> {
+  const port = await reserveLoopbackPort()
+  const terminalPort = await reserveLoopbackPort()
+  const fileWatcherPort = await reserveLoopbackPort()
+
+  process.env.LABORER_TERMINAL_HTTP_PORT = String(terminalPort)
+  process.env.LABORER_TERMINAL_RPC_URL = `ws://127.0.0.1:${String(terminalPort)}/rpc`
+  process.env.LABORER_FILE_WATCHER_HTTP_PORT = String(fileWatcherPort)
+  process.env.LABORER_FILE_WATCHER_RPC_URL = `ws://127.0.0.1:${String(fileWatcherPort)}/rpc`
+  process.env.PORT = String(port)
+
+  backendProcessManager = new BackendProcessManager({
+    authToken: crypto.randomUUID(),
+    port,
+  })
+  backendWsUrl = backendProcessManager.start().wsUrl
+}
+
 /**
  * Broker direct MessagePort channels between utility processes that
  * need to communicate with each other.
@@ -341,54 +391,14 @@ function createWindow(record?: WindowRecord): BrowserWindow {
  * either service, since old ports die with old processes.
  */
 function brokerInterProcessPorts(): void {
-  // Server <-> Terminal: server's TerminalClient calls TerminalRpcs
-  // @see Issue #13: Server-to-terminal MessagePort channel
-  if (
-    lifecycleMonitor?.isHealthy('terminal') &&
-    lifecycleMonitor?.isHealthy('server')
-  ) {
-    utilityProcessManager?.brokerInterProcessPort(
-      'server',
-      { type: 'terminal-rpc-port' },
-      'terminal',
-      { type: 'port' }
-    )
-  }
-
-  // Server <-> File-watcher: server's FileWatcherClient calls FileWatcherRpcs
-  // @see Issue #14: File-watcher as utility process
-  if (
-    lifecycleMonitor?.isHealthy('file-watcher') &&
-    lifecycleMonitor?.isHealthy('server')
-  ) {
-    utilityProcessManager?.brokerInterProcessPort(
-      'server',
-      { type: 'file-watcher-rpc-port' },
-      'file-watcher',
-      { type: 'port' }
-    )
-  }
-
-  // MCP <-> Server: MCP's LaborerRpcClient calls LaborerRpcs
-  // The MCP utility process receives the port as 'server-rpc-port',
-  // the server receives it as 'port' (additional RPC port).
-  // @see Issue #15: MCP as utility process
-  if (
-    lifecycleMonitor?.isHealthy('mcp') &&
-    lifecycleMonitor?.isHealthy('server')
-  ) {
-    utilityProcessManager?.brokerInterProcessPort(
-      'mcp',
-      { type: 'server-rpc-port' },
-      'server',
-      { type: 'port' }
-    )
-  }
+  // Server no longer runs as a utility process. The backend child reaches
+  // terminal and file-watcher over loopback WebSocket RPC, and standalone MCP
+  // clients reach the backend child's `/rpc` endpoint directly.
 }
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     // In production, register the custom laborer:// protocol handler
     // that serves the built frontend from disk.
     if (!isDev) {
@@ -431,14 +441,11 @@ app
     // renderer can acquire direct MessagePort connections to services.
     setUtilityProcessManager(utilityProcessManager)
 
+    await startServerBackend()
+
     // Fork utility processes via the lifecycle monitor, which handles
     // startup detection, crash recovery, and status events.
-    lifecycleMonitor.forkAllAndMonitor([
-      'terminal',
-      'server',
-      'file-watcher',
-      'mcp',
-    ])
+    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher', 'mcp'])
 
     // Pause heartbeat monitoring when the system sleeps so stale
     // timestamps don't trigger false-positive crash detections on wake.
@@ -487,7 +494,7 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
+      const validNames = ['terminal', 'file-watcher', 'mcp'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return
@@ -509,6 +516,8 @@ app
     setGetSidecarStatusesHandler(() => {
       return lifecycleMonitor?.getCurrentStatuses() ?? []
     })
+
+    setGetBackendWsUrlHandler(() => backendWsUrl)
 
     // Wire auto-update IPC handlers.
     setGetUpdateStateHandler(() => getUpdateState())
@@ -637,6 +646,10 @@ async function shutdownUtilityProcesses(): Promise<void> {
   if (utilityProcessManager) {
     await utilityProcessManager.killAllAndWait(UTILITY_QUIT_TIMEOUT_MS)
   }
+
+  backendProcessManager?.stop()
+  backendProcessManager = null
+  backendWsUrl = null
 }
 
 // Phase 1: `before-quit` — ask renderers for permission, with veto support.

@@ -369,9 +369,7 @@ export class UtilityProcessManager {
         appendLifecycleLog(`[utility:${name}] Service ready`)
       } else if (msg?.type === 'error') {
         console.error(`[utility:${name}] Bootstrap error: ${msg.message}`)
-        appendLifecycleLog(
-          `[utility:${name}] Bootstrap error: ${msg.message}`
-        )
+        appendLifecycleLog(`[utility:${name}] Bootstrap error: ${msg.message}`)
       }
 
       // Forward all typed messages to the message handler (LifecycleMonitor).

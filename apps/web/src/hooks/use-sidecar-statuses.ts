@@ -21,7 +21,7 @@ import type {
 } from '@laborer/shared/desktop-bridge'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getDesktopBridge } from '@/lib/desktop'
+import { getBackendWsUrl, getDesktopBridge } from '@/lib/desktop'
 import {
   deriveSidecarStatuses,
   type SidecarStatuses,
@@ -92,6 +92,20 @@ function useSidecarStatuses(): SidecarStatuses {
     })
 
     return bridge.onSidecarStatus(handleEvent)
+  }, [handleEvent])
+
+  // Backend-child mode: `server` is no longer an Electron utility process,
+  // so it does not emit sidecar lifecycle events. Treat a resolved backend URL
+  // as the server health signal for renderer lifecycle gates.
+  useEffect(() => {
+    if (!useIpcEvents) {
+      return
+    }
+
+    const url = getBackendWsUrl()
+    if (url !== null) {
+      handleEvent({ name: 'server', state: 'healthy' })
+    }
   }, [handleEvent])
 
   // Dev mode (browser or Electron dev): poll health endpoints.

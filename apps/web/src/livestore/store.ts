@@ -33,13 +33,25 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import { acquireSyncPort, isElectron } from '../lib/desktop'
+import {
+  acquireSyncPort,
+  getBackendSyncWsUrl,
+  isElectron,
+} from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 import {
   consumePendingPersistenceReset,
+  formatRecoverableErrorCause,
   LIVESTORE_FATAL_ERROR_MESSAGE,
+  recoverFromPersistenceError,
   schedulePersistenceResetRecovery,
 } from './recovery'
+
+const originalConsoleError = console.error.bind(console)
+console.error = (...args: unknown[]) => {
+  recoverFromPersistenceError(formatRecoverableErrorCause(args))
+  originalConsoleError(...args)
+}
 
 /**
  * Whether to reset persistence on load. In dev mode, append `?reset`
@@ -128,23 +140,29 @@ function createLiveStoreWorker(options: { name: string }): Worker {
     window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
   })
 
-  // Acquire a sync MessagePort from the server utility process and
-  // transfer it to the worker. This happens asynchronously — the worker
-  // waits for the port before initializing LiveStore.
+  const backendSyncUrl = getBackendSyncWsUrl()
+  if (backendSyncUrl) {
+    worker.postMessage({ type: 'sync-url', url: backendSyncUrl })
+    return worker
+  }
+
   acquireSyncPort()
     .then((port) => {
+      if (port === null) {
+        return
+      }
       if (port) {
         worker.postMessage({ type: 'sync-port' }, [port])
       } else {
         console.warn(
-          '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
+          '[LiveStore.store] Failed to acquire sync port — starting LiveStore without sync backend'
         )
-        window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
+        worker.postMessage({ type: 'no-sync' })
       }
     })
     .catch((error: unknown) => {
       console.error('[LiveStore.store] Error acquiring sync port:', error)
-      window.dispatchEvent(new Event(RPC_PORT_DEAD_EVENT))
+      worker.postMessage({ type: 'no-sync' })
     })
 
   return worker

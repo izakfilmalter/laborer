@@ -1,9 +1,7 @@
 /**
  * LaborerClient — AtomRpc client for the server's LaborerRpcs.
  *
- * Communicates via a direct MessagePort connection to the server utility
- * process (no HTTP, no JSON serialization). The port is acquired lazily
- * via `acquireServicePort('server')` when the first RPC is made.
+ * Communicates with the desktop-managed server backend over loopback WebSocket.
  *
  * Uses `AtomRpc.Tag` to provide typed `query` and `mutation` atoms that
  * integrate with React components via `@effect-atom/atom`.
@@ -12,34 +10,44 @@
  * @see packages/server/src/utility-main.ts — Server utility process entry
  */
 
-import { RpcClient } from '@effect/rpc'
+import {
+  layerWebSocket,
+  layerWebSocketConstructorGlobal,
+} from '@effect/platform/Socket'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Layer } from 'effect'
+import { Context, Effect, Layer } from 'effect'
 
-import { acquireServicePort } from '@/lib/desktop'
+import { getBackendRpcWsUrl } from '@/lib/desktop'
 
 const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
   RpcClient.Protocol,
   Effect.gen(function* () {
-    const port = yield* Effect.promise(() => acquireServicePort('server'))
-    if (!port) {
+    const rpcUrl = getBackendRpcWsUrl()
+    if (!rpcUrl) {
       return yield* Effect.die(
-        'Server utility process is not running — could not acquire MessagePort'
+        'Server backend is not running — could not resolve WebSocket URL'
       )
     }
-    return yield* makeClientProtocolMessagePort(
-      port as unknown as RpcMessagePort
+    const socketLayer = layerWebSocket(rpcUrl).pipe(
+      Layer.provide(layerWebSocketConstructorGlobal)
     )
+    const protocol = yield* RpcClient.layerProtocolSocket({
+      retryTransientErrors: true,
+    }).pipe(
+      Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),
+      Layer.build,
+      Effect.map((context) => Context.get(context, RpcClient.Protocol))
+    )
+    return protocol
   })
 )
 
 /**
  * LaborerClient — typed AtomRpc client for React components.
  *
- * Uses MessagePort to the server utility process.
+ * Uses WebSocket RPC to the desktop-managed server backend.
  * Provides `mutation` and `query` helpers for all LaborerRpcs endpoints.
  */
 export const ConfigReactivityKeys = ['config'] as const

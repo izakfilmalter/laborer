@@ -245,6 +245,23 @@ const FileWatcherRpcPortLive = Layer.effect(
   })
 )
 
+const isUtilityProcess = Boolean(
+  (process as unknown as { parentPort?: unknown }).parentPort
+)
+
+const provideUtilityPortLayers = <RIn, E, ROut>(
+  layer: Layer.Layer<ROut, E, RIn>
+) => {
+  if (!isUtilityProcess) {
+    return layer
+  }
+
+  return layer.pipe(
+    Layer.provide(FileWatcherRpcPortLive),
+    Layer.provide(TerminalRpcPortLive)
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Deferred Layers — Real implementations (built in background fiber)
 // ---------------------------------------------------------------------------
@@ -424,8 +441,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       // Build each layer group separately to identify hangs.
       yield* Effect.logInfo('[deferred-init] Building leaf layers...')
       const leafCtx = yield* Layer.build(
-        DeferredLeafLayers.pipe(
-          Layer.provide(FileWatcherRpcPortLive),
+        provideUtilityPortLayers(DeferredLeafLayers).pipe(
           Layer.provide(CoreDeps)
         )
       )
@@ -510,8 +526,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       const terminalFiber = yield* Effect.gen(function* () {
         yield* Effect.logInfo('[deferred-init] Building TerminalClient...')
         const termCtx = yield* Layer.build(
-          TerminalClient.layer.pipe(
-            Layer.provide(TerminalRpcPortLive),
+          provideUtilityPortLayers(TerminalClient.layer).pipe(
             Layer.provide(CoreDeps),
             Layer.provide(
               Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
@@ -584,6 +599,13 @@ const DeferredServicesProxyLive = Layer.scopedContext(
   })
 )
 
+export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
+  Layer.provideMerge(DeferredServicesReadyLayer),
+  Layer.provideMerge(ConfigService.layer),
+  Layer.provideMerge(RepositoryIdentity.layer),
+  Layer.provideMerge(LaborerStoreLive)
+)
+
 // ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
@@ -630,13 +652,6 @@ async function main(): Promise<void> {
   // Uses `provideMerge` so core infrastructure services (LaborerStore,
   // ConfigService, DeferredServicesReady) remain in the output context.
   // LaborerRpcsLive requires these services directly in its handlers.
-  const InfrastructureLayer = DeferredServicesProxyLive.pipe(
-    Layer.provideMerge(DeferredServicesReadyLayer),
-    Layer.provideMerge(ConfigService.layer),
-    Layer.provideMerge(RepositoryIdentity.layer),
-    Layer.provideMerge(LaborerStoreLive)
-  )
-
   // Queue for additional RPC ports arriving from the parent process.
   // Ports are pushed from the synchronous event listener and consumed
   // inside the Effect scope where the shared infrastructure is live.
@@ -670,7 +685,7 @@ async function main(): Promise<void> {
       // Do NOT call start() here — the RPC server transport will call
       // start() after attaching its message listener to avoid losing
       // messages (MessagePortMain doesn't buffer after start).
-      serveSyncOnPort(syncPort)
+      serveSyncOnPort(syncPort, { source: 'renderer' })
     } else if (data?.type === 'terminal-rpc-port' && event.ports.length > 0) {
       const terminalPort = event.ports[0] as RpcMessagePort
       // Do NOT call start() here — the RPC client transport will call
@@ -787,10 +802,12 @@ async function main(): Promise<void> {
   await Effect.runPromise(program)
 }
 
-main().catch((error) => {
-  console.error(`[server-utility] Fatal error: ${String(error)}`)
-  if (error instanceof Error && error.stack) {
-    console.error(error.stack)
-  }
-  process.exit(1)
-})
+if ((process as unknown as { parentPort?: unknown }).parentPort) {
+  main().catch((error) => {
+    console.error(`[server-utility] Fatal error: ${String(error)}`)
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack)
+    }
+    process.exit(1)
+  })
+}

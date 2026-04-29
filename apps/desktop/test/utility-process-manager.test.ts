@@ -616,11 +616,22 @@ describe('UtilityProcessManager', () => {
       )
 
       const logWrites = appendFileSyncMock.mock.calls
-        .filter(([filePath]) => filePath === '/mock/appData/logs/utility-processes/server.log')
+        .filter(
+          ([filePath]) =>
+            filePath === '/mock/appData/logs/utility-processes/server.log'
+        )
         .map(([, line]) => String(line))
 
-      expect(logWrites.some((line) => line.includes('[stdout] sync backend initialized'))).toBe(true)
-      expect(logWrites.some((line) => line.includes('[stderr] warning: stale cursor'))).toBe(true)
+      expect(
+        logWrites.some((line) =>
+          line.includes('[stdout] sync backend initialized')
+        )
+      ).toBe(true)
+      expect(
+        logWrites.some((line) =>
+          line.includes('[stderr] warning: stale cursor')
+        )
+      ).toBe(true)
     })
   })
 

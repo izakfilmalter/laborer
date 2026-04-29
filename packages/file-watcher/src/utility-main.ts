@@ -33,7 +33,10 @@
  * @see Issue #14: File-watcher as utility process
  */
 
-import { RpcServer } from '@effect/rpc'
+import { createServer } from 'node:http'
+import { HttpMiddleware, HttpRouter } from '@effect/platform'
+import { NodeHttpServer } from '@effect/platform-node'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -168,6 +171,35 @@ function serveRpcOnPort(
   Effect.runFork(program)
 }
 
+function serveWebSocketRpc(
+  port: number,
+  sharedServicesLayer: Layer.Layer<WatcherManager>
+): void {
+  const RpcLive = RpcServer.layer(FileWatcherRpcs).pipe(
+    Layer.provide(RpcServer.layerProtocolWebsocket({ path: '/rpc' })),
+    Layer.provide(FileWatcherRpcsLive),
+    Layer.provide(sharedServicesLayer)
+  )
+  const ServerLive = HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
+    Layer.provide(RpcLive),
+    Layer.provide(RpcSerialization.layerJson),
+    Layer.provide(
+      NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })
+    )
+  )
+
+  Effect.runFork(
+    Layer.launch(ServerLive).pipe(
+      Effect.tap(() =>
+        Effect.logInfo(
+          `[file-watcher-utility] WebSocket RPC listening on 127.0.0.1:${String(port)}`
+        )
+      ),
+      Effect.scoped
+    )
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
@@ -246,6 +278,11 @@ async function main(): Promise<void> {
   const sharedServicesLayer = Layer.succeedContext(
     Context.make(WatcherManager, Context.get(runtime.context, WatcherManager))
   )
+
+  const httpPort = Number(process.env.LABORER_FILE_WATCHER_HTTP_PORT ?? '0')
+  if (httpPort > 0) {
+    serveWebSocketRpc(httpPort, sharedServicesLayer)
+  }
 
   // Wire up the port handler now that the runtime is ready.
   portHandler = (port) => {

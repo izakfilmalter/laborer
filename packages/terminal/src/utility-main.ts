@@ -27,7 +27,10 @@
  * @see services/terminal-session-persistence.ts — Replay buffer and serialization
  */
 
-import { RpcServer } from '@effect/rpc'
+import { createServer } from 'node:http'
+import { HttpMiddleware, HttpRouter } from '@effect/platform'
+import { NodeHttpServer } from '@effect/platform-node'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -138,6 +141,35 @@ function serveRpcOnPort(
     )
   )
   Effect.runFork(program)
+}
+
+function serveWebSocketRpc(
+  port: number,
+  sharedServicesLayer: Layer.Layer<TerminalManager>
+): void {
+  const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
+    Layer.provide(RpcServer.layerProtocolWebsocket({ path: '/rpc' })),
+    Layer.provide(TerminalRpcsLive),
+    Layer.provide(sharedServicesLayer)
+  )
+  const ServerLive = HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
+    Layer.provide(RpcLive),
+    Layer.provide(RpcSerialization.layerJson),
+    Layer.provide(
+      NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })
+    )
+  )
+
+  Effect.runFork(
+    Layer.launch(ServerLive).pipe(
+      Effect.tap(() =>
+        Effect.logInfo(
+          `[terminal-utility] WebSocket RPC listening on 127.0.0.1:${String(port)}`
+        )
+      ),
+      Effect.scoped
+    )
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +379,11 @@ async function main(): Promise<void> {
   const sharedServicesLayer = Layer.succeedContext(
     Context.make(TerminalManager, Context.get(runtime.context, TerminalManager))
   )
+
+  const httpPort = Number(process.env.LABORER_TERMINAL_HTTP_PORT ?? '0')
+  if (httpPort > 0) {
+    serveWebSocketRpc(httpPort, sharedServicesLayer)
+  }
 
   // Set up session persistence (replay buffers, SIGTERM handler, restore)
   setupSessionPersistence(managedRuntime, persistedState)

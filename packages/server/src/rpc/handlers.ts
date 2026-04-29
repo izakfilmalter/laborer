@@ -55,6 +55,21 @@ const toRpcError = (
     message: error.message,
   })
 
+const getProjectFromStore = (projectId: string) =>
+  Effect.gen(function* () {
+    const { store } = yield* LaborerStore
+    const project = store.query(tables.projects.where('id', projectId))[0]
+
+    if (!project) {
+      return yield* new RpcError({
+        message: `Project not found: ${projectId}`,
+        code: 'NOT_FOUND',
+      })
+    }
+
+    return project
+  })
+
 const toPrdResponse = (prd: {
   id: string
   projectId: string
@@ -168,10 +183,9 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
-    const registry = yield* ProjectRegistry
     const configService = yield* ConfigService
 
-    const project = yield* registry.getProject(projectId)
+    const project = yield* getProjectFromStore(projectId)
     return yield* configService
       .resolveConfig(project.repoPath, project.name)
       .pipe(
@@ -345,10 +359,9 @@ export const handleConfigUpdate = ({
       })
     }
 
-    const registry = yield* ProjectRegistry
     const configService = yield* ConfigService
 
-    const project = yield* registry.getProject(projectId)
+    const project = yield* getProjectFromStore(projectId)
     yield* configService.writeProjectConfig(project.repoPath, config)
   })
 

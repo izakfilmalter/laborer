@@ -1,4 +1,4 @@
-import { FetchHttpClient } from '@effect/platform'
+import { NodeSocket } from '@effect/platform-node'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcClientError } from '@effect/rpc/RpcClientError'
 import {
@@ -7,8 +7,6 @@ import {
   type ProjectResponse,
   RpcError,
 } from '@laborer/shared/rpc'
-import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import type { TaskStatus } from '@laborer/shared/types'
 import { Context, Effect, Layer } from 'effect'
 
@@ -28,11 +26,11 @@ export interface TaskResponse {
   readonly title: string
 }
 
-// Standalone MCP mode uses HTTP to connect to the server. The PORT env
+// Standalone MCP mode uses WebSocket RPC to connect to the server. The PORT env
 // var defaults to 2100 for backwards compatibility with external MCP
-// clients. In utility process mode, the `utilityLayer` is used instead.
+// clients. Utility process mode uses the same layer with an inherited PORT.
 const serverPort = Number(process.env.PORT ?? '2100')
-const serverRpcUrl = `http://localhost:${serverPort}/rpc`
+const serverRpcUrl = `ws://localhost:${serverPort}/rpc`
 
 class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
   LaborerRpcClient,
@@ -75,20 +73,22 @@ class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
   }
 >() {
   /**
-   * HTTP-based layer for standalone MCP server mode (stdio entry point).
-   * Uses `FetchHttpClient` + JSON serialization to connect to the server's
-   * `/rpc` HTTP endpoint.
+   * WebSocket-based layer for standalone MCP server mode (stdio entry point).
+   * Uses socket RPC + JSON serialization to connect to the server's `/rpc`
+   * endpoint.
    */
   static readonly layer = Layer.scoped(
     LaborerRpcClient,
     Effect.gen(function* () {
       const rpcClient = yield* RpcClient.make(LaborerRpcs).pipe(
         Effect.provide(
-          RpcClient.layerProtocolHttp({
-            url: serverRpcUrl,
-          }).pipe(
-            Layer.provide(FetchHttpClient.layer),
-            Layer.provide(RpcSerialization.layerJson)
+          RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeSocket.layerWebSocket(serverRpcUrl),
+                RpcSerialization.layerJson
+              )
+            )
           )
         )
       )
@@ -96,34 +96,6 @@ class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
       return wrapRpcClient(rpcClient)
     })
   )
-
-  /**
-   * MessagePort-based layer for utility process mode.
-   * Uses a brokered MessagePort to the server utility process for
-   * `LaborerRpcs` calls. No HTTP, no JSON serialization — MessagePort
-   * uses structured clone natively.
-   *
-   * @param port - The brokered MessagePort to the server utility process
-   *
-   * @see Issue #15: MCP as utility process
-   */
-  static utilityLayer(port: RpcMessagePort): Layer.Layer<LaborerRpcClient> {
-    return Layer.scoped(
-      LaborerRpcClient,
-      Effect.gen(function* () {
-        const rpcClient = yield* RpcClient.make(LaborerRpcs).pipe(
-          Effect.provide(
-            Layer.scoped(
-              RpcClient.Protocol,
-              makeClientProtocolMessagePort(port)
-            )
-          )
-        )
-
-        return wrapRpcClient(rpcClient)
-      })
-    )
-  }
 }
 
 /**
@@ -134,7 +106,7 @@ type LaborerRpc = Effect.Effect.Success<typeof MakeLaborerClient>
 
 /**
  * Wrap an RPC client instance into the LaborerRpcClient service interface.
- * Shared between the HTTP and MessagePort layers.
+ * Shared by standalone and utility-process MCP modes.
  */
 function wrapRpcClient(rpcClient: LaborerRpc): LaborerRpcClient['Type'] {
   const listProjects = Effect.fn('LaborerRpcClient.listProjects')(function* () {

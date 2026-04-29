@@ -670,7 +670,7 @@ function ProjectSettingsModal({
 }: ProjectSettingsModalProps) {
   const [open, setOpen] = useState(false)
   const configGet$ = useMemo(() => createConfigGetQuery(projectId), [projectId])
-  const isServerEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
@@ -701,13 +701,13 @@ function ProjectSettingsModal({
             scripts, and brrr config for {projectName}.
           </DialogDescription>
         </DialogHeader>
-        {open && !isServerEventuallyReady && (
+        {open && !isServerReady && (
           <div className="flex items-center gap-2 py-6 text-muted-foreground text-sm">
             <Spinner className="size-4" />
-            Waiting for project services...
+            Connecting to server...
           </div>
         )}
-        {open && isServerEventuallyReady && (
+        {open && isServerReady && (
           <ProjectSettingsForm
             configGet$={configGet$}
             onSaved={() => setOpen(false)}

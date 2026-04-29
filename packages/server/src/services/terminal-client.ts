@@ -32,6 +32,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { NodeSocket } from '@effect/platform-node'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { tables } from '@laborer/shared/schema'
@@ -59,6 +61,7 @@ import { WorkspaceProvider } from './workspace-provider.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalClient'
+const terminalRpcUrl = process.env.LABORER_TERMINAL_RPC_URL ?? null
 
 /**
  * Map from terminal ID to workspace ID, maintained by the event stream
@@ -291,24 +294,37 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // MessagePort mode — direct process-to-process communication.
-          // The main process brokers a MessagePort between the server
-          // and terminal utility processes.
-          if (Option.isNone(terminalRpcPort)) {
-            return yield* Effect.die(
-              'TerminalRpcPort is not available — cannot connect to terminal service'
+          const client = yield* (() => {
+            if (Option.isSome(terminalRpcPort)) {
+              return createMessagePortRpcClient(
+                TerminalRpcs,
+                terminalRpcPort.value.port,
+                layerScope
+              )
+            }
+
+            if (terminalRpcUrl) {
+              return Effect.gen(function* () {
+                const socketLayer = NodeSocket.layerWebSocket(terminalRpcUrl)
+                const context = yield* Layer.build(
+                  RpcClient.layerProtocolSocket({
+                    retryTransientErrors: true,
+                  }).pipe(
+                    Layer.provide(
+                      Layer.mergeAll(socketLayer, RpcSerialization.layerJson)
+                    )
+                  )
+                )
+                return yield* RpcClient.make(TerminalRpcs).pipe(
+                  Effect.provide(context)
+                )
+              })
+            }
+
+            return Effect.die(
+              'TerminalRpcPort is not available and LABORER_TERMINAL_RPC_URL is unset — cannot connect to terminal service'
             )
-          }
-
-          yield* Effect.log(
-            'Connecting to terminal service via MessagePort'
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-
-          const client = yield* createMessagePortRpcClient(
-            TerminalRpcs,
-            terminalRpcPort.value.port,
-            layerScope
-          )
+          })()
 
           // Seed the map from the terminal service's current terminal list.
           // This handles the case where the server restarts but the terminal
@@ -514,6 +530,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           })
         )
 
+      const provideLayerScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(Scope.Scope, layerScope))
+
       /**
        * Auto-type setup scripts and dev server start command into a terminal.
        * Runs as a fire-and-forget background fiber so it doesn't block the
@@ -537,18 +556,20 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
               Effect.annotateLogs('module', logPrefix)
             )
 
-            yield* rpcClient.terminal
-              .write({
-                id: terminalId,
-                data: `${script}\n`,
-              })
-              .pipe(
-                Effect.catchAll((err) =>
-                  Effect.logWarning(
-                    `Failed to auto-type setup script '${script}': ${String(err)}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
+            yield* provideLayerScope(
+              rpcClient.terminal
+                .write({
+                  id: terminalId,
+                  data: `${script}\n`,
+                })
+                .pipe(
+                  Effect.catchAll((err) =>
+                    Effect.logWarning(
+                      `Failed to auto-type setup script '${script}': ${String(err)}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
                 )
-              )
+            )
 
             // Small delay between scripts to allow the shell to process
             yield* Effect.sleep(Duration.millis(200))
@@ -560,18 +581,20 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
               `Auto-typing start command: ${startCommand}`
             ).pipe(Effect.annotateLogs('module', logPrefix))
 
-            yield* rpcClient.terminal
-              .write({
-                id: terminalId,
-                data: `${startCommand}\n`,
-              })
-              .pipe(
-                Effect.catchAll((err) =>
-                  Effect.logWarning(
-                    `Failed to auto-type start command '${startCommand}': ${String(err)}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
+            yield* provideLayerScope(
+              rpcClient.terminal
+                .write({
+                  id: terminalId,
+                  data: `${startCommand}\n`,
+                })
+                .pipe(
+                  Effect.catchAll((err) =>
+                    Effect.logWarning(
+                      `Failed to auto-type start command '${startCommand}': ${String(err)}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
                 )
-              )
+            )
           }
 
           yield* Effect.log(
@@ -652,7 +675,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         command: string | undefined,
         autoRun: boolean | undefined
       ) {
-        const { client: rpcClient } = yield* getOrCreateClient
+        const { client: rpcClient } =
+          yield* provideLayerScope(getOrCreateClient)
 
         const containerNameValue =
           workspace.sandboxUrl?.replace('.orb.local', '') ?? workspaceId
@@ -665,21 +689,23 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           ? ['exec', '-it', containerNameValue, '/bin/sh', '-c', command]
           : ['exec', '-it', containerNameValue, '/bin/sh']
 
-        const terminalInfo = yield* rpcClient.terminal
-          .spawn({
-            command: 'docker',
-            args: dockerArgs,
-            cwd: workspace.worktreePath,
-            env: {
-              ...process.env,
-              TERM: 'xterm-256color',
-              COLORTERM: 'truecolor',
-            } as Record<string, string>,
-            cols: 80,
-            rows: 24,
-            workspaceId,
-          })
-          .pipe(Effect.catchAll(mapTerminalError))
+        const terminalInfo = yield* provideLayerScope(
+          rpcClient.terminal
+            .spawn({
+              command: 'docker',
+              args: dockerArgs,
+              cwd: workspace.worktreePath,
+              env: {
+                ...process.env,
+                TERM: 'xterm-256color',
+                COLORTERM: 'truecolor',
+              } as Record<string, string>,
+              cols: 80,
+              rows: 24,
+              workspaceId,
+            })
+            .pipe(Effect.catchAll(mapTerminalError))
+        )
 
         // Auto-type setup scripts + start command when autoRun is requested.
         // Runs as a fire-and-forget background fiber so it doesn't block
@@ -715,7 +741,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           workspaceId: string,
           command: string | undefined
         ) {
-          const { client: rpcClient, terminalPort } = yield* getOrCreateClient
+          const { client: rpcClient, terminalPort } =
+            yield* provideLayerScope(getOrCreateClient)
 
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
@@ -736,24 +763,26 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           const shellPath = command ? defaultShell : resolvedCommand
           const shellArgs = command ? ['-c', agentCmd] : []
 
-          const terminalInfo = yield* rpcClient.terminal
-            .spawn({
-              command: shellPath,
-              args: shellArgs,
-              cwd: workspace.worktreePath,
-              env: {
-                ...process.env,
-                ...workspaceEnv,
-                ...extraEnv,
-                TERM: 'xterm-256color',
-                COLORTERM: 'truecolor',
-              } as Record<string, string>,
-              id: terminalId,
-              cols: 80,
-              rows: 24,
-              workspaceId,
-            })
-            .pipe(Effect.catchAll(mapTerminalError))
+          const terminalInfo = yield* provideLayerScope(
+            rpcClient.terminal
+              .spawn({
+                command: shellPath,
+                args: shellArgs,
+                cwd: workspace.worktreePath,
+                env: {
+                  ...process.env,
+                  ...workspaceEnv,
+                  ...extraEnv,
+                  TERM: 'xterm-256color',
+                  COLORTERM: 'truecolor',
+                } as Record<string, string>,
+                id: terminalId,
+                cols: 80,
+                rows: 24,
+                workspaceId,
+              })
+              .pipe(Effect.catchAll(mapTerminalError))
+          )
 
           return {
             id: terminalInfo.id,
@@ -850,14 +879,15 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             return 0
           }
 
-          const { client: rpcClient } = yield* getOrCreateClient
+          const { client: rpcClient } =
+            yield* provideLayerScope(getOrCreateClient)
 
           let killedCount = 0
           yield* Effect.forEach(
             workspaceTerminalIds,
             (terminalId) =>
               pipe(
-                rpcClient.terminal.kill({ id: terminalId }),
+                provideLayerScope(rpcClient.terminal.kill({ id: terminalId })),
                 Effect.tap(() =>
                   Effect.sync(() => {
                     killedCount += 1
@@ -885,28 +915,37 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
 
       const resizeTerminal = Effect.fn('TerminalClient.resizeTerminal')(
         function* (terminalId: string, cols: number, rows: number) {
-          const { client: rpcClient } = yield* getOrCreateClient
-          yield* rpcClient.terminal
-            .resize({ id: terminalId, cols, rows })
-            .pipe(Effect.catchAll(mapTerminalError))
+          const { client: rpcClient } =
+            yield* provideLayerScope(getOrCreateClient)
+          yield* provideLayerScope(
+            rpcClient.terminal
+              .resize({ id: terminalId, cols, rows })
+              .pipe(Effect.catchAll(mapTerminalError))
+          )
         }
       )
 
       const killTerminal = Effect.fn('TerminalClient.killTerminal')(function* (
         terminalId: string
       ) {
-        const { client: rpcClient } = yield* getOrCreateClient
-        yield* rpcClient.terminal
-          .kill({ id: terminalId })
-          .pipe(Effect.catchAll(mapTerminalError))
+        const { client: rpcClient } =
+          yield* provideLayerScope(getOrCreateClient)
+        yield* provideLayerScope(
+          rpcClient.terminal
+            .kill({ id: terminalId })
+            .pipe(Effect.catchAll(mapTerminalError))
+        )
       })
 
       const removeTerminal = Effect.fn('TerminalClient.removeTerminal')(
         function* (terminalId: string) {
-          const { client: rpcClient } = yield* getOrCreateClient
-          yield* rpcClient.terminal
-            .remove({ id: terminalId })
-            .pipe(Effect.catchAll(mapTerminalError))
+          const { client: rpcClient } =
+            yield* provideLayerScope(getOrCreateClient)
+          yield* provideLayerScope(
+            rpcClient.terminal
+              .remove({ id: terminalId })
+              .pipe(Effect.catchAll(mapTerminalError))
+          )
         }
       )
 

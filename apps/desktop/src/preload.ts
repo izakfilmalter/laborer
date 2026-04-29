@@ -28,6 +28,7 @@ const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
+const GET_BACKEND_WS_URL_CHANNEL = 'desktop:get-backend-ws-url'
 const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
 const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
 // Port acquisition channel constants are no longer needed in the preload.
@@ -106,6 +107,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   },
 
   getSidecarStatuses: () => ipcRenderer.invoke(GET_SIDECAR_STATUSES_CHANNEL),
+
+  getBackendWsUrl: () => {
+    const result = ipcRenderer.sendSync(GET_BACKEND_WS_URL_CHANNEL)
+    return typeof result === 'string' ? result : null
+  },
 
   getWindowId: () => windowId,
 

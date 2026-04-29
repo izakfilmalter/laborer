@@ -6,6 +6,8 @@ const LIVESTORE_PERSISTENCE_RESET_ATTEMPT =
 const RECOVERABLE_PERSISTENCE_ERROR_SNIPPETS = [
   'During boot the backend head',
   'Encountered empty or corrupted database',
+  'Failed calling makeChangeset.apply',
+  'function signature mismatch',
 ] as const
 
 export const LIVESTORE_FATAL_ERROR_MESSAGE = 'laborer:livestore-fatal-error'
@@ -14,6 +16,27 @@ export const isRecoverablePersistenceError = (cause: string): boolean =>
   RECOVERABLE_PERSISTENCE_ERROR_SNIPPETS.some((snippet) =>
     cause.includes(snippet)
   )
+
+export const formatRecoverableErrorCause = (
+  values: readonly unknown[]
+): string =>
+  values
+    .map((value) => {
+      if (typeof value === 'string') {
+        return value
+      }
+
+      if (value instanceof Error) {
+        return `${value.message}\n${value.stack ?? ''}`
+      }
+
+      try {
+        return JSON.stringify(value)
+      } catch {
+        return String(value)
+      }
+    })
+    .join(' ')
 
 /**
  * Consume a one-shot flag instructing the next LiveStore boot to clear the
@@ -63,4 +86,23 @@ export const schedulePersistenceResetRecovery = (): boolean => {
   } catch {
     return false
   }
+}
+
+export const recoverFromPersistenceError = (
+  cause: string,
+  reload: () => void = () => globalThis.location.reload()
+): boolean => {
+  if (!isRecoverablePersistenceError(cause)) {
+    return false
+  }
+
+  if (!schedulePersistenceResetRecovery()) {
+    return false
+  }
+
+  console.warn(
+    '[LiveStore] Recoverable persisted-state error detected — reloading once with a cleared local cache'
+  )
+  reload()
+  return true
 }

@@ -25,6 +25,8 @@
  * @see Issue #20: Build script update + port reservation removal
  */
 
+import { NodeSocket } from '@effect/platform-node'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
 import {
   FileWatcherRpcError,
   FileWatcherRpcs,
@@ -39,6 +41,7 @@ import {
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'FileWatcherClient'
+const fileWatcherRpcUrl = process.env.LABORER_FILE_WATCHER_RPC_URL ?? null
 
 /**
  * Callback for receiving file events from the file-watcher service.
@@ -158,29 +161,37 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // MessagePort mode — direct process-to-process communication.
-          // The main process brokers a MessagePort between the server
-          // and file-watcher utility processes.
-          if (Option.isNone(fileWatcherRpcPort)) {
-            return yield* Effect.die(
-              'FileWatcherRpcPort is not available — cannot connect to file-watcher service'
+          const client = yield* (() => {
+            if (Option.isSome(fileWatcherRpcPort)) {
+              return createMessagePortRpcClient(
+                FileWatcherRpcs,
+                fileWatcherRpcPort.value.port,
+                layerScope
+              )
+            }
+
+            if (fileWatcherRpcUrl) {
+              return Effect.gen(function* () {
+                const socketLayer = NodeSocket.layerWebSocket(fileWatcherRpcUrl)
+                const context = yield* Layer.build(
+                  RpcClient.layerProtocolSocket({
+                    retryTransientErrors: true,
+                  }).pipe(
+                    Layer.provide(
+                      Layer.mergeAll(socketLayer, RpcSerialization.layerJson)
+                    )
+                  )
+                )
+                return yield* RpcClient.make(FileWatcherRpcs).pipe(
+                  Effect.provide(context)
+                )
+              })
+            }
+
+            return Effect.die(
+              'FileWatcherRpcPort is not available and LABORER_FILE_WATCHER_RPC_URL is unset — cannot connect to file-watcher service'
             )
-          }
-
-          yield* Effect.log('Creating RPC client...').pipe(
-            Effect.annotateLogs('module', logPrefix)
-          )
-
-          // Smoke test: send directly on the port to verify connectivity
-          fileWatcherRpcPort.value.port.postMessage?.({
-            type: 'ping2',
-            timestamp: Date.now(),
-          })
-          const client = yield* createMessagePortRpcClient(
-            FileWatcherRpcs,
-            fileWatcherRpcPort.value.port,
-            layerScope
-          )
+          })()
 
           yield* Effect.log('RPC client created — subscribing to events').pipe(
             Effect.annotateLogs('module', logPrefix)
@@ -223,30 +234,35 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
               code: 'INTERNAL_ERROR',
             })
 
+      const provideLayerScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(Scope.Scope, layerScope))
+
       const subscribe: FileWatcherClient['Type']['subscribe'] = (
         path,
         options
       ) =>
         Effect.gen(function* () {
-          const client = yield* getOrCreateClient
-          return yield* client.watcher
-            .subscribe({
-              path,
-              recursive: options?.recursive,
-              ignoreGlobs:
-                options?.ignoreGlobs !== undefined
-                  ? [...options.ignoreGlobs]
-                  : undefined,
-            })
-            .pipe(Effect.mapError(mapError))
+          const client = yield* provideLayerScope(getOrCreateClient)
+          return yield* provideLayerScope(
+            client.watcher
+              .subscribe({
+                path,
+                recursive: options?.recursive,
+                ignoreGlobs:
+                  options?.ignoreGlobs !== undefined
+                    ? [...options.ignoreGlobs]
+                    : undefined,
+              })
+              .pipe(Effect.mapError(mapError))
+          )
         }).pipe(Effect.mapError(mapError))
 
       const unsubscribe: FileWatcherClient['Type']['unsubscribe'] = (id) =>
         Effect.gen(function* () {
-          const client = yield* getOrCreateClient
-          return yield* client.watcher
-            .unsubscribe({ id })
-            .pipe(Effect.mapError(mapError))
+          const client = yield* provideLayerScope(getOrCreateClient)
+          return yield* provideLayerScope(
+            client.watcher.unsubscribe({ id }).pipe(Effect.mapError(mapError))
+          )
         }).pipe(Effect.mapError(mapError))
 
       const updateIgnore: FileWatcherClient['Type']['updateIgnore'] = (
@@ -254,10 +270,12 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
         ignoreGlobs
       ) =>
         Effect.gen(function* () {
-          const client = yield* getOrCreateClient
-          return yield* client.watcher
-            .updateIgnore({ id, ignoreGlobs: [...ignoreGlobs] })
-            .pipe(Effect.mapError(mapError))
+          const client = yield* provideLayerScope(getOrCreateClient)
+          return yield* provideLayerScope(
+            client.watcher
+              .updateIgnore({ id, ignoreGlobs: [...ignoreGlobs] })
+              .pipe(Effect.mapError(mapError))
+          )
         }).pipe(Effect.mapError(mapError))
 
       const onFileEvent = (
@@ -277,8 +295,10 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
       const listSubscriptions: FileWatcherClient['Type']['listSubscriptions'] =
         () =>
           Effect.gen(function* () {
-            const client = yield* getOrCreateClient
-            return yield* client.watcher.list().pipe(Effect.mapError(mapError))
+            const client = yield* provideLayerScope(getOrCreateClient)
+            return yield* provideLayerScope(
+              client.watcher.list().pipe(Effect.mapError(mapError))
+            )
           }).pipe(Effect.mapError(mapError))
 
       yield* Effect.addFinalizer(() =>

@@ -30,7 +30,7 @@
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { schema } from '@laborer/shared/schema'
 import { makeWorkerEffect } from '@livestore/adapter-web/worker'
-import type { makeWsSync } from '@livestore/sync-cf/client'
+import { makeWsSync } from '@livestore/sync-cf/client'
 import { Cause, Effect, Exit } from 'effect'
 import { makeMessagePortSync } from './livestore/messageport-sync'
 import {
@@ -98,56 +98,75 @@ console.error = (...args: unknown[]) => {
  * process and transfers it to this worker via
  * `worker.postMessage({ type: 'sync-port' }, [port])`.
  */
-const waitForSyncPort = (): Promise<MessagePort> =>
+type SyncConfig =
+  | { readonly type: 'message-port'; readonly port: MessagePort }
+  | { readonly type: 'websocket'; readonly url: string }
+  | { readonly type: 'none' }
+
+const waitForSyncConfig = (): Promise<SyncConfig> =>
   new Promise((resolve) => {
     const handler = (event: MessageEvent) => {
-      const data = event.data as { type?: string }
+      const data = event.data as { type?: string; url?: unknown }
+      if (data?.type === 'no-sync') {
+        self.removeEventListener('message', handler)
+        resolve({ type: 'none' })
+        return
+      }
+      if (data?.type === 'sync-url' && typeof data.url === 'string') {
+        self.removeEventListener('message', handler)
+        resolve({ type: 'websocket', url: data.url })
+        return
+      }
       if (data?.type === 'sync-port' && event.ports.length > 0) {
         self.removeEventListener('message', handler)
         const port = event.ports[0]
         if (port) {
-          resolve(port)
+          resolve({ port, type: 'message-port' })
         }
       }
     }
     self.addEventListener('message', handler)
   })
 
-// Wait for the sync MessagePort from the main thread, then initialize.
-waitForSyncPort().then((port) => {
-  console.log('[LiveStore.worker] initializing with MessagePort sync')
-
-  // The makeMessagePortSync adapter accepts any duck-typed port with
-  // postMessage/onmessage/start/close methods. Browser's MessagePort
-  // is compatible. The return type is duck-typed to match LiveStore's
-  // SyncBackend interface — we cast through `unknown` because LiveStore
-  // uses branded number types (GlobalEventSequenceNumber) internally
-  // that are structurally identical to plain numbers at runtime.
-  // Cast the browser MessagePort through `unknown` to satisfy the
-  // RpcMessagePort interface (structurally compatible, different
-  // onmessage signature due to browser vs generic typing).
-  const typedPort = port as unknown as Parameters<typeof makeMessagePortSync>[0]
-
-  const runWorker = async () => {
-    const exit = await Effect.runPromiseExit(
-      makeWorkerEffect({
-        schema,
-        sync: {
-          backend: makeMessagePortSync(typedPort) as unknown as ReturnType<
-            typeof makeWsSync
-          >,
-        },
-      })
-    )
-
-    if (Exit.isFailure(exit)) {
-      const cause = Cause.pretty(exit.cause)
-      console.error('[LiveStore.worker] fatal exit', cause)
-      reportFatalWorkerError(cause)
+const runWorker = async (syncConfig: SyncConfig) => {
+  const syncBackend = (() => {
+    if (syncConfig.type === 'websocket') {
+      return makeWsSync({ url: syncConfig.url })
     }
-  }
 
-  runWorker().catch((error: unknown) => {
+    if (syncConfig.type === 'message-port') {
+      return makeMessagePortSync(
+        syncConfig.port as unknown as Parameters<typeof makeMessagePortSync>[0]
+      ) as unknown as ReturnType<typeof makeWsSync>
+    }
+
+    return null
+  })()
+
+  const workerOptions = syncBackend
+    ? { schema, sync: { backend: syncBackend } }
+    : { schema }
+
+  const exit = await Effect.runPromiseExit(makeWorkerEffect(workerOptions))
+
+  if (Exit.isFailure(exit)) {
+    const cause = Cause.pretty(exit.cause)
+    console.error('[LiveStore.worker] fatal exit', cause)
+    reportFatalWorkerError(cause)
+  }
+}
+
+// Wait for the sync MessagePort from the main thread, then initialize.
+waitForSyncConfig().then((syncConfig) => {
+  let syncModeMessage = '[LiveStore.worker] initializing without sync backend'
+  if (syncConfig.type === 'websocket') {
+    syncModeMessage = '[LiveStore.worker] initializing with WebSocket sync'
+  } else if (syncConfig.type === 'message-port') {
+    syncModeMessage = '[LiveStore.worker] initializing with MessagePort sync'
+  }
+  console.log(syncModeMessage)
+
+  runWorker(syncConfig).catch((error: unknown) => {
     const cause = error instanceof Error ? error.message : String(error)
     console.error('[LiveStore.worker] failed to start', cause)
     reportFatalWorkerError(cause)

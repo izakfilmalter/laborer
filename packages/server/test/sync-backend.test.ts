@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import initSqlJs from 'sql.js'
 import { afterAll } from 'vitest'
@@ -50,7 +50,7 @@ describe('sync-backend startup backfill', () => {
       '{"_tag":"Some","value":{"_tag":"SyncMessage.SyncMetadata","createdAt":"2026-04-23T00:00:00.000Z"}}'
 
     serverEventlogDb.run(
-      `INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      'INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         1,
         1,
@@ -72,7 +72,7 @@ describe('sync-backend startup backfill', () => {
     )
 
     serverEventlogDb.run(
-      `INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      'INSERT INTO eventlog (seqNumGlobal, seqNumClient, seqNumRebaseGeneration, parentSeqNumGlobal, parentSeqNumClient, parentSeqNumRebaseGeneration, name, argsJson, clientId, sessionId, schemaHash, syncMetadataJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         2,
         2,
@@ -119,7 +119,7 @@ describe('sync-backend startup backfill', () => {
       )
     `)
     syncDb.run(
-      `INSERT INTO context_1 (storeId, currentHead, backendId) VALUES (?, ?, ?)`,
+      'INSERT INTO context_1 (storeId, currentHead, backendId) VALUES (?, ?, ?)',
       [storeId, 2, backendId]
     )
     syncDb.run(

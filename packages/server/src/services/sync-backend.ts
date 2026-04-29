@@ -194,10 +194,7 @@ interface SyncStorageBackfillResult {
   nextHead: number
 }
 
-const readSyncStorageNumber = (
-  db: SqlJsDatabase,
-  sql: string
-): number => {
+const readSyncStorageNumber = (db: SqlJsDatabase, sql: string): number => {
   const stmt = db.prepare(sql)
 
   let value = 0
@@ -619,7 +616,10 @@ type SyncStorage = Awaited<ReturnType<typeof makeSyncStorage>>
 interface LivePullPort {
   port: RpcMessagePort
   pullRequestIds: Set<string>
+  source: SyncPortSource
 }
+
+type SyncPortSource = 'internal' | 'renderer'
 
 class SyncBackendService extends Context.Tag('@laborer/SyncBackendService')<
   SyncBackendService,
@@ -815,7 +815,7 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
   // This bypasses the Effect RPC stream mechanism entirely —
   // the client's RPC framework sees these as stream chunks for
   // the still-open Pull request and delivers them seamlessly.
-  for (const livePort of livePorts.values()) {
+  for (const [portId, livePort] of livePorts) {
     for (const requestId of livePort.pullRequestIds) {
       const rpcChunk = {
         _tag: 'Chunk' as const,
@@ -831,9 +831,13 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
           }),
       }).pipe(
         Effect.catchTag('PostMessageError', (err) =>
-          Effect.sync(() =>
+          Effect.sync(() => {
             console.error(`[sync-backend] ${err.message}:`, err.cause)
-          )
+            livePorts.delete(portId)
+            console.warn(
+              `[sync-backend] Removed stale live port ${portId} after postMessage failure (total ports: ${String(livePorts.size)})`
+            )
+          })
         )
       )
     }
@@ -962,8 +966,12 @@ const SharedSyncBackendServiceLive = Layer.effect(
  * @param port - The MessagePort to serve sync RPCs over.
  * @returns A fiber handle that can be interrupted to stop serving.
  */
-const serveSyncOnPort = (port: RpcMessagePort) => {
+const serveSyncOnPort = (
+  port: RpcMessagePort,
+  options: { readonly source?: SyncPortSource } = {}
+) => {
   console.log('[sync-backend] serveSyncOnPort called — building layer')
+  const source = options.source ?? 'renderer'
 
   // Unique ID for this port in the shared livePorts registry.
   const portId = crypto.randomUUID()
@@ -974,9 +982,22 @@ const serveSyncOnPort = (port: RpcMessagePort) => {
   const registerLivePort = Effect.promise(getSharedSyncBackendService).pipe(
     Effect.map((ctx) => {
       const service = Context.get(ctx, SyncBackendService)
+      if (source === 'renderer') {
+        for (const [existingPortId, existingPort] of service.livePorts) {
+          if (existingPort.source !== 'renderer') {
+            continue
+          }
+          service.livePorts.delete(existingPortId)
+          existingPort.port.close?.()
+          console.log(
+            `[sync-backend] Replaced stale renderer sync port ${existingPortId}`
+          )
+        }
+      }
       const livePort: LivePullPort = {
         port,
         pullRequestIds: new Set(),
+        source,
       }
       service.livePorts.set(portId, livePort)
       console.log(
@@ -1174,7 +1195,9 @@ const makeInProcessSyncBackend = () => {
   // Serve sync RPC on the server port.
   // Cast through unknown because Node.js MessagePort has a compatible
   // but differently-typed interface than our RpcMessagePort.
-  serveSyncOnPort(serverPort as unknown as RpcMessagePort)
+  serveSyncOnPort(serverPort as unknown as RpcMessagePort, {
+    source: 'internal',
+  })
 
   // Return a sync backend constructor that connects through the client port.
   const syncBackendConstructor =
@@ -1332,5 +1355,8 @@ const makeInProcessSyncBackend = () => {
 export {
   backfillSyncStorageFromServerEventlog,
   makeInProcessSyncBackend,
+  SharedSyncBackendServiceLive,
+  SyncRpcHandlersLive,
+  SyncWsRpc,
   serveSyncOnPort,
 }

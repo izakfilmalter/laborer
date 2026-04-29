@@ -414,10 +414,30 @@ function TerminalPaneMessagePort({
   onTitleChange,
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
+  const pendingDataRef = useRef<string[]>([])
   const [replayEpoch, setReplayEpoch] = useState(0)
 
   const handleTerminalData = useCallback((data: string) => {
-    terminalRef.current?.write(data)
+    const terminal = terminalRef.current
+    if (!terminal) {
+      pendingDataRef.current.push(data)
+      return
+    }
+
+    terminal.write(data)
+  }, [])
+
+  const flushPendingTerminalData = useCallback(() => {
+    const terminal = terminalRef.current
+    if (!terminal || pendingDataRef.current.length === 0) {
+      return
+    }
+
+    const pendingData = pendingDataRef.current
+    pendingDataRef.current = []
+    for (const data of pendingData) {
+      terminal.write(data)
+    }
   }, [])
 
   const handleReplayStart = useCallback((replayEvent: ReplayControlMessage) => {
@@ -475,6 +495,7 @@ function TerminalPaneMessagePort({
   return (
     <TerminalPaneRenderer
       connection={connection}
+      onTerminalReady={flushPendingTerminalData}
       onTitleChange={onTitleChange}
       replayEpoch={replayEpoch}
       terminalId={terminalId}
@@ -486,6 +507,7 @@ function TerminalPaneMessagePort({
 /** Props for the shared terminal renderer component. */
 interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
+  readonly onTerminalReady: () => void
   readonly onTitleChange?: ((title: string) => void) | undefined
   readonly replayEpoch: number
   readonly terminalId: string
@@ -507,6 +529,7 @@ interface TerminalPaneRendererProps {
 function TerminalPaneRenderer({
   terminalId,
   onTitleChange,
+  onTerminalReady,
   connection,
   replayEpoch,
   terminalRef,
@@ -924,6 +947,8 @@ function TerminalPaneRenderer({
       }
     })
 
+    onTerminalReady()
+
     // Attempt WebGL rendering for better performance (GPU-accelerated).
     // Critical for scroll performance with 100k+ lines — WebGL renders
     // only visible rows via the GPU, avoiding DOM reflow on scroll.
@@ -1113,7 +1138,7 @@ function TerminalPaneRenderer({
       }
       prefixModeRef.current = false
     }
-  }, [terminalId, terminalRef])
+  }, [terminalId, terminalRef, onTerminalReady])
 
   /**
    * Observe the container element for size changes using ResizeObserver.

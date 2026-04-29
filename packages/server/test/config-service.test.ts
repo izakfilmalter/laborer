@@ -154,6 +154,24 @@ describe('ConfigService', () => {
       })
     )
 
+    it.effect('should resolve none as a sandbox provider', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'none-sandbox-provider')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          defaultSandboxProvider: 'none',
+          devServer: { provider: 'none' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'none-provider-project')
+
+        assert.strictEqual(result.defaultSandboxProvider.value, 'none')
+        assert.strictEqual(result.defaultSandboxProvider.source, configPath)
+        assert.strictEqual(result.devServer.provider.value, 'none')
+        assert.strictEqual(result.devServer.provider.source, configPath)
+      })
+    )
+
     it.effect('should read config from project root', () =>
       Effect.gen(function* () {
         const projectDir = join(testRoot, 'project-root-config')

@@ -148,7 +148,11 @@ const ConfigResolvedValueNullableNumber = Schema.Struct({
   source: Schema.String,
 })
 
-export const SandboxProviderTypeSchema = Schema.Literal('docker', 'daytona')
+export const SandboxProviderTypeSchema = Schema.Literal(
+  'docker',
+  'daytona',
+  'none'
+)
 
 export type SandboxProviderType = typeof SandboxProviderTypeSchema.Type
 

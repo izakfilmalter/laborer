@@ -35,8 +35,8 @@ interface CreateSandboxParams {
     readonly network: string | null
     /** Port the dev server listens on. */
     readonly port: number | null
-    /** Sandbox provider for this project ("docker" or "daytona"). */
-    readonly provider: 'docker' | 'daytona' | null
+    /** Sandbox provider for this project ("docker", "daytona", or "none"). */
+    readonly provider: 'docker' | 'daytona' | 'none' | null
     /** Daytona sandbox resource limits (CPU, memory, disk). */
     readonly resources: {
       readonly cpu?: number | undefined

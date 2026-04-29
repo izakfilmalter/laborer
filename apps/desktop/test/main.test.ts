@@ -118,6 +118,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       whenReady: () => Promise.resolve(),
       on: appOn,
       once: vi.fn(),
+      exit: vi.fn(),
       quit: vi.fn(),
       setAsDefaultProtocolClient: vi.fn(),
     },
@@ -175,6 +176,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       kill = vi.fn()
       restart = vi.fn()
       killAll = vi.fn()
+      killAllAndWait = vi.fn(async () => undefined)
       setMessageHandler = vi.fn()
       isRunning = vi.fn(() => false)
       getPort = vi.fn()

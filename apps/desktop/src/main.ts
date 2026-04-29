@@ -603,6 +603,11 @@ const RENDERER_QUIT_TIMEOUT_MS = 5000
 /** Maximum time to wait for utility processes to exit after SIGTERM. */
 const UTILITY_QUIT_TIMEOUT_MS = 5000
 
+/** Absolute upper bound for app shutdown once quit is accepted. */
+const FORCE_EXIT_TIMEOUT_MS = UTILITY_QUIT_TIMEOUT_MS + 1000
+
+let forceExitTimer: ReturnType<typeof setTimeout> | null = null
+
 /**
  * Synchronous cleanup of main-process resources.
  * Called once during shutdown — idempotent via `isQuitting`.
@@ -625,6 +630,24 @@ function cleanupMainProcessResources(): void {
   if (devWatcher) {
     devWatcher.shutdown()
   }
+}
+
+function scheduleForceExit(): void {
+  if (forceExitTimer) {
+    return
+  }
+
+  forceExitTimer = setTimeout(() => {
+    console.error('[main] Shutdown timed out — forcing app exit')
+    app.exit(0)
+  }, FORCE_EXIT_TIMEOUT_MS)
+  forceExitTimer.unref()
+}
+
+function beginQuit(): void {
+  isQuitting = true
+  cleanupMainProcessResources()
+  scheduleForceExit()
 }
 
 /**
@@ -673,15 +696,13 @@ app.on('before-quit', (event) => {
 
       // No veto — proceed with shutdown. Set the flag so the next
       // before-quit pass-through doesn't re-ask renderers.
-      isQuitting = true
-      cleanupMainProcessResources()
+      beginQuit()
       app.quit()
     })
     .catch((error: unknown) => {
       // On error, proceed with quit to avoid leaving the app in a stuck state.
       console.error('[main] Error during renderer quit negotiation:', error)
-      isQuitting = true
-      cleanupMainProcessResources()
+      beginQuit()
       app.quit()
     })
 })
@@ -691,6 +712,7 @@ app.on('before-quit', (event) => {
 // `forceAllowNextQuit` flag is set so it won't veto.
 ipcMain.on(QUIT_CONFIRMED_CHANNEL, () => {
   console.info('[main] Renderer confirmed quit — re-triggering app.quit()')
+  beginQuit()
   app.quit()
 })
 
@@ -701,11 +723,11 @@ app.once('will-quit', (event) => {
 
   shutdownUtilityProcesses()
     .then(() => {
-      app.quit()
+      app.exit(0)
     })
     .catch((error: unknown) => {
       console.error('[main] Error during utility process shutdown:', error)
-      app.quit()
+      app.exit(0)
     })
 })
 
@@ -716,15 +738,14 @@ if (process.platform !== 'win32') {
     if (isQuitting) {
       return
     }
-    isQuitting = true
-    cleanupMainProcessResources()
+    beginQuit()
 
     shutdownUtilityProcesses()
       .then(() => {
-        app.quit()
+        app.exit(0)
       })
       .catch(() => {
-        app.quit()
+        app.exit(0)
       })
   }
 

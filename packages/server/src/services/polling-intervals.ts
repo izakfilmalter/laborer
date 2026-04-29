@@ -66,6 +66,9 @@ export const FETCH_SKEW_UPPER_BOUND_MS = 30_000 // 30 seconds
  */
 export const REPO_WATCH_DEBOUNCE_MS = 500
 
+/** Minimum delay between full worktree reconciliations for one project. */
+export const REPO_WATCH_RECONCILE_COOLDOWN_MS = 5000
+
 /** Delay before retrying a failed watcher subscription. */
 export const REPO_WATCH_RECOVERY_MS = 1000
 

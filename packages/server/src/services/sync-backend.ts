@@ -652,7 +652,10 @@ const handlePull = (
         ? req.cursor.value.eventSequenceNumber
         : undefined
 
-    const total = storage.countEvents(cursorSeqNum)
+    const shouldReplayStoredEvents = !(req.live && cursorSeqNum === undefined)
+    const total = shouldReplayStoredEvents
+      ? storage.countEvents(cursorSeqNum)
+      : 0
 
     // Phase 1: Read existing events from storage in pages
     interface PageState {

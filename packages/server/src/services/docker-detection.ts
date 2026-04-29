@@ -121,10 +121,6 @@ class DockerDetection extends Context.Tag('@laborer/DockerDetection')<
         return status
       })
 
-      // Run detection eagerly on service construction so the result
-      // is cached by the time the first RPC call arrives.
-      yield* check()
-
       return DockerDetection.of({
         check,
       })

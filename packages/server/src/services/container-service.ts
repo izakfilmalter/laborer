@@ -656,12 +656,15 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         }
       })
 
-      // Run reconciliation for all containerized workspaces at startup
-      const containerized = store
-        .query(tables.workspaces)
-        .filter((ws) => ws.sandboxId !== null)
+      const reconcileExistingContainers = Effect.gen(function* () {
+        const containerized = store
+          .query(tables.workspaces)
+          .filter((ws) => ws.sandboxId !== null)
 
-      if (containerized.length > 0) {
+        if (containerized.length === 0) {
+          return
+        }
+
         yield* Effect.logInfo(
           `Reconciling Docker state for ${containerized.length} containerized workspace(s)`
         ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -671,7 +674,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           (workspace) => reconcileWorkspaceContainer(workspace),
           { discard: true }
         )
-      }
+      })
 
       // ── Docker events listener ────────────────────────────────
       // Spawn `docker events` as a long-running subprocess that streams
@@ -866,6 +869,13 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
 
       // Fork the docker events listener as a daemon fiber so it runs
       // in the background for the lifetime of the service.
+      yield* Effect.forkDaemon(
+        reconcileExistingContainers.pipe(
+          Effect.catchAllCause((cause) =>
+            Effect.logWarning('Docker startup reconciliation failed', { cause })
+          )
+        )
+      )
       yield* Effect.forkDaemon(startDockerEventsListener)
 
       // Clean up the docker events subprocess on service shutdown

@@ -38,6 +38,7 @@ import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
 import {
   REPO_WATCH_DEBOUNCE_MS,
+  REPO_WATCH_RECONCILE_COOLDOWN_MS,
   REPO_WATCH_RECOVERY_MS,
 } from './polling-intervals.js'
 import { RepositoryIdentity } from './repository-identity.js'
@@ -56,6 +57,8 @@ interface ProjectWatcherState {
   readonly gitDirPath: string
   /** Remote subscription ID for the git metadata root watcher */
   gitDirRootSubscriptionId: string | null
+  /** Last completed full worktree reconciliation timestamp. */
+  lastWorktreeReconcileAt: number
   /** Project identifier */
   readonly projectId: string
   /** Pending retry timer for watcher recovery */
@@ -349,6 +352,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
         if (state.worktreeTimer !== null) {
           clearTimeout(state.worktreeTimer)
         }
+        const elapsed = Date.now() - state.lastWorktreeReconcileAt
+        const cooldownDelay = Math.max(
+          0,
+          REPO_WATCH_RECONCILE_COOLDOWN_MS - elapsed
+        )
+        const delay = Math.max(REPO_WATCH_DEBOUNCE_MS, cooldownDelay)
         state.worktreeTimer = setTimeout(() => {
           if (!isActive(state)) {
             state.worktreeTimer = null
@@ -356,9 +365,15 @@ class RepositoryWatchCoordinator extends Context.Tag(
           }
           state.worktreeTimer = null
           runPromise(
-            reconcileWithWarning(state.projectId, state.repoPath, reason)
+            reconcileWithWarning(state.projectId, state.repoPath, reason).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  state.lastWorktreeReconcileAt = Date.now()
+                })
+              )
+            )
           ).catch(() => undefined)
-        }, REPO_WATCH_DEBOUNCE_MS)
+        }, delay)
       }
 
       const scheduleBranchRefresh = (
@@ -698,6 +713,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           worktreesSubscriptionId: null,
           repoRootSubscriptionId: null,
           worktreeTimer: null,
+          lastWorktreeReconcileAt: 0,
           branchTimer: null,
           recoveryTimer: null,
         }

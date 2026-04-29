@@ -2,15 +2,15 @@
  * DockerSandboxProvider — SandboxProvider implementation for Docker/OrbStack
  *
  * Thin adapter that wraps the existing `ContainerService`, `DepsImageService`,
- * `DockerDetection`, and `TerminalClient` services behind the `SandboxProvider`
+ * and `DockerDetection` services behind the `SandboxProvider`
  * interface. This allows `WorkspaceProvider` (after Issue 10) to delegate to
  * any `SandboxProvider` implementation without knowing which backend is in use.
  *
  * This is a **pure adapter** — no new behavior is introduced. The existing
- * Docker lifecycle (create, destroy, pause, unpause), terminal spawning
- * (via `docker exec`), state reconciliation (via `docker events` listener),
- * and availability check (via `DockerDetection`) are all delegated directly
- * to their existing implementations.
+ * Docker lifecycle (create, destroy, pause, unpause), state reconciliation
+ * (via `docker events` listener), and availability check (via
+ * `DockerDetection`) are all delegated directly to their existing
+ * implementations. Docker terminal spawning is owned by `TerminalClient`.
  *
  * The `ContainerService` internally emits `v1.Container*` events, which
  * materialize into the same `sandbox*` columns as the `v2.Sandbox*` events
@@ -33,7 +33,6 @@ import type {
   CreateSandboxParams,
   SandboxProvider,
 } from './sandbox-provider.js'
-import { TerminalClient } from './terminal-client.js'
 
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'DockerSandboxProvider'
@@ -116,8 +115,8 @@ const destroyContainerByName = (
  * Tag identifying the Docker-specific `SandboxProvider` implementation.
  *
  * The `layer` on this class builds a `SandboxProvider` value by delegating
- * to `ContainerService`, `DepsImageService`, `DockerDetection`,
- * `TerminalClient`, and `LaborerStore`.
+ * to `ContainerService`, `DepsImageService`, `DockerDetection`, and
+ * `LaborerStore`.
  */
 class DockerSandboxProvider extends Context.Tag(
   '@laborer/DockerSandboxProvider'
@@ -129,24 +128,18 @@ class DockerSandboxProvider extends Context.Tag(
    * - `ContainerService` — Docker container lifecycle
    * - `DepsImageService` — cached deps image builds
    * - `DockerDetection` — Docker availability check
-   * - `TerminalClient` — terminal spawning (delegates to `docker exec`)
    * - `LaborerStore` — LiveStore access for workspace lookups
    */
   static readonly layer: Layer.Layer<
     DockerSandboxProvider,
     never,
-    | ContainerService
-    | DepsImageService
-    | DockerDetection
-    | TerminalClient
-    | LaborerStore
+    ContainerService | DepsImageService | DockerDetection | LaborerStore
   > = Layer.effect(
     DockerSandboxProvider,
     Effect.gen(function* () {
       const containerService = yield* ContainerService
       const depsImageService = yield* DepsImageService
       const dockerDetection = yield* DockerDetection
-      const terminalClient = yield* TerminalClient
       const { store } = yield* LaborerStore
 
       // ── createSandbox ─────────────────────────────────────────
@@ -366,17 +359,15 @@ class DockerSandboxProvider extends Context.Tag(
       )
 
       // ── spawnTerminal ─────────────────────────────────────────
-      // Delegates to TerminalClient.spawnInWorkspace which already
-      // handles the Docker exec path for containerized workspaces.
+      // Docker terminal spawning is handled by TerminalClient directly.
 
       const spawnTerminal = Effect.fn('DockerSandboxProvider.spawnTerminal')(
-        function* (workspaceId: string, opts?) {
-          const result = yield* terminalClient.spawnInWorkspace(
-            workspaceId,
-            opts?.command,
-            opts?.autoRun
-          )
-          return result
+        function* (_workspaceId: string, _opts?) {
+          return yield* new RpcError({
+            message:
+              'Docker terminal spawning is handled by TerminalClient, not DockerSandboxProvider.',
+            code: 'UNSUPPORTED_OPERATION',
+          })
         }
       )
 
@@ -389,20 +380,32 @@ class DockerSandboxProvider extends Context.Tag(
       // here for interface completeness.
 
       const resizeTerminal = Effect.fn('DockerSandboxProvider.resizeTerminal')(
-        function* (terminalId: string, cols: number, rows: number) {
-          yield* terminalClient.resizeTerminal(terminalId, cols, rows)
+        function* (_terminalId: string, _cols: number, _rows: number) {
+          return yield* new RpcError({
+            message:
+              'Docker terminal resize is handled by TerminalClient, not DockerSandboxProvider.',
+            code: 'UNSUPPORTED_OPERATION',
+          })
         }
       )
 
       const killTerminal = Effect.fn('DockerSandboxProvider.killTerminal')(
-        function* (terminalId: string) {
-          yield* terminalClient.killTerminal(terminalId)
+        function* (_terminalId: string) {
+          return yield* new RpcError({
+            message:
+              'Docker terminal kill is handled by TerminalClient, not DockerSandboxProvider.',
+            code: 'UNSUPPORTED_OPERATION',
+          })
         }
       )
 
       const removeTerminal = Effect.fn('DockerSandboxProvider.removeTerminal')(
-        function* (terminalId: string) {
-          yield* terminalClient.removeTerminal(terminalId)
+        function* (_terminalId: string) {
+          return yield* new RpcError({
+            message:
+              'Docker terminal removal is handled by TerminalClient, not DockerSandboxProvider.',
+            code: 'UNSUPPORTED_OPERATION',
+          })
         }
       )
 

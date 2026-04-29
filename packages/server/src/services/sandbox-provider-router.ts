@@ -324,7 +324,6 @@ const SandboxProviderRoutedLayer: Layer.Layer<
   | import('./container-service.js').ContainerService
   | import('./deps-image-service.js').DepsImageService
   | import('./docker-detection.js').DockerDetection
-  | import('./terminal-client.js').TerminalClient
 > = SandboxProviderRouterLayer.pipe(
   // Provide DockerSandboxProvider (always available)
   Layer.provideMerge(DockerSandboxProvider.layer),

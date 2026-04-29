@@ -67,7 +67,7 @@ interface FileEventSubscription {
  */
 class FileWatcherRpcPort extends Context.Tag('@laborer/FileWatcherRpcPort')<
   FileWatcherRpcPort,
-  { readonly port: RpcMessagePort }
+  { readonly awaitPort: Effect.Effect<RpcMessagePort> }
 >() {}
 
 class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
@@ -163,11 +163,14 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
         Effect.gen(function* () {
           const client = yield* (() => {
             if (Option.isSome(fileWatcherRpcPort)) {
-              return createMessagePortRpcClient(
-                FileWatcherRpcs,
-                fileWatcherRpcPort.value.port,
-                layerScope
-              )
+              return Effect.gen(function* () {
+                const port = yield* fileWatcherRpcPort.value.awaitPort
+                return yield* createMessagePortRpcClient(
+                  FileWatcherRpcs,
+                  port,
+                  layerScope
+                )
+              })
             }
 
             if (fileWatcherRpcUrl) {

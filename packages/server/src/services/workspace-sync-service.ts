@@ -325,7 +325,13 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
         )
       })
 
-      yield* bootstrapPolling()
+      yield* Effect.forkDaemon(
+        bootstrapPolling().pipe(
+          Effect.catchAllCause((cause) =>
+            Effect.logWarning('Workspace sync bootstrap failed', { cause })
+          )
+        )
+      )
       yield* Effect.addFinalizer(() => stopAllPolling())
 
       return WorkspaceSyncService.of({

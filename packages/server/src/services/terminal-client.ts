@@ -52,7 +52,6 @@ import {
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
-import { SandboxProvider } from './sandbox-provider.js'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -104,7 +103,7 @@ type TerminalRpc = Effect.Effect.Success<ReturnType<typeof _inferTerminalRpc>>
  */
 class TerminalRpcPort extends Context.Tag('@laborer/TerminalRpcPort')<
   TerminalRpcPort,
-  { readonly port: RpcMessagePort }
+  { readonly awaitPort: Effect.Effect<RpcMessagePort> }
 >() {}
 
 export { TerminalRpcPort }
@@ -260,7 +259,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const workspaceProvider = yield* WorkspaceProvider
       const configService = yield* ConfigService
       const registry = yield* ProjectRegistry
-      const sandboxProvider = yield* SandboxProvider
 
       // Capture the layer's scope so lazy connection can use it later.
       // The scope lives for the lifetime of this service layer.
@@ -296,11 +294,14 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         Effect.gen(function* () {
           const client = yield* (() => {
             if (Option.isSome(terminalRpcPort)) {
-              return createMessagePortRpcClient(
-                TerminalRpcs,
-                terminalRpcPort.value.port,
-                layerScope
-              )
+              return Effect.gen(function* () {
+                const port = yield* terminalRpcPort.value.awaitPort
+                return yield* createMessagePortRpcClient(
+                  TerminalRpcs,
+                  port,
+                  layerScope
+                )
+              })
             }
 
             if (terminalRpcUrl) {
@@ -815,22 +816,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             return yield* new RpcError({
               message: `Workspace ${workspaceId} has been destroyed — cannot spawn terminal`,
               code: 'INVALID_STATE',
-            })
-          }
-
-          // 1b. Daytona workspace: delegate to SandboxProvider.spawnTerminal
-          //     Daytona workspaces have no local worktree — code lives in
-          //     the cloud sandbox. Skip worktree directory validation and
-          //     route directly to the Daytona PTY (WebSocket session in
-          //     the server process, not via docker exec).
-          //     @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
-          if (
-            workspace.sandboxProvider === 'daytona' &&
-            workspace.sandboxId != null
-          ) {
-            return yield* sandboxProvider.spawnTerminal(workspaceId, {
-              command,
-              autoRun,
             })
           }
 

@@ -1211,6 +1211,22 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'terminal.spawn': ({ workspaceId, command, autoRun }) =>
       Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+        const workspace = store.query(
+          tables.workspaces.where('id', workspaceId)
+        )[0]
+
+        if (
+          workspace?.sandboxProvider === 'daytona' &&
+          workspace.sandboxId !== null
+        ) {
+          const sandboxProvider = yield* SandboxProvider
+          return yield* sandboxProvider.spawnTerminal(workspaceId, {
+            command,
+            autoRun,
+          })
+        }
+
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
       }),

@@ -166,6 +166,7 @@ function Calendar({
           )
         },
         DayButton: ({ ...props }) => (
+          // @ts-expect-error
           <CalendarDayButton locale={locale} {...props} />
         ),
         WeekNumber: ({ children, ...props }) => {

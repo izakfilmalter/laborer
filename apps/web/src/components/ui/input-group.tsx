@@ -56,6 +56,7 @@ function InputGroupAddon({
       className={cn(inputGroupAddonVariants({ align }), className)}
       data-align={align}
       data-slot="input-group-addon"
+      // @ts-expect-error
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button')) {
           return

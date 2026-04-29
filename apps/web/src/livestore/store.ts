@@ -10,9 +10,10 @@
  * - **Dedicated worker**: Owns the canonical OPFS SQLite databases
  * - **Shared worker**: Coordinates leader election across tabs
  *
- * Sync transport: Main thread acquires a sync MessagePort from the server
- * utility process via `desktopBridge.acquireSyncPort()`, then transfers
- * it to the worker. Worker uses `makeMessagePortSync`.
+ * Sync transport: Main thread resolves the desktop-managed backend WebSocket
+ * URL from the preload bridge and passes it to the worker. This mirrors
+ * t3code's server connection model: a backend process owns WebSocket RPC and
+ * clients connect to the resolved loopback endpoint.
  *
  * Usage in components:
  * ```tsx
@@ -33,11 +34,7 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import {
-  acquireSyncPort,
-  getBackendSyncWsUrl,
-  isElectron,
-} from '../lib/desktop'
+import { getBackendSyncWsUrl, isElectron } from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 import {
   consumePendingPersistenceReset,
@@ -86,21 +83,15 @@ if (resetPersistenceFromRecovery) {
 /**
  * Create the LiveStore dedicated worker.
  *
- * The worker URL includes `?transport=messageport` to signal the worker
- * should wait for a MessagePort transfer instead of creating a WebSocket
- * connection.
- *
- * After creating the worker, the main thread acquires a sync port from
- * the server utility process and transfers it to the worker.
+ * The desktop app runs the server as a backend child process, following the
+ * same shape as t3code: the renderer resolves a backend WebSocket URL from
+ * the preload bridge and the sync client owns connection/retry behavior.
  */
 function createLiveStoreWorker(options: { name: string }): Worker {
-  let workerUrl = LiveStoreWorkerUrl
-
-  // Signal the worker to wait for a MessagePort transfer.
-  const separator = workerUrl.includes('?') ? '&' : '?'
-  workerUrl = `${workerUrl}${separator}transport=messageport`
-
-  const worker = new Worker(workerUrl, { type: 'module', name: options.name })
+  const worker = new Worker(LiveStoreWorkerUrl, {
+    type: 'module',
+    name: options.name,
+  })
 
   worker.addEventListener('message', (event: MessageEvent) => {
     const data = event.data as {
@@ -141,29 +132,15 @@ function createLiveStoreWorker(options: { name: string }): Worker {
   })
 
   const backendSyncUrl = getBackendSyncWsUrl()
-  if (backendSyncUrl) {
+  if (backendSyncUrl !== null) {
     worker.postMessage({ type: 'sync-url', url: backendSyncUrl })
     return worker
   }
 
-  acquireSyncPort()
-    .then((port) => {
-      if (port === null) {
-        return
-      }
-      if (port) {
-        worker.postMessage({ type: 'sync-port' }, [port])
-      } else {
-        console.warn(
-          '[LiveStore.store] Failed to acquire sync port — starting LiveStore without sync backend'
-        )
-        worker.postMessage({ type: 'no-sync' })
-      }
-    })
-    .catch((error: unknown) => {
-      console.error('[LiveStore.store] Error acquiring sync port:', error)
-      worker.postMessage({ type: 'no-sync' })
-    })
+  console.warn(
+    '[LiveStore.store] No backend sync WebSocket URL available — starting LiveStore without sync backend'
+  )
+  worker.postMessage({ type: 'no-sync' })
 
   return worker
 }

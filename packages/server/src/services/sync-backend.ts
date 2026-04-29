@@ -37,6 +37,7 @@ import {
   Effect,
   Layer,
   Option,
+  Queue,
   Schema,
   Stream,
   SubscriptionRef,
@@ -102,11 +103,6 @@ class InvalidPullError extends Schema.TaggedError<InvalidPullError>()(
 class InvalidPushError extends Schema.TaggedError<InvalidPushError>()(
   'InvalidPushError',
   { cause: Schema.Unknown }
-) {}
-
-class PostMessageError extends Schema.TaggedError<PostMessageError>()(
-  'PostMessageError',
-  { message: Schema.String, cause: Schema.Unknown }
 ) {}
 
 // ---------------------------------------------------------------------------
@@ -626,18 +622,9 @@ class SyncBackendService extends Context.Tag('@laborer/SyncBackendService')<
   {
     readonly storage: SyncStorage
     readonly livePorts: Map<string, LivePullPort>
+    readonly liveQueues: Set<Queue.Queue<PullResponseType>>
   }
 >() {}
-
-/**
- * Schema encoder for PullResponse — used to encode values before
- * injecting them as raw RPC chunk messages onto MessagePorts.
- *
- * The RPC server normally encodes stream chunk values through
- * `Schema.encodeUnknown(Schema.Array(successSchema))`. When we
- * bypass the stream, we must do the same encoding ourselves.
- */
-const encodePullResponse = Schema.encodeSync(PullResponse)
 
 // ---------------------------------------------------------------------------
 // Pull handler
@@ -647,7 +634,7 @@ const handlePull = (
   req: PullPayloadType
 ): Stream.Stream<PullResponseType, InvalidPullError, SyncBackendService> =>
   Effect.gen(function* () {
-    const { storage } = yield* SyncBackendService
+    const { liveQueues, storage } = yield* SyncBackendService
     const { backendId } = storage
 
     // Validate backendId if cursor provided
@@ -747,14 +734,25 @@ const handlePull = (
       return phase1WithEmpty
     }
 
-    // Phase 2: Keep stream alive with Stream.never.
-    // Live updates are NOT delivered through this stream. Instead,
-    // the push handler injects raw RPC ResponseChunkEncoded messages
-    // directly onto the MessagePort. Stream.never prevents the RPC
-    // framework from sending an Exit message, keeping the channel open.
-    return Stream.concat(
-      phase1WithEmpty,
-      Stream.never as Stream.Stream<PullResponseType, never, never>
+    // Phase 2: keep the RPC stream open and emit pushed events. This is the
+    // WebSocket-compatible path used by t3code-style backend connections.
+    return Stream.unwrapScoped(
+      Queue.unbounded<PullResponseType>().pipe(
+        Effect.tap((queue) =>
+          Effect.sync(() => {
+            liveQueues.add(queue)
+          })
+        ),
+        Effect.map((queue) =>
+          Stream.concat(phase1WithEmpty, Stream.fromQueue(queue)).pipe(
+            Stream.ensuring(
+              Effect.sync(() => {
+                liveQueues.delete(queue)
+              })
+            )
+          )
+        )
+      )
     )
   }).pipe(
     Stream.unwrap,
@@ -770,7 +768,7 @@ const handlePull = (
 // ---------------------------------------------------------------------------
 
 const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
-  const { storage, livePorts } = yield* SyncBackendService
+  const { liveQueues, storage } = yield* SyncBackendService
   const { backendId } = storage
 
   if (req.batch.length === 0) {
@@ -794,13 +792,22 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
     return {}
   }
 
+  const currentHead = storage.getCurrentHead()
+  const newEvents = req.batch.filter((event) => event.seqNum > currentHead)
+  if (newEvents.length === 0) {
+    console.log(
+      `[sync-backend] Push ignored duplicate batch: batchLen=${String(req.batch.length)} head=${String(currentHead)}`
+    )
+    return {}
+  }
+
   // Store events
   const createdAt = new Date().toISOString()
-  storage.appendEvents(req.batch, createdAt)
+  storage.appendEvents(newEvents, createdAt)
 
   // Build the PullResponse for broadcasting
   const pullResponse: PullResponseType = {
-    batch: req.batch.map((eventEncoded: EventEncodedType) => ({
+    batch: newEvents.map((eventEncoded: EventEncodedType) => ({
       eventEncoded,
       metadata: Option.some(makeSyncMetadata(createdAt)),
     })),
@@ -808,39 +815,8 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
     backendId,
   }
 
-  // Encode through the PullResponse schema (converts Option types etc.)
-  const encodedValue = encodePullResponse(pullResponse)
-
-  // Inject ResponseChunkEncoded messages directly onto ports.
-  // This bypasses the Effect RPC stream mechanism entirely —
-  // the client's RPC framework sees these as stream chunks for
-  // the still-open Pull request and delivers them seamlessly.
-  for (const [portId, livePort] of livePorts) {
-    for (const requestId of livePort.pullRequestIds) {
-      const rpcChunk = {
-        _tag: 'Chunk' as const,
-        requestId,
-        values: [encodedValue],
-      }
-      yield* Effect.try({
-        try: () => livePort.port.postMessage(rpcChunk),
-        catch: (cause) =>
-          new PostMessageError({
-            message: `Failed to send chunk to port requestId=${requestId}`,
-            cause,
-          }),
-      }).pipe(
-        Effect.catchTag('PostMessageError', (err) =>
-          Effect.sync(() => {
-            console.error(`[sync-backend] ${err.message}:`, err.cause)
-            livePorts.delete(portId)
-            console.warn(
-              `[sync-backend] Removed stale live port ${portId} after postMessage failure (total ports: ${String(livePorts.size)})`
-            )
-          })
-        )
-      )
-    }
+  for (const queue of liveQueues) {
+    yield* Queue.offer(queue, pullResponse)
   }
 
   return {}
@@ -922,7 +898,12 @@ const getSharedSyncBackendService = (): Promise<
   sharedServiceInitPromise = (async () => {
     const storage = await makeSyncStorage(DATA_DIRECTORY, STORE_ID)
     const livePorts = new Map<string, LivePullPort>()
-    const ctx = Context.make(SyncBackendService, { storage, livePorts })
+    const liveQueues = new Set<Queue.Queue<PullResponseType>>()
+    const ctx = Context.make(SyncBackendService, {
+      livePorts,
+      liveQueues,
+      storage,
+    })
     sharedServiceContext = ctx
     console.log('[sync-backend] Shared SyncBackendService initialized (sql.js)')
     return ctx

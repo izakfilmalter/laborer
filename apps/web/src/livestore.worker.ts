@@ -92,11 +92,11 @@ console.error = (...args: unknown[]) => {
 }
 
 /**
- * Wait for a MessagePort from the main thread.
+ * Wait for sync configuration from the main thread.
  *
- * The main thread acquires a sync MessagePort from the server utility
- * process and transfers it to this worker via
- * `worker.postMessage({ type: 'sync-port' }, [port])`.
+ * Desktop builds use the backend WebSocket URL exposed by the preload bridge.
+ * MessagePort sync is still accepted for tests and experiments, but the
+ * production connection shape follows t3code's backend WebSocket model.
  */
 type SyncConfig =
   | { readonly type: 'message-port'; readonly port: MessagePort }
@@ -156,7 +156,7 @@ const runWorker = async (syncConfig: SyncConfig) => {
   }
 }
 
-// Wait for the sync MessagePort from the main thread, then initialize.
+// Wait for the sync configuration from the main thread, then initialize.
 waitForSyncConfig().then((syncConfig) => {
   let syncModeMessage = '[LiveStore.worker] initializing without sync backend'
   if (syncConfig.type === 'websocket') {

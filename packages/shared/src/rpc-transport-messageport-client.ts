@@ -173,11 +173,6 @@ export const makeClientProtocolMessagePort = (
         // Any real message also counts as proof of liveness (like
         // Mux's "inbound frame tracking" pattern).
         lastPongTimestamp = Date.now()
-        console.log(
-          '[rpc-client-transport] recv:',
-          typeof data,
-          JSON.stringify(data as object)?.slice(0, 200)
-        )
         Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
       }
 
@@ -252,12 +247,7 @@ export const makeClientProtocolMessagePort = (
       }
 
       // Web MessagePorts require .start() to begin receiving messages.
-      console.log(
-        '[rpc-client-transport] Calling port.start(), hasOn:',
-        typeof port.on === 'function'
-      )
       port.start?.()
-      console.log('[rpc-client-transport] port.start() called successfully')
 
       // Start the application-level heartbeat timer.
       // Sends a ping every HEARTBEAT_INTERVAL_MS and checks whether a pong
@@ -352,11 +342,6 @@ export const makeClientProtocolMessagePort = (
           }
           return Effect.try({
             try: () => {
-              console.log(
-                '[rpc-client-transport] send:',
-                typeof request,
-                JSON.stringify(request)?.slice(0, 200)
-              )
               port.postMessage(request, transferables as readonly unknown[])
             },
             catch: (cause) =>

@@ -299,9 +299,15 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           removed += 1
         }
 
-        yield* Effect.log(
-          `[WorktreeReconciler] project=${projectId} reconcile complete: added=${added} removed=${removed} unchanged=${unchanged}`
-        )
+        if (added > 0 || removed > 0) {
+          yield* Effect.log(
+            `[WorktreeReconciler] project=${projectId} reconcile complete: added=${added} removed=${removed} unchanged=${unchanged}`
+          )
+        } else {
+          yield* Effect.logDebug(
+            `[WorktreeReconciler] project=${projectId} reconcile complete: added=${added} removed=${removed} unchanged=${unchanged}`
+          )
+        }
 
         return {
           added,

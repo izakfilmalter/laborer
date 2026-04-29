@@ -217,6 +217,12 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
         // Deduplicate: only commit event if PR state changed
         const serialized = serializePrData(prData)
+        const persistedSerialized = serializePrData({
+          number: workspace.prNumber,
+          url: workspace.prUrl,
+          title: workspace.prTitle,
+          state: workspace.prState,
+        })
         const previousSerialized = yield* Ref.modify(
           previousPrState,
           (cache) => {
@@ -227,7 +233,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           }
         )
 
-        if (previousSerialized !== serialized) {
+        if (
+          previousSerialized !== serialized &&
+          persistedSerialized !== serialized
+        ) {
           store.commit(
             events.workspacePrUpdated({
               id: workspaceId,

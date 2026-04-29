@@ -131,11 +131,6 @@ export const makeProtocolMessagePort = (
           }
           return
         }
-        console.log(
-          '[rpc-server-transport] message received:',
-          typeof data,
-          JSON.stringify(data)?.slice(0, 200)
-        )
         Queue.unsafeOffer(messageQueue, data as FromClientEncoded)
       }
 
@@ -165,14 +160,7 @@ export const makeProtocolMessagePort = (
       }
 
       // Web MessagePorts require .start() to begin receiving messages.
-      console.log(
-        '[rpc-server-transport] Calling port.start(), hasOn:',
-        typeof port.on === 'function'
-      )
       port.start?.()
-      console.log(
-        '[rpc-server-transport] port.start() called, listeners attached'
-      )
 
       // Clean up listeners when the scope is finalized.
       yield* Scope.addFinalizer(
@@ -196,11 +184,6 @@ export const makeProtocolMessagePort = (
         disconnects,
         send(_clientId: number, response: FromServerEncoded, transferables) {
           return Effect.sync(() => {
-            console.log(
-              '[rpc-server-transport] send:',
-              typeof response,
-              JSON.stringify(response)?.slice(0, 200)
-            )
             port.postMessage(response, transferables as readonly unknown[])
           })
         },

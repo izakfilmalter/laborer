@@ -138,6 +138,17 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
         'WorkspaceSyncService.commitSyncStatus'
       )(function* (workspaceId: string, status: WorkspaceSyncStatus) {
         const serialized = serializeSyncStatus(status)
+        const workspaceOpt = pipe(
+          store.query(tables.workspaces),
+          Arr.findFirst((workspace) => workspace.id === workspaceId)
+        )
+        const persistedSerialized =
+          workspaceOpt._tag === 'Some'
+            ? serializeSyncStatus({
+                aheadCount: workspaceOpt.value.aheadCount,
+                behindCount: workspaceOpt.value.behindCount,
+              })
+            : null
         const previousSerialized = yield* Ref.modify(
           previousStatuses,
           (cache) => {
@@ -148,7 +159,10 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
           }
         )
 
-        if (previousSerialized === serialized) {
+        if (
+          previousSerialized === serialized ||
+          persistedSerialized === serialized
+        ) {
           return
         }
 

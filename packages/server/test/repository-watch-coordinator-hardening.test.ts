@@ -608,7 +608,8 @@ describe('RepositoryWatchCoordinator hardening', () => {
           'Worktree-related events should trigger reconciliation'
         )
 
-        // Test null fileName — should trigger both branch AND worktree
+        // Null fileName events from the git-dir watcher are too ambiguous
+        // to classify safely; macOS can emit them for unrelated git churn.
         reconcileCalls.current = 0
         branchRefreshCalls.current = 0
 
@@ -619,23 +620,17 @@ describe('RepositoryWatchCoordinator hardening', () => {
           absolutePath: '/virtual/repo/.git',
         })
 
-        yield* Effect.promise(() =>
-          waitFor(() =>
-            Promise.resolve(
-              reconcileCalls.current === 1 && branchRefreshCalls.current === 1
-            )
-          )
-        )
+        yield* Effect.promise(() => delay(100))
 
         assert.strictEqual(
           reconcileCalls.current,
-          1,
-          'null fileName should trigger reconciliation'
+          0,
+          'null git-dir fileName should not trigger reconciliation'
         )
         assert.strictEqual(
           branchRefreshCalls.current,
-          1,
-          'null fileName should trigger branch refresh'
+          0,
+          'null git-dir fileName should not trigger branch refresh'
         )
       }).pipe(Effect.provide(TestLayer))
     }

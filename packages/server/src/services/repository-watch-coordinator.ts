@@ -122,7 +122,7 @@ const formatWatcherWarning = (
  */
 const isBranchRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
-    return true
+    return false
   }
   return fileName.endsWith('HEAD')
 }
@@ -133,7 +133,7 @@ const isBranchRelatedEvent = (fileName: string | null): boolean => {
  */
 const isWorktreeRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
-    return true
+    return false
   }
   if (fileName === 'worktrees' || fileName.startsWith('worktrees')) {
     return true

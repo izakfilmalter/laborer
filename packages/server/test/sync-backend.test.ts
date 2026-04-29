@@ -4,9 +4,25 @@ import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import initSqlJs from 'sql.js'
 import { afterAll } from 'vitest'
-import { backfillSyncStorageFromServerEventlog } from '../src/services/sync-backend.js'
+import {
+  backfillSyncStorageFromServerEventlog,
+  validatePushBatch,
+} from '../src/services/sync-backend.js'
 
 const tempDirs: string[] = []
+
+const makeEvent = (seqNum: number, parentSeqNum: number) => ({
+  args: {
+    id: `project-${String(seqNum)}`,
+    name: `Project ${String(seqNum)}`,
+    repoPath: `/repo/${String(seqNum)}`,
+  },
+  clientId: 'client-1',
+  name: 'v1.ProjectCreated',
+  parentSeqNum,
+  seqNum,
+  sessionId: 'session-1',
+})
 
 afterAll(() => {
   for (const tempDir of tempDirs) {
@@ -160,5 +176,44 @@ describe('sync-backend startup backfill', () => {
     assert.deepStrictEqual(context?.values, [[2, backendId]])
 
     syncDb.close()
+  })
+})
+
+describe('sync-backend push validation', () => {
+  it('accepts a contiguous batch after the current head', () => {
+    const batch = [makeEvent(11, 10), makeEvent(12, 11)]
+
+    assert.deepStrictEqual(validatePushBatch(batch, 10), {
+      _tag: 'append',
+      batch,
+    })
+  })
+
+  it('acknowledges fully stale duplicate batches', () => {
+    assert.deepStrictEqual(validatePushBatch([makeEvent(10, 9)], 10), {
+      _tag: 'duplicate',
+    })
+  })
+
+  it('rejects mixed stale and new batches instead of appending a partial tail', () => {
+    assert.deepStrictEqual(
+      validatePushBatch([makeEvent(11, 10), makeEvent(12, 11)], 11),
+      {
+        _tag: 'server-ahead',
+        minimumExpectedNum: 11,
+        providedNum: 10,
+      }
+    )
+  })
+
+  it('rejects gaps inside a pushed batch', () => {
+    assert.deepStrictEqual(
+      validatePushBatch([makeEvent(11, 10), makeEvent(13, 12)], 10),
+      {
+        _tag: 'server-ahead',
+        minimumExpectedNum: 11,
+        providedNum: 12,
+      }
+    )
   })
 })

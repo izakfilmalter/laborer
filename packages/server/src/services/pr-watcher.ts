@@ -48,6 +48,11 @@ interface PrData {
   readonly url: string | null
 }
 
+interface BootstrapPollingSnapshot {
+  readonly activeWorkspaceIds: readonly string[]
+  readonly stoppedWorkspaceIds: readonly string[]
+}
+
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
   JSON.stringify([data.number, data.url, data.title, data.state])
@@ -353,38 +358,55 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         return currentFibers.has(workspaceId)
       })
 
+      const getBootstrapPollingSnapshot = (): BootstrapPollingSnapshot => {
+        const allWorkspaces = store
+          .query(tables.workspaces)
+          .filter((workspace) => workspace.status !== 'destroyed')
+
+        return {
+          activeWorkspaceIds: allWorkspaces
+            .filter(
+              (workspace) =>
+                workspace.status === 'running' ||
+                workspace.status === 'creating'
+            )
+            .map((workspace) => workspace.id),
+          stoppedWorkspaceIds: allWorkspaces
+            .filter((workspace) => workspace.status === 'stopped')
+            .map((workspace) => workspace.id),
+        }
+      }
+
       const bootstrapPolling = Effect.fn('PrWatcher.bootstrapPolling')(
-        function* () {
-          const allWorkspaces = store
-            .query(tables.workspaces)
-            .filter((workspace) => workspace.status !== 'destroyed')
-
-          const activeWorkspaces = allWorkspaces.filter(
-            (workspace) =>
-              workspace.status === 'running' || workspace.status === 'creating'
-          )
-
-          const stoppedWorkspaces = allWorkspaces.filter(
-            (workspace) => workspace.status === 'stopped'
-          )
+        function* (snapshot: BootstrapPollingSnapshot) {
+          const { activeWorkspaceIds, stoppedWorkspaceIds } = snapshot
 
           yield* Effect.forEach(
-            activeWorkspaces,
-            (workspace) => startPolling(workspace.id),
+            activeWorkspaceIds,
+            (workspaceId) => startPolling(workspaceId),
             { discard: true }
           )
 
           // Run a one-time PR check for stopped workspaces to refresh stale
           // PR data, but do not start continuous polling for them.
           yield* Effect.forEach(
-            stoppedWorkspaces,
-            (workspace) => checkPr(workspace.id),
+            stoppedWorkspaceIds,
+            (workspaceId) => checkPr(workspaceId),
             { discard: true }
           )
         }
       )
 
-      yield* bootstrapPolling()
+      const bootstrapSnapshot = getBootstrapPollingSnapshot()
+
+      yield* bootstrapPolling(bootstrapSnapshot).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.logWarning(
+            `[PrWatcher] startup polling failed: ${String(cause)}`
+          )
+        ),
+        Effect.forkScoped
+      )
 
       // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())

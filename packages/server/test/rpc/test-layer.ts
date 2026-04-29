@@ -1,6 +1,13 @@
 import { RpcTest } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Ref, SubscriptionRef } from 'effect'
+import {
+  Context,
+  Effect,
+  Layer,
+  Ref,
+  type Scope,
+  SubscriptionRef,
+} from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
@@ -263,11 +270,21 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 
 export const TestLaborerRpcClient = RpcTest.makeClient(LaborerRpcs)
 
+interface ScopedTestRpcContext {
+  readonly client: Effect.Effect.Success<typeof TestLaborerRpcClient>
+  readonly store: LaborerStore['Type']['store']
+  readonly terminalClientRecorder: TestTerminalClientRecorder['Type']
+}
+
 export const makeTestRpcClient = TestLaborerRpcClient.pipe(
   Effect.provide(TestLaborerRpcLayer)
 )
 
-export const makeScopedTestRpcContext = Effect.gen(function* () {
+export const makeScopedTestRpcContext: Effect.Effect<
+  ScopedTestRpcContext,
+  never,
+  Scope.Scope
+> = Effect.gen(function* () {
   const context = yield* Layer.build(TestLaborerRpcWithStoreLayer)
   const client = yield* TestLaborerRpcClient.pipe(
     Effect.provide(Layer.succeedContext(context))

@@ -4,7 +4,6 @@ const {
   mockCreateWriteStream,
   mockExistsSync,
   mockMkdirSync,
-  MockSocket,
   mockSpawn,
   spawnedProcesses,
 } = vi.hoisted(() => {
@@ -56,18 +55,7 @@ const {
     }
   )
 
-  class MockSocket extends EventEmitter {
-    connect(): void {
-      queueMicrotask(() => this.emit('connect'))
-    }
-
-    destroy(): void {}
-
-    setTimeout(_timeout: number, _callback: () => void): void {}
-  }
-
   return {
-    MockSocket,
     mockCreateWriteStream: vi.fn(() => ({ end: vi.fn(), write: vi.fn() })),
     mockExistsSync: vi.fn(() => true),
     mockMkdirSync: vi.fn(),
@@ -84,10 +72,6 @@ vi.mock('node:fs', () => ({
 
 vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
-}))
-
-vi.mock('node:net', () => ({
-  Socket: MockSocket,
 }))
 
 vi.mock('electron', () => ({
@@ -119,7 +103,14 @@ describe('BackendProcessManager', () => {
       port: 17_321,
     })
 
-    const endpoint = await manager.start()
+    const endpoint = manager.start()
+    const readyPromise = manager.waitUntilReady()
+    spawnedProcesses[0]?.stdout.emit(
+      'data',
+      Buffer.from('[server-main] Listening on http://127.0.0.1:17321\n')
+    )
+
+    await readyPromise
 
     expect(endpoint.wsUrl).toBe('ws://127.0.0.1:17321/?token=secret-token')
     expect(mockSpawn).toHaveBeenCalledOnce()
@@ -177,9 +168,16 @@ describe('BackendProcessManager', () => {
         port: 24_680,
       })
 
-      await expect(manager.start()).resolves.toMatchObject({
+      const endpoint = manager.start()
+      const readyPromise = manager.waitUntilReady()
+      spawnedProcesses[0]?.stdout.emit(
+        'data',
+        Buffer.from('[server-main] Listening on http://127.0.0.1:24680\n')
+      )
+      expect(endpoint).toMatchObject({
         wsUrl: 'ws://127.0.0.1:24680/?token=stable-token',
       })
+      await readyPromise
       spawnedProcesses[0]?.emit('exit', 1, null)
 
       await vi.advanceTimersByTimeAsync(500)
@@ -191,9 +189,16 @@ describe('BackendProcessManager', () => {
       ).toHaveBeenCalledWith(
         `${JSON.stringify({ authToken: 'stable-token', host: '127.0.0.1', port: 24_680 })}\n`
       )
-      await expect(manager.start()).resolves.toMatchObject({
+      const restartedEndpoint = manager.start()
+      const restartedReadyPromise = manager.waitUntilReady()
+      spawnedProcesses[1]?.stdout.emit(
+        'data',
+        Buffer.from('[server-main] Listening on http://127.0.0.1:24680\n')
+      )
+      expect(restartedEndpoint).toMatchObject({
         wsUrl: 'ws://127.0.0.1:24680/?token=stable-token',
       })
+      await restartedReadyPromise
 
       manager.stop()
     } finally {

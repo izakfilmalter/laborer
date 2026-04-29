@@ -56,7 +56,14 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  panelLayout: { table: 'panel_layout' },
+  panelLayout: {
+    table: 'panel_layout',
+    get: vi.fn((id: string, options?: { default?: unknown }) => ({
+      id,
+      options,
+      type: 'panelLayoutGet',
+    })),
+  },
   windowLayoutUpdated: windowLayoutUpdatedMock,
   workspaces: { table: 'workspaces' },
 }))
@@ -100,11 +107,42 @@ vi.mock('@/lib/desktop', () => ({
 }))
 
 vi.mock('@/livestore/store', () => ({
-  useLaborerStore: vi.fn(() => ({
-    commit: storeCommitMock,
-    query: storeQueryMock,
-    useQuery: storeUseQueryMock,
-  })),
+  useLaborerStore: vi.fn(() => {
+    const useClientDocument = (
+      _table: unknown,
+      windowId: string,
+      options?: { default?: { windowLayout: unknown } }
+    ) => {
+      const currentRow = persistedRowsRef.current.find(
+        (row) => row.windowId === windowId
+      )
+      const document = {
+        windowLayout:
+          currentRow?.windowLayout ?? options?.default?.windowLayout ?? null,
+      }
+      const setDocument = (nextDocument: { windowLayout: unknown }) => {
+        windowLayoutUpdatedMock({
+          windowId,
+          windowLayout: nextDocument.windowLayout,
+        })
+        const otherRows = persistedRowsRef.current.filter(
+          (row) => row.windowId !== windowId
+        )
+        persistedRowsRef.current = [
+          ...otherRows,
+          { windowId, windowLayout: nextDocument.windowLayout },
+        ]
+      }
+      return [document, setDocument] as const
+    }
+
+    return {
+      commit: storeCommitMock,
+      query: storeQueryMock,
+      useClientDocument,
+      useQuery: storeUseQueryMock,
+    }
+  }),
 }))
 
 vi.mock('@/panels/panel-group-registry', () => ({
@@ -229,10 +267,22 @@ describe('usePanelLayout', () => {
           : persistedRowsRef.current
     )
     storeQueryMock.mockImplementation(
-      (query: { options?: { label?: string } }) =>
-        query.options?.label === 'homePanelWorkspaces'
+      (query: { id?: string; options?: { label?: string }; type?: string }) => {
+        if (query.type === 'panelLayoutGet' && query.id) {
+          const row = getPersistedRow(query.id)
+          return {
+            windowLayout:
+              row?.windowLayout ??
+              (query.options as { default?: { windowLayout?: unknown } })
+                ?.default?.windowLayout ??
+              null,
+          }
+        }
+
+        return query.options?.label === 'homePanelWorkspaces'
           ? workspaceRowsRef.current
           : persistedRowsRef.current
+      }
     )
   })
 

@@ -826,7 +826,7 @@ describe('LiveStore schema', () => {
   )
 
   // ---------------------------------------------------------------------------
-  // windowLayoutUpdated — single unified layout event
+  // Deprecated terminal events
   // ---------------------------------------------------------------------------
 
   it.scoped('keeps deprecated terminal events as no-op materializers', () =>
@@ -883,7 +883,6 @@ describe('LiveStore schema', () => {
         workspaces: store.query(tables.workspaces),
         tasks: store.query(tables.tasks),
         prds: store.query(tables.prds),
-        panelLayout: store.query(tables.panelLayout),
       }
 
       store.commit(
@@ -917,7 +916,6 @@ describe('LiveStore schema', () => {
           workspaces: store.query(tables.workspaces),
           tasks: store.query(tables.tasks),
           prds: store.query(tables.prds),
-          panelLayout: store.query(tables.panelLayout),
         },
         beforeDeprecatedEvents
       )
@@ -925,8 +923,12 @@ describe('LiveStore schema', () => {
   )
 
   // ---------------------------------------------------------------------------
-  // windowLayoutUpdated — single unified layout event
+  // Panel layout client document
   // ---------------------------------------------------------------------------
+
+  it('keeps window layout changes client-only', () => {
+    assert.isTrue(events.windowLayoutUpdated.options.clientOnly)
+  })
 
   const singlePanelLeaf = {
     _tag: 'LeafNode',
@@ -994,152 +996,56 @@ describe('LiveStore schema', () => {
     activeTabId: 'wtab-1',
   } as const
 
-  it.scoped(
-    'windowLayoutUpdated persists a valid WindowLayout and is queryable',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        store.commit(
-          events.windowLayoutUpdated({
-            windowId: 'window-1',
-            windowLayout: singleTabLayout,
-            reason: 'initial-seed',
-          })
-        )
-
-        const result = store.query(tables.panelLayout)
-        assert.strictEqual(result.length, 1)
-        assert.deepStrictEqual(result[0], {
-          windowId: 'window-1',
-          windowLayout: singleTabLayout,
-        })
-      })
-  )
-
-  it.scoped('windowLayoutUpdated upserts on same windowId (overwrites)', () =>
+  it.scoped('panelLayout client document stores a valid WindowLayout', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
 
       store.commit(
-        events.windowLayoutUpdated({
-          windowId: 'window-1',
-          windowLayout: singleTabLayout,
-        })
+        tables.panelLayout.set({ windowLayout: singleTabLayout }, 'window-1')
       )
 
-      store.commit(
-        events.windowLayoutUpdated({
-          windowId: 'window-1',
-          windowLayout: twoTabLayout,
-          reason: 'tab-added',
-        })
-      )
-
-      const result = store.query(tables.panelLayout)
-      assert.strictEqual(result.length, 1)
-      assert.deepStrictEqual(result[0]?.windowLayout, twoTabLayout)
+      const result = store.query(tables.panelLayout.get('window-1'))
+      assert.deepStrictEqual(result.windowLayout, singleTabLayout)
     })
   )
 
-  it.scoped(
-    'windowLayoutUpdated reason field is optional and does not affect materialization',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        // Without reason
-        store.commit(
-          events.windowLayoutUpdated({
-            windowId: 'window-1',
-            windowLayout: singleTabLayout,
-          })
-        )
-
-        const result1 = store.query(tables.panelLayout)
-        assert.deepStrictEqual(result1[0]?.windowLayout, singleTabLayout)
-
-        // With reason — same result
-        store.commit(
-          events.windowLayoutUpdated({
-            windowId: 'window-1',
-            windowLayout: twoTabLayout,
-            reason: 'split',
-          })
-        )
-
-        const result2 = store.query(tables.panelLayout)
-        assert.deepStrictEqual(result2[0]?.windowLayout, twoTabLayout)
-      })
-  )
-
-  it.scoped(
-    'panelLayout table returns only windowId and windowLayout columns',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        store.commit(
-          events.windowLayoutUpdated({
-            windowId: 'window-1',
-            windowLayout: singleTabLayout,
-          })
-        )
-
-        const result = store.query(tables.panelLayout)
-        assert.strictEqual(result.length, 1)
-        const row = result[0]
-        assert.ok(row)
-        const keys = Object.keys(row)
-        assert.deepStrictEqual(keys.sort(), ['windowId', 'windowLayout'])
-      })
-  )
-
-  it.scoped('windowLayoutUpdated stores multiple windows independently', () =>
+  it.scoped('panelLayout client document overwrites the same window', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
 
       store.commit(
-        events.windowLayoutUpdated({
-          windowId: 'window-1',
-          windowLayout: singleTabLayout,
-        })
+        tables.panelLayout.set({ windowLayout: singleTabLayout }, 'window-1')
       )
-
-      const window2Layout = {
-        tabs: [
-          {
-            id: 'wtab-3',
-            workspaceLayout: {
-              _tag: 'WorkspaceTileLeaf',
-              id: 'tile-3',
-              workspaceId: 'ws-3',
-              panelTabs: [panelTab2],
-              activePanelTabId: 'ptab-2',
-            } as const,
-          },
-        ],
-        activeTabId: 'wtab-3',
-      }
-
       store.commit(
-        events.windowLayoutUpdated({
-          windowId: 'window-2',
-          windowLayout: window2Layout,
-        })
+        tables.panelLayout.set({ windowLayout: twoTabLayout }, 'window-1')
       )
 
-      const result = store.query(tables.panelLayout)
-      assert.strictEqual(result.length, 2)
-      assert.strictEqual(result[0]?.windowId, 'window-1')
-      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
-      assert.strictEqual(result[1]?.windowId, 'window-2')
-      assert.deepStrictEqual(result[1]?.windowLayout, window2Layout)
+      const result = store.query(tables.panelLayout.get('window-1'))
+      assert.deepStrictEqual(result.windowLayout, twoTabLayout)
     })
   )
 
   it.scoped(
-    'windowLayoutUpdated with nested workspace tile splits round-trips correctly',
+    'legacy windowLayoutUpdated events no longer materialize layout',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.windowLayoutUpdated({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            reason: 'legacy-event',
+          })
+        )
+
+        const result = store.query(tables.panelLayout.get('window-1'))
+        assert.deepStrictEqual(result.windowLayout, null)
+      })
+  )
+
+  it.scoped(
+    'panelLayout client document round-trips nested workspace splits',
     () =>
       Effect.gen(function* () {
         const store = yield* makeTestStore
@@ -1177,18 +1083,13 @@ describe('LiveStore schema', () => {
         } as const
 
         store.commit(
-          events.windowLayoutUpdated({
-            windowId: 'window-1',
-            windowLayout: nestedLayout,
-            reason: 'restore',
-          })
+          tables.panelLayout.set({ windowLayout: nestedLayout }, 'window-1')
         )
 
-        const result = store.query(tables.panelLayout)
-        assert.deepStrictEqual(result[0]?.windowLayout, nestedLayout)
+        const result = store.query(tables.panelLayout.get('window-1'))
+        assert.deepStrictEqual(result.windowLayout, nestedLayout)
 
-        // Verify the nested structure is fully deserialized
-        const wsLayout = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+        const wsLayout = result.windowLayout?.tabs[0]?.workspaceLayout
         assert.strictEqual(wsLayout?._tag, 'WorkspaceTileSplit')
         if (wsLayout?._tag === 'WorkspaceTileSplit') {
           assert.strictEqual(wsLayout.children.length, 2)

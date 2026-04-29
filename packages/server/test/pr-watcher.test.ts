@@ -4,6 +4,24 @@ import { Context, Effect, Layer } from 'effect'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { TestLaborerStore } from './helpers/test-store.js'
+import { waitFor } from './helpers/timing-helpers.js'
+
+type PrWatcherService = Context.Tag.Service<typeof PrWatcher>
+
+const waitForPollingState = (
+  prWatcher: PrWatcherService,
+  workspaceId: string,
+  expected: boolean
+) =>
+  Effect.promise(() =>
+    waitFor(
+      async () =>
+        (await Effect.runPromise(prWatcher.isPolling(workspaceId))) ===
+        expected,
+      2000,
+      `PrWatcher polling state for ${workspaceId}`
+    )
+  )
 
 /**
  * Helper: build a PrWatcher from a pre-built store context.
@@ -46,6 +64,7 @@ describe('PrWatcher', () => {
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
+        yield* waitForPollingState(prWatcher, 'workspace-running', true)
         const isPolling = yield* prWatcher.isPolling('workspace-running')
 
         assert.isTrue(isPolling)
@@ -80,6 +99,7 @@ describe('PrWatcher', () => {
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
+        yield* waitForPollingState(prWatcher, 'workspace-stopped', false)
         const isPolling = yield* prWatcher.isPolling('workspace-stopped')
 
         assert.isFalse(isPolling)
@@ -207,6 +227,18 @@ describe('PrWatcher', () => {
           'stopped workspaces should not have continuous polling'
         )
 
+        yield* Effect.promise(() =>
+          waitFor(
+            async () =>
+              store
+                .query(tables.workspaces)
+                .find((w) => w.id === 'workspace-stopped-boot')?.prState ===
+              null,
+            5000,
+            'stopped workspace bootstrap PR check'
+          )
+        )
+
         // But the one-time bootstrap check should have run, overwriting
         // the stale OPEN state with the gh pr view result (EMPTY_PR since
         // the fake worktree path has no real repo).
@@ -247,6 +279,7 @@ describe('PrWatcher', () => {
         const prWatcher = yield* buildPrWatcher(storeContext)
 
         // Verify polling is active
+        yield* waitForPollingState(prWatcher, 'workspace-vanishing', true)
         const pollingBefore = yield* prWatcher.isPolling('workspace-vanishing')
         assert.isTrue(pollingBefore, 'should be polling after bootstrap')
 

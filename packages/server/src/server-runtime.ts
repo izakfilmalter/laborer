@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import {
   HttpMiddleware,
   HttpRouter,
+  HttpServer,
   HttpServerRequest,
   HttpServerResponse,
 } from '@effect/platform'
@@ -204,6 +205,9 @@ const makeRoutesLayer = Layer.unwrapScoped(
     )
 
     return Layer.mergeAll(
+      HttpRouter.Default.use((router) =>
+        router.get('/', HttpServerResponse.empty({ status: 204 }))
+      ),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
       authedWebSocketRoute('/sync', config.authToken, syncWebSocketApp),
       authedSyncWebSocketRoute(
@@ -218,8 +222,25 @@ const makeRoutesLayer = Layer.unwrapScoped(
 export const makeServerLayer = Layer.unwrapEffect(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
-    return HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
-      Layer.provide(makeRoutesLayer),
+    const listeningLogLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer
+        const address = server.address
+        const host =
+          address._tag === 'TcpAddress' ? address.hostname : config.host
+        const port = address._tag === 'TcpAddress' ? address.port : config.port
+        yield* Effect.logInfo(
+          `[server-main] Listening on http://${host}:${String(port)}`
+        )
+      })
+    )
+
+    return Layer.mergeAll(
+      HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
+        Layer.provide(makeRoutesLayer)
+      ),
+      listeningLogLayer
+    ).pipe(
       Layer.provide(InfrastructureLayer),
       Layer.provide(
         NodeHttpServer.layer(createServer, {

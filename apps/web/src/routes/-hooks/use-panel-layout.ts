@@ -1,9 +1,5 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import {
-  panelLayout,
-  windowLayoutUpdated,
-  workspaces,
-} from '@laborer/shared/schema'
+import { panelLayout, workspaces } from '@laborer/shared/schema'
 import type {
   LeafNode,
   PanelNode,
@@ -375,13 +371,10 @@ function assignTerminalInWorkspace(
  */
 const paneSpawnGuard = createSpawnGuard()
 
-/** Query the persisted panel layout from LiveStore. */
-const persistedLayout$ = queryDb(panelLayout, {
-  label: 'persistedPanelLayout',
-})
-
 /** LiveStore query for workspaces (used by isWorkspaceContainerized). */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
+
+const DEFAULT_PANEL_LAYOUT_DOCUMENT = { windowLayout: null }
 
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
@@ -404,13 +397,11 @@ const daytonaRemoveTerminalMutation = LaborerClient.mutation('terminal.remove')
  * that mutate the `WindowLayout` and persist changes to LiveStore.
  *
  * Layout persistence flow:
- * 1. Read the persisted `WindowLayout` from LiveStore's `panelLayout` table.
+ * 1. Read the per-window `WindowLayout` from LiveStore's client document.
  * 2. If no persisted layout exists, seed from the auto-generated
- *    `WindowLayout` (via `useInitialLayout`) and commit it as a
- *    `windowLayoutUpdated` event.
+ *    `WindowLayout` (via `useInitialLayout`).
  * 3. On mutations (split, close, assign, etc.), compute the new
- *    `WindowLayout` and commit a single `windowLayoutUpdated` event.
- * 4. The materializer upserts the row, and the reactive query re-fires.
+ *    `WindowLayout` and write the client document.
  */
 export function usePanelLayout() {
   const store = useLaborerStore()
@@ -419,18 +410,35 @@ export function usePanelLayout() {
   const nativeWindowId = getCurrentWindowId()
   const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
 
-  // Read the persisted layout from LiveStore reactively.
-  // Returns all rows; this hook still targets a single window-scoped row.
-  const persistedRows = store.useQuery(persistedLayout$)
-  const persistedRow = persistedRows.find(
-    (row) => row.windowId === panelWindowId
+  const [panelLayoutDocument, setPanelLayoutDocument] = store.useClientDocument(
+    panelLayout,
+    panelWindowId,
+    {
+      default: DEFAULT_PANEL_LAYOUT_DOCUMENT,
+    }
   )
 
-  // Read and decode the hierarchical window layout from the persisted row.
+  const persistWindowLayout = useCallback(
+    (_reason: string, windowLayout: WindowLayout) => {
+      setPanelLayoutDocument({ windowLayout })
+    },
+    [setPanelLayoutDocument]
+  )
+
+  const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
+    const currentDocument = store.query(
+      panelLayout.get(panelWindowId, {
+        default: DEFAULT_PANEL_LAYOUT_DOCUMENT,
+      })
+    )
+    return currentDocument.windowLayout ?? undefined
+  }, [panelWindowId, store])
+
+  // Read and decode the hierarchical window layout from the client document.
   // Uses Effect Schema decode with repair transforms. If the layout was
   // repaired, we'll re-persist it.
   const windowLayoutRepair = useMemo(() => {
-    const raw = persistedRow?.windowLayout
+    const raw = panelLayoutDocument.windowLayout
     if (!raw) {
       return {
         windowLayout: undefined as WindowLayout | undefined,
@@ -438,12 +446,13 @@ export function usePanelLayout() {
       }
     }
     return decodeWindowLayout(raw)
-  }, [persistedRow])
+  }, [panelLayoutDocument.windowLayout])
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
   const workspaceList = store.useQuery(allWorkspaces$)
   const pendingAgentAutoOpenWorkspaceIdsRef = useRef<Set<string>>(new Set())
+  const hasPersistedLayout = panelLayoutDocument.windowLayout !== null
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >
@@ -465,48 +474,29 @@ export function usePanelLayout() {
   const hasPersistedWindowRepair = useRef(false)
   useEffect(() => {
     if (
-      !(
-        windowLayoutRepair.wasRepaired &&
-        windowLayoutRepair.windowLayout &&
-        persistedRow
-      ) ||
+      !(windowLayoutRepair.wasRepaired && windowLayoutRepair.windowLayout) ||
       hasPersistedWindowRepair.current
     ) {
       return
     }
 
     hasPersistedWindowRepair.current = true
-    store.commit(
-      windowLayoutUpdated({
-        windowId: panelWindowId,
-        windowLayout: windowLayoutRepair.windowLayout,
-        reason: 'window-layout-repair',
-      })
-    )
+    persistWindowLayout('window-layout-repair', windowLayoutRepair.windowLayout)
   }, [
     windowLayoutRepair.wasRepaired,
     windowLayoutRepair.windowLayout,
-    persistedRow,
-    panelWindowId,
-    store,
+    persistWindowLayout,
   ])
 
-  // Seed LiveStore with the initial layout when there's no persisted layout
-  // but we have an auto-generated one from terminals/workspaces.
-  // `useInitialLayout` returns a complete `WindowLayout` ready to commit.
+  // Seed the client document when there's no persisted layout but we have an
+  // auto-generated one from terminals/workspaces.
   const hasSeeded = useRef(false)
   useEffect(() => {
-    if (!persistedRow && initialLayout && !hasSeeded.current) {
+    if (!hasPersistedLayout && initialLayout && !hasSeeded.current) {
       hasSeeded.current = true
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: initialLayout,
-          reason: 'seed',
-        })
-      )
+      persistWindowLayout('seed', initialLayout)
     }
-  }, [initialLayout, panelWindowId, persistedRow, store])
+  }, [hasPersistedLayout, initialLayout, persistWindowLayout])
 
   // -------------------------------------------------------------------
   // Reconcile persisted layout against live terminal state on startup.
@@ -613,14 +603,7 @@ export function usePanelLayout() {
    */
   const commitReconciledLayouts = useCallback(
     (liveIds: ReadonlySet<string>, respawnedIds: Map<string, string>) => {
-      const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find(
-        (row) => row.windowId === panelWindowId
-      )
-
-      const currentWindowLayout = currentRow?.windowLayout as
-        | WindowLayout
-        | undefined
+      const currentWindowLayout = getCurrentWindowLayout()
       const effectiveWindowLayout = currentWindowLayout ?? persistedWindowLayout
       if (effectiveWindowLayout) {
         const reconciledWindow = reconcileWindowLayout(
@@ -629,17 +612,11 @@ export function usePanelLayout() {
           respawnedIds
         )
         if (reconciledWindow !== currentWindowLayout) {
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: reconciledWindow,
-              reason: 'reconciliation',
-            })
-          )
+          persistWindowLayout('reconciliation', reconciledWindow)
         }
       }
     },
-    [panelWindowId, persistedWindowLayout, store]
+    [getCurrentWindowLayout, persistedWindowLayout, persistWindowLayout]
   )
 
   useEffect(() => {
@@ -808,13 +785,7 @@ export function usePanelLayout() {
       }
 
       if (resultLayout !== persistedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: resultLayout,
-            reason: 'split',
-          })
-        )
+        persistWindowLayout('split', resultLayout)
       }
 
       if (!newLeaf?.workspaceId) {
@@ -877,13 +848,7 @@ export function usePanelLayout() {
             return
           }
           // Read the CURRENT layout from the store — NOT a stale snapshot.
-          const currentRows = store.query(persistedLayout$)
-          const currentRow = currentRows.find(
-            (row) => row.windowId === panelWindowId
-          )
-          const currentWindowLayout = currentRow?.windowLayout as
-            | WindowLayout
-            | undefined
+          const currentWindowLayout = getCurrentWindowLayout()
           if (!currentWindowLayout) {
             return
           }
@@ -915,13 +880,7 @@ export function usePanelLayout() {
               })),
             })
           )
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: updated,
-              reason: 'split-terminal-assigned',
-            })
-          )
+          persistWindowLayout('split-terminal-assigned', updated)
         })
         .catch((error) => {
           console.warn('[split-pane] auto-spawn failed:', error)
@@ -930,12 +889,13 @@ export function usePanelLayout() {
       return newLeaf.id
     },
     [
-      panelWindowId,
       persistedWindowLayout,
-      store,
+      getCurrentWindowLayout,
+      persistWindowLayout,
       getConfig,
       spawnTerminal,
       removeTerminalOptimistically,
+      store.query,
     ]
   )
 
@@ -984,13 +944,7 @@ export function usePanelLayout() {
       }
 
       if (resultLayout !== persistedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: resultLayout,
-            reason: 'update-pane-type',
-          })
-        )
+        persistWindowLayout('update-pane-type', resultLayout)
       }
 
       // Auto-spawn a terminal for terminal/agent panes
@@ -1034,13 +988,7 @@ export function usePanelLayout() {
               removeTerminalOptimistically(result.id, '[update-type-cancelled]')
               return
             }
-            const currentRows = store.query(persistedLayout$)
-            const currentRow = currentRows.find(
-              (row) => row.windowId === panelWindowId
-            )
-            const currentWindowLayout = currentRow?.windowLayout as
-              | WindowLayout
-              | undefined
+            const currentWindowLayout = getCurrentWindowLayout()
             if (!currentWindowLayout) {
               return
             }
@@ -1070,13 +1018,7 @@ export function usePanelLayout() {
                 })),
               })
             )
-            store.commit(
-              windowLayoutUpdated({
-                windowId: panelWindowId,
-                windowLayout: updated,
-                reason: 'update-type-terminal-assigned',
-              })
-            )
+            persistWindowLayout('update-type-terminal-assigned', updated)
           })
           .catch((error) => {
             console.warn('[update-pane-type] auto-spawn failed:', error)
@@ -1084,12 +1026,13 @@ export function usePanelLayout() {
       }
     },
     [
-      panelWindowId,
       persistedWindowLayout,
-      store,
+      getCurrentWindowLayout,
+      persistWindowLayout,
       getConfig,
       spawnTerminal,
       removeTerminalOptimistically,
+      store.query,
     ]
   )
 
@@ -1131,31 +1074,19 @@ export function usePanelLayout() {
         })
 
         if (hasContent) {
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: resultLayout,
-              reason: 'pane-closed',
-            })
-          )
+          persistWindowLayout('pane-closed', resultLayout)
         } else {
           const emptyLayout: WindowLayout = {
             ...resultLayout,
             tabs: [],
             activeTabId: undefined,
           }
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: emptyLayout,
-              reason: 'all-panes-closed',
-            })
-          )
+          persistWindowLayout('all-panes-closed', emptyLayout)
           hasSeeded.current = false
         }
       }
     },
-    [panelWindowId, persistedWindowLayout, store, removeTerminalOptimistically]
+    [persistedWindowLayout, persistWindowLayout, removeTerminalOptimistically]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -1175,16 +1106,10 @@ export function usePanelLayout() {
       // switching tabs can restore focus later.
       const updated = saveFocusedPaneId(persistedWindowLayout, validatedPaneId)
       if (updated !== persistedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: updated,
-            reason: 'focus-changed',
-          })
-        )
+        persistWindowLayout('focus-changed', updated)
       }
     },
-    [panelWindowId, store, persistedWindowLayout]
+    [persistedWindowLayout, persistWindowLayout]
   )
 
   /**
@@ -1233,13 +1158,7 @@ export function usePanelLayout() {
       if (!paneId) {
         const navLayout = navigateToTerminal(persistedWindowLayout, terminalId)
         if (navLayout) {
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: navLayout,
-              reason: 'navigate-to-terminal',
-            })
-          )
+          persistWindowLayout('navigate-to-terminal', navLayout)
           return
         }
       }
@@ -1259,13 +1178,7 @@ export function usePanelLayout() {
       )
 
       if (resultLayout !== persistedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: resultLayout,
-            reason: 'terminal-assigned',
-          })
-        )
+        persistWindowLayout('terminal-assigned', resultLayout)
       }
 
       // Auto-open dev server for containerized workspaces
@@ -1279,7 +1192,7 @@ export function usePanelLayout() {
         }
       }
     },
-    [persistedWindowLayout, panelWindowId, store, isWorkspaceContainerized]
+    [persistedWindowLayout, persistWindowLayout, isWorkspaceContainerized]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -1403,13 +1316,7 @@ export function usePanelLayout() {
           wsId,
           (leaf) => removePanelTab(leaf, existingDevTab.id)
         )
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: newLayout,
-            reason: 'dev-server-toggle-off',
-          })
-        )
+        persistWindowLayout('dev-server-toggle-off', newLayout)
         return false
       }
 
@@ -1422,13 +1329,7 @@ export function usePanelLayout() {
       })
 
       // Re-read the layout to avoid overwriting concurrent changes.
-      const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find(
-        (row) => row.windowId === panelWindowId
-      )
-      const currentWindowLayout = currentRow?.windowLayout as
-        | WindowLayout
-        | undefined
+      const currentWindowLayout = getCurrentWindowLayout()
       if (!currentWindowLayout) {
         return false
       }
@@ -1440,19 +1341,13 @@ export function usePanelLayout() {
         (leaf) =>
           addPanelTab(leaf, 'devServerTerminal', { terminalId: result.id })
       )
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: newLayout,
-          reason: 'dev-server-toggle-on',
-        })
-      )
+      persistWindowLayout('dev-server-toggle-on', newLayout)
       return true
     },
     [
       persistedWindowLayout,
-      panelWindowId,
-      store,
+      getCurrentWindowLayout,
+      persistWindowLayout,
       spawnTerminal,
       removeTerminalOptimistically,
     ]
@@ -1478,13 +1373,7 @@ export function usePanelLayout() {
         )
         if (newLayout !== persistedWindowLayout) {
           removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: newLayout,
-              reason: 'terminal-pane-closed',
-            })
-          )
+          persistWindowLayout('terminal-pane-closed', newLayout)
           return
         }
       }
@@ -1492,7 +1381,7 @@ export function usePanelLayout() {
       // No pane found — remove the terminal from the service directly
       removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
     },
-    [persistedWindowLayout, panelWindowId, store, removeTerminalOptimistically]
+    [persistedWindowLayout, persistWindowLayout, removeTerminalOptimistically]
   )
 
   /**
@@ -1526,16 +1415,10 @@ export function usePanelLayout() {
         removeWorkspaceFromTab
       )
       if (updatedWindowLayout !== persistedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: updatedWindowLayout,
-            reason: 'workspace-closed',
-          })
-        )
+        persistWindowLayout('workspace-closed', updatedWindowLayout)
       }
     },
-    [panelWindowId, persistedWindowLayout, store, cancelSpawnsAndKillTerminals]
+    [persistedWindowLayout, persistWindowLayout, cancelSpawnsAndKillTerminals]
   )
 
   /**
@@ -1583,20 +1466,13 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
 
   /**
-   * Helper to commit a window layout update to LiveStore.
-   * All layout mutations use the single `windowLayoutUpdated` event.
+   * Helper to persist a window layout update to LiveStore's client document.
    */
   const commitWindowLayout = useCallback(
     (reason: string, newLayout: WindowLayout) => {
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: newLayout,
-          reason,
-        })
-      )
+      persistWindowLayout(reason, newLayout)
     },
-    [panelWindowId, store]
+    [persistWindowLayout]
   )
 
   /**
@@ -1604,7 +1480,7 @@ export function usePanelLayout() {
    * Called when the user drag-and-drops workspace frames to rearrange them.
    *
    * Updates the WorkspaceTileNode tree within the active WindowTab and
-   * commits a single `windowLayoutUpdated` event.
+   * persists the client document.
    */
   const handleReorderWorkspaces = useCallback(
     (workspaceOrder: (string | undefined)[]) => {
@@ -1804,20 +1680,13 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
 
   /**
-   * Helper to commit a panel tab layout update to LiveStore.
-   * All panel tab mutations use the single `windowLayoutUpdated` event.
+   * Helper to persist a panel tab layout update to LiveStore.
    */
   const commitPanelTabLayout = useCallback(
     (reason: string, newLayout: WindowLayout) => {
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: newLayout,
-          reason,
-        })
-      )
+      persistWindowLayout(reason, newLayout)
     },
-    [panelWindowId, store]
+    [persistWindowLayout]
   )
 
   const handleAddPanelTab = useCallback(
@@ -1935,13 +1804,7 @@ export function usePanelLayout() {
             // Multiple layout mutations may have occurred between when this
             // spawn was initiated and when it completed. Using a stale
             // snapshot would overwrite those mutations, collapsing the layout.
-            const currentRows = store.query(persistedLayout$)
-            const currentRow = currentRows.find(
-              (row) => row.windowId === panelWindowId
-            )
-            const currentWindowLayout = currentRow?.windowLayout as
-              | WindowLayout
-              | undefined
+            const currentWindowLayout = getCurrentWindowLayout()
             if (!currentWindowLayout) {
               return
             }
@@ -1978,10 +1841,10 @@ export function usePanelLayout() {
       persistedWindowLayout,
       commitPanelTabLayout,
       commitWindowLayout,
+      getCurrentWindowLayout,
       getConfig,
       spawnTerminal,
       store,
-      panelWindowId,
       removeTerminalOptimistically,
     ]
   )
@@ -2050,16 +1913,10 @@ export function usePanelLayout() {
         workspaceId,
         removeWorkspaceFromTab
       )
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: finalLayout,
-          reason: 'auto-close-empty-workspace',
-        })
-      )
+      persistWindowLayout('auto-close-empty-workspace', finalLayout)
       return true
     },
-    [panelWindowId, store]
+    [persistWindowLayout]
   )
 
   const handleRemovePanelTab = useCallback(

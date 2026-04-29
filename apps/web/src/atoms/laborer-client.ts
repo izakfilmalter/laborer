@@ -10,42 +10,68 @@
  * @see packages/server/src/utility-main.ts — Server utility process entry
  */
 
-import {
-  layerWebSocket,
-  layerWebSocketConstructorGlobal,
-} from '@effect/platform/Socket'
+import { layerWebSocket, WebSocketConstructor } from '@effect/platform/Socket'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Duration, Effect, Layer, Schedule } from 'effect'
 
 import { getBackendRpcWsUrl } from '@/lib/desktop'
+import {
+  getWsReconnectDelayMsForRetry,
+  recordWsConnectionAttempt,
+  recordWsConnectionClosed,
+  recordWsConnectionErrored,
+  recordWsConnectionOpened,
+  WS_RECONNECT_MAX_RETRIES,
+} from './ws-connection-state'
 
-const WS_RECONNECT_INITIAL_DELAY_MS = 1000
-const WS_RECONNECT_BACKOFF_FACTOR = 2
-const WS_RECONNECT_MAX_DELAY_MS = 64_000
-const WS_RECONNECT_MAX_RETRIES = 7
+function createTrackingWebSocket(
+  socketUrl: string,
+  protocols?: string | string[]
+): WebSocket {
+  recordWsConnectionAttempt(socketUrl)
+  const socket = new globalThis.WebSocket(socketUrl, protocols)
 
-function getWsReconnectDelayMsForRetry(retryIndex: number): number | null {
-  if (
-    !Number.isInteger(retryIndex) ||
-    retryIndex < 0 ||
-    retryIndex >= WS_RECONNECT_MAX_RETRIES
-  ) {
-    return null
-  }
-
-  return Math.min(
-    Math.round(
-      WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** retryIndex
-    ),
-    WS_RECONNECT_MAX_DELAY_MS
+  socket.addEventListener(
+    'open',
+    () => {
+      recordWsConnectionOpened()
+    },
+    { once: true }
   )
+  socket.addEventListener(
+    'error',
+    () => {
+      recordWsConnectionErrored(
+        'Unable to connect to the Laborer server WebSocket.'
+      )
+    },
+    { once: true }
+  )
+  socket.addEventListener(
+    'close',
+    (event) => {
+      recordWsConnectionClosed({
+        code: event.code,
+        reason: event.reason,
+      })
+    },
+    { once: true }
+  )
+
+  return socket
 }
 
-const retryPolicy = Schedule.addDelay(
+const retrySchedule = Schedule.addDelay(
   Schedule.recurs(WS_RECONNECT_MAX_RETRIES),
-  (retryCount) => Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)
+  (retryCount) =>
+    Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)
+)
+
+const trackingWebSocketConstructorLayer = Layer.succeed(
+  WebSocketConstructor,
+  createTrackingWebSocket
 )
 
 const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
@@ -58,10 +84,10 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
       )
     }
     const socketLayer = layerWebSocket(rpcUrl).pipe(
-      Layer.provide(layerWebSocketConstructorGlobal)
+      Layer.provide(trackingWebSocketConstructorLayer)
     )
     const protocol = yield* RpcClient.layerProtocolSocket({
-      retrySchedule: retryPolicy,
+      retrySchedule,
       retryTransientErrors: true,
     }).pipe(
       Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),

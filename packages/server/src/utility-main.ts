@@ -9,7 +9,8 @@
  * - Runs inside an Electron utility process (forked via bootstrap script)
  * - Receives a MessagePort from the parent process for RPC communication
  * - LaborerRpcs served over MessagePort (no HTTP server)
- * - Real command services are built before RPC is exposed
+ * - Command-service proxies are exposed immediately; real services hydrate in
+ *   background fibers
  * - LiveStore setup preserved (sync channel migrated separately in #11)
  * - Server-to-terminal and server-to-file-watcher connections use lazy
  *   MessagePort acquisition so startup does not wait for sidecar ports
@@ -24,8 +25,8 @@
  *
  * What's preserved:
  * - LaborerRpcsLive (all ~40 RPC handlers)
- * - RealServicesLayer (no placeholder service proxies)
- * - ServicesReadyLayer
+ * - DeferredServicesProxyLive (Ref-backed proxies + background init fiber)
+ * - DeferredServicesReadyLayer
  * - LaborerStoreLive (LiveStore + SQLite persistence)
  * - ConfigService.layer
  * - RepositoryIdentity.layer
@@ -47,7 +48,7 @@ import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Effect, Layer, Queue, SubscriptionRef } from 'effect'
+import { Context, Effect, Fiber, Layer, pipe, Queue, Ref, Stream } from 'effect'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
@@ -55,7 +56,12 @@ import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
 import { handleDaytonaTerminalDataPort } from './services/daytona-terminal-data-channel.js'
-import { DeferredServicesReady } from './services/deferred-service.js'
+import {
+  DeferredServicesReady,
+  DeferredServicesReadyLayer,
+  makeRefDelegatingService,
+  serviceInitializingError,
+} from './services/deferred-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
 import { DockerDetection } from './services/docker-detection.js'
 import { FileService } from './services/file-service.js'
@@ -64,7 +70,7 @@ import {
   FileWatcherRpcPort,
 } from './services/file-watcher-client.js'
 import { GithubTaskImporter } from './services/github-task-importer.js'
-import { LaborerStoreLive } from './services/laborer-store.js'
+import { LaborerStore, LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
@@ -72,6 +78,7 @@ import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
+import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
@@ -255,13 +262,14 @@ const provideUtilityPortLayers = <RIn, E, ROut>(
 }
 
 // ---------------------------------------------------------------------------
-// Service Layers — Real implementations
+// Deferred Layers — Real implementations built in background fibers
 // ---------------------------------------------------------------------------
 
 /**
- * Leaf services with no inter-service dependencies.
+ * Leaf services have no inter-service dependencies, but some perform I/O or
+ * establish lazy sidecar clients. Build them off the HTTP startup path.
  */
-const LeafServiceLayers = Layer.mergeAll(
+const DeferredLeafLayers = Layer.mergeAll(
   FileWatcherClient.layer,
   WorktreeDetector.layer,
   DepsImageService.layer,
@@ -269,11 +277,9 @@ const LeafServiceLayers = Layer.mergeAll(
 )
 
 /**
- * Core services depending on LaborerStore + leaf layers.
- * Does NOT include WorktreeReconciler because it needs SandboxProvider,
- * which is built in Group 1b after ContainerService is available.
+ * Services depending on LaborerStore + leaf layers.
  */
-const CoreServiceLayers = Layer.mergeAll(
+const DeferredGroup1aLayers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
@@ -283,71 +289,218 @@ const CoreServiceLayers = Layer.mergeAll(
 )
 
 /**
- * Adds SandboxProvider (routed between Docker and
- * Daytona) on top of Group 1a, then builds WorktreeReconciler which
- * needs SandboxProvider for sandbox cleanup when removing stale
- * workspaces.
+ * Adds SandboxProvider, then builds WorktreeReconciler on top of Group 1a.
  */
-const WorkspaceSupportLayers = WorktreeReconciler.layer.pipe(
+const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(
   Layer.provideMerge(SandboxProviderRoutedLayer),
-  Layer.provideMerge(CoreServiceLayers)
+  Layer.provideMerge(DeferredGroup1aLayers)
 )
 
-/**
- * Adds WorkspaceSyncService (depends on PrWatcher +
- * BackgroundFetchService in addition to Group 1).
- */
-const WorkspaceSupportWithSync = WorkspaceSyncService.layer.pipe(
+const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
   Layer.provide(BackgroundFetchService.layer),
-  Layer.provideMerge(WorkspaceSupportLayers)
+  Layer.provideMerge(DeferredGroup1Layers)
 )
 
-/**
- * Services depending on workspace support services.
- */
-const ImportAndWatchLayers = Layer.mergeAll(
+const DeferredGroup2Layers = Layer.mergeAll(
   GithubTaskImporter.layer,
   LinearTaskImporter.layer,
   ReviewCommentFetcher.layer,
   RepositoryWatchCoordinator.layer
 )
 
-/**
- * Full workspace command stack built bottom-up.
- * Each group uses provideMerge so all services remain available
- * as outputs for higher layers to consume.
- *
- * `SandboxProvider` is already in the stack from Group 1b
- * (via `SandboxProviderRoutedLayer`), so `WorkspaceProvider.layer`
- * can consume it directly.
- */
-const WorkspaceCommandLayer = WorkspaceProvider.layer.pipe(
+const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
-  Layer.provideMerge(ImportAndWatchLayers),
-  Layer.provideMerge(WorkspaceSupportWithSync),
-  Layer.provideMerge(LeafServiceLayers)
+  Layer.provideMerge(DeferredGroup2Layers),
+  Layer.provideMerge(DeferredGroup1WithSync)
 )
 
 /**
- * Complete service graph. This layer is built before RPC is exposed, so
- * command handlers never see placeholder service implementations.
+ * Provides cheap Ref-backed proxies immediately, then swaps each proxy to the
+ * real implementation as the background service groups finish building.
  */
-const RealServicesLayer = TerminalClient.layer.pipe(
-  Layer.provideMerge(WorkspaceCommandLayer)
-)
-
-const ServicesReadyLayer = Layer.effect(
-  DeferredServicesReady,
+const DeferredServicesProxyLive = Layer.scopedContext(
   Effect.gen(function* () {
-    const ref = yield* SubscriptionRef.make(true)
-    return DeferredServicesReady.of({ ref })
+    const containerService = yield* makeRefDelegatingService(ContainerService)
+    const fileService = yield* makeRefDelegatingService(FileService, {
+      watcherSubscribe: () =>
+        Stream.fail(serviceInitializingError('@laborer/FileService')),
+    })
+    const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
+      check: () => Effect.succeed({ available: false }),
+    })
+    const githubTaskImporter =
+      yield* makeRefDelegatingService(GithubTaskImporter)
+    const linearTaskImporter =
+      yield* makeRefDelegatingService(LinearTaskImporter)
+    const prWatcher = yield* makeRefDelegatingService(PrWatcher)
+    const prdStorageService = yield* makeRefDelegatingService(PrdStorageService)
+    const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
+    const reviewCommentFetcher =
+      yield* makeRefDelegatingService(ReviewCommentFetcher)
+    const taskManager = yield* makeRefDelegatingService(TaskManager)
+    const terminalClient = yield* makeRefDelegatingService(TerminalClient)
+    const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
+    const workspaceSyncService =
+      yield* makeRefDelegatingService(WorkspaceSyncService)
+    const depsImageService = yield* makeRefDelegatingService(DepsImageService)
+    const sandboxProvider = yield* makeRefDelegatingService(SandboxProvider, {
+      checkAvailability: () => Effect.succeed({ available: false }),
+    })
+
+    yield* Effect.gen(function* () {
+      yield* Effect.logInfo(
+        'Starting background initialization of deferred services...'
+      )
+
+      const store = yield* LaborerStore
+      const config = yield* ConfigService
+      const repoId = yield* RepositoryIdentity
+      const ready = yield* DeferredServicesReady
+
+      const CoreDeps = Layer.mergeAll(
+        Layer.succeed(LaborerStore, store),
+        Layer.succeed(ConfigService, config),
+        Layer.succeed(RepositoryIdentity, repoId),
+        Layer.succeed(DeferredServicesReady, ready)
+      )
+
+      yield* Effect.logInfo('[deferred-init] Building leaf layers...')
+      const leafCtx = yield* Layer.build(
+        provideUtilityPortLayers(DeferredLeafLayers).pipe(
+          Layer.provide(CoreDeps)
+        )
+      )
+      yield* Effect.logInfo('[deferred-init] Leaf layers built OK')
+
+      const stackFiber = yield* Effect.gen(function* () {
+        yield* Effect.logInfo('[deferred-init] Building service stack...')
+        const stackCtx = yield* Layer.build(
+          DeferredServiceStack.pipe(
+            Layer.provide(Layer.succeedContext(leafCtx)),
+            Layer.provide(CoreDeps),
+            Layer.provide(Layer.succeed(TerminalClient, terminalClient.proxy))
+          )
+        )
+        yield* Effect.logInfo(
+          '[deferred-init] Service stack built OK — swapping Refs'
+        )
+        yield* Ref.set(
+          containerService.ref,
+          Context.get(stackCtx, ContainerService)
+        )
+        yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
+        yield* Ref.set(
+          githubTaskImporter.ref,
+          Context.get(stackCtx, GithubTaskImporter)
+        )
+        yield* Ref.set(
+          linearTaskImporter.ref,
+          Context.get(stackCtx, LinearTaskImporter)
+        )
+        yield* Ref.set(prWatcher.ref, Context.get(stackCtx, PrWatcher))
+        yield* Ref.set(
+          prdStorageService.ref,
+          Context.get(stackCtx, PrdStorageService)
+        )
+        yield* Ref.set(
+          projectRegistry.ref,
+          Context.get(stackCtx, ProjectRegistry)
+        )
+        yield* Ref.set(
+          reviewCommentFetcher.ref,
+          Context.get(stackCtx, ReviewCommentFetcher)
+        )
+        yield* Ref.set(taskManager.ref, Context.get(stackCtx, TaskManager))
+        yield* Ref.set(
+          workspaceProvider.ref,
+          Context.get(stackCtx, WorkspaceProvider)
+        )
+        yield* Ref.set(
+          workspaceSyncService.ref,
+          Context.get(stackCtx, WorkspaceSyncService)
+        )
+        yield* Ref.set(
+          sandboxProvider.ref,
+          Context.get(stackCtx, SandboxProvider)
+        )
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.logError('[deferred-init] Service stack init failed', cause)
+        ),
+        Effect.forkScoped
+      )
+
+      const terminalFiber = yield* Effect.gen(function* () {
+        yield* Effect.logInfo('[deferred-init] Building TerminalClient...')
+        const termCtx = yield* Layer.build(
+          provideUtilityPortLayers(TerminalClient.layer).pipe(
+            Layer.provide(CoreDeps),
+            Layer.provide(
+              Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
+            ),
+            Layer.provide(
+              Layer.succeed(ProjectRegistry, projectRegistry.proxy)
+            ),
+            Layer.provide(Layer.succeed(SandboxProvider, sandboxProvider.proxy))
+          )
+        )
+        yield* Effect.logInfo(
+          '[deferred-init] TerminalClient built OK — swapping Ref'
+        )
+        yield* Ref.set(terminalClient.ref, Context.get(termCtx, TerminalClient))
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.logError('[deferred-init] TerminalClient init failed', cause)
+        ),
+        Effect.forkScoped
+      )
+
+      yield* Ref.set(dockerDetection.ref, Context.get(leafCtx, DockerDetection))
+      yield* Ref.set(
+        depsImageService.ref,
+        Context.get(leafCtx, DepsImageService)
+      )
+
+      yield* Fiber.join(stackFiber)
+      yield* Fiber.join(terminalFiber)
+      yield* Ref.set(ready.ref, true)
+      yield* Effect.logInfo(
+        '[deferred-init] All groups complete — DeferredServicesReady set to true'
+      )
+    }).pipe(
+      Effect.catchAllCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logError('Deferred services failed to initialize')
+          yield* Effect.logError(cause)
+        })
+      ),
+      Effect.forkScoped,
+      Effect.withSpan('deferred.init.all')
+    )
+
+    return pipe(
+      Context.empty(),
+      Context.add(ContainerService, containerService.proxy),
+      Context.add(FileService, fileService.proxy),
+      Context.add(DockerDetection, dockerDetection.proxy),
+      Context.add(GithubTaskImporter, githubTaskImporter.proxy),
+      Context.add(LinearTaskImporter, linearTaskImporter.proxy),
+      Context.add(PrWatcher, prWatcher.proxy),
+      Context.add(PrdStorageService, prdStorageService.proxy),
+      Context.add(ProjectRegistry, projectRegistry.proxy),
+      Context.add(ReviewCommentFetcher, reviewCommentFetcher.proxy),
+      Context.add(TaskManager, taskManager.proxy),
+      Context.add(TerminalClient, terminalClient.proxy),
+      Context.add(WorkspaceProvider, workspaceProvider.proxy),
+      Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
+      Context.add(DepsImageService, depsImageService.proxy),
+      Context.add(SandboxProvider, sandboxProvider.proxy)
+    )
   })
 )
 
-export const InfrastructureLayer = provideUtilityPortLayers(
-  RealServicesLayer
-).pipe(
-  Layer.provideMerge(ServicesReadyLayer),
+export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
+  Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provideMerge(ConfigService.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(LaborerStoreLive)

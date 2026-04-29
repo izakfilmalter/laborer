@@ -11,10 +11,9 @@
  * import LiveStoreWorkerUrl from "../livestore.worker.ts?worker&url"
  * ```
  *
- * Sync transport: The main thread transfers a `MessagePort` to this
- * worker via `postMessage`. The worker uses `makeMessagePortSync` to
- * speak the `SyncWsRpc` protocol over the port directly to the server
- * utility process — no WebSocket, no HTTP.
+ * Sync transport: Desktop builds pass the backend WebSocket sync URL to this
+ * worker via `postMessage`. MessagePort sync is still accepted for tests and
+ * local experiments, but production follows the backend WebSocket model.
  *
  * Sync uses LiveStore's default non-blocking mode (`{ _tag: 'Skip' }`):
  * the store loads from the local OPFS cache immediately and syncs in the

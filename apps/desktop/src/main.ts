@@ -11,6 +11,10 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
+import {
+  DEFAULT_DESKTOP_BACKEND_PORT,
+  resolveDesktopBackendPort,
+} from './backend-port.js'
 import { BackendProcessManager } from './backend-process-manager.js'
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
@@ -118,6 +122,8 @@ process.on('SIGPIPE', () => {
 // back to this app after the user authorizes in the browser.
 
 const GITHUB_OAUTH_PROTOCOL = 'x-github-desktop-dev-auth'
+const DESKTOP_LOOPBACK_HOST = '127.0.0.1'
+const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ['0.0.0.0', '::'] as const
 
 /** Pending OAuth URL received before a window was ready. */
 let pendingOAuthUrl: string | null = null
@@ -364,7 +370,13 @@ function reserveLoopbackPort(): Promise<number> {
 }
 
 async function startServerBackend(): Promise<void> {
-  const port = await reserveLoopbackPort()
+  const port = await resolveDesktopBackendPort({
+    host: DESKTOP_LOOPBACK_HOST,
+    requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
+    startPort: Number(
+      process.env.LABORER_DESKTOP_BACKEND_PORT ?? DEFAULT_DESKTOP_BACKEND_PORT
+    ),
+  })
   const terminalPort = await reserveLoopbackPort()
   const fileWatcherPort = await reserveLoopbackPort()
 
@@ -378,7 +390,7 @@ async function startServerBackend(): Promise<void> {
     authToken: crypto.randomUUID(),
     port,
   })
-  backendWsUrl = (await backendProcessManager.start()).wsUrl
+  backendWsUrl = backendProcessManager.start().wsUrl
 }
 
 /**

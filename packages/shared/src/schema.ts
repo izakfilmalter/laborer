@@ -128,23 +128,18 @@ export const appSettings = State.SQLite.table({
 })
 
 /**
- * PanelLayout stores the hierarchical layout tree for each Electron window.
- * Uses a single row per window (keyed by `windowId`) with the full
- * `WindowLayout` serialized as JSON.
+ * PanelLayout is per-renderer UI state, so keep it in a LiveStore client
+ * document instead of a custom synced/client-only event stream. This follows
+ * LiveStore's reference pattern for local UI state and avoids rebasing layout
+ * changes with backend workspace events.
  */
-export const panelLayout = State.SQLite.table({
+export const panelLayout = State.SQLite.clientDocument({
   name: 'panel_layout',
-  columns: {
-    windowId: State.SQLite.text({ primaryKey: true }),
-    /**
-     * The hierarchical layout tree: WindowLayout > WindowTab > WorkspaceTileNode > PanelTab.
-     * Contains all window tabs, workspace tiling, panel tabs, and split trees.
-     */
-    windowLayout: State.SQLite.json({
-      schema: Schema.NullOr(WindowLayoutSchema),
-      nullable: true,
-      default: null,
-    }),
+  schema: Schema.Struct({
+    windowLayout: Schema.NullOr(WindowLayoutSchema),
+  }),
+  default: {
+    value: { windowLayout: null },
   },
 })
 
@@ -547,11 +542,12 @@ export const appSettingChanged = Events.synced({
 // -- Panel Layout event ------------------------------------------------------
 
 /**
- * The single event for all layout mutations. Carries the full `WindowLayout`
- * tree; the materializer upserts on `windowId`. The optional `reason` field
- * is purely for debugging/auditability.
+ * The single client-only event for all layout mutations. Carries the full
+ * `WindowLayout` tree; the materializer upserts on `windowId`. Layout is
+ * per Electron window, so it must not participate in backend sync/rebase.
+ * The optional `reason` field is purely for debugging/auditability.
  */
-export const windowLayoutUpdated = Events.synced({
+export const windowLayoutUpdated = Events.clientOnly({
   name: 'v1.WindowLayoutUpdated',
   schema: Schema.Struct({
     windowId: Schema.String,
@@ -602,6 +598,7 @@ export const events = {
   prdStatusChanged,
   prdRemoved,
   appSettingChanged,
+  panelLayoutSet: panelLayout.set,
   windowLayoutUpdated,
 }
 
@@ -846,11 +843,9 @@ const materializers = State.SQLite.materializers(events, {
   'v1.PrdRemoved': ({ id }) => prds.delete().where({ id }),
   'v1.AppSettingChanged': ({ key, value }) =>
     appSettings.insert({ key, value }).onConflict('key', 'replace'),
-  // -- Panel layout event -----------------------------------------------------
-  'v1.WindowLayoutUpdated': ({ windowId, windowLayout }) =>
-    panelLayout
-      .insert({ windowId, windowLayout })
-      .onConflict('windowId', 'update', { windowLayout }),
+  // Legacy layout events are intentionally ignored. Current layout state is
+  // stored via `panelLayout.set`, the built-in client-document event.
+  'v1.WindowLayoutUpdated': () => [],
 })
 
 // ---------------------------------------------------------------------------

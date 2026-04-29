@@ -167,6 +167,51 @@ const makeSyncMetadata = (createdAt: string): typeof SyncMetadata.Type => ({
   createdAt,
 })
 
+type PushBatchValidationResult =
+  | { readonly _tag: 'append'; readonly batch: readonly EventEncodedType[] }
+  | { readonly _tag: 'duplicate' }
+  | {
+      readonly _tag: 'server-ahead'
+      readonly minimumExpectedNum: number
+      readonly providedNum: number
+    }
+
+const validatePushBatch = (
+  batch: readonly EventEncodedType[],
+  currentHead: number
+): PushBatchValidationResult => {
+  const firstEvent = batch[0]
+  if (firstEvent === undefined) {
+    return { _tag: 'duplicate' }
+  }
+
+  if (batch.every((event) => event.seqNum <= currentHead)) {
+    return { _tag: 'duplicate' }
+  }
+
+  if (firstEvent.parentSeqNum !== currentHead) {
+    return {
+      _tag: 'server-ahead',
+      minimumExpectedNum: currentHead,
+      providedNum: firstEvent.parentSeqNum,
+    }
+  }
+
+  let expectedParentSeqNum = currentHead
+  for (const event of batch) {
+    if (event.parentSeqNum !== expectedParentSeqNum) {
+      return {
+        _tag: 'server-ahead',
+        minimumExpectedNum: expectedParentSeqNum,
+        providedNum: event.parentSeqNum,
+      }
+    }
+    expectedParentSeqNum = event.seqNum
+  }
+
+  return { _tag: 'append', batch }
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -643,7 +688,11 @@ const handlePull = (
       req.cursor.value.backendId !== backendId
     ) {
       return yield* new InvalidPullError({
-        cause: `Backend ID mismatch: expected ${backendId}, got ${req.cursor.value.backendId}`,
+        cause: {
+          _tag: 'BackendIdMismatchError',
+          expected: backendId,
+          received: req.cursor.value.backendId,
+        },
       })
     }
 
@@ -652,13 +701,10 @@ const handlePull = (
         ? req.cursor.value.eventSequenceNumber
         : undefined
 
-    // LiveStore performs catch-up with non-live pulls before opening the live
-    // subscription. Replaying stored events from a live pull can race with live
-    // push chunks for the same client and crash SQLite changeset application.
-    const shouldReplayStoredEvents = !req.live
-    const total = shouldReplayStoredEvents
-      ? storage.countEvents(cursorSeqNum)
-      : 0
+    // Match LiveStore's sync-cf backend: a pull always replays stored events
+    // from the supplied cursor. For live pulls, new push chunks are queued
+    // after replay so the stream does not interleave catch-up with live data.
+    const total = storage.countEvents(cursorSeqNum)
 
     // Phase 1: Read existing events from storage in pages
     interface PageState {
@@ -784,36 +830,40 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
   // Validate backendId
   if (req.backendId._tag === 'Some' && req.backendId.value !== backendId) {
     return yield* new InvalidPushError({
-      cause: `Backend ID mismatch: expected ${backendId}, got ${req.backendId.value}`,
+      cause: {
+        _tag: 'BackendIdMismatchError',
+        expected: backendId,
+        received: req.backendId.value,
+      },
     })
   }
 
-  // Accept all pushes without sequence validation.
-  // The sync backend acts as a relay — the authoritative LaborerStore
-  // manages its own consistency. Strict sequence validation would
-  // reject valid batches when the server-side sync client pushes
-  // events in chunks or when the sync db is seeded mid-history.
-  const firstEvent = req.batch[0]
-  if (firstEvent === undefined) {
-    return {}
-  }
-
   const currentHead = storage.getCurrentHead()
-  const newEvents = req.batch.filter((event) => event.seqNum > currentHead)
-  if (newEvents.length === 0) {
+  const validation = validatePushBatch(req.batch, currentHead)
+  if (validation._tag === 'duplicate') {
     console.log(
       `[sync-backend] Push ignored duplicate batch: batchLen=${String(req.batch.length)} head=${String(currentHead)}`
     )
     return {}
   }
 
+  if (validation._tag === 'server-ahead') {
+    return yield* new InvalidPushError({
+      cause: {
+        _tag: 'ServerAheadError',
+        minimumExpectedNum: validation.minimumExpectedNum,
+        providedNum: validation.providedNum,
+      },
+    })
+  }
+
   // Store events
   const createdAt = new Date().toISOString()
-  storage.appendEvents(newEvents, createdAt)
+  storage.appendEvents(validation.batch, createdAt)
 
   // Build the PullResponse for broadcasting
   const pullResponse: PullResponseType = {
-    batch: newEvents.map((eventEncoded: EventEncodedType) => ({
+    batch: validation.batch.map((eventEncoded: EventEncodedType) => ({
       eventEncoded,
       metadata: Option.some(makeSyncMetadata(createdAt)),
     })),
@@ -1346,4 +1396,5 @@ export {
   SyncRpcHandlersLive,
   SyncWsRpc,
   serveSyncOnPort,
+  validatePushBatch,
 }

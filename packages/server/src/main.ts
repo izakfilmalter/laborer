@@ -9,13 +9,5 @@ import {
 const config = readBootstrapConfig()
 
 NodeRuntime.runMain(
-  runServer.pipe(
-    Effect.provide(ServerRuntimeConfigLive(config)),
-    Effect.tap(() =>
-      Effect.logInfo(
-        `[server-main] Listening on http://${config.host}:${String(config.port)}`
-      )
-    ),
-    Effect.scoped
-  )
+  runServer.pipe(Effect.provide(ServerRuntimeConfigLive(config)), Effect.scoped)
 )

@@ -1,78 +1,23 @@
 /**
  * visible-workspaces — Server-side helper
  *
- * Extracts the set of workspace IDs that currently have an open panel
- * in any Electron window. Used by polling services (DiffService,
- * PrWatcher) to gate or adjust polling frequency based on visibility.
- *
- * Walks the hierarchical layout tree:
- *   WindowLayout > WindowTab > WorkspaceTileNode > WorkspaceTileLeaf
- *
- * All window tabs are considered (not just the active one), so
- * workspaces in background tabs are still treated as "visible".
+ * Panel layout is renderer-local UI state and is stored in a LiveStore client
+ * document. Client documents are not synced to the backend, so server-side
+ * polling services cannot derive actual window visibility from LiveStore.
  */
 
-import { tables } from '@laborer/shared/schema'
-import type {
-  WindowLayout,
-  WindowTab,
-  WorkspaceTileNode,
-} from '@laborer/shared/types'
 import type { LaborerStore } from './laborer-store.js'
 
 /**
- * Recursively collect workspace IDs from a WorkspaceTileNode tree.
- */
-const collectFromTileNode = (
-  node: WorkspaceTileNode,
-  result: Set<string>
-): void => {
-  if (node._tag === 'WorkspaceTileLeaf') {
-    result.add(node.workspaceId)
-  } else {
-    for (const child of node.children) {
-      collectFromTileNode(child, result)
-    }
-  }
-}
-
-/**
- * Collect all workspace IDs from a WindowTab.
- */
-const collectFromTab = (tab: WindowTab, result: Set<string>): void => {
-  if (tab.workspaceLayout !== undefined) {
-    collectFromTileNode(tab.workspaceLayout, result)
-  }
-}
-
-/**
- * Collect all workspace IDs from a WindowLayout.
- */
-const collectFromLayout = (layout: WindowLayout, result: Set<string>): void => {
-  for (const tab of layout.tabs) {
-    collectFromTab(tab, result)
-  }
-}
-
-/**
- * Query the LiveStore panel_layout table and return the set of
- * workspace IDs that are currently visible in any window.
- *
- * Returns an empty set if no windows are open or no layouts exist.
+ * Return the set of backend-visible workspace IDs. Since renderer panel layout
+ * does not sync to the backend, all workspaces are treated as background work.
  */
 const getVisibleWorkspaceIds = (
-  store: LaborerStore['Type']['store']
+  _store: LaborerStore['Type']['store']
 ): ReadonlySet<string> => {
-  const result = new Set<string>()
-  const rows = store.query(tables.panelLayout)
-
-  for (const row of rows) {
-    if (row.windowLayout !== null) {
-      collectFromLayout(row.windowLayout, result)
-    }
-  }
-
-  return result
+  // Panel layout is a renderer-local LiveStore client document and is not
+  // synced to the backend. Treat all workspaces as background from server code.
+  return new Set<string>()
 }
 
 export { getVisibleWorkspaceIds }

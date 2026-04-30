@@ -37,6 +37,9 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000
 /** Interval between periodic update checks. */
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
 
+/** Laborer ships a single prerelease update stream until stable channels exist. */
+const AUTO_UPDATE_CHANNEL = 'nightly'
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -277,7 +280,8 @@ export function configureAutoUpdater(quitCallback: () => void): void {
   // Configure electron-updater.
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.allowPrerelease = false
+  autoUpdater.channel = AUTO_UPDATE_CHANNEL
+  autoUpdater.allowPrerelease = true
   autoUpdater.allowDowngrade = false
   autoUpdater.disableDifferentialDownload =
     isArm64HostRunningIntelBuild(runtimeInfo)

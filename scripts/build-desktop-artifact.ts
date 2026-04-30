@@ -67,6 +67,9 @@ const LEADING_SLASHES_PATTERN = /^\/+/
 /** Matches a short git commit hash. */
 const GIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i
 
+/** Matches nightly release versions. */
+const NIGHTLY_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/
+
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
@@ -264,7 +267,8 @@ function resolveGitHubPublishConfig():
       readonly provider: 'github'
       readonly owner: string
       readonly repo: string
-      readonly releaseType: 'release'
+      readonly releaseType: 'release' | 'prerelease'
+      readonly channel?: 'nightly'
     }
   | undefined {
   const rawRepo =
@@ -282,12 +286,19 @@ function resolveGitHubPublishConfig():
     return undefined
   }
 
+  const updateChannel = resolveDesktopUpdateChannel(BUILD_VERSION)
+
   return {
     provider: 'github',
     owner,
     repo,
-    releaseType: 'release',
+    releaseType: updateChannel === 'nightly' ? 'prerelease' : 'release',
+    ...(updateChannel === 'nightly' ? { channel: 'nightly' as const } : {}),
   }
+}
+
+function resolveDesktopUpdateChannel(version: string): 'latest' | 'nightly' {
+  return NIGHTLY_VERSION_PATTERN.test(version) ? 'nightly' : 'latest'
 }
 
 function createBuildConfig(): Record<string, unknown> {

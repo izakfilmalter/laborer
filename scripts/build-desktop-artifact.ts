@@ -38,7 +38,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, extname, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import desktopPkg from '../apps/desktop/package.json' with { type: 'json' }
@@ -120,6 +120,12 @@ const DIST_DIRS = {
   fileWatcherDist: join(REPO_ROOT, 'packages/file-watcher/dist'),
   mcpDist: join(REPO_ROOT, 'packages/mcp/dist'),
 }
+
+const REQUIRED_ASAR_FILES = [
+  'node_modules/@effect/experimental/package.json',
+  'node_modules/@effect/platform/package.json',
+  'node_modules/effect/package.json',
+] as const
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -312,6 +318,7 @@ function createBuildConfig(): Record<string, unknown> {
     directories: {
       buildResources: 'apps/desktop/resources',
     },
+    files: ['**/*'],
     mac: {
       target: ['dmg', 'zip'],
       icon: 'icon.icns',
@@ -325,6 +332,55 @@ function createBuildConfig(): Record<string, unknown> {
   }
 
   return config
+}
+
+function validatePackagedAsar(stageAppDir: string): void {
+  const appName = resolveDesktopAppName({
+    isDevelopment: false,
+    version: BUILD_VERSION,
+  })
+  const appAsarPath = join(
+    stageAppDir,
+    'dist',
+    `mac-${ARCH}`,
+    `${appName}.app`,
+    'Contents',
+    'Resources',
+    'app.asar'
+  )
+
+  if (!existsSync(appAsarPath)) {
+    throw new Error(`Missing packaged app.asar at ${appAsarPath}`)
+  }
+
+  const result = spawnSync('bunx', ['asar', 'list', appAsarPath], {
+    cwd: stageAppDir,
+    encoding: 'utf8',
+    maxBuffer: 50 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  if (result.status !== 0) {
+    throw new Error(
+      `Unable to inspect packaged app.asar: ${result.stderr.trim() || result.stdout.trim()}`
+    )
+  }
+
+  const files = new Set(
+    result.stdout
+      .split('\n')
+      .map((line) => line.trim().replace(LEADING_SLASHES_PATTERN, ''))
+      .filter((line) => line.length > 0)
+  )
+
+  const missing = REQUIRED_ASAR_FILES.filter((file) => !files.has(file))
+  if (missing.length > 0) {
+    throw new Error(
+      `Packaged app.asar is missing runtime dependencies: ${missing.join(', ')}`
+    )
+  }
+
+  log(`Validated runtime dependencies in ${relative(stageAppDir, appAsarPath)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +561,8 @@ function stage(stageRoot: string): void {
     ['electron-builder', '--mac', `--${ARCH}`, '--publish', 'never'],
     { cwd: stageAppDir, env: buildEnv }
   )
+
+  validatePackagedAsar(stageAppDir)
 
   // Copy artifacts to output dir.
   const stageDistDir = join(stageAppDir, 'dist')

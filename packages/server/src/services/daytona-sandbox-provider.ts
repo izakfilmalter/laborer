@@ -104,6 +104,7 @@ import type {
   CreateSandboxParams,
   ProviderStatus,
   SandboxProvider,
+  TerminalOpts,
 } from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
@@ -1009,7 +1010,7 @@ class DaytonaSandboxProvider extends Context.Tag(
       // 7. Return a TerminalHandle with session metadata
 
       const spawnTerminal = Effect.fn('DaytonaSandboxProvider.spawnTerminal')(
-        function* (workspaceId: string, opts?) {
+        function* (workspaceId: string, opts?: TerminalOpts) {
           const allWorkspaces = store.query(tables.workspaces)
           const workspaceOpt = pipe(
             allWorkspaces,

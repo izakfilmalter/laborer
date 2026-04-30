@@ -32,7 +32,7 @@ import { DaytonaSandboxProvider } from './daytona-sandbox-provider.js'
 import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
 import { DockerSandboxProvider } from './docker-sandbox-provider.js'
 import { LaborerStore } from './laborer-store.js'
-import type { CreateSandboxParams } from './sandbox-provider.js'
+import type { CreateSandboxParams, TerminalOpts } from './sandbox-provider.js'
 import { SandboxProvider } from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
@@ -198,7 +198,7 @@ const SandboxProviderRouterLayer: Layer.Layer<
     )
 
     const spawnTerminal = Effect.fn('SandboxProviderRouter.spawnTerminal')(
-      function* (workspaceId: string, opts?) {
+      function* (workspaceId: string, opts?: TerminalOpts) {
         const provider = yield* resolveForWorkspace(workspaceId)
         return yield* provider.spawnTerminal(workspaceId, opts)
       }

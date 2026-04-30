@@ -32,6 +32,7 @@ import { LaborerStore } from './laborer-store.js'
 import type {
   CreateSandboxParams,
   SandboxProvider,
+  TerminalOpts,
 } from './sandbox-provider.js'
 
 /** Module-level log annotation for structured logging. */
@@ -362,7 +363,7 @@ class DockerSandboxProvider extends Context.Tag(
       // Docker terminal spawning is handled by TerminalClient directly.
 
       const spawnTerminal = Effect.fn('DockerSandboxProvider.spawnTerminal')(
-        function* (_workspaceId: string, _opts?) {
+        function* (_workspaceId: string, _opts?: TerminalOpts) {
           return yield* new RpcError({
             message:
               'Docker terminal spawning is handled by TerminalClient, not DockerSandboxProvider.',

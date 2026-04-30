@@ -913,6 +913,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         const tm = yield* TerminalManager
         return yield* tm.spawn({
           command: '/bin/sh',
+          args: ['-i'],
           cwd: TEST_CWD,
           cols: 80,
           rows: 24,

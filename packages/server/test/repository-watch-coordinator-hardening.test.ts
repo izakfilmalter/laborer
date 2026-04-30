@@ -250,9 +250,9 @@ describe('RepositoryWatchCoordinator hardening', () => {
         RepositoryIdentity,
         RepositoryIdentity.of({
           resolve: () =>
-            Effect.sync(() => {
+            Effect.dieSync(() => {
               resolveCalls.current += 1
-              throw new Error('watchAll should use persisted identity')
+              return new Error('watchAll should use persisted identity')
             }),
         })
       )

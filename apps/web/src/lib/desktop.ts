@@ -21,7 +21,7 @@ import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
  * Access the DesktopBridge injected by the Electron preload script.
  * Returns undefined when running outside Electron (plain browser).
  */
-function getDesktopBridge(): DesktopBridge | undefined {
+export function getDesktopBridge(): DesktopBridge | undefined {
   if (typeof window !== 'undefined' && 'desktopBridge' in window) {
     return (window as unknown as { desktopBridge: DesktopBridge }).desktopBridge
   }
@@ -227,5 +227,3 @@ export function acquireTerminalDataPort(
     { terminalId }
   )
 }
-
-export { getDesktopBridge }

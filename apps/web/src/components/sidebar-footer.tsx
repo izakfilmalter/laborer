@@ -1,6 +1,7 @@
 import { RotateCcw, Settings } from 'lucide-react'
 import { useCallback } from 'react'
 import { useAppSettings } from '@/components/app-settings-context'
+import { DesktopUpdatePill } from '@/components/desktop-update-pill'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -55,14 +56,17 @@ function SettingsButton() {
 
 export function SidebarFooter() {
   return (
-    <div className="flex items-center gap-2 border-t p-3">
-      <div className="min-w-0 flex-1">
-        <ServiceStatusDots />
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <ResetButton />
-        <SettingsButton />
-        <ModeToggle />
+    <div className="grid gap-2 border-t p-3">
+      <DesktopUpdatePill />
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <ServiceStatusDots />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <ResetButton />
+          <SettingsButton />
+          <ModeToggle />
+        </div>
       </div>
     </div>
   )

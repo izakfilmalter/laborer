@@ -8,6 +8,7 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
+import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ProviderStatusBanner } from '@/components/provider-status-banner'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
@@ -107,6 +108,7 @@ function RootComponent() {
                     <PhaseTransitionDriver />
                     <BeforeQuitHandler />
                     <SidecarCrashListener />
+                    <DesktopUpdateToastListener />
                   </AtomRegistryProvider>
                 )}
               </SidecarRuntimeBoundary>

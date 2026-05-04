@@ -195,9 +195,9 @@ const getProposedTerminalDimensions = (
  * Terminal resize debouncer — applies VS Code's independent X/Y resize
  * strategy to prevent ghost/duplicate rendering during resize operations.
  *
- * Row changes are applied immediately (cheap — no reflow), while column
- * changes are debounced because they trigger expensive text reflow across
- * the entire scrollback buffer.
+ * Small buffers resize immediately. Large buffers coalesce the whole resize
+ * because fullscreen TUIs repaint aggressively on every SIGWINCH, including
+ * row-only updates.
  *
  * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
  */
@@ -209,10 +209,10 @@ const createResizeDebouncer = (
   >,
   terminalId: string
 ) => {
-  let colsDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
   let serverResizeTimer: ReturnType<typeof setTimeout> | null = null
-  /** Latest desired cols — updated on each observation, applied when debounce fires. */
-  let latestCols = 0
+  /** Latest desired dimensions — updated on each observation, applied when debounce fires. */
+  let latestDimensions: { cols: number; rows: number } | null = null
   let latestServerDimensions: { cols: number; rows: number } | null = null
   let lastSentServerDimensions: { cols: number; rows: number } | null = null
 
@@ -259,16 +259,21 @@ const createResizeDebouncer = (
     scheduleServerResize(dimensions)
   }
 
-  /** Schedule a debounced column resize. */
-  const debounceCols = () => {
-    if (colsDebounceTimer !== null) {
-      clearTimeout(colsDebounceTimer)
+  /** Schedule a debounced resize for expensive large-buffer reflows/TUI repaints. */
+  const debounceResize = () => {
+    if (resizeDebounceTimer !== null) {
+      clearTimeout(resizeDebounceTimer)
     }
-    colsDebounceTimer = setTimeout(() => {
-      colsDebounceTimer = null
+    resizeDebounceTimer = setTimeout(() => {
+      resizeDebounceTimer = null
       const t = terminalRef.current
-      if (t && latestCols > 0 && latestCols !== t.cols) {
-        applyResize(latestCols, t.rows)
+      const dimensions = latestDimensions
+      if (
+        t &&
+        dimensions &&
+        (dimensions.cols !== t.cols || dimensions.rows !== t.rows)
+      ) {
+        applyResize(dimensions.cols, dimensions.rows)
       }
     }, RESIZE_COLS_DEBOUNCE_MS)
   }
@@ -290,36 +295,26 @@ const createResizeDebouncer = (
       return
     }
 
-    latestCols = dims.cols
-    const colsChanged = dims.cols !== terminal.cols
-    const rowsChanged = dims.rows !== terminal.rows
+    latestDimensions = dims
 
     // Small buffer optimization: reflow is fast with small buffers,
     // so apply both dimensions immediately without debouncing.
     if (terminal.buffer.normal.length < START_DEBOUNCING_THRESHOLD) {
-      if (colsDebounceTimer !== null) {
-        clearTimeout(colsDebounceTimer)
-        colsDebounceTimer = null
+      if (resizeDebounceTimer !== null) {
+        clearTimeout(resizeDebounceTimer)
+        resizeDebounceTimer = null
       }
       applyResize(dims.cols, dims.rows)
       return
     }
 
-    // Apply row change immediately (cheap — no reflow)
-    if (rowsChanged) {
-      applyResize(terminal.cols, dims.rows)
-    }
-
-    // Debounce column change (expensive — triggers text reflow)
-    if (colsChanged) {
-      debounceCols()
-    }
+    debounceResize()
   }
 
   const dispose = () => {
-    if (colsDebounceTimer !== null) {
-      clearTimeout(colsDebounceTimer)
-      colsDebounceTimer = null
+    if (resizeDebounceTimer !== null) {
+      clearTimeout(resizeDebounceTimer)
+      resizeDebounceTimer = null
     }
     if (serverResizeTimer !== null) {
       clearTimeout(serverResizeTimer)
@@ -1144,15 +1139,14 @@ function TerminalPaneRenderer({
    * Observe the container element for size changes using ResizeObserver.
    * This handles pane resizing, window resizing, fullscreen, etc.
    *
-   * Follows VS Code's TerminalResizeDebouncer pattern:
-   * - Row changes are applied immediately (cheap — no reflow)
-   * - Column changes are debounced at 100ms (expensive — triggers
-   *   text reflow across the entire scrollback buffer)
+   * Adapts VS Code's TerminalResizeDebouncer pattern:
    * - Small buffers (<200 lines) resize immediately since reflow is fast
+   * - Large buffers debounce the whole resize at 100ms to avoid hammering
+   *   fullscreen TUIs with SIGWINCH while panels are actively dragging
    *
-   * This prevents the "ghost/duplicate content" rendering artifacts
-   * that occur when TUI applications receive rapid SIGWINCH signals
-   * during drag-resize operations.
+   * This prevents the flashing/duplicate-content artifacts that occur when
+   * TUI applications receive rapid SIGWINCH signals during drag-resize
+   * operations.
    *
    * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
    */

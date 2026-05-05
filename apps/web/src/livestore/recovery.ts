@@ -2,6 +2,10 @@ const LIVESTORE_PERSISTENCE_RESET_FLAG =
   'laborer:livestore-reset-persistence-on-next-boot'
 const LIVESTORE_PERSISTENCE_RESET_ATTEMPT =
   'laborer:livestore-reset-persistence-attempted'
+const LIVESTORE_RUNTIME_RECOVERY_INSTALLED =
+  '__laborerLiveStoreRuntimeRecoveryInstalled'
+
+const MAX_FORMAT_DEPTH = 4
 
 const RECOVERABLE_PERSISTENCE_ERROR_SNIPPETS = [
   'During boot the backend head',
@@ -17,25 +21,75 @@ export const isRecoverablePersistenceError = (cause: string): boolean =>
     cause.includes(snippet)
   )
 
+const formatRecoverableErrorValue = (
+  value: unknown,
+  seen: WeakSet<object>,
+  depth: number
+): string => {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (value instanceof Error) {
+    if (seen.has(value)) {
+      return '[Circular Error]'
+    }
+
+    seen.add(value)
+
+    if (depth >= MAX_FORMAT_DEPTH) {
+      return `${value.name}: ${value.message}`
+    }
+
+    const cause =
+      value.cause === undefined
+        ? ''
+        : `\ncause: ${formatRecoverableErrorValue(value.cause, seen, depth + 1)}`
+    return `${value.name}: ${value.message}\n${value.stack ?? ''}${cause}`
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return String(value)
+  }
+
+  if (seen.has(value)) {
+    return '[Circular]'
+  }
+
+  if (depth >= MAX_FORMAT_DEPTH) {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatRecoverableErrorValue(item, seen, depth + 1))
+      .join(' ')
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0) {
+    return String(value)
+  }
+
+  return entries
+    .map(
+      ([key, entryValue]) =>
+        `${key}: ${formatRecoverableErrorValue(entryValue, seen, depth + 1)}`
+    )
+    .join(' ')
+}
+
 export const formatRecoverableErrorCause = (
   values: readonly unknown[]
 ): string =>
   values
-    .map((value) => {
-      if (typeof value === 'string') {
-        return value
-      }
-
-      if (value instanceof Error) {
-        return `${value.message}\n${value.stack ?? ''}`
-      }
-
-      try {
-        return JSON.stringify(value)
-      } catch {
-        return String(value)
-      }
-    })
+    .map((value) => formatRecoverableErrorValue(value, new WeakSet(), 0))
     .join(' ')
 
 /**
@@ -105,4 +159,44 @@ export const recoverFromPersistenceError = (
   )
   reload()
   return true
+}
+
+type RuntimeRecoveryWindow = Window & {
+  [LIVESTORE_RUNTIME_RECOVERY_INSTALLED]?: boolean
+}
+
+export const installLiveStoreRuntimeRecovery = (
+  target: Window = window,
+  reload?: () => void
+): (() => void) => {
+  const runtimeTarget = target as RuntimeRecoveryWindow
+  if (runtimeTarget[LIVESTORE_RUNTIME_RECOVERY_INSTALLED] === true) {
+    return () => undefined
+  }
+
+  const recover = (values: readonly unknown[], event: Event) => {
+    if (
+      recoverFromPersistenceError(formatRecoverableErrorCause(values), reload)
+    ) {
+      event.preventDefault()
+    }
+  }
+
+  const handleError = (event: ErrorEvent) => {
+    recover([event.error, event.message], event)
+  }
+
+  const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+    recover([event.reason], event)
+  }
+
+  runtimeTarget[LIVESTORE_RUNTIME_RECOVERY_INSTALLED] = true
+  target.addEventListener('error', handleError)
+  target.addEventListener('unhandledrejection', handleUnhandledRejection)
+
+  return () => {
+    target.removeEventListener('error', handleError)
+    target.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    runtimeTarget[LIVESTORE_RUNTIME_RECOVERY_INSTALLED] = false
+  }
 }

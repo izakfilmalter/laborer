@@ -39,6 +39,7 @@ import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 import {
   consumePendingPersistenceReset,
   formatRecoverableErrorCause,
+  installLiveStoreRuntimeRecovery,
   LIVESTORE_FATAL_ERROR_MESSAGE,
   recoverFromPersistenceError,
   schedulePersistenceResetRecovery,
@@ -49,6 +50,8 @@ console.error = (...args: unknown[]) => {
   recoverFromPersistenceError(formatRecoverableErrorCause(args))
   originalConsoleError(...args)
 }
+
+installLiveStoreRuntimeRecovery()
 
 /**
  * Whether to reset persistence on load. In dev mode, append `?reset`

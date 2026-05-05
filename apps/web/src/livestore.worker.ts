@@ -33,6 +33,7 @@ import { makeWsSync } from '@livestore/sync-cf/client'
 import { Cause, Effect, Exit } from 'effect'
 import { makeMessagePortSync } from './livestore/messageport-sync'
 import {
+  formatRecoverableErrorCause,
   isRecoverablePersistenceError,
   LIVESTORE_FATAL_ERROR_MESSAGE,
 } from './livestore/recovery'
@@ -52,22 +53,6 @@ const reportFatalWorkerError = (cause: string) => {
   })
 }
 
-const formatConsoleArg = (value: unknown): string => {
-  if (typeof value === 'string') {
-    return value
-  }
-
-  if (value instanceof Error) {
-    return `${value.message}\n${value.stack ?? ''}`
-  }
-
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
 let didReportRecoverableBootError = false
 
 const maybeReportRecoverableBootError = (...args: readonly unknown[]) => {
@@ -75,7 +60,7 @@ const maybeReportRecoverableBootError = (...args: readonly unknown[]) => {
     return
   }
 
-  const cause = args.map((value) => formatConsoleArg(value)).join(' ')
+  const cause = formatRecoverableErrorCause(args)
   if (!isRecoverablePersistenceError(cause)) {
     return
   }

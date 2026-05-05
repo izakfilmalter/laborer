@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   consumePendingPersistenceReset,
+  formatRecoverableErrorCause,
+  installLiveStoreRuntimeRecovery,
   isRecoverablePersistenceError,
   recoverFromPersistenceError,
   schedulePersistenceResetRecovery,
@@ -68,5 +70,48 @@ describe('livestore recovery', () => {
     ).toBe(false)
     expect(reloadCount).toBe(1)
     expect(consumePendingPersistenceReset()).toBe(true)
+  })
+
+  it('formats nested runtime error causes', () => {
+    const cause = formatRecoverableErrorCause([
+      {
+        cause: new Error('Failed calling makeChangeset.apply'),
+        message:
+          '[@livestore/adapter-web:client-session] client-session shutdown',
+      },
+    ])
+
+    expect(cause).toContain('Failed calling makeChangeset.apply')
+    expect(isRecoverablePersistenceError(cause)).toBe(true)
+  })
+
+  it('reloads once for recoverable runtime error events', () => {
+    let reloadCount = 0
+    const cleanup = installLiveStoreRuntimeRecovery(window, () => {
+      reloadCount += 1
+    })
+
+    try {
+      window.dispatchEvent(
+        new ErrorEvent('error', {
+          cancelable: true,
+          error: new Error('function signature mismatch'),
+          message: 'LiveStore runtime failure',
+        })
+      )
+
+      window.dispatchEvent(
+        new ErrorEvent('error', {
+          cancelable: true,
+          error: new Error('function signature mismatch'),
+          message: 'LiveStore runtime failure',
+        })
+      )
+
+      expect(reloadCount).toBe(1)
+      expect(consumePendingPersistenceReset()).toBe(true)
+    } finally {
+      cleanup()
+    }
   })
 })

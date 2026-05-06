@@ -2,8 +2,15 @@ import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { activePaneIdRef, setActivePaneIdMock } = vi.hoisted(() => ({
+const {
+  activePaneIdRef,
+  diffPaneRenderMock,
+  pendingPickerPaneIdRef,
+  setActivePaneIdMock,
+} = vi.hoisted(() => ({
   activePaneIdRef: { current: null as string | null },
+  diffPaneRenderMock: vi.fn(),
+  pendingPickerPaneIdRef: { current: null as string | null },
   setActivePaneIdMock: vi.fn(),
 }))
 
@@ -43,9 +50,10 @@ vi.mock('@/panes/terminal-pane', () => ({
 }))
 
 vi.mock('@/panes/diff-pane', () => ({
-  DiffPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div data-pane-text-selectable>diff:{workspaceId}</div>
-  ),
+  DiffPane: ({ workspaceId }: { workspaceId: string }) => {
+    diffPaneRenderMock(workspaceId)
+    return <div data-pane-text-selectable>diff:{workspaceId}</div>
+  },
 }))
 
 vi.mock('@/panes/dev-server-terminal-pane', () => ({
@@ -73,7 +81,7 @@ vi.mock('@/panels/panel-context', () => ({
     onCancel: () => undefined,
   }),
   usePendingPicker: () => ({
-    paneId: null,
+    paneId: pendingPickerPaneIdRef.current,
     onSelect: () => undefined,
     onCancel: () => undefined,
   }),
@@ -92,7 +100,7 @@ vi.mock('@/routes/-components/close-dialogs', () => ({
 }))
 
 vi.mock('@/components/ui/panel-type-picker', () => ({
-  PanelTypePicker: () => null,
+  PanelTypePicker: () => <div data-testid="panel-type-picker" />,
 }))
 
 // Mock the store and atom hooks used by EmptyTerminalPane / EmptyDevServerPane
@@ -153,6 +161,8 @@ function createSplitNode(overrides: Partial<SplitNode> = {}): SplitNode {
 afterEach(() => {
   cleanup()
   activePaneIdRef.current = null
+  pendingPickerPaneIdRef.current = null
+  diffPaneRenderMock.mockReset()
   setActivePaneIdMock.mockReset()
 })
 
@@ -326,6 +336,22 @@ describe('PanelRenderer', () => {
     }
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('diff:ws-1')).toBeTruthy()
+  })
+
+  it('does not mount diff content while picker is open on a placeholder pane', () => {
+    pendingPickerPaneIdRef.current = 'diff-pane'
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(<PanelRenderer node={leaf} />)
+
+    expect(screen.queryByText('diff:ws-1')).toBeNull()
+    expect(screen.getByTestId('panel-type-picker')).toBeTruthy()
+    expect(diffPaneRenderMock).not.toHaveBeenCalled()
   })
 
   it('does not activate the pane on mouse down inside text-selectable diff content', () => {

@@ -169,7 +169,6 @@ const makeSyncMetadata = (createdAt: string): typeof SyncMetadata.Type => ({
 
 type PushBatchValidationResult =
   | { readonly _tag: 'append'; readonly batch: readonly EventEncodedType[] }
-  | { readonly _tag: 'duplicate' }
   | {
       readonly _tag: 'server-ahead'
       readonly minimumExpectedNum: number
@@ -182,11 +181,7 @@ const validatePushBatch = (
 ): PushBatchValidationResult => {
   const firstEvent = batch[0]
   if (firstEvent === undefined) {
-    return { _tag: 'duplicate' }
-  }
-
-  if (batch.every((event) => event.seqNum <= currentHead)) {
-    return { _tag: 'duplicate' }
+    return { _tag: 'append', batch }
   }
 
   if (firstEvent.parentSeqNum !== currentHead) {
@@ -840,13 +835,6 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
 
   const currentHead = storage.getCurrentHead()
   const validation = validatePushBatch(req.batch, currentHead)
-  if (validation._tag === 'duplicate') {
-    console.log(
-      `[sync-backend] Push ignored duplicate batch: batchLen=${String(req.batch.length)} head=${String(currentHead)}`
-    )
-    return {}
-  }
-
   if (validation._tag === 'server-ahead') {
     return yield* new InvalidPushError({
       cause: {

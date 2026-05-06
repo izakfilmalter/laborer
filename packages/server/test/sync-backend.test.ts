@@ -189,9 +189,11 @@ describe('sync-backend push validation', () => {
     })
   })
 
-  it('acknowledges fully stale duplicate batches', () => {
+  it('rejects fully stale duplicate batches so LiveStore can rebase from pull', () => {
     assert.deepStrictEqual(validatePushBatch([makeEvent(10, 9)], 10), {
-      _tag: 'duplicate',
+      _tag: 'server-ahead',
+      minimumExpectedNum: 10,
+      providedNum: 9,
     })
   })
 

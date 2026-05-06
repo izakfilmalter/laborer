@@ -798,9 +798,9 @@ function HomeComponent() {
   const showPanelTypePicker = useCallback(
     (mode: PickerMode) => {
       if (mode.kind === 'split-right' || mode.kind === 'split-down') {
-        // Create the split immediately with 'diff' as a placeholder type
-        // (diff panes don't auto-spawn terminals). The type will be
-        // updated when the user selects from the picker.
+        // Create the split immediately with 'diff' as a non-spawning placeholder.
+        // PanelManager suppresses placeholder diff rendering while the picker is
+        // open, so expensive diff fetching only starts if Diff is selected.
         const direction =
           mode.kind === 'split-right' ? 'horizontal' : 'vertical'
         const newPaneId = panelActions.splitPane(mode.paneId, direction, {

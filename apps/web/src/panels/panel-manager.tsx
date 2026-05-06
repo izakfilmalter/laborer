@@ -611,6 +611,10 @@ function PanePickerOverlay({
   )
 }
 
+function PickerPlaceholderPane() {
+  return <div className="h-full w-full bg-background" />
+}
+
 /**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
@@ -642,6 +646,8 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const isFullscreen = fullscreenPaneId === node.id
   const isActive = activePaneId === node.id
   const isLiveTerminalPane = node.paneType === 'terminal' && !!node.terminalId
+  const isPickerPlaceholderPane =
+    pendingPicker.paneId === node.id && node.paneType === 'diff'
 
   // When this pane becomes active (via keyboard navigation, tab switch, or
   // split), transfer DOM focus to it. This ensures terminal panes receive
@@ -793,7 +799,11 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       role="region"
       tabIndex={-1}
     >
-      <PaneContent node={node} onTerminalExit={handleTerminalExit} />
+      {isPickerPlaceholderPane ? (
+        <PickerPlaceholderPane />
+      ) : (
+        <PaneContent node={node} onTerminalExit={handleTerminalExit} />
+      )}
       {isOccupiedTerminalPane && (
         <TerminalOverlayToolbar
           actions={actions}

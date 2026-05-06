@@ -196,6 +196,21 @@ interface PersistedLayoutEvent {
 const getPersistedRow = (windowId: string): PersistedLayoutRow | undefined =>
   persistedRowsRef.current.find((row) => row.windowId === windowId)
 
+const panelLayoutStorageKey = (windowId: string) =>
+  `laborer:panel-layout:v1:${windowId}`
+
+const readStoredWindowLayout = (windowId: string): unknown => {
+  const raw = window.localStorage.getItem(panelLayoutStorageKey(windowId))
+  return raw ? JSON.parse(raw).windowLayout : undefined
+}
+
+const writeStoredWindowLayout = (windowId: string, windowLayout: unknown) => {
+  window.localStorage.setItem(
+    panelLayoutStorageKey(windowId),
+    JSON.stringify({ windowLayout })
+  )
+}
+
 const upsertPersistedRow = (
   windowId: string,
   update: (currentRow?: PersistedLayoutRow) => PersistedLayoutRow
@@ -238,6 +253,7 @@ const layoutContainsTerminal = (
 describe('usePanelLayout', () => {
   beforeEach(() => {
     currentWindowIdRef.current = 'window-a'
+    window.localStorage.clear()
     initialLayoutRef.current = undefined
     persistedRowsRef.current = []
     workspaceRowsRef.current = []
@@ -288,6 +304,7 @@ describe('usePanelLayout', () => {
 
   afterEach(() => {
     cleanup()
+    window.localStorage.clear()
   })
 
   // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
@@ -400,12 +417,7 @@ describe('usePanelLayout', () => {
       ],
       activeTabId: 'win-tab-1',
     }
-    persistedRowsRef.current = [
-      {
-        windowId: 'window-a',
-        windowLayout: layoutWithEmptyWorkspace,
-      },
-    ]
+    writeStoredWindowLayout('window-a', layoutWithEmptyWorkspace)
 
     const { result } = renderHook(() => usePanelLayout())
 
@@ -416,12 +428,8 @@ describe('usePanelLayout', () => {
       )
     })
 
-    // A windowLayoutUpdated event should have been committed
-    expect(windowLayoutUpdatedMock).toHaveBeenCalled()
-
     // The committed layout should contain a panel tab with the terminal assigned
-    const lastCall = windowLayoutUpdatedMock.mock.calls.at(-1)?.[0]
-    const committedLayout = lastCall?.windowLayout
+    const committedLayout = readStoredWindowLayout('window-a')
     expect(committedLayout).toBeDefined()
 
     // Find the workspace tile leaf in the committed layout
@@ -439,38 +447,33 @@ describe('usePanelLayout', () => {
   })
 
   it('waits to auto-open a new workspace agent until the workspace is running', async () => {
-    persistedRowsRef.current = [
-      {
-        windowId: 'window-a',
-        windowLayout: {
-          tabs: [
-            {
-              id: 'win-tab-1',
-              label: 'Tab 1',
-              workspaceLayout: {
-                _tag: 'WorkspaceTileLeaf' as const,
-                id: 'ws-tile-existing',
-                workspaceId: 'workspace-existing',
-                panelTabs: [
-                  {
-                    id: 'panel-tab-existing',
-                    label: 'Terminal',
-                    panelLayout: {
-                      _tag: 'LeafNode' as const,
-                      id: 'pane-existing',
-                      paneType: 'terminal' as const,
-                      terminalId: 'terminal-existing',
-                    },
-                  },
-                ],
-                activePanelTabId: 'panel-tab-existing',
+    writeStoredWindowLayout('window-a', {
+      tabs: [
+        {
+          id: 'win-tab-1',
+          label: 'Tab 1',
+          workspaceLayout: {
+            _tag: 'WorkspaceTileLeaf' as const,
+            id: 'ws-tile-existing',
+            workspaceId: 'workspace-existing',
+            panelTabs: [
+              {
+                id: 'panel-tab-existing',
+                label: 'Terminal',
+                panelLayout: {
+                  _tag: 'LeafNode' as const,
+                  id: 'pane-existing',
+                  paneType: 'terminal' as const,
+                  terminalId: 'terminal-existing',
+                },
               },
-            },
-          ],
-          activeTabId: 'win-tab-1',
+            ],
+            activePanelTabId: 'panel-tab-existing',
+          },
         },
-      },
-    ]
+      ],
+      activeTabId: 'win-tab-1',
+    })
     workspaceRowsRef.current = [
       {
         id: 'workspace-new',
@@ -516,9 +519,11 @@ describe('usePanelLayout', () => {
     })
 
     await waitFor(() => {
-      const lastCall = windowLayoutUpdatedMock.mock.calls.at(-1)?.[0]
       expect(
-        layoutContainsTerminal(lastCall?.windowLayout, 'spawned-terminal')
+        layoutContainsTerminal(
+          readStoredWindowLayout('window-a'),
+          'spawned-terminal'
+        )
       ).toBe(true)
     })
   })

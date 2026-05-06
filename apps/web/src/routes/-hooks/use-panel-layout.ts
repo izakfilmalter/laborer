@@ -1,5 +1,5 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { panelLayout, workspaces } from '@laborer/shared/schema'
+import { workspaces } from '@laborer/shared/schema'
 import type {
   LeafNode,
   PanelNode,
@@ -374,7 +374,56 @@ const paneSpawnGuard = createSpawnGuard()
 /** LiveStore query for workspaces (used by isWorkspaceContainerized). */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
-const DEFAULT_PANEL_LAYOUT_DOCUMENT = { windowLayout: null }
+const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'laborer:panel-layout:v1:'
+
+interface StoredPanelLayout {
+  readonly windowLayout: WindowLayout | null
+}
+
+const createPanelLayoutStorageKey = (windowId: string) =>
+  `${PANEL_LAYOUT_STORAGE_KEY_PREFIX}${windowId}`
+
+const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
+  if (typeof window === 'undefined') {
+    return { windowLayout: null }
+  }
+
+  try {
+    const raw = window.localStorage.getItem(
+      createPanelLayoutStorageKey(windowId)
+    )
+    if (!raw) {
+      return { windowLayout: null }
+    }
+
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
+      return {
+        windowLayout:
+          (parsed as { readonly windowLayout?: WindowLayout | null })
+            .windowLayout ?? null,
+      }
+    }
+  } catch {
+    return { windowLayout: null }
+  }
+
+  return { windowLayout: null }
+}
+
+const writeStoredPanelLayout = (
+  windowId: string,
+  windowLayout: WindowLayout
+) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(
+    createPanelLayoutStorageKey(windowId),
+    JSON.stringify({ windowLayout })
+  )
+}
 
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
@@ -394,14 +443,14 @@ const daytonaRemoveTerminalMutation = LaborerClient.mutation('terminal.remove')
 
 /**
  * Manages the panel layout state, providing split and close actions
- * that mutate the `WindowLayout` and persist changes to LiveStore.
+ * that mutate the `WindowLayout` and persist changes to localStorage.
  *
  * Layout persistence flow:
- * 1. Read the per-window `WindowLayout` from LiveStore's client document.
+ * 1. Read the per-window `WindowLayout` from localStorage.
  * 2. If no persisted layout exists, seed from the auto-generated
  *    `WindowLayout` (via `useInitialLayout`).
  * 3. On mutations (split, close, assign, etc.), compute the new
- *    `WindowLayout` and write the client document.
+ *    `WindowLayout` and write it back to localStorage.
  */
 export function usePanelLayout() {
   const store = useLaborerStore()
@@ -409,36 +458,31 @@ export function usePanelLayout() {
   const registry = usePanelGroupRegistry()
   const nativeWindowId = getCurrentWindowId()
   const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
-
-  const [panelLayoutDocument, setPanelLayoutDocument] = store.useClientDocument(
-    panelLayout,
-    panelWindowId,
-    {
-      default: DEFAULT_PANEL_LAYOUT_DOCUMENT,
-    }
+  const [storedPanelLayout, setStoredPanelLayout] = useState(() =>
+    readStoredPanelLayout(panelWindowId)
   )
+
+  useEffect(() => {
+    setStoredPanelLayout(readStoredPanelLayout(panelWindowId))
+  }, [panelWindowId])
 
   const persistWindowLayout = useCallback(
     (_reason: string, windowLayout: WindowLayout) => {
-      setPanelLayoutDocument({ windowLayout })
+      writeStoredPanelLayout(panelWindowId, windowLayout)
+      setStoredPanelLayout({ windowLayout })
     },
-    [setPanelLayoutDocument]
+    [panelWindowId]
   )
 
   const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
-    const currentDocument = store.query(
-      panelLayout.get(panelWindowId, {
-        default: DEFAULT_PANEL_LAYOUT_DOCUMENT,
-      })
-    )
-    return currentDocument.windowLayout ?? undefined
-  }, [panelWindowId, store])
+    return readStoredPanelLayout(panelWindowId).windowLayout ?? undefined
+  }, [panelWindowId])
 
-  // Read and decode the hierarchical window layout from the client document.
+  // Read and decode the hierarchical window layout from localStorage.
   // Uses Effect Schema decode with repair transforms. If the layout was
   // repaired, we'll re-persist it.
   const windowLayoutRepair = useMemo(() => {
-    const raw = panelLayoutDocument.windowLayout
+    const raw = storedPanelLayout.windowLayout
     if (!raw) {
       return {
         windowLayout: undefined as WindowLayout | undefined,
@@ -446,13 +490,13 @@ export function usePanelLayout() {
       }
     }
     return decodeWindowLayout(raw)
-  }, [panelLayoutDocument.windowLayout])
+  }, [storedPanelLayout.windowLayout])
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
   const workspaceList = store.useQuery(allWorkspaces$)
   const pendingAgentAutoOpenWorkspaceIdsRef = useRef<Set<string>>(new Set())
-  const hasPersistedLayout = panelLayoutDocument.windowLayout !== null
+  const hasPersistedLayout = storedPanelLayout.windowLayout !== null
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >
@@ -469,7 +513,7 @@ export function usePanelLayout() {
     return resolveActivePaneForWindowTab(activeTab) ?? null
   }, [persistedWindowLayout])
 
-  // Persist repaired window layout to LiveStore.
+  // Persist repaired window layout to localStorage.
   // Only fires when repair was needed.
   const hasPersistedWindowRepair = useRef(false)
   useEffect(() => {
@@ -488,7 +532,7 @@ export function usePanelLayout() {
     persistWindowLayout,
   ])
 
-  // Seed the client document when there's no persisted layout but we have an
+  // Seed localStorage when there's no persisted layout but we have an
   // auto-generated one from terminals/workspaces.
   const hasSeeded = useRef(false)
   useEffect(() => {
@@ -503,7 +547,7 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
   // After a full app restart the terminal service loses its in-memory
   // state (all PTY processes are gone), but the persisted layout in
-  // LiveStore/OPFS still contains stale terminal IDs. Without this
+  // localStorage still contains stale terminal IDs. Without this
   // reconciliation, the UI renders TerminalPane components that try to
   // connect to non-existent terminals via WebSocket, producing infinite
   // reconnection loops.
@@ -1466,7 +1510,7 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
 
   /**
-   * Helper to persist a window layout update to LiveStore's client document.
+   * Helper to persist a window layout update to localStorage.
    */
   const commitWindowLayout = useCallback(
     (reason: string, newLayout: WindowLayout) => {
@@ -1480,7 +1524,7 @@ export function usePanelLayout() {
    * Called when the user drag-and-drops workspace frames to rearrange them.
    *
    * Updates the WorkspaceTileNode tree within the active WindowTab and
-   * persists the client document.
+   * persists the stored layout.
    */
   const handleReorderWorkspaces = useCallback(
     (workspaceOrder: (string | undefined)[]) => {

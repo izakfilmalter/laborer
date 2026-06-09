@@ -204,16 +204,31 @@ const makeRoutesLayer = Layer.unwrapScoped(
       )
     )
 
+    // Connection lifecycle logging for sync clients. The handler effect
+    // runs for the duration of the WebSocket connection, so completion
+    // (or interruption) marks the disconnect. This is the primary
+    // diagnostic for silently dropped renderer sync subscriptions.
+    const loggedSyncWebSocketApp = Effect.sync(() => {
+      console.log('[server-runtime] Sync WebSocket client connected')
+    }).pipe(
+      Effect.zipRight(syncWebSocketApp),
+      Effect.ensuring(
+        Effect.sync(() => {
+          console.log('[server-runtime] Sync WebSocket client disconnected')
+        })
+      )
+    )
+
     return Layer.mergeAll(
       HttpRouter.Default.use((router) =>
         router.get('/', HttpServerResponse.empty({ status: 204 }))
       ),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
-      authedWebSocketRoute('/sync', config.authToken, syncWebSocketApp),
+      authedWebSocketRoute('/sync', config.authToken, loggedSyncWebSocketApp),
       authedSyncWebSocketRoute(
         `/sync/${encodeURIComponent(config.authToken ?? '')}`,
         config.authToken,
-        syncWebSocketApp
+        loggedSyncWebSocketApp
       )
     )
   })

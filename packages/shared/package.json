@@ -15,6 +15,7 @@
     "./rpc": "./src/rpc.ts",
     "./container-name": "./src/container-name.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
+    "./live-pull-watchdog": "./src/live-pull-watchdog.ts",
     "./rpc-transport-messageport": "./src/rpc-transport-messageport.ts",
     "./rpc-transport-messageport-client": "./src/rpc-transport-messageport-client.ts"
   },

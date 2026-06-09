@@ -29,6 +29,7 @@ import { dirname, join } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
+import { withLivePullWatchdog } from '@laborer/shared/live-pull-watchdog'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
@@ -38,6 +39,7 @@ import {
   Layer,
   Option,
   Queue,
+  Schedule,
   Schema,
   Stream,
   SubscriptionRef,
@@ -212,6 +214,21 @@ const validatePushBatch = (
 // ---------------------------------------------------------------------------
 
 const MAX_PULL_EVENTS_PER_PAGE = 256
+
+/**
+ * Interval at which live pull streams emit an empty-batch heartbeat
+ * response. Clients use the absence of heartbeats to detect a live pull
+ * whose server-side subscription died while the transport stayed open
+ * (the "silent live-pull drop" failure mode).
+ */
+const SYNC_HEARTBEAT_INTERVAL_MS = 20_000
+
+/**
+ * Maximum live-pull silence tolerated by sync clients before they tear
+ * down and resubscribe. Three missed heartbeats — comfortably above
+ * `SYNC_HEARTBEAT_INTERVAL_MS` to avoid false positives under load.
+ */
+const SYNC_LIVE_PULL_SILENCE_TIMEOUT_MS = SYNC_HEARTBEAT_INTERVAL_MS * 3
 const SERVER_EVENTLOG_FILE_PATTERN = /^eventlog@\d+\.db$/
 const FALLBACK_SYNC_CREATED_AT = '1970-01-01T00:00:00.000Z'
 
@@ -666,6 +683,32 @@ class SyncBackendService extends Context.Tag('@laborer/SyncBackendService')<
   }
 >() {}
 
+/**
+ * Builds an isolated `SyncBackendService` layer backed by its own sql.js
+ * database under `dataDir`. Unlike the shared singleton used in
+ * production, each layer instance has independent storage and live
+ * subscriber registries — intended for tests.
+ */
+const makeSyncBackendServiceLayer = (options: {
+  readonly dataDir: string
+  readonly storeId: string
+}): Layer.Layer<SyncBackendService> =>
+  Layer.scoped(
+    SyncBackendService,
+    Effect.acquireRelease(
+      Effect.promise(() =>
+        makeSyncStorage(options.dataDir, options.storeId)
+      ).pipe(
+        Effect.map((storage) => ({
+          livePorts: new Map<string, LivePullPort>(),
+          liveQueues: new Set<Queue.Queue<PullResponseType>>(),
+          storage,
+        }))
+      ),
+      (service) => Effect.sync(() => service.storage.close())
+    )
+  )
+
 // ---------------------------------------------------------------------------
 // Pull handler
 // ---------------------------------------------------------------------------
@@ -781,6 +824,21 @@ const handlePull = (
       return phase1WithEmpty
     }
 
+    // Heartbeats prove to the client that its live subscription is still
+    // registered. If the live stream dies server-side while the transport
+    // stays open, heartbeats stop and the client watchdog can re-pull.
+    const heartbeats: Stream.Stream<PullResponseType> = Stream.fromSchedule(
+      Schedule.spaced(`${SYNC_HEARTBEAT_INTERVAL_MS} millis`)
+    ).pipe(
+      Stream.map(
+        (): PullResponseType => ({
+          backendId,
+          batch: [],
+          pageInfo: pageInfoNoMore,
+        })
+      )
+    )
+
     // Phase 2: keep the RPC stream open and emit pushed events. This is the
     // WebSocket-compatible path used by t3code-style backend connections.
     return Stream.unwrapScoped(
@@ -788,13 +846,22 @@ const handlePull = (
         Effect.tap((queue) =>
           Effect.sync(() => {
             liveQueues.add(queue)
+            console.log(
+              `[sync-backend] Live pull SUBSCRIBED (total subscribers: ${String(liveQueues.size)})`
+            )
           })
         ),
         Effect.map((queue) =>
-          Stream.concat(phase1WithEmpty, Stream.fromQueue(queue)).pipe(
+          Stream.concat(
+            phase1WithEmpty,
+            Stream.merge(Stream.fromQueue(queue), heartbeats)
+          ).pipe(
             Stream.ensuring(
               Effect.sync(() => {
                 liveQueues.delete(queue)
+                console.log(
+                  `[sync-backend] Live pull UNSUBSCRIBED (total subscribers: ${String(liveQueues.size)})`
+                )
               })
             )
           )
@@ -1291,59 +1358,87 @@ const makeInProcessSyncBackend = () => {
 
         const ping = SubscriptionRef.set(isConnected, true).pipe(Effect.asVoid)
 
+        const pullFromRelay = (
+          cursor: Option.Option<{
+            eventSequenceNumber: number
+            metadata: Option.Option<unknown>
+          }>,
+          options?: { live?: boolean }
+        ) => {
+          // Build the cursor with backendId. If we have a cursor but
+          // no backendId yet, we MUST learn it first via a non-live
+          // pull. Dropping the cursor causes the server to return all
+          // events from the beginning, which SyncState.merge rejects
+          // as "incoming events must be greater than upstream head".
+          const buildRpcCursor = Effect.gen(function* () {
+            if (cursor._tag === 'None') {
+              return Option.none<{
+                eventSequenceNumber: number
+                backendId: string
+              }>()
+            }
+            // Ensure we have the backendId before constructing cursor
+            const backendId = yield* fetchBackendId
+            return Option.some({
+              eventSequenceNumber: cursor.value.eventSequenceNumber,
+              backendId,
+            })
+          })
+
+          return Stream.unwrap(
+            buildRpcCursor.pipe(
+              Effect.map((rpcCursor) =>
+                pullRpc({
+                  storeId,
+                  live: options?.live === true,
+                  cursor: rpcCursor,
+                }).pipe(
+                  Stream.tap((res) =>
+                    Effect.sync(() => {
+                      currentBackendId = Option.some(res.backendId)
+                    })
+                  ),
+                  Stream.map((res) => ({
+                    batch: res.batch,
+                    pageInfo: res.pageInfo,
+                  }))
+                )
+              )
+            )
+          )
+        }
+
         return {
           isConnected,
           connect: ping,
 
-          pull: (
-            cursor: Option.Option<{
-              eventSequenceNumber: number
-              metadata: Option.Option<unknown>
-            }>,
-            options?: { live?: boolean }
-          ) => {
-            // Build the cursor with backendId. If we have a cursor but
-            // no backendId yet, we MUST learn it first via a non-live
-            // pull. Dropping the cursor causes the server to return all
-            // events from the beginning, which SyncState.merge rejects
-            // as "incoming events must be greater than upstream head".
-            const buildRpcCursor = Effect.gen(function* () {
-              if (cursor._tag === 'None') {
-                return Option.none<{
-                  eventSequenceNumber: number
-                  backendId: string
-                }>()
-              }
-              // Ensure we have the backendId before constructing cursor
-              const backendId = yield* fetchBackendId
-              return Option.some({
-                eventSequenceNumber: cursor.value.eventSequenceNumber,
-                backendId,
-              })
-            })
-
-            return Stream.unwrap(
-              buildRpcCursor.pipe(
-                Effect.map((rpcCursor) =>
-                  pullRpc({
-                    storeId,
-                    live: options?.live === true,
-                    cursor: rpcCursor,
-                  }).pipe(
-                    Stream.tap((res) =>
-                      Effect.sync(() => {
-                        currentBackendId = Option.some(res.backendId)
-                      })
-                    ),
-                    Stream.map((res) => ({
-                      batch: res.batch,
-                      pageInfo: res.pageInfo,
-                    }))
-                  )
-                )
+          // Live pulls receive heartbeats from the relay; the watchdog
+          // resubscribes from the last seen cursor if the live stream
+          // goes silent (and keeps heartbeats away from LiveStore).
+          pull: withLivePullWatchdog({
+            cursorFromPage: (page) => {
+              const lastEvent = page.batch.at(-1)
+              return lastEvent === undefined
+                ? Option.none()
+                : Option.some({
+                    eventSequenceNumber: lastEvent.eventEncoded.seqNum,
+                    metadata: lastEvent.metadata,
+                  })
+            },
+            onSilenceTimeout: (cursor) => {
+              console.warn(
+                `[sync-backend] In-process live pull silent past timeout — resubscribing (cursor=${Option.match(
+                  cursor,
+                  {
+                    onNone: () => 'none',
+                    onSome: (value) => String(value.eventSequenceNumber),
+                  }
+                )})`
               )
-            )
-          },
+            },
+            pull: pullFromRelay,
+            silenceTimeoutMs: SYNC_LIVE_PULL_SILENCE_TIMEOUT_MS,
+          }),
 
           push: (batch: readonly Record<string, unknown>[]) =>
             Effect.gen(function* () {
@@ -1377,10 +1472,14 @@ const makeInProcessSyncBackend = () => {
   return syncBackendConstructor(clientPort as unknown as RpcMessagePort)
 }
 
+export type SyncPullResponse = PullResponseType
+
 export {
   backfillSyncStorageFromServerEventlog,
   makeInProcessSyncBackend,
+  makeSyncBackendServiceLayer,
   SharedSyncBackendServiceLive,
+  SyncBackendService,
   SyncRpcHandlersLive,
   SyncWsRpc,
   serveSyncOnPort,

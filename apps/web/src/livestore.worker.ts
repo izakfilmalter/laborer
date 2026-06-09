@@ -26,11 +26,12 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
+import { withLivePullWatchdog } from '@laborer/shared/live-pull-watchdog'
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { schema } from '@laborer/shared/schema'
 import { makeWorkerEffect } from '@livestore/adapter-web/worker'
 import { makeWsSync } from '@livestore/sync-cf/client'
-import { Cause, Effect, Exit } from 'effect'
+import { Cause, Effect, Exit, Option } from 'effect'
 import { makeMessagePortSync } from './livestore/messageport-sync'
 import {
   formatRecoverableErrorCause,
@@ -112,16 +113,68 @@ const waitForSyncConfig = (): Promise<SyncConfig> =>
     self.addEventListener('message', handler)
   })
 
+/**
+ * Maximum live-pull silence before the watchdog resubscribes. The sync
+ * backend emits heartbeats every 20s on live pulls, so 60s of silence
+ * means the server-side subscription died while the WebSocket stayed
+ * open — the failure mode where workspace changes stop appearing until
+ * an app restart.
+ */
+const SYNC_SILENCE_TIMEOUT_MS = 60_000
+
+type WsSyncConstructor = ReturnType<typeof makeWsSync>
+
+/**
+ * Wraps the WebSocket sync backend so live pulls self-heal: if neither
+ * events nor heartbeats arrive within the silence timeout, the pull is
+ * torn down and resubscribed from the last cursor seen.
+ */
+const withSyncWatchdog =
+  (makeBackend: WsSyncConstructor): WsSyncConstructor =>
+  (args) =>
+    makeBackend(args).pipe(
+      Effect.map((backend) => ({
+        ...backend,
+        pull: withLivePullWatchdog({
+          cursorFromPage: (page) => {
+            const lastEvent = page.batch.at(-1)
+            return lastEvent === undefined
+              ? Option.none()
+              : Option.some({
+                  eventSequenceNumber: lastEvent.eventEncoded.seqNum,
+                  metadata: lastEvent.metadata,
+                })
+          },
+          onSilenceTimeout: (cursor) => {
+            console.warn(
+              '[LiveStore.worker] live pull silent past timeout — resubscribing',
+              Option.match(cursor, {
+                onNone: () => 'cursor=none',
+                onSome: (value) =>
+                  `cursor=${String(value.eventSequenceNumber)}`,
+              })
+            )
+          },
+          pull: backend.pull,
+          silenceTimeoutMs: SYNC_SILENCE_TIMEOUT_MS,
+        }),
+      }))
+    )
+
 const runWorker = async (syncConfig: SyncConfig) => {
   const syncBackend = (() => {
     if (syncConfig.type === 'websocket') {
-      return makeWsSync({ url: syncConfig.url })
+      return withSyncWatchdog(makeWsSync({ url: syncConfig.url }))
     }
 
     if (syncConfig.type === 'message-port') {
-      return makeMessagePortSync(
-        syncConfig.port as unknown as Parameters<typeof makeMessagePortSync>[0]
-      ) as unknown as ReturnType<typeof makeWsSync>
+      return withSyncWatchdog(
+        makeMessagePortSync(
+          syncConfig.port as unknown as Parameters<
+            typeof makeMessagePortSync
+          >[0]
+        ) as unknown as ReturnType<typeof makeWsSync>
+      )
     }
 
     return null

@@ -11,7 +11,7 @@ fi
 # For each iteration, run Claude Code with the following prompt.
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
-result=$(opencode --model anthropic/claude-opus-4-6 run \
+result=$(opencode --model openai/gpt-5.5 run \
 "@docs/shuru-sandbox-provider/PRD-shuru-sandbox-provider.md @docs/shuru-sandbox-provider/issues.md @docs/shuru-sandbox-provider/progress.txt \
 1. Decide which task to work on next from docs/shuru-sandbox-provider/issues.md. \
 This should be the one YOU decide has the highest priority, \

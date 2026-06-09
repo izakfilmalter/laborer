@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
+  createdLogStreams,
   mockCreateWriteStream,
   mockExistsSync,
   mockMkdirSync,
@@ -55,8 +56,27 @@ const {
     }
   )
 
+  /**
+   * Fake WriteStream that can emit `error` events like the real one.
+   */
+  type MockLogStream = InstanceType<typeof EventEmitter> & {
+    end: ReturnType<typeof vi.fn>
+    write: ReturnType<typeof vi.fn>
+  }
+
+  const logStreams: MockLogStream[] = []
+  const createWriteStream = vi.fn(() => {
+    const stream = Object.assign(new EventEmitter(), {
+      end: vi.fn(),
+      write: vi.fn(),
+    }) as MockLogStream
+    logStreams.push(stream)
+    return stream
+  })
+
   return {
-    mockCreateWriteStream: vi.fn(() => ({ end: vi.fn(), write: vi.fn() })),
+    createdLogStreams: logStreams,
+    mockCreateWriteStream: createWriteStream,
     mockExistsSync: vi.fn(() => true),
     mockMkdirSync: vi.fn(),
     mockSpawn: spawn,
@@ -92,6 +112,7 @@ describe('BackendProcessManager', () => {
     mockMkdirSync.mockClear()
     mockCreateWriteStream.mockClear()
     spawnedProcesses.length = 0
+    createdLogStreams.length = 0
   })
 
   it('starts the server backend as a Node child process with a loopback WebSocket endpoint', async () => {
@@ -204,5 +225,124 @@ describe('BackendProcessManager', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('keeps capturing backend logs after the log stream errors', async () => {
+    vi.useFakeTimers()
+    try {
+      const { BACKEND_LOG_REOPEN_MIN_INTERVAL_MS, BackendProcessManager } =
+        await import('../src/backend-process-manager.js')
+      const manager = new BackendProcessManager({
+        authToken: 'secret-token',
+        port: 17_321,
+      })
+      manager.start()
+
+      const firstStream = createdLogStreams[0]
+      expect(firstStream).toBeDefined()
+
+      // Logs flow into backend.log normally.
+      const beforeError = Buffer.from('before error\n')
+      spawnedProcesses[0]?.stdout.emit('data', beforeError)
+      expect(firstStream?.write).toHaveBeenCalledWith(beforeError)
+
+      // The write stream dies (e.g. EIO write error after sleep).
+      firstStream?.emit(
+        'error',
+        Object.assign(new Error('write EIO'), { code: 'EIO', syscall: 'write' })
+      )
+
+      // After the reopen interval, the next chunk reopens backend.log
+      // and is captured by the fresh stream.
+      vi.advanceTimersByTime(BACKEND_LOG_REOPEN_MIN_INTERVAL_MS)
+      const afterError = Buffer.from('after error\n')
+      spawnedProcesses[0]?.stdout.emit('data', afterError)
+
+      expect(mockCreateWriteStream).toHaveBeenCalledTimes(2)
+      expect(createdLogStreams[1]?.write).toHaveBeenCalledWith(afterError)
+
+      manager.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('throttles log stream reopen attempts', async () => {
+    vi.useFakeTimers()
+    try {
+      const { BACKEND_LOG_REOPEN_MIN_INTERVAL_MS, BackendProcessManager } =
+        await import('../src/backend-process-manager.js')
+      const manager = new BackendProcessManager({
+        authToken: 'secret-token',
+        port: 17_321,
+      })
+      manager.start()
+
+      createdLogStreams[0]?.emit(
+        'error',
+        Object.assign(new Error('write ENOSPC'), {
+          code: 'ENOSPC',
+          syscall: 'write',
+        })
+      )
+
+      // Chunks arriving within the throttle window must not reopen.
+      spawnedProcesses[0]?.stdout.emit('data', Buffer.from('one\n'))
+      vi.advanceTimersByTime(BACKEND_LOG_REOPEN_MIN_INTERVAL_MS - 1)
+      spawnedProcesses[0]?.stdout.emit('data', Buffer.from('two\n'))
+      expect(mockCreateWriteStream).toHaveBeenCalledTimes(1)
+
+      // Once the window has elapsed, the next chunk reopens.
+      vi.advanceTimersByTime(1)
+      spawnedProcesses[0]?.stdout.emit('data', Buffer.from('three\n'))
+      expect(mockCreateWriteStream).toHaveBeenCalledTimes(2)
+
+      manager.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('survives stdout/stderr pipe errors without crashing', async () => {
+    const { BackendProcessManager } = await import(
+      '../src/backend-process-manager.js'
+    )
+    const manager = new BackendProcessManager({
+      authToken: 'secret-token',
+      port: 17_321,
+    })
+    manager.start()
+
+    const pipeError = Object.assign(new Error('read EIO'), {
+      code: 'EIO',
+      syscall: 'read',
+    })
+    expect(() =>
+      spawnedProcesses[0]?.stdout.emit('error', pipeError)
+    ).not.toThrow()
+    expect(() =>
+      spawnedProcesses[0]?.stderr.emit('error', pipeError)
+    ).not.toThrow()
+
+    // Log capture still works afterwards.
+    const chunk = Buffer.from('still alive\n')
+    spawnedProcesses[0]?.stdout.emit('data', chunk)
+    expect(createdLogStreams[0]?.write).toHaveBeenCalledWith(chunk)
+
+    manager.stop()
+  })
+
+  it('closes the log stream on stop', async () => {
+    const { BackendProcessManager } = await import(
+      '../src/backend-process-manager.js'
+    )
+    const manager = new BackendProcessManager({
+      authToken: 'secret-token',
+      port: 17_321,
+    })
+    manager.start()
+    manager.stop()
+
+    expect(createdLogStreams[0]?.end).toHaveBeenCalled()
   })
 })

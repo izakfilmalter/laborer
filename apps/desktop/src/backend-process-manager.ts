@@ -25,6 +25,16 @@ const READY_TIMEOUT_MS = 60_000
 const RESTART_BASE_DELAY_MS = 500
 const RESTART_MAX_DELAY_MS = 10_000
 
+/**
+ * Minimum time between attempts to reopen backend.log after the write
+ * stream errors (ms). The stream has no automatic recovery — a single
+ * write error (EPIPE/EIO after sleep, ENOSPC, ...) would otherwise
+ * silently kill log capture for the rest of the session while the
+ * backend keeps running. Throttled so a persistent failure (e.g. disk
+ * full) doesn't attempt a reopen for every log chunk.
+ */
+export const BACKEND_LOG_REOPEN_MIN_INTERVAL_MS = 5000
+
 function resolveAppRoot(): string {
   if (!app.isPackaged) {
     return join(import.meta.dirname, '..', '..', '..')
@@ -56,6 +66,12 @@ function openBackendLogStream(): WriteStream | null {
 export class BackendProcessManager {
   readonly #authToken: string
   #backendLogStream: WriteStream | null = null
+  /**
+   * Wall-clock timestamp of the last log stream failure or reopen
+   * attempt. `null` when the stream is healthy or log capture is
+   * disabled (dev mode). Gates reopen attempts in #writeBackendLog.
+   */
+  #backendLogStreamFailedAt: number | null = null
   #backendReadinessAbortController: AbortController | null = null
   #backendListeningDetector: ServerListeningDetector | null = null
   #backendStartupReadyPromise: Promise<void> | null = null
@@ -133,6 +149,9 @@ export class BackendProcessManager {
 
     this.#closeBackendLogStream()
     this.#backendLogStream = openBackendLogStream()
+    if (this.#backendLogStream) {
+      this.#attachLogStreamErrorHandler(this.#backendLogStream)
+    }
     const captureBackendLogs = this.#backendLogStream !== null
     const child = spawn(
       process.execPath,
@@ -178,6 +197,15 @@ export class BackendProcessManager {
       if (!captureBackendLogs) {
         console.error(`[backend] ${chunk.toString().trimEnd()}`)
       }
+    })
+    // Without listeners, a pipe read error becomes an uncaughtException
+    // in the main process. Log-only: if the pipes are truly gone the
+    // child's exit handler drives recovery.
+    child.stdout?.on('error', (error) => {
+      console.error('[backend] stdout pipe error', error)
+    })
+    child.stderr?.on('error', (error) => {
+      console.error('[backend] stderr pipe error', error)
     })
     child.once('spawn', () => {
       this.#restartAttempt = 0
@@ -286,12 +314,63 @@ export class BackendProcessManager {
   }
 
   #writeBackendLog(chunk: Buffer): void {
-    this.#backendLogStream?.write(chunk)
+    if (this.#backendLogStream) {
+      this.#backendLogStream.write(chunk)
+      return
+    }
+
+    // No stream and no recorded failure means log capture is disabled
+    // (dev mode) — nothing to recover.
+    if (this.#backendLogStreamFailedAt === null) {
+      return
+    }
+
+    // The stream died earlier. Try to reopen backend.log, throttled so
+    // a persistent failure doesn't retry on every chunk.
+    const sinceFailureMs = Date.now() - this.#backendLogStreamFailedAt
+    if (sinceFailureMs < BACKEND_LOG_REOPEN_MIN_INTERVAL_MS) {
+      return
+    }
+    this.#backendLogStreamFailedAt = Date.now()
+
+    try {
+      const stream = openBackendLogStream()
+      if (!stream) {
+        return
+      }
+      this.#attachLogStreamErrorHandler(stream)
+      this.#backendLogStream = stream
+      console.info('[backend] reopened backend.log after log stream error')
+      stream.write(chunk)
+    } catch (error) {
+      console.error('[backend] failed to reopen backend.log', error)
+    }
+  }
+
+  /**
+   * Watch for write errors on the backend.log stream. Without a
+   * listener a single EPIPE/EIO/ENOSPC write error becomes an
+   * uncaughtException and log capture silently dies for the rest of
+   * the session. Instead: drop the dead stream and let
+   * #writeBackendLog reopen it on a later chunk.
+   */
+  #attachLogStreamErrorHandler(stream: WriteStream): void {
+    stream.on('error', (error) => {
+      console.error(
+        '[backend] backend.log stream error — will reopen on next log chunk',
+        error
+      )
+      if (this.#backendLogStream === stream) {
+        this.#backendLogStream = null
+        this.#backendLogStreamFailedAt = Date.now()
+      }
+    })
   }
 
   #closeBackendLogStream(): void {
     this.#backendLogStream?.end()
     this.#backendLogStream = null
+    this.#backendLogStreamFailedAt = null
   }
 }
 

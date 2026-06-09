@@ -66,6 +66,20 @@ export const HEARTBEAT_INTERVAL_MS = 5000
  */
 export const HEARTBEAT_TIMEOUT_MS = 15_000
 
+/**
+ * Tolerance for late-firing heartbeat timeout timers (ms).
+ *
+ * When the system sleeps mid-window (especially macOS DarkWake, which
+ * does not reliably emit `suspend`/`resume` events), the pending
+ * heartbeat timer fires shortly after wake with far more wall-clock
+ * time elapsed than the scheduled 15s — while the utility process was
+ * frozen, not hung. If the timeout handler observes elapsed time beyond
+ * `HEARTBEAT_TIMEOUT_MS + HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS`, it treats
+ * the firing as a sleep artifact and re-arms a fresh window instead of
+ * killing the process.
+ */
+export const HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS = HEARTBEAT_INTERVAL_MS
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -95,6 +109,12 @@ export type StatusListener = (status: LifecycleStatus) => void
 
 /** Per-service lifecycle tracking state. */
 interface ServiceState {
+  /**
+   * Wall-clock timestamp (`Date.now()`) when the heartbeat timer was
+   * last armed. Used to detect timers that fired late because the
+   * system slept mid-window.
+   */
+  heartbeatArmedAt: number
   /** Current heartbeat timeout timer. */
   heartbeatTimer: ReturnType<typeof setTimeout> | null
   /** Whether the service has sent its `ready` message. */
@@ -522,6 +542,8 @@ export class LifecycleMonitor {
       clearTimeout(state.heartbeatTimer)
     }
 
+    state.heartbeatArmedAt = Date.now()
+
     const timer = setTimeout(() => {
       state.heartbeatTimer = null
       this.handleHeartbeatTimeout(name)
@@ -545,6 +567,21 @@ export class LifecycleMonitor {
     const state = this.services.get(name)
     if (!state?.isReady) {
       // Already marked as not ready (e.g., already crashed).
+      return
+    }
+
+    // Late-fire detection: if far more wall-clock time elapsed than the
+    // scheduled window, the system slept mid-window (e.g. a macOS
+    // DarkWake that never emitted suspend/resume). The utility process
+    // was frozen, not hung — give it a fresh window instead of killing.
+    const elapsedMs = Date.now() - state.heartbeatArmedAt
+    if (elapsedMs > HEARTBEAT_TIMEOUT_MS + HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS) {
+      console.info(
+        `[lifecycle:${name}] Heartbeat timeout fired ${elapsedMs}ms after arming ` +
+          `(expected ~${HEARTBEAT_TIMEOUT_MS}ms) — system likely slept. ` +
+          'Re-arming instead of killing.'
+      )
+      this.resetHeartbeatTimer(name)
       return
     }
 
@@ -598,6 +635,7 @@ export class LifecycleMonitor {
     let state = this.services.get(name)
     if (!state) {
       state = {
+        heartbeatArmedAt: 0,
         heartbeatTimer: null,
         isReady: false,
         restartTimer: null,

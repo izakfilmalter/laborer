@@ -550,6 +550,103 @@ describe('LifecycleMonitor', () => {
   })
 
   // -----------------------------------------------------------------------
+  // Sleep / wake (DarkWake) tolerance
+  // -----------------------------------------------------------------------
+
+  describe('sleep and wake tolerance', () => {
+    it('does not kill when the timeout fires after a wall-clock jump (system slept mid-window)', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      // Simulate sleep without a `suspend` event (macOS DarkWake): the
+      // wall clock jumps forward while timers are frozen...
+      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
+      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
+
+      // ...then the pending heartbeat timer fires shortly after wake.
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+
+      // The process was frozen, not hung — it must not be killed.
+      expect(mockManager.killCalls).not.toContain('terminal')
+      expect(monitor.isHealthy('terminal')).toBe(true)
+    })
+
+    it('still kills after a clean silent window following the sleep grace', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      // Sleep mid-window, late timer fires → grace re-arm.
+      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
+      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+      expect(mockManager.killCalls).not.toContain('terminal')
+
+      // The process really is hung: a full clean window passes while
+      // awake with no heartbeat — now it must be killed.
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+      expect(mockManager.killCalls).toContain('terminal')
+    })
+
+    it('stays healthy when heartbeats resume after the sleep grace', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      // Sleep mid-window, late timer fires → grace re-arm.
+      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
+      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+
+      // The process wakes up and resumes heartbeats.
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)
+      monitor.handleHeartbeat('terminal')
+
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 1000)
+      expect(mockManager.killCalls).not.toContain('terminal')
+      expect(monitor.isHealthy('terminal')).toBe(true)
+    })
+
+    it('handleSuspend pauses heartbeat timers so no kill occurs', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      monitor.handleSuspend()
+
+      // Even far past the timeout, the paused timer must not fire.
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 4)
+      expect(mockManager.killCalls).not.toContain('terminal')
+      expect(monitor.isHealthy('terminal')).toBe(true)
+    })
+
+    it('handleResume re-arms timers with a fresh full window', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      monitor.handleSuspend()
+      vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000)
+      monitor.handleResume()
+
+      // Fresh window: just under the timeout, still healthy...
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 100)
+      expect(mockManager.killCalls).not.toContain('terminal')
+
+      // ...but a clean silent window after resume still detects a hang.
+      vi.advanceTimersByTime(200)
+      expect(mockManager.killCalls).toContain('terminal')
+    })
+
+    it('handleResume does not start timers for services that were not ready', () => {
+      monitor.forkAndMonitor('terminal')
+      // No handleReady — service is still starting.
+
+      monitor.handleSuspend()
+      monitor.handleResume()
+
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 4)
+      expect(mockManager.killCalls).not.toContain('terminal')
+    })
+  })
+
+  // -----------------------------------------------------------------------
   // Manual restart
   // -----------------------------------------------------------------------
 

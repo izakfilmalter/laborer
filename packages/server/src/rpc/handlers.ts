@@ -912,7 +912,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     // Workspace RPCs (Issue #33-47)
     // -------------------------------------------------------------------
-    'workspace.create': ({ projectId, branchName, taskId }) =>
+    'workspace.create': ({ projectId, branchName, taskId, baseWorkspaceId }) =>
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
         // Pass an onReady callback that starts PR polling once the
@@ -928,7 +928,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           projectId,
           branchName,
           taskId,
-          onReady
+          onReady,
+          baseWorkspaceId
         )
 
         return {

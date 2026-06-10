@@ -129,6 +129,7 @@ describe('LiveStore schema', () => {
           origin: 'laborer',
           createdAt: '2026-03-06T00:00:00.000Z',
           baseSha: 'abc123',
+          baseBranch: null,
           sandboxId: null,
           sandboxUrl: null,
           sandboxPort: null,
@@ -166,6 +167,54 @@ describe('LiveStore schema', () => {
           store.query(tables.workspaces.where('id', 'workspace-1')),
           []
         )
+      })
+  )
+
+  it.scoped(
+    'materializes baseBranch for sub-workspaces and defaults to null when absent',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.workspaceCreated({
+            id: 'workspace-sub',
+            projectId: 'project-1',
+            taskSource: null,
+            branchName: 'fix/auth',
+            worktreePath: '/tmp/project-1.worktrees/fix-auth',
+            status: 'creating',
+            origin: 'laborer',
+            createdAt: '2026-06-10T00:00:00.000Z',
+            baseSha: 'abc123',
+            baseBranch: 'feat/big-thing',
+          })
+        )
+
+        const subWorkspace = store.query(
+          tables.workspaces.where('id', 'workspace-sub')
+        )
+        assert.strictEqual(subWorkspace[0]?.baseBranch, 'feat/big-thing')
+
+        // Events persisted before this field existed must still decode.
+        store.commit(
+          events.workspaceCreated({
+            id: 'workspace-plain',
+            projectId: 'project-1',
+            taskSource: null,
+            branchName: 'feat/standalone',
+            worktreePath: '/tmp/project-1.worktrees/feat-standalone',
+            status: 'creating',
+            origin: 'laborer',
+            createdAt: '2026-06-10T00:00:00.000Z',
+            baseSha: 'abc123',
+          })
+        )
+
+        const plainWorkspace = store.query(
+          tables.workspaces.where('id', 'workspace-plain')
+        )
+        assert.strictEqual(plainWorkspace[0]?.baseBranch, null)
       })
   )
 

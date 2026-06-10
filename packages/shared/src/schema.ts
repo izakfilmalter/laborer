@@ -30,6 +30,13 @@ export const workspaces = State.SQLite.table({
     createdAt: State.SQLite.text(),
     /** SHA of the parent branch HEAD when the worktree was created. Used by DiffService as the base for `git diff`. */
     baseSha: State.SQLite.text({ nullable: true }),
+    /**
+     * Branch this workspace's PR targets, captured from the parent workspace at
+     * creation time. Null for ordinary workspaces (PRs target the repo default
+     * branch). Sidebar lineage is derived by matching this against live
+     * workspaces' branchName — see docs/adr/0001-branch-keyed-workspace-lineage.md.
+     */
+    baseBranch: State.SQLite.text({ nullable: true }),
     /** Sandbox ID when a dev server sandbox is running for this workspace. Null when no sandbox exists. */
     sandboxId: State.SQLite.text({ nullable: true }),
     /** The URL for the sandbox dev server. Null when no sandbox exists. */
@@ -197,6 +204,8 @@ export const workspaceCreated = Events.synced({
     }),
     /** Provider selected when creating the workspace. Optional for backward compatibility with old events. */
     sandboxProvider: Schema.optional(Schema.NullOr(Schema.String)),
+    /** Branch this workspace's PR targets (sub-workspaces only). Optional for backward compatibility with old events. */
+    baseBranch: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 })
 
@@ -648,6 +657,7 @@ const materializers = State.SQLite.materializers(events, {
     createdAt,
     baseSha,
     sandboxProvider,
+    baseBranch,
   }) =>
     workspaces.insert({
       id,
@@ -659,6 +669,7 @@ const materializers = State.SQLite.materializers(events, {
       origin,
       createdAt,
       baseSha,
+      baseBranch: baseBranch ?? null,
       sandboxId: null,
       sandboxUrl: null,
       sandboxImage: null,

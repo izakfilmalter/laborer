@@ -39,8 +39,13 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
+import {
+  buildWorkspaceTree,
+  type WorkspaceTreeNode,
+} from '@laborer/shared/workspace-tree'
 import { queryDb } from '@livestore/livestore'
 import {
+  ChevronRight,
   ExternalLink,
   GitBranch,
   GitBranchPlus,
@@ -63,6 +68,7 @@ import {
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
+import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -90,6 +96,12 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { DialogTrigger } from '@/components/ui/dialog'
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -114,6 +126,10 @@ import {
   type ActiveTerminal,
   useDestroyWorkspaceChecks,
 } from '@/hooks/use-destroy-workspace-checks'
+import {
+  type CollapseState,
+  useWorkspaceGroupCollapseState,
+} from '@/hooks/use-project-collapse-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
@@ -749,6 +765,8 @@ interface WorkspaceItemProps {
    * repository clone.
    */
   readonly isRootWorkspace?: boolean | undefined
+  /** The project name, used by the sub-workspace creation dialog. */
+  readonly projectName: string
   readonly workspace: {
     readonly id: string
     readonly projectId: string
@@ -984,6 +1002,7 @@ function WorkspaceItem({
   workspace,
   associatedPrdId,
   isRootWorkspace,
+  projectName,
 }: WorkspaceItemProps) {
   const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
@@ -1171,6 +1190,37 @@ function WorkspaceItem({
                 workspaceId={workspace.id}
               />
             )}
+            <CreateWorkspaceForm
+              baseWorkspace={{
+                id: workspace.id,
+                branchName: workspace.branchName,
+              }}
+              projectId={workspace.projectId}
+              projectName={projectName}
+              trigger={
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DialogTrigger
+                        render={
+                          <Button
+                            aria-label={`Create sub-workspace from ${workspace.branchName}`}
+                            className="size-6"
+                            size="icon-sm"
+                            variant="ghost"
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <GitBranchPlus className="size-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Create sub-workspace from this branch
+                  </TooltipContent>
+                </Tooltip>
+              }
+            />
             {!isRootWorkspace && (
               <DestroyWorkspaceButton
                 branchName={workspace.branchName}
@@ -1264,6 +1314,8 @@ function WorkspaceItem({
 interface WorkspaceListProps {
   /** Only workspaces belonging to this project are shown. */
   readonly projectId: string
+  /** The project name, used by the sub-workspace creation dialog. */
+  readonly projectName: string
   /**
    * The repository path (project.repoPath) used to identify the root workspace.
    * The root workspace is the one where worktreePath matches this path.
@@ -1271,10 +1323,103 @@ interface WorkspaceListProps {
   readonly repoPath: string
 }
 
-function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
+/** Workspace row shape used by the sidebar tree. */
+type WorkspaceTreeRow = WorkspaceItemProps['workspace'] & {
+  readonly baseBranch: string | null
+}
+
+interface WorkspaceTreeGroupProps {
+  readonly branchToPrdId: ReadonlyMap<string, string>
+  readonly collapseState: CollapseState
+  readonly node: WorkspaceTreeNode<WorkspaceTreeRow>
+  readonly projectName: string
+  readonly repoPath: string
+}
+
+/**
+ * Renders one node of the workspace tree. Childless workspaces render as a
+ * plain card. A workspace with sub-workspaces gets a thin, collapsible,
+ * branch-named group header wrapping its own card plus its children —
+ * recursively, so stacks can nest arbitrarily deep.
+ *
+ * Lineage is derived from branch names, not stored parent IDs
+ * (docs/adr/0001-branch-keyed-workspace-lineage.md): destroying a parent
+ * simply dissolves its group, and recreating a workspace on the same branch
+ * re-adopts its children.
+ */
+function WorkspaceTreeGroup({
+  node,
+  branchToPrdId,
+  collapseState,
+  projectName,
+  repoPath,
+}: WorkspaceTreeGroupProps) {
+  const { workspace, children } = node
+
+  const card = (
+    <WorkspaceItem
+      associatedPrdId={branchToPrdId.get(workspace.branchName)}
+      isRootWorkspace={workspace.worktreePath === repoPath}
+      projectName={projectName}
+      workspace={workspace}
+    />
+  )
+
+  if (children.length === 0) {
+    return card
+  }
+
+  // Keyed by branch so collapse state survives destroy/recreate cycles.
+  const groupKey = `${workspace.projectId}:${workspace.branchName}`
+  const expanded = collapseState.isExpanded(groupKey)
+
+  return (
+    <Collapsible open={expanded}>
+      <CollapsibleTrigger
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left font-medium text-muted-foreground text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+        data-testid={`workspace-group-${workspace.branchName}`}
+        onClick={() => collapseState.toggle(groupKey)}
+      >
+        <ChevronRight
+          className={cn(
+            'size-3 shrink-0 transition-transform duration-200',
+            expanded && 'rotate-90'
+          )}
+        />
+        <GitBranch className="size-3 shrink-0" />
+        <span className="min-w-0 truncate font-mono">
+          {workspace.branchName}
+        </span>
+        <span className="ml-auto shrink-0 tabular-nums">{children.length}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 ml-1.5 grid gap-2 border-l pl-1.5">
+          {card}
+          {children.map((child) => (
+            <WorkspaceTreeGroup
+              branchToPrdId={branchToPrdId}
+              collapseState={collapseState}
+              key={child.workspace.id}
+              node={child}
+              projectName={projectName}
+              repoPath={repoPath}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function WorkspaceList({
+  projectId,
+  projectName,
+  repoPath,
+}: WorkspaceListProps) {
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspaces$)
   const prdList = store.useQuery(allPrds$)
+  const collapseState = useWorkspaceGroupCollapseState()
 
   // Filter out destroyed workspaces, scoped to the given project
   const activeWorkspaces = useMemo(
@@ -1283,6 +1428,25 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
         (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
       ),
     [workspaceList, projectId]
+  )
+
+  // Derive the sub-workspace tree by matching each workspace's baseBranch
+  // against live workspaces' branchName.
+  const workspaceTree = useMemo(
+    () =>
+      buildWorkspaceTree(
+        activeWorkspaces.map(
+          (ws): WorkspaceTreeRow => ({
+            ...ws,
+            // baseBranch is not in LiveStore's inferred queryDb type
+            // (column count limit), but it IS in the SQLite table and
+            // accessible at runtime.
+            baseBranch:
+              (ws as { baseBranch?: string | null }).baseBranch ?? null,
+          })
+        )
+      ),
+    [activeWorkspaces]
   )
 
   // Build a map of plan/<slug> branch name → prdId for this project,
@@ -1316,12 +1480,14 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
 
   return (
     <div className="grid gap-2">
-      {activeWorkspaces.map((workspace) => (
-        <WorkspaceItem
-          associatedPrdId={branchToPrdId.get(workspace.branchName)}
-          isRootWorkspace={workspace.worktreePath === repoPath}
-          key={workspace.id}
-          workspace={workspace}
+      {workspaceTree.map((node) => (
+        <WorkspaceTreeGroup
+          branchToPrdId={branchToPrdId}
+          collapseState={collapseState}
+          key={node.workspace.id}
+          node={node}
+          projectName={projectName}
+          repoPath={repoPath}
         />
       ))}
     </div>

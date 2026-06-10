@@ -124,6 +124,13 @@ function getErrorIcon(code: string | undefined) {
 }
 
 interface CreateWorkspaceFormProps {
+  /**
+   * When set, creates a sub-workspace: the new worktree branches from this
+   * workspace's current HEAD and its PR targets this workspace's branch.
+   */
+  readonly baseWorkspace?:
+    | { readonly id: string; readonly branchName: string }
+    | undefined
   /** The project to create a workspace in. */
   readonly projectId: string
   /** The project name shown in the sidebar. */
@@ -133,6 +140,7 @@ interface CreateWorkspaceFormProps {
 }
 
 function CreateWorkspaceForm({
+  baseWorkspace,
   projectId,
   projectName,
   trigger,
@@ -168,6 +176,7 @@ function CreateWorkspaceForm({
           payload: {
             projectId,
             ...(branchName ? { branchName } : {}),
+            ...(baseWorkspace ? { baseWorkspaceId: baseWorkspace.id } : {}),
           },
         })
         panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
@@ -218,10 +227,22 @@ function CreateWorkspaceForm({
       )}
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create Workspace</DialogTitle>
+          <DialogTitle>
+            {baseWorkspace ? 'Create Sub-workspace' : 'Create Workspace'}
+          </DialogTitle>
           <DialogDescription>
-            Create an isolated git worktree for an agent or task. Each workspace
-            gets its own branch, port, and directory.
+            {baseWorkspace ? (
+              <>
+                Branch off{' '}
+                <span className="font-mono text-foreground">
+                  {baseWorkspace.branchName}
+                </span>
+                . The new workspace starts at its current commit and its PR
+                targets that branch.
+              </>
+            ) : (
+              'Create an isolated git worktree for an agent or task. Each workspace gets its own branch, port, and directory.'
+            )}
           </DialogDescription>
         </DialogHeader>
         {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: Cmd+Enter keyboard shortcut to submit the form */}

@@ -174,3 +174,17 @@ Rules when modifying event schemas:
 In materializers, use `?? null` (or a suitable default) for optional fields to convert `undefined` to the value expected by the SQLite column.
 
 **Never add a required field to an existing event.** This breaks rematerialization for any user with old events in their eventlog.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for `izakfilmalter/laborer`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the canonical default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain docs layout: root `CONTEXT.md` and root `docs/adr/`. See `docs/agents/domain.md`.

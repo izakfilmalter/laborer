@@ -31,5 +31,8 @@ The commit SHA used as the base for a workspace's diff view. Captured at worktre
 **Origin**:
 How a workspace came to exist: `laborer` (created by the app) or `external` (a pre-existing worktree detected on disk).
 
+**Diff Viewer**:
+The read-only pane showing a workspace's changes against its base SHA. Purely visual — it never modifies the diff, files, or worktree. Its only interactions are navigational (open in editor, scroll to a file/line).
+
 **Panel type picker**:
 The transient chooser used to select what kind of pane to create or assign when opening a new split or panel tab.

@@ -1,6 +1,7 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
 import type { PanelNode } from '@laborer/shared/types'
+import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
 import { queryDb } from '@livestore/livestore'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -83,6 +84,7 @@ export function WorkspaceFrameHeaderContainer({
     if (!workspaceId) {
       return {
         projectName: undefined,
+        workspacePath: [],
         branchName: undefined,
         isContainerized: false,
         prNumber: null,
@@ -97,6 +99,7 @@ export function WorkspaceFrameHeaderContainer({
     if (!workspace) {
       return {
         projectName: undefined,
+        workspacePath: [],
         branchName: undefined,
         isContainerized: false,
         prNumber: null,
@@ -109,8 +112,23 @@ export function WorkspaceFrameHeaderContainer({
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
     const isContainerized = workspace.sandboxId != null
+    const projectWorkspaces = workspaceList
+      .filter(
+        (ws) =>
+          ws.status !== 'destroyed' && ws.projectId === workspace.projectId
+      )
+      .map((ws) => ({
+        id: ws.id,
+        branchName: ws.branchName,
+        baseBranch: (ws as { baseBranch?: string | null }).baseBranch ?? null,
+      }))
+    const workspacePath = buildWorkspacePath(
+      projectWorkspaces,
+      workspaceId
+    ).map((ws) => ws.branchName)
     return {
       projectName: project?.name,
+      workspacePath,
       branchName: workspace.branchName,
       isContainerized,
       prNumber: workspace.prNumber ?? null,
@@ -155,6 +173,7 @@ export function WorkspaceFrameHeaderContainer({
       reviewIsOpen={reviewIsOpen ?? false}
       treeIsOpen={treeIsOpen ?? false}
       workspaceId={workspaceId}
+      workspacePath={workspaceData.workspacePath}
     />
   )
 }

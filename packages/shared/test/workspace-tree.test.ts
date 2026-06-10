@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkspaceTree } from '../src/workspace-tree.js'
+import {
+  buildWorkspacePath,
+  buildWorkspaceTree,
+} from '../src/workspace-tree.js'
 
 const workspace = (branchName: string, baseBranch: string | null = null) => ({
+  id: branchName,
   branchName,
   baseBranch,
 })
@@ -84,5 +88,57 @@ describe('buildWorkspaceTree', () => {
       'feat/b',
       'feat/self',
     ])
+  })
+})
+
+describe('buildWorkspacePath', () => {
+  it('returns the visible sidebar ancestry path for a nested workspace', () => {
+    const path = buildWorkspacePath(
+      [
+        workspace('feat/big-thing'),
+        workspace('fix/auth', 'feat/big-thing'),
+        workspace('fix/auth-tests', 'fix/auth'),
+      ],
+      'fix/auth-tests'
+    )
+
+    expect(path.map((item) => item.branchName)).toEqual([
+      'feat/big-thing',
+      'fix/auth',
+      'fix/auth-tests',
+    ])
+  })
+
+  it('promotes a workspace when no live workspace owns its base branch', () => {
+    const path = buildWorkspacePath(
+      [
+        workspace('fix/auth', 'feat/destroyed-parent'),
+        workspace('fix/auth-tests', 'fix/auth'),
+      ],
+      'fix/auth-tests'
+    )
+
+    expect(path.map((item) => item.branchName)).toEqual([
+      'fix/auth',
+      'fix/auth-tests',
+    ])
+  })
+
+  it('returns only the target workspace when its direct parent is missing', () => {
+    const path = buildWorkspacePath(
+      [workspace('fix/auth', 'feat/destroyed-parent')],
+      'fix/auth'
+    )
+
+    expect(path.map((item) => item.branchName)).toEqual(['fix/auth'])
+  })
+
+  it('returns only the target workspace when the lineage contains a cycle', () => {
+    const path = buildWorkspacePath(
+      [workspace('feat/a', 'feat/b'), workspace('feat/b', 'feat/a')],
+      'feat/a'
+    )
+
+    expect(path.map((item) => item.branchName)).toEqual(['feat/a'])
   })
 })

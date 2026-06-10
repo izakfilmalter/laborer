@@ -163,16 +163,11 @@ function CreateWorkspaceForm({
       // Clear any previous error when retrying
       setCreationError(null)
       try {
-        // Replace forward slashes with hyphens so the branch name
-        // is safe as a directory name on the filesystem.
-        const sanitized = pipe(
-          value.branchName.trim(),
-          Str.replaceAll('/', '-')
-        )
+        const branchName = value.branchName.trim()
         const result = await createWorkspace({
           payload: {
             projectId,
-            ...(sanitized ? { branchName: sanitized } : {}),
+            ...(branchName ? { branchName } : {}),
           },
         })
         panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)

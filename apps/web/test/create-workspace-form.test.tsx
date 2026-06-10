@@ -1,16 +1,60 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createWorkspaceFn, mutationMap, panelActionsMock } = vi.hoisted(() => ({
-  createWorkspaceFn: vi.fn(),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
-}))
+if (typeof document === 'undefined') {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'http://localhost/',
+  })
+  const testGlobal = globalThis as typeof globalThis & {
+    document: Document
+    HTMLElement: typeof HTMLElement
+    navigator: Navigator
+    Node: typeof Node
+    window: Window & typeof globalThis
+  }
+
+  testGlobal.window = dom.window as Window & typeof globalThis
+  testGlobal.document = dom.window.document
+  testGlobal.HTMLElement = dom.window.HTMLElement
+  testGlobal.Node = dom.window.Node
+  testGlobal.navigator = dom.window.navigator
+  testGlobal.HTMLElement.prototype.attachEvent = () => undefined
+  testGlobal.HTMLElement.prototype.detachEvent = () => undefined
+}
+
+const { cleanup, render, screen, waitFor } = await import(
+  '@testing-library/react'
+)
+const { default: userEvent } = await import('@testing-library/user-event')
+
+interface CreateWorkspaceFormTestMocks {
+  readonly createWorkspaceFn: ReturnType<typeof vi.fn>
+  readonly mutationMap: Map<unknown, ReturnType<typeof vi.fn>>
+  readonly panelActionsMock: {
+    readonly autoOpenAgentWhenWorkspaceReady: ReturnType<typeof vi.fn>
+  }
+}
+
+const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
+  const testGlobal = globalThis as typeof globalThis & {
+    __createWorkspaceFormTestMocks?: CreateWorkspaceFormTestMocks | undefined
+  }
+
+  testGlobal.__createWorkspaceFormTestMocks ??= {
+    createWorkspaceFn: vi.fn(),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
+  }
+
+  return testGlobal.__createWorkspaceFormTestMocks
+}
+
+const { createWorkspaceFn, panelActionsMock } =
+  getCreateWorkspaceFormTestMocks()
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
-    return mutationMap.get(atom) ?? vi.fn()
+    return getCreateWorkspaceFormTestMocks().mutationMap.get(atom) ?? vi.fn()
   },
 }))
 
@@ -19,7 +63,8 @@ vi.mock('@/atoms/laborer-client', () => ({
     mutation: (name: string) => {
       const sentinel = Symbol.for(`mutation:${name}`)
       if (name === 'workspace.create') {
-        mutationMap.set(sentinel, createWorkspaceFn)
+        const mocks = getCreateWorkspaceFormTestMocks()
+        mocks.mutationMap.set(sentinel, mocks.createWorkspaceFn)
       }
       return sentinel
     },
@@ -31,7 +76,7 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 vi.mock('@/panels/panel-context', () => ({
-  usePanelActions: () => panelActionsMock,
+  usePanelActions: () => getCreateWorkspaceFormTestMocks().panelActionsMock,
 }))
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -77,8 +122,10 @@ vi.mock('@/components/ui/spinner', () => ({
   Spinner: () => null,
 }))
 
-import { CreateWorkspaceForm } from '../src/components/create-workspace-form'
-import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
+const { CreateWorkspaceForm } = await import(
+  '../src/components/create-workspace-form'
+)
+const { ReadyPhaseWrapper } = await import('./helpers/lifecycle-test-utils')
 
 const BRANCH_NAME_RE = /branch name/i
 const CREATE_WORKSPACE_RE = /create workspace/i
@@ -269,12 +316,12 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     })
   })
 
-  it('replaces forward slashes with hyphens on submit', async () => {
+  it('preserves forward slashes in branch names on submit', async () => {
     const user = userEvent.setup()
     createWorkspaceFn.mockResolvedValue({
       id: 'ws-new',
       projectId: 'project-1',
-      branchName: 'if-batch-column-variant-prd',
+      branchName: 'if/batch-column-variant-prd',
       worktreePath: '/path/to/worktree',
       status: 'running',
     })
@@ -303,7 +350,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
           projectId: 'project-1',
-          branchName: 'if-batch-column-variant-prd',
+          branchName: 'if/batch-column-variant-prd',
         },
       })
     })

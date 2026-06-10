@@ -12,6 +12,10 @@ export interface WorkspaceTreeInput {
   branchName: string
 }
 
+export interface WorkspacePathInput extends WorkspaceTreeInput {
+  id: string
+}
+
 export interface WorkspaceTreeNode<W extends WorkspaceTreeInput> {
   children: WorkspaceTreeNode<W>[]
   workspace: W
@@ -74,4 +78,43 @@ export const buildWorkspaceTree = <W extends WorkspaceTreeInput>(
   }
 
   return roots
+}
+
+/**
+ * Builds the visible sidebar path for a workspace: its live ancestors followed
+ * by itself. Missing parents promote the workspace to the top level, matching
+ * `buildWorkspaceTree`.
+ */
+export const buildWorkspacePath = <W extends WorkspacePathInput>(
+  workspaceList: readonly W[],
+  workspaceId: string
+): W[] => {
+  const target = workspaceList.find((workspace) => workspace.id === workspaceId)
+  if (!target) {
+    return []
+  }
+
+  const byBranch = new Map<string, W>()
+  for (const workspace of workspaceList) {
+    if (!byBranch.has(workspace.branchName)) {
+      byBranch.set(workspace.branchName, workspace)
+    }
+  }
+
+  const path: W[] = []
+  const seen = new Set<string>()
+  let current: W | undefined = target
+
+  while (current) {
+    if (seen.has(current.id)) {
+      return [target]
+    }
+
+    seen.add(current.id)
+    path.unshift(current)
+
+    current = current.baseBranch ? byBranch.get(current.baseBranch) : undefined
+  }
+
+  return path
 }

@@ -84,6 +84,8 @@ interface WorkspaceFrameHeaderProps {
   readonly treeIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
   readonly workspaceId: string | undefined
+  /** Visible sidebar path for the workspace, excluding the project name. */
+  readonly workspacePath: readonly string[]
 }
 
 /**
@@ -190,6 +192,34 @@ function ReviewButtonWithCount({
   )
 }
 
+function WorkspaceFrameTitle({
+  branchName,
+  projectName,
+  workspacePath,
+}: {
+  readonly branchName: string | undefined
+  readonly projectName: string | undefined
+  readonly workspacePath: readonly string[]
+}) {
+  if (!(projectName && branchName)) {
+    return <span className="text-foreground">Terminal</span>
+  }
+
+  const pathSegments = workspacePath.length > 0 ? workspacePath : [branchName]
+
+  return (
+    <>
+      <span className="text-foreground">{projectName}</span>
+      {pathSegments.map((segment) => (
+        <span key={segment}>
+          <span className="mx-1">/</span>
+          <span>{segment}</span>
+        </span>
+      ))}
+    </>
+  )
+}
+
 /**
  * Icon-only file tree toggle button.
  */
@@ -253,6 +283,7 @@ function WorkspaceFrameHeader({
   reviewIsOpen = false,
   treeIsOpen = false,
   workspaceId,
+  workspacePath,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
   const needsAttention = agentStatus === 'waiting_for_input'
@@ -312,15 +343,11 @@ function WorkspaceFrameHeader({
             <Terminal className="size-3.5" />
           </div>
           <div className="min-w-0 truncate text-muted-foreground text-xs">
-            {projectName && branchName ? (
-              <>
-                <span className="text-foreground">{projectName}</span>
-                <span className="mx-1">/</span>
-                <span>{branchName}</span>
-              </>
-            ) : (
-              <span className="text-foreground">Terminal</span>
-            )}
+            <WorkspaceFrameTitle
+              branchName={branchName}
+              projectName={projectName}
+              workspacePath={workspacePath}
+            />
           </div>
         </button>
         <GitHubPrStatusBadge

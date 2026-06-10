@@ -768,8 +768,13 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
         return
       }
       actions?.setActivePaneId(node.id)
+      if (pendingPicker.paneId === node.id) {
+        paneContainerRef.current
+          ?.querySelector<HTMLElement>('[role="listbox"]')
+          ?.focus()
+      }
     },
-    [actions, node.id]
+    [actions, node.id, pendingPicker.paneId]
   )
 
   const handleClickCapture = useCallback(

@@ -100,7 +100,9 @@ vi.mock('@/routes/-components/close-dialogs', () => ({
 }))
 
 vi.mock('@/components/ui/panel-type-picker', () => ({
-  PanelTypePicker: () => <div data-testid="panel-type-picker" />,
+  PanelTypePicker: () => (
+    <div data-testid="panel-type-picker" role="listbox" tabIndex={0} />
+  ),
 }))
 
 // Mock the store and atom hooks used by EmptyTerminalPane / EmptyDevServerPane
@@ -352,6 +354,31 @@ describe('PanelRenderer', () => {
     expect(screen.queryByText('diff:ws-1')).toBeNull()
     expect(screen.getByTestId('panel-type-picker')).toBeTruthy()
     expect(diffPaneRenderMock).not.toHaveBeenCalled()
+  })
+
+  it('refocuses the panel type picker when clicking its pane', () => {
+    pendingPickerPaneIdRef.current = 'diff-pane'
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'diff-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    }
+
+    render(
+      <>
+        <button type="button">Other focus target</button>
+        <PanelRenderer node={leaf} />
+      </>
+    )
+    screen.getByRole('button', { name: 'Other focus target' }).focus()
+
+    const pickerContainer =
+      screen.getByTestId('panel-type-picker').parentElement
+    expect(pickerContainer).toBeTruthy()
+    fireEvent.mouseDown(pickerContainer as HTMLElement)
+
+    expect(document.activeElement).toBe(screen.getByTestId('panel-type-picker'))
   })
 
   it('does not activate the pane on mouse down inside text-selectable diff content', () => {

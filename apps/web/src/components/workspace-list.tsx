@@ -1190,37 +1190,39 @@ function WorkspaceItem({
                 workspaceId={workspace.id}
               />
             )}
-            <CreateWorkspaceForm
-              baseWorkspace={{
-                id: workspace.id,
-                branchName: workspace.branchName,
-              }}
-              projectId={workspace.projectId}
-              projectName={projectName}
-              trigger={
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <DialogTrigger
-                        render={
-                          <Button
-                            aria-label={`Create sub-workspace from ${workspace.branchName}`}
-                            className="size-6"
-                            size="icon-sm"
-                            variant="ghost"
-                          />
-                        }
-                      />
-                    }
-                  >
-                    <GitBranchPlus className="size-3.5 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Create sub-workspace from this branch
-                  </TooltipContent>
-                </Tooltip>
-              }
-            />
+            {!isRootWorkspace && (
+              <CreateWorkspaceForm
+                baseWorkspace={{
+                  id: workspace.id,
+                  branchName: workspace.branchName,
+                }}
+                projectId={workspace.projectId}
+                projectName={projectName}
+                trigger={
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <DialogTrigger
+                          render={
+                            <Button
+                              aria-label={`Create sub-workspace from ${workspace.branchName}`}
+                              className="size-6"
+                              size="icon-sm"
+                              variant="ghost"
+                            />
+                          }
+                        />
+                      }
+                    >
+                      <GitBranchPlus className="size-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Create sub-workspace from this branch
+                    </TooltipContent>
+                  </Tooltip>
+                }
+              />
+            )}
             {!isRootWorkspace && (
               <DestroyWorkspaceButton
                 branchName={workspace.branchName}

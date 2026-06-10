@@ -51,7 +51,17 @@ interface CoalesceBuffer {
 }
 
 // ---------------------------------------------------------------------------
-// Flow control (matches pty-host.ts)
+// Flow control (watermarks match VS Code's terminalProcess.ts)
+//
+// Laborer deliberately diverges from VS Code in one way: flow control is
+// only active while at least one data-channel consumer (a renderer pane)
+// is attached. VS Code lets a detached PTY pause at the high watermark as
+// OS-level backpressure — fine for an idle shell, but Laborer terminals
+// run autonomous agents that must keep making progress while no pane is
+// watching. A paused PTY fills the kernel buffer and blocks the agent's
+// stdout writes, stalling the agent itself.
+//
+// See docs/adr/0002-flow-control-only-while-attached.md
 // ---------------------------------------------------------------------------
 
 const HIGH_WATERMARK_CHARS = 100_000
@@ -134,12 +144,68 @@ const directLayer = Layer.scoped(
     const flowControlStates = new Map<string, FlowControlState>()
     const ptyGenerations = new Map<string, number>()
 
+    /**
+     * Number of attached data-channel consumers per terminal.
+     * Tracked independently of `flowControlStates` because consumers
+     * outlive PTY respawns (restart keeps channels attached) and a
+     * channel can attach to a stopped terminal.
+     */
+    const flowControlConsumerCounts = new Map<string, number>()
+
+    /**
+     * Zero the unacknowledged counter and force-resume a paused PTY.
+     * Equivalent to VS Code's `clearUnacknowledgedChars` — ack debt
+     * never survives a consumer attach/detach transition.
+     */
+    function clearFlowControl(id: string): void {
+      const fcState = flowControlStates.get(id)
+      if (fcState === undefined) {
+        return
+      }
+
+      fcState.unacknowledgedCharCount = 0
+      if (fcState.paused) {
+        const pty = ptys.get(id)
+        if (pty !== undefined) {
+          pty.resume()
+        }
+        ;(fcState as { paused: boolean }).paused = false
+      }
+    }
+
     // Fix spawn-helper permissions before anything else
     yield* Effect.promise(() => fixSpawnHelperPermissions())
 
     // -------------------------------------------------------------------
     // Data coalescing helpers (from pty-host.ts)
     // -------------------------------------------------------------------
+
+    /**
+     * Count emitted chars and pause the PTY at the high watermark.
+     * Only active while a consumer is attached — detached terminals
+     * always flow so background agents never stall on a full kernel
+     * buffer.
+     */
+    function trackEmittedChars(id: string, charCount: number): void {
+      const fcState = flowControlStates.get(id)
+      const hasConsumers = (flowControlConsumerCounts.get(id) ?? 0) > 0
+      if (fcState === undefined || !hasConsumers) {
+        return
+      }
+
+      fcState.unacknowledgedCharCount += charCount
+
+      if (
+        !fcState.paused &&
+        fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
+      ) {
+        const pty = ptys.get(id)
+        if (pty !== undefined) {
+          pty.pause()
+          ;(fcState as { paused: boolean }).paused = true
+        }
+      }
+    }
 
     function flushCoalesceBuffer(id: string): void {
       const buf = coalesceBuffers.get(id)
@@ -156,22 +222,7 @@ const directLayer = Layer.scoped(
           dataCb(joined)
         }
 
-        // Update flow control
-        const fcState = flowControlStates.get(id)
-        if (fcState !== undefined) {
-          fcState.unacknowledgedCharCount += joined.length
-
-          if (
-            !fcState.paused &&
-            fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
-          ) {
-            const pty = ptys.get(id)
-            if (pty !== undefined) {
-              pty.pause()
-              ;(fcState as { paused: boolean }).paused = true
-            }
-          }
-        }
+        trackEmittedChars(id, joined.length)
       }
     }
 
@@ -216,6 +267,7 @@ const directLayer = Layer.scoped(
         exitCallbacks.clear()
         spawnedCallbacks.clear()
         flowControlStates.clear()
+        flowControlConsumerCounts.clear()
         ptyGenerations.clear()
       })
     )
@@ -393,6 +445,29 @@ const directLayer = Layer.scoped(
             pty.resume()
             ;(fcState as { paused: boolean }).paused = false
           }
+        }
+      },
+
+      attachFlowControlConsumer: (id: string) => {
+        const count = flowControlConsumerCounts.get(id) ?? 0
+        flowControlConsumerCounts.set(id, count + 1)
+
+        // Reset on every attach: ack debt accumulated by a previous
+        // (possibly dead) consumer never carries over to a new one.
+        clearFlowControl(id)
+      },
+
+      detachFlowControlConsumer: (id: string) => {
+        const count = flowControlConsumerCounts.get(id) ?? 0
+        const next = Math.max(0, count - 1)
+
+        if (next === 0) {
+          flowControlConsumerCounts.delete(id)
+          // Last consumer gone — release any backpressure so the
+          // terminal keeps flowing while unwatched.
+          clearFlowControl(id)
+        } else {
+          flowControlConsumerCounts.set(id, next)
         }
       },
 

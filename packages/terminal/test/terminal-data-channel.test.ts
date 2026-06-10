@@ -760,6 +760,40 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
+  it('finalizes the channel when the renderer port closes', async () => {
+    // Spawn a long-lived terminal so exit cannot end the channel.
+    const terminal = await run(
+      client.terminal.spawn({
+        command: 'sleep 30',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+    rendererPort.on('message', () => {
+      // Drain output; content is irrelevant here.
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(500)
+
+    // Closing the renderer side must end the channel fiber on its own —
+    // no interrupt. This is the close-detection that releases the
+    // subscriber and flow-control consumer when a pane unmounts.
+    rendererPort.close()
+
+    const exit = await run(Fiber.await(fiber).pipe(Effect.timeout('5 seconds')))
+    expect(Exit.isSuccess(exit)).toBe(true)
+
+    await run(client.terminal.kill({ id: terminal.id }))
+  })
+
   it('data channel is separate from RPC channel', async () => {
     // Spawn a terminal via RPC.
     const terminal = await run(

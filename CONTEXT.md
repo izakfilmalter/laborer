@@ -33,3 +33,13 @@ How a workspace came to exist: `laborer` (created by the app) or `external` (a p
 
 **Panel type picker**:
 The transient chooser used to select what kind of pane to create or assign when opening a new split or panel tab.
+
+**Terminal**:
+A long-lived shell process owned by a workspace, in which agents run. It exists independently of any UI viewing it and must keep making progress while unwatched.
+
+**Terminal pane**:
+A view of a terminal in the panel layout. Panes come and go (open, close, fullscreen, workspace switches) without affecting the terminal itself; several panes can view one terminal.
+_Avoid_: Using "terminal" for the view
+
+**Detached terminal**:
+A terminal no pane is currently viewing. Detached terminals are first-class: agents inside them are expected to continue working at full speed.

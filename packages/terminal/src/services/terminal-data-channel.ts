@@ -32,7 +32,7 @@
 
 import type { TerminalRpcError } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Effect, PubSub, Runtime, type Scope } from 'effect'
+import { Deferred, Effect, PubSub, Runtime, type Scope } from 'effect'
 import { PtyHostClient } from './pty-host-client.js'
 import {
   type TerminalLifecycleEvent,
@@ -94,12 +94,6 @@ function parseClientMessage(
   }
   return null
 }
-
-// ---------------------------------------------------------------------------
-// High watermark for flow control reset on disconnect (matches terminal-ws.ts)
-// ---------------------------------------------------------------------------
-
-const DISCONNECT_ACK_CHARS = 100_000
 
 // ---------------------------------------------------------------------------
 // Data channel attachment
@@ -182,6 +176,11 @@ const attachDataChannel = (
       { replay: false }
     )
 
+    // Register as a flow-control consumer. This resets the unacknowledged
+    // counter and force-resumes a paused PTY, so ack debt owed by a
+    // previous (possibly dead) channel never freezes this one.
+    ptyHostClient.attachFlowControlConsumer(terminalId)
+
     const revivedReplayEvent =
       yield* terminalManager.takeRevivedReplayEvent(terminalId)
 
@@ -263,6 +262,21 @@ const attachDataChannel = (
       }
     }
 
+    // Detect the renderer going away. Electron's MessagePortMain (and
+    // Node's worker_threads MessagePort) emit 'close' when the remote
+    // end disconnects — renderer unmount, page navigation, or crash.
+    // Completing this Deferred ends the channel and runs the finalizer.
+    const portClosed = yield* Deferred.make<void>()
+    const closeListener = (): void => {
+      Deferred.unsafeDone(portClosed, Effect.void)
+    }
+
+    if (typeof port.on === 'function') {
+      port.on('close', closeListener)
+    } else {
+      port.onclose = closeListener
+    }
+
     // Start receiving messages (required for Web MessagePorts).
     port.start?.()
 
@@ -271,27 +285,29 @@ const attachDataChannel = (
       Effect.gen(function* () {
         yield* terminalManager.unsubscribe(terminalId, subscriberId)
 
-        // Reset flow control on disconnect.
-        ptyHostClient.ack(terminalId, DISCONNECT_ACK_CHARS)
+        // Release flow-control backpressure held on behalf of this
+        // channel so an unwatched terminal keeps flowing.
+        ptyHostClient.detachFlowControlConsumer(terminalId)
 
-        // Remove message listener.
+        // Remove message + close listeners.
         if (typeof port.off === 'function') {
           port.off('message', nodeListener)
+          port.off('close', closeListener)
         } else if (typeof port.removeListener === 'function') {
           port.removeListener('message', nodeListener)
+          port.removeListener('close', closeListener)
         } else {
           port.onmessage = null
+          port.onclose = null
         }
 
         port.close?.()
       })
     )
 
-    // Keep the data channel alive until the scope is closed.
-    // The scope is closed when:
-    // - The renderer disconnects (port close event)
-    // - The utility process shuts down (service layer finalization)
-    return yield* Effect.never
+    // Keep the data channel alive until the renderer port closes or the
+    // enclosing scope is finalized (utility process shutdown).
+    return yield* Deferred.await(portClosed)
   })
 
 /**

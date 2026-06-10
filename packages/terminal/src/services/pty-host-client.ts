@@ -80,6 +80,24 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
     readonly ack: (id: string, chars: number) => void
 
     /**
+     * Register a data-channel consumer for a terminal. Flow control
+     * (char counting + pause at the high watermark) is only active
+     * while at least one consumer is attached. Each attach resets the
+     * unacknowledged counter and resumes a paused PTY, so ack debt
+     * never survives a reconnect.
+     *
+     * @see docs/adr/0002-flow-control-only-while-attached.md
+     */
+    readonly attachFlowControlConsumer: (id: string) => void
+
+    /**
+     * Unregister a data-channel consumer. When the last consumer
+     * detaches, flow control is cleared and disabled so detached
+     * terminals (background agents) always keep flowing.
+     */
+    readonly detachFlowControlConsumer: (id: string) => void
+
+    /**
      * Register a callback that is invoked when the PTY host
      * crashes or exits unexpectedly.
      */

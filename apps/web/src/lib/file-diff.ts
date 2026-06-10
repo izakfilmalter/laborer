@@ -1,37 +1,21 @@
-import type { FileInfo } from '@laborer/shared/rpc'
+import type { FileDiffEntry } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
-import { parseDiffFromFile, parsePatchFiles } from '@pierre/diffs'
-
-interface FileReadResult {
-  readonly content: string
-  readonly diff?: string
-  readonly type: string
-}
+import { parsePatchFiles } from '@pierre/diffs'
 
 /**
- * Convert a `file.read` response into Pierre's metadata format. Untracked files
- * do not have a git patch, so we synthesize one from an empty file.
+ * Convert a `file.diff` entry into Pierre's metadata format.
+ *
+ * The server returns a unified diff patch per changed file (including
+ * untracked files, which are diffed against `/dev/null`). Entries
+ * without a patch (binary files, truncated patches) return `null` and
+ * are skipped by the diff viewer.
  */
-export const parseFileDiff = ({
-  filePath,
-  result,
-  status,
-}: {
-  readonly filePath: string
-  readonly result: FileReadResult
-  readonly status?: FileInfo['status'] | undefined
-}): FileDiffMetadata | null => {
-  if (result.diff) {
-    const parsed = parsePatchFiles(result.diff)
-    return parsed.flatMap((entry) => entry.files)[0] ?? null
-  }
-
-  if (result.type !== 'text' || status !== 'added') {
+export const parseFileDiffEntry = (
+  entry: FileDiffEntry
+): FileDiffMetadata | null => {
+  if (!entry.patch) {
     return null
   }
-
-  return parseDiffFromFile(
-    { name: filePath, contents: '' },
-    { name: filePath, contents: result.content }
-  )
+  const parsed = parsePatchFiles(entry.patch)
+  return parsed.flatMap((patchEntry) => patchEntry.files)[0] ?? null
 }

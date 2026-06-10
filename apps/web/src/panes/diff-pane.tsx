@@ -1,23 +1,24 @@
 /**
  * Diff viewer pane component — renders per-file git diffs using @pierre/diffs.
  *
- * Fetches the list of changed files via the `file.status` RPC and renders
- * per-file diffs fetched on-demand via `file.read`. Subscribes to the
+ * Fetches all changed files **with their patches in a single batched
+ * `file.diff` RPC** (modeled on opencode's `/instance/vcs/diff` and
+ * t3code's review diff preview). Subscribes to the
  * `file.watcher.subscribe` streaming RPC for reactive invalidation —
- * when files change on disk, the affected file diff or status list is
- * re-fetched automatically.
+ * when files change on disk, the batched diff is re-fetched (debounced).
  *
- * ## On-demand architecture (Issue 7)
+ * ## Batched architecture
  *
- * The diff viewer updates **live** without polling or LiveStore:
- *
- * 1. On mount, `file.status(workspaceId)` fetches the list of changed files
- * 2. For each changed file, `file.read(workspaceId, filePath)` fetches
- *    per-file content + diff against HEAD
- * 3. `file.watcher.subscribe(workspaceId)` streams file change events
- * 4. When a watcher event indicates a file change, the affected file's
- *    diff is re-fetched via `file.read`; when files are added/removed,
- *    `file.status` is re-fetched to update the sidebar
+ * 1. On mount, `file.diff(workspaceId)` fetches every changed file with
+ *    its unified diff patch in one round-trip
+ * 2. `file.watcher.subscribe(workspaceId)` streams file change events;
+ *    relevant events schedule a debounced refresh of the batched diff
+ * 3. Stale-while-revalidate: the previous diff stays visible while a
+ *    refresh is in flight — the loading screen only shows when there is
+ *    no data at all, and a failure with no data shows an error state
+ *    with a retry button (never an infinite spinner)
+ * 4. Each fetch attempt has a timeout and bounded retries, so pending
+ *    always terminates
  * 5. `useTransition` defers expensive FileDiff re-renders
  * 6. Scroll position is preserved across updates
  *
@@ -33,20 +34,29 @@
  *
  * @see packages/server/src/services/file-service.ts — server-side FileService
  * @see docs/lazy-file-service/PRD.md — Lazy File Service PRD
- * @see Issue 7: Client diff pane — On-demand per-file diffs
  */
 
-import { Result } from '@effect-atom/atom'
+import { Atom, Result } from '@effect-atom/atom'
 import {
   useAtomMount,
+  useAtomRefresh,
   useAtomSet,
   useAtomValue,
 } from '@effect-atom/atom-react/Hooks'
-import type { FileInfo } from '@laborer/shared/rpc'
+import type { FileDiffEntry } from '@laborer/shared/rpc'
+import { RpcError } from '@laborer/shared/rpc'
 import type { AnnotationSide, FileDiffMetadata, Hunk } from '@pierre/diffs'
 import { diffAcceptRejectHunk } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
-import { Check, ExternalLink, FileCode2, RefreshCw, X } from 'lucide-react'
+import { Cause, Effect, Option, Schedule } from 'effect'
+import {
+  Check,
+  ExternalLink,
+  FileCode2,
+  RefreshCw,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -67,7 +77,7 @@ import {
 } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { parseFileDiff } from '@/lib/file-diff'
+import { parseFileDiffEntry } from '@/lib/file-diff'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
@@ -79,11 +89,43 @@ import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 /** Mutation atom for opening files in the editor. */
 const editorOpenMutation = LaborerClient.mutation('editor.open')
 
-/** Mutation atom for fetching workspace-level changed file summary. */
-const fileStatusMutation = LaborerClient.mutation('file.status')
+/** Per-attempt timeout so a dead connection can never hang the pane. */
+const DIFF_FETCH_TIMEOUT = '30 seconds'
 
-/** Mutation atom for reading a single file's content + diff. */
-const fileReadMutation = LaborerClient.mutation('file.read')
+/**
+ * Bounded retry policy: 2 retries with exponential backoff. Combined
+ * with the per-attempt timeout, a fetch always terminates — either with
+ * data or with an error the UI can render (with a manual retry button).
+ */
+const diffRetrySchedule = Schedule.intersect(
+  Schedule.exponential('1 second'),
+  Schedule.recurs(2)
+)
+
+/**
+ * Per-workspace query atom for the batched workspace diff.
+ *
+ * Keyed by workspaceId so concurrent panes never share (and interrupt)
+ * each other's in-flight requests — the failure mode that previously
+ * left the pane stuck on "Computing diff...".
+ */
+const fileDiffQuery = Atom.family((workspaceId: string) =>
+  LaborerClient.runtime.atom(
+    Effect.flatMap(LaborerClient, (client) =>
+      client('file.diff', { workspaceId })
+    ).pipe(
+      Effect.timeoutFail({
+        duration: DIFF_FETCH_TIMEOUT,
+        onTimeout: () =>
+          new RpcError({
+            message: 'Timed out computing the workspace diff',
+            code: 'TIMEOUT',
+          }),
+      }),
+      Effect.retry(diffRetrySchedule)
+    )
+  )
+)
 
 // ---------------------------------------------------------------------------
 // Watcher subscription atom cache
@@ -130,45 +172,24 @@ const FILE_DIFF_OPTIONS_UNIFIED = {
 const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
 
+/** Debounce window for watcher-driven refreshes — agents write in bursts. */
+const WATCHER_REFRESH_DEBOUNCE_MS = 300
+
 // ---------------------------------------------------------------------------
 // Watcher event processing (pure function for testability)
 // ---------------------------------------------------------------------------
 
-interface WatcherEventAction {
-  readonly filesToRefresh: ReadonlySet<string>
-  readonly statusChanged: boolean
-}
-
 /**
- * Process a batch of watcher events and determine what actions to take.
- * Returns which individual files need diff re-fetch and whether the
- * status list needs re-fetching.
+ * Determine whether a batch of watcher events should trigger a refresh
+ * of the batched diff. Events under `.git/` are internal bookkeeping
+ * (index locks, FETCH_HEAD, etc.) and are ignored.
  */
-const processWatcherEvents = (
-  events: readonly { file: string; event: string }[],
-  displayedPaths: readonly string[]
-): WatcherEventAction => {
-  let statusChanged = false
-  const filesToRefresh = new Set<string>()
-
-  for (const event of events) {
-    const { file: path, event: kind } = event
-    if (path.startsWith('.git/') || path === '.git') {
-      continue
-    }
-    if (kind === 'add' || kind === 'unlink') {
-      statusChanged = true
-    }
-    if (kind === 'change') {
-      if (displayedPaths.includes(path)) {
-        filesToRefresh.add(path)
-      }
-      statusChanged = true
-    }
-  }
-
-  return { filesToRefresh, statusChanged }
-}
+const hasRelevantWatcherEvent = (
+  events: readonly { file: string; event: string }[]
+): boolean =>
+  events.some(
+    (event) => !(event.file === '.git' || event.file.startsWith('.git/'))
+  )
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -212,14 +233,6 @@ function hunkHasChanges(hunk: Hunk): boolean {
 interface DiffPaneProps {
   readonly onClose?: (() => void) | undefined
   readonly workspaceId: string
-}
-
-/** Parsed diff data for a single file, fetched via file.read. */
-interface FileDiffData {
-  readonly error: string | null
-  readonly fileDiff: FileDiffMetadata | null
-  readonly loading: boolean
-  readonly path: string
 }
 
 // ---------------------------------------------------------------------------
@@ -275,145 +288,105 @@ function DiffPaneLoading({
   )
 }
 
+function DiffPaneError({
+  message,
+  onClose,
+  onRetry,
+}: {
+  readonly message: string
+  readonly onClose?: (() => void) | undefined
+  readonly onRetry: () => void
+}) {
+  return (
+    <div className="flex h-full w-full flex-col bg-background">
+      <DiffPaneHeader onClose={onClose} />
+      <div className="flex flex-1 items-center justify-center">
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <TriangleAlert />
+            </EmptyMedia>
+            <EmptyTitle>Failed to compute diff</EmptyTitle>
+            <EmptyDescription>{message}</EmptyDescription>
+          </EmptyHeader>
+          <Button onClick={onRetry} size="sm" variant="outline">
+            <RefreshCw className="size-3.5" />
+            Retry
+          </Button>
+        </Empty>
+      </div>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Custom hook: useDiffStore — manages fetching + invalidation of diffs
 // ---------------------------------------------------------------------------
 
 interface DiffStoreResult {
-  readonly changedFiles: readonly FileInfo[]
-  readonly diffsLoading: boolean
-  readonly fetchFileDiff: (
-    path: string,
-    status?: FileInfo['status']
-  ) => Promise<void>
+  readonly changedFiles: readonly FileDiffEntry[]
+  /** Non-null only when there is no data at all to render. */
+  readonly errorMessage: string | null
+  /** True only when there is no data and no terminal error yet. */
+  readonly loading: boolean
   readonly orderedFileDiffs: readonly FileDiffMetadata[]
-  readonly statusLoading: boolean
+  readonly refresh: () => void
 }
+
+const EMPTY_ENTRIES: readonly FileDiffEntry[] = []
 
 /**
  * Hook that manages the diff data lifecycle:
- * 1. Fetches file.status on mount to get the changed file list
- * 2. Fetches file.read for each changed file to get per-file diffs
- * 3. Subscribes to file.watcher.subscribe for reactive invalidation
+ * 1. Fetches the batched `file.diff` on mount (one RPC for all files)
+ * 2. Subscribes to file.watcher.subscribe for reactive invalidation,
+ *    re-fetching the batch (debounced) when relevant files change
+ * 3. Keeps the previous diff visible while a refresh is in flight
+ *    (stale-while-revalidate) so the pane never regresses to a spinner
  * 4. Returns the ordered list of FileDiffMetadata for rendering
  */
 function useDiffStore(workspaceId: string): DiffStoreResult {
-  const fetchFileStatus = useAtomSet(fileStatusMutation, { mode: 'promise' })
-  const fetchFileRead = useAtomSet(fileReadMutation, { mode: 'promise' })
+  const diffAtom = useMemo(() => fileDiffQuery(workspaceId), [workspaceId])
+  const diffResult = useAtomValue(diffAtom)
+  const refresh = useAtomRefresh(diffAtom)
 
-  const [statusLoading, setStatusLoading] = useState(true)
-  const [diffsLoading, setDiffsLoading] = useState(true)
-  const [changedFiles, setChangedFiles] = useState<readonly FileInfo[]>([])
-  const [fileDiffs, setFileDiffs] = useState<Map<string, FileDiffData>>(
-    new Map()
-  )
-  const changedFilesRef = useRef(changedFiles)
-  changedFilesRef.current = changedFiles
+  // Stale-while-revalidate: a waiting/failed Result keeps its previous
+  // success value, so the previous diff stays visible during refreshes.
+  const entriesOption = Result.value(diffResult)
+  const changedFiles = Option.getOrElse(entriesOption, () => EMPTY_ENTRIES)
+  const hasData = Option.isSome(entriesOption)
 
-  // --- Fetch file status ---
-  const refreshFileStatus = useCallback(async (): Promise<
-    readonly FileInfo[]
-  > => {
-    try {
-      const result = await fetchFileStatus({
-        payload: { workspaceId },
-      })
-      const files = result as readonly FileInfo[]
-      setChangedFiles(files)
-      setStatusLoading(false)
-      return files
-    } catch {
-      setChangedFiles([])
-      setStatusLoading(false)
-      return []
-    }
-  }, [fetchFileStatus, workspaceId])
+  const loading = !(hasData || Result.isFailure(diffResult))
+  const errorMessage =
+    !hasData && Result.isFailure(diffResult)
+      ? extractErrorMessage(Cause.squash(diffResult.cause))
+      : null
 
-  // --- Fetch a single file's diff ---
-  const fetchFileDiff = useCallback(
-    async (filePath: string, status?: FileInfo['status']) => {
-      setFileDiffs((prev) => {
-        const next = new Map(prev)
-        next.set(filePath, {
-          path: filePath,
-          fileDiff: prev.get(filePath)?.fileDiff ?? null,
-          loading: true,
-          error: null,
-        })
-        return next
-      })
-
-      try {
-        const result = (await fetchFileRead({
-          payload: { workspaceId, filePath },
-        })) as { type: string; content: string; diff?: string }
-
-        const parsedFileDiff = parseFileDiff({
-          filePath,
-          result,
-          status:
-            status ??
-            changedFilesRef.current.find((file) => file.path === filePath)
-              ?.status,
-        })
-
-        setFileDiffs((prev) => {
-          const next = new Map(prev)
-          next.set(filePath, {
-            path: filePath,
-            fileDiff: parsedFileDiff,
-            loading: false,
-            error: null,
-          })
-          return next
-        })
-      } catch (error: unknown) {
-        setFileDiffs((prev) => {
-          const next = new Map(prev)
-          next.set(filePath, {
-            path: filePath,
-            fileDiff: null,
-            loading: false,
-            error: extractErrorMessage(error),
-          })
-          return next
-        })
-      }
-    },
-    [fetchFileRead, workspaceId]
-  )
-
-  const fetchFileDiffRef = useRef(fetchFileDiff)
-  fetchFileDiffRef.current = fetchFileDiff
-  const refreshFileStatusRef = useRef(refreshFileStatus)
-  refreshFileStatusRef.current = refreshFileStatus
-
-  // --- Initial load ---
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      setDiffsLoading(true)
-      const files = await refreshFileStatus()
-      if (cancelled) {
-        return
-      }
-      await Promise.all(
-        files.map((file) => fetchFileDiff(file.path, file.status))
-      )
-      if (!cancelled) {
-        setDiffsLoading(false)
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [refreshFileStatus, fetchFileDiff])
-
-  // --- Watcher subscription for invalidation ---
+  // --- Watcher subscription for invalidation (debounced refresh) ---
   const watcherAtom = useMemo(() => getWatcherAtom(workspaceId), [workspaceId])
   useAtomMount(watcherAtom)
   const watcherResult = useAtomValue(watcherAtom)
+
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current)
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null
+      refreshRef.current()
+    }, WATCHER_REFRESH_DEBOUNCE_MS)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current)
+      }
+    }
+  }, [])
 
   const lastProcessedIndexRef = useRef(0)
 
@@ -431,43 +404,29 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
     const newEvents = items.slice(startIndex).filter(Boolean)
     lastProcessedIndexRef.current = items.length
 
-    const displayedPaths = changedFilesRef.current.map((f) => f.path)
-    const actions = processWatcherEvents(newEvents, displayedPaths)
-
-    for (const path of actions.filesToRefresh) {
-      fetchFileDiffRef.current(path)
+    if (hasRelevantWatcherEvent(newEvents)) {
+      scheduleRefresh()
     }
-
-    if (actions.statusChanged) {
-      refreshFileStatusRef.current().then((newFiles) => {
-        const currentPaths = new Set(displayedPaths)
-        for (const f of newFiles) {
-          if (!currentPaths.has(f.path)) {
-            fetchFileDiffRef.current(f.path, f.status)
-          }
-        }
-      })
-    }
-  }, [watcherResult])
+  }, [watcherResult, scheduleRefresh])
 
   // --- Build ordered list ---
   const orderedFileDiffs = useMemo(() => {
-    const result: FileDiffMetadata[] = []
-    for (const file of changedFiles) {
-      const data = fileDiffs.get(file.path)
-      if (data?.fileDiff) {
-        result.push(data.fileDiff)
+    const parsed: FileDiffMetadata[] = []
+    for (const entry of changedFiles) {
+      const fileDiff = parseFileDiffEntry(entry)
+      if (fileDiff) {
+        parsed.push(fileDiff)
       }
     }
-    return result
-  }, [changedFiles, fileDiffs])
+    return parsed
+  }, [changedFiles])
 
   return {
     changedFiles,
-    diffsLoading,
-    fetchFileDiff,
+    errorMessage,
+    loading,
     orderedFileDiffs,
-    statusLoading,
+    refresh,
   }
 }
 
@@ -536,7 +495,7 @@ function useAnnotatedDiffs(
 function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
 
-  const { changedFiles, diffsLoading, orderedFileDiffs, statusLoading } =
+  const { changedFiles, errorMessage, loading, orderedFileDiffs, refresh } =
     useDiffStore(workspaceId)
 
   const { annotatedDiffs, effectiveFileDiffs, handleHunkAction } =
@@ -763,17 +722,20 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     }, [])
   )
 
-  // --- Loading state ---
-  if (statusLoading) {
+  // --- Loading state (no data at all yet) ---
+  if (loading) {
     return <DiffPaneLoading onClose={onClose} />
   }
 
-  if (
-    diffsLoading &&
-    changedFiles.length > 0 &&
-    orderedFileDiffs.length === 0
-  ) {
-    return <DiffPaneLoading onClose={onClose} />
+  // --- Error state (fetch exhausted retries and there is no data) ---
+  if (errorMessage !== null) {
+    return (
+      <DiffPaneError
+        message={errorMessage}
+        onClose={onClose}
+        onRetry={refresh}
+      />
+    )
   }
 
   // --- Empty state ---

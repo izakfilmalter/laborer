@@ -551,6 +551,40 @@ export const FileInfo = Schema.Struct({
 
 export type FileInfo = typeof FileInfo.Type
 
+/**
+ * A single changed file with its unified diff patch, returned by `file.diff`.
+ *
+ * The batched diff endpoint returns one entry per changed file. Tracked
+ * changes come from a single `git diff --patch HEAD` invocation split per
+ * file; untracked files are diffed against `/dev/null` via
+ * `git diff --no-index`.
+ *
+ * When a patch exceeds the per-file or total byte budget it is omitted and
+ * `truncated` is set so the client can render a placeholder instead of
+ * hanging or ballooning memory.
+ *
+ * @see opencode `Vcs.FileDiff` — the shape this endpoint is modeled on
+ */
+export const FileDiffEntry = Schema.Struct({
+  /** Path of the changed file, relative to the worktree root. */
+  path: Schema.String,
+  /** Number of lines added relative to HEAD. */
+  added: Schema.Number,
+  /** Number of lines removed relative to HEAD. */
+  removed: Schema.Number,
+  /** The type of change: added (untracked), deleted, or modified. */
+  status: Schema.Literal('added', 'deleted', 'modified'),
+  /**
+   * Unified diff patch text for this file. Absent for binary files and
+   * for files whose patch was truncated by the size budget.
+   */
+  patch: Schema.optional(Schema.String),
+  /** True when the patch was omitted because it exceeded the size budget. */
+  truncated: Schema.Boolean,
+})
+
+export type FileDiffEntry = typeof FileDiffEntry.Type
+
 // ---------------------------------------------------------------------------
 // File Tree Schemas
 // ---------------------------------------------------------------------------
@@ -1312,6 +1346,26 @@ export class LaborerRpcs extends RpcGroup.make(
    */
   Rpc.make('file.status', {
     success: Schema.Array(FileInfo),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Return all changed files in a workspace with their unified diff patches
+   * in a single batched call.
+   *
+   * Tracked changes are computed with one `git diff --patch HEAD` invocation
+   * whose output is split per file; untracked files are diffed against
+   * `/dev/null` via `git diff --no-index`. Patches that exceed the size
+   * budget are omitted with `truncated: true`.
+   *
+   * This is the diff viewer's data source — one round-trip per refresh
+   * instead of one `file.read` per changed file.
+   */
+  Rpc.make('file.diff', {
+    success: Schema.Array(FileDiffEntry),
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

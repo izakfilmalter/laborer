@@ -14,7 +14,12 @@ import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
-import { FileService } from '../src/services/file-service.js'
+import {
+  assembleDiffEntries,
+  FileService,
+  fileFromPatchChunk,
+  splitGitPatch,
+} from '../src/services/file-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
@@ -928,5 +933,324 @@ describe('FileService', () => {
 
         cleanupTempRoots()
       }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+})
+
+// =================================================================
+// FileService.diff() tests — batched workspace diff
+// =================================================================
+
+describe('FileService.diff', () => {
+  // --- Modified tracked file gets a patch from the batched git diff ---
+  it.scoped('diff returns a patch for a modified tracked file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-modified', tempRoots)
+      writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2\n')
+      git('add tracked.txt', repoPath)
+      git('commit -m "add tracked"', repoPath)
+
+      writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2 modified\n')
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      const tracked = entries.find((e) => e.path === 'tracked.txt')
+      assert.isDefined(tracked, 'Expected tracked.txt entry')
+      assert.strictEqual(tracked?.status, 'modified')
+      assert.strictEqual(tracked?.truncated, false)
+      assert.isDefined(tracked?.patch, 'Expected a patch')
+      assert.include(tracked?.patch ?? '', '+line 2 modified')
+      assert.include(tracked?.patch ?? '', '-line 2')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Untracked file gets a /dev/null no-index patch ---
+  it.scoped('diff returns an all-additions patch for an untracked file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-untracked', tempRoots)
+      writeFileSync(join(repoPath, 'brand-new.txt'), 'hello\nworld\n')
+      // Do NOT git add — leave untracked
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      const added = entries.find((e) => e.path === 'brand-new.txt')
+      assert.isDefined(added, 'Expected brand-new.txt entry')
+      assert.strictEqual(added?.status, 'added')
+      assert.isDefined(added?.patch, 'Expected a patch for untracked file')
+      assert.include(added?.patch ?? '', '+hello')
+      assert.include(added?.patch ?? '', '+world')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Deleted file gets a deletions patch from the batched git diff ---
+  it.scoped('diff returns a deletions patch for a deleted file', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-deleted', tempRoots)
+      writeFileSync(join(repoPath, 'to-delete.txt'), 'goodbye\n')
+      git('add to-delete.txt', repoPath)
+      git('commit -m "add to-delete"', repoPath)
+
+      unlinkSync(join(repoPath, 'to-delete.txt'))
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      const deleted = entries.find((e) => e.path === 'to-delete.txt')
+      assert.isDefined(deleted, 'Expected to-delete.txt entry')
+      assert.strictEqual(deleted?.status, 'deleted')
+      assert.isDefined(deleted?.patch, 'Expected a patch for deleted file')
+      assert.include(deleted?.patch ?? '', '-goodbye')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Staged changes are included (git diff HEAD covers index) ---
+  it.scoped('diff includes staged-but-uncommitted changes', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-staged', tempRoots)
+      writeFileSync(join(repoPath, 'staged.txt'), 'original\n')
+      git('add staged.txt', repoPath)
+      git('commit -m "add staged"', repoPath)
+
+      writeFileSync(join(repoPath, 'staged.txt'), 'modified\n')
+      git('add staged.txt', repoPath)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      const staged = entries.find((e) => e.path === 'staged.txt')
+      assert.isDefined(staged, 'Expected staged.txt entry')
+      assert.include(staged?.patch ?? '', '+modified')
+      assert.include(staged?.patch ?? '', '-original')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- All change types in one batched response ---
+  it.scoped('diff returns modified, added, and deleted entries together', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-all', tempRoots)
+      writeFileSync(join(repoPath, 'modify-me.txt'), 'original\n')
+      writeFileSync(join(repoPath, 'delete-me.txt'), 'to be deleted\n')
+      git('add .', repoPath)
+      git('commit -m "add files"', repoPath)
+
+      writeFileSync(join(repoPath, 'modify-me.txt'), 'changed\n')
+      unlinkSync(join(repoPath, 'delete-me.txt'))
+      writeFileSync(join(repoPath, 'brand-new.txt'), 'new content\n')
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      assert.strictEqual(entries.length, 3, 'Expected exactly 3 entries')
+      for (const entry of entries) {
+        assert.isDefined(
+          entry.patch,
+          `Expected a patch for ${entry.path} (${entry.status})`
+        )
+      }
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Clean tree returns an empty array ---
+  it.scoped('diff returns empty array for a clean working tree', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-diff-clean', tempRoots)
+
+      const { store } = yield* LaborerStore
+      const workspaceId = seedWorkspace(store, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      assert.strictEqual(entries.length, 0)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  // --- Unknown workspace fails with NOT_FOUND ---
+  it.scoped('diff fails with NOT_FOUND for unknown workspace', () =>
+    Effect.gen(function* () {
+      const fileService = yield* FileService
+      const result = yield* fileService.diff('nonexistent-workspace-id').pipe(
+        Effect.matchEffect({
+          onSuccess: () => Effect.succeed('success' as const),
+          onFailure: (error) => Effect.succeed(error),
+        })
+      )
+
+      if (result === 'success') {
+        assert.fail('Expected NOT_FOUND error')
+      }
+      assert.strictEqual(result._tag, 'RpcError')
+      assert.strictEqual(result.code, 'NOT_FOUND')
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+})
+
+// =================================================================
+// Batched patch helper tests — pure functions
+// =================================================================
+
+describe('splitGitPatch', () => {
+  it.effect('splits combined diff output on diff --git boundaries', () =>
+    Effect.sync(() => {
+      const combined = [
+        'diff --git a/one.txt b/one.txt',
+        'index 111..222 100644',
+        '--- a/one.txt',
+        '+++ b/one.txt',
+        '@@ -1 +1 @@',
+        '-old',
+        '+new',
+        'diff --git a/two.txt b/two.txt',
+        'index 333..444 100644',
+        '--- a/two.txt',
+        '+++ b/two.txt',
+        '@@ -1 +1 @@',
+        '-foo',
+        '+bar',
+        '',
+      ].join('\n')
+
+      const chunks = splitGitPatch(combined)
+      assert.strictEqual(chunks.length, 2)
+      assert.isTrue(chunks[0]?.startsWith('diff --git a/one.txt'))
+      assert.isTrue(chunks[1]?.startsWith('diff --git a/two.txt'))
+      assert.include(chunks[0] ?? '', '+new')
+      assert.include(chunks[1] ?? '', '+bar')
+    })
+  )
+
+  it.effect('returns empty array for empty output', () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(splitGitPatch(''), [])
+      assert.deepStrictEqual(splitGitPatch('\n'), [])
+    })
+  )
+})
+
+describe('fileFromPatchChunk', () => {
+  it.effect('extracts the path from the +++ b/ header', () =>
+    Effect.sync(() => {
+      const chunk = [
+        'diff --git a/src/index.ts b/src/index.ts',
+        '--- a/src/index.ts',
+        '+++ b/src/index.ts',
+        '@@ -1 +1 @@',
+      ].join('\n')
+      assert.strictEqual(fileFromPatchChunk(chunk), 'src/index.ts')
+    })
+  )
+
+  it.effect('falls back to --- a/ for deletions', () =>
+    Effect.sync(() => {
+      const chunk = [
+        'diff --git a/gone.txt b/gone.txt',
+        'deleted file mode 100644',
+        '--- a/gone.txt',
+        '+++ /dev/null',
+        '@@ -1 +0,0 @@',
+        '-bye',
+      ].join('\n')
+      assert.strictEqual(fileFromPatchChunk(chunk), 'gone.txt')
+    })
+  )
+
+  it.effect('falls back to the diff --git header for binary chunks', () =>
+    Effect.sync(() => {
+      const chunk = [
+        'diff --git a/logo.png b/logo.png',
+        'index 111..222 100644',
+        'Binary files a/logo.png and b/logo.png differ',
+      ].join('\n')
+      assert.strictEqual(fileFromPatchChunk(chunk), 'logo.png')
+    })
+  )
+})
+
+describe('assembleDiffEntries', () => {
+  const fileInfo = (path: string) => ({
+    path,
+    added: 1,
+    removed: 0,
+    status: 'modified' as const,
+  })
+
+  it.effect('attaches patches and marks entries without one', () =>
+    Effect.sync(() => {
+      const entries = assembleDiffEntries(
+        [fileInfo('a.txt'), fileInfo('b.bin')],
+        new Map([['a.txt', 'patch-a']])
+      )
+      assert.strictEqual(entries[0]?.patch, 'patch-a')
+      assert.strictEqual(entries[0]?.truncated, false)
+      assert.isUndefined(entries[1]?.patch)
+      assert.strictEqual(entries[1]?.truncated, false)
+    })
+  )
+
+  it.effect('omits oversized patches with truncated: true', () =>
+    Effect.sync(() => {
+      const huge = 'a'.repeat(10_000_001)
+      const entries = assembleDiffEntries(
+        [fileInfo('huge.txt'), fileInfo('small.txt')],
+        new Map([
+          ['huge.txt', huge],
+          ['small.txt', 'patch-small'],
+        ])
+      )
+      const hugeEntry = entries.find((e) => e.path === 'huge.txt')
+      const smallEntry = entries.find((e) => e.path === 'small.txt')
+      assert.isUndefined(hugeEntry?.patch)
+      assert.strictEqual(hugeEntry?.truncated, true)
+      assert.strictEqual(smallEntry?.patch, 'patch-small')
+      assert.strictEqual(smallEntry?.truncated, false)
+    })
+  )
+
+  it.effect('caps the total patch budget across files', () =>
+    Effect.sync(() => {
+      const sixMb = 'a'.repeat(6_000_000)
+      const entries = assembleDiffEntries(
+        [fileInfo('one.txt'), fileInfo('two.txt'), fileInfo('three.txt')],
+        new Map([
+          ['one.txt', sixMb],
+          ['two.txt', sixMb],
+          ['three.txt', 'small-patch'],
+        ])
+      )
+      // First fits, second exceeds the 10MB total, third is capped too
+      assert.isDefined(entries[0]?.patch)
+      assert.isUndefined(entries[1]?.patch)
+      assert.strictEqual(entries[1]?.truncated, true)
+      assert.isUndefined(entries[2]?.patch)
+      assert.strictEqual(entries[2]?.truncated, true)
+    })
   )
 })

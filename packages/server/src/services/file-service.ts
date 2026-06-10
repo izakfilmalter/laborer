@@ -21,6 +21,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { extname, join, normalize, relative, resolve } from 'node:path'
 import type {
   FileContent,
+  FileDiffEntry,
   FileInfo,
   FileNode,
   FileWatcherEvent,
@@ -555,6 +556,181 @@ const deduplicateStatusResults = (
   )
 }
 
+// ── Batched workspace diff computation ──────────────────────────
+// Computes patches for every changed file with a single
+// `git diff --patch HEAD` invocation (plus per-file `--no-index`
+// diffs for untracked files), modeled on opencode's Vcs.diff and
+// t3code's review diff preview.
+
+/**
+ * Full-file context so patches include the entire file, matching the
+ * previous `structuredPatch(..., { context: Infinity })` behavior.
+ * Same value opencode uses as its default patch context.
+ */
+const PATCH_CONTEXT_LINES = 2_147_483_647
+
+/** Per-file patch byte budget — larger patches are omitted + flagged. */
+const MAX_PATCH_BYTES = 10_000_000
+
+/** Total patch byte budget across all files in one `file.diff` response. */
+const MAX_TOTAL_PATCH_BYTES = 10_000_000
+
+/** Bounded fan-out for untracked-file `git diff --no-index` calls. */
+const UNTRACKED_DIFF_CONCURRENCY = 4
+
+/** Flags shared by all patch-producing git diff invocations. */
+const PATCH_GIT_FLAGS = [
+  '--patch',
+  '--no-color',
+  '--no-ext-diff',
+  '--no-textconv',
+  `--unified=${String(PATCH_CONTEXT_LINES)}`,
+]
+
+/** Matches the `diff --git a/<path> b/<path>` header for identical paths. */
+const DIFF_GIT_HEADER_REGEX = /^diff --git a\/(.+) b\/\1$/
+
+/** Splits combined `git diff` output ahead of each `diff --git ` header. */
+const DIFF_CHUNK_BOUNDARY_REGEX = /^(?=diff --git )/m
+
+/** Strips git's trailing tab from `+++ b/<path>` / `--- a/<path>` headers. */
+const TRAILING_TAB_REGEX = /\t$/
+
+/**
+ * Split combined `git diff` output into per-file chunks on
+ * `diff --git ` boundaries. The first element (anything before the
+ * first header) is dropped.
+ */
+const splitGitPatch = (combined: string): string[] => {
+  if (!combined.trim()) {
+    return []
+  }
+  const parts = combined.split(DIFF_CHUNK_BOUNDARY_REGEX)
+  return parts.filter((part) => part.startsWith('diff --git '))
+}
+
+/**
+ * Extract the file path a patch chunk applies to.
+ *
+ * Prefers the `+++ b/<path>` header, falling back to `--- a/<path>`
+ * for deletions (where `+++` is `/dev/null`), then to the
+ * `diff --git a/<p> b/<p>` line for binary chunks that have neither.
+ */
+const fileFromPatchChunk = (chunk: string): string | null => {
+  for (const line of chunk.split('\n')) {
+    if (line.startsWith('+++ b/')) {
+      return line.slice('+++ b/'.length).replace(TRAILING_TAB_REGEX, '')
+    }
+    if (line.startsWith('--- a/') && chunk.includes('+++ /dev/null')) {
+      return line.slice('--- a/'.length).replace(TRAILING_TAB_REGEX, '')
+    }
+  }
+  const headerLine = chunk.split('\n')[0] ?? ''
+  const match = DIFF_GIT_HEADER_REGEX.exec(headerLine)
+  return match?.[1] ?? null
+}
+
+/**
+ * Run one batched `git diff --patch HEAD` for all tracked changes and
+ * return a map of relative path → patch chunk. Returns an empty map
+ * when the repo has no HEAD (fresh repo) or the command fails — the
+ * caller degrades to entries without patches.
+ */
+const buildBatchedPatchMap = (
+  worktreeRoot: string
+): Effect.Effect<Map<string, string>> =>
+  Effect.tryPromise({
+    try: () =>
+      spawnGit(
+        [...STATUS_GIT_FLAGS, 'diff', ...PATCH_GIT_FLAGS, 'HEAD', '--', '.'],
+        { cwd: worktreeRoot, readOnly: true }
+      ),
+    catch: () => null,
+  }).pipe(
+    Effect.map((result) => {
+      const map = new Map<string, string>()
+      if (result.exitCode !== 0) {
+        return map
+      }
+      for (const chunk of splitGitPatch(result.stdout)) {
+        const path = fileFromPatchChunk(chunk)
+        if (path !== null) {
+          map.set(path, chunk)
+        }
+      }
+      return map
+    }),
+    Effect.catchAll(() => Effect.succeed(new Map<string, string>()))
+  )
+
+/**
+ * Compute a patch for one untracked file by diffing it against
+ * `/dev/null` with `git diff --no-index` (exit code 1 means "diff
+ * found" and is expected). Returns `null` on failure so one bad file
+ * never blocks the batch.
+ */
+const buildUntrackedPatch = (
+  worktreeRoot: string,
+  filePath: string
+): Effect.Effect<string | null> =>
+  Effect.tryPromise({
+    try: () =>
+      spawnGit(
+        [
+          ...STATUS_GIT_FLAGS,
+          'diff',
+          '--no-index',
+          ...PATCH_GIT_FLAGS,
+          '--',
+          '/dev/null',
+          filePath,
+        ],
+        { cwd: worktreeRoot, readOnly: true }
+      ),
+    catch: () => null,
+  }).pipe(
+    Effect.map((result) => {
+      const patch = result.stdout.trim()
+      return patch.length > 0 ? result.stdout : null
+    }),
+    Effect.catchAll(() => Effect.succeed(null))
+  )
+
+/**
+ * Assemble `FileDiffEntry[]` from the status file list and the patch
+ * map, enforcing per-file and total byte budgets. Once the total
+ * budget is exhausted, remaining patches are omitted with
+ * `truncated: true` (opencode's "capped" behavior).
+ */
+const assembleDiffEntries = (
+  files: readonly FileInfo[],
+  patches: ReadonlyMap<string, string>
+): FileDiffEntry[] => {
+  let totalBytes = 0
+  let capped = false
+  const entries: FileDiffEntry[] = []
+  for (const file of files) {
+    const patch = patches.get(file.path)
+    if (patch === undefined) {
+      entries.push({ ...file, truncated: false })
+      continue
+    }
+    const patchBytes = Buffer.byteLength(patch, 'utf-8')
+    if (capped || patchBytes > MAX_PATCH_BYTES) {
+      entries.push({ ...file, truncated: true })
+      continue
+    }
+    totalBytes += patchBytes
+    if (totalBytes > MAX_TOTAL_PATCH_BYTES) {
+      capped = true
+      entries.push({ ...file, truncated: true })
+      continue
+    }
+    entries.push({ ...file, patch, truncated: false })
+  }
+  return entries
+}
+
 // ── Per-file diff computation ───────────────────────────────────
 // Computes the diff of a text file against HEAD. Tries unstaged diff
 // first, then falls back to staged diff. Uses the `diff` npm library
@@ -692,6 +868,22 @@ class FileService extends Context.Tag('@laborer/FileService')<
     ) => Effect.Effect<readonly FileInfo[], RpcError>
 
     /**
+     * Return all changed files with their unified diff patches in a
+     * single batched call.
+     *
+     * Tracked changes (modified + deleted, staged or unstaged) come from
+     * one `git diff --patch HEAD` invocation split per file; untracked
+     * files are diffed against `/dev/null` via `git diff --no-index`
+     * with bounded concurrency. Patches exceeding the size budget are
+     * omitted with `truncated: true`.
+     *
+     * @param workspaceId - ID of the workspace
+     */
+    readonly diff: (
+      workspaceId: string
+    ) => Effect.Effect<readonly FileDiffEntry[], RpcError>
+
+    /**
      * Subscribe to file change events for a workspace's worktree.
      *
      * Returns a `Stream` of `FileWatcherEvent` objects with file paths
@@ -795,13 +987,10 @@ class FileService extends Context.Tag('@laborer/FileService')<
           return yield* computeFileDiff(worktreeRoot, filePath, content)
         })
 
-      const status = (
-        workspaceId: string
+      const computeStatus = (
+        worktreeRoot: string
       ): Effect.Effect<readonly FileInfo[], RpcError> =>
         Effect.gen(function* () {
-          const workspace = yield* lookupWorkspace(store, workspaceId)
-          const worktreeRoot = workspace.worktreePath
-
           // Run three git commands in parallel
           const [numstatResult, untrackedResult, deletedResult] =
             yield* runStatusGitCommands(worktreeRoot)
@@ -814,6 +1003,50 @@ class FileService extends Context.Tag('@laborer/FileService')<
           const deleted = parseDeletedOutput(deletedResult.stdout)
 
           return deduplicateStatusResults([...modified, ...added, ...deleted])
+        })
+
+      const status = (
+        workspaceId: string
+      ): Effect.Effect<readonly FileInfo[], RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(store, workspaceId)
+          return yield* computeStatus(workspace.worktreePath)
+        })
+
+      const diff = (
+        workspaceId: string
+      ): Effect.Effect<readonly FileDiffEntry[], RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+
+          // File list with line stats + batched tracked-change patches,
+          // computed concurrently.
+          const [files, patchMap] = yield* Effect.all(
+            [computeStatus(worktreeRoot), buildBatchedPatchMap(worktreeRoot)],
+            { concurrency: 2 }
+          )
+
+          // Untracked files are absent from `git diff HEAD` — diff each
+          // against /dev/null with bounded concurrency.
+          const untrackedFiles = files.filter(
+            (file) => file.status === 'added' && !patchMap.has(file.path)
+          )
+          const untrackedPatches = yield* Effect.forEach(
+            untrackedFiles,
+            (file) =>
+              buildUntrackedPatch(worktreeRoot, file.path).pipe(
+                Effect.map((patch) => [file.path, patch] as const)
+              ),
+            { concurrency: UNTRACKED_DIFF_CONCURRENCY }
+          )
+          for (const [path, patch] of untrackedPatches) {
+            if (patch !== null) {
+              patchMap.set(path, patch)
+            }
+          }
+
+          return assembleDiffEntries(files, patchMap)
         })
 
       const watcherSubscribe = (
@@ -877,9 +1110,15 @@ class FileService extends Context.Tag('@laborer/FileService')<
           })
         )
 
-      return FileService.of({ list, read, status, watcherSubscribe })
+      return FileService.of({ list, read, status, diff, watcherSubscribe })
     })
   )
 }
 
-export { FileService }
+export {
+  // Exported for testing — pure helpers behind the batched `file.diff` RPC
+  assembleDiffEntries,
+  fileFromPatchChunk,
+  FileService,
+  splitGitPatch,
+}

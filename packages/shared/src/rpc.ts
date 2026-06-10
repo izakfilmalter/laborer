@@ -848,6 +848,11 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       branchName: Schema.optional(Schema.String),
       taskId: Schema.optional(Schema.String),
+      /**
+       * Creates a sub-workspace: the new worktree branches from this
+       * workspace's current HEAD and its PR targets that workspace's branch.
+       */
+      baseWorkspaceId: Schema.optional(Schema.String),
     },
   }),
 

@@ -76,6 +76,8 @@ import { SandboxProvider } from './sandbox-provider.js'
  * Matches the LiveStore workspaces table columns.
  */
 interface WorkspaceRecord {
+  /** Branch this workspace's PR targets (sub-workspaces only). Null for ordinary workspaces. */
+  readonly baseBranch: string | null
   /** SHA of the parent branch HEAD when the worktree was created. Used by DiffService as the diff base. */
   readonly baseSha: string | null
   readonly branchName: string
@@ -485,12 +487,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      * @param onReady - Optional effect to run when workspace setup completes
      *   (e.g. start diff polling). Receives the workspace ID. Errors are
      *   logged but do not affect the workspace status.
+     * @param baseWorkspaceId - Optional workspace to branch from, making this
+     *   a sub-workspace: the worktree is created from that workspace's current
+     *   HEAD (its branch is pushed best-effort first so the PR base exists on
+     *   the remote) and `baseBranch` records the branch its PR targets.
      */
     readonly createWorktree: (
       projectId: string,
       branchName?: string,
       taskId?: string,
-      onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+      onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
+      baseWorkspaceId?: string
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /**
@@ -595,6 +602,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         readonly repoPath: string
         readonly worktreeDir: string
         readonly worktreePath: string
+        /**
+         * Commit to branch the new worktree from (sub-workspaces: the parent
+         * workspace's HEAD). Defaults to the main checkout's HEAD. Ignored
+         * when the branch already exists.
+         */
+        readonly baseRef?: string | undefined
       }): Effect.Effect<string | null, RpcError> =>
         Effect.gen(function* () {
           const { id, branchName, repoPath, worktreeDir, worktreePath } = params
@@ -681,10 +694,21 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           }).pipe(Effect.catchAll(() => Effect.void))
 
-          // Create the git worktree, reusing the branch if it exists
+          // Create the git worktree, reusing the branch if it exists.
+          // New branches start from baseRef when provided (sub-workspaces
+          // branch from the parent workspace's HEAD instead of the main
+          // checkout's HEAD).
           const worktreeArgs = branchExists
             ? ['git', 'worktree', 'add', worktreePath, branchName]
-            : ['git', 'worktree', 'add', '-b', branchName, worktreePath]
+            : [
+                'git',
+                'worktree',
+                'add',
+                '-b',
+                branchName,
+                worktreePath,
+                ...(params.baseRef ? [params.baseRef] : []),
+              ]
 
           const worktreeResult = yield* Effect.tryPromise({
             try: async () => {
@@ -711,24 +735,28 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             })
           }
 
-          // Capture the base SHA
-          const baseSha = yield* Effect.tryPromise({
-            try: async () => {
-              const proc = spawn(['git', 'rev-parse', 'HEAD'], {
-                cwd: repoPath,
-                stdout: 'pipe',
-                stderr: 'pipe',
+          // Capture the base SHA. Sub-workspaces diff against the parent
+          // workspace's HEAD (baseRef); ordinary workspaces against the main
+          // checkout's HEAD.
+          const baseSha = params.baseRef
+            ? params.baseRef
+            : yield* Effect.tryPromise({
+                try: async () => {
+                  const proc = spawn(['git', 'rev-parse', 'HEAD'], {
+                    cwd: repoPath,
+                    stdout: 'pipe',
+                    stderr: 'pipe',
+                  })
+                  const exitCode = await proc.exited
+                  const stdout = await new Response(proc.stdout).text()
+                  return exitCode === 0 ? stdout.trim() : null
+                },
+                catch: () =>
+                  new RpcError({
+                    message: 'Failed to capture base SHA for worktree',
+                    code: 'GIT_REV_PARSE_FAILED',
+                  }),
               })
-              const exitCode = await proc.exited
-              const stdout = await new Response(proc.stdout).text()
-              return exitCode === 0 ? stdout.trim() : null
-            },
-            catch: () =>
-              new RpcError({
-                message: 'Failed to capture base SHA for worktree',
-                code: 'GIT_REV_PARSE_FAILED',
-              }),
-          })
 
           // Signal UI: validating worktree
           store.commit(
@@ -924,15 +952,123 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
         })
 
+      /**
+       * Best-effort push of a workspace branch so it exists on the remote
+       * before a sub-workspace PR targets it. Failures (offline, no remote,
+       * auth) are logged and never block creation — the local git
+       * relationship is valid regardless, and the PR diff self-heals on the
+       * parent's next push.
+       */
+      const pushBranchBestEffort = (worktreePath: string, branchName: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'push', '-u', 'origin', branchName], {
+              cwd: worktreePath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stderr = await new Response(proc.stderr).text()
+            return { exitCode, stderr }
+          },
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to spawn git push: ${String(error)}`,
+              code: 'GIT_PUSH_FAILED',
+            }),
+        }).pipe(
+          Effect.flatMap(({ exitCode, stderr }) =>
+            exitCode === 0
+              ? Effect.logDebug(`Pushed base branch ${branchName}`)
+              : Effect.logWarning(
+                  `Best-effort push of base branch ${branchName} failed (exit ${exitCode}): ${stderr.trim()}`
+                )
+          ),
+          Effect.catchAll((error) =>
+            Effect.logWarning(
+              `Best-effort push of base branch ${branchName} failed: ${error.message}`
+            )
+          ),
+          Effect.annotateLogs('module', logPrefix)
+        )
+
+      /** Resolve the current HEAD SHA of a worktree. */
+      const resolveWorktreeHead = (worktreePath: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(['git', 'rev-parse', 'HEAD'], {
+              cwd: worktreePath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            if (exitCode !== 0) {
+              throw new Error(`git rev-parse HEAD exited with ${exitCode}`)
+            }
+            return stdout.trim()
+          },
+          catch: (error) =>
+            new RpcError({
+              message: `Failed to resolve base workspace HEAD at ${worktreePath}: ${String(error)}`,
+              code: 'GIT_REV_PARSE_FAILED',
+            }),
+        })
+
+      /**
+       * Prepare the base commit for a sub-workspace: push the base
+       * workspace's branch (best-effort, so the PR base exists on the
+       * remote) and resolve its current HEAD — the commit the new
+       * sub-workspace branches from.
+       */
+      const prepareSubWorkspaceBase = (base: {
+        readonly worktreePath: string
+        readonly branchName: string
+      }): Effect.Effect<string, RpcError> =>
+        pushBranchBestEffort(base.worktreePath, base.branchName).pipe(
+          Effect.andThen(resolveWorktreeHead(base.worktreePath))
+        )
+
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (
           projectId: string,
           branchName?: string,
           taskId?: string,
-          onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+          onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
+          baseWorkspaceId?: string
         ) {
           // 1. Validate the project exists and get its repo path
           const project = yield* registry.getProject(projectId)
+
+          // 1a. Resolve the base workspace when creating a sub-workspace.
+          // The sub-workspace branches from this workspace's HEAD and its
+          // PR targets this workspace's branch (see
+          // docs/adr/0001-branch-keyed-workspace-lineage.md).
+          const baseWorkspace = baseWorkspaceId
+            ? store
+                .query(tables.workspaces)
+                .find((w) => w.id === baseWorkspaceId)
+            : undefined
+          if (baseWorkspaceId !== undefined) {
+            if (baseWorkspace === undefined) {
+              return yield* new RpcError({
+                message: `Base workspace not found: ${baseWorkspaceId}`,
+                code: 'NOT_FOUND',
+              })
+            }
+            if (baseWorkspace.projectId !== projectId) {
+              return yield* new RpcError({
+                message: `Base workspace ${baseWorkspaceId} belongs to a different project`,
+                code: 'BASE_WORKSPACE_INVALID',
+              })
+            }
+            if (baseWorkspace.worktreePath === '') {
+              return yield* new RpcError({
+                message: `Base workspace ${baseWorkspaceId} has no local worktree to branch from`,
+                code: 'BASE_WORKSPACE_INVALID',
+              })
+            }
+          }
 
           // 1b. Resolve config for worktree location + setup scripts
           const resolvedConfig = yield* configService
@@ -982,6 +1118,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             origin: 'laborer',
             createdAt,
             baseSha: null,
+            baseBranch: baseWorkspace?.branchName ?? null,
           }
 
           store.commit(
@@ -996,8 +1133,93 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               createdAt: workspace.createdAt,
               baseSha: workspace.baseSha,
               sandboxProvider: effectiveProvider,
+              baseBranch: workspace.baseBranch,
             })
           )
+
+          // ── Local worktree path (Docker / no sandbox) ──────────
+          const localWorktreeSetup = Effect.gen(function* () {
+            // Phase 0: Wait for any in-flight destroy cleanup targeting the
+            // same worktree path. This blocks on the actual background fiber
+            // instead of polling with a timeout.
+            const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+              worktreePath
+            )
+            if (inFlightDestroy !== undefined) {
+              yield* Effect.logInfo(
+                `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              yield* Fiber.join(inFlightDestroy)
+              yield* Effect.logInfo(
+                `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            }
+
+            // Phase 0b: Sub-workspaces branch from the base workspace's
+            // HEAD. Push its branch first (best-effort) so the PR base
+            // exists on the remote, then resolve the HEAD to branch from.
+            const baseRef = baseWorkspace
+              ? yield* prepareSubWorkspaceBase(baseWorkspace)
+              : undefined
+
+            // Phase 1: Create and validate worktree. This is the first
+            // checkpoint: once it succeeds, agents can open in the
+            // workspace directory even if later setup is still running.
+            const baseSha = yield* performWorktreeSetup({
+              id,
+              branchName: resolvedBranch,
+              repoPath: project.repoPath,
+              worktreeDir,
+              worktreePath,
+              baseRef,
+            })
+
+            // Update baseSha now that we have it
+            if (baseSha !== null) {
+              store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
+            }
+
+            // Worktree setup complete — transition to 'running'.
+            // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
+            store.commit(
+              events.workspaceStatusChanged({ id, status: 'running' })
+            )
+
+            // Run the onReady callback (e.g. start diff/PR polling,
+            // open agent panels) as soon as the worktree directory is ready.
+            if (onReady) {
+              yield* onReady(id).pipe(
+                Effect.catchAll((err) =>
+                  Effect.logWarning(
+                    `onReady callback failed for workspace ${id}: ${err.message}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
+              )
+            }
+
+            // Phase 1b: Run project setup scripts after the worktree-ready
+            // checkpoint. The UI can show progress while agents are already
+            // available in the worktree directory.
+            yield* runPostWorktreeSetup({
+              id,
+              branchName: resolvedBranch,
+              setupScripts: resolvedConfig.setupScripts.value,
+              worktreePath,
+            })
+
+            // Phase 2: Start sandbox if devServer config has an image
+            if (shouldStartSandbox) {
+              yield* performSandboxSetup({
+                id,
+                branchName: resolvedBranch,
+                worktreePath,
+                projectName: project.name,
+                repoUrl: null,
+                currentBranch: null,
+                devServer: resolvedConfig.devServer,
+              })
+            }
+          })
 
           // 5. Fork the heavy setup work into a background fiber.
           // For Docker: worktree creation, setup scripts, then container setup.
@@ -1035,79 +1257,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 events.workspaceStatusChanged({ id, status: 'running' })
               )
             } else {
-              // ── Local worktree path (Docker / no sandbox) ──────────
-              // Phase 0: Wait for any in-flight destroy cleanup targeting the
-              // same worktree path. This blocks on the actual background fiber
-              // instead of polling with a timeout.
-              const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
-                worktreePath
-              )
-              if (inFlightDestroy !== undefined) {
-                yield* Effect.logInfo(
-                  `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-                yield* Fiber.join(inFlightDestroy)
-                yield* Effect.logInfo(
-                  `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              }
-
-              // Phase 1: Create and validate worktree. This is the first
-              // checkpoint: once it succeeds, agents can open in the
-              // workspace directory even if later setup is still running.
-              const baseSha = yield* performWorktreeSetup({
-                id,
-                branchName: resolvedBranch,
-                repoPath: project.repoPath,
-                worktreeDir,
-                worktreePath,
-              })
-
-              // Update baseSha now that we have it
-              if (baseSha !== null) {
-                store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
-              }
-
-              // Worktree setup complete — transition to 'running'.
-              // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
-              store.commit(
-                events.workspaceStatusChanged({ id, status: 'running' })
-              )
-
-              // Run the onReady callback (e.g. start diff/PR polling,
-              // open agent panels) as soon as the worktree directory is ready.
-              if (onReady) {
-                yield* onReady(id).pipe(
-                  Effect.catchAll((err) =>
-                    Effect.logWarning(
-                      `onReady callback failed for workspace ${id}: ${err.message}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-                  )
-                )
-              }
-
-              // Phase 1b: Run project setup scripts after the worktree-ready
-              // checkpoint. The UI can show progress while agents are already
-              // available in the worktree directory.
-              yield* runPostWorktreeSetup({
-                id,
-                branchName: resolvedBranch,
-                setupScripts: resolvedConfig.setupScripts.value,
-                worktreePath,
-              })
-
-              // Phase 2: Start sandbox if devServer config has an image
-              if (shouldStartSandbox) {
-                yield* performSandboxSetup({
-                  id,
-                  branchName: resolvedBranch,
-                  worktreePath,
-                  projectName: project.name,
-                  repoUrl: null,
-                  currentBranch: null,
-                  devServer: resolvedConfig.devServer,
-                })
-              }
+              yield* localWorktreeSetup
             }
           }).pipe(
             // Use catchAllCause instead of catchAll so that both expected

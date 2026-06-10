@@ -1,25 +1,32 @@
 /**
- * Hook to manage project collapse/expand state in the sidebar.
+ * Hooks to manage collapse/expand state for sidebar groups.
  *
- * Stores a `Record<string, boolean>` mapping project IDs to their
+ * Stores a `Record<string, boolean>` mapping group keys to their
  * expanded state. Persisted to localStorage so collapse state survives
- * page reloads. Defaults to all projects expanded when no stored state
+ * page reloads. Defaults to all groups expanded when no stored state
  * exists.
+ *
+ * Used for project headings (keyed by project ID) and workspace group
+ * headers (keyed by `<projectId>:<branchName>` so the state survives
+ * workspace destruction/recreation on the same branch).
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  */
 
 import { useCallback, useEffect, useState } from 'react'
 
-const STORAGE_KEY = 'laborer:project-collapse-state'
+const PROJECT_STORAGE_KEY = 'laborer:project-collapse-state'
+const WORKSPACE_GROUP_STORAGE_KEY = 'laborer:workspace-group-collapse-state'
 
 /**
  * Read the persisted collapse state from localStorage.
  * Returns undefined if nothing is stored or the stored value is invalid.
  */
-function readStoredState(): Record<string, boolean> | undefined {
+function readStoredState(
+  storageKey: string
+): Record<string, boolean> | undefined {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey)
     if (!raw) {
       return undefined
     }
@@ -38,49 +45,70 @@ function readStoredState(): Record<string, boolean> | undefined {
 }
 
 /**
- * Persist the collapse state to localStorage.
+ * Persist the collapse state to localStorage, merging with whatever is
+ * already stored. Several hook instances can exist at once (one per
+ * project group); merging keeps one instance's writes from clobbering
+ * keys it never touched.
  */
-function writeStoredState(state: Record<string, boolean>): void {
+function writeStoredState(
+  storageKey: string,
+  state: Record<string, boolean>
+): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    const merged = { ...readStoredState(storageKey), ...state }
+    localStorage.setItem(storageKey, JSON.stringify(merged))
   } catch {
     // Silently ignore storage errors (e.g. quota exceeded)
   }
 }
 
-interface ProjectCollapseState {
-  /** Check if a project is expanded. Defaults to true (expanded). */
-  readonly isExpanded: (projectId: string) => boolean
-  /** Toggle the expanded state of a project. */
-  readonly toggle: (projectId: string) => void
+interface CollapseState {
+  /** Check if a group is expanded. Defaults to true (expanded). */
+  readonly isExpanded: (key: string) => boolean
+  /** Toggle the expanded state of a group. */
+  readonly toggle: (key: string) => void
 }
 
-function useProjectCollapseState(): ProjectCollapseState {
+function useCollapseState(storageKey: string): CollapseState {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>(
-    () => readStoredState() ?? {}
+    () => readStoredState(storageKey) ?? {}
   )
 
   // Persist to localStorage on every change
   useEffect(() => {
-    writeStoredState(expandedMap)
-  }, [expandedMap])
+    writeStoredState(storageKey, expandedMap)
+  }, [storageKey, expandedMap])
 
   const isExpanded = useCallback(
-    (projectId: string): boolean => {
+    (key: string): boolean => {
       // Default to expanded (true) if not explicitly set
-      return expandedMap[projectId] !== false
+      return expandedMap[key] !== false
     },
     [expandedMap]
   )
 
-  const toggle = useCallback((projectId: string): void => {
+  const toggle = useCallback((key: string): void => {
     setExpandedMap((prev) => ({
       ...prev,
-      [projectId]: prev[projectId] === false,
+      [key]: prev[key] === false,
     }))
   }, [])
 
   return { isExpanded, toggle }
 }
 
-export { useProjectCollapseState }
+/** Collapse state for project headings, keyed by project ID. */
+function useProjectCollapseState(): CollapseState {
+  return useCollapseState(PROJECT_STORAGE_KEY)
+}
+
+/**
+ * Collapse state for workspace group headers (workspaces with
+ * sub-workspaces), keyed by `<projectId>:<branchName>`.
+ */
+function useWorkspaceGroupCollapseState(): CollapseState {
+  return useCollapseState(WORKSPACE_GROUP_STORAGE_KEY)
+}
+
+export { useProjectCollapseState, useWorkspaceGroupCollapseState }
+export type { CollapseState }

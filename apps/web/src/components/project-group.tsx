@@ -201,7 +201,11 @@ function ProjectGroup({
       </div>
       <CollapsibleContent>
         <div className="mt-1 ml-2 border-l pl-2">
-          <WorkspaceList projectId={project.id} repoPath={project.repoPath} />
+          <WorkspaceList
+            projectId={project.id}
+            projectName={project.name}
+            repoPath={project.repoPath}
+          />
           <Separator className="my-2" />
           <PlanList
             onSelectPlan={onSelectPlan}

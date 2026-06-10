@@ -338,6 +338,108 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
+  it.scopedLive(
+    'workspace.create with baseWorkspaceId branches from the parent worktree HEAD, pushes the parent branch, and records baseBranch',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const { localPath, remotePath } = initRemoteRepo(
+            'rpc-sub-workspace',
+            tempRoots
+          )
+          const worktreeRoot = createTempDir(
+            'rpc-sub-workspace-root',
+            tempRoots
+          )
+
+          writeLaborerConfig(localPath, {
+            devServer: { image: null, provider: 'none' },
+            setupScripts: [],
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', localPath)
+          git('commit -m "add laborer config"', localPath)
+
+          const waitForRunning = (workspaceId: string) =>
+            Effect.gen(function* () {
+              const maxAttempts = 200
+              for (let i = 0; i < maxAttempts; i++) {
+                yield* Effect.sleep('100 millis')
+                const row = store.query(
+                  tables.workspaces.where('id', workspaceId)
+                )[0]
+                if (row?.status === 'errored') {
+                  return assert.fail(
+                    `Workspace errored: ${row.errorMessage ?? ''}`
+                  )
+                }
+                if (
+                  row?.status === 'running' &&
+                  row.worktreeSetupStep === null
+                ) {
+                  return
+                }
+              }
+              assert.fail('Timed out waiting for workspace to run')
+            })
+
+          const project = yield* client.project.add({ repoPath: localPath })
+          const parent = yield* client.workspace.create({
+            branchName: 'feat/big-thing',
+            projectId: project.id,
+          })
+          yield* waitForRunning(parent.id)
+
+          // Advance the parent branch past the main checkout's HEAD so we can
+          // prove the sub-workspace branches from the parent, not the repo.
+          writeFileSync(join(parent.worktreePath, 'parent-work.txt'), 'work')
+          git('add parent-work.txt', parent.worktreePath)
+          git('commit -m "parent work"', parent.worktreePath)
+          const parentHeadSha = git('rev-parse HEAD', parent.worktreePath)
+
+          const child = yield* client.workspace.create({
+            branchName: 'fix/auth',
+            projectId: project.id,
+            baseWorkspaceId: parent.id,
+          })
+          yield* waitForRunning(child.id)
+
+          // Sub-workspace starts at the parent's HEAD, not the repo's HEAD.
+          assert.strictEqual(
+            git('rev-parse HEAD', child.worktreePath),
+            parentHeadSha
+          )
+          assert.notStrictEqual(git('rev-parse HEAD', localPath), parentHeadSha)
+
+          const childRow = store.query(
+            tables.workspaces.where('id', child.id)
+          )[0]
+          assert.isDefined(childRow)
+          assert.strictEqual(childRow?.baseBranch, 'feat/big-thing')
+          // Diff base is the parent HEAD at creation time.
+          assert.strictEqual(childRow?.baseSha, parentHeadSha)
+
+          // The parent branch was auto-pushed so the child's PR base exists
+          // on the remote.
+          assert.strictEqual(
+            git('rev-parse feat/big-thing', remotePath),
+            parentHeadSha
+          )
+
+          // Ordinary workspaces record no baseBranch.
+          const parentRow = store.query(
+            tables.workspaces.where('id', parent.id)
+          )[0]
+          assert.isNull(parentRow?.baseBranch)
+        })
+      )
+  )
+
   it.scoped('workspace.create returns NOT_FOUND for an unknown project', () =>
     runWithRpcTestContext(({ client, store }) =>
       Effect.gen(function* () {

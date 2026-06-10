@@ -14,6 +14,7 @@
     "./schema": "./src/schema.ts",
     "./rpc": "./src/rpc.ts",
     "./container-name": "./src/container-name.ts",
+    "./workspace-tree": "./src/workspace-tree.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./live-pull-watchdog": "./src/live-pull-watchdog.ts",
     "./rpc-transport-messageport": "./src/rpc-transport-messageport.ts",

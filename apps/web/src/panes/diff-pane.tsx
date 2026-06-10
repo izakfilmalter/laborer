@@ -27,10 +27,9 @@
  * Each file has a clickable "Open" button in its header that calls the
  * `editor.open` RPC mutation.
  *
- * ## Accept/reject annotations (Issue #88)
- *
- * Each hunk has accept/reject buttons on hover. Uses `diffAcceptRejectHunk`
- * from @pierre/diffs.
+ * The pane is purely visual: it never modifies the diff or the worktree.
+ * The only interactive affordances are navigational (open-in-editor,
+ * close, retry, cross-pane scroll-to-line).
  *
  * @see packages/server/src/services/file-service.ts — server-side FileService
  * @see docs/lazy-file-service/PRD.md — Lazy File Service PRD
@@ -45,12 +44,10 @@ import {
 } from '@effect-atom/atom-react/Hooks'
 import type { FileDiffEntry } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
-import type { AnnotationSide, FileDiffMetadata, Hunk } from '@pierre/diffs'
-import { diffAcceptRejectHunk } from '@pierre/diffs'
+import type { FileDiffMetadata } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
 import { Cause, Effect, Option, Schedule } from 'effect'
 import {
-  Check,
   ExternalLink,
   FileCode2,
   RefreshCw,
@@ -155,8 +152,7 @@ const FILE_DIFF_OPTIONS_SPLIT = {
   themeType: 'dark' as const,
   diffIndicators: 'bars' as const,
   lineDiffType: 'word-alt' as const,
-  overflow: 'scroll' as const,
-  enableHoverUtility: true,
+  overflow: 'wrap' as const,
 }
 
 const FILE_DIFF_OPTIONS_UNIFIED = {
@@ -165,8 +161,7 @@ const FILE_DIFF_OPTIONS_UNIFIED = {
   themeType: 'dark' as const,
   diffIndicators: 'bars' as const,
   lineDiffType: 'word-alt' as const,
-  overflow: 'scroll' as const,
-  enableHoverUtility: true,
+  overflow: 'wrap' as const,
 }
 
 const UNIFIED_DIFF_THRESHOLD = 500
@@ -190,41 +185,6 @@ const hasRelevantWatcherEvent = (
   events.some(
     (event) => !(event.file === '.git' || event.file.startsWith('.git/'))
   )
-
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
-
-function findHunkIndexForLine(
-  hunks: readonly Hunk[],
-  lineNumber: number,
-  side: AnnotationSide
-): number {
-  for (let i = 0; i < hunks.length; i++) {
-    const hunk = hunks[i]
-    if (!hunk) {
-      continue
-    }
-    if (side === 'additions') {
-      if (
-        lineNumber >= hunk.additionStart &&
-        lineNumber < hunk.additionStart + hunk.additionCount
-      ) {
-        return i
-      }
-    } else if (
-      lineNumber >= hunk.deletionStart &&
-      lineNumber < hunk.deletionStart + hunk.deletionCount
-    ) {
-      return i
-    }
-  }
-  return -1
-}
-
-function hunkHasChanges(hunk: Hunk): boolean {
-  return hunk.additionLines > 0 || hunk.deletionLines > 0
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -431,64 +391,6 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
 }
 
 // ---------------------------------------------------------------------------
-// Custom hook: useAnnotatedDiffs — manages accept/reject overlay state
-// ---------------------------------------------------------------------------
-
-interface AnnotatedDiffsResult {
-  readonly annotatedDiffs: Map<string, FileDiffMetadata>
-  readonly effectiveFileDiffs: readonly FileDiffMetadata[]
-  readonly handleHunkAction: (
-    fileName: string,
-    hunkIndex: number,
-    action: 'accept' | 'reject'
-  ) => void
-}
-
-function useAnnotatedDiffs(
-  orderedFileDiffs: readonly FileDiffMetadata[]
-): AnnotatedDiffsResult {
-  const [annotatedDiffs, setAnnotatedDiffs] = useState<
-    Map<string, FileDiffMetadata>
-  >(new Map())
-
-  // Reset when base diffs change
-  const prevOrderedRef = useRef(orderedFileDiffs)
-  useEffect(() => {
-    if (orderedFileDiffs !== prevOrderedRef.current) {
-      prevOrderedRef.current = orderedFileDiffs
-      setAnnotatedDiffs(new Map())
-    }
-  }, [orderedFileDiffs])
-
-  const effectiveFileDiffs = useMemo(() => {
-    if (annotatedDiffs.size === 0) {
-      return orderedFileDiffs
-    }
-    return orderedFileDiffs.map((fd) => annotatedDiffs.get(fd.name) ?? fd)
-  }, [orderedFileDiffs, annotatedDiffs])
-
-  const handleHunkAction = useCallback(
-    (fileName: string, hunkIndex: number, action: 'accept' | 'reject') => {
-      setAnnotatedDiffs((prev) => {
-        const currentDiff =
-          prev.get(fileName) ??
-          orderedFileDiffs.find((fd) => fd.name === fileName)
-        if (!currentDiff) {
-          return prev
-        }
-        const updated = diffAcceptRejectHunk(currentDiff, hunkIndex, action)
-        const next = new Map(prev)
-        next.set(fileName, updated)
-        return next
-      })
-    },
-    [orderedFileDiffs]
-  )
-
-  return { annotatedDiffs, effectiveFileDiffs, handleHunkAction }
-}
-
-// ---------------------------------------------------------------------------
 // DiffPaneContent — mounted only after Phase 4 (Eventually)
 // ---------------------------------------------------------------------------
 
@@ -497,12 +399,6 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
 
   const { changedFiles, errorMessage, loading, orderedFileDiffs, refresh } =
     useDiffStore(workspaceId)
-
-  const { annotatedDiffs, effectiveFileDiffs, handleHunkAction } =
-    useAnnotatedDiffs(orderedFileDiffs)
-
-  const handleHunkActionRef = useRef(handleHunkAction)
-  handleHunkActionRef.current = handleHunkAction
 
   // --- Responsive diff style ---
   const containerRef = useRef<HTMLDivElement>(null)
@@ -529,17 +425,17 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
 
   // --- Deferred rendering ---
   const [isTransitionPending, startTransition] = useTransition()
-  const [deferredFileDiffs, setDeferredFileDiffs] = useState(effectiveFileDiffs)
+  const [deferredFileDiffs, setDeferredFileDiffs] = useState(orderedFileDiffs)
 
   useEffect(() => {
     startTransition(() => {
-      setDeferredFileDiffs(effectiveFileDiffs)
+      setDeferredFileDiffs(orderedFileDiffs)
     })
-  }, [effectiveFileDiffs])
+  }, [orderedFileDiffs])
 
   // --- Scroll position preservation ---
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const savedScrollRef = useRef({ top: 0, left: 0 })
+  const savedScrollTopRef = useRef(0)
 
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -547,8 +443,7 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
       return
     }
     const observer = new MutationObserver(() => {
-      container.scrollTop = savedScrollRef.current.top
-      container.scrollLeft = savedScrollRef.current.left
+      container.scrollTop = savedScrollTopRef.current
     })
     observer.observe(container, { childList: true, subtree: true })
     return () => observer.disconnect()
@@ -623,79 +518,10 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     [handleOpenFile]
   )
 
-  const createRenderHoverUtility = useCallback(
-    (fileDiffMeta: FileDiffMetadata) => {
-      return (
-        getHoveredLine: () =>
-          | { lineNumber: number; side: AnnotationSide }
-          | undefined
-      ) => {
-        const hovered = getHoveredLine()
-        if (!hovered) {
-          return null
-        }
-        const currentDiff =
-          annotatedDiffs.get(fileDiffMeta.name) ?? fileDiffMeta
-        const hunkIndex = findHunkIndexForLine(
-          currentDiff.hunks,
-          hovered.lineNumber,
-          hovered.side
-        )
-        if (hunkIndex === -1) {
-          return null
-        }
-        const hunk = currentDiff.hunks[hunkIndex]
-        if (!(hunk && hunkHasChanges(hunk))) {
-          return null
-        }
-        return (
-          <div className="flex items-center gap-0.5">
-            <button
-              className="inline-flex items-center gap-0.5 rounded bg-success/15 px-1.5 py-0.5 text-success text-xs transition-colors hover:bg-success/30"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleHunkActionRef.current(
-                  fileDiffMeta.name,
-                  hunkIndex,
-                  'accept'
-                )
-              }}
-              title="Accept this change (keep additions)"
-              type="button"
-            >
-              <Check className="h-3 w-3" />
-              Accept
-            </button>
-            <button
-              className="inline-flex items-center gap-0.5 rounded bg-destructive/15 px-1.5 py-0.5 text-destructive text-xs transition-colors hover:bg-destructive/30"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleHunkActionRef.current(
-                  fileDiffMeta.name,
-                  hunkIndex,
-                  'reject'
-                )
-              }}
-              title="Reject this change (keep deletions)"
-              type="button"
-            >
-              <X className="h-3 w-3" />
-              Reject
-            </button>
-          </div>
-        )
-      }
-    },
-    [annotatedDiffs]
-  )
-
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
     if (container) {
-      savedScrollRef.current = {
-        top: container.scrollTop,
-        left: container.scrollLeft,
-      }
+      savedScrollTopRef.current = container.scrollTop
     }
   }, [])
 
@@ -805,7 +631,7 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
       )}
 
       <div
-        className="min-h-0 flex-1 select-text overflow-auto"
+        className="min-h-0 flex-1 select-text overflow-y-auto overflow-x-hidden"
         data-pane-text-selectable
         onScroll={handleScroll}
         ref={scrollContainerRef}
@@ -817,7 +643,6 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
             key={fileDiffMeta.name ?? index}
             options={diffOptions}
             renderHeaderMetadata={renderHeaderMetadata}
-            renderHoverUtility={createRenderHoverUtility(fileDiffMeta)}
           />
         ))}
       </div>

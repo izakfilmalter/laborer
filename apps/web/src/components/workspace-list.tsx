@@ -767,6 +767,8 @@ interface WorkspaceItemProps {
   readonly isRootWorkspace?: boolean | undefined
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
+  /** Whether to show the sub-workspace creation action in the card header. */
+  readonly showCreateSubWorkspaceAction?: boolean | undefined
   readonly workspace: {
     readonly id: string
     readonly projectId: string
@@ -1003,6 +1005,7 @@ function WorkspaceItem({
   associatedPrdId,
   isRootWorkspace,
   projectName,
+  showCreateSubWorkspaceAction = true,
 }: WorkspaceItemProps) {
   const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
@@ -1190,7 +1193,7 @@ function WorkspaceItem({
                 workspaceId={workspace.id}
               />
             )}
-            {!isRootWorkspace && (
+            {!isRootWorkspace && showCreateSubWorkspaceAction && (
               <CreateWorkspaceForm
                 baseWorkspace={{
                   id: workspace.id,
@@ -1363,6 +1366,7 @@ function WorkspaceTreeGroup({
       associatedPrdId={branchToPrdId.get(workspace.branchName)}
       isRootWorkspace={workspace.worktreePath === repoPath}
       projectName={projectName}
+      showCreateSubWorkspaceAction={children.length === 0}
       workspace={workspace}
     />
   )
@@ -1377,23 +1381,58 @@ function WorkspaceTreeGroup({
 
   return (
     <Collapsible open={expanded}>
-      <CollapsibleTrigger
-        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left font-medium text-muted-foreground text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-        data-testid={`workspace-group-${workspace.branchName}`}
-        onClick={() => collapseState.toggle(groupKey)}
-      >
-        <ChevronRight
-          className={cn(
-            'size-3 shrink-0 transition-transform duration-200',
-            expanded && 'rotate-90'
-          )}
+      <div className="flex items-center gap-1">
+        <CollapsibleTrigger
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left font-medium text-muted-foreground text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+          data-testid={`workspace-group-${workspace.branchName}`}
+          onClick={() => collapseState.toggle(groupKey)}
+        >
+          <ChevronRight
+            className={cn(
+              'size-3 shrink-0 transition-transform duration-200',
+              expanded && 'rotate-90'
+            )}
+          />
+          <GitBranch className="size-3 shrink-0" />
+          <span className="min-w-0 truncate font-mono">
+            {workspace.branchName}
+          </span>
+          <span className="ml-auto shrink-0 tabular-nums">
+            {children.length}
+          </span>
+        </CollapsibleTrigger>
+        <CreateWorkspaceForm
+          baseWorkspace={{
+            id: workspace.id,
+            branchName: workspace.branchName,
+          }}
+          projectId={workspace.projectId}
+          projectName={projectName}
+          trigger={
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <DialogTrigger
+                    render={
+                      <Button
+                        aria-label={`Create sub-workspace from ${workspace.branchName}`}
+                        className="size-6"
+                        size="icon-sm"
+                        variant="ghost"
+                      />
+                    }
+                  />
+                }
+              >
+                <GitBranchPlus className="size-3.5 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent>
+                Create sub-workspace from this branch
+              </TooltipContent>
+            </Tooltip>
+          }
         />
-        <GitBranch className="size-3 shrink-0" />
-        <span className="min-w-0 truncate font-mono">
-          {workspace.branchName}
-        </span>
-        <span className="ml-auto shrink-0 tabular-nums">{children.length}</span>
-      </CollapsibleTrigger>
+      </div>
       <CollapsibleContent>
         <div className="mt-1 ml-1.5 grid gap-2 border-l pl-1.5">
           {card}

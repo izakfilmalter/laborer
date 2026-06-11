@@ -111,6 +111,7 @@ const BASE_PROPS = {
   projectName: 'my-project',
   reviewIsOpen: false,
   workspaceId: 'ws-1',
+  workspacePath: [] as readonly string[],
 } as const
 
 describe('WorkspaceFrameHeader', () => {

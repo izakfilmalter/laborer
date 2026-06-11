@@ -51,41 +51,40 @@ export interface MessagePortClientProtocolOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * How often the client sends a ping to the server (ms).
- * Follows the VS Code KeepAlive pattern — frequent enough to detect
- * dead channels within a reasonable window.
+ * Countdown tick resolution for the heartbeat loop (ms).
+ *
+ * The heartbeat counts elapsed time with a coarse 1 s interval instead of
+ * comparing wall-clock timestamps. Interval callbacks do not run while the
+ * OS sleeps, so all heartbeat accounting is in *awake* time — sleeping
+ * through the timeout window can never declare the port dead (ADR 0003).
+ * This replaces the previous wall-clock tick-gap sleep-detection heuristic.
+ *
+ * @see .reference/vscode/src/vs/base/common/async.ts — `ProcessTimeRunOnceScheduler`
  */
-const HEARTBEAT_INTERVAL_MS = 5000
+const HEARTBEAT_TICK_MS = 1000
 
 /**
- * How long to wait for a pong before declaring the port dead (ms).
- * Set to 6× the ping interval so heavy synchronous work on the
- * server (e.g. SQLite sync changesets, LiveStore rematerialization)
+ * How often the client sends a ping to the server, in awake-time ticks
+ * (~5 s). Follows the VS Code KeepAlive pattern — frequent enough to
+ * detect dead channels within a reasonable window.
+ */
+const HEARTBEAT_PING_TICKS = 5
+
+/**
+ * How many awake-time ticks of pong silence before declaring the port
+ * dead (~30 s). Set to 6× the ping interval so heavy synchronous work on
+ * the server (e.g. SQLite sync changesets, LiveStore rematerialization)
  * doesn't cause false-positive dead port detections.
  *
- * With a 5 s ping interval the client gets six pings (at 5, 10, 15,
- * 20, 25, 30 s) before declaring the channel dead — generous enough
- * to survive temporary event-loop stalls while still catching truly
- * dead ports within 35 s.
+ * With a ~5 s ping interval the client gets six pings before declaring
+ * the channel dead — generous enough to survive temporary event-loop
+ * stalls while still catching truly dead ports within ~35 s of awake time.
  *
  * @see .reference/vscode/src/vs/base/parts/ipc/common/ipc.net.ts —
  *      VS Code uses `ProtocolConstants.TimeoutTime = 20_000` with
  *      additional heuristics (unacked messages, last timeout time).
  */
-const HEARTBEAT_TIMEOUT_MS = 30_000
-
-/**
- * If a heartbeat tick fires and the wall-clock time since the last
- * tick exceeds the interval by this factor, we infer the system was
- * sleeping. In that case we reset the liveness timestamp instead of
- * declaring the port dead — the utility process was also suspended
- * and couldn't have sent a pong.
- *
- * Factor of 3× the interval (15 s) is generous: normal jitter from
- * event-loop stalls rarely exceeds a few hundred ms. A 15+ second
- * gap between 5 s ticks strongly indicates OS suspend/resume.
- */
-const SLEEP_DETECTION_FACTOR = 3
+const HEARTBEAT_TIMEOUT_TICKS = 30
 
 /**
  * Custom DOM event name dispatched when a MessagePort is detected as dead
@@ -119,8 +118,9 @@ export const RPC_PORT_DEAD_EVENT = 'laborer:rpc-port-dead'
  * **Port close detection:** This version uses three mechanisms to detect a
  * dead channel:
  * 1. Listens for `close` events on the MessagePort (unreliable in Web API).
- * 2. Application-level heartbeat: pings the server every 5s and expects a
- *    pong within 15s. If no pong arrives, the port is considered dead.
+ * 2. Application-level heartbeat: pings the server every ~5s of awake time
+ *    and expects a pong within ~30s of awake time. If no pong arrives, the
+ *    port is considered dead. Sleep time never counts toward the timeout.
  * 3. Main process port tracking: proactively closes renderer ports when
  *    the utility process exits (handled externally by ipc.ts).
  *
@@ -147,12 +147,10 @@ export const makeClientProtocolMessagePort = (
       // end. Used in `send()` to fail fast instead of posting into a dead port.
       const portState = { closed: false }
 
-      // Heartbeat tracking — timestamp of last pong (or message) received.
-      let lastPongTimestamp = Date.now()
-      // Timestamp of the last heartbeat tick, used to detect system sleep.
-      // If the gap between consecutive ticks is much larger than the interval,
-      // the OS suspended the process and we should forgive the missed pongs.
-      let lastTickTimestamp = Date.now()
+      // Heartbeat tracking — counted in awake-time ticks, not wall-clock
+      // timestamps. Any inbound message resets the silence counter.
+      let awakeTicksSinceLastPong = 0
+      let awakeTicksSinceLastPing = 0
       let heartbeatInterval: ReturnType<typeof setInterval> | null = null
       const heartbeatEnabled = options?.heartbeatEnabled ?? true
 
@@ -167,12 +165,12 @@ export const makeClientProtocolMessagePort = (
       const messageHandler = (data: unknown): void => {
         // Intercept pong messages from the heartbeat echo.
         if (data === PONG_MESSAGE) {
-          lastPongTimestamp = Date.now()
+          awakeTicksSinceLastPong = 0
           return
         }
         // Any real message also counts as proof of liveness (like
         // Mux's "inbound frame tracking" pattern).
-        lastPongTimestamp = Date.now()
+        awakeTicksSinceLastPong = 0
         Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
       }
 
@@ -249,50 +247,35 @@ export const makeClientProtocolMessagePort = (
       // Web MessagePorts require .start() to begin receiving messages.
       port.start?.()
 
-      // Start the application-level heartbeat timer.
-      // Sends a ping every HEARTBEAT_INTERVAL_MS and checks whether a pong
-      // (or any message) was received within HEARTBEAT_TIMEOUT_MS.
+      // Start the application-level heartbeat ticker.
       //
-      // Sleep detection: if the wall-clock gap between consecutive ticks is
-      // much larger than the interval, the OS suspended the process (system
-      // sleep / lid close). In that case we reset the pong timestamp instead
-      // of declaring the port dead — the utility process was suspended too
-      // and couldn't have responded to pings.
+      // Counts awake-time ticks (the interval callback does not run while
+      // the OS sleeps), sends a ping every HEARTBEAT_PING_TICKS, and
+      // declares the port dead after HEARTBEAT_TIMEOUT_TICKS of pong
+      // silence. Because all accounting is in awake time, OS sleep can
+      // never produce a false-positive dead-port detection — no sleep
+      // detection heuristic is needed (ADR 0003).
       if (heartbeatEnabled) {
         heartbeatInterval = setInterval(() => {
           if (portState.closed) {
             return
           }
 
-          const now = Date.now()
-          const tickGap = now - lastTickTimestamp
-          lastTickTimestamp = now
+          awakeTicksSinceLastPong += 1
+          awakeTicksSinceLastPing += 1
 
-          // Detect system sleep: if the gap between this tick and the
-          // previous one is much larger than expected, the OS suspended
-          // the process. Forgive the missed pongs and reset liveness.
-          if (tickGap > HEARTBEAT_INTERVAL_MS * SLEEP_DETECTION_FACTOR) {
-            console.info(
-              `[rpc-client-transport] Detected system sleep (tick gap ${tickGap}ms, expected ~${HEARTBEAT_INTERVAL_MS}ms) — resetting heartbeat`
-            )
-            lastPongTimestamp = now
-            // Send a fresh ping so the server responds promptly after wake.
-            try {
-              port.postMessage(PING_MESSAGE)
-            } catch {
-              closeHandler()
-            }
-            return
-          }
-
-          const elapsed = now - lastPongTimestamp
-          if (elapsed > HEARTBEAT_TIMEOUT_MS) {
+          if (awakeTicksSinceLastPong > HEARTBEAT_TIMEOUT_TICKS) {
             console.warn(
-              `[rpc-client-transport] No pong received in ${elapsed}ms — declaring port dead`
+              `[rpc-client-transport] No pong received in ~${awakeTicksSinceLastPong}s of awake time — declaring port dead`
             )
             closeHandler()
             return
           }
+
+          if (awakeTicksSinceLastPing < HEARTBEAT_PING_TICKS) {
+            return
+          }
+          awakeTicksSinceLastPing = 0
 
           // Send ping. If the port is dead, postMessage will throw —
           // catch and trigger close.
@@ -301,7 +284,7 @@ export const makeClientProtocolMessagePort = (
           } catch {
             closeHandler()
           }
-        }, HEARTBEAT_INTERVAL_MS)
+        }, HEARTBEAT_TICK_MS)
       }
 
       // Clean up listeners when the scope is finalized.

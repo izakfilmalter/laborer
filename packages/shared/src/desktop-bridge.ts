@@ -15,14 +15,18 @@ export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
 /**
  * Sidecar status reported to the renderer.
  *
- * - `starting`    — sidecar spawned, waiting for health check
- * - `healthy`     — health check passed, service is reachable
- * - `crashed`     — process exited unexpectedly (includes stderr excerpt)
- * - `restarting`  — automatic restart scheduled, waiting for backoff delay
+ * - `starting`     — sidecar spawned, waiting for health check
+ * - `healthy`      — health check passed, service is reachable
+ * - `unresponsive` — process alive but heartbeats stopped (advisory only;
+ *                    emitted for status-only services like `terminal`,
+ *                    self-heals to `healthy` on the next beat — ADR 0003)
+ * - `crashed`      — process exited unexpectedly (includes stderr excerpt)
+ * - `restarting`   — automatic restart scheduled, waiting for backoff delay
  */
 export type SidecarStatusEvent =
   | { readonly state: 'starting'; readonly name: SidecarName }
   | { readonly state: 'healthy'; readonly name: SidecarName }
+  | { readonly state: 'unresponsive'; readonly name: SidecarName }
   | {
       readonly state: 'crashed'
       readonly name: SidecarName

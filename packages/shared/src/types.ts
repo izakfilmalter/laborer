@@ -135,6 +135,13 @@ export class Diff extends Schema.Class<Diff>('Diff')({
  */
 export interface LeafNode {
   readonly _tag: 'LeafNode'
+  /**
+   * Spawn intent: the command this pane's terminal was created with
+   * (e.g. `opencode`, `claude`). Undefined for plain shells. Persisted
+   * so a genuinely-dead terminal respawns as what it was — an agent
+   * pane must never silently degrade to a plain shell (ADR 0003).
+   */
+  readonly command?: string | undefined
   readonly id: string
   readonly paneType: PaneType
   readonly terminalId?: string | undefined
@@ -154,6 +161,7 @@ export type PanelNode = LeafNode | SplitNode
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
+    command: Schema.optional(Schema.String),
     id: Schema.String,
     paneType: PaneType,
     terminalId: Schema.optional(Schema.String),

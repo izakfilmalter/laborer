@@ -10,17 +10,34 @@
  * - Startup detection via `{ type: 'ready' }` bootstrap message
  * - Crash detection via utility process `exit` events
  * - Auto-restart with exponential backoff on unexpected exit
- * - Heartbeat monitoring: kill + restart unresponsive processes
+ * - Heartbeat monitoring in awake time (process-time countdowns; OS sleep
+ *   never advances a heartbeat timeout — ADR 0003)
  * - Status events forwarded to renderer windows
  * - Max restart limit (default 5, matching VS Code's `MaxRestarts`)
  * - Manual restart support (resets backoff counter)
  * - Graceful shutdown: cancels all pending restart timers
  *
+ * **Heartbeat consequences are per-service (ADR 0003):**
+ * - The terminal service holds irreplaceable state (live PTYs running
+ *   agents), so heartbeat silence is *advisory only* — it emits an
+ *   `unresponsive` status (status pill + manual restart affordance) and
+ *   self-heals on the next beat. It is never killed by the watchdog;
+ *   restarts happen only on actual process exit or user request. This
+ *   matches VS Code's pty host, whose missed heartbeats only ever fire
+ *   `onPtyHostUnresponsive`.
+ * - Stateless sidecars (file-watcher, mcp) keep kill + restart on
+ *   heartbeat timeout.
+ *
  * Follows VS Code's patterns:
  * @see .reference/vscode/src/vs/platform/terminal/node/heartbeatService.ts
  * @see .reference/vscode/src/vs/platform/terminal/node/ptyHostService.ts
+ * @see docs/adr/0003-advisory-liveness-explicit-terminal-lifecycle.md
  */
 
+import {
+  type ProcessTimeTimeout,
+  scheduleProcessTimeTimeout,
+} from '@laborer/shared/process-time-scheduler'
 import { BrowserWindow } from 'electron'
 
 import type {
@@ -61,24 +78,32 @@ const MAX_RESTARTS = 5
 export const HEARTBEAT_INTERVAL_MS = 5000
 
 /**
- * Maximum time to wait for a heartbeat before considering the process
+ * Awake time to wait before logging a heartbeat warning (ms).
+ * Mirrors VS Code's first-stage timeout (`FirstWaitMultiplier`), which
+ * exists to surface jitter without taking any action.
+ */
+export const HEARTBEAT_WARN_MS = 6000
+
+/**
+ * Awake time to wait for a heartbeat before declaring the process
  * unresponsive (ms). 3x the heartbeat interval to tolerate missed beats.
+ *
+ * Measured in process-alive time via {@link scheduleProcessTimeTimeout}:
+ * OS sleep (including macOS DarkWake, which emits no `suspend`/`resume`)
+ * never advances the countdown, so a wake can never produce a
+ * false-positive timeout. No clock-jump tolerance is needed.
  */
 export const HEARTBEAT_TIMEOUT_MS = 15_000
 
 /**
- * Tolerance for late-firing heartbeat timeout timers (ms).
- *
- * When the system sleeps mid-window (especially macOS DarkWake, which
- * does not reliably emit `suspend`/`resume` events), the pending
- * heartbeat timer fires shortly after wake with far more wall-clock
- * time elapsed than the scheduled 15s — while the utility process was
- * frozen, not hung. If the timeout handler observes elapsed time beyond
- * `HEARTBEAT_TIMEOUT_MS + HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS`, it treats
- * the firing as a sleep artifact and re-arms a fresh window instead of
- * killing the process.
+ * Services whose heartbeat is advisory only (ADR 0003). On timeout they
+ * are declared `unresponsive` (status pill + manual restart affordance)
+ * instead of being killed, and self-heal on the next beat. The terminal
+ * service is listed because it holds irreplaceable live PTY state.
  */
-export const HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS = HEARTBEAT_INTERVAL_MS
+export const STATUS_ONLY_HEARTBEAT_SERVICES: ReadonlySet<ServiceName> = new Set(
+  ['terminal']
+)
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,6 +118,16 @@ export const HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS = HEARTBEAT_INTERVAL_MS
 export type LifecycleStatus =
   | { readonly state: 'starting'; readonly name: ServiceName }
   | { readonly state: 'healthy'; readonly name: ServiceName }
+  | {
+      /**
+       * Advisory: the process is alive but heartbeats have stopped for
+       * {@link HEARTBEAT_TIMEOUT_MS} of awake time. Emitted only for
+       * {@link STATUS_ONLY_HEARTBEAT_SERVICES}; self-heals to `healthy`
+       * on the next beat. No ports are closed and nothing is killed.
+       */
+      readonly state: 'unresponsive'
+      readonly name: ServiceName
+    }
   | {
       readonly state: 'crashed'
       readonly name: ServiceName
@@ -109,16 +144,17 @@ export type StatusListener = (status: LifecycleStatus) => void
 
 /** Per-service lifecycle tracking state. */
 interface ServiceState {
-  /**
-   * Wall-clock timestamp (`Date.now()`) when the heartbeat timer was
-   * last armed. Used to detect timers that fired late because the
-   * system slept mid-window.
-   */
-  heartbeatArmedAt: number
-  /** Current heartbeat timeout timer. */
-  heartbeatTimer: ReturnType<typeof setTimeout> | null
+  /** Second-stage heartbeat countdown (awake time) — declares/acts. */
+  heartbeatActionTimer: ProcessTimeTimeout | null
+  /** First-stage heartbeat countdown (awake time) — warns only. */
+  heartbeatWarnTimer: ProcessTimeTimeout | null
   /** Whether the service has sent its `ready` message. */
   isReady: boolean
+  /**
+   * Whether a status-only service is currently declared unresponsive.
+   * Cleared (with a `healthy` status emit) on the next heartbeat.
+   */
+  isUnresponsive: boolean
   /** Number of automatic restart attempts (resets on manual restart or healthy). */
   restartAttempts: number
   /** Pending restart timer. */
@@ -237,6 +273,7 @@ export class LifecycleMonitor {
     const state = this.getOrCreateState(name)
     state.restartAttempts = 0
     state.isReady = false
+    state.isUnresponsive = false
     this.clearHeartbeatTimer(name)
 
     // Close renderer-side ports before killing — the old port channels
@@ -274,7 +311,9 @@ export class LifecycleMonitor {
   getCurrentStatuses(): LifecycleStatus[] {
     const statuses: LifecycleStatus[] = []
     for (const [name, state] of this.services) {
-      if (state.isReady) {
+      if (state.isReady && state.isUnresponsive) {
+        statuses.push({ state: 'unresponsive', name })
+      } else if (state.isReady) {
         statuses.push({ state: 'healthy', name })
       } else if (state.restartTimer) {
         statuses.push({
@@ -287,44 +326,6 @@ export class LifecycleMonitor {
       }
     }
     return statuses
-  }
-
-  /**
-   * Pause all heartbeat timers. Called when the system is about to
-   * suspend (sleep / lid close). Without this, heartbeat timeouts
-   * fire immediately after resume because wall-clock time advanced
-   * while the process was frozen, causing false-positive crash
-   * detections and unnecessary utility process restarts.
-   *
-   * @see handleResume — restarts the heartbeat timers after wake.
-   */
-  handleSuspend(): void {
-    console.info('[lifecycle] System suspending — pausing all heartbeat timers')
-    for (const [name, state] of this.services) {
-      if (state.heartbeatTimer) {
-        clearTimeout(state.heartbeatTimer)
-        state.heartbeatTimer = null
-        console.info(`[lifecycle:${name}] Paused heartbeat timer`)
-      }
-    }
-  }
-
-  /**
-   * Restart heartbeat timers after system resume. Gives each healthy
-   * service a fresh timeout window to send its next heartbeat.
-   *
-   * @see handleSuspend — pauses timers before sleep.
-   */
-  handleResume(): void {
-    console.info(
-      '[lifecycle] System resumed — restarting heartbeat timers for healthy services'
-    )
-    for (const [name, state] of this.services) {
-      if (state.isReady) {
-        this.resetHeartbeatTimer(name)
-        console.info(`[lifecycle:${name}] Restarted heartbeat timer`)
-      }
-    }
   }
 
   /**
@@ -342,16 +343,14 @@ export class LifecycleMonitor {
           `[lifecycle:${name}] Cancelled pending restart (shutting down)`
         )
       }
-      if (state.heartbeatTimer) {
-        clearTimeout(state.heartbeatTimer)
-        state.heartbeatTimer = null
-      }
+      this.clearHeartbeatTimer(name)
     }
   }
 
   /**
    * Handle a heartbeat message from a utility process.
-   * Resets the heartbeat timeout timer.
+   * Resets the heartbeat countdown, and self-heals a status-only service
+   * that was previously declared unresponsive.
    *
    * Called by the UtilityProcessManager when it receives a
    * `{ type: 'heartbeat' }` message from a utility process.
@@ -360,6 +359,14 @@ export class LifecycleMonitor {
     const state = this.services.get(name)
     if (!state?.isReady) {
       return
+    }
+
+    if (state.isUnresponsive) {
+      state.isUnresponsive = false
+      console.info(
+        `[lifecycle:${name}] Heartbeat received — service responsive again`
+      )
+      this.emitStatus({ state: 'healthy', name })
     }
 
     this.resetHeartbeatTimer(name)
@@ -385,6 +392,7 @@ export class LifecycleMonitor {
     }
 
     state.isReady = true
+    state.isUnresponsive = false
     state.restartAttempts = 0
 
     console.info(`[lifecycle:${name}] Service ready — marking healthy`)
@@ -440,6 +448,7 @@ export class LifecycleMonitor {
     // Mark as not ready.
     const state = this.getOrCreateState(name)
     state.isReady = false
+    state.isUnresponsive = false
 
     const error = lastStderr
       ? `Process exited unexpectedly (code=${code}).\n${lastStderr}`
@@ -527,9 +536,13 @@ export class LifecycleMonitor {
   }
 
   /**
-   * Reset the heartbeat timeout timer for a service.
-   * If no heartbeat is received within HEARTBEAT_TIMEOUT_MS, the
-   * process is considered unresponsive and is killed + restarted.
+   * Reset the heartbeat countdowns for a service.
+   *
+   * Both stages count *awake* time (process-time countdowns): OS sleep
+   * never advances them, so a wake can never fire a false timeout.
+   * Stage one ({@link HEARTBEAT_WARN_MS}) only logs; stage two
+   * ({@link HEARTBEAT_TIMEOUT_MS}) declares the service unresponsive
+   * (status-only services) or kills it (stateless sidecars).
    */
   private resetHeartbeatTimer(name: ServiceName): void {
     const state = this.services.get(name)
@@ -537,27 +550,38 @@ export class LifecycleMonitor {
       return
     }
 
-    // Clear existing timer.
-    if (state.heartbeatTimer) {
-      clearTimeout(state.heartbeatTimer)
-    }
+    state.heartbeatWarnTimer?.cancel()
+    state.heartbeatActionTimer?.cancel()
 
-    state.heartbeatArmedAt = Date.now()
+    state.heartbeatWarnTimer = scheduleProcessTimeTimeout(
+      () => {
+        state.heartbeatWarnTimer = null
+        console.warn(
+          `[lifecycle:${name}] No heartbeat for ${HEARTBEAT_WARN_MS}ms of awake time`
+        )
+      },
+      HEARTBEAT_WARN_MS,
+      { unref: true }
+    )
 
-    const timer = setTimeout(() => {
-      state.heartbeatTimer = null
-      this.handleHeartbeatTimeout(name)
-    }, HEARTBEAT_TIMEOUT_MS)
-
-    // Don't let the timer prevent app exit.
-    timer.unref()
-
-    state.heartbeatTimer = timer
+    state.heartbeatActionTimer = scheduleProcessTimeTimeout(
+      () => {
+        state.heartbeatActionTimer = null
+        this.handleHeartbeatTimeout(name)
+      },
+      HEARTBEAT_TIMEOUT_MS,
+      { unref: true }
+    )
   }
 
   /**
-   * Handle heartbeat timeout: the process is unresponsive.
-   * Kill and restart it.
+   * Handle heartbeat timeout: the process has been silent for a full
+   * awake-time window.
+   *
+   * Per ADR 0003 the consequence depends on the service:
+   * - Status-only services (terminal): emit `unresponsive` and wait —
+   *   the next heartbeat self-heals back to `healthy`. Never killed.
+   * - Stateless sidecars: kill + restart.
    */
   private handleHeartbeatTimeout(name: ServiceName): void {
     if (this.isQuitting) {
@@ -570,18 +594,17 @@ export class LifecycleMonitor {
       return
     }
 
-    // Late-fire detection: if far more wall-clock time elapsed than the
-    // scheduled window, the system slept mid-window (e.g. a macOS
-    // DarkWake that never emitted suspend/resume). The utility process
-    // was frozen, not hung — give it a fresh window instead of killing.
-    const elapsedMs = Date.now() - state.heartbeatArmedAt
-    if (elapsedMs > HEARTBEAT_TIMEOUT_MS + HEARTBEAT_CLOCK_JUMP_TOLERANCE_MS) {
-      console.info(
-        `[lifecycle:${name}] Heartbeat timeout fired ${elapsedMs}ms after arming ` +
-          `(expected ~${HEARTBEAT_TIMEOUT_MS}ms) — system likely slept. ` +
-          'Re-arming instead of killing.'
-      )
-      this.resetHeartbeatTimer(name)
+    if (STATUS_ONLY_HEARTBEAT_SERVICES.has(name)) {
+      if (!state.isUnresponsive) {
+        state.isUnresponsive = true
+        console.warn(
+          `[lifecycle:${name}] No heartbeat within ${HEARTBEAT_TIMEOUT_MS}ms of awake time — ` +
+            'declaring unresponsive (advisory only; will self-heal on next beat)'
+        )
+        this.emitStatus({ state: 'unresponsive', name })
+      }
+      // Stay armed so a genuinely hung service keeps reporting, and so
+      // recovery is detected by handleHeartbeat when beats resume.
       return
     }
 
@@ -591,7 +614,7 @@ export class LifecycleMonitor {
     // the dead channel immediately.
     this.onProcessExit?.(name)
 
-    const error = `Process unresponsive — no heartbeat received within ${HEARTBEAT_TIMEOUT_MS}ms.`
+    const error = `Process unresponsive — no heartbeat received within ${HEARTBEAT_TIMEOUT_MS}ms of awake time.`
     console.error(`[lifecycle:${name}] ${error}`)
     this.emitStatus({ state: 'crashed', name, error })
 
@@ -616,16 +639,18 @@ export class LifecycleMonitor {
   }
 
   /**
-   * Clear the heartbeat timer for a service.
+   * Clear the heartbeat countdowns for a service.
    */
   private clearHeartbeatTimer(name: ServiceName): void {
     const state = this.services.get(name)
-    if (!state?.heartbeatTimer) {
+    if (!state) {
       return
     }
 
-    clearTimeout(state.heartbeatTimer)
-    state.heartbeatTimer = null
+    state.heartbeatWarnTimer?.cancel()
+    state.heartbeatWarnTimer = null
+    state.heartbeatActionTimer?.cancel()
+    state.heartbeatActionTimer = null
   }
 
   /**
@@ -635,9 +660,10 @@ export class LifecycleMonitor {
     let state = this.services.get(name)
     if (!state) {
       state = {
-        heartbeatArmedAt: 0,
-        heartbeatTimer: null,
+        heartbeatActionTimer: null,
+        heartbeatWarnTimer: null,
         isReady: false,
+        isUnresponsive: false,
         restartTimer: null,
         restartAttempts: 0,
       }

@@ -19,6 +19,10 @@
  */
 
 import { exec } from 'node:child_process'
+import {
+  type ProcessTimeTimeout,
+  scheduleProcessTimeTimeout,
+} from '@laborer/shared/process-time-scheduler'
 import { TerminalRpcError } from '@laborer/shared/rpc'
 import {
   Cause,
@@ -40,7 +44,16 @@ import type {
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalManager'
 
-/** Default grace period for disconnected/orphaned terminals (60 seconds). */
+/**
+ * Default grace period for orphaned terminals (60 seconds of awake time).
+ *
+ * Per ADR 0003 this is purely a *leak guard* for freshly spawned terminals
+ * that were never claimed by any subscriber (e.g. the spawning client died
+ * mid-spawn). A terminal that was claimed once is never an orphan: detached
+ * terminals are first-class and must keep running unwatched, and restored
+ * terminals proved their ownership in a previous life. Counted in
+ * process-alive time so OS sleep never expires the window.
+ */
 const DEFAULT_TERMINAL_GRACE_PERIOD_MS = 60_000
 
 /** Regex for splitting whitespace in ps output lines. Defined at module level for performance. */
@@ -176,6 +189,13 @@ interface SpawnPayload {
    * to report back to the terminal service with their terminal ID).
    */
   readonly id?: string | undefined
+  /**
+   * Marks a spawn performed by session-persistence restoration after a
+   * terminal-service restart. Restored terminals are exempt from the
+   * orphan leak-guard (ADR 0003): they were claimed in a previous life
+   * and must stay alive while waiting to be re-adopted by the renderer.
+   */
+  readonly restored?: boolean | undefined
   readonly rows: number
   readonly workspaceId: string
 }
@@ -897,7 +917,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // Per-terminal subscriber state (WebSocket connections).
       const subscriberStates = new Map<string, TerminalSubscriberState>()
       const revivedReplayEvents = new Map<string, SerializedReplayEvent>()
-      const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+      const graceTimeouts = new Map<string, ProcessTimeTimeout>()
 
       // -------------------------------------------------------------------
       // OSC-based activity detection state (follows Mux pattern)
@@ -1118,20 +1138,29 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       }
 
       const clearGraceTimeout = (terminalId: string): void => {
-        const timeoutId = graceTimeouts.get(terminalId)
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId)
+        const timeout = graceTimeouts.get(terminalId)
+        if (timeout !== undefined) {
+          timeout.cancel()
           graceTimeouts.delete(terminalId)
         }
       }
 
-      const scheduleGraceTimeout = (
-        terminalId: string,
-        reason: 'orphan' | 'disconnect' | 'restart'
-      ): void => {
+      /**
+       * Arm the orphan leak-guard for a freshly spawned terminal.
+       *
+       * Per ADR 0003 this is the ONLY heuristic that may kill a terminal:
+       * a fresh spawn that no subscriber ever claimed within the grace
+       * window (the spawning client died mid-spawn). The first subscribe
+       * disarms it permanently — a terminal that was claimed once is
+       * never reaped again, no matter how long it runs unwatched.
+       * Restored terminals are never armed (they were claimed in a
+       * previous life). The countdown is in process-alive time, so OS
+       * sleep never expires the window.
+       */
+      const scheduleOrphanTimeout = (terminalId: string): void => {
         clearGraceTimeout(terminalId)
 
-        const timeoutId = setTimeout(() => {
+        const timeout = scheduleProcessTimeTimeout(() => {
           runFork(
             Effect.gen(function* () {
               const map = yield* Ref.get(terminalsRef)
@@ -1167,7 +1196,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               })
 
               yield* Effect.log(
-                `Grace period expired (${gracePeriodMs}ms, reason=${reason}) — killed terminal ${terminalId}`
+                `Orphan grace period expired (${gracePeriodMs}ms awake, never claimed) — killed terminal ${terminalId}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
             }).pipe(
               Effect.tapDefect((cause) =>
@@ -1179,7 +1208,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           )
         }, gracePeriodMs)
 
-        graceTimeouts.set(terminalId, timeoutId)
+        graceTimeouts.set(terminalId, timeout)
       }
 
       // ---------------------------------------------------------------
@@ -1372,7 +1401,13 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
 
         emitEvent({ _tag: 'Spawned', terminal: record })
-        scheduleGraceTimeout(id, 'orphan')
+
+        // Orphan leak-guard for fresh spawns only (ADR 0003). Restored
+        // terminals proved their ownership in a previous life and must
+        // never be reaped while waiting to be re-adopted.
+        if (payload.restored !== true) {
+          scheduleOrphanTimeout(id)
+        }
 
         return record
       })
@@ -1825,10 +1860,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         emitEvent({ _tag: 'Restarted', terminal: record })
 
-        const restartState = subscriberStates.get(terminalId)
-        if ((restartState?.subscribers.size ?? 0) === 0) {
-          scheduleGraceTimeout(terminalId, 'restart')
-        }
+        // No grace timer: a restarted terminal was claimed before, so it
+        // is never an orphan (ADR 0003). It runs unwatched until a pane
+        // re-attaches or it is explicitly killed.
 
         yield* Effect.log(`Restarted terminal ${terminalId}`).pipe(
           Effect.annotateLogs('module', logPrefix)
@@ -1947,8 +1981,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
           yield* Ref.set(terminalsRef, new Map<string, ManagedTerminal>())
 
-          for (const timeoutId of graceTimeouts.values()) {
-            clearTimeout(timeoutId)
+          for (const timeout of graceTimeouts.values()) {
+            timeout.cancel()
           }
           graceTimeouts.clear()
 
@@ -2039,9 +2073,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const state = subscriberStates.get(terminalId)
         if (state !== undefined) {
           state.subscribers.delete(subscriberId)
-          if (state.subscribers.size === 0) {
-            scheduleGraceTimeout(terminalId, 'disconnect')
-          }
+          // Deliberately no grace timer when the last subscriber leaves:
+          // detached terminals are first-class (CONTEXT.md) and a
+          // terminal that was claimed once is never reaped (ADR 0003).
+          // Cleanup happens via explicit kill/remove (pane close) only.
         }
 
         yield* Effect.log(

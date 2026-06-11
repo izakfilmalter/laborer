@@ -47,6 +47,11 @@ function generatePaneId(): string {
  * Options for creating a new panel tab.
  */
 interface AddPanelTabOptions {
+  /**
+   * Optional spawn intent (e.g. `opencode`) recorded on the pane leaf so
+   * reconciliation can respawn a dead terminal as what it was (ADR 0003).
+   */
+  readonly command?: string | undefined
   /** Optional label for the tab */
   readonly label?: string
   /** Optional pre-configured tab to use instead of creating a new one */
@@ -79,6 +84,7 @@ function addPanelTab(
     panelLayout: {
       _tag: 'LeafNode',
       id: paneId,
+      command: options?.command,
       paneType: panelType,
       terminalId: options?.terminalId,
       workspaceId: workspace.workspaceId,

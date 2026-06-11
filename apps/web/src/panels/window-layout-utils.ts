@@ -1075,6 +1075,11 @@ function closeTerminalInWindowLayout(
  * Stale terminal leaf info within the hierarchical layout.
  */
 interface StaleTerminalLeaf {
+  /**
+   * Spawn intent recorded on the leaf (e.g. `opencode`). Respawn passes
+   * it through so an agent pane comes back as an agent (ADR 0003).
+   */
+  readonly command: string | undefined
   readonly paneId: string
   readonly terminalId: string
   readonly workspaceId: string | undefined
@@ -1095,6 +1100,7 @@ function getStaleTerminalLeavesFromPanelTree(
     ) {
       return [
         {
+          command: node.command,
           paneId: node.id,
           terminalId: node.terminalId,
           workspaceId: node.workspaceId,

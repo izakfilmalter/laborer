@@ -198,6 +198,7 @@ function StatusBadgeCore({
   color,
   displayName,
   label,
+  onActivate,
   pulsing,
   testId,
   variant,
@@ -205,6 +206,12 @@ function StatusBadgeCore({
   readonly color: StatusColor
   readonly displayName: string
   readonly label: string
+  /**
+   * When provided, the badge renders as a button and clicking it invokes
+   * this callback. Used for the unresponsive → manual restart affordance
+   * (ADR 0003), mirroring VS Code's pty host status bar entry.
+   */
+  readonly onActivate?: (() => void) | undefined
   readonly pulsing: boolean
   readonly testId?: string
   readonly variant: 'default' | 'destructive' | 'outline' | 'secondary'
@@ -215,13 +222,19 @@ function StatusBadgeCore({
         render={
           <Badge
             className={cn(
-              'cursor-default gap-1.5 transition-colors duration-300',
+              onActivate ? 'cursor-pointer' : 'cursor-default',
+              'gap-1.5 transition-colors duration-300',
               color === 'green' && 'border-success/40 text-success',
               color === 'yellow' && 'border-warning/40 text-warning',
               color === 'red' && 'border-destructive text-destructive',
               color === 'gray' && 'border-border text-muted-foreground'
             )}
             data-testid={testId}
+            render={
+              onActivate ? (
+                <button onClick={onActivate} type="button" />
+              ) : undefined
+            }
             variant={variant}
           />
         }
@@ -271,6 +284,10 @@ function ServiceStatusBadge({
   const label = getStatusLabel(displayState)
   const pulsing = shouldPulse(displayState)
   const variant = BADGE_VARIANT_MAP[color]
+  // Unresponsive is advisory (ADR 0003): offer click-to-restart, the same
+  // path as the crash retry action.
+  const onActivate =
+    displayState.state === 'unresponsive' ? onRetryError : undefined
 
   return (
     <span
@@ -284,6 +301,7 @@ function ServiceStatusBadge({
         color={color}
         displayName={displayName}
         label={label}
+        onActivate={onActivate}
         pulsing={pulsing}
         variant={variant}
       />

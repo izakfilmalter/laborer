@@ -6,7 +6,9 @@
  * - Crash detection via unexpected exit handler
  * - Auto-restart with exponential backoff
  * - Max restart limit
- * - Heartbeat monitoring (timeout → kill + restart)
+ * - Heartbeat monitoring in awake time (timeout → kill + restart for
+ *   stateless sidecars; advisory `unresponsive` status for the terminal
+ *   service, which is never heartbeat-killed — ADR 0003)
  * - Manual restart resets backoff counter
  * - Shutdown cancels pending restarts and heartbeat timers
  * - Status events emitted correctly
@@ -14,6 +16,11 @@
  *
  * The LifecycleMonitor wraps UtilityProcessManager, so we mock the
  * manager interface rather than Electron APIs directly.
+ *
+ * Fake-timer note: heartbeat countdowns are process-time (1s interval
+ * ticks). Advancing fake timers runs the ticks, which models awake time;
+ * OS sleep is simply the absence of ticks, so there is nothing to
+ * simulate beyond not advancing.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -472,25 +479,25 @@ describe('LifecycleMonitor', () => {
   // Heartbeat monitoring
   // -----------------------------------------------------------------------
 
-  describe('heartbeat monitoring', () => {
+  describe('heartbeat monitoring (stateless sidecars)', () => {
     it('starts heartbeat timer after ready', () => {
-      monitor.forkAndMonitor('terminal')
-      monitor.handleReady('terminal')
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
       // Advance to just before the timeout — should still be healthy.
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 100)
-      expect(monitor.isHealthy('terminal')).toBe(true)
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 1000)
+      expect(monitor.isHealthy('file-watcher')).toBe(true)
     })
 
     it('kills and restarts process on heartbeat timeout', () => {
-      monitor.forkAndMonitor('terminal')
-      monitor.handleReady('terminal')
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
       // Advance past the heartbeat timeout.
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
 
       // Should have killed the process.
-      expect(mockManager.killCalls).toContain('terminal')
+      expect(mockManager.killCalls).toContain('file-watcher')
 
       // Should emit crashed status.
       const crashedStatus = statuses.find(
@@ -500,149 +507,188 @@ describe('LifecycleMonitor', () => {
     })
 
     it('resets heartbeat timer on heartbeat message', () => {
-      monitor.forkAndMonitor('terminal')
-      monitor.handleReady('terminal')
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
       // Advance to near the timeout.
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 1000)
 
       // Send a heartbeat — should reset the timer.
-      monitor.handleHeartbeat('terminal')
+      monitor.handleHeartbeat('file-watcher')
 
       // Advance past the original timeout — should still be healthy.
       vi.advanceTimersByTime(2000)
-      expect(monitor.isHealthy('terminal')).toBe(true)
+      expect(monitor.isHealthy('file-watcher')).toBe(true)
 
       // But advancing past the NEW timeout should trigger.
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS)
 
-      expect(mockManager.killCalls).toContain('terminal')
+      expect(mockManager.killCalls).toContain('file-watcher')
     })
 
     it('ignores heartbeats for non-ready services', () => {
-      monitor.forkAndMonitor('terminal')
+      monitor.forkAndMonitor('file-watcher')
       // Don't call handleReady — service is still starting.
 
-      monitor.handleHeartbeat('terminal')
+      monitor.handleHeartbeat('file-watcher')
 
       // Advance a lot of time — should not trigger any timeout.
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 3)
-      expect(mockManager.killCalls).not.toContain('terminal')
+      expect(mockManager.killCalls).not.toContain('file-watcher')
     })
 
     it('clears heartbeat timer on crash', () => {
-      monitor.forkAndMonitor('terminal')
-      monitor.handleReady('terminal')
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
       // Crash the process.
-      mockManager.simulateUnexpectedExit('terminal', 1, '')
+      mockManager.simulateUnexpectedExit('file-watcher', 1, '')
 
       // Advance past the heartbeat timeout — should NOT double-trigger.
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 1000)
 
       // Kill should not have been called directly (only the exit handler ran).
       // The heartbeat timer was cleared by the crash handler.
-      const killCallsForTerminal = mockManager.killCalls.filter(
-        (n) => n === 'terminal'
+      const killCallsForService = mockManager.killCalls.filter(
+        (n) => n === 'file-watcher'
       )
-      expect(killCallsForTerminal).toHaveLength(0)
+      expect(killCallsForService).toHaveLength(0)
     })
   })
 
   // -----------------------------------------------------------------------
-  // Sleep / wake (DarkWake) tolerance
+  // Advisory heartbeat for the terminal service (ADR 0003)
   // -----------------------------------------------------------------------
 
-  describe('sleep and wake tolerance', () => {
-    it('does not kill when the timeout fires after a wall-clock jump (system slept mid-window)', () => {
+  describe('heartbeat monitoring (terminal — status only)', () => {
+    it('never kills the terminal service on heartbeat timeout', () => {
       monitor.forkAndMonitor('terminal')
       monitor.handleReady('terminal')
 
-      // Simulate sleep without a `suspend` event (macOS DarkWake): the
-      // wall clock jumps forward while timers are frozen...
-      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
-      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
+      // Advance far past the heartbeat timeout.
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 4)
 
-      // ...then the pending heartbeat timer fires shortly after wake.
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
-
-      // The process was frozen, not hung — it must not be killed.
       expect(mockManager.killCalls).not.toContain('terminal')
       expect(monitor.isHealthy('terminal')).toBe(true)
     })
 
-    it('still kills after a clean silent window following the sleep grace', () => {
+    it('emits unresponsive status on heartbeat timeout', () => {
       monitor.forkAndMonitor('terminal')
       monitor.handleReady('terminal')
 
-      // Sleep mid-window, late timer fires → grace re-arm.
-      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
-      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
       vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
-      expect(mockManager.killCalls).not.toContain('terminal')
 
-      // The process really is hung: a full clean window passes while
-      // awake with no heartbeat — now it must be killed.
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
-      expect(mockManager.killCalls).toContain('terminal')
+      const unresponsiveStatus = statuses.find(
+        (s) => s.state === 'unresponsive' && s.name === 'terminal'
+      )
+      expect(unresponsiveStatus).toBeDefined()
+
+      // No crashed status, no restart scheduled.
+      expect(statuses.some((s) => s.state === 'crashed')).toBe(false)
+      expect(statuses.some((s) => s.state === 'restarting')).toBe(false)
     })
 
-    it('stays healthy when heartbeats resume after the sleep grace', () => {
+    it('emits unresponsive only once per silence window', () => {
       monitor.forkAndMonitor('terminal')
       monitor.handleReady('terminal')
 
-      // Sleep mid-window, late timer fires → grace re-arm.
-      const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000
-      vi.setSystemTime(Date.now() + EIGHT_HOURS_MS)
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 3)
 
-      // The process wakes up and resumes heartbeats.
-      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)
+      const unresponsiveStatuses = statuses.filter(
+        (s) => s.state === 'unresponsive'
+      )
+      expect(unresponsiveStatuses).toHaveLength(1)
+    })
+
+    it('self-heals to healthy when heartbeats resume', () => {
+      monitor.forkAndMonitor('terminal')
+      monitor.handleReady('terminal')
+
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
+      expect(statuses.some((s) => s.state === 'unresponsive')).toBe(true)
+
+      const healthyCountBefore = statuses.filter(
+        (s) => s.state === 'healthy'
+      ).length
+
       monitor.handleHeartbeat('terminal')
 
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 1000)
-      expect(mockManager.killCalls).not.toContain('terminal')
+      const healthyCountAfter = statuses.filter(
+        (s) => s.state === 'healthy'
+      ).length
+      expect(healthyCountAfter).toBe(healthyCountBefore + 1)
       expect(monitor.isHealthy('terminal')).toBe(true)
     })
 
-    it('handleSuspend pauses heartbeat timers so no kill occurs', () => {
+    it('does not close renderer ports when unresponsive', () => {
+      const processExitCalls: ServiceName[] = []
+      const exitMonitor = new LifecycleMonitor(mockManager, {
+        maxRestarts: 3,
+        onProcessExit: (name) => {
+          processExitCalls.push(name)
+        },
+      })
+
+      exitMonitor.forkAndMonitor('terminal')
+      exitMonitor.handleReady('terminal')
+
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 2)
+
+      expect(processExitCalls).toHaveLength(0)
+      exitMonitor.shutdown()
+    })
+
+    it('reports unresponsive in getCurrentStatuses', () => {
       monitor.forkAndMonitor('terminal')
       monitor.handleReady('terminal')
 
-      monitor.handleSuspend()
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
 
-      // Even far past the timeout, the paused timer must not fire.
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 4)
-      expect(mockManager.killCalls).not.toContain('terminal')
-      expect(monitor.isHealthy('terminal')).toBe(true)
+      const current = monitor.getCurrentStatuses()
+      expect(current).toContainEqual({
+        state: 'unresponsive',
+        name: 'terminal',
+      })
     })
 
-    it('handleResume re-arms timers with a fresh full window', () => {
+    it('still restarts the terminal service on actual process exit', () => {
       monitor.forkAndMonitor('terminal')
       monitor.handleReady('terminal')
 
-      monitor.handleSuspend()
-      vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000)
-      monitor.handleResume()
+      mockManager.simulateUnexpectedExit('terminal', 1, 'segfault')
 
-      // Fresh window: just under the timeout, still healthy...
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS - 100)
-      expect(mockManager.killCalls).not.toContain('terminal')
+      const restartingStatus = statuses.find(
+        (s) => s.state === 'restarting' && s.name === 'terminal'
+      )
+      expect(restartingStatus).toBeDefined()
+    })
+  })
 
-      // ...but a clean silent window after resume still detects a hang.
-      vi.advanceTimersByTime(200)
-      expect(mockManager.killCalls).toContain('terminal')
+  // -----------------------------------------------------------------------
+  // Awake-time heartbeat semantics
+  // -----------------------------------------------------------------------
+
+  describe('awake-time heartbeat semantics', () => {
+    it('a hung stateless sidecar is killed after a full awake window', () => {
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
+
+      // A clean awake window with no heartbeat — genuinely hung.
+      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 1000)
+      expect(mockManager.killCalls).toContain('file-watcher')
     })
 
-    it('handleResume does not start timers for services that were not ready', () => {
-      monitor.forkAndMonitor('terminal')
-      // No handleReady — service is still starting.
+    it('stays healthy when heartbeats keep arriving', () => {
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
-      monitor.handleSuspend()
-      monitor.handleResume()
+      for (let i = 0; i < 10; i++) {
+        vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)
+        monitor.handleHeartbeat('file-watcher')
+      }
 
-      vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS * 4)
-      expect(mockManager.killCalls).not.toContain('terminal')
+      expect(mockManager.killCalls).not.toContain('file-watcher')
+      expect(monitor.isHealthy('file-watcher')).toBe(true)
     })
   })
 
@@ -770,8 +816,8 @@ describe('LifecycleMonitor', () => {
     })
 
     it('cancels heartbeat timers', () => {
-      monitor.forkAndMonitor('terminal')
-      monitor.handleReady('terminal')
+      monitor.forkAndMonitor('file-watcher')
+      monitor.handleReady('file-watcher')
 
       monitor.shutdown()
 
@@ -960,15 +1006,15 @@ describe('LifecycleMonitor onProcessExit callback', () => {
     monitor.shutdown()
   })
 
-  it('calls onProcessExit when heartbeat times out', () => {
+  it('calls onProcessExit when a stateless sidecar heartbeat times out', () => {
     const monitor = createMonitorWithExitCallback()
-    monitor.forkAndMonitor('terminal')
-    monitor.handleReady('terminal')
+    monitor.forkAndMonitor('file-watcher')
+    monitor.handleReady('file-watcher')
 
     // Advance past heartbeat timeout
     vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + 100)
 
-    expect(processExitCalls).toEqual(['terminal'])
+    expect(processExitCalls).toEqual(['file-watcher'])
     monitor.shutdown()
   })
 

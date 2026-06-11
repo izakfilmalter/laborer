@@ -102,6 +102,18 @@ async function retryOnInitializing<T>(
   return undefined
 }
 
+/** Payload for the reconciliation spawn function. */
+interface SpawnPayload {
+  /**
+   * Spawn intent persisted on the layout leaf (e.g. `opencode`).
+   * Passing it through preserves the pane's identity: an agent pane
+   * respawns as a fresh agent CLI, never silently as a plain shell
+   * (ADR 0003).
+   */
+  readonly command?: string | undefined
+  readonly workspaceId: string
+}
+
 /**
  * Spawn a terminal for a workspace, retrying with exponential backoff
  * when the error indicates the server is still initializing.
@@ -110,15 +122,16 @@ async function retryOnInitializing<T>(
  * reconciliation spawn path.
  */
 function spawnWithRetry(
-  workspaceId: string,
-  spawnFn: (payload: { workspaceId: string }) => Promise<SpawnResult>,
+  payload: SpawnPayload,
+  spawnFn: (payload: SpawnPayload) => Promise<SpawnResult>,
   options?: SpawnRetryOptions
 ): Promise<SpawnResult | undefined> {
-  return retryOnInitializing(() => spawnFn({ workspaceId }), options)
+  return retryOnInitializing(() => spawnFn(payload), options)
 }
 
 /** A stale leaf that needs its terminal respawned. */
 interface StaleLeaf {
+  readonly command?: string | undefined
   readonly terminalId?: string | undefined
   readonly workspaceId?: string | undefined
 }
@@ -138,7 +151,7 @@ interface RespawnStaleTerminalsArgs {
     workspaceId: string
   ) => void
   /** The spawn function (typically the terminal.spawn RPC mutation). */
-  readonly spawnFn: (payload: { workspaceId: string }) => Promise<SpawnResult>
+  readonly spawnFn: (payload: SpawnPayload) => Promise<SpawnResult>
   /** Options for controlling retry behaviour. */
   readonly spawnRetryOptions?: SpawnRetryOptions
   /** Stale leaves collected from the persisted layout. */
@@ -176,7 +189,11 @@ async function respawnStaleTerminals(
       continue
     }
 
-    const result = await spawnWithRetry(wsId, spawnFn, spawnRetryOptions)
+    const result = await spawnWithRetry(
+      { command: leaf.command, workspaceId: wsId },
+      spawnFn,
+      spawnRetryOptions
+    )
     if (result) {
       respawnedIds.set(termId, result.id)
       onTerminalSpawned?.(result, wsId)
@@ -281,4 +298,10 @@ export {
   retryOnInitializing,
   spawnWithRetry,
 }
-export type { SpawnGuard, SpawnResult, SpawnRetryOptions, StaleLeaf }
+export type {
+  SpawnGuard,
+  SpawnPayload,
+  SpawnResult,
+  SpawnRetryOptions,
+  StaleLeaf,
+}

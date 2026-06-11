@@ -717,7 +717,9 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     assert.deepStrictEqual(terminal?.args, ['hello', 'world'])
   })
 
-  it('kills orphaned spawned terminals after grace period expires', async () => {
+  it('kills never-claimed spawned terminals after the orphan grace period expires', async () => {
+    // NOTE: the orphan countdown is process-time based with 1s resolution,
+    // so a 300ms grace rounds up to one 1s tick.
     await withGracePeriod(300, async (runLocalEffect) => {
       const terminal = await runLocalEffect(
         Effect.gen(function* () {
@@ -732,7 +734,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         })
       )
 
-      await delay(700)
+      await delay(1600)
 
       const terminals = await runLocalEffect(
         Effect.gen(function* () {
@@ -744,6 +746,47 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       assert.strictEqual(
         terminals.find((t) => t.id === terminal.id)?.status,
         'stopped'
+      )
+    })
+  })
+
+  it('does not reap restored terminals even when never re-claimed (ADR 0003)', async () => {
+    await withGracePeriod(300, async (runLocalEffect) => {
+      const terminal = await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.spawn({
+            command: 'cat',
+            cwd: TEST_CWD,
+            cols: 80,
+            rows: 24,
+            workspaceId: TEST_WORKSPACE_ID,
+            restored: true,
+          })
+        })
+      )
+
+      // Far past the grace window — a restored terminal must stay alive
+      // while it waits to be re-adopted by the renderer.
+      await delay(1600)
+
+      const terminals = await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.listTerminals()
+        })
+      )
+
+      assert.strictEqual(
+        terminals.find((t) => t.id === terminal.id)?.status,
+        'running'
+      )
+
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminal.id)
+        })
       )
     })
   })
@@ -812,7 +855,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     })
   })
 
-  it('kills terminal after last subscriber disconnects and grace expires', async () => {
+  it('keeps a claimed terminal running after the last subscriber disconnects (detached terminals are never reaped)', async () => {
     await withGracePeriod(300, async (runLocalEffect) => {
       const terminal = await runLocalEffect(
         Effect.gen(function* () {
@@ -842,7 +885,9 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         })
       )
 
-      await delay(700)
+      // Far past the grace window. The terminal was claimed once, so it
+      // is detached — not orphaned — and must keep running (ADR 0003).
+      await delay(1600)
 
       const terminals = await runLocalEffect(
         Effect.gen(function* () {
@@ -853,7 +898,14 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
       assert.strictEqual(
         terminals.find((t) => t.id === terminal.id)?.status,
-        'stopped'
+        'running'
+      )
+
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminal.id)
+        })
       )
     })
   })

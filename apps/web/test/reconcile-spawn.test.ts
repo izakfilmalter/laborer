@@ -110,7 +110,7 @@ describe('spawnWithRetry', () => {
         status: 'running',
       })
 
-    const result = await spawnWithRetry('ws-1', spawnFn, {
+    const result = await spawnWithRetry({ workspaceId: 'ws-1' }, spawnFn, {
       maxRetries: 5,
       baseDelayMs: 0, // no real delay in tests
     })
@@ -132,7 +132,7 @@ describe('spawnWithRetry', () => {
     )
     const spawnFn = vi.fn().mockRejectedValue(initError)
 
-    const result = await spawnWithRetry('ws-1', spawnFn, {
+    const result = await spawnWithRetry({ workspaceId: 'ws-1' }, spawnFn, {
       maxRetries: 2,
       baseDelayMs: 0,
     })
@@ -147,7 +147,7 @@ describe('spawnWithRetry', () => {
       .fn()
       .mockRejectedValueOnce(new Error('Something else went wrong'))
 
-    const result = await spawnWithRetry('ws-1', spawnFn, {
+    const result = await spawnWithRetry({ workspaceId: 'ws-1' }, spawnFn, {
       maxRetries: 5,
       baseDelayMs: 0,
     })
@@ -164,7 +164,7 @@ describe('spawnWithRetry', () => {
       status: 'running',
     })
 
-    const result = await spawnWithRetry('ws-1', spawnFn, {
+    const result = await spawnWithRetry({ workspaceId: 'ws-1' }, spawnFn, {
       maxRetries: 5,
       baseDelayMs: 0,
     })
@@ -310,6 +310,45 @@ describe('respawnStaleTerminals', () => {
     expect(respawnedIds.get('term-ok-2')).toBe('new-ws-ok-2')
     // Failed mapping does not exist
     expect(respawnedIds.has('term-fail')).toBe(false)
+  })
+
+  it('passes the persisted spawn intent through to the spawn function (ADR 0003)', async () => {
+    const staleLeaves = [
+      {
+        command: 'opencode',
+        workspaceId: 'ws-agent',
+        terminalId: 'term-agent',
+      },
+      { workspaceId: 'ws-shell', terminalId: 'term-shell' },
+    ]
+
+    const spawnFn = vi
+      .fn()
+      .mockImplementation((payload: { workspaceId: string }) =>
+        Promise.resolve({
+          id: `new-${payload.workspaceId}`,
+          command: '/bin/zsh',
+          status: 'running',
+        })
+      )
+
+    await respawnStaleTerminals({
+      staleLeaves,
+      spawnFn,
+      liveIds: new Set<string>(),
+      commitReconciledLayouts: vi.fn(),
+      spawnRetryOptions: { maxRetries: 0, baseDelayMs: 0 },
+    })
+
+    // The agent pane respawns as an agent, the shell pane as a shell.
+    expect(spawnFn).toHaveBeenCalledWith({
+      command: 'opencode',
+      workspaceId: 'ws-agent',
+    })
+    expect(spawnFn).toHaveBeenCalledWith({
+      command: undefined,
+      workspaceId: 'ws-shell',
+    })
   })
 
   it('skips leaves without workspaceId or terminalId', async () => {

@@ -46,3 +46,17 @@ _Avoid_: Using "terminal" for the view
 
 **Detached terminal**:
 A terminal no pane is currently viewing. Detached terminals are first-class: agents inside them are expected to continue working at full speed.
+
+**Restored terminal**:
+A terminal the terminal service brought back from persisted state after a restart, keeping its original identity.
+_Avoid_: Respawned terminal (that's a replacement with a new identity)
+
+**Adoption**:
+Re-attaching the UI to a live or restored terminal by its ID after a service restart. The opposite of respawning; adoption is always preferred when the terminal still exists.
+
+**Spawn intent**:
+What a terminal pane is meant to launch (agent CLI or plain shell), persisted with the layout so a replacement terminal keeps the pane's identity.
+
+**Orphan**:
+A freshly spawned terminal that no client ever claimed. Only orphans may be reaped on a timer; a terminal that was claimed once is never an orphan, no matter how long it goes unwatched.
+_Avoid_: Calling detached or restored terminals orphans

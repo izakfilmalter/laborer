@@ -244,12 +244,16 @@ function findEmptyTerminalPaneInTree(node: PanelNode): string | undefined {
  * If a specific paneId is given, assigns to that pane.
  * If no paneId is given, finds an empty pane or splits to create one.
  * Returns the updated layout and the focused pane ID.
+ *
+ * `command` records the pane's spawn intent on the leaf (ADR 0003) so
+ * reconciliation can respawn a dead terminal as what it was.
  */
 function assignTerminalInWorkspace(
   baseLayout: WindowLayout,
   workspaceId: string,
   terminalId: string,
-  paneId: string | undefined
+  paneId: string | undefined,
+  command?: string
 ): { layout: WindowLayout; focusPaneId: string | undefined } {
   if (paneId) {
     const updated = updateWorkspaceTileLeaf(
@@ -262,7 +266,8 @@ function assignTerminalInWorkspace(
           panelLayout: assignTerminalInPanelTree(
             tab.panelLayout,
             paneId,
-            terminalId
+            terminalId,
+            command
           ),
         })),
       })
@@ -285,7 +290,7 @@ function assignTerminalInWorkspace(
     // This handles the case where a workspace tile was added to the layout
     // (via addWorkspaceToTab) but no terminal panel tab was created yet.
     const updated = updateWorkspaceTileLeaf(baseLayout, workspaceId, (leaf) =>
-      addPanelTab(leaf, 'terminal', { terminalId })
+      addPanelTab(leaf, 'terminal', { command, terminalId })
     )
     // Resolve the new pane ID for focus
     const updatedLeaves = getAllWorkspaceTileLeaves(updated)
@@ -318,7 +323,8 @@ function assignTerminalInWorkspace(
                 panelLayout: assignTerminalInPanelTree(
                   tab.panelLayout,
                   emptyPaneId,
-                  terminalId
+                  terminalId,
+                  command
                 ),
               }
             : tab
@@ -340,6 +346,7 @@ function assignTerminalInWorkspace(
 
   const oldTree = activePTab.panelLayout
   const newTree = splitPaneInTree(oldTree, lastPaneId, 'vertical', {
+    command,
     paneType: 'terminal',
     terminalId,
     workspaceId,
@@ -557,8 +564,11 @@ export function usePanelLayout() {
   // gets immediately usable terminals instead of empty panes or error
   // states. Panes without a workspaceId (or where the spawn fails) fall
   // back to the EmptyTerminalPane CTA.
-  const { terminals: liveTerminals, isLoading: terminalsLoading } =
-    useTerminalList()
+  const {
+    terminals: liveTerminals,
+    isLoading: terminalsLoading,
+    serviceStatus: terminalServiceStatus,
+  } = useTerminalList()
   // Use an independent spawner so concurrent spawns for different panes
   // don't interrupt each other. The mutation atom (AtomResultFn) operates
   // in "latest-wins" mode — calling it a second time interrupts the first
@@ -674,6 +684,19 @@ export function usePanelLayout() {
       return
     }
 
+    // Adoption before respawn (ADR 0003): staleness can only be judged
+    // against a SUCCESSFUL terminal.list from a healthy service. During
+    // a terminal-service restart the list fails or is empty, and treating
+    // that as "everything is stale" would respawn replacements while the
+    // service is restoring the originals — orphaning them. Render the
+    // persisted layout untouched and wait; panes re-attach by ID when the
+    // restored terminals appear, and this effect re-runs when the service
+    // becomes available (hasReconciled stays false until then).
+    if (terminalServiceStatus !== 'available') {
+      setIsReconciling(false)
+      return
+    }
+
     const liveIds = new Set(liveTerminals.map((t) => t.id))
     const staleLeavesToRespawn = collectStaleLeaves(liveIds)
 
@@ -718,6 +741,7 @@ export function usePanelLayout() {
     })
   }, [
     terminalsLoading,
+    terminalServiceStatus,
     liveTerminals,
     persistedWindowLayout,
     collectStaleLeaves,
@@ -871,11 +895,16 @@ export function usePanelLayout() {
       // Use the spawn guard to prevent concurrent spawns for the same
       // pane. If a spawn is already in-flight for newPaneId, this is a
       // no-op. Follows VS Code's _isTerminalBeingCreated pattern.
+      // The requested command is captured so it can be persisted on the
+      // pane leaf as spawn intent (ADR 0003).
+      let requestedCommand: string | undefined
       paneSpawnGuard
         .run(newPaneId, async () => {
-          const command = await resolveCommand()
+          requestedCommand = await resolveCommand()
           return retryOnInitializing(() =>
-            spawnTerminal({ payload: { workspaceId: wsId, command } })
+            spawnTerminal({
+              payload: { workspaceId: wsId, command: requestedCommand },
+            })
           )
         })
         .then((result) => {
@@ -919,7 +948,8 @@ export function usePanelLayout() {
                 panelLayout: assignTerminalInPanelTree(
                   tab.panelLayout,
                   newPaneId,
-                  result.id
+                  result.id,
+                  requestedCommand
                 ),
               })),
             })
@@ -1017,11 +1047,16 @@ export function usePanelLayout() {
           }
         }
 
+        // Captured so the spawn intent can be persisted on the pane leaf
+        // (ADR 0003).
+        let requestedCommand: string | undefined
         paneSpawnGuard
           .run(paneId, async () => {
-            const command = await resolveCommand()
+            requestedCommand = await resolveCommand()
             return retryOnInitializing(() =>
-              spawnTerminal({ payload: { workspaceId: wsId, command } })
+              spawnTerminal({
+                payload: { workspaceId: wsId, command: requestedCommand },
+              })
             )
           })
           .then((result) => {
@@ -1057,7 +1092,8 @@ export function usePanelLayout() {
                   panelLayout: assignTerminalInPanelTree(
                     tab.panelLayout,
                     paneId,
-                    result.id
+                    result.id,
+                    requestedCommand
                   ),
                 })),
               })
@@ -1823,11 +1859,16 @@ export function usePanelLayout() {
 
         // Use the spawn guard to prevent concurrent spawns for the same
         // pane. Follows VS Code's _isTerminalBeingCreated pattern.
+        // The requested command is captured so it can be persisted on the
+        // pane leaf as spawn intent (ADR 0003).
+        let requestedCommand: string | undefined
         paneSpawnGuard
           .run(paneId, async () => {
-            const command = await resolveCommand()
+            requestedCommand = await resolveCommand()
             return retryOnInitializing(() =>
-              spawnTerminal({ payload: { workspaceId, command } })
+              spawnTerminal({
+                payload: { workspaceId, command: requestedCommand },
+              })
             )
           })
           .then((result) => {
@@ -1872,7 +1913,8 @@ export function usePanelLayout() {
               currentWindowLayout,
               workspaceId,
               result.id,
-              paneId
+              paneId,
+              requestedCommand
             )
             commitPanelTabLayout('panel-tab-terminal-assigned', updated)
           })

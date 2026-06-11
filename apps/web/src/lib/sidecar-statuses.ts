@@ -23,6 +23,7 @@ type ServiceState =
   | { readonly state: 'unknown' }
   | { readonly state: 'starting' }
   | { readonly state: 'healthy' }
+  | { readonly state: 'unresponsive' }
   | { readonly state: 'crashed'; readonly error: string }
   | { readonly state: 'restarting'; readonly delayMs: number }
 
@@ -49,6 +50,10 @@ function deriveSidecarStatuses(
       }
       case 'healthy': {
         statuses[event.name] = { state: 'healthy' }
+        break
+      }
+      case 'unresponsive': {
+        statuses[event.name] = { state: 'unresponsive' }
         break
       }
       case 'crashed': {
@@ -95,7 +100,8 @@ function getStatusColor(state: ServiceState): StatusColor {
       return 'green'
     }
     case 'starting':
-    case 'restarting': {
+    case 'restarting':
+    case 'unresponsive': {
       return 'yellow'
     }
     case 'crashed': {
@@ -121,6 +127,9 @@ function getStatusLabel(state: ServiceState): string {
     }
     case 'healthy': {
       return 'Healthy'
+    }
+    case 'unresponsive': {
+      return 'Unresponsive — click to restart'
     }
     case 'crashed': {
       return `Crashed: ${state.error}`
@@ -148,9 +157,16 @@ const CORE_SIDECAR_NAMES: readonly SidecarName[] = [
 /**
  * Check whether all core services (server, terminal, file-watcher) are healthy.
  * Returns false if any core service is not in the `healthy` state.
+ *
+ * `unresponsive` counts as healthy: it is an advisory heartbeat signal
+ * (ADR 0003) — the process is alive, ports are intact, and it self-heals.
+ * Gating the UI on it would block the app during transient stalls.
  */
 function areCoreServicesHealthy(statuses: SidecarStatuses): boolean {
-  return CORE_SIDECAR_NAMES.every((name) => statuses[name].state === 'healthy')
+  return CORE_SIDECAR_NAMES.every((name) => {
+    const { state } = statuses[name]
+    return state === 'healthy' || state === 'unresponsive'
+  })
 }
 
 /**

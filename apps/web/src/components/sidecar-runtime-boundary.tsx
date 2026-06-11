@@ -52,7 +52,20 @@ export function SidecarRuntimeBoundary({
         `[sidecar-boundary] ${status.name}: ${String(previousState)} → ${status.state}`
       )
 
-      if (previousState === 'healthy' && status.state !== 'healthy') {
+      // `unresponsive` is advisory (ADR 0003): the process is alive, its
+      // MessagePorts are intact, and it self-heals on the next heartbeat.
+      // It must never mark the service for recovery — bumping the
+      // generation when it heals would needlessly wipe terminal state.
+      if (status.state === 'unresponsive') {
+        return
+      }
+
+      // The service was up (healthy or merely unresponsive) and is now
+      // actually down (crashed / restarting / starting). Mark it so the
+      // next `healthy` bumps the generation and acquires fresh ports.
+      const wasUp =
+        previousState === 'healthy' || previousState === 'unresponsive'
+      if (wasUp && status.state !== 'healthy') {
         console.log(
           `[sidecar-boundary] ${status.name} went unhealthy — marking for recovery`
         )

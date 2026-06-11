@@ -15,6 +15,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
+import { getDesktopBridge } from '@/lib/desktop'
 import {
   ALL_SIDECAR_NAMES,
   getDisplayName,
@@ -54,6 +55,19 @@ function shouldPulse(state: ServiceState): boolean {
   return state.state === 'starting' || state.state === 'restarting'
 }
 
+/**
+ * Restart an unresponsive sidecar via the desktop bridge.
+ * Mirrors VS Code's "Pty Host is unresponsive… click to restart"
+ * status bar affordance (ADR 0003).
+ */
+function restartUnresponsiveSidecar(name: SidecarName): void {
+  getDesktopBridge()
+    ?.restartSidecar(name)
+    .catch((error: unknown) => {
+      console.error(`[service-pills] Failed to restart ${name}:`, error)
+    })
+}
+
 /** A single service status pill with a colored dot, name, and tooltip. */
 function ServicePill({
   name,
@@ -66,38 +80,57 @@ function ServicePill({
   const displayName = getDisplayName(name)
   const label = getStatusLabel(serviceState)
   const pulsing = shouldPulse(serviceState)
+  const isUnresponsive = serviceState.state === 'unresponsive'
+
+  const pillContent = (
+    <>
+      <span aria-hidden="true" className="relative inline-flex size-2">
+        {pulsing && (
+          <span
+            className={cn(
+              'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+              DOT_COLOR_CLASSES[color]
+            )}
+          />
+        )}
+        <span
+          className={cn(
+            'relative inline-flex size-2 rounded-full',
+            DOT_COLOR_CLASSES[color]
+          )}
+        />
+      </span>
+      {displayName}
+    </>
+  )
+
+  const pillClassName = cn(
+    'inline-flex items-center gap-1.5 border px-2 py-0.5 text-xs',
+    TEXT_COLOR_CLASSES[color],
+    BORDER_COLOR_CLASSES[color],
+    isUnresponsive && 'cursor-pointer'
+  )
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <span
-            className={cn(
-              'inline-flex items-center gap-1.5 border px-2 py-0.5 text-xs',
-              TEXT_COLOR_CLASSES[color],
-              BORDER_COLOR_CLASSES[color]
-            )}
-            data-testid={`service-pill-${name}`}
-          />
+          isUnresponsive ? (
+            <button
+              className={pillClassName}
+              data-testid={`service-pill-${name}`}
+              onClick={() => restartUnresponsiveSidecar(name)}
+              type="button"
+            />
+          ) : (
+            <span
+              className={pillClassName}
+              data-testid={`service-pill-${name}`}
+            />
+          )
         }
       >
-        <span aria-hidden="true" className="relative inline-flex size-2">
-          {pulsing && (
-            <span
-              className={cn(
-                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                DOT_COLOR_CLASSES[color]
-              )}
-            />
-          )}
-          <span
-            className={cn(
-              'relative inline-flex size-2 rounded-full',
-              DOT_COLOR_CLASSES[color]
-            )}
-          />
-        </span>
-        {displayName}
+        {pillContent}
       </TooltipTrigger>
       <TooltipContent>
         {displayName} — {label}

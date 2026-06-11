@@ -139,6 +139,7 @@ function splitPaneRecursive(
     const newPane: LeafNode = {
       _tag: 'LeafNode',
       id: generateId('pane'),
+      command: newPaneContent?.command,
       paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
       terminalId: newPaneContent?.terminalId,
       workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
@@ -165,6 +166,7 @@ function splitPaneRecursive(
         const newPane: LeafNode = {
           _tag: 'LeafNode',
           id: generateId('pane'),
+          command: newPaneContent?.command,
           paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
           terminalId: newPaneContent?.terminalId,
           workspaceId: newPaneContent?.workspaceId ?? targetChild.workspaceId,
@@ -333,20 +335,26 @@ function findNewLeafAfterSplit(
  * Recursively walks the tree and replaces the `terminalId` on the leaf
  * whose `id` matches `paneId`. Returns the original tree unchanged
  * (referential equality) if no matching leaf is found.
+ *
+ * When `command` is provided it is recorded on the leaf as the pane's
+ * spawn intent (ADR 0003) so reconciliation can respawn a dead terminal
+ * as what it was (e.g. an agent CLI) instead of a plain shell. Passing
+ * `undefined` clears any previous intent — the pane now hosts a shell.
  */
 function assignTerminal(
   node: PanelNode,
   paneId: string,
-  terminalId: string
+  terminalId: string,
+  command?: string
 ): PanelNode {
   if (node._tag === 'LeafNode') {
     if (node.id === paneId) {
-      return { ...node, terminalId }
+      return { ...node, terminalId, command }
     }
     return node
   }
   const newChildren = node.children.map((child) =>
-    assignTerminal(child, paneId, terminalId)
+    assignTerminal(child, paneId, terminalId, command)
   )
   // Only create a new object if something changed
   if (newChildren.every((child, i) => child === node.children[i])) {

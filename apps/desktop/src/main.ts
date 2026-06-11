@@ -1,7 +1,7 @@
 import { watch } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, powerMonitor, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { resolveDesktopAppName } from './app-name.js'
 import {
   broadcastUpdateStateToWindow,
@@ -459,15 +459,10 @@ app
     // startup detection, crash recovery, and status events.
     lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher', 'mcp'])
 
-    // Pause heartbeat monitoring when the system sleeps so stale
-    // timestamps don't trigger false-positive crash detections on wake.
-    // `powerMonitor` is only available after `app.whenReady()`.
-    powerMonitor.on('suspend', () => {
-      lifecycleMonitor?.handleSuspend()
-    })
-    powerMonitor.on('resume', () => {
-      lifecycleMonitor?.handleResume()
-    })
+    // No powerMonitor suspend/resume wiring is needed for heartbeats:
+    // the lifecycle monitor counts awake time (process-time countdowns),
+    // so OS sleep — including DarkWake, which emits no suspend/resume —
+    // can never advance a heartbeat timeout (ADR 0003).
 
     // In dev mode, watch sidecar dist directories for changes and auto-restart
     // utility processes. `tsdown --watch` rebuilds dist/utility-main.mjs on

@@ -214,6 +214,9 @@ function setupSessionPersistence(
             cols: saved.cols,
             rows: saved.rows,
             workspaceId: saved.workspaceId,
+            // Exempt from the orphan leak-guard (ADR 0003): restored
+            // terminals wait to be re-adopted, however long that takes.
+            restored: true,
           })
         )
 

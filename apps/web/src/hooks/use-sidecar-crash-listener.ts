@@ -86,14 +86,15 @@ function useSidecarCrashListener(): void {
       }
 
       if (status.state === 'healthy') {
-        // Dismiss the error toast if there was one
+        // Only celebrate recovery from an actual crash. `healthy` also
+        // fires on initial startup and on unresponsive→healthy self-heal
+        // (ADR 0003), neither of which warrants a toast.
         const existingId = toastIdsRef.current.get(name)
         if (existingId !== undefined) {
           toast.dismiss(existingId)
           toastIdsRef.current.delete(name)
+          toast.success(`${displayName} service recovered`)
         }
-
-        toast.success(`${displayName} service recovered`)
       }
     })
 

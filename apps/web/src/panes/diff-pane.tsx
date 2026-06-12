@@ -20,7 +20,25 @@
  * 4. Each fetch attempt has a timeout and bounded retries, so pending
  *    always terminates
  * 5. `useTransition` defers expensive FileDiff re-renders
- * 6. Scroll position is preserved across updates
+ *
+ * ## Huge-diff safety (modeled on opencode + t3code)
+ *
+ * Large diffs used to crash the pane: every line of every file was
+ * rendered to the DOM and highlighted on the main thread. Three layers
+ * now bound the work:
+ *
+ * 1. **Virtualization** — the file list is wrapped in Pierre's
+ *    `Virtualizer`, which switches every `FileDiff` to
+ *    `VirtualizedFileDiff` (IntersectionObserver windowing; off-screen
+ *    content becomes sized buffer placeholders)
+ * 2. **Worker pool** — `DiffWorkerPoolProvider` moves shiki syntax
+ *    highlighting off the main thread
+ * 3. **Per-file gates** — files with more than
+ *    {@link MAX_DIFF_CHANGED_LINES} changed lines render a placeholder
+ *    with a "Render anyway" button (opencode-style); files whose patch
+ *    exceeds {@link LARGE_PATCH_BYTES} render without intra-line word
+ *    diffs; server-truncated entries render an inert notice instead of
+ *    being silently dropped
  *
  * ## Click-to-open file (Issue #112)
  *
@@ -45,7 +63,7 @@ import {
 import type { FileDiffEntry } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
-import { FileDiff } from '@pierre/diffs/react'
+import { FileDiff, Virtualizer } from '@pierre/diffs/react'
 import { Cause, Effect, Option, Schedule } from 'effect'
 import {
   ExternalLink,
@@ -63,6 +81,7 @@ import {
   useTransition,
 } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { DiffWorkerPoolProvider } from '@/components/diff-worker-pool-provider'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import {
@@ -164,6 +183,44 @@ const FILE_DIFF_OPTIONS_UNIFIED = {
   overflow: 'wrap' as const,
 }
 
+/**
+ * Degraded options for huge patches: intra-line word diffing is O(n*m)
+ * per changed line pair and dominates render cost on large files.
+ * Mirrors opencode's `largeOptions` (`lineDiffType: "none"`).
+ */
+const FILE_DIFF_OPTIONS_SPLIT_PLAIN = {
+  ...FILE_DIFF_OPTIONS_SPLIT,
+  lineDiffType: 'none' as const,
+}
+
+const FILE_DIFF_OPTIONS_UNIFIED_PLAIN = {
+  ...FILE_DIFF_OPTIONS_UNIFIED,
+  lineDiffType: 'none' as const,
+}
+
+/**
+ * Files with more changed lines than this render a placeholder with a
+ * "Render anyway" button instead of the diff. Same threshold opencode
+ * uses (`MAX_DIFF_CHANGED_LINES = 500` in session-review.tsx).
+ */
+const MAX_DIFF_CHANGED_LINES = 500
+
+/**
+ * Patches larger than this render without intra-line word diffs.
+ * Matches opencode's 500KB degradation threshold.
+ */
+const LARGE_PATCH_BYTES = 500_000
+
+/**
+ * Virtualizer windowing config, borrowed from t3code's DiffPanel:
+ * observe 1200px beyond the viewport and keep 600px of overscroll
+ * rendered so fast scrolling doesn't flash empty buffers.
+ */
+const VIRTUALIZER_CONFIG = {
+  overscrollSize: 600,
+  intersectionObserverMargin: 1200,
+}
+
 const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
 
@@ -193,6 +250,16 @@ const hasRelevantWatcherEvent = (
 interface DiffPaneProps {
   readonly onClose?: (() => void) | undefined
   readonly workspaceId: string
+}
+
+/**
+ * A changed file ready for rendering. `fileDiff` is `null` when the
+ * server omitted the patch because it exceeded the size budget
+ * (`entry.truncated`) — those render an inert placeholder.
+ */
+interface RenderableFileDiff {
+  readonly entry: FileDiffEntry
+  readonly fileDiff: FileDiffMetadata | null
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +346,74 @@ function DiffPaneError({
   )
 }
 
+/**
+ * Shared stats line for diff placeholders: path plus +added/−removed.
+ */
+function DiffPlaceholderStats({ entry }: { readonly entry: FileDiffEntry }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="truncate font-mono text-foreground text-xs">
+        {entry.path}
+      </span>
+      <span className="shrink-0 text-xs">
+        <span className="text-green-500">+{entry.added}</span>{' '}
+        <span className="text-red-500">-{entry.removed}</span>
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Rendered instead of a FileDiff when the file has more than
+ * {@link MAX_DIFF_CHANGED_LINES} changed lines. Opting in via "Render
+ * anyway" is per-file and survives watcher-driven refreshes.
+ */
+function LargeDiffPlaceholder({
+  entry,
+  onRender,
+}: {
+  readonly entry: FileDiffEntry
+  readonly onRender: () => void
+}) {
+  return (
+    <div className="m-2 flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <DiffPlaceholderStats entry={entry} />
+        <span className="text-muted-foreground text-xs">
+          Large diff — skipped to keep the app responsive.
+        </span>
+      </div>
+      <Button onClick={onRender} size="sm" variant="outline">
+        Render anyway
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * Rendered when the server omitted the patch entirely because it
+ * exceeded the per-file or total byte budget (`entry.truncated`).
+ * There is nothing to render anyway — the patch never left the server.
+ */
+function TruncatedDiffPlaceholder({
+  entry,
+}: {
+  readonly entry: FileDiffEntry
+}) {
+  return (
+    <div className="m-2 flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <DiffPlaceholderStats entry={entry} />
+        <span className="text-muted-foreground text-xs">
+          Diff exceeds the size budget and was not loaded. Open the file in the
+          editor to inspect it.
+        </span>
+      </div>
+      <TriangleAlert className="size-4 shrink-0 text-muted-foreground" />
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Custom hook: useDiffStore — manages fetching + invalidation of diffs
 // ---------------------------------------------------------------------------
@@ -289,7 +424,7 @@ interface DiffStoreResult {
   readonly errorMessage: string | null
   /** True only when there is no data and no terminal error yet. */
   readonly loading: boolean
-  readonly orderedFileDiffs: readonly FileDiffMetadata[]
+  readonly orderedFileDiffs: readonly RenderableFileDiff[]
   readonly refresh: () => void
 }
 
@@ -371,12 +506,19 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
 
   // --- Build ordered list ---
   const orderedFileDiffs = useMemo(() => {
-    const parsed: FileDiffMetadata[] = []
+    const parsed: RenderableFileDiff[] = []
     for (const entry of changedFiles) {
       const fileDiff = parseFileDiffEntry(entry)
       if (fileDiff) {
-        parsed.push(fileDiff)
+        parsed.push({ entry, fileDiff })
+      } else if (entry.truncated) {
+        // Patch omitted by the server-side size budget — keep the
+        // entry so the user sees why the file is missing instead of
+        // it silently disappearing.
+        parsed.push({ entry, fileDiff: null })
       }
+      // Entries with no patch and truncated=false are binary files —
+      // skipped, matching previous behavior.
     }
     return parsed
   }, [changedFiles])
@@ -422,6 +564,9 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
   const diffOptions = useUnified
     ? FILE_DIFF_OPTIONS_UNIFIED
     : FILE_DIFF_OPTIONS_SPLIT
+  const plainDiffOptions = useUnified
+    ? FILE_DIFF_OPTIONS_UNIFIED_PLAIN
+    : FILE_DIFF_OPTIONS_SPLIT_PLAIN
 
   // --- Deferred rendering ---
   const [isTransitionPending, startTransition] = useTransition()
@@ -433,20 +578,17 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     })
   }, [orderedFileDiffs])
 
-  // --- Scroll position preservation ---
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const savedScrollTopRef = useRef(0)
+  // --- Per-file "Render anyway" opt-ins for large diffs ---
+  const [forcedPaths, setForcedPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  )
 
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) {
-      return
-    }
-    const observer = new MutationObserver(() => {
-      container.scrollTop = savedScrollTopRef.current
+  const forceRenderPath = useCallback((path: string) => {
+    setForcedPaths((prev) => {
+      const next = new Set(prev)
+      next.add(path)
+      return next
     })
-    observer.observe(container, { childList: true, subtree: true })
-    return () => observer.disconnect()
   }, [])
 
   // --- "Updated" flash indicator ---
@@ -518,32 +660,23 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     [handleOpenFile]
   )
 
-  const handleScroll = useCallback(() => {
-    const container = scrollContainerRef.current
-    if (container) {
-      savedScrollTopRef.current = container.scrollTop
-    }
-  }, [])
-
   // --- Cross-pane diff scroll ---
-  const deferredFileDiffsRef = useRef(deferredFileDiffs)
-  deferredFileDiffsRef.current = deferredFileDiffs
-
+  // File wrappers carry `data-diff-file-path`; resolve by attribute
+  // comparison instead of child index because the Virtualizer inserts
+  // its own content wrapper between the scroll root and the files.
   useOnDiffScrollRequest(
     workspaceId,
     useCallback((target: { file: string; line: number }) => {
-      const container = scrollContainerRef.current
+      const container = containerRef.current
       if (!container) {
         return
       }
-      const fileDiffsList = deferredFileDiffsRef.current
-      const fileIndex = fileDiffsList.findIndex((fd) => fd.name === target.file)
-      if (fileIndex === -1) {
-        return
-      }
-      const fileElement = container.children[fileIndex]
-      if (fileElement) {
-        fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const fileElements = container.querySelectorAll('[data-diff-file-path]')
+      for (const fileElement of fileElements) {
+        if (fileElement.getAttribute('data-diff-file-path') === target.file) {
+          fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          return
+        }
       }
     }, [])
   )
@@ -630,21 +763,48 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
         </div>
       )}
 
-      <div
-        className="min-h-0 flex-1 select-text overflow-y-auto overflow-x-hidden"
-        data-pane-text-selectable
-        onScroll={handleScroll}
-        ref={scrollContainerRef}
-      >
-        {deferredFileDiffs.map((fileDiffMeta, index) => (
-          <FileDiff
-            className="select-text"
-            fileDiff={fileDiffMeta}
-            key={fileDiffMeta.name ?? index}
-            options={diffOptions}
-            renderHeaderMetadata={renderHeaderMetadata}
-          />
-        ))}
+      <div className="min-h-0 flex-1" data-pane-text-selectable>
+        <Virtualizer
+          className="h-full select-text overflow-y-auto overflow-x-hidden"
+          config={VIRTUALIZER_CONFIG}
+        >
+          {deferredFileDiffs.map(({ entry, fileDiff }) => {
+            if (fileDiff === null) {
+              return (
+                <div data-diff-file-path={entry.path} key={entry.path}>
+                  <TruncatedDiffPlaceholder entry={entry} />
+                </div>
+              )
+            }
+
+            const changedLines = entry.added + entry.removed
+            const tooLarge =
+              changedLines > MAX_DIFF_CHANGED_LINES &&
+              !forcedPaths.has(entry.path)
+            if (tooLarge) {
+              return (
+                <div data-diff-file-path={entry.path} key={entry.path}>
+                  <LargeDiffPlaceholder
+                    entry={entry}
+                    onRender={() => forceRenderPath(entry.path)}
+                  />
+                </div>
+              )
+            }
+
+            const hugePatch = (entry.patch?.length ?? 0) > LARGE_PATCH_BYTES
+            return (
+              <div data-diff-file-path={entry.path} key={entry.path}>
+                <FileDiff
+                  className="select-text"
+                  fileDiff={fileDiff}
+                  options={hugePatch ? plainDiffOptions : diffOptions}
+                  renderHeaderMetadata={renderHeaderMetadata}
+                />
+              </div>
+            )
+          })}
+        </Virtualizer>
       </div>
     </div>
   )
@@ -661,7 +821,11 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
     return <DiffPaneLoading onClose={onClose} />
   }
 
-  return <DiffPaneContent onClose={onClose} workspaceId={workspaceId} />
+  return (
+    <DiffWorkerPoolProvider>
+      <DiffPaneContent onClose={onClose} workspaceId={workspaceId} />
+    </DiffWorkerPoolProvider>
+  )
 }
 
 export { DiffPane }

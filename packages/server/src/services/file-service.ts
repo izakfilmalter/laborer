@@ -563,11 +563,15 @@ const deduplicateStatusResults = (
 // t3code's review diff preview.
 
 /**
- * Full-file context so patches include the entire file, matching the
- * previous `structuredPatch(..., { context: Infinity })` behavior.
- * Same value opencode uses as its default patch context.
+ * Context lines around each hunk. Previously this was effectively
+ * `Infinity` (full-file context), which made every patch contain the
+ * entire file — a one-line edit to a 20k-line file produced a 20k-line
+ * patch that the diff viewer then parsed, highlighted, and rendered in
+ * full. A bounded context keeps patches proportional to the actual
+ * change; untracked (new) files still ship in full since every line is
+ * an addition.
  */
-const PATCH_CONTEXT_LINES = 2_147_483_647
+const PATCH_CONTEXT_LINES = 8
 
 /** Per-file patch byte budget — larger patches are omitted + flagged. */
 const MAX_PATCH_BYTES = 10_000_000

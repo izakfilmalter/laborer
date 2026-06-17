@@ -163,8 +163,12 @@ const originBranchExists = (
       const verifyExitCode = await verifyProc.exited
       return verifyExitCode === 0
     },
-    catch: () => false,
-  })
+    catch: () =>
+      new RpcError({
+        message: `Failed to check origin branch existence: ${branchName}`,
+        code: 'GIT_CHECK_FAILED',
+      }),
+  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
 
 const buildWorktreeAddArgs = (params: {
   readonly baseRef?: string | undefined

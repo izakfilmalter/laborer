@@ -247,6 +247,84 @@ describe('LaborerRpcs workspace management', () => {
   )
 
   it.scopedLive(
+    'workspace.create checks out a remote-only branch when it exists on origin',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const { localPath, remotePath } = initRemoteRepo(
+            'rpc-workspace-remote-branch',
+            tempRoots
+          )
+          const colleaguePath = createRemoteClone(
+            remotePath,
+            'rpc-workspace-colleague',
+            tempRoots
+          )
+          const worktreeRoot = createTempDir(
+            'rpc-worktree-root-remote-branch',
+            tempRoots
+          )
+          const branchName = 'feature/colleague-pr'
+
+          writeLaborerConfig(localPath, {
+            devServer: { image: null, provider: 'docker' },
+            setupScripts: [],
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', localPath)
+          git('commit -m "add laborer config"', localPath)
+
+          git(`checkout -b ${branchName}`, colleaguePath)
+          commitFile(colleaguePath, 'colleague.txt', 'from remote branch')
+          git(`push -u origin ${branchName}`, colleaguePath)
+
+          const project = yield* client.project.add({ repoPath: localPath })
+          const workspace = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const row = store.query(
+                tables.workspaces.where('id', workspace.id)
+              )[0]
+              if (row === undefined) {
+                return assert.fail('Workspace row deleted during setup')
+              }
+              if (row.status === 'errored') {
+                return assert.fail(row.errorMessage ?? 'Workspace errored')
+              }
+              if (row.status === 'running') {
+                return
+              }
+            }
+            assert.fail('Timed out waiting for workspace to run')
+          })
+
+          assert.strictEqual(
+            readFileSync(
+              join(workspace.worktreePath, 'colleague.txt'),
+              'utf-8'
+            ),
+            'from remote branch'
+          )
+          assert.strictEqual(
+            git(`rev-parse ${branchName}`, localPath),
+            git(`rev-parse origin/${branchName}`, localPath)
+          )
+        })
+      )
+  )
+
+  it.scopedLive(
     'workspace.create with no sandbox creates only a local worktree',
     () =>
       runWithRpcTestContext(({ client, store }) =>

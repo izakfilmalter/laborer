@@ -106,6 +106,102 @@ const slugify = (branchName: string): string =>
  */
 const logPrefix = 'WorkspaceProvider'
 
+const localBranchExists = (
+  repoPath: string,
+  branchName: string
+): Effect.Effect<boolean, RpcError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = spawn(['git', 'rev-parse', '--verify', branchName], {
+        cwd: repoPath,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      return exitCode === 0
+    },
+    catch: () =>
+      new RpcError({
+        message: `Failed to check branch existence: ${branchName}`,
+        code: 'GIT_CHECK_FAILED',
+      }),
+  })
+
+const originBranchExists = (
+  repoPath: string,
+  branchName: string,
+  remoteBranchRef: string
+): Effect.Effect<boolean> =>
+  Effect.tryPromise({
+    try: async () => {
+      const fetchProc = spawn(
+        [
+          'git',
+          'fetch',
+          'origin',
+          `refs/heads/${branchName}:refs/remotes/${remoteBranchRef}`,
+        ],
+        {
+          cwd: repoPath,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        }
+      )
+      const fetchExitCode = await fetchProc.exited
+      if (fetchExitCode !== 0) {
+        return false
+      }
+
+      const verifyProc = spawn(
+        ['git', 'rev-parse', '--verify', remoteBranchRef],
+        {
+          cwd: repoPath,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        }
+      )
+      const verifyExitCode = await verifyProc.exited
+      return verifyExitCode === 0
+    },
+    catch: () => false,
+  })
+
+const buildWorktreeAddArgs = (params: {
+  readonly baseRef?: string | undefined
+  readonly branchExists: boolean
+  readonly branchName: string
+  readonly remoteBranchExists: boolean
+  readonly remoteBranchRef: string
+  readonly worktreePath: string
+}): string[] => {
+  if (params.branchExists) {
+    return ['git', 'worktree', 'add', params.worktreePath, params.branchName]
+  }
+
+  if (params.remoteBranchExists) {
+    return [
+      'git',
+      'worktree',
+      'add',
+      '--track',
+      '-b',
+      params.branchName,
+      params.worktreePath,
+      params.remoteBranchRef,
+    ]
+  }
+
+  return [
+    'git',
+    'worktree',
+    'add',
+    '-b',
+    params.branchName,
+    params.worktreePath,
+    ...(params.baseRef ? [params.baseRef] : []),
+  ]
+}
+
 /**
  * Result of running a single setup script.
  */
@@ -612,23 +708,13 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         Effect.gen(function* () {
           const { id, branchName, repoPath, worktreeDir, worktreePath } = params
 
-          // Check if a branch with this name already exists
-          const branchExists = yield* Effect.tryPromise({
-            try: async () => {
-              const proc = spawn(['git', 'rev-parse', '--verify', branchName], {
-                cwd: repoPath,
-                stdout: 'pipe',
-                stderr: 'pipe',
-              })
-              const exitCode = await proc.exited
-              return exitCode === 0
-            },
-            catch: () =>
-              new RpcError({
-                message: `Failed to check branch existence: ${branchName}`,
-                code: 'GIT_CHECK_FAILED',
-              }),
-          })
+          // Check if a branch with this name already exists locally.
+          const branchExists = yield* localBranchExists(repoPath, branchName)
+
+          const remoteBranchRef = `origin/${branchName}`
+          const remoteBranchExists = branchExists
+            ? false
+            : yield* originBranchExists(repoPath, branchName, remoteBranchRef)
 
           // Signal UI: creating worktree
           store.commit(
@@ -695,20 +781,19 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           }).pipe(Effect.catchAll(() => Effect.void))
 
           // Create the git worktree, reusing the branch if it exists.
+          // If the user typed a branch that only exists on origin, create the
+          // local workspace branch from that remote branch instead of dev/main.
           // New branches start from baseRef when provided (sub-workspaces
           // branch from the parent workspace's HEAD instead of the main
           // checkout's HEAD).
-          const worktreeArgs = branchExists
-            ? ['git', 'worktree', 'add', worktreePath, branchName]
-            : [
-                'git',
-                'worktree',
-                'add',
-                '-b',
-                branchName,
-                worktreePath,
-                ...(params.baseRef ? [params.baseRef] : []),
-              ]
+          const worktreeArgs = buildWorktreeAddArgs({
+            baseRef: params.baseRef,
+            branchExists,
+            branchName,
+            remoteBranchExists,
+            remoteBranchRef,
+            worktreePath,
+          })
 
           const worktreeResult = yield* Effect.tryPromise({
             try: async () => {

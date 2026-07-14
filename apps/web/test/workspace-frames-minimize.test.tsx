@@ -1,14 +1,15 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PanelActions } from '@/panels/panel-context'
+/**
+ * Behavioral tests for workspace minimize handling in WorkspaceFrames.
+ *
+ * Uses the stateful fake in helpers/fake-resizable.tsx which emulates the
+ * react-resizable-panels v4 behaviors that caused the original bugs:
+ * layout resets when the panel set changes, and neighbor-pivot collapse.
+ */
 
-const { panelApis } = vi.hoisted(() => ({
-  panelApis: [] as {
-    collapse: ReturnType<typeof vi.fn>
-    expand: ReturnType<typeof vi.fn>
-    isCollapsed: ReturnType<typeof vi.fn>
-  }[],
-}))
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { PanelActions } from '@/panels/panel-context'
+import { COLLAPSED_PCT } from './helpers/fake-resizable'
 
 vi.mock('@atlaskit/pragmatic-drag-and-drop/element/adapter', () => ({
   draggable: () => () => undefined,
@@ -20,8 +21,8 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
   combine:
     (...cleanups: Array<() => void>) =>
     () => {
-      for (const cleanup of cleanups) {
-        cleanup()
+      for (const cleanupFn of cleanups) {
+        cleanupFn()
       }
     },
 }))
@@ -119,54 +120,14 @@ vi.mock('@/panels/panel-context', () => {
   }
 })
 
-vi.mock('@/components/ui/resizable', () => ({
-  ResizableHandle: () => <div data-testid="resize-handle" />,
-  ResizablePanel: ({
-    children,
-    collapsible,
-    collapsedSize,
-    ...props
-  }: {
-    children: React.ReactNode
-    collapsible?: boolean
-    collapsedSize?: string
-    panelRef?: {
-      current: {
-        collapse: () => void
-        expand: () => void
-        isCollapsed: () => boolean
-      } | null
-    }
-  }) => {
-    const refObject = props.panelRef
-    if (refObject && !refObject.current) {
-      let isCollapsed = false
-      const panelApi = {
-        collapse: vi.fn(() => {
-          isCollapsed = true
-        }),
-        expand: vi.fn(() => {
-          isCollapsed = false
-        }),
-        isCollapsed: vi.fn(() => isCollapsed),
-      }
-      refObject.current = panelApi
-      panelApis.push(panelApi)
-    }
-    return (
-      <div
-        data-collapsed-size={collapsedSize ?? ''}
-        data-collapsible={collapsible ? 'true' : 'false'}
-        data-testid="resizable-panel"
-      >
-        {children}
-      </div>
-    )
-  },
-  ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="resizable-panel-group">{children}</div>
-  ),
-}))
+vi.mock('@/components/ui/resizable', async () => {
+  const fake = await import('./helpers/fake-resizable')
+  return {
+    ResizableHandle: fake.ResizableHandle,
+    ResizablePanel: fake.ResizablePanel,
+    ResizablePanelGroup: fake.ResizablePanelGroup,
+  }
+})
 
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   WorkspaceFrameHeaderContainer: ({
@@ -184,71 +145,70 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   ),
 }))
 
-import type { WorkspaceTileNode } from '@laborer/shared/types'
+import type {
+  WorkspaceTileLeaf,
+  WorkspaceTileNode,
+} from '@laborer/shared/types'
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
-/** Tile layout with two workspace leaves in a vertical split. */
-const tileLayout: WorkspaceTileNode = {
-  _tag: 'WorkspaceTileSplit',
-  id: 'tile-root',
-  direction: 'vertical',
-  children: [
-    {
-      _tag: 'WorkspaceTileLeaf',
-      id: 'tile-leaf-1',
-      workspaceId: 'ws-1',
-      activePanelTabId: 'tab-1',
-      panelTabs: [
-        {
-          id: 'tab-1',
-          panelLayout: {
-            _tag: 'LeafNode',
-            id: 'pane-1',
-            paneType: 'terminal',
-            terminalId: 'term-1',
-            workspaceId: 'ws-1',
-          },
+/** Build a workspace tile leaf with a single terminal panel tab. */
+function makeLeaf(index: number): WorkspaceTileLeaf {
+  return {
+    _tag: 'WorkspaceTileLeaf',
+    id: `tile-leaf-${index}`,
+    workspaceId: `ws-${index}`,
+    activePanelTabId: `tab-${index}`,
+    panelTabs: [
+      {
+        id: `tab-${index}`,
+        panelLayout: {
+          _tag: 'LeafNode',
+          id: `pane-${index}`,
+          paneType: 'terminal',
+          terminalId: `term-${index}`,
+          workspaceId: `ws-${index}`,
         },
-      ],
-    },
-    {
-      _tag: 'WorkspaceTileLeaf',
-      id: 'tile-leaf-2',
-      workspaceId: 'ws-2',
-      activePanelTabId: 'tab-2',
-      panelTabs: [
-        {
-          id: 'tab-2',
-          panelLayout: {
-            _tag: 'LeafNode',
-            id: 'pane-2',
-            paneType: 'terminal',
-            terminalId: 'term-2',
-            workspaceId: 'ws-2',
-          },
-        },
-      ],
-    },
-  ],
-  sizes: [50, 50],
+      },
+    ],
+  }
+}
+
+/** Vertical split of workspace leaves with the given sizes. */
+function makeSplit(sizes: readonly number[]): WorkspaceTileNode {
+  return {
+    _tag: 'WorkspaceTileSplit',
+    id: 'tile-root',
+    direction: 'vertical',
+    children: sizes.map((_, i) => makeLeaf(i + 1)),
+    sizes: [...sizes],
+  }
+}
+
+/** Read the rendered percentage size of the workspace panel at an index. */
+function panelSize(index: number): number {
+  const panels = screen.getAllByTestId('resizable-panel')
+  const el = panels[index]
+  if (!el) {
+    throw new Error(`No panel found at index ${index}`)
+  }
+  return Number.parseFloat(el.getAttribute('data-size') ?? '')
 }
 
 const MINIMIZE_WS_1_RE = /minimize ws-1/i
 const EXPAND_WS_1_RE = /expand ws-1/i
 
-describe('WorkspaceFrames minimize behavior (legacy path)', () => {
-  beforeEach(() => {
-    panelApis.length = 0
-  })
-
+describe('WorkspaceFrames minimize behavior', () => {
   afterEach(() => {
     cleanup()
   })
 
   it('renders workspace panels as collapsible when multiple workspaces are stacked', () => {
     render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
     )
 
     const panels = screen.getAllByTestId('resizable-panel')
@@ -257,61 +217,40 @@ describe('WorkspaceFrames minimize behavior (legacy path)', () => {
     expect(panels[1]?.getAttribute('data-collapsible')).toBe('true')
   })
 
-  it('collapses and re-expands the workspace panel when minimize is toggled', () => {
+  it('collapses the workspace panel to the collapsed size when minimize is clicked', () => {
     render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
     )
 
     fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
-    expect(panelApis[0]?.collapse).toHaveBeenCalledOnce()
 
-    fireEvent.click(screen.getByRole('button', { name: EXPAND_WS_1_RE }))
-    expect(panelApis[0]?.expand).toHaveBeenCalledOnce()
-  })
-})
-
-describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
-  beforeEach(() => {
-    panelApis.length = 0
+    expect(panelSize(0)).toBeCloseTo(COLLAPSED_PCT, 1)
   })
 
-  afterEach(() => {
-    cleanup()
-  })
-
-  it('renders tile leaf panels as collapsible', () => {
+  it('restores the workspace panel size when expand is clicked after minimizing', () => {
     render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
-    )
-
-    const panels = screen.getAllByTestId('resizable-panel')
-    expect(panels).toHaveLength(2)
-    expect(panels[0]?.getAttribute('data-collapsible')).toBe('true')
-    expect(panels[1]?.getAttribute('data-collapsible')).toBe('true')
-  })
-
-  it('collapses the resizable panel when minimize is clicked', () => {
-    render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
-    expect(panelApis[0]?.collapse).toHaveBeenCalledOnce()
-  })
-
-  it('expands the resizable panel when expand is clicked after minimizing', () => {
-    render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
     )
 
     fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
     fireEvent.click(screen.getByRole('button', { name: EXPAND_WS_1_RE }))
-    expect(panelApis[0]?.expand).toHaveBeenCalledOnce()
+
+    expect(panelSize(0)).toBeCloseTo(50, 1)
+    expect(panelSize(1)).toBeCloseTo(50, 1)
   })
 
   it('hides panel content when minimized', () => {
     render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
     )
 
     // Content is initially visible
@@ -328,7 +267,10 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('shows panel content again when expanded after minimizing', () => {
     render(
-      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
     )
 
     const managersBefore = screen.getAllByTestId('panel-manager')
@@ -338,5 +280,56 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
     const managersAfter = screen.getAllByTestId('panel-manager')
     expect(managersAfter).toHaveLength(managersBefore.length)
+  })
+
+  it('keeps a minimized workspace collapsed when a new workspace is added', () => {
+    const { rerender } = render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([50, 50])}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+    expect(panelSize(0)).toBeCloseTo(COLLAPSED_PCT, 1)
+
+    // Adding a workspace changes the resizable group's panel set, which
+    // makes the library rebuild the layout from default sizes. The
+    // minimized workspace must stay collapsed instead of silently
+    // re-occupying space while its content is still hidden.
+    rerender(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([33, 33, 34])}
+      />
+    )
+
+    expect(panelSize(0)).toBeCloseTo(COLLAPSED_PCT, 1)
+    // The freed space is shared by the expanded workspaces proportionally
+    // to their default sizes (33:34).
+    const remaining = 100 - COLLAPSED_PCT
+    expect(panelSize(1)).toBeCloseTo((33 / 67) * remaining, 0)
+    expect(panelSize(2)).toBeCloseTo((34 / 67) * remaining, 0)
+    // ws-1 content stays hidden (header-only).
+    expect(screen.getAllByTestId('panel-manager')).toHaveLength(2)
+  })
+
+  it('distributes freed space across all expanded workspaces when minimizing', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        workspaceTileLayout={makeSplit([40, 35, 25])}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+
+    // ws-1 collapses; its freed space (40 - collapsed) is split between
+    // ws-2 and ws-3 proportionally to their sizes (35:25), not handed
+    // entirely to the adjacent workspace.
+    const remaining = 100 - COLLAPSED_PCT
+    expect(panelSize(0)).toBeCloseTo(COLLAPSED_PCT, 1)
+    expect(panelSize(1)).toBeCloseTo((35 / 60) * remaining, 0)
+    expect(panelSize(2)).toBeCloseTo((25 / 60) * remaining, 0)
   })
 })

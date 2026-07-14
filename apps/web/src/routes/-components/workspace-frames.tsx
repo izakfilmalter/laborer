@@ -12,11 +12,15 @@ import type {
   SplitDirection,
   WorkspaceTileLeaf,
   WorkspaceTileNode,
+  WorkspaceTileSplit,
 } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PanelImperativeHandle } from 'react-resizable-panels'
+import type {
+  GroupImperativeHandle,
+  PanelImperativeHandle,
+} from 'react-resizable-panels'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -50,6 +54,7 @@ import {
   isWorkspaceFrameData,
   WORKSPACE_FRAME_TYPE,
 } from '@/panels/window-layout-utils'
+import { computeMinimizedTargetLayout } from '@/panels/workspace-minimize-layout'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
@@ -574,8 +579,8 @@ function WorkspaceFrame({
   subLayout,
   activePaneId,
   index,
-  isCollapsible = false,
-  panelRef,
+  isMinimized: isMinimizedProp,
+  onToggleMinimize,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
   reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
@@ -586,10 +591,15 @@ function WorkspaceFrame({
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
-  readonly isCollapsible?: boolean | undefined
-  readonly panelRef?:
-    | { readonly current: PanelImperativeHandle | null }
-    | undefined
+  /**
+   * Controlled minimized state. Provided when this frame is a child of a
+   * workspace tile split — the split owns minimize state so it can manage
+   * the resizable group layout. When undefined, the frame manages its own
+   * (header-only) minimized state locally.
+   */
+  readonly isMinimized?: boolean | undefined
+  /** Toggle callback paired with the controlled `isMinimized` prop. */
+  readonly onToggleMinimize?: (() => void) | undefined
   readonly diffWorkspaceIds?: readonly string[]
   readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
@@ -602,8 +612,17 @@ function WorkspaceFrame({
   const isHorizontal = parentDirection === 'horizontal'
   type EdgeType = 'top' | 'bottom' | 'left' | 'right'
   const [closestEdge, setClosestEdge] = useState<EdgeType | null>(null)
-  const [isMinimized, setIsMinimized] = useState(false)
+  const [localMinimized, setLocalMinimized] = useState(false)
+  const isMinimized = isMinimizedProp ?? localMinimized
   const actions = usePanelActions()
+
+  const handleMinimize = useCallback(() => {
+    if (onToggleMinimize) {
+      onToggleMinimize()
+      return
+    }
+    setLocalMinimized((prev) => !prev)
+  }, [onToggleMinimize])
 
   // Check if the active pane belongs to this workspace frame
   const activePaneInFrame = useMemo(
@@ -615,7 +634,7 @@ function WorkspaceFrame({
   // Handle header click: if minimized, expand; otherwise focus the first pane
   const handleHeaderClick = useCallback(() => {
     if (isMinimized) {
-      setIsMinimized(false)
+      handleMinimize()
       return
     }
     // Focus the first leaf pane in this workspace frame
@@ -623,42 +642,7 @@ function WorkspaceFrame({
     if (firstLeaf) {
       actions?.setActivePaneId(firstLeaf)
     }
-  }, [isMinimized, subLayout, actions])
-
-  const handleMinimize = useCallback(() => {
-    setIsMinimized((prev) => !prev)
-  }, [])
-
-  useEffect(() => {
-    if (!isCollapsible) {
-      return
-    }
-
-    const panel = panelRef?.current
-    if (!panel) {
-      return
-    }
-
-    // Panel constraints may not be registered yet when the ResizablePanelGroup
-    // first mounts (e.g. transitioning from 1 to 2+ workspaces). The library
-    // throws synchronously from isCollapsed/collapse/expand in that case.
-    // This is a transient state — React will re-run this effect once the panel
-    // is fully registered.
-    try {
-      if (isMinimized) {
-        if (!panel.isCollapsed()) {
-          panel.collapse()
-        }
-        return
-      }
-
-      if (panel.isCollapsed()) {
-        panel.expand()
-      }
-    } catch {
-      // Panel not yet registered with its group — will retry on next render.
-    }
-  }, [isCollapsible, isMinimized, panelRef])
+  }, [isMinimized, handleMinimize, subLayout, actions])
 
   useEffect(() => {
     const frameEl = frameRef.current
@@ -958,8 +942,8 @@ function WorkspaceTileLeafFrame({
   reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
-  isCollapsible = false,
-  panelRef,
+  isMinimized,
+  onToggleMinimize,
 }: {
   readonly leaf: WorkspaceTileLeaf
   readonly activePaneId: string | null
@@ -968,10 +952,8 @@ function WorkspaceTileLeafFrame({
   readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
-  readonly isCollapsible?: boolean | undefined
-  readonly panelRef?:
-    | { readonly current: PanelImperativeHandle | null }
-    | undefined
+  readonly isMinimized?: boolean | undefined
+  readonly onToggleMinimize?: (() => void) | undefined
 }) {
   // Pass the active panel tab's layout directly to PanelManager.
   // PanelNode types are used throughout — no conversion needed.
@@ -996,8 +978,8 @@ function WorkspaceTileLeafFrame({
       activePaneId={activePaneId}
       diffWorkspaceIds={diffWorkspaceIds}
       index={index}
-      isCollapsible={isCollapsible}
-      panelRef={panelRef}
+      isMinimized={isMinimized}
+      onToggleMinimize={onToggleMinimize}
       parentDirection={parentDirection}
       reviewWorkspaceIds={reviewWorkspaceIds}
       subLayout={subLayout}
@@ -1011,6 +993,10 @@ function WorkspaceTileLeafFrame({
 /**
  * A resizable child for workspace tile rendering.
  * Wraps a workspace tile leaf or a nested tile renderer in a ResizablePanel.
+ *
+ * Leaf children are collapsible: their imperative panel handle is registered
+ * with the parent split group (by tile id) so the group can collapse and
+ * redistribute space when workspaces are minimized.
  */
 function WorkspaceTileResizableChild({
   tileNode,
@@ -1021,6 +1007,9 @@ function WorkspaceTileResizableChild({
   reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
+  isMinimized = false,
+  onToggleMinimize,
+  registerPanelHandle,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly activePaneId: string | null
@@ -1030,9 +1019,26 @@ function WorkspaceTileResizableChild({
   readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
+  readonly isMinimized?: boolean
+  readonly onToggleMinimize: (tileId: string) => void
+  readonly registerPanelHandle: (
+    tileId: string,
+    handle: PanelImperativeHandle | null
+  ) => void
 }) {
-  const panelRef = useRef<PanelImperativeHandle | null>(null)
   const isLeaf = tileNode._tag === 'WorkspaceTileLeaf'
+  const tileId = tileNode.id
+
+  const handlePanelRef = useCallback(
+    (handle: PanelImperativeHandle | null) => {
+      registerPanelHandle(tileId, handle)
+    },
+    [registerPanelHandle, tileId]
+  )
+
+  const handleToggleMinimize = useCallback(() => {
+    onToggleMinimize(tileId)
+  }, [onToggleMinimize, tileId])
 
   return (
     <>
@@ -1041,15 +1047,16 @@ function WorkspaceTileResizableChild({
         collapsedSize="2.5rem"
         collapsible={isLeaf}
         defaultSize={`${defaultSize}%`}
+        id={tileId}
         minSize="10%"
-        panelRef={panelRef}
+        panelRef={isLeaf ? handlePanelRef : undefined}
       >
         <WorkspaceTileRenderer
           activePaneId={activePaneId}
           diffWorkspaceIds={diffWorkspaceIds}
           index={index}
-          isCollapsible={isLeaf}
-          panelRef={isLeaf ? panelRef : undefined}
+          isMinimized={isLeaf ? isMinimized : undefined}
+          onToggleMinimize={isLeaf ? handleToggleMinimize : undefined}
           parentDirection={parentDirection}
           reviewWorkspaceIds={reviewWorkspaceIds}
           tileNode={tileNode}
@@ -1057,6 +1064,219 @@ function WorkspaceTileResizableChild({
         />
       </ResizablePanel>
     </>
+  )
+}
+
+/**
+ * Collapse a panel if it isn't collapsed already.
+ *
+ * Swallows the error react-resizable-panels throws when the panel's
+ * constraints aren't registered with its group yet (a transient state
+ * while the group is mounting) — the onLayoutChanged handler re-asserts
+ * once registration completes.
+ */
+function collapsePanel(handle: PanelImperativeHandle | undefined): void {
+  if (!handle) {
+    return
+  }
+  try {
+    if (!handle.isCollapsed()) {
+      handle.collapse()
+    }
+  } catch {
+    // Panel not registered with its group yet.
+  }
+}
+
+/**
+ * Whether a panel is currently collapsed. Returns undefined when the panel
+ * handle is missing or not yet registered with its group.
+ */
+function isPanelCollapsed(
+  handle: PanelImperativeHandle | undefined
+): boolean | undefined {
+  if (!handle) {
+    return undefined
+  }
+  try {
+    return handle.isCollapsed()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Renders a WorkspaceTileSplit as a resizable panel group and owns the
+ * minimize state for its direct children.
+ *
+ * Owning minimize state at the split level (rather than inside each
+ * workspace frame) lets the group:
+ *
+ * - Distribute the space freed by minimizing a workspace across ALL
+ *   expanded siblings proportionally, instead of handing it to the
+ *   adjacent panel (react-resizable-panels' default collapse behavior).
+ * - Re-assert collapsed sizes after the library rebuilds the layout.
+ *   react-resizable-panels caches layouts per panel-id-set, so adding or
+ *   removing a workspace rebuilds the layout from default sizes — which
+ *   would otherwise silently re-expand a minimized workspace's panel.
+ *   The rebuild is detected via `onLayoutChanged`.
+ */
+function WorkspaceTileSplitGroup({
+  tileNode,
+  activePaneId,
+  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
+}: {
+  readonly tileNode: WorkspaceTileSplit
+  readonly activePaneId: string | null
+  readonly diffWorkspaceIds?: readonly string[]
+  readonly reviewWorkspaceIds?: readonly string[]
+  readonly treeWorkspaceIds?: readonly string[]
+}) {
+  const groupRef = useRef<GroupImperativeHandle | null>(null)
+  const panelHandlesRef = useRef(new Map<string, PanelImperativeHandle>())
+  /** Pre-minimize percentage per tile id, restored on expand. */
+  const lastExpandedSharesRef = useRef(new Map<string, number>())
+  /** Tile ids toggled from minimized to expanded, awaiting size restore. */
+  const pendingExpandIdsRef = useRef(new Set<string>())
+  /** Guards against onLayoutChanged re-entrancy while applying a layout. */
+  const applyingLayoutRef = useRef(false)
+  const [minimizedIds, setMinimizedIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  )
+  const minimizedIdsRef = useRef(minimizedIds)
+  minimizedIdsRef.current = minimizedIds
+
+  const childIds = useMemo(
+    () => tileNode.children.map((child) => child.id),
+    [tileNode.children]
+  )
+  const childIdsRef = useRef(childIds)
+  childIdsRef.current = childIds
+
+  const registerPanelHandle = useCallback(
+    (tileId: string, handle: PanelImperativeHandle | null) => {
+      if (handle) {
+        panelHandlesRef.current.set(tileId, handle)
+        return
+      }
+      panelHandlesRef.current.delete(tileId)
+    },
+    []
+  )
+
+  /**
+   * Collapse all minimized panels and distribute the remaining space among
+   * expanded panels proportionally to their current sizes. Panels that were
+   * just expanded are restored to their remembered pre-minimize share.
+   */
+  const applyMinimizedLayout = useCallback(() => {
+    const group = groupRef.current
+    if (!group || applyingLayoutRef.current) {
+      return
+    }
+    const minimized = minimizedIdsRef.current
+    const pendingExpand = pendingExpandIdsRef.current
+    if (minimized.size === 0 && pendingExpand.size === 0) {
+      return
+    }
+
+    applyingLayoutRef.current = true
+    try {
+      const preLayout = group.getLayout()
+
+      // Collapse minimized panels via the imperative API first so the
+      // library computes the exact collapsed percentage (it handles unit
+      // conversion for collapsedSize values like "2.5rem").
+      for (const id of minimized) {
+        collapsePanel(panelHandlesRef.current.get(id))
+      }
+
+      const target = computeMinimizedTargetLayout({
+        childIds: childIdsRef.current,
+        minimizedIds: minimized,
+        restoreIds: pendingExpand,
+        preLayout,
+        postLayout: group.getLayout(),
+        lastExpandedShares: lastExpandedSharesRef.current,
+      })
+      pendingExpand.clear()
+      group.setLayout(target)
+    } finally {
+      applyingLayoutRef.current = false
+    }
+  }, [])
+
+  const handleToggleMinimize = useCallback((tileId: string) => {
+    const wasMinimized = minimizedIdsRef.current.has(tileId)
+    if (wasMinimized) {
+      pendingExpandIdsRef.current.add(tileId)
+    } else {
+      pendingExpandIdsRef.current.delete(tileId)
+      // Remember the current share so expanding restores it.
+      const share = groupRef.current?.getLayout()[tileId]
+      if (share !== undefined && share > 0) {
+        lastExpandedSharesRef.current.set(tileId, share)
+      }
+    }
+    setMinimizedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(tileId)) {
+        next.delete(tileId)
+      } else {
+        next.add(tileId)
+      }
+      return next
+    })
+  }, [])
+
+  // Apply layout changes whenever minimize state changes.
+  useEffect(() => {
+    applyMinimizedLayout()
+  }, [applyMinimizedLayout, minimizedIds])
+
+  // Re-assert collapsed sizes when the library rebuilds the layout out from
+  // under us (e.g. a workspace was added, changing the panel set).
+  const handleLayoutChanged = useCallback(() => {
+    if (applyingLayoutRef.current) {
+      return
+    }
+    const needsReassert = [...minimizedIdsRef.current].some(
+      (id) => isPanelCollapsed(panelHandlesRef.current.get(id)) === false
+    )
+    if (needsReassert) {
+      applyMinimizedLayout()
+    }
+  }, [applyMinimizedLayout])
+
+  return (
+    <ResizablePanelGroup
+      groupRef={groupRef}
+      onLayoutChanged={handleLayoutChanged}
+      orientation={tileNode.direction}
+    >
+      {tileNode.children.map((child, childIndex) => {
+        const size =
+          tileNode.sizes[childIndex] ?? 100 / tileNode.children.length
+        return (
+          <WorkspaceTileResizableChild
+            activePaneId={activePaneId}
+            defaultSize={size}
+            diffWorkspaceIds={diffWorkspaceIds}
+            index={childIndex}
+            isMinimized={minimizedIds.has(child.id)}
+            key={child.id}
+            onToggleMinimize={handleToggleMinimize}
+            parentDirection={tileNode.direction}
+            registerPanelHandle={registerPanelHandle}
+            reviewWorkspaceIds={reviewWorkspaceIds}
+            tileNode={child}
+            treeWorkspaceIds={treeWorkspaceIds}
+          />
+        )
+      })}
+    </ResizablePanelGroup>
   )
 }
 
@@ -1079,8 +1299,8 @@ function WorkspaceTileRenderer({
   reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
-  isCollapsible = false,
-  panelRef,
+  isMinimized,
+  onToggleMinimize,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly activePaneId: string | null
@@ -1089,10 +1309,8 @@ function WorkspaceTileRenderer({
   readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
-  readonly isCollapsible?: boolean | undefined
-  readonly panelRef?:
-    | { readonly current: PanelImperativeHandle | null }
-    | undefined
+  readonly isMinimized?: boolean | undefined
+  readonly onToggleMinimize?: (() => void) | undefined
 }) {
   if (tileNode._tag === 'WorkspaceTileLeaf') {
     return (
@@ -1101,9 +1319,9 @@ function WorkspaceTileRenderer({
           activePaneId={activePaneId}
           diffWorkspaceIds={diffWorkspaceIds}
           index={index}
-          isCollapsible={isCollapsible}
+          isMinimized={isMinimized}
           leaf={tileNode}
-          panelRef={panelRef}
+          onToggleMinimize={onToggleMinimize}
           parentDirection={parentDirection}
           reviewWorkspaceIds={reviewWorkspaceIds}
           treeWorkspaceIds={treeWorkspaceIds}
@@ -1118,25 +1336,13 @@ function WorkspaceTileRenderer({
   }
 
   return (
-    <ResizablePanelGroup orientation={tileNode.direction}>
-      {tileNode.children.map((child, childIndex) => {
-        const size =
-          tileNode.sizes[childIndex] ?? 100 / tileNode.children.length
-        return (
-          <WorkspaceTileResizableChild
-            activePaneId={activePaneId}
-            defaultSize={size}
-            diffWorkspaceIds={diffWorkspaceIds}
-            index={childIndex}
-            key={child.id}
-            parentDirection={tileNode.direction}
-            reviewWorkspaceIds={reviewWorkspaceIds}
-            tileNode={child}
-            treeWorkspaceIds={treeWorkspaceIds}
-          />
-        )
-      })}
-    </ResizablePanelGroup>
+    <WorkspaceTileSplitGroup
+      activePaneId={activePaneId}
+      diffWorkspaceIds={diffWorkspaceIds}
+      reviewWorkspaceIds={reviewWorkspaceIds}
+      tileNode={tileNode}
+      treeWorkspaceIds={treeWorkspaceIds}
+    />
   )
 }
 

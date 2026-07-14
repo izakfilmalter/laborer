@@ -136,6 +136,7 @@ import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
+import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
 import { useLaborerStore } from '@/livestore/store'
 import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 
@@ -167,27 +168,10 @@ type WorkspaceStatus =
   | 'errored'
   | 'destroyed'
 
-/**
- * Human-readable label for worktree setup progress steps.
- * Displayed in the workspace card during background worktree creation.
- */
-const getWorktreeSetupLabel = (step: string): string => {
-  switch (step) {
-    case 'fetching-remote':
-      return 'Fetching latest remote refs...'
-    case 'creating-worktree':
-      return 'Creating git worktree...'
-    case 'validating-worktree':
-      return 'Validating worktree...'
-    case 'running-setup-scripts':
-      return 'Running setup scripts...'
-    default:
-      return 'Setting up workspace...'
-  }
-}
-
-// getSandboxSetupLabel is shared with workspace-dashboard.tsx —
-// see apps/web/src/lib/sandbox-setup-labels.ts for the implementation.
+// getWorktreeSetupLabel and getSandboxSetupLabel are shared with
+// panel-manager.tsx and workspace-dashboard.tsx — see
+// apps/web/src/lib/worktree-setup-labels.ts and
+// apps/web/src/lib/sandbox-setup-labels.ts for the implementations.
 
 /**
  * Returns Tailwind classes for a status badge based on workspace status.

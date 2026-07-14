@@ -78,10 +78,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
+import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
+import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
 import { useLaborerStore } from '@/livestore/store'
 import {
   useActivePaneId,
@@ -183,6 +186,27 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     (ws) => ws.status === 'running' || ws.status === 'creating'
   )
 
+  // When the pane's workspace is still being set up (worktree creation,
+  // setup scripts, sandbox provisioning), the terminal spawn is deferred
+  // until the workspace reaches 'running'. Show setup progress instead of
+  // the manual CTA so the pane reads as a loading state, not a dead end.
+  const paneWorkspace = workspaceId
+    ? workspaceList.find((ws) => ws.id === workspaceId)
+    : undefined
+  const isWorkspaceSettingUp = paneWorkspace?.status === 'creating'
+  const setupStepLabel = ((): string | undefined => {
+    if (!isWorkspaceSettingUp) {
+      return undefined
+    }
+    if (paneWorkspace?.worktreeSetupStep) {
+      return getWorktreeSetupLabel(paneWorkspace.worktreeSetupStep)
+    }
+    if (paneWorkspace?.sandboxSetupStep) {
+      return getSandboxSetupLabel(paneWorkspace.sandboxSetupStep)
+    }
+    return 'Preparing workspace...'
+  })()
+
   // Determine which workspace to use for spawning
   const singleWorkspaceId =
     activeWorkspaces.length === 1 ? activeWorkspaces[0]?.id : undefined
@@ -219,6 +243,14 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   // If this component is still mounted after a short delay, the caller's
   // auto-spawn either failed or wasn't triggered. Show the manual CTA.
   useEffect(() => {
+    // The pane's workspace is still being set up — stay in the loading
+    // state for as long as setup runs (which can far exceed the CTA
+    // timeout). The terminal auto-spawns once setup completes, and this
+    // effect re-runs to start the CTA timer as a fallback.
+    if (isWorkspaceSettingUp) {
+      setShowCta(false)
+      return
+    }
     // No workspace available — show CTA immediately so user gets guidance.
     if (activeWorkspaces.length === 0) {
       setShowCta(true)
@@ -230,11 +262,14 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     return () => {
       clearTimeout(timer)
     }
-  }, [activeWorkspaces.length])
+  }, [activeWorkspaces.length, isWorkspaceSettingUp])
 
   const hasMultipleWorkspaces = !workspaceId && activeWorkspaces.length > 1
 
   const getDescription = (): string => {
+    if (isWorkspaceSettingUp) {
+      return setupStepLabel ?? 'Preparing workspace...'
+    }
     if (isSpawning) {
       return 'Spawning a terminal...'
     }
@@ -251,20 +286,31 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   }
   const description = getDescription()
 
+  const getTitle = (): string => {
+    if (isWorkspaceSettingUp) {
+      return 'Setting up workspace...'
+    }
+    if (showCta && !isSpawning) {
+      return 'No terminal'
+    }
+    return 'Starting terminal...'
+  }
+
+  const isLoading = isWorkspaceSettingUp || isSpawning || !showCta
+
   const getButtonLabel = (err: string | null): string =>
     err ? 'Retry' : 'Spawn Terminal'
-  const showActions = showCta && activeWorkspaces.length > 0
+  const showActions =
+    showCta && !isWorkspaceSettingUp && activeWorkspaces.length > 0
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <TerminalIcon />
+            {isLoading ? <Spinner className="size-4" /> : <TerminalIcon />}
           </EmptyMedia>
-          <EmptyTitle>
-            {showCta && !isSpawning ? 'No terminal' : 'Starting terminal...'}
-          </EmptyTitle>
+          <EmptyTitle>{getTitle()}</EmptyTitle>
           <EmptyDescription>{description}</EmptyDescription>
         </EmptyHeader>
         {(showActions || error) && (

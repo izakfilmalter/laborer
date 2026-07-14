@@ -74,7 +74,6 @@ import type {
 } from '@/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { openExternalUrl } from '@/lib/desktop'
 import {
   isPrefixKey,
   isTerminalFindNextShortcut,
@@ -82,6 +81,7 @@ import {
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
+import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
 /**
  * Daytona terminal IDs are prefixed with `daytona:` so the correct
@@ -879,6 +879,7 @@ function TerminalPaneRenderer({
         '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.2,
+      linkHandler: terminalOscLinkHandler,
       theme: {
         background: '#09090b', // zinc-950 — matches dark theme
         foreground: '#fafafa', // zinc-50
@@ -983,9 +984,7 @@ function TerminalPaneRenderer({
     // delegates to shell.openExternal via the Electron IPC bridge.
     try {
       const webLinksAddon = new WebLinksAddon((_event, url) => {
-        openExternalUrl(url).catch(() => {
-          // Silently ignore — link open failures are non-critical
-        })
+        openTerminalLink(url)
       })
       terminal.loadAddon(webLinksAddon)
     } catch {

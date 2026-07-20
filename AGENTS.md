@@ -4,10 +4,10 @@ This project uses **Ultracite**, a zero-config preset that enforces strict code 
 
 ## Quick Reference
 
-- **Check formatting**: `bun run format`
-- **Fix formatting**: `bun run format:fix`
-- **Run all checks** (typecheck + format fix + tests): `bun run check`
-- **Diagnose setup**: `bun x ultracite doctor`
+- **Check formatting**: `bun run --cwd current format`
+- **Fix formatting**: `bun run --cwd current format:fix`
+- **Run all checks** (typecheck + format fix + tests): `bun run --cwd current check`
+- **Diagnose setup**: `cd current && bun x ultracite doctor`
 
 Biome (the underlying engine) provides robust linting and formatting. Most issues are automatically fixable.
 
@@ -116,7 +116,7 @@ Biome's linter will catch most issues automatically. Focus your attention on:
 
 ---
 
-Most formatting and common issues are automatically fixed by Biome. Run `bun run format:fix` before committing to ensure compliance.
+Most formatting and common issues are automatically fixed by Biome. Run `bun run --cwd current format:fix` before committing changes to the current app.
 
 ## Source References
 

@@ -13,6 +13,9 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: current
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
@@ -74,6 +77,9 @@ jobs:
     name: Build macOS arm64
     needs: preflight
     runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: current
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -154,7 +160,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-mac-arm64
-          path: release-publish/*
+          path: current/release-publish/*
           if-no-files-found: error
 
   release:
@@ -217,6 +223,9 @@ jobs:
     name: Finalize release
     needs: [preflight, release]
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: current
     steps:
       - name: Checkout
         uses: actions/checkout@v4

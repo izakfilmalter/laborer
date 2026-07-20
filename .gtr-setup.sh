@@ -20,15 +20,13 @@ WORKTREES_DIR="../${REPO_NAME}.worktrees"
 if [ ! -d "$WORKTREES_DIR" ]; then
     mkdir -p "$WORKTREES_DIR"
 fi
-if [ ! -f "$WORKTREES_DIR/biome.json" ]; then
-    cat > "$WORKTREES_DIR/biome.json" << EOF
+cat > "$WORKTREES_DIR/biome.json" << EOF
 {
   "\$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
-  "extends": ["../${REPO_NAME}/biome.json"]
+  "extends": ["../${REPO_NAME}/current/biome.json"]
 }
 EOF
-    echo "  Created biome.json in worktrees directory"
-fi
+echo "  Updated biome.json in worktrees directory"
 
 # Default editor
 git gtr config set gtr.editor.default cursor
@@ -36,12 +34,13 @@ git gtr config set gtr.editor.default cursor
 # Default AI tool
 git gtr config set gtr.ai.default claude
 
-# Copy .env.local to worktrees (gtr handles copying, script handles overrides)
-git gtr config add gtr.copy.include ".env.local"
+# Copy the current app environment to worktrees (gtr handles copying, script
+# handles overrides).
+git gtr config add gtr.copy.include "current/.env.local"
 
 # Post-create hook for worktree setup and bun install
 # Use absolute path since hook runs from within the new worktree
-git gtr config add gtr.hook.postCreate "$REPO_ROOT/scripts/worktree-setup.sh"
+git gtr config add gtr.hook.postCreate "$REPO_ROOT/current/scripts/worktree-setup.sh"
 
 echo ""
 echo "gtr configured successfully!"

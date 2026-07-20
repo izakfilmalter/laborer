@@ -8,6 +8,9 @@ jobs:
   ci:
     name: CI
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: current
     steps:
       - name: Checkout
         uses: actions/checkout@v4

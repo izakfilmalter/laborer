@@ -28,16 +28,18 @@ done
 
 # Get the root worktree path (main repo)
 ROOT_WORKTREE_PATH="$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')"
+WORKTREE_ROOT="$(git rev-parse --show-toplevel)"
+APP_DIR="$WORKTREE_ROOT/current"
 
 # Calculate worktree index (count existing worktrees, subtract 1 since main repo is #0)
 WORKTREE_INDEX=$(($(git worktree list | wc -l | tr -d ' ') - 1))
 
 # Store index for reference
-echo "$WORKTREE_INDEX" > .worktree-index
+echo "$WORKTREE_INDEX" > "$APP_DIR/.worktree-index"
 
 # Get branch name and worktree slug
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-WORKTREE_SLUG="$(bash "$ROOT_WORKTREE_PATH/scripts/worktree-slug.sh" "$BRANCH_NAME")"
+WORKTREE_SLUG="$(bash "$ROOT_WORKTREE_PATH/current/scripts/worktree-slug.sh" "$BRANCH_NAME")"
 
 if [ "$NO_PORTS" = false ]; then
     # Worktree-specific ports offset by index
@@ -75,9 +77,9 @@ fi
 
 # Append worktree-specific config to .env.local
 # Later values override earlier ones, so we just append at the bottom
-if [ -f ".env.local" ]; then
+if [ -f "$APP_DIR/.env.local" ]; then
     if [ "$NO_PORTS" = false ]; then
-        cat >> .env.local << EOF
+        cat >> "$APP_DIR/.env.local" << EOF
 
 # Worktree #$WORKTREE_INDEX overrides
 WORKTREE_SLUG=$WORKTREE_SLUG
@@ -92,7 +94,7 @@ VITE_TERMINAL_PORT=$TERMINAL_PORT
 VITE_PORT=$VITE_PORT
 EOF
     else
-        cat >> .env.local << EOF
+        cat >> "$APP_DIR/.env.local" << EOF
 
 # Worktree #$WORKTREE_INDEX overrides (no custom ports)
 WORKTREE_SLUG=$WORKTREE_SLUG
@@ -105,10 +107,10 @@ fi
 # Run bun install
 echo ""
 echo "Running bun install..."
-bun install
+bun install --cwd "$APP_DIR"
 
 echo ""
 echo "Worktree setup complete!"
 echo ""
 echo "To start development:"
-echo "  bun run dev"
+echo "  cd current && bun run dev"

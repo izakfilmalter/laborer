@@ -1,9 +1,9 @@
 {
   "devServer": {
-    "startCommand": "bun dev",
+    "startCommand": "bun run --cwd current dev",
     "provider": "none"
   },
-  "setupScripts": ["sh ./scripts/worktree-setup.sh --no-ports"],
+  "setupScripts": ["sh ./current/scripts/worktree-setup.sh --no-ports"],
   "agent": "opencode",
   "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees"
 }

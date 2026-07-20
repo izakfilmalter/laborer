@@ -11,25 +11,52 @@ The generic bridge that accepts work through Slack, invokes user-controlled loca
 Laborer's conversational identity in Slack. People mention it in a conversation and receive its updates there.
 
 **Laborer Runner**:
-The local service that receives work-thread events and invokes the configured work handler.
+The local service that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root.
+
+**Laborer root**:
+The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
 
 **Work thread**:
-A Slack thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns.
+A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
 
 **Activation**:
-The first mention that asks Laborer to accept a Slack thread as a work thread. For the prototype, any Slack message may activate Laborer, regardless of sender. After activation, every new message except Laborer's own becomes handler input without requiring another mention.
+The first newly created, nonblank text message that explicitly mentions Laborer and asks it to accept a public or private channel thread as a work thread. Any human or external bot may activate Laborer from a channel root or existing thread reply; Laborer's own messages, edits, and direct messages cannot. After activation, authored text replies under the canonical root become handler input without another mention, while unrelated channel roots remain outside the work thread.
+
+**Historical context**:
+One-time Slack conversation context included in a work thread's first turn. A root activation receives the ten preceding top-level channel messages without expanding their threads. A reply activation receives the canonical root and earlier replies through the activating reply. Context is distinguished from input and is not replayed in later turns.
+
+**Normalized message**:
+The narrow text-oriented record Laborer presents to a work handler. It carries a stable identity, context-or-input classification, activation marker, author kind and Slack ID, original Slack timestamp, and verbatim Slack `mrkdwn` text. Laborer excludes its own messages, textless rich content, system notices, edits, deletions, and reactions; it does not resolve display names or expose raw Slack payloads.
 
 **Work handler**:
-The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run and where to run it. It owns all workflow-specific behavior, resources, and continuation state.
+The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run from the Laborer root. It owns all workflow-specific behavior, resources, and continuation state, including any worktrees it creates.
 
 **Turn**:
-One serialized batch of work-thread input delivered to a work handler.
+One serialized batch of work-thread input delivered to a work handler. A turn has one stable identity across replay attempts, and a known handler outcome permanently consumes its assigned input.
+
+**Turn attempt**:
+One invocation of a work handler for a turn. An attempt interrupted by a Runner shutdown or crash is replayed automatically as a new attempt of the same turn; a known handler failure is not retried automatically.
+
+**Settled turn**:
+A turn whose handler has a known terminal outcome and whose accepted outbound items have all been delivered or explicitly abandoned. Only a settled turn permits the next queued turn in its work thread to start.
 
 **Handler invocation**:
 The temporary local process that executes one turn. It exits when the turn finishes; an idle work thread consumes no running handler process.
 
+**Handler state directory**:
+A stable filesystem directory Laborer assigns to one work thread and presents to its work handler on every turn. Laborer manages the directory's identity and location but treats its contents as opaque handler-owned state.
+
 **Public reply**:
-A conversational message the work handler explicitly chooses to send to its work thread. Public replies are the only handler-authored output shown in Slack; internal output remains private.
+A conversational message the work handler explicitly chooses to send by emitting a public-reply protocol record. Laborer binds it to the work thread and posts it as the Laborer Slack app. Public replies are ordered, append-only, and the only handler-authored output shown in Slack; internal output remains private.
+
+**Operational notice**:
+A sanitized, Laborer-authored Slack message reporting that a turn or reply failed. Operational notices identify the turn and failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They exist because Slack is the prototype's primary interface.
+
+**Outbound item**:
+A durable, ordered Slack message awaiting delivery for a turn. Public replies and operational notices use the same outbox and may be pending, delivering, delivered, or blocked. A permanently blocked head item pauses only its work thread until a local operator retries or abandons it.
+
+**Durable snapshot**:
+The Runner-owned, versioned record of accepted inbound identities, work-thread queues, turns, attempts, sanitized outcomes, and outbound delivery state. The prototype stores one atomic filesystem JSON snapshot per Runner, retains it indefinitely, and fails closed rather than inferring or resetting corrupt or unwritable state. Handler state-directory contents and raw process output are not part of the snapshot.
 
 The following terms belong to the first intended coding-workflow use case, not to Laborer's generic core.
 

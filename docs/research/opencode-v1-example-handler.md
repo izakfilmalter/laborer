@@ -1,6 +1,7 @@
 # OpenCode v1 example-handler contract
 
-**Research ticket:** [#202](https://github.com/izakfilmalter/laborer/issues/202)  
+**Research ticket:** [#202](https://github.com/izakfilmalter/laborer/issues/202)
+
 **Validated against:** installed OpenCode `1.18.4` on 2026-07-20, official tag commit [`49c69c5`](https://github.com/anomalyco/opencode/tree/49c69c5ed3ccf706b61b3febb43c8aaff7f8325e), and the repository reference clone at `3ad6923c` (`1.17.1`).
 
 ## Decision

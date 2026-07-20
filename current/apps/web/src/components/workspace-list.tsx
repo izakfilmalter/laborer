@@ -68,7 +68,11 @@ import {
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
-import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import {
+  CreateWorkspaceForm,
+  type PendingWorkspaceCreation,
+  type PendingWorkspaceCreationChangeHandler,
+} from '@/components/create-workspace-form'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -749,6 +753,10 @@ interface WorkspaceItemProps {
    * repository clone.
    */
   readonly isRootWorkspace?: boolean | undefined
+  /** Reports temporary state for sub-workspaces created from this item. */
+  readonly onPendingCreationChange?:
+    | PendingWorkspaceCreationChangeHandler
+    | undefined
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
   /** Whether to show the sub-workspace creation action in the card header. */
@@ -988,6 +996,7 @@ function WorkspaceItem({
   workspace,
   associatedPrdId,
   isRootWorkspace,
+  onPendingCreationChange,
   projectName,
   showCreateSubWorkspaceAction = true,
 }: WorkspaceItemProps) {
@@ -1183,6 +1192,7 @@ function WorkspaceItem({
                   id: workspace.id,
                   branchName: workspace.branchName,
                 }}
+                onPendingCreationChange={onPendingCreationChange}
                 projectId={workspace.projectId}
                 projectName={projectName}
                 trigger={
@@ -1301,6 +1311,12 @@ function WorkspaceItem({
 }
 
 interface WorkspaceListProps {
+  /** Reports pending sub-workspace creation changes to the project group. */
+  readonly onPendingCreationChange?:
+    | PendingWorkspaceCreationChangeHandler
+    | undefined
+  /** Temporary workspace items shown while planning or creation is in flight. */
+  readonly pendingCreations?: readonly PendingWorkspaceCreation[] | undefined
   /** Only workspaces belonging to this project are shown. */
   readonly projectId: string
   /** The project name, used by the sub-workspace creation dialog. */
@@ -1321,6 +1337,9 @@ interface WorkspaceTreeGroupProps {
   readonly branchToPrdId: ReadonlyMap<string, string>
   readonly collapseState: CollapseState
   readonly node: WorkspaceTreeNode<WorkspaceTreeRow>
+  readonly onPendingCreationChange?:
+    | PendingWorkspaceCreationChangeHandler
+    | undefined
   readonly projectName: string
   readonly repoPath: string
 }
@@ -1340,6 +1359,7 @@ function WorkspaceTreeGroup({
   node,
   branchToPrdId,
   collapseState,
+  onPendingCreationChange,
   projectName,
   repoPath,
 }: WorkspaceTreeGroupProps) {
@@ -1349,6 +1369,7 @@ function WorkspaceTreeGroup({
     <WorkspaceItem
       associatedPrdId={branchToPrdId.get(workspace.branchName)}
       isRootWorkspace={workspace.worktreePath === repoPath}
+      onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
       showCreateSubWorkspaceAction={children.length === 0}
       workspace={workspace}
@@ -1390,6 +1411,7 @@ function WorkspaceTreeGroup({
             id: workspace.id,
             branchName: workspace.branchName,
           }}
+          onPendingCreationChange={onPendingCreationChange}
           projectId={workspace.projectId}
           projectName={projectName}
           trigger={
@@ -1426,6 +1448,7 @@ function WorkspaceTreeGroup({
               collapseState={collapseState}
               key={child.workspace.id}
               node={child}
+              onPendingCreationChange={onPendingCreationChange}
               projectName={projectName}
               repoPath={repoPath}
             />
@@ -1436,7 +1459,48 @@ function WorkspaceTreeGroup({
   )
 }
 
+function PendingWorkspaceItem({
+  creation,
+}: {
+  readonly creation: PendingWorkspaceCreation
+}) {
+  const isAnalyzing = creation.phase === 'analyzing'
+  const branchLabel =
+    creation.branchName ?? (isAnalyzing ? 'Slack workspace' : 'New workspace')
+  const phaseLabel = isAnalyzing ? 'Reading Slack thread' : 'Creating workspace'
+
+  return (
+    <Card
+      aria-label={`${phaseLabel}: ${branchLabel}`}
+      aria-live="polite"
+      className="border-warning/30 bg-warning/5"
+      data-testid={`pending-workspace-${creation.id}`}
+      role="status"
+      size="sm"
+    >
+      <CardHeader className="gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <GitBranch className="size-4 shrink-0 text-muted-foreground" />
+          <CardTitle className="min-w-0 flex-1 truncate font-mono text-sm">
+            {branchLabel}
+          </CardTitle>
+          <Badge
+            className="shrink-0 border border-warning/30 bg-warning/10 text-warning"
+            variant="outline"
+          >
+            <Spinner className="size-3" />
+            {isAnalyzing ? 'planning' : 'creating'}
+          </Badge>
+        </div>
+        <CardDescription className="text-xs">{phaseLabel}</CardDescription>
+      </CardHeader>
+    </Card>
+  )
+}
+
 function WorkspaceList({
+  onPendingCreationChange,
+  pendingCreations = [],
   projectId,
   projectName,
   repoPath,
@@ -1486,7 +1550,7 @@ function WorkspaceList({
     return map
   }, [prdList, projectId])
 
-  if (activeWorkspaces.length === 0) {
+  if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {
     return (
       <Empty className="py-4">
         <EmptyHeader>
@@ -1505,12 +1569,16 @@ function WorkspaceList({
 
   return (
     <div className="grid gap-2">
+      {pendingCreations.map((creation) => (
+        <PendingWorkspaceItem creation={creation} key={creation.id} />
+      ))}
       {workspaceTree.map((node) => (
         <WorkspaceTreeGroup
           branchToPrdId={branchToPrdId}
           collapseState={collapseState}
           key={node.workspace.id}
           node={node}
+          onPendingCreationChange={onPendingCreationChange}
           projectName={projectName}
           repoPath={repoPath}
         />

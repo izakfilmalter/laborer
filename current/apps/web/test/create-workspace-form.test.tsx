@@ -22,7 +22,7 @@ if (typeof document === 'undefined') {
   testGlobal.HTMLElement.prototype.detachEvent = () => undefined
 }
 
-const { cleanup, render, screen, waitFor } = await import(
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
   '@testing-library/react'
 )
 const { default: userEvent } = await import('@testing-library/user-event')
@@ -34,6 +34,8 @@ interface CreateWorkspaceFormTestMocks {
     readonly autoOpenAgentWhenWorkspaceReady: ReturnType<typeof vi.fn>
   }
   readonly planSlackWorkspaceFn: ReturnType<typeof vi.fn>
+  readonly toastErrorFn: ReturnType<typeof vi.fn>
+  readonly toastSuccessFn: ReturnType<typeof vi.fn>
 }
 
 const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
@@ -46,6 +48,8 @@ const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
     planSlackWorkspaceFn: vi.fn(),
     mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
     panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
+    toastErrorFn: vi.fn(),
+    toastSuccessFn: vi.fn(),
   }
 
   return testGlobal.__createWorkspaceFormTestMocks
@@ -78,7 +82,10 @@ vi.mock('@/atoms/laborer-client', () => ({
 }))
 
 vi.mock('@/lib/toast', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: {
+    error: getCreateWorkspaceFormTestMocks().toastErrorFn,
+    success: getCreateWorkspaceFormTestMocks().toastSuccessFn,
+  },
 }))
 
 vi.mock('@/panels/panel-context', () => ({
@@ -98,8 +105,24 @@ vi.mock('@/components/ui/tooltip', () => ({
 // Mock Dialog to render inline (no portal) so content is accessible in jsdom.
 // The trigger is hidden so it doesn't collide with the submit button's accessible name.
 vi.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="dialog">{children}</div>
+  Dialog: ({
+    children,
+    onOpenChange,
+    open,
+  }: {
+    children: React.ReactNode
+    onOpenChange: (open: boolean) => void
+    open: boolean
+  }) => (
+    <div data-open={String(open)} data-testid="dialog">
+      <button
+        data-testid="dialog-open-control"
+        onClick={() => onOpenChange(true)}
+        style={{ display: 'none' }}
+        type="button"
+      />
+      {children}
+    </div>
   ),
   DialogContent: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="dialog-content">{children}</div>
@@ -382,6 +405,150 @@ describe('CreateWorkspaceForm — branch name mask', () => {
         panelActionsMock.autoOpenAgentWhenWorkspaceReady
       ).toHaveBeenCalledWith('ws-slack', { initialPrompt })
     })
+  })
+
+  it('moves Slack planning into a pending sidebar item and reports completion', async () => {
+    const user = userEvent.setup()
+    const slackUrl =
+      'https://example.slack.com/archives/C12345678/p1750000000000000'
+    const initialPrompt = 'Fix the timeout described by the Slack thread.'
+    let resolvePlan:
+      | ((value: {
+          branchName: string
+          initialPrompt: string
+          workType: string
+        }) => void)
+      | undefined
+    let resolveCreate:
+      | ((value: {
+          id: string
+          projectId: string
+          branchName: string
+          worktreePath: string
+          status: string
+        }) => void)
+      | undefined
+    const pendingChanges = vi.fn()
+
+    planSlackWorkspaceFn.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePlan = resolve
+      })
+    )
+    createWorkspaceFn.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve
+      })
+    )
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm
+          onPendingCreationChange={pendingChanges}
+          projectId="project-1"
+          projectName="laborer"
+        />
+      </ReadyPhaseWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('dialog-open-control'))
+    expect(screen.getByTestId('dialog').getAttribute('data-open')).toBe('true')
+
+    await user.type(
+      screen.getByRole('textbox', { name: SLACK_URL_RE }),
+      slackUrl
+    )
+    await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('dialog').getAttribute('data-open')).toBe(
+        'false'
+      )
+      expect(pendingChanges).toHaveBeenCalledWith({
+        creation: {
+          branchName: null,
+          id: expect.any(String),
+          phase: 'analyzing',
+        },
+        id: expect.any(String),
+      })
+    })
+    expect(createWorkspaceFn).not.toHaveBeenCalled()
+
+    act(() => {
+      resolvePlan?.({
+        branchName: 'slack/fix-auth-timeout',
+        initialPrompt,
+        workType: 'bug',
+      })
+    })
+
+    await waitFor(() => {
+      expect(pendingChanges).toHaveBeenCalledWith({
+        creation: {
+          branchName: 'slack/fix-auth-timeout',
+          id: expect.any(String),
+          phase: 'creating',
+        },
+        id: expect.any(String),
+      })
+      expect(createWorkspaceFn).toHaveBeenCalled()
+    })
+
+    act(() => {
+      resolveCreate?.({
+        id: 'ws-slack',
+        projectId: 'project-1',
+        branchName: 'slack/fix-auth-timeout',
+        worktreePath: '/path/to/worktree',
+        status: 'creating',
+      })
+    })
+
+    await waitFor(() => {
+      expect(pendingChanges).toHaveBeenLastCalledWith({
+        creation: null,
+        id: expect.any(String),
+      })
+      expect(
+        getCreateWorkspaceFormTestMocks().toastSuccessFn
+      ).toHaveBeenCalledWith(
+        'Workspace "slack/fix-auth-timeout" is being set up with its Slack prompt'
+      )
+    })
+  })
+
+  it('removes the pending item and reports an error when Slack planning fails', async () => {
+    const user = userEvent.setup()
+    const pendingChanges = vi.fn()
+    planSlackWorkspaceFn.mockRejectedValue(new Error('Could not read Slack'))
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm
+          onPendingCreationChange={pendingChanges}
+          projectId="project-1"
+          projectName="laborer"
+        />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.type(
+      screen.getByRole('textbox', { name: SLACK_URL_RE }),
+      'https://example.slack.com/archives/C12345678/p1750000000000000'
+    )
+    await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
+
+    await waitFor(() => {
+      expect(pendingChanges).toHaveBeenLastCalledWith({
+        creation: null,
+        id: expect.any(String),
+      })
+      expect(
+        getCreateWorkspaceFormTestMocks().toastErrorFn
+      ).toHaveBeenCalledWith('Could not read Slack')
+    })
+    expect(createWorkspaceFn).not.toHaveBeenCalled()
   })
 
   it('preserves forward slashes in branch names on submit', async () => {

@@ -16,9 +16,13 @@
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import {
+  CreateWorkspaceForm,
+  type PendingWorkspaceCreation,
+  type PendingWorkspaceCreationChangeHandler,
+} from '@/components/create-workspace-form'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanList } from '@/components/plan-list'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
@@ -80,9 +84,43 @@ function ProjectGroup({
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [taskSource, setTaskSource] = useState<TaskSourceFilter>('linear')
+  const [pendingWorkspaceCreations, setPendingWorkspaceCreations] = useState<
+    readonly PendingWorkspaceCreation[]
+  >([])
+  const pendingCreationIdsRef = useRef(new Set<string>())
   const removeProject = useAtomSet(removeProjectMutation, {
     mode: 'promise',
   })
+
+  const handlePendingCreationChange: PendingWorkspaceCreationChangeHandler =
+    useCallback(
+      ({ creation, id }) => {
+        if (creation === null) {
+          pendingCreationIdsRef.current.delete(id)
+          setPendingWorkspaceCreations((current) =>
+            current.filter((pending) => pending.id !== id)
+          )
+          return
+        }
+
+        const isNewCreation = !pendingCreationIdsRef.current.has(id)
+        pendingCreationIdsRef.current.add(id)
+        setPendingWorkspaceCreations((current) => {
+          const alreadyPending = current.some((pending) => pending.id === id)
+          if (!alreadyPending) {
+            return [...current, creation]
+          }
+          return current.map((pending) =>
+            pending.id === id ? creation : pending
+          )
+        })
+
+        if (isNewCreation && !expanded) {
+          onToggle()
+        }
+      },
+      [expanded, onToggle]
+    )
 
   const handleRemove = async () => {
     setIsRemoving(true)
@@ -117,6 +155,7 @@ function ProjectGroup({
         </CollapsibleTrigger>
         <div className="flex shrink-0 items-center gap-0.5">
           <CreateWorkspaceForm
+            onPendingCreationChange={handlePendingCreationChange}
             projectId={project.id}
             projectName={project.name}
             trigger={
@@ -202,6 +241,8 @@ function ProjectGroup({
       <CollapsibleContent>
         <div className="mt-1 ml-2 border-l pl-2">
           <WorkspaceList
+            onPendingCreationChange={handlePendingCreationChange}
+            pendingCreations={pendingWorkspaceCreations}
             projectId={project.id}
             projectName={project.name}
             repoPath={project.repoPath}

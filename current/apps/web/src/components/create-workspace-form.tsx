@@ -4,14 +4,9 @@
  * A dialog with a TanStack Form for creating a new workspace.
  * Fields: optional branch name (autofocused on open).
  * On submit, calls the `workspace.create` mutation via AtomRpc.
- * Shows a loading state with spinner and indeterminate progress bar
- * during workspace creation (worktree creation, port allocation,
- * setup script execution). Dialog cannot be dismissed during submission.
- * Success: workspace appears in the list (via LiveStore), form resets, dialog closes.
- * Error: displays an inline alert within the dialog with a distinct, actionable
- * message for each error type (git fetch failure, setup script
- * failure, branch conflict, worktree failure). Also shows a toast for persistence
- * after the dialog is closed.
+ * The dialog closes immediately on submit while a temporary workspace item shows
+ * Slack analysis and creation progress in the project sidebar. Success and failure
+ * are reported with toasts after the background request completes.
  *
  * @see Issue #42: Create Workspace form
  * @see Issue #49: Workspace creation error display
@@ -22,13 +17,12 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { useForm } from '@tanstack/react-form'
 import { pipe, String as Str } from 'effect'
-import { AlertTriangle, Layers, ScrollText, WifiOff, X } from 'lucide-react'
+import { Layers } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { IMaskInput } from 'react-imask'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -43,14 +37,9 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
-import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
@@ -58,78 +47,18 @@ const planSlackWorkspaceMutation = LaborerClient.mutation(
   'workspace.planFromSlack'
 )
 
-/** Structured error info for workspace creation failures. */
-interface WorkspaceCreationError {
-  /** The error code from the RPC response, if available. */
-  code: string | undefined
-  /** The human-readable error message. */
-  message: string
+type PendingWorkspaceCreationPhase = 'analyzing' | 'creating'
+
+interface PendingWorkspaceCreation {
+  readonly branchName: string | null
+  readonly id: string
+  readonly phase: PendingWorkspaceCreationPhase
 }
 
-/**
- * Returns a short, user-friendly title for a workspace creation error code.
- * Used as the inline alert heading.
- */
-function getErrorTitle(code: string | undefined): string {
-  switch (code) {
-    case 'GIT_FETCH_FAILED':
-      return 'Network Error'
-    case 'SETUP_SCRIPT_FAILED':
-      return 'Setup Script Failed'
-    case 'GIT_WORKTREE_FAILED':
-      return 'Worktree Creation Failed'
-    case 'WORKTREE_VERIFY_FAILED':
-      return 'Worktree Verification Failed'
-    case 'FILESYSTEM_ERROR':
-      return 'Filesystem Error'
-    case 'GIT_CHECK_FAILED':
-      return 'Git Check Failed'
-    case 'GIT_REV_PARSE_FAILED':
-      return 'Git Error'
-    case 'NO_PORTS_AVAILABLE':
-      return 'No Ports Available'
-    case 'INVALID_SLACK_URL':
-      return 'Invalid Slack URL'
-    case 'SLACK_ANALYSIS_FAILED':
-    case 'SLACK_ANALYSIS_INVALID_RESPONSE':
-      return 'Slack Analysis Failed'
-    default:
-      return 'Workspace Creation Failed'
-  }
-}
-
-/**
- * Returns a concise, actionable guidance string for a workspace creation error.
- * This supplements the server's error message with a clear next step.
- */
-function getErrorGuidance(code: string | undefined): string | undefined {
-  switch (code) {
-    case 'GIT_FETCH_FAILED':
-      return 'Check your network connection and remote repository access, then try again.'
-    case 'SETUP_SCRIPT_FAILED':
-      return "Check the setup scripts in your project's laborer.json file and fix the failing script."
-    case 'GIT_WORKTREE_FAILED':
-      return 'This may indicate a conflict with an existing worktree. Check your git worktree list.'
-    case 'NO_PORTS_AVAILABLE':
-      return 'Destroy some existing workspaces to free up ports.'
-    default:
-      return undefined
-  }
-}
-
-/**
- * Returns the appropriate icon for a workspace creation error code.
- */
-function getErrorIcon(code: string | undefined) {
-  switch (code) {
-    case 'GIT_FETCH_FAILED':
-      return <WifiOff className="size-4" />
-    case 'SETUP_SCRIPT_FAILED':
-      return <ScrollText className="size-4" />
-    default:
-      return <AlertTriangle className="size-4" />
-  }
-}
+type PendingWorkspaceCreationChangeHandler = (change: {
+  readonly creation: PendingWorkspaceCreation | null
+  readonly id: string
+}) => void
 
 interface CreateWorkspaceFormProps {
   /**
@@ -138,6 +67,10 @@ interface CreateWorkspaceFormProps {
    */
   readonly baseWorkspace?:
     | { readonly id: string; readonly branchName: string }
+    | undefined
+  /** Reports temporary sidebar state while creation runs after the dialog closes. */
+  readonly onPendingCreationChange?:
+    | PendingWorkspaceCreationChangeHandler
     | undefined
   /** The project to create a workspace in. */
   readonly projectId: string
@@ -149,15 +82,15 @@ interface CreateWorkspaceFormProps {
 
 function CreateWorkspaceForm({
   baseWorkspace,
+  onPendingCreationChange,
   projectId,
   projectName,
   trigger,
 }: CreateWorkspaceFormProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const panelActions = usePanelActions()
+  const pendingCreationId = useId()
   const [open, setOpen] = useState(false)
-  const [creationError, setCreationError] =
-    useState<WorkspaceCreationError | null>(null)
   const createWorkspace = useAtomSet(createWorkspaceMutation, {
     mode: 'promise',
   })
@@ -173,30 +106,45 @@ function CreateWorkspaceForm({
     }
   }, [])
 
-  const clearError = useCallback(() => {
-    setCreationError(null)
-  }, [])
-
   const form = useForm({
     defaultValues: {
       branchName: '',
       slackUrl: '',
     },
     onSubmit: async ({ value }) => {
-      // Clear any previous error when retrying
-      setCreationError(null)
-      try {
-        const slackUrl = value.slackUrl.trim()
-        let branchName = value.branchName.trim()
-        let initialPrompt: string | undefined
+      const slackUrl = value.slackUrl.trim()
+      let branchName = value.branchName.trim()
+      let initialPrompt: string | undefined
+      const initialPhase: PendingWorkspaceCreationPhase = slackUrl
+        ? 'analyzing'
+        : 'creating'
 
+      setSubmissionPhase(initialPhase)
+      onPendingCreationChange?.({
+        creation: {
+          branchName: branchName || null,
+          id: pendingCreationId,
+          phase: initialPhase,
+        },
+        id: pendingCreationId,
+      })
+      setOpen(false)
+
+      try {
         if (slackUrl) {
-          setSubmissionPhase('analyzing')
           const plan = await planSlackWorkspace({
             payload: { slackUrl },
           })
           branchName = plan.branchName
           initialPrompt = plan.initialPrompt
+          onPendingCreationChange?.({
+            creation: {
+              branchName,
+              id: pendingCreationId,
+              phase: 'creating',
+            },
+            id: pendingCreationId,
+          })
         }
 
         setSubmissionPhase('creating')
@@ -221,14 +169,15 @@ function CreateWorkspaceForm({
             ? `Workspace "${result.branchName}" is being set up with its Slack prompt`
             : `Workspace "${result.branchName}" is being set up`
         )
-        form.reset()
-        setOpen(false)
       } catch (error: unknown) {
         const message = extractErrorMessage(error)
-        const code = extractErrorCode(error)
-        setCreationError({ code, message })
         toast.error(message)
       } finally {
+        onPendingCreationChange?.({
+          creation: null,
+          id: pendingCreationId,
+        })
+        form.reset()
         setSubmissionPhase(null)
       }
     },
@@ -247,9 +196,6 @@ function CreateWorkspaceForm({
             branchName: '',
             slackUrl: '',
           })
-        }
-        if (!value) {
-          setCreationError(null)
         }
       }}
       open={open}
@@ -360,10 +306,6 @@ function CreateWorkspaceForm({
             </form.Field>
           </div>
 
-          {creationError && (
-            <WorkspaceErrorAlert error={creationError} onDismiss={clearError} />
-          )}
-
           <form.Subscribe
             selector={(state) => [state.canSubmit, state.isSubmitting]}
           >
@@ -381,8 +323,7 @@ function CreateWorkspaceForm({
                         : 'Creating...'}
                     </>
                   )}
-                  {!isSubmitting && creationError && 'Retry'}
-                  {!(isSubmitting || creationError) && 'Create Workspace'}
+                  {!isSubmitting && 'Create Workspace'}
                   {!isSubmitting && <Kbd>↵</Kbd>}
                 </Button>
               </DialogFooter>
@@ -394,49 +335,9 @@ function CreateWorkspaceForm({
   )
 }
 
-/**
- * Inline alert component for workspace creation errors.
- * Shows a distinct title, icon, and actionable guidance for each error type.
- */
-function WorkspaceErrorAlert({
-  error,
-  onDismiss,
-}: {
-  error: WorkspaceCreationError
-  onDismiss: () => void
-}) {
-  const title = getErrorTitle(error.code)
-  const guidance = getErrorGuidance(error.code)
-  const icon = getErrorIcon(error.code)
-
-  return (
-    <Alert className="relative my-2" variant="destructive">
-      {icon}
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        <p>{error.message}</p>
-        {guidance && (
-          <p className="mt-1 font-medium text-destructive">{guidance}</p>
-        )}
-      </AlertDescription>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              aria-label="Dismiss error"
-              className="absolute top-2 right-2 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-              onClick={onDismiss}
-              type="button"
-            />
-          }
-        >
-          <X className="size-3.5" />
-        </TooltipTrigger>
-        <TooltipContent>Dismiss</TooltipContent>
-      </Tooltip>
-    </Alert>
-  )
-}
-
 export { CreateWorkspaceForm }
-export type { CreateWorkspaceFormProps }
+export type {
+  CreateWorkspaceFormProps,
+  PendingWorkspaceCreation,
+  PendingWorkspaceCreationChangeHandler,
+}

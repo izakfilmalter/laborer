@@ -363,4 +363,31 @@ describe('WorkspaceList — root workspace delete protection', () => {
       screen.queryByRole('button', { name: SET_SANDBOX_PORT_RE })
     ).toBeNull()
   })
+
+  it('shows a pending workspace instead of the empty state during Slack planning', () => {
+    mockStore([])
+
+    render(
+      <WorkspaceList
+        pendingCreations={[
+          {
+            branchName: null,
+            id: 'pending-slack',
+            phase: 'analyzing',
+          },
+        ]}
+        projectId="project-1"
+        projectName="my-project"
+        repoPath={PROJECT_REPO_PATH}
+      />
+    )
+
+    expect(
+      screen.getByRole('status', {
+        name: 'Reading Slack thread: Slack workspace',
+      })
+    ).toBeTruthy()
+    expect(screen.getByText('planning')).toBeTruthy()
+    expect(screen.queryByText('No workspaces')).toBeNull()
+  })
 })

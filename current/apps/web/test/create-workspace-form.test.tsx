@@ -33,6 +33,7 @@ interface CreateWorkspaceFormTestMocks {
   readonly panelActionsMock: {
     readonly autoOpenAgentWhenWorkspaceReady: ReturnType<typeof vi.fn>
   }
+  readonly planSlackWorkspaceFn: ReturnType<typeof vi.fn>
 }
 
 const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
@@ -42,6 +43,7 @@ const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
 
   testGlobal.__createWorkspaceFormTestMocks ??= {
     createWorkspaceFn: vi.fn(),
+    planSlackWorkspaceFn: vi.fn(),
     mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
     panelActionsMock: { autoOpenAgentWhenWorkspaceReady: vi.fn() },
   }
@@ -49,7 +51,7 @@ const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
   return testGlobal.__createWorkspaceFormTestMocks
 }
 
-const { createWorkspaceFn, panelActionsMock } =
+const { createWorkspaceFn, panelActionsMock, planSlackWorkspaceFn } =
   getCreateWorkspaceFormTestMocks()
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -65,6 +67,10 @@ vi.mock('@/atoms/laborer-client', () => ({
       if (name === 'workspace.create') {
         const mocks = getCreateWorkspaceFormTestMocks()
         mocks.mutationMap.set(sentinel, mocks.createWorkspaceFn)
+      }
+      if (name === 'workspace.planFromSlack') {
+        const mocks = getCreateWorkspaceFormTestMocks()
+        mocks.mutationMap.set(sentinel, mocks.planSlackWorkspaceFn)
       }
       return sentinel
     },
@@ -129,6 +135,7 @@ const { ReadyPhaseWrapper } = await import('./helpers/lifecycle-test-utils')
 
 const BRANCH_NAME_RE = /branch name/i
 const CREATE_WORKSPACE_RE = /create workspace/i
+const SLACK_URL_RE = /slack message or thread url/i
 
 /** Return the branch name input (dialog is always rendered inline by the mock). */
 function getBranchInput() {
@@ -313,6 +320,56 @@ describe('CreateWorkspaceForm — branch name mask', () => {
           branchName: 'my-feature-branch',
         },
       })
+    })
+  })
+
+  it('plans from Slack, copies the prompt, and creates the suggested workspace', async () => {
+    const user = userEvent.setup()
+    const writeTextFn = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue(undefined)
+    const slackUrl =
+      'https://example.slack.com/archives/C12345678/p1750000000000000'
+    const initialPrompt = 'Fix the timeout described by the Slack thread.'
+    planSlackWorkspaceFn.mockResolvedValue({
+      branchName: 'slack/fix-auth-timeout',
+      initialPrompt,
+      workType: 'bug',
+    })
+    createWorkspaceFn.mockResolvedValue({
+      id: 'ws-slack',
+      projectId: 'project-1',
+      branchName: 'slack/fix-auth-timeout',
+      worktreePath: '/path/to/worktree',
+      status: 'creating',
+    })
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.type(
+      screen.getByRole('textbox', { name: SLACK_URL_RE }),
+      slackUrl
+    )
+    await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
+
+    await waitFor(() => {
+      expect(planSlackWorkspaceFn).toHaveBeenCalledWith({
+        payload: { slackUrl },
+      })
+      expect(writeTextFn).toHaveBeenCalledWith(initialPrompt)
+      expect(createWorkspaceFn).toHaveBeenCalledWith({
+        payload: {
+          projectId: 'project-1',
+          branchName: 'slack/fix-auth-timeout',
+        },
+      })
+      expect(
+        panelActionsMock.autoOpenAgentWhenWorkspaceReady
+      ).toHaveBeenCalledWith('ws-slack')
     })
   })
 

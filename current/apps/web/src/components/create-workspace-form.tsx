@@ -27,6 +27,7 @@ import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { IMaskInput } from 'react-imask'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { copyToClipboardWithMeta } from '@/components/copy-button'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -54,6 +55,9 @@ import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
+const planSlackWorkspaceMutation = LaborerClient.mutation(
+  'workspace.planFromSlack'
+)
 
 /** Structured error info for workspace creation failures. */
 interface WorkspaceCreationError {
@@ -85,6 +89,13 @@ function getErrorTitle(code: string | undefined): string {
       return 'Git Error'
     case 'NO_PORTS_AVAILABLE':
       return 'No Ports Available'
+    case 'INVALID_SLACK_URL':
+      return 'Invalid Slack URL'
+    case 'SLACK_ANALYSIS_FAILED':
+    case 'SLACK_ANALYSIS_INVALID_RESPONSE':
+      return 'Slack Analysis Failed'
+    case 'CLIPBOARD_WRITE_FAILED':
+      return 'Clipboard Access Failed'
     default:
       return 'Workspace Creation Failed'
   }
@@ -153,6 +164,12 @@ function CreateWorkspaceForm({
   const createWorkspace = useAtomSet(createWorkspaceMutation, {
     mode: 'promise',
   })
+  const planSlackWorkspace = useAtomSet(planSlackWorkspaceMutation, {
+    mode: 'promise',
+  })
+  const [submissionPhase, setSubmissionPhase] = useState<
+    'analyzing' | 'creating' | null
+  >(null)
   const branchInputRef = useCallback((el: HTMLInputElement | null) => {
     if (el) {
       el.focus()
@@ -166,12 +183,34 @@ function CreateWorkspaceForm({
   const form = useForm({
     defaultValues: {
       branchName: '',
+      slackUrl: '',
     },
     onSubmit: async ({ value }) => {
       // Clear any previous error when retrying
       setCreationError(null)
       try {
-        const branchName = value.branchName.trim()
+        const slackUrl = value.slackUrl.trim()
+        let branchName = value.branchName.trim()
+
+        if (slackUrl) {
+          setSubmissionPhase('analyzing')
+          const plan = await planSlackWorkspace({
+            payload: { slackUrl },
+          })
+          branchName = plan.branchName
+
+          try {
+            await copyToClipboardWithMeta(plan.initialPrompt)
+          } catch {
+            const message =
+              'Laborer could not copy the generated prompt. Check clipboard permissions and try again.'
+            setCreationError({ code: 'CLIPBOARD_WRITE_FAILED', message })
+            toast.error(message)
+            return
+          }
+        }
+
+        setSubmissionPhase('creating')
         const result = await createWorkspace({
           payload: {
             projectId,
@@ -182,7 +221,11 @@ function CreateWorkspaceForm({
         panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
         // The RPC now returns immediately with status 'creating'.
         // The workspace card will show setup progress via worktreeSetupStep.
-        toast.success(`Workspace "${result.branchName}" is being set up`)
+        toast.success(
+          slackUrl
+            ? `Workspace "${result.branchName}" is being set up and its prompt is on your clipboard`
+            : `Workspace "${result.branchName}" is being set up`
+        )
         form.reset()
         setOpen(false)
       } catch (error: unknown) {
@@ -190,6 +233,8 @@ function CreateWorkspaceForm({
         const code = extractErrorCode(error)
         setCreationError({ code, message })
         toast.error(message)
+      } finally {
+        setSubmissionPhase(null)
       }
     },
   })
@@ -197,11 +242,15 @@ function CreateWorkspaceForm({
   return (
     <Dialog
       onOpenChange={(value) => {
+        if (form.state.isSubmitting) {
+          return
+        }
         setOpen(value)
         if (value) {
           // Reset form when dialog opens
           form.reset({
             branchName: '',
+            slackUrl: '',
           })
         }
         if (!value) {
@@ -261,6 +310,30 @@ function CreateWorkspaceForm({
           }}
         >
           <div className="grid gap-4 py-2">
+            <form.Field name="slackUrl">
+              {(field) => (
+                <Field>
+                  <FieldLabel htmlFor="slackUrl">
+                    Slack Message or Thread URL (optional)
+                  </FieldLabel>
+                  <input
+                    className={inputClassName}
+                    disabled={form.state.isSubmitting}
+                    id="slackUrl"
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="https://workspace.slack.com/archives/…"
+                    type="url"
+                    value={field.state.value}
+                  />
+                  <FieldDescription>
+                    OpenCode will read the conversation, name the workspace, and
+                    copy a self-contained starting prompt to your clipboard.
+                  </FieldDescription>
+                </Field>
+              )}
+            </form.Field>
             <form.Field name="branchName">
               {(field) => (
                 <Field>
@@ -284,7 +357,8 @@ function CreateWorkspaceForm({
                     value={field.state.value}
                   />
                   <FieldDescription>
-                    Leave empty to auto-generate a branch name.
+                    Used when no Slack URL is provided. Leave empty to
+                    auto-generate a branch name.
                   </FieldDescription>
                 </Field>
               )}
@@ -307,7 +381,9 @@ function CreateWorkspaceForm({
                   {isSubmitting && (
                     <>
                       <Spinner className="size-3.5" />
-                      Creating...
+                      {submissionPhase === 'analyzing'
+                        ? 'Reading Slack...'
+                        : 'Creating...'}
                     </>
                   )}
                   {!isSubmitting && creationError && 'Retry'}

@@ -34,6 +34,7 @@ import {
 import { ProjectRegistry } from '../services/project-registry.js'
 import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { SandboxProvider } from '../services/sandbox-provider.js'
+import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -945,6 +946,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             | 'destroyed',
         }
       }),
+    'workspace.planFromSlack': ({ slackUrl }) => planSlackWorkspace(slackUrl),
     'workspace.destroy': ({ workspaceId, force }) =>
       Effect.gen(function* () {
         // Stop PR polling before destroying the workspace.

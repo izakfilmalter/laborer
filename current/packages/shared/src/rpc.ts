@@ -251,6 +251,12 @@ const WorkspaceResponse = Schema.Struct({
   status: WorkspaceStatus,
 })
 
+const SlackWorkspacePlanResponse = Schema.Struct({
+  branchName: Schema.String,
+  initialPrompt: Schema.String,
+  workType: Schema.Literal('bug', 'feature'),
+})
+
 const TerminalResponse = Schema.Struct({
   id: Schema.String,
   workspaceId: Schema.String,
@@ -853,6 +859,14 @@ export class LaborerRpcs extends RpcGroup.make(
        * workspace's current HEAD and its PR targets that workspace's branch.
        */
       baseWorkspaceId: Schema.optional(Schema.String),
+    },
+  }),
+
+  Rpc.make('workspace.planFromSlack', {
+    success: SlackWorkspacePlanResponse,
+    error: RpcError,
+    payload: {
+      slackUrl: Schema.String,
     },
   }),
 

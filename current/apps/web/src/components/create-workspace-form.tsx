@@ -27,7 +27,6 @@ import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { IMaskInput } from 'react-imask'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { copyToClipboardWithMeta } from '@/components/copy-button'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -94,8 +93,6 @@ function getErrorTitle(code: string | undefined): string {
     case 'SLACK_ANALYSIS_FAILED':
     case 'SLACK_ANALYSIS_INVALID_RESPONSE':
       return 'Slack Analysis Failed'
-    case 'CLIPBOARD_WRITE_FAILED':
-      return 'Clipboard Access Failed'
     default:
       return 'Workspace Creation Failed'
   }
@@ -191,6 +188,7 @@ function CreateWorkspaceForm({
       try {
         const slackUrl = value.slackUrl.trim()
         let branchName = value.branchName.trim()
+        let initialPrompt: string | undefined
 
         if (slackUrl) {
           setSubmissionPhase('analyzing')
@@ -198,16 +196,7 @@ function CreateWorkspaceForm({
             payload: { slackUrl },
           })
           branchName = plan.branchName
-
-          try {
-            await copyToClipboardWithMeta(plan.initialPrompt)
-          } catch {
-            const message =
-              'Laborer could not copy the generated prompt. Check clipboard permissions and try again.'
-            setCreationError({ code: 'CLIPBOARD_WRITE_FAILED', message })
-            toast.error(message)
-            return
-          }
+          initialPrompt = plan.initialPrompt
         }
 
         setSubmissionPhase('creating')
@@ -218,12 +207,18 @@ function CreateWorkspaceForm({
             ...(baseWorkspace ? { baseWorkspaceId: baseWorkspace.id } : {}),
           },
         })
-        panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
+        if (initialPrompt === undefined) {
+          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
+        } else {
+          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id, {
+            initialPrompt,
+          })
+        }
         // The RPC now returns immediately with status 'creating'.
         // The workspace card will show setup progress via worktreeSetupStep.
         toast.success(
           slackUrl
-            ? `Workspace "${result.branchName}" is being set up and its prompt is on your clipboard`
+            ? `Workspace "${result.branchName}" is being set up with its Slack prompt`
             : `Workspace "${result.branchName}" is being set up`
         )
         form.reset()
@@ -310,30 +305,6 @@ function CreateWorkspaceForm({
           }}
         >
           <div className="grid gap-4 py-2">
-            <form.Field name="slackUrl">
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor="slackUrl">
-                    Slack Message or Thread URL (optional)
-                  </FieldLabel>
-                  <input
-                    className={inputClassName}
-                    disabled={form.state.isSubmitting}
-                    id="slackUrl"
-                    name={field.name}
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    placeholder="https://workspace.slack.com/archives/…"
-                    type="url"
-                    value={field.state.value}
-                  />
-                  <FieldDescription>
-                    OpenCode will read the conversation, name the workspace, and
-                    copy a self-contained starting prompt to your clipboard.
-                  </FieldDescription>
-                </Field>
-              )}
-            </form.Field>
             <form.Field name="branchName">
               {(field) => (
                 <Field>
@@ -359,6 +330,30 @@ function CreateWorkspaceForm({
                   <FieldDescription>
                     Used when no Slack URL is provided. Leave empty to
                     auto-generate a branch name.
+                  </FieldDescription>
+                </Field>
+              )}
+            </form.Field>
+            <form.Field name="slackUrl">
+              {(field) => (
+                <Field>
+                  <FieldLabel htmlFor="slackUrl">
+                    Slack Message or Thread URL (optional)
+                  </FieldLabel>
+                  <input
+                    className={inputClassName}
+                    disabled={form.state.isSubmitting}
+                    id="slackUrl"
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="https://workspace.slack.com/archives/…"
+                    type="url"
+                    value={field.state.value}
+                  />
+                  <FieldDescription>
+                    OpenCode will read the conversation, name the workspace, and
+                    start with a self-contained prompt.
                   </FieldDescription>
                 </Field>
               )}

@@ -161,6 +161,21 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     expect(document.activeElement).toBe(input)
   })
 
+  it('tabs from the branch name input to the Slack URL input', async () => {
+    const user = userEvent.setup()
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.tab()
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: SLACK_URL_RE })
+    )
+  })
+
   it('renders the branch name input with correct placeholder', () => {
     render(
       <ReadyPhaseWrapper>
@@ -323,11 +338,8 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     })
   })
 
-  it('plans from Slack, copies the prompt, and creates the suggested workspace', async () => {
+  it('plans from Slack and opens OpenCode with the generated prompt', async () => {
     const user = userEvent.setup()
-    const writeTextFn = vi
-      .spyOn(navigator.clipboard, 'writeText')
-      .mockResolvedValue(undefined)
     const slackUrl =
       'https://example.slack.com/archives/C12345678/p1750000000000000'
     const initialPrompt = 'Fix the timeout described by the Slack thread.'
@@ -360,7 +372,6 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       expect(planSlackWorkspaceFn).toHaveBeenCalledWith({
         payload: { slackUrl },
       })
-      expect(writeTextFn).toHaveBeenCalledWith(initialPrompt)
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
           projectId: 'project-1',
@@ -369,7 +380,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       })
       expect(
         panelActionsMock.autoOpenAgentWhenWorkspaceReady
-      ).toHaveBeenCalledWith('ws-slack')
+      ).toHaveBeenCalledWith('ws-slack', { initialPrompt })
     })
   })
 

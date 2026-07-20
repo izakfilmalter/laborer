@@ -49,6 +49,7 @@ import {
   Scope,
   Stream,
 } from 'effect'
+import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
@@ -216,7 +217,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     readonly spawnInWorkspace: (
       workspaceId: string,
       command?: string,
-      autoRun?: boolean
+      autoRun?: boolean,
+      initialPrompt?: string
     ) => Effect.Effect<TerminalRecord, RpcError>
 
     /**
@@ -495,7 +497,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const buildAgentCommand = (
         agentCommand: string,
         terminalId: string,
-        terminalPort: number
+        terminalPort: number,
+        initialPrompt?: string
       ): { command: string; extraEnv: Record<string, string> } => {
         const hookUrl = `http://localhost:${terminalPort}/hook/agent-status`
         const extraEnv: Record<string, string> = {
@@ -511,10 +514,17 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           }
         }
 
-        // For opencode and other agents, spawn them normally.
+        // For opencode and other agents, add any supported initial prompt.
         // OpenCode hooks are handled via a plugin file that reads
         // LABORER_TERMINAL_ID and LABORER_HOOK_URL from the environment.
-        return { command: agentCommand, extraEnv }
+        const launchCommand = withInitialAgentPrompt(
+          agentCommand,
+          initialPrompt
+        )
+        return {
+          command: launchCommand.command,
+          extraEnv: { ...extraEnv, ...launchCommand.extraEnv },
+        }
       }
 
       /**
@@ -740,7 +750,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         function* (
           workspace: { readonly worktreePath: string },
           workspaceId: string,
-          command: string | undefined
+          command: string | undefined,
+          initialPrompt?: string
         ) {
           const { client: rpcClient, terminalPort } =
             yield* provideLayerScope(getOrCreateClient)
@@ -757,7 +768,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           // Build the command, potentially wrapping it with hook settings
           const { command: agentCmd, extraEnv } =
             isAgent && terminalId !== undefined
-              ? buildAgentCommand(command, terminalId, terminalPort)
+              ? buildAgentCommand(
+                  command,
+                  terminalId,
+                  terminalPort,
+                  initialPrompt
+                )
               : { command: command ?? defaultShell, extraEnv: {} }
 
           const resolvedCommand = command ?? defaultShell
@@ -795,7 +811,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       )
 
       const spawnInWorkspace = Effect.fn('TerminalClient.spawnInWorkspace')(
-        function* (workspaceId: string, command?: string, autoRun?: boolean) {
+        function* (
+          workspaceId: string,
+          command?: string,
+          autoRun?: boolean,
+          initialPrompt?: string
+        ) {
           // 1. Validate workspace exists and get its info from LiveStore
           const allWorkspaces = store.query(tables.workspaces)
           const workspaceOpt = pipe(
@@ -845,7 +866,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           }
 
           // 4. Regular terminal: always spawn on host (even for containerized workspaces)
-          return yield* spawnHostTerminal(workspace, workspaceId, command)
+          return yield* spawnHostTerminal(
+            workspace,
+            workspaceId,
+            command,
+            initialPrompt
+          )
         }
       )
 

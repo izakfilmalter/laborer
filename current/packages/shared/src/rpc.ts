@@ -1017,6 +1017,8 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       command: Schema.optional(Schema.String),
+      /** Prompt passed to a supported interactive agent when it starts. */
+      initialPrompt: Schema.optional(Schema.String),
       /**
        * When true and the workspace is containerized, auto-types setup scripts
        * from `laborer.json` followed by the `devServer.startCommand` into the

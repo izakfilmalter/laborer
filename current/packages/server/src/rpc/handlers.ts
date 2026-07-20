@@ -1212,7 +1212,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // these for Daytona terminals only (detected by `daytona:` prefix);
     // local terminals are handled directly by TerminalServiceClient.
     // -------------------------------------------------------------------
-    'terminal.spawn': ({ workspaceId, command, autoRun }) =>
+    'terminal.spawn': ({ workspaceId, command, initialPrompt, autoRun }) =>
       Effect.gen(function* () {
         const { store } = yield* LaborerStore
         const workspace = store.query(
@@ -1226,12 +1226,18 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           const sandboxProvider = yield* SandboxProvider
           return yield* sandboxProvider.spawnTerminal(workspaceId, {
             command,
+            initialPrompt,
             autoRun,
           })
         }
 
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
+        return yield* tc.spawnInWorkspace(
+          workspaceId,
+          command,
+          autoRun,
+          initialPrompt
+        )
       }),
 
     'terminal.resize': ({ id, cols, rows }) =>

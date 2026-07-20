@@ -490,7 +490,8 @@ describe('usePanelLayout', () => {
 
     act(() => {
       result.current.panelActions.autoOpenAgentWhenWorkspaceReady?.(
-        'workspace-new'
+        'workspace-new',
+        { initialPrompt: 'Investigate the Slack report.' }
       )
     })
 
@@ -514,7 +515,11 @@ describe('usePanelLayout', () => {
 
     await waitFor(() => {
       expect(spawnTerminalMock).toHaveBeenCalledWith({
-        payload: { workspaceId: 'workspace-new', command: 'opencode' },
+        payload: {
+          workspaceId: 'workspace-new',
+          command: 'opencode',
+          initialPrompt: 'Investigate the Slack report.',
+        },
       })
     })
 

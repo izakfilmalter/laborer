@@ -27,6 +27,11 @@ interface AssignTerminalToPaneOptions {
   readonly autoOpenDevServer?: boolean | undefined
 }
 
+interface AutoOpenAgentOptions {
+  /** Prompt passed to OpenCode when the deferred agent terminal starts. */
+  readonly initialPrompt?: string | undefined
+}
+
 /**
  * Mode for the panel type picker — determines what happens after a type
  * is selected.
@@ -102,7 +107,10 @@ interface PanelActions {
    *
    * @param workspaceId - The workspace whose agent should open when ready
    */
-  readonly autoOpenAgentWhenWorkspaceReady?: (workspaceId: string) => void
+  readonly autoOpenAgentWhenWorkspaceReady?: (
+    workspaceId: string,
+    options?: AutoOpenAgentOptions
+  ) => void
   /**
    * Close a pane and remove it from the layout.
    * If it's the last pane, the layout becomes empty.
@@ -744,6 +752,7 @@ export {
 }
 export type {
   AssignTerminalToPaneOptions,
+  AutoOpenAgentOptions,
   PanelActions,
   PendingCloseState,
   PendingClosePanelTabState,

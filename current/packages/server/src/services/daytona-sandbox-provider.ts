@@ -94,6 +94,7 @@ import {
   SSH_TOKEN_REFRESH_MINUTES,
   upsertSshConfigEntry,
 } from '../lib/ssh-config.js'
+import { withInitialAgentPrompt } from './agent-launch-command.js'
 import type { DaytonaSandbox } from './daytona-client.js'
 import { DaytonaClient } from './daytona-client.js'
 import { DAYTONA_TERMINAL_ID_PREFIX } from './daytona-terminal-data-channel.js'
@@ -1040,7 +1041,11 @@ class DaytonaSandboxProvider extends Context.Tag(
           const sessionId = `${DAYTONA_TERMINAL_ID_PREFIX}${rawSessionId}`
           const cols = opts?.cols ?? 80
           const rows = opts?.rows ?? 24
-          const command = opts?.command ?? '/bin/sh'
+          const launchCommand =
+            opts?.command === undefined
+              ? { command: '/bin/sh', extraEnv: {} }
+              : withInitialAgentPrompt(opts.command, opts.initialPrompt)
+          const command = launchCommand.command
 
           yield* Effect.logInfo(
             `Spawning Daytona PTY session "${sessionId}" in sandbox "${sandboxId}" for workspace "${workspaceId}" (${String(cols)}×${String(rows)})`
@@ -1060,6 +1065,7 @@ class DaytonaSandboxProvider extends Context.Tag(
                 envs: {
                   TERM: 'xterm-256color',
                   COLORTERM: 'truecolor',
+                  ...launchCommand.extraEnv,
                 },
                 onData: (_data: Uint8Array) => {
                   // Output data is received here from the WebSocket PTY.

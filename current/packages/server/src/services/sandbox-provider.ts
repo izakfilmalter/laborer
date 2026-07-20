@@ -82,6 +82,8 @@ interface TerminalOpts {
   readonly cols?: number | undefined
   /** Initial command to execute in the terminal. */
   readonly command?: string | undefined
+  /** Prompt passed to a supported interactive agent when it starts. */
+  readonly initialPrompt?: string | undefined
   /** Initial terminal row count. */
   readonly rows?: number | undefined
 }

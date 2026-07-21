@@ -652,40 +652,38 @@ interface SlackReactionFailure {
   readonly cause: unknown;
 }
 
-const performSlackReaction = Effect.fnUntraced(function* (
+const performSlackReaction = (
   botClient: ReactionsClient,
   operation: "add" | "remove",
   name: string,
   channelId: string,
   timestamp: string
-) {
-  const result = yield* Effect.result(
-    Effect.tryPromise({
-      try: () =>
-        botClient.reactions[operation]({
-          channel: channelId,
-          name,
-          timestamp,
-        }),
-      catch: (cause): SlackReactionFailure => ({ cause }),
+): Effect.Effect<void, DeliveryError> =>
+  Effect.tryPromise({
+    try: () =>
+      botClient.reactions[operation]({
+        channel: channelId,
+        name,
+        timestamp,
+      }),
+    catch: (cause): SlackReactionFailure => ({ cause }),
+  }).pipe(
+    Effect.asVoid,
+    Effect.catch(({ cause }) => {
+      const isIdempotent =
+        (operation === "add" && isAlreadyReacted(cause)) ||
+        (operation === "remove" && isReactionAbsent(cause));
+      if (isIdempotent) {
+        return Effect.void;
+      }
+      const failure = classifySlackError(cause);
+      return DeliveryError.make({
+        category: failure.category,
+        disposition: failure.disposition,
+        retryAfterMillis: failure.retryAfterMillis,
+      });
     })
   );
-  if (result._tag === "Success") {
-    return;
-  }
-  const isIdempotent =
-    (operation === "add" && isAlreadyReacted(result.failure.cause)) ||
-    (operation === "remove" && isReactionAbsent(result.failure.cause));
-  if (isIdempotent) {
-    return;
-  }
-  const failure = classifySlackError(result.failure.cause);
-  return yield* DeliveryError.make({
-    category: failure.category,
-    disposition: failure.disposition,
-    retryAfterMillis: failure.retryAfterMillis,
-  });
-});
 
 export const makeSlackActivationAcknowledger = (
   botClient: ReactionsClient

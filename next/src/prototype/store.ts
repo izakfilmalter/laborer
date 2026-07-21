@@ -3,7 +3,7 @@
  * All queue, claim, outcome, and outbox invariants live behind this service.
  */
 import { randomUUID } from "node:crypto";
-import { type FileHandle, open, readFile, rename, rm } from "node:fs/promises";
+import { type FileHandle, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   Context,
@@ -42,6 +42,7 @@ import {
   ReplyProtocolError,
   StoreError,
 } from "./errors.ts";
+import { assertSafeFilePath, openRegularFileNoFollow } from "./path-safety.ts";
 
 export interface ActivationContextRequest {
   readonly activationTs: string;
@@ -1389,11 +1390,17 @@ const closeFile = async (file: FileHandle): Promise<void> => {
 const persistSnapshotPromise = async (
   path: string,
   state: PrototypeState,
-  signal: AbortSignal
+  signal: AbortSignal,
+  trustedRoot?: string
 ): Promise<void> => {
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   try {
     signal.throwIfAborted();
+    await assertSafeFilePath({
+      ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
+      operation: "persist-snapshot",
+      path,
+    });
     const file = await open(temporaryPath, "wx", 0o600);
     try {
       await file.writeFile(JSON.stringify(state), { encoding: "utf8", signal });
@@ -1402,6 +1409,11 @@ const persistSnapshotPromise = async (
       await closeFile(file);
     }
     signal.throwIfAborted();
+    await assertSafeFilePath({
+      ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
+      operation: "persist-snapshot",
+      path,
+    });
     await rename(temporaryPath, path);
     const directory = await open(dirname(path), "r");
     try {
@@ -1415,15 +1427,36 @@ const persistSnapshotPromise = async (
   }
 };
 
-const persistSnapshot = (path: string, state: PrototypeState) =>
+const persistSnapshot = (
+  path: string,
+  state: PrototypeState,
+  trustedRoot?: string
+) =>
   Effect.tryPromise({
-    try: (signal) => persistSnapshotPromise(path, state, signal),
+    try: (signal) => persistSnapshotPromise(path, state, signal, trustedRoot),
     catch: () => storeFailure("persist", "snapshot-unwritable"),
   });
 
-const loadSnapshot = (path: string) =>
+const readSnapshotPromise = async (
+  path: string,
+  trustedRoot?: string
+): Promise<unknown> => {
+  await assertSafeFilePath({
+    ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
+    operation: "load-snapshot",
+    path,
+  });
+  const file = await openRegularFileNoFollow(path, "load-snapshot");
+  try {
+    return JSON.parse(await file.readFile("utf8")) as unknown;
+  } finally {
+    await closeFile(file);
+  }
+};
+
+const loadSnapshot = (path: string, trustedRoot?: string) =>
   Effect.tryPromise({
-    try: async () => JSON.parse(await readFile(path, "utf8")) as unknown,
+    try: () => readSnapshotPromise(path, trustedRoot),
     catch: (cause) =>
       isMissingFile(cause)
         ? SnapshotMissing.make()
@@ -1436,7 +1469,7 @@ const loadSnapshot = (path: string) =>
         : storeFailure("load", "snapshot-invalid")
     ),
     Effect.catchTag("SnapshotMissing", () =>
-      persistSnapshot(path, initialPrototypeState).pipe(
+      persistSnapshot(path, initialPrototypeState, trustedRoot).pipe(
         Effect.as(initialPrototypeState)
       )
     )
@@ -1444,14 +1477,15 @@ const loadSnapshot = (path: string) =>
 
 export const makeFileStoreLayer = (
   laborerSlackId: string,
-  snapshotPath: string
+  snapshotPath: string,
+  trustedRoot?: string
 ): Layer.Layer<PrototypeStore, StoreError> =>
   Layer.effect(
     PrototypeStore,
     Effect.gen(function* () {
-      const initial = yield* loadSnapshot(snapshotPath);
+      const initial = yield* loadSnapshot(snapshotPath, trustedRoot);
       return yield* makeStore(laborerSlackId, initial, (state) =>
-        persistSnapshot(snapshotPath, state)
+        persistSnapshot(snapshotPath, state, trustedRoot)
       );
     })
   );

@@ -5,6 +5,8 @@
   "scripts": {
     "prepare": "effect-language-service patch",
     "prototype": "bun run src/prototype/demo.ts",
+    "start:slack": "bun run src/slack/live.ts",
+    "check:secrets": "vitest run tests/secret-safety.test.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "format": "ultracite check",
@@ -12,6 +14,7 @@
     "check": "bun run typecheck && bun run format && bun run test"
   },
   "dependencies": {
+    "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
     "effect": "4.0.0-beta.99",
     "emulate": "^0.9.0"

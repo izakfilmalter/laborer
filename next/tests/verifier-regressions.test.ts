@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -877,8 +878,8 @@ describe("process supervision", () => {
     "tightens a pre-existing state directory to owner-only before invocation",
     () =>
       Effect.gen(function* () {
-        const stateRoot = yield* Effect.promise(() =>
-          mkdtemp(join(tmpdir(), "laborer-204-state-mode-"))
+        const stateRoot = yield* Effect.promise(async () =>
+          realpath(await mkdtemp(join(tmpdir(), "laborer-204-state-mode-")))
         );
         const stateDirectory = join(
           stateRoot,
@@ -1098,7 +1099,7 @@ describe("storage failure posture", () => {
 
 describe("real WebClient error and partial-context integration", () => {
   const makeClient = (fetch: FetchFunction): WebClient =>
-    new WebClient("xoxb-test", {
+    new WebClient("prototype-web-client-token", {
       fetch,
       rejectRateLimitedCalls: true,
       retryConfig: { retries: 0 },

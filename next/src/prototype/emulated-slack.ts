@@ -29,8 +29,8 @@ import {
 import type { SlackGatewayShape } from "./runtime.ts";
 import type { ActivationContextRequest } from "./store.ts";
 
-const HUMAN_TOKEN = "xoxp-human-issue-204";
-const BOT_TOKEN = "xoxb-laborer-issue-204";
+const HUMAN_TOKEN = "prototype-human-token";
+const BOT_TOKEN = "prototype-bot-token";
 const BOT_ID = "B204000001";
 const BOT_USER_ID = "U204LABORER";
 const PUBLIC_CHANNEL_NAME = "tracer-bullet";

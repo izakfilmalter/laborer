@@ -12,6 +12,17 @@ release
 # Environment variables
 .env
 .env*.local
+.env.*
+!.env.example
+*.token
+*.tokens
+.slack-token*
+slack-token*
+.slack-config-access-token*
+slack-config-access-token*
+
+# Local Slack Runner state
+next/.laborer-runtime/
 
 # IDEs and editors
 .vscode/*

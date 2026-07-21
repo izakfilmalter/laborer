@@ -1,4 +1,4 @@
-# Slack-to-handler tracer bullet
+# Slack-to-handler tracer bullet and live fixture smoke
 
 > **THROWAWAY LOGIC PROTOTYPE for issue #204.** This is a local vertical proof,
 > not the production Runner. Every file under `src/prototype/` exists only for
@@ -14,15 +14,82 @@ bun run prototype
 
 The command starts a strictly-scoped Vercel Labs Emulate Slack server, uses
 separate human and Laborer bot tokens through official `@slack/web-api`
-`WebClient` instances, injects normalized events below the future Socket Mode
-adapter, launches one fresh fixture child process per turn, and prints the
-store/process/Slack evidence. Cleanup is scope-finalized.
+`WebClient` instances, injects normalized events at the same boundary used by
+the thin live Socket Mode adapter, launches one fresh fixture child process per
+turn, and prints the store/process/Slack evidence. Cleanup is scope-finalized.
+
+This is the **Emulate proof**, not a connection to Slack. It requires no Slack
+app or credentials and remains the default automated integration path.
 
 Run the adversarial proof with:
 
 ```sh
 bun run check
 ```
+
+## Run the live Slack fixture smoke mode
+
+> **FIXTURE MODE ONLY.** `start:slack` connects the production Socket Mode and
+> Web API adapters to a real workspace, but deliberately invokes the committed
+> `src/prototype/fixture-handler.ts`. It is not arbitrary-handler support and
+> cannot be configured to execute a command or shell string.
+
+### Provision the app manually
+
+1. Open [Your Apps](https://api.slack.com/apps), choose **Create New App**, then
+   **From an app manifest**.
+2. Select the development workspace, choose YAML, and paste the complete
+   contents of [`slack-app-manifest.yaml`](./slack-app-manifest.yaml). Review and
+   create the app. The manifest enables Socket Mode, creates the Laborer bot,
+   subscribes only to `app_mention`, `message.channels`, and `message.groups`,
+   and requests only `app_mentions:read`, `channels:history`, `groups:history`,
+   and `chat:write` bot scopes.
+3. In **OAuth & Permissions**, choose **Install to Workspace** (or reinstall
+   after a manifest change), approve it, and copy the **Bot User OAuth Token**.
+4. In **Basic Information → App-Level Tokens**, choose **Generate Token and
+   Scopes**. Give it a local-development name, grant only
+   `connections:write`, generate it, and copy the app-level token.
+5. In `next`, copy `.env.example` to the ignored `.env.local` and enter the two
+   token values locally:
+
+   ```sh
+   cp .env.example .env.local
+   ```
+
+   Do not paste tokens into the manifest, source, tests, README, shell history,
+   or any tracked file. `SLACK_APP_TOKEN` is the app-level token and
+   `SLACK_BOT_TOKEN` is the installed bot token. Laborer validates their token
+   kinds while keeping them redacted. No app, bot, user, or workspace ID is
+   configured manually: startup calls `auth.test` to derive the bot user, bot,
+   and team identifiers.
+6. In each public or private channel used for the smoke test, invite the app
+   with `/invite @Laborer`. The app cannot read or reply in a channel it has not
+   joined.
+7. Start the Runner from `next`:
+
+   ```sh
+   bun run start:slack
+   ```
+
+8. In an invited channel, post a new nonblank message such as
+   `@Laborer fixture smoke`, then reply in its thread. The fixture posts an
+   intentionally obvious `[PUBLIC ...]` echo for each turn. Press Ctrl-C to
+   disconnect cleanly.
+
+Live state is stored in ignored `next/.laborer-runtime/`. Its state and
+work-thread directories are forced to owner-only permissions, and the atomic
+filesystem snapshot fails closed if it is corrupt or unwritable. Delete or
+inspect this directory only while the Runner is stopped. A root-derived
+exclusive loopback TCP lease is acquired before `auth.test`, Socket Mode, or
+snapshot loading; a second Runner fails closed, clean shutdown releases the
+lease, and a crash-stale nonsecret marker is safely replaced only by the new
+lease owner. Runtime, lock, snapshot, and handler-state paths reject
+pre-existing or traversed symlinks rather than chmodding or reading through
+them. If the root-derived loopback port is occupied for any reason, startup
+fails closed rather than risking a second owner.
+
+No automated test opens a Slack connection. Tests inject a fake Socket Mode
+client and continue to use Emulate for official `WebClient` HTTP behavior.
 
 ## What this prototype genuinely proves
 
@@ -60,6 +127,9 @@ bun run check
   uses channel-qualified stable message IDs, excludes Laborer/system/blank/
   edited/deleted records, bounds root context to the preceding ten top-level
   messages, and bounds reply context at the activating reply.
+- Live normalization treats Slack's `thread_broadcast` subtype as the authored
+  conversational reply it represents, preserving its text, canonical
+  `thread_ts`, and human/external-bot/Laborer self-trigger classification.
 - Actual Emulate HTTP reads and writes prove public and private channel roots,
   root/reply activation, exact `thread_ts`, no broadcast flag, distinct human
   and bot users, and self-trigger prevention.
@@ -83,22 +153,35 @@ bun run check
 - Effect services are narrow `Context.Service` contracts assembled with
   `Layer`s. Boundary/domain records use `Schema` classes and branded IDs;
   expected failures use tagged schema errors; resources use scopes.
+- The live adapter acknowledges each Socket Mode envelope before normalization
+  or asynchronous Runner work, then injects the existing normalized ingress
+  boundary. Durable event and channel/timestamp message identities absorb Slack
+  retries and duplicate mention/message subscription delivery.
+- Production ingress defensively decodes Events API callbacks and normalizes
+  public/private channel roots and replies, human/external-bot/Laborer authors,
+  original text, edits, deletes, system records, blank messages, and excluded
+  DM/MPIM channel kinds. Startup derives Slack identity with `auth.test`.
+- Live fixture mode wires the fail-closed atomic filesystem store and fresh
+  process boundary into a scoped Socket Mode resource. Listener removal,
+  disconnect, and in-flight fiber/process interruption are scope-finalized.
+- Live startup holds one OS-enforced, root-scoped loopback TCP lease for its
+  full lifetime before any Slack connection or durable-state load. Filesystem
+  boundaries combine `lstat`, canonical containment, no-follow opens, and
+  descriptor-based chmod to reject symlink redirection.
 
-## Deliberately outside issue #204
+## Remaining scope after this live smoke adapter
 
-- Socket Mode transport, envelope acknowledgement, Slack reconnect/retry event
-  delivery, and production event normalization. Tests inject the normalized
-  boundary chosen by #200.
-- A production `laborer.json` loader, PATH/executable validation, root lock,
+- A production `laborer.json` loader, PATH/executable validation,
   installation/packaging, and a real user work handler. The child is a fixture
   that exercises the real adapter/parser/supervisor boundary.
-- A production atomic filesystem store wired into the Runner, migrations,
-  retention, and operator CLI/UX. The tracer uses the in-memory Layer so tests
-  remain local and inspectable.
+- State migrations, retention, and operator retry/abandon CLI/UX.
+  Live fixture mode now uses the atomic filesystem store; Emulate scenarios
+  retain the in-memory layer where they need inspectable isolation.
 - Hard-crash process overlap and ambiguous real Slack delivery outcomes. Those
   accepted #201/#199 risks require process-level restart and real Slack tests.
-- Socket Mode and exact Slack rate-limit fidelity, which Emulate does not
-  implement.
+- Automated Socket Mode reconnect fidelity and exact Slack rate-limit behavior,
+  which Emulate does not implement. The thin production client delegates
+  reconnect behavior to the official SDK.
 
 ## Emulate-specific evidence and workaround
 

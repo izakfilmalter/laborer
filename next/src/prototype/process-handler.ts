@@ -4,8 +4,9 @@
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { Effect, Array as EffectArray, Layer, pipe, Ref, Schema } from "effect";
 import {
   type ClaimedTurn,
@@ -15,6 +16,7 @@ import {
   UnknownProtocolRecord,
 } from "./domain.ts";
 import { HandlerFailure, StoreError } from "./errors.ts";
+import { ensureOwnerOnlyDirectoryTree } from "./path-safety.ts";
 import { WorkHandler, type WorkHandlerShape } from "./runtime.ts";
 
 const MAX_PROTOCOL_RECORD_BYTES = 1024 * 1024;
@@ -49,6 +51,7 @@ export interface ProcessHandlerOptions {
   readonly command: string;
   readonly cwd: string;
   readonly stateRoot: string;
+  readonly stateRootAnchor?: string;
   readonly timeout?: import("effect").Duration.Input;
 }
 
@@ -318,8 +321,17 @@ const invokeProcess = Effect.fnUntraced(function* (
   );
   yield* Effect.tryPromise({
     try: async () => {
-      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
-      await chmod(stateDirectory, 0o700);
+      const anchor = options.stateRootAnchor ?? dirname(options.stateRoot);
+      await ensureOwnerOnlyDirectoryTree({
+        anchor,
+        operation: "prepare-handler-state-root",
+        target: options.stateRoot,
+      });
+      await ensureOwnerOnlyDirectoryTree({
+        anchor: options.stateRoot,
+        operation: "prepare-handler-state-directory",
+        target: stateDirectory,
+      });
     },
     catch: spawnFailure,
   });
@@ -481,5 +493,10 @@ export const fixtureHandlerOptions = (cwd: string): ProcessHandlerOptions => ({
   command: process.execPath,
   args: [resolve(cwd, "src/prototype/fixture-handler.ts")],
   cwd,
-  stateRoot: resolve("/tmp", "laborer-issue-204-prototype-state", randomUUID()),
+  stateRoot: resolve(
+    realpathSync(tmpdir()),
+    "laborer-issue-204-prototype-state",
+    randomUUID()
+  ),
+  stateRootAnchor: realpathSync(tmpdir()),
 });

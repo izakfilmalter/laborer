@@ -2,6 +2,7 @@
  * THROWAWAY ISSUE #204 PROTOTYPE.
  * Store-driven per-thread FIFO worker and narrow Effect service contracts.
  */
+import { isAbsolute } from "node:path";
 import {
   Clock,
   Context,
@@ -33,6 +34,10 @@ import {
   type RunnerError,
   StoreError,
 } from "./errors.ts";
+import {
+  assertNoSymlinkPathComponents,
+  canonicalDirectory,
+} from "./path-safety.ts";
 import {
   type ActivationContextRequest,
   makeInMemoryStoreLayer,
@@ -106,6 +111,61 @@ export class WorkHandler extends Context.Service<
     Layer.succeed(WorkHandler, handler);
 }
 
+export interface ThreadInitializerShape {
+  readonly initialize: (
+    turn: ClaimedTurn,
+    acceptReply: (
+      record: PublicReplyProtocolRecord
+    ) => Effect.Effect<void, HandlerFailure | StoreError>
+  ) => Effect.Effect<string, HandlerFailure | StoreError>;
+}
+
+export class ThreadInitializer extends Context.Service<
+  ThreadInitializer,
+  ThreadInitializerShape
+>()("@laborer/prototype/ThreadInitializer") {
+  static layer = (
+    initializer: ThreadInitializerShape
+  ): Layer.Layer<ThreadInitializer> =>
+    Layer.succeed(ThreadInitializer, initializer);
+}
+
+const unusedThreadInitializer: ThreadInitializerShape = {
+  initialize: () =>
+    HandlerFailure.make({
+      category: "protocol",
+      safeDetail: "thread initializer unavailable",
+    }),
+};
+
+const validateInitializedWorkingDirectory = (
+  candidate: string
+): Effect.Effect<string, HandlerFailure> =>
+  Effect.tryPromise({
+    try: async () => {
+      if (!isAbsolute(candidate)) {
+        throw new Error("working directory is not absolute");
+      }
+      await assertNoSymlinkPathComponents(
+        candidate,
+        "validate-initialized-working-directory"
+      );
+      const canonical = await canonicalDirectory(
+        candidate,
+        "validate-initialized-working-directory"
+      );
+      if (canonical !== candidate) {
+        throw new Error("working directory is not canonical");
+      }
+      return canonical;
+    },
+    catch: () =>
+      HandlerFailure.make({
+        category: "protocol",
+        safeDetail: "initializer returned an invalid working directory",
+      }),
+  });
+
 export interface Runner {
   readonly abandonBlocked: (
     threadId: ThreadId
@@ -162,6 +222,7 @@ const runnerLayer = Layer.effect(
     const store = yield* PrototypeStore;
     const slack = yield* SlackGateway;
     const handler = yield* WorkHandler;
+    const initializer = yield* ThreadInitializer;
     const activationAcknowledger = yield* ActivationAcknowledger;
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
     const acknowledgementSemaphores = yield* Ref.make<
@@ -494,8 +555,8 @@ const runnerLayer = Layer.effect(
       }
     });
 
-    const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
-      const persistReply = (record: PublicReplyProtocolRecord) =>
+    const persistReplyFor =
+      (turn: ClaimedTurn) => (record: PublicReplyProtocolRecord) =>
         store
           .acceptPublicReply(
             turn.threadId,
@@ -513,7 +574,61 @@ const runnerLayer = Layer.effect(
                 })
             )
           );
-      const result = yield* Effect.result(handler.invoke(turn, persistReply));
+
+    const initializeClaimedTurn = Effect.fnUntraced(function* (
+      turn: ClaimedTurn,
+      persistReply: ReturnType<typeof persistReplyFor>
+    ) {
+      if (turn.initializationStatus !== "pending") {
+        return {
+          _tag: "Ready" as const,
+          workingDirectory: turn.workingDirectory,
+        };
+      }
+      const initialization = yield* Effect.result(
+        initializer
+          .initialize(turn, persistReply)
+          .pipe(Effect.flatMap(validateInitializedWorkingDirectory))
+      );
+      if (initialization._tag === "Success") {
+        yield* store.completeInitialization(
+          turn.threadId,
+          initialization.success
+        );
+        return {
+          _tag: "Ready" as const,
+          workingDirectory: initialization.success,
+        };
+      }
+      if (initialization.failure instanceof StoreError) {
+        return yield* initialization.failure;
+      }
+      if (
+        initialization.failure.category === "signal" ||
+        initialization.failure.category === "timeout"
+      ) {
+        return { _tag: "Replayable" as const };
+      }
+      yield* store.completeHandler(turn.threadId, turn.id, {
+        _tag: "Failure",
+        category: initialization.failure.category,
+        safeDetail: initialization.failure.safeDetail,
+      });
+      return { _tag: "Completed" as const };
+    });
+
+    const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
+      const persistReply = persistReplyFor(turn);
+      const initialization = yield* initializeClaimedTurn(turn, persistReply);
+      if (initialization._tag !== "Ready") {
+        return initialization._tag;
+      }
+      const result = yield* Effect.result(
+        handler.invoke(
+          { ...turn, workingDirectory: initialization.workingDirectory },
+          persistReply
+        )
+      );
       if (result._tag === "Success") {
         yield* store.completeHandler(turn.threadId, turn.id, {
           _tag: "Success",
@@ -670,6 +785,7 @@ export interface PrototypeHarness {
 export const makePrototypeHarness = (options: {
   readonly activationAcknowledger?: ActivationAcknowledgerShape;
   readonly handler: WorkHandlerShape;
+  readonly initializer?: ThreadInitializerShape;
   readonly laborerSlackId: string;
   readonly slack: SlackGatewayShape;
   readonly storeLayer?: Layer.Layer<PrototypeStore, StoreError>;
@@ -679,13 +795,17 @@ export const makePrototypeHarness = (options: {
   import("effect").Scope.Scope
 > => {
   const storeLayer =
-    options.storeLayer ?? makeInMemoryStoreLayer(options.laborerSlackId);
+    options.storeLayer ??
+    makeInMemoryStoreLayer(options.laborerSlackId, {
+      initializeNewThreads: options.initializer !== undefined,
+    });
   const dependencies = Layer.mergeAll(
     storeLayer,
     ActivationAcknowledger.layer(
       options.activationAcknowledger ?? noOpActivationAcknowledger
     ),
     SlackGateway.layer(options.slack),
+    ThreadInitializer.layer(options.initializer ?? unusedThreadInitializer),
     WorkHandler.layer(options.handler)
   );
   const applicationLayer: Layer.Layer<

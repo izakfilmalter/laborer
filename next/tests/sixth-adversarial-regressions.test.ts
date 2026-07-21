@@ -65,9 +65,11 @@ const makeTurn = (): ClaimedTurn => {
     channelId,
     context: [],
     id: TurnId.make(`turn:${message.id}`),
+    initializationStatus: "not_applicable",
     messages: [message],
     rootTs: "1.0",
     threadId: ThreadId.make(`${channelId}:1.0`),
+    workingDirectory: null,
   };
 };
 

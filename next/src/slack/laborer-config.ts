@@ -12,10 +12,14 @@ import {
 } from "../prototype/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
 
-export interface WorkHandlerConfig {
+export interface ProcessCommandConfig {
   readonly args: readonly string[];
   readonly command: string;
   readonly environment: readonly string[];
+}
+
+export interface WorkHandlerConfig extends ProcessCommandConfig {
+  readonly initialize?: ProcessCommandConfig;
 }
 
 export interface LaborerConfig extends Readonly<Record<string, unknown>> {
@@ -37,7 +41,7 @@ const FORBIDDEN_HANDLER_ENVIRONMENT_NAMES = [
   "SLACK_BOT_TOKEN",
 ] as const;
 
-const WorkHandlerConfigFromJson = Schema.Struct({
+const ProcessCommandConfigFromJson = Schema.Struct({
   args: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
@@ -45,6 +49,11 @@ const WorkHandlerConfigFromJson = Schema.Struct({
   environment: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
+});
+
+const WorkHandlerConfigFromJson = Schema.Struct({
+  ...ProcessCommandConfigFromJson.fields,
+  initialize: Schema.optional(ProcessCommandConfigFromJson),
 });
 
 const LaborerConfigFromJson = Schema.fromJsonString(
@@ -82,11 +91,12 @@ const executableFile = Effect.fnUntraced(function* (path: string) {
 const validateCommand = Effect.fnUntraced(function* (
   command: string,
   root: string,
-  environment: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv,
+  operation: string
 ) {
   if (command.includes("/")) {
     if (isAbsolute(command)) {
-      return yield* configFailure("validate-work-handler", "absolute-command");
+      return yield* configFailure(operation, "absolute-command");
     }
     const resolvedCommand = resolve(root, command);
     yield* Effect.tryPromise({
@@ -96,21 +106,17 @@ const validateCommand = Effect.fnUntraced(function* (
           operation: "validate-work-handler-command",
           path: resolvedCommand,
         }),
-      catch: () =>
-        configFailure("validate-work-handler", "unsafe-command-path"),
+      catch: () => configFailure(operation, "unsafe-command-path"),
     });
     if (yield* executableFile(resolvedCommand)) {
       return resolvedCommand;
     }
-    return yield* configFailure(
-      "validate-work-handler",
-      "command-not-executable"
-    );
+    return yield* configFailure(operation, "command-not-executable");
   }
 
   const path = environment.PATH;
   if (path === undefined) {
-    return yield* configFailure("validate-work-handler", "command-not-on-path");
+    return yield* configFailure(operation, "command-not-on-path");
   }
   for (const pathEntry of path.split(delimiter)) {
     const candidate = resolve(root, pathEntry, command);
@@ -118,11 +124,12 @@ const validateCommand = Effect.fnUntraced(function* (
       return candidate;
     }
   }
-  return yield* configFailure("validate-work-handler", "command-not-on-path");
+  return yield* configFailure(operation, "command-not-on-path");
 });
 
 const validateEnvironmentNames = (
-  names: readonly string[]
+  names: readonly string[],
+  operation: string
 ): Effect.Effect<readonly string[], LaborerConfigError> => {
   const invalidName = EffectArray.findFirst(
     names,
@@ -131,13 +138,26 @@ const validateEnvironmentNames = (
       EffectArray.contains(FORBIDDEN_HANDLER_ENVIRONMENT_NAMES, name)
   );
   if (invalidName._tag === "Some") {
-    return configFailure("validate-work-handler", "invalid-environment-name");
+    return configFailure(operation, "invalid-environment-name");
   }
   if (EffectArray.dedupe(names).length !== names.length) {
-    return configFailure("validate-work-handler", "duplicate-environment-name");
+    return configFailure(operation, "duplicate-environment-name");
   }
   return Effect.succeed(names);
 };
+
+const validateProcessCommand = Effect.fnUntraced(function* (
+  raw: typeof ProcessCommandConfigFromJson.Type,
+  root: string,
+  environment: NodeJS.ProcessEnv,
+  operation: string
+) {
+  return {
+    args: raw.args,
+    command: yield* validateCommand(raw.command, root, environment, operation),
+    environment: yield* validateEnvironmentNames(raw.environment, operation),
+  } satisfies ProcessCommandConfig;
+});
 
 const readConfig = async (root: string): Promise<string> => {
   const path = resolve(root, "laborer.json");
@@ -196,14 +216,24 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
       Effect.mapError(() => configFailure("parse-config", "invalid-config"))
     );
     const rawWorkHandler = rawConfig.workHandler;
+    const validatedWorkHandler = yield* validateProcessCommand(
+      rawWorkHandler,
+      root,
+      environment,
+      "validate-work-handler"
+    );
+    const initialize =
+      rawWorkHandler.initialize === undefined
+        ? undefined
+        : yield* validateProcessCommand(
+            rawWorkHandler.initialize,
+            root,
+            environment,
+            "validate-work-handler-initializer"
+          );
     const workHandler = {
-      args: rawWorkHandler.args,
-      command: yield* validateCommand(
-        rawWorkHandler.command,
-        root,
-        environment
-      ),
-      environment: yield* validateEnvironmentNames(rawWorkHandler.environment),
+      ...validatedWorkHandler,
+      ...(initialize === undefined ? {} : { initialize }),
     } satisfies WorkHandlerConfig;
     const config: LaborerConfig = {
       ...rawConfig,

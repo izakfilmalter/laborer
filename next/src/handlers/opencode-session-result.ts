@@ -18,7 +18,7 @@ if (!Number.isSafeInteger(baseline) || baseline < 0) {
   fail("invalid invocation");
 }
 
-const child = spawn(command, ["export", sessionId, "--pure"], {
+const child = spawn(command, ["export", sessionId], {
   env: process.env,
   shell: false,
   stdio: ["pipe", "pipe", "pipe"] as const,

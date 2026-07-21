@@ -28,6 +28,7 @@ import {
   type ClaimedTurn,
   HandlerInputEnvelope,
   type HandlerInputEnvelope as HandlerInputEnvelopeType,
+  InitializedProtocolRecord,
   PublicReplyProtocolRecord,
   UnknownProtocolRecord,
 } from "./domain.ts";
@@ -38,7 +39,12 @@ import {
   retainTrustedDirectory,
   verifyRetainedDirectory,
 } from "./path-safety.ts";
-import { WorkHandler, type WorkHandlerShape } from "./runtime.ts";
+import {
+  ThreadInitializer,
+  type ThreadInitializerShape,
+  WorkHandler,
+  type WorkHandlerShape,
+} from "./runtime.ts";
 
 const MAX_PROTOCOL_RECORD_BYTES = 1024 * 1024;
 export const MAX_HANDLER_INPUT_BYTES = 4 * 1024 * 1024;
@@ -78,6 +84,11 @@ export interface ProcessHandlerEvidence {
 
 export interface ProcessHandlerFixture {
   readonly handler: WorkHandlerShape;
+  readonly snapshot: Effect.Effect<ProcessHandlerEvidence>;
+}
+
+export interface ProcessInitializerFixture {
+  readonly initializer: ThreadInitializerShape;
   readonly snapshot: Effect.Effect<ProcessHandlerEvidence>;
 }
 
@@ -314,13 +325,20 @@ const terminateProcess = (
 const stateDirectoryFor = (stateRoot: string, threadId: string): string =>
   resolve(stateRoot, encodeURIComponent(threadId));
 
+interface ProtocolRecordConsumer {
+  readonly acceptInitialized?: (
+    record: InitializedProtocolRecord
+  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  readonly acceptReply: (
+    record: PublicReplyProtocolRecord
+  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+}
+
 const parseProtocolLine = async (
   lineBuffer: Buffer,
   lineNumber: number,
   terminatorBytes: number,
-  acceptReply: (
-    record: PublicReplyProtocolRecord
-  ) => Effect.Effect<void, HandlerFailure | StoreError>,
+  consumer: ProtocolRecordConsumer,
   runPromise: (
     effect: Effect.Effect<void, HandlerFailure | StoreError>
   ) => Promise<void>
@@ -365,6 +383,24 @@ const parseProtocolLine = async (
       safeDetail: `invalid record at line ${lineNumber}`,
     });
   }
+  if (base.type === "initialized" && consumer.acceptInitialized !== undefined) {
+    let initialized: InitializedProtocolRecord;
+    try {
+      initialized = await Schema.decodeUnknownPromise(
+        InitializedProtocolRecord,
+        {
+          onExcessProperty: "error",
+        }
+      )(value);
+    } catch {
+      throw HandlerFailure.make({
+        category: "protocol",
+        safeDetail: `invalid initialized record at line ${lineNumber}`,
+      });
+    }
+    await runPromise(consumer.acceptInitialized(initialized));
+    return;
+  }
   if (base.type !== "public_reply") {
     await runPromise(
       Effect.logDebug(`Ignored handler protocol record type: ${base.type}`)
@@ -382,14 +418,12 @@ const parseProtocolLine = async (
       safeDetail: `invalid public reply at line ${lineNumber}`,
     });
   }
-  await runPromise(acceptReply(reply));
+  await runPromise(consumer.acceptReply(reply));
 };
 
 const parseStdout = async (
   child: ChildProcessWithoutNullStreams,
-  acceptReply: (
-    record: PublicReplyProtocolRecord
-  ) => Effect.Effect<void, HandlerFailure | StoreError>,
+  consumer: ProtocolRecordConsumer,
   runPromise: (
     effect: Effect.Effect<void, HandlerFailure | StoreError>
   ) => Promise<void>
@@ -420,7 +454,7 @@ const parseStdout = async (
         pending.subarray(0, newlineIndex),
         lineNumber,
         1,
-        acceptReply,
+        consumer,
         runPromise
       );
       pending = pending.subarray(newlineIndex + 1);
@@ -440,13 +474,7 @@ const parseStdout = async (
         safeDetail: "handler stdout exceeds 4096 records",
       });
     }
-    await parseProtocolLine(
-      pending,
-      lineNumber + 1,
-      0,
-      acceptReply,
-      runPromise
-    );
+    await parseProtocolLine(pending, lineNumber + 1, 0, consumer, runPromise);
   }
 };
 
@@ -556,9 +584,7 @@ const invokeProcess = Effect.fnUntraced(function* (
   options: ProcessHandlerOptions,
   evidence: Ref.Ref<MutableEvidence>,
   turn: ClaimedTurn,
-  acceptReply: (
-    record: PublicReplyProtocolRecord
-  ) => Effect.Effect<void, HandlerFailure | StoreError>
+  consumer: ProtocolRecordConsumer
 ) {
   const limits = evidenceLimits(options);
   const invocationId = `${turn.id}:attempt:${turn.attemptNumber}`;
@@ -680,6 +706,7 @@ const invokeProcess = Effect.fnUntraced(function* (
   const command = options.command.includes("/")
     ? resolve(options.cwd, options.command)
     : options.command;
+  const invocationCwd = turn.workingDirectory ?? options.cwd;
   yield* Effect.tryPromise({
     try: () => validateCommandBeforeSpawn(command),
     catch: spawnFailure,
@@ -692,7 +719,7 @@ const invokeProcess = Effect.fnUntraced(function* (
           process.execPath,
           [supervisorProxyPath, command, ...options.args],
           {
-            cwd: options.cwd,
+            cwd: invocationCwd,
             detached: true,
             env: options.environment,
             shell: false,
@@ -741,7 +768,7 @@ const invokeProcess = Effect.fnUntraced(function* (
     try: async () => {
       const handlerResult = readSupervisorResult(child);
       const stderr = drainStderr(child, runPromise, limits.includePayload);
-      const stdout = parseStdout(child, acceptReply, runPromise);
+      const stdout = parseStdout(child, consumer, runPromise);
       const failureOnly = <A>(promise: Promise<A>): Promise<never> =>
         promise.then(
           () => new Promise<never>(() => undefined),
@@ -853,9 +880,66 @@ export const makeProcessHandler = (
     return {
       handler: WorkHandler.of({
         invoke: (turn, acceptReply) =>
-          invokeProcess(options, evidence, turn, acceptReply).pipe(
+          invokeProcess(options, evidence, turn, { acceptReply }).pipe(
             Effect.scoped
           ),
+      }),
+      snapshot: Ref.get(evidence).pipe(
+        Effect.map((current) => boundEvidence(current, limits)),
+        Effect.map(
+          ({
+            activeGlobal: _activeGlobal,
+            activeThreads: _activeThreads,
+            ...state
+          }) => state
+        )
+      ),
+    };
+  });
+
+export const makeProcessInitializer = (
+  options: ProcessHandlerOptions
+): Effect.Effect<ProcessInitializerFixture> =>
+  Effect.gen(function* () {
+    const limits = evidenceLimits(options);
+    const evidence = yield* Ref.make<MutableEvidence>({
+      activeGlobal: 0,
+      activeThreads: {},
+      internalStderr: [],
+      invocations: [],
+      maximumGlobalConcurrency: 0,
+      maximumThreadConcurrency: {},
+    });
+    return {
+      initializer: ThreadInitializer.of({
+        initialize: (turn, acceptReply) =>
+          Effect.gen(function* () {
+            let workingDirectory: string | null = null;
+            const acceptInitialized = (
+              record: InitializedProtocolRecord
+            ): Effect.Effect<void, HandlerFailure> => {
+              if (workingDirectory !== null) {
+                return HandlerFailure.make({
+                  category: "protocol",
+                  safeDetail:
+                    "initializer emitted multiple initialized records",
+                });
+              }
+              workingDirectory = record.workingDirectory;
+              return Effect.void;
+            };
+            yield* invokeProcess(options, evidence, turn, {
+              acceptInitialized,
+              acceptReply,
+            }).pipe(Effect.scoped);
+            if (workingDirectory === null) {
+              return yield* HandlerFailure.make({
+                category: "protocol",
+                safeDetail: "initializer omitted initialized record",
+              });
+            }
+            return workingDirectory;
+          }),
       }),
       snapshot: Ref.get(evidence).pipe(
         Effect.map((current) => boundEvidence(current, limits)),

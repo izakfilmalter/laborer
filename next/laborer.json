@@ -10,6 +10,10 @@
       "LABORER_OPENCODE_MODEL",
       "OPENCODE_CONFIG_CONTENT",
       "OPENAI_API_KEY"
-    ]
+    ],
+    "initialize": {
+      "args": ["./src/handlers/create-thread-worktree.ts"],
+      "command": "node"
+    }
   }
 }

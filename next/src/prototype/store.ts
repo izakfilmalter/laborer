@@ -4,7 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { type FileHandle, open, rename, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, normalize } from "node:path";
 import {
   Context,
   Effect,
@@ -46,7 +46,9 @@ import {
   StoreError,
 } from "./errors.ts";
 import {
+  assertNoSymlinkPathComponents,
   assertSafeFilePath,
+  canonicalDirectory,
   openRegularFileNoFollow,
   retainTrustedDirectory,
   verifyRetainedDirectory,
@@ -117,6 +119,10 @@ export interface PrototypeStoreShape {
           readonly category: HandlerFailureCategory;
           readonly safeDetail: string | null;
         }
+  ) => Effect.Effect<void, StoreError>;
+  readonly completeInitialization: (
+    threadId: ThreadId,
+    workingDirectory: string
   ) => Effect.Effect<void, StoreError>;
   readonly contextRequest: (
     threadId: ThreadId
@@ -353,7 +359,8 @@ const inputMessageOrder = pipe(
 const acceptTransition = (
   state: PrototypeState,
   event: NormalizedInboundEvent,
-  laborerSlackId: string
+  laborerSlackId: string,
+  initializeNewThreads: boolean
 ): readonly [InboundDecision, PrototypeState] | StoreError => {
   if (EffectArray.contains(state.seenEventIds, event.eventId)) {
     return ignored(state, event, "duplicate", false);
@@ -420,10 +427,14 @@ const acceptTransition = (
             contextRetryAtMillis: null,
             contextStatus: "pending",
             id: threadId,
+            initializationStatus: initializeNewThreads
+              ? "pending"
+              : "not_applicable",
             outbox: [],
             rootTs,
             turns: [],
             unassigned: [message],
+            workingDirectory: null,
           })
         )
       : pipe(
@@ -535,6 +546,8 @@ const claimTurnInThread = (
         messages: activeTurn.messages,
         rootTs: thread.rootTs,
         threadId,
+        initializationStatus: thread.initializationStatus,
+        workingDirectory: thread.workingDirectory,
       },
       WorkThreadState.make({
         ...thread,
@@ -572,6 +585,8 @@ const claimTurnInThread = (
       messages: thread.unassigned,
       rootTs: thread.rootTs,
       threadId,
+      initializationStatus: thread.initializationStatus,
+      workingDirectory: thread.workingDirectory,
     },
     WorkThreadState.make({
       ...thread,
@@ -583,6 +598,7 @@ const claimTurnInThread = (
 
 const makeStore = Effect.fnUntraced(function* (
   laborerSlackId: string,
+  initializeNewThreads: boolean,
   initial: PrototypeState,
   persist: (
     state: PrototypeState
@@ -652,7 +668,7 @@ const makeStore = Effect.fnUntraced(function* (
     ),
     accept: (event) =>
       transition("accept", (state) =>
-        acceptTransition(state, event, laborerSlackId)
+        acceptTransition(state, event, laborerSlackId, initializeNewThreads)
       ),
     markAcknowledgementActive: (id) =>
       transition("markAcknowledgementActive", (state) =>
@@ -785,6 +801,25 @@ const makeStore = Effect.fnUntraced(function* (
             contextStatus: "ready",
           }),
         ])
+      ),
+    completeInitialization: (threadId, workingDirectory) =>
+      transition("completeInitialization", (state) =>
+        modifyThread(state, threadId, "completeInitialization", (thread) => {
+          if (thread.initializationStatus !== "pending") {
+            return storeFailure(
+              "completeInitialization",
+              "initialization-not-pending"
+            );
+          }
+          return [
+            undefined,
+            WorkThreadState.make({
+              ...thread,
+              initializationStatus: "completed",
+              workingDirectory,
+            }),
+          ];
+        })
       ),
     claimNextTurn: (threadId) =>
       transition("claimNextTurn", (state) =>
@@ -1289,9 +1324,26 @@ interface ThreadIdentities {
   readonly turnIds: readonly string[];
 }
 
+const hasValidThreadInitialization = (thread: WorkThreadState): boolean => {
+  if (thread.initializationStatus !== "completed") {
+    return thread.workingDirectory === null;
+  }
+  if (thread.workingDirectory === null) {
+    return false;
+  }
+  return (
+    thread.workingDirectory.trim().length > 0 &&
+    isAbsolute(thread.workingDirectory) &&
+    normalize(thread.workingDirectory) === thread.workingDirectory
+  );
+};
+
 const validateThreadMetadata = (thread: WorkThreadState): StoreError | null => {
   if (thread.id !== canonicalThreadId(thread.channelId, thread.rootTs)) {
     return storeFailure("validate", "noncanonical-thread-id");
+  }
+  if (!hasValidThreadInitialization(thread)) {
+    return storeFailure("validate", "invalid-thread-initialization-state");
   }
   if (
     !(
@@ -1711,16 +1763,21 @@ const validateState = (state: PrototypeState) =>
   );
 
 export const makeInMemoryStoreLayer = (
-  laborerSlackId: string
+  laborerSlackId: string,
+  options?: { readonly initializeNewThreads?: boolean }
 ): Layer.Layer<PrototypeStore, StoreError> =>
   Layer.effect(
     PrototypeStore,
-    makeStore(laborerSlackId, initialPrototypeState, (state) =>
-      validateState(state).pipe(Effect.as(published))
+    makeStore(
+      laborerSlackId,
+      options?.initializeNewThreads ?? false,
+      initialPrototypeState,
+      (state) => validateState(state).pipe(Effect.as(published))
     )
   );
 
 export const makeControlledStoreLayer = (options: {
+  readonly initializeNewThreads?: boolean;
   readonly laborerSlackId: string;
   readonly persist: (state: PrototypeState) => Effect.Effect<void, StoreError>;
   readonly state?: PrototypeState;
@@ -1729,6 +1786,7 @@ export const makeControlledStoreLayer = (options: {
     PrototypeStore,
     makeStore(
       options.laborerSlackId,
+      options.initializeNewThreads ?? false,
       options.state ?? initialPrototypeState,
       (state) => options.persist(state).pipe(Effect.as(published))
     )
@@ -1928,20 +1986,46 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
   const threads = pipe(
     value.threads,
     EffectArray.map((candidate, index) => {
-      if (
-        !isUnknownRecord(candidate) ||
-        Object.hasOwn(candidate, "activationEventId")
-      ) {
+      if (!isUnknownRecord(candidate)) {
         return candidate;
       }
       const threadIdentity =
         typeof candidate.id === "string" ? candidate.id : String(index);
-      const activationEventId = `migration:activation:${threadIdentity}`;
-      if (!EffectArray.contains(seenEventIds, activationEventId)) {
+      const activationEventId = Object.hasOwn(candidate, "activationEventId")
+        ? candidate.activationEventId
+        : `migration:activation:${threadIdentity}`;
+      const needsActivationEventId = !Object.hasOwn(
+        candidate,
+        "activationEventId"
+      );
+      if (
+        needsActivationEventId &&
+        typeof activationEventId === "string" &&
+        !EffectArray.contains(seenEventIds, activationEventId)
+      ) {
         seenEventIds = EffectArray.append(seenEventIds, activationEventId);
       }
-      changed = true;
-      return { ...candidate, activationEventId };
+      const needsInitializationStatus = !Object.hasOwn(
+        candidate,
+        "initializationStatus"
+      );
+      const needsWorkingDirectory = !Object.hasOwn(
+        candidate,
+        "workingDirectory"
+      );
+      changed =
+        changed ||
+        needsActivationEventId ||
+        needsInitializationStatus ||
+        needsWorkingDirectory;
+      return {
+        ...candidate,
+        ...(needsActivationEventId ? { activationEventId } : {}),
+        ...(needsInitializationStatus
+          ? { initializationStatus: "not_applicable" }
+          : {}),
+        ...(needsWorkingDirectory ? { workingDirectory: null } : {}),
+      };
     })
   );
 
@@ -1961,6 +2045,36 @@ const loadSnapshot = (path: string, trustedRoot?: string) =>
       Schema.decodeUnknownEffect(PrototypeStateSchema, {
         onExcessProperty: "error",
       })
+    ),
+    Effect.tap((state) =>
+      Effect.forEach(
+        state.threads,
+        (thread) => {
+          if (
+            thread.initializationStatus !== "completed" ||
+            thread.workingDirectory === null
+          ) {
+            return Effect.void;
+          }
+          return Effect.tryPromise({
+            try: async () => {
+              await assertNoSymlinkPathComponents(
+                thread.workingDirectory ?? "",
+                "load-thread-working-directory"
+              );
+              const canonical = await canonicalDirectory(
+                thread.workingDirectory ?? "",
+                "load-thread-working-directory"
+              );
+              if (canonical !== thread.workingDirectory) {
+                throw new Error("working directory is not canonical");
+              }
+            },
+            catch: () => storeFailure("load", "working-directory-invalid"),
+          });
+        },
+        { discard: true }
+      )
     ),
     Effect.mapError((error) =>
       error instanceof SnapshotMissing
@@ -1984,19 +2098,24 @@ export const makeFileStoreLayer = (
   trustedRoot?: string,
   testHooks?: {
     readonly afterRename?: () => Promise<void>;
-  }
+  },
+  options?: { readonly initializeNewThreads?: boolean }
 ): Layer.Layer<PrototypeStore, StoreError> =>
   Layer.effect(
     PrototypeStore,
     Effect.gen(function* () {
       const initial = yield* loadSnapshot(snapshotPath, trustedRoot);
-      return yield* makeStore(laborerSlackId, initial, (state) =>
-        persistSnapshot(
-          snapshotPath,
-          state,
-          trustedRoot,
-          testHooks?.afterRename
-        )
+      return yield* makeStore(
+        laborerSlackId,
+        options?.initializeNewThreads ?? false,
+        initial,
+        (state) =>
+          persistSnapshot(
+            snapshotPath,
+            state,
+            trustedRoot,
+            testHooks?.afterRename
+          )
       );
     })
   );

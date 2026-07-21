@@ -663,12 +663,22 @@ describe("safe local Slack configuration", () => {
               workHandler: {
                 command: "./handler.sh",
                 environment: ["PROVIDER_API_KEY"],
+                initialize: {
+                  args: ["--prototype"],
+                  command: "./initialize.sh",
+                  environment: ["WORKTREE_BASE"],
+                },
               },
             })
           )
         );
         yield* Effect.promise(() =>
           writeFile(join(directory, "handler.sh"), "#!/bin/sh\nexit 0\n", {
+            mode: 0o700,
+          })
+        );
+        yield* Effect.promise(() =>
+          writeFile(join(directory, "initialize.sh"), "#!/bin/sh\nexit 0\n", {
             mode: 0o700,
           })
         );
@@ -692,6 +702,11 @@ describe("safe local Slack configuration", () => {
         assert.deepStrictEqual(loaded.config.workHandler.environment, [
           "PROVIDER_API_KEY",
         ]);
+        assert.deepStrictEqual(loaded.config.workHandler.initialize, {
+          args: ["--prototype"],
+          command: join(canonicalDirectory, "initialize.sh"),
+          environment: ["WORKTREE_BASE"],
+        });
         assert.deepStrictEqual(loaded.config.unrelated, { retained: true });
       })
   );

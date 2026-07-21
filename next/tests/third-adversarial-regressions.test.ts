@@ -24,6 +24,7 @@ import { LABORER_SLACK_ID } from "../src/prototype/scenario.ts";
 import {
   makeControlledStoreLayer,
   makeFileStoreLayer,
+  PrototypeStore,
 } from "../src/prototype/store.ts";
 import { environmentForConfiguredHandler } from "../src/slack/handler-environment.ts";
 import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
@@ -51,9 +52,11 @@ const makeTurn = (text: string, suffix = "1.0"): ClaimedTurn => {
     channelId,
     context: [],
     id: TurnId.make(`turn:${message.id}`),
+    initializationStatus: "not_applicable",
     messages: [message],
     rootTs: suffix,
     threadId: ThreadId.make(`${channelId}:${suffix}`),
+    workingDirectory: null,
   };
 };
 
@@ -117,10 +120,12 @@ const baseAcknowledgementState = (): PrototypeState => {
         contextRetryAtMillis: null,
         contextStatus: "pending",
         id: ThreadId.make(`${channelId}:${messageTs}`),
+        initializationStatus: "not_applicable",
         outbox: [],
         rootTs: messageTs,
         turns: [],
         unassigned: [message],
+        workingDirectory: null,
       }),
     ],
   });
@@ -392,8 +397,12 @@ describe("third adversarial state and config verification", () => {
           const { acknowledgements: _acknowledgements, ...withoutAcks } = base;
           const firstThread = withoutAcks.threads[0];
           assert.ok(firstThread);
-          const { activationEventId: _activationEventId, ...legacyThread } =
-            firstThread;
+          const {
+            activationEventId: _activationEventId,
+            initializationStatus: _initializationStatus,
+            workingDirectory: _workingDirectory,
+            ...legacyThread
+          } = firstThread;
           const legacy = {
             ...withoutAcks,
             threads: [legacyThread],
@@ -401,9 +410,16 @@ describe("third adversarial state and config verification", () => {
           yield* Effect.promise(() =>
             writeFile(snapshotPath, JSON.stringify(legacy), "utf8")
           );
-          yield* Layer.build(
+          const context = yield* Layer.build(
             makeFileStoreLayer(LABORER_SLACK_ID, snapshotPath, root)
           );
+          const store = yield* PrototypeStore.pipe(Effect.provide(context));
+          const migrated = yield* store.snapshot;
+          assert.strictEqual(
+            migrated.threads[0]?.initializationStatus,
+            "not_applicable"
+          );
+          assert.strictEqual(migrated.threads[0]?.workingDirectory, null);
 
           for (const invalid of [
             { ...base, unexpectedTopLevel: true },

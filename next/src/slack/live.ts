@@ -10,7 +10,10 @@ import {
   makeSlackActivationAcknowledger,
   makeSlackGateway,
 } from "../prototype/emulated-slack.ts";
-import { makeProcessHandler } from "../prototype/process-handler.ts";
+import {
+  makeProcessHandler,
+  makeProcessInitializer,
+} from "../prototype/process-handler.ts";
 import { makePrototypeHarness } from "../prototype/runtime.ts";
 import { makeFileStoreLayer } from "../prototype/store.ts";
 import { loadSlackConfig } from "./config.ts";
@@ -66,9 +69,28 @@ const program = Effect.gen(function* () {
     stateRoot: paths.workThreads,
     stateRootAnchor: paths.root,
   });
+  const initializerConfig = laborer.config.workHandler.initialize;
+  const processInitializer =
+    initializerConfig === undefined
+      ? undefined
+      : yield* makeProcessInitializer({
+          args: initializerConfig.args,
+          command: initializerConfig.command,
+          cwd: laborer.root,
+          environment: environmentForConfiguredHandler(
+            process.env,
+            initializerConfig.environment
+          ),
+          evidence: { mode: "production" },
+          stateRoot: paths.workThreads,
+          stateRootAnchor: paths.root,
+        });
   const harness = yield* makePrototypeHarness({
     activationAcknowledger: makeSlackActivationAcknowledger(botClient),
     handler: processHandler.handler,
+    ...(processInitializer === undefined
+      ? {}
+      : { initializer: processInitializer.initializer }),
     laborerSlackId: identity.botUserId,
     slack: makeSlackGateway({
       botClient,
@@ -79,7 +101,9 @@ const program = Effect.gen(function* () {
     storeLayer: makeFileStoreLayer(
       identity.botUserId,
       paths.snapshot,
-      paths.root
+      paths.root,
+      undefined,
+      { initializeNewThreads: processInitializer !== undefined }
     ),
   });
   const socketClient = new SocketModeClient({

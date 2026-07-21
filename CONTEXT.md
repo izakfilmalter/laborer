@@ -14,7 +14,7 @@ Laborer's conversational identity in Slack. People mention it in a conversation 
 The local service that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root.
 
 **Laborer root**:
-The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
+The directory that binds a Laborer Runner to its configuration and work handler. It is the default handler working directory and does not need to be a Git repository. A configured thread initializer may select a different working directory for a new work thread.
 
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
@@ -29,7 +29,13 @@ One-time Slack conversation context included in a work thread's first turn. A ro
 The narrow text-oriented record Laborer presents to a work handler. It carries a stable identity, context-or-input classification, activation marker, author kind and Slack ID, original Slack timestamp, and verbatim Slack `mrkdwn` text. Laborer excludes its own messages, textless rich content, system notices, edits, deletions, and reactions; it does not resolve display names or expose raw Slack payloads.
 
 **Work handler**:
-The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run from the Laborer root. It owns all workflow-specific behavior, resources, and continuation state, including any worktrees it creates.
+The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run. It owns all workflow-specific behavior, resources, and continuation state.
+
+**Thread initializer**:
+An optional user-supplied local program Laborer invokes before the first work-handler invocation in a newly activated work thread. It receives the same first-turn envelope, may emit deliberate public replies, and returns one absolute working directory through the versioned protocol. Laborer durably binds that directory to the work thread. Initializers must be idempotent because an interrupted initialization is replayed with the same thread and turn identities.
+
+**Thread working directory**:
+The directory selected once by a thread initializer and used as the current working directory for every work-handler invocation in that work thread. Laborer validates and remembers its identity but does not interpret or clean up its contents. Without an initializer, the Laborer root remains the handler working directory.
 
 **Turn**:
 One serialized batch of work-thread input delivered to a work handler. A turn has one stable identity across replay attempts, and a known handler outcome permanently consumes its assigned input.

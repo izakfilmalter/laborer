@@ -8,6 +8,11 @@
 > `laborer.json` and `src/handlers/classifier-worker-prototype.sh` prove a
 > user-owned classifier-to-worker conversation through the generic process
 > seam. The Runner remains unaware of OpenCode, classification, and agents.
+>
+> **THROWAWAY INITIALIZER PROTOTYPE for issue #205.** An optional configured
+> process can select one durable working directory before a new work thread's
+> first handler invocation. The tracked initializer creates a sibling Git
+> worktree; Git and worktree policy remain user-owned process behavior.
 
 ## Run it
 
@@ -49,8 +54,24 @@ names are always forbidden. The child otherwise receives only a small runtime
 allowlist (`PATH`, `HOME`, temporary-directory, locale, user, shell, and XDG
 locations). Commands containing `/` resolve relative to the Laborer root and
 must be executable. Bare commands are validated through inherited `PATH`.
-Arguments are passed literally, no shell is used, and the handler starts in the
-Laborer root. Other `laborer.json` fields are retained.
+Arguments are passed literally and no shell is used. Other `laborer.json`
+fields are retained.
+
+`workHandler.initialize` optionally configures a second command with its own
+literal `args` and environment-name allowlist. It runs after first-turn context
+is ready and before the first handler process. It receives the same JSON
+envelope, may emit ordinary `public_reply` records, and must emit exactly one
+`initialized` record containing an absolute canonical `workingDirectory`.
+Laborer persists that directory and starts the first and every later handler
+process there. Existing durable threads are never retroactively initialized.
+An interrupted initializer is replayed and therefore must be idempotent.
+
+The tracked initializer derives one branch from the opaque work-thread ID,
+creates or reuses `<repository>.worktrees/thread-<identity>` from the source
+checkout's current `HEAD`, and copies only `next/.env.local` to the same relative
+location with mode `0600`. It performs no cleanup. This intentionally makes the
+local values in `next/.env.local` available inside the worktree; configure a
+different initializer if that trust boundary is inappropriate.
 
 ### Provision the app manually
 
@@ -95,17 +116,22 @@ Laborer root. Other `laborer.json` fields are retained.
    `src/slack/live.ts` directly with Bun creates a connection that drops at its
    first health check.
 
-8. In an invited channel, post a new nonblank message such as
-   `@Laborer help me outline a short essay`, then reply in its thread. On the
+8. In an invited channel, post a new nonblank bug report or feature request,
+   then reply in its thread. On the
    first turn Laborer schedules an `:hourglass_flowing_sand:` acknowledgement
    without blocking the handler and removes it after the turn finishes or
    fails. A transient reaction outage never blocks accepted handler work:
    reaction state and retry time are persisted, and a scoped background driver
    awaits and serializes each add/remove request until cleanup converges.
-   Startup reconciles a stale reaction left by a hard crash. The
-   handler runs a tool-denied classifier and a fresh tool-denied safe
-   essay/advice worker. Later replies resume the persisted worker session
-   without reclassification. Press Ctrl-C to disconnect cleanly.
+   Startup reconciles a stale reaction left by a hard crash. The tracked
+   initializer first creates the thread's sibling worktree. The handler then
+   runs a classifier there and deterministically selects either the
+   `bug-to-pr` or `feature-to-pr` skill for a coding worker. The
+   classifier and coding worker use the user's default OpenCode agent and
+   configuration; the handler does not override plugins, tools, permissions,
+   or approval policy. Later
+   replies resume the persisted coding session without reclassification. Press
+   Ctrl-C to disconnect cleanly.
 
 `LABORER_OPENCODE_MODEL` is a live-supported optional model override and is
 explicitly allowed through tracked `laborer.json` configuration.
@@ -164,11 +190,21 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   per-invocation stdout record/byte and stderr-throughput limits, ignores valid
   extensible unknown record types, strictly rejects excess `public_reply`
   fields and blank reply IDs, and persists accepted replies before completion.
+- A configured thread initializer crosses the same bounded process boundary,
+  sees the same first-turn envelope, and must return exactly one validated
+  `initialized` record. Its canonical directory is persisted once per new
+  thread and becomes the current working directory for initial and resumed
+  handler turns. Legacy threads remain explicitly uninitialized, while an
+  interrupted setup replays with stable identities. The tracked example
+  idempotently creates a real sibling Git worktree and copies only
+  `next/.env.local`; it does not clean worktrees up.
 - The issue #207 user-owned Bash handler stages every external mutation,
-  classifies only the first turn, starts
-  a tool-denied safe worker, and resumes that worker's persisted OpenCode
-  session on later turns. Per-turn persisted replies make handler replay
-  idempotent without teaching the Runner about either role.
+  classifies only the first turn, maps that classification to the
+  `bug-to-pr` or `feature-to-pr` skill, and resumes the selected
+  coding worker's persisted OpenCode session on later turns. Its prompt adapts
+  the legacy workspace planner's untrusted-Slack-context boundary to the
+  already-bound Laborer thread. Per-turn persisted replies make handler replay idempotent
+  without teaching the Runner about classification, skills, or agents.
 - `replyId` replay with identical text is idempotent; conflicting text is a
   terminal protocol outcome. Valid replies survive malformed output or nonzero
   exit and precede the sanitized operational notice.
@@ -249,8 +285,8 @@ not mutate these paths while it is running.
 ## Remaining scope after these prototypes
 
 - Production hardening, installation/packaging, and non-prototype work handlers.
-  The issue #207 Bash handler intentionally proves only the classifier/worker
-  conversation and is not a coding agent or repository-editing workflow.
+  The tracked Bash handler and worktree initializer are an opt-in coding
+  prototype, not a packaged or sandboxed production workflow.
 - State migrations, retention, and operator retry/abandon CLI/UX. Live
   configured-handler mode uses the atomic filesystem store; Emulate scenarios
   retain the in-memory layer where they need inspectable isolation.

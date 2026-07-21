@@ -78,7 +78,9 @@ response_text="Initial worker answer from the selected feature worker."
 if [[ "$prompt" == *"LABORER_CLASSIFIER_PROTOCOL_V1"* ]]; then
   kind="classifier"
   event_session_id="ses_classifier_207"
-  response_text="$(jq -cn '{classification: "feature", workerPrompt: "Give concise, practical writing advice."}')"
+  response_text="$(jq -cn \
+    --arg classification "${FAKE_OPENCODE_CLASSIFICATION:-feature}" \
+    '{classification: $classification}')"
 elif [[ -n "$session_id" ]]; then
   kind="follow-up"
   event_session_id="$session_id"
@@ -97,6 +99,12 @@ tool_denied="$(printf '%s\n' "$inline_config" | jq -r --arg agent "$agent" '
 slack_tokens_present=false
 if [[ -n "${SLACK_APP_TOKEN+x}" || -n "${SLACK_BOT_TOKEN+x}" ]]; then
   slack_tokens_present=true
+fi
+selected_skill="none"
+if [[ "$prompt" == *'`bug-to-pr`'* ]]; then
+  selected_skill="bug-to-pr"
+elif [[ "$prompt" == *'`feature-to-pr`'* ]]; then
+  selected_skill="feature-to-pr"
 fi
 
 fake_mode="${FAKE_OPENCODE_MODE:-normal}"
@@ -137,11 +145,12 @@ jq -cn \
   --arg agent "$agent" \
   --arg kind "$kind" \
   --arg model "$model" \
+  --arg selectedSkill "$selected_skill" \
   --argjson promptBytes "$(LC_ALL=C printf '%s' "$prompt" | wc -c | tr -d '[:space:]')" \
   --arg session "$session_id" \
   --argjson slackTokensPresent "$slack_tokens_present" \
   --argjson toolDenied "$tool_denied" \
-  '{agent: $agent, kind: $kind, model: $model, promptBytes: $promptBytes, promptInArgv: false, session: $session, slackTokensPresent: $slackTokensPresent, toolDenied: $toolDenied}' \
+  '{agent: $agent, kind: $kind, model: $model, promptBytes: $promptBytes, promptInArgv: false, selectedSkill: $selectedSkill, session: $session, slackTokensPresent: $slackTokensPresent, toolDenied: $toolDenied}' \
   >>"${FAKE_OPENCODE_LOG:?}"
 
 message_sequence=0

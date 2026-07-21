@@ -10,6 +10,12 @@ import type {
   PublicReplyProtocolRecord,
 } from "../src/prototype/domain.ts";
 import {
+  NormalizedMessage,
+  stableMessageId,
+  ThreadId,
+  TurnId,
+} from "../src/prototype/domain.ts";
+import {
   makeSlackActivationAcknowledger,
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
@@ -129,7 +135,7 @@ const validClassifierWorkerState = {
     },
   },
   version: 3,
-  workerBrief: "Write the requested response",
+  workerBrief: "feature-to-pr",
   workerSessionId: "session:worker",
 } as const;
 
@@ -150,7 +156,66 @@ const waitForFile = Effect.fnUntraced(function* (path: string) {
   assert.fail(`fixture readiness timed out after 5 seconds: path=${path}`);
 });
 
+const selectedSkillFor = Effect.fnUntraced(function* (
+  classification: "bug" | "feature"
+) {
+  const temporaryRoot = yield* makeTempDirectoryScoped(
+    `laborer-${classification}-skill-`
+  );
+  const fakeLog = join(temporaryRoot, "fake-opencode.ndjson");
+  const processHandler = yield* makeProcessHandler({
+    args: [
+      `FAKE_OPENCODE_CLASSIFICATION=${classification}`,
+      `FAKE_OPENCODE_LOG=${fakeLog}`,
+      `LABORER_OPENCODE_COMMAND=${fakeOpenCodePath}`,
+      handlerPath,
+    ],
+    command: "/usr/bin/env",
+    cwd: projectRoot,
+    environment: environmentForConfiguredHandler(process.env),
+    evidence: { mode: "fixture" },
+    stateRoot: join(temporaryRoot, "work-threads"),
+    stateRootAnchor: temporaryRoot,
+  });
+  const channelId = `C${classification.toUpperCase()}`;
+  const message = NormalizedMessage.make({
+    authorKind: "human",
+    authorSlackId: "UHUMAN",
+    classification: "input",
+    id: stableMessageId(channelId, "1.0"),
+    isActivation: true,
+    slackTs: "1.0",
+    text: `Implement the ${classification} request`,
+  });
+  const turn: ClaimedTurn = {
+    attemptNumber: 1,
+    channelId,
+    context: [],
+    id: TurnId.make(`turn:${message.id}`),
+    initializationStatus: "completed",
+    messages: [message],
+    rootTs: "1.0",
+    threadId: ThreadId.make(`${channelId}:1.0`),
+    workingDirectory: projectRoot,
+  };
+  yield* processHandler.handler.invoke(turn, () => Effect.void);
+  const calls = pipe(
+    (yield* Effect.promise(() => readFile(fakeLog, "utf8"))).trim().split("\n"),
+    EffectArray.map((line) => JSON.parse(line) as Record<string, unknown>)
+  );
+  return calls[1]?.selectedSkill;
+});
+
 describe("issue #207 generic classifier-to-worker conversation", () => {
+  it.live("selects the bug or feature Slack-to-PR skill", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        assert.strictEqual(yield* selectedSkillFor("bug"), "bug-to-pr");
+        assert.strictEqual(yield* selectedSkillFor("feature"), "feature-to-pr");
+      })
+    )
+  );
+
   it.effect(
     "rejects excess keys at every classifier state object boundary",
     () =>
@@ -375,6 +440,8 @@ describe("issue #207 generic classifier-to-worker conversation", () => {
             messages: firstTurn.messages,
             rootTs: thread.rootTs,
             threadId: thread.id,
+            initializationStatus: thread.initializationStatus,
+            workingDirectory: thread.workingDirectory,
           };
           yield* processHandler.handler.invoke(replayTurn, (record) =>
             Effect.sync(() => {
@@ -421,20 +488,25 @@ describe("issue #207 generic classifier-to-worker conversation", () => {
               callLog,
               EffectArray.map((call) => call.agent)
             ),
-            [
-              "laborer-prototype-classifier",
-              "laborer-prototype-worker",
-              "laborer-prototype-worker",
-            ]
+            ["", "", ""]
           );
           assert.ok(
             EffectArray.every(
               callLog,
               (call) =>
                 call.model === "test-provider/test-model" &&
-                call.toolDenied === true &&
                 call.slackTokensPresent === false
             )
+          );
+          assert.ok(
+            EffectArray.every(callLog, (call) => call.toolDenied === false)
+          );
+          assert.deepStrictEqual(
+            pipe(
+              callLog,
+              EffectArray.map((call) => call.selectedSkill)
+            ),
+            ["none", "feature-to-pr", "feature-to-pr"]
           );
           const finalThread = (yield* harness.store.snapshot).threads[0];
           assert.strictEqual(finalThread?.turns.length, 2);

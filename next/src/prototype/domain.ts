@@ -68,6 +68,14 @@ export class PublicReplyProtocolRecord extends Schema.Class<PublicReplyProtocolR
   type: Schema.Literal("public_reply"),
 }) {}
 
+export class InitializedProtocolRecord extends Schema.Class<InitializedProtocolRecord>(
+  "InitializedProtocolRecord"
+)({
+  protocolVersion: ProtocolVersion,
+  type: Schema.Literal("initialized"),
+  workingDirectory: Schema.String,
+}) {}
+
 export const UnknownProtocolRecord = Schema.Struct({
   protocolVersion: ProtocolVersion,
   type: Schema.String,
@@ -170,10 +178,16 @@ export class WorkThreadState extends Schema.Class<WorkThreadState>(
   contextRetryAtMillis: Schema.NullOr(Schema.Number),
   contextStatus: Schema.Literals(["pending", "ready"]),
   id: ThreadId,
+  initializationStatus: Schema.Literals([
+    "not_applicable",
+    "pending",
+    "completed",
+  ]),
   outbox: Schema.Array(OutboundItem),
   rootTs: Schema.String,
   turns: Schema.Array(TurnState),
   unassigned: Schema.Array(NormalizedMessage),
+  workingDirectory: Schema.NullOr(Schema.String),
 }) {}
 
 export class AcknowledgementState extends Schema.Class<AcknowledgementState>(
@@ -235,9 +249,11 @@ export interface ClaimedTurn {
   readonly channelId: string;
   readonly context: readonly NormalizedMessage[];
   readonly id: TurnId;
+  readonly initializationStatus: WorkThreadState["initializationStatus"];
   readonly messages: readonly NormalizedMessage[];
   readonly rootTs: string;
   readonly threadId: ThreadId;
+  readonly workingDirectory: string | null;
 }
 
 export const canonicalThreadId = (

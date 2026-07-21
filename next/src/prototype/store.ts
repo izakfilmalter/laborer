@@ -1910,6 +1910,44 @@ const readSnapshotPromise = async (
   }
 };
 
+const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
+  if (
+    !isUnknownRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.threads) ||
+    !Array.isArray(value.seenEventIds)
+  ) {
+    return value;
+  }
+
+  let changed = false;
+  let seenEventIds: readonly unknown[] = value.seenEventIds;
+  const threads = pipe(
+    value.threads,
+    EffectArray.map((candidate, index) => {
+      if (
+        !isUnknownRecord(candidate) ||
+        Object.hasOwn(candidate, "activationEventId")
+      ) {
+        return candidate;
+      }
+      const threadIdentity =
+        typeof candidate.id === "string" ? candidate.id : String(index);
+      const activationEventId = `migration:activation:${threadIdentity}`;
+      if (!EffectArray.contains(seenEventIds, activationEventId)) {
+        seenEventIds = EffectArray.append(seenEventIds, activationEventId);
+      }
+      changed = true;
+      return { ...candidate, activationEventId };
+    })
+  );
+
+  return changed ? { ...value, seenEventIds, threads } : value;
+};
+
 const loadSnapshot = (path: string, trustedRoot?: string) =>
   Effect.tryPromise({
     try: () => readSnapshotPromise(path, trustedRoot),
@@ -1918,6 +1956,7 @@ const loadSnapshot = (path: string, trustedRoot?: string) =>
         ? SnapshotMissing.make()
         : storeFailure("load", "snapshot-unreadable"),
   }).pipe(
+    Effect.map(migrateSchemaVersionOneSnapshot),
     Effect.flatMap(
       Schema.decodeUnknownEffect(PrototypeStateSchema, {
         onExcessProperty: "error",

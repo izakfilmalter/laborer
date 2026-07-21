@@ -389,7 +389,15 @@ describe("third adversarial state and config verification", () => {
           );
           const snapshotPath = join(root, "snapshot.json");
           const base = baseAcknowledgementState();
-          const { acknowledgements: _acknowledgements, ...legacy } = base;
+          const { acknowledgements: _acknowledgements, ...withoutAcks } = base;
+          const firstThread = withoutAcks.threads[0];
+          assert.ok(firstThread);
+          const { activationEventId: _activationEventId, ...legacyThread } =
+            firstThread;
+          const legacy = {
+            ...withoutAcks,
+            threads: [legacyThread],
+          };
           yield* Effect.promise(() =>
             writeFile(snapshotPath, JSON.stringify(legacy), "utf8")
           );

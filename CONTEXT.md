@@ -55,6 +55,9 @@ A stable filesystem directory Laborer assigns to one work thread and presents to
 **Public reply**:
 A conversational message the work handler explicitly chooses to send by emitting a public-reply protocol record. Laborer binds it to the work thread and posts it as the Laborer Slack app. Public replies are ordered, append-only, and the only handler-authored output shown in Slack; internal output remains private.
 
+**Completion reaction**:
+A per-turn durable attempt rendered as a sticky `:white_check_mark:` on the canonical thread root after the turn succeeds and all deliberate public replies attached to it are delivered. Eligibility includes replies from initialization and replayed attempts; any blocked or abandoned public reply suppresses the marker. Later successful turns converge idempotently on the same reaction.
+
 **Operational notice**:
 A sanitized, Laborer-authored Slack message reporting that a turn or reply failed. Operational notices identify the turn and failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They exist because Slack is the prototype's primary interface.
 

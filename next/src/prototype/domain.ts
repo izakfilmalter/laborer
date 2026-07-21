@@ -211,10 +211,27 @@ export class AcknowledgementState extends Schema.Class<AcknowledgementState>(
   ]),
 }) {}
 
+export class CompletionReactionState extends Schema.Class<CompletionReactionState>(
+  "CompletionReactionState"
+)({
+  attempts: Schema.Number,
+  channelId: Schema.String,
+  id: Schema.String,
+  lastErrorCategory: Schema.NullOr(Schema.String),
+  retryAtMillis: Schema.NullOr(Schema.Number),
+  rootTs: Schema.String,
+  status: Schema.Literals(["add_pending", "permanent_failure"]),
+  threadId: ThreadId,
+  turnId: TurnId,
+}) {}
+
 export class PrototypeState extends Schema.Class<PrototypeState>(
   "PrototypeState"
 )({
   acknowledgements: Schema.Array(AcknowledgementState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
+  completionReactions: Schema.Array(CompletionReactionState).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
   ignoredInbound: Schema.Array(IgnoredInbound),
@@ -225,6 +242,7 @@ export class PrototypeState extends Schema.Class<PrototypeState>(
 
 export const initialPrototypeState = PrototypeState.make({
   acknowledgements: [],
+  completionReactions: [],
   schemaVersion: 1,
   seenEventIds: [],
   ignoredInbound: [],
@@ -270,3 +288,6 @@ export const stableAcknowledgementId = (
   channelId: string,
   messageTs: string
 ): string => `ack:${channelId}:${messageTs}`;
+
+export const stableCompletionReactionId = (turnId: TurnId): string =>
+  `completion-reaction:${turnId}`;

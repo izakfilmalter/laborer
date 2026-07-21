@@ -20,6 +20,7 @@ import {
 import {
   AcknowledgementState,
   type ClaimedTurn,
+  CompletionReactionState,
   canonicalThreadId,
   HandlerAttempt,
   type HandlerFailureCategory,
@@ -34,6 +35,7 @@ import {
   PrototypeState as PrototypeStateSchema,
   type ReplyId,
   stableAcknowledgementId,
+  stableCompletionReactionId,
   stableMessageId,
   type ThreadId,
   TurnId,
@@ -104,6 +106,9 @@ export interface PrototypeStoreShape {
   readonly completeAcknowledgement: (
     id: string
   ) => Effect.Effect<void, StoreError>;
+  readonly completeCompletionReaction: (
+    id: string
+  ) => Effect.Effect<void, StoreError>;
   readonly completeContext: (
     threadId: ThreadId,
     context: readonly NormalizedMessage[],
@@ -124,6 +129,10 @@ export interface PrototypeStoreShape {
     threadId: ThreadId,
     workingDirectory: string
   ) => Effect.Effect<void, StoreError>;
+  readonly completionReactions: Effect.Effect<
+    readonly CompletionReactionState[],
+    StoreError
+  >;
   readonly contextRequest: (
     threadId: ThreadId
   ) => Effect.Effect<ActivationContextRequest | null, StoreError>;
@@ -134,6 +143,12 @@ export interface PrototypeStoreShape {
     id: string
   ) => Effect.Effect<void, StoreError>;
   readonly markAcknowledgementFailure: (
+    id: string,
+    category: string,
+    disposition: DeliveryFailureDisposition,
+    retryAtMillis: number | null
+  ) => Effect.Effect<void, StoreError>;
+  readonly markCompletionReactionFailure: (
     id: string,
     category: string,
     disposition: DeliveryFailureDisposition,
@@ -289,6 +304,34 @@ const modifyAcknowledgement = (
       ...state,
       acknowledgements: replaceAt(
         state.acknowledgements,
+        index,
+        update(current)
+      ),
+    }),
+  ];
+};
+
+const modifyCompletionReaction = (
+  state: PrototypeState,
+  id: string,
+  operation: string,
+  update: (current: CompletionReactionState) => CompletionReactionState
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = pipe(
+    state.completionReactions,
+    EffectArray.findFirstIndex((reaction) => reaction.id === id),
+    Option.getOrElse(() => -1)
+  );
+  const current = state.completionReactions[index];
+  if (current === undefined) {
+    return storeFailure(operation, "completion-reaction-not-found");
+  }
+  return [
+    undefined,
+    PrototypeStateSchema.make({
+      ...state,
+      completionReactions: replaceAt(
+        state.completionReactions,
         index,
         update(current)
       ),
@@ -483,6 +526,55 @@ const findTurnIndex = (thread: WorkThreadState, turnId: TurnId): number =>
     Option.getOrElse(() => -1)
   );
 
+const enqueueEligibleCompletionReaction = (
+  state: PrototypeState,
+  threadId: ThreadId,
+  turnId: TurnId
+): PrototypeState => {
+  const thread = state.threads[findThreadIndex(state, threadId)];
+  const turn = thread?.turns[findTurnIndex(thread, turnId)];
+  if (thread === undefined || turn?.outcome?.kind !== "success") {
+    return state;
+  }
+  const publicReplies = pipe(
+    thread.outbox,
+    EffectArray.filter(
+      (item) => item.turnId === turnId && item.kind === "public_reply"
+    )
+  );
+  if (
+    !EffectArray.every(publicReplies, (item) => item.status === "delivered")
+  ) {
+    return state;
+  }
+  const id = stableCompletionReactionId(turnId);
+  if (
+    EffectArray.some(
+      state.completionReactions,
+      (reaction) => reaction.id === id
+    )
+  ) {
+    return state;
+  }
+  return PrototypeStateSchema.make({
+    ...state,
+    completionReactions: EffectArray.append(
+      state.completionReactions,
+      CompletionReactionState.make({
+        attempts: 0,
+        channelId: thread.channelId,
+        id,
+        lastErrorCategory: null,
+        retryAtMillis: null,
+        rootTs: thread.rootTs,
+        status: "add_pending",
+        threadId,
+        turnId,
+      })
+    ),
+  });
+};
+
 const deliveryFailureNoticeId = (item: OutboundItem): string =>
   `notice:${item.turnId}:delivery:${item.id}`;
 
@@ -666,6 +758,10 @@ const makeStore = Effect.fnUntraced(function* (
       Effect.map((state) => state.acknowledgements),
       Effect.mapError(() => storeFailure("acknowledgements", "read-failed"))
     ),
+    completionReactions: Ref.get(ref).pipe(
+      Effect.map((state) => state.completionReactions),
+      Effect.mapError(() => storeFailure("completionReactions", "read-failed"))
+    ),
     accept: (event) =>
       transition("accept", (state) =>
         acceptTransition(state, event, laborerSlackId, initializeNewThreads)
@@ -733,6 +829,25 @@ const makeStore = Effect.fnUntraced(function* (
             })
         )
       ),
+    markCompletionReactionFailure: (id, category, disposition, retryAtMillis) =>
+      transition("markCompletionReactionFailure", (state) =>
+        modifyCompletionReaction(
+          state,
+          id,
+          "markCompletionReactionFailure",
+          (current) =>
+            CompletionReactionState.make({
+              ...current,
+              attempts: current.attempts + 1,
+              lastErrorCategory: category,
+              retryAtMillis: disposition === "transient" ? retryAtMillis : null,
+              status:
+                disposition === "transient"
+                  ? "add_pending"
+                  : "permanent_failure",
+            })
+        )
+      ),
     completeAcknowledgement: (id) =>
       transition("completeAcknowledgement", (state) => {
         const index = pipe(
@@ -753,6 +868,30 @@ const makeStore = Effect.fnUntraced(function* (
           PrototypeStateSchema.make({
             ...state,
             acknowledgements: EffectArray.remove(state.acknowledgements, index),
+          }),
+        ];
+      }),
+    completeCompletionReaction: (id) =>
+      transition("completeCompletionReaction", (state) => {
+        const index = pipe(
+          state.completionReactions,
+          EffectArray.findFirstIndex((reaction) => reaction.id === id),
+          Option.getOrElse(() => -1)
+        );
+        if (index < 0) {
+          return storeFailure(
+            "completeCompletionReaction",
+            "completion-reaction-not-found"
+          );
+        }
+        return [
+          undefined,
+          PrototypeStateSchema.make({
+            ...state,
+            completionReactions: EffectArray.remove(
+              state.completionReactions,
+              index
+            ),
           }),
         ];
       }),
@@ -875,71 +1014,85 @@ const makeStore = Effect.fnUntraced(function* (
         }
       ),
     completeHandler: (threadId, turnId, outcome) =>
-      transition("completeHandler", (state) =>
-        modifyThread(state, threadId, "completeHandler", (thread) => {
-          const turnIndex = findTurnIndex(thread, turnId);
-          const turn = thread.turns[turnIndex];
-          if (turn === undefined) {
-            return storeFailure("completeHandler", "turn-not-found");
-          }
-          const attempts = pipe(
-            turn.attempts,
-            EffectArray.map((attempt, index) =>
-              index === turn.attempts.length - 1
-                ? HandlerAttempt.make({
-                    ...attempt,
-                    status: outcome._tag === "Success" ? "succeeded" : "failed",
-                  })
-                : attempt
-            )
-          );
-          const outcomeState = HandlerOutcomeState.make(
-            outcome._tag === "Success"
-              ? { category: null, kind: "success", safeDetail: null }
-              : {
-                  category: outcome.category,
-                  kind: "failure",
-                  safeDetail: outcome.safeDetail,
-                }
-          );
-          const completedTurn = TurnState.make({
-            ...turn,
-            attempts,
-            outcome: outcomeState,
-            status: "awaiting_delivery",
-          });
-          let outbox = thread.outbox;
-          if (outcome._tag === "Failure") {
-            const detail =
-              outcome.safeDetail === null ? "" : `: ${outcome.safeDetail}`;
-            outbox = EffectArray.append(
-              outbox,
-              OutboundItem.make({
-                deliveryAttempts: 0,
-                id: `notice:${turnId}:${outcome.category}`,
-                kind: "operational_notice",
-                lastErrorCategory: null,
-                replyId: null,
-                retryAtMillis: null,
-                slackTs: null,
-                status: "pending",
-                text: `Turn ${turnId} failed (${outcome.category}${detail}). See Runner logs.`,
-                turnId,
-              })
+      transition("completeHandler", (state) => {
+        const result = modifyThread(
+          state,
+          threadId,
+          "completeHandler",
+          (thread) => {
+            const turnIndex = findTurnIndex(thread, turnId);
+            const turn = thread.turns[turnIndex];
+            if (turn === undefined) {
+              return storeFailure("completeHandler", "turn-not-found");
+            }
+            const attempts = pipe(
+              turn.attempts,
+              EffectArray.map((attempt, index) =>
+                index === turn.attempts.length - 1
+                  ? HandlerAttempt.make({
+                      ...attempt,
+                      status:
+                        outcome._tag === "Success" ? "succeeded" : "failed",
+                    })
+                  : attempt
+              )
             );
-          }
-          return [
-            undefined,
-            settleEligibleTurns(
-              WorkThreadState.make({
-                ...thread,
+            const outcomeState = HandlerOutcomeState.make(
+              outcome._tag === "Success"
+                ? { category: null, kind: "success", safeDetail: null }
+                : {
+                    category: outcome.category,
+                    kind: "failure",
+                    safeDetail: outcome.safeDetail,
+                  }
+            );
+            const completedTurn = TurnState.make({
+              ...turn,
+              attempts,
+              outcome: outcomeState,
+              status: "awaiting_delivery",
+            });
+            let outbox = thread.outbox;
+            if (outcome._tag === "Failure") {
+              const detail =
+                outcome.safeDetail === null ? "" : `: ${outcome.safeDetail}`;
+              outbox = EffectArray.append(
                 outbox,
-                turns: replaceAt(thread.turns, turnIndex, completedTurn),
-              })
-            ),
-          ];
-        })
-      ),
+                OutboundItem.make({
+                  deliveryAttempts: 0,
+                  id: `notice:${turnId}:${outcome.category}`,
+                  kind: "operational_notice",
+                  lastErrorCategory: null,
+                  replyId: null,
+                  retryAtMillis: null,
+                  slackTs: null,
+                  status: "pending",
+                  text: `Turn ${turnId} failed (${outcome.category}${detail}). See Runner logs.`,
+                  turnId,
+                })
+              );
+            }
+            return [
+              undefined,
+              settleEligibleTurns(
+                WorkThreadState.make({
+                  ...thread,
+                  outbox,
+                  turns: replaceAt(thread.turns, turnIndex, completedTurn),
+                })
+              ),
+            ];
+          }
+        );
+        if (result instanceof StoreError) {
+          return result;
+        }
+        const [value, next] = result;
+        return [
+          value,
+          enqueueEligibleCompletionReaction(next, threadId, turnId),
+        ];
+      }),
     claimOutboundHead: (threadId, nowMillis) =>
       transition("claimOutboundHead", (state) =>
         modifyThread<OutboxClaim>(
@@ -1003,40 +1156,55 @@ const makeStore = Effect.fnUntraced(function* (
         )
       ),
     markDelivered: (threadId, itemId, slackTs) =>
-      transition("markDelivered", (state) =>
-        modifyThread(state, threadId, "markDelivered", (thread) => {
-          const index = pipe(
-            EffectArray.findFirstIndex(
-              thread.outbox,
-              (item) => item.id === itemId
-            ),
-            Option.getOrElse(() => -1)
-          );
-          const item = thread.outbox[index];
-          if (item === undefined || item.status !== "delivering") {
-            return storeFailure("markDelivered", "item-not-delivering");
+      transition("markDelivered", (state) => {
+        let deliveredTurnId: TurnId | null = null;
+        const result = modifyThread(
+          state,
+          threadId,
+          "markDelivered",
+          (thread) => {
+            const index = pipe(
+              EffectArray.findFirstIndex(
+                thread.outbox,
+                (item) => item.id === itemId
+              ),
+              Option.getOrElse(() => -1)
+            );
+            const item = thread.outbox[index];
+            if (item === undefined || item.status !== "delivering") {
+              return storeFailure("markDelivered", "item-not-delivering");
+            }
+            deliveredTurnId = item.turnId;
+            return [
+              undefined,
+              settleEligibleTurns(
+                WorkThreadState.make({
+                  ...thread,
+                  outbox: replaceAt(
+                    thread.outbox,
+                    index,
+                    OutboundItem.make({
+                      ...item,
+                      lastErrorCategory: null,
+                      retryAtMillis: null,
+                      slackTs,
+                      status: "delivered",
+                    })
+                  ),
+                })
+              ),
+            ];
           }
-          return [
-            undefined,
-            settleEligibleTurns(
-              WorkThreadState.make({
-                ...thread,
-                outbox: replaceAt(
-                  thread.outbox,
-                  index,
-                  OutboundItem.make({
-                    ...item,
-                    lastErrorCategory: null,
-                    retryAtMillis: null,
-                    slackTs,
-                    status: "delivered",
-                  })
-                ),
-              })
-            ),
-          ];
-        })
-      ),
+        );
+        if (result instanceof StoreError || deliveredTurnId === null) {
+          return result;
+        }
+        const [value, next] = result;
+        return [
+          value,
+          enqueueEligibleCompletionReaction(next, threadId, deliveredTurnId),
+        ];
+      }),
     markDeliveryFailed: (
       threadId,
       itemId,
@@ -1707,10 +1875,77 @@ const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
   return null;
 };
 
+const validateCompletionReactions = (
+  state: PrototypeState
+): StoreError | null => {
+  if (
+    duplicateValue(state.completionReactions.map((reaction) => reaction.id)) !==
+      null ||
+    duplicateValue(
+      state.completionReactions.map((reaction) => reaction.turnId)
+    ) !== null
+  ) {
+    return storeFailure("validate", "duplicate-completion-reaction");
+  }
+  for (const reaction of state.completionReactions) {
+    const thread = pipe(
+      state.threads,
+      EffectArray.findFirst((candidate) => candidate.id === reaction.threadId),
+      Option.getOrNull
+    );
+    const turn =
+      thread === null
+        ? undefined
+        : thread.turns[findTurnIndex(thread, reaction.turnId)];
+    const publicReplies =
+      thread === null
+        ? []
+        : pipe(
+            thread.outbox,
+            EffectArray.filter(
+              (item) =>
+                item.turnId === reaction.turnId && item.kind === "public_reply"
+            )
+          );
+    const hasRetry = reaction.retryAtMillis !== null;
+    const hasError = reaction.lastErrorCategory !== null;
+    if (
+      reaction.id !== stableCompletionReactionId(reaction.turnId) ||
+      thread === null ||
+      reaction.channelId !== thread.channelId ||
+      reaction.rootTs !== thread.rootTs ||
+      turn?.outcome?.kind !== "success" ||
+      !EffectArray.every(
+        publicReplies,
+        (item) => item.status === "delivered"
+      ) ||
+      !Number.isInteger(reaction.attempts) ||
+      reaction.attempts < 0 ||
+      (hasRetry &&
+        (!Number.isFinite(reaction.retryAtMillis) ||
+          (reaction.retryAtMillis ?? -1) < 0)) ||
+      (reaction.status === "add_pending" && hasRetry !== hasError) ||
+      (reaction.attempts === 0 && hasError) ||
+      (reaction.attempts > 0 &&
+        reaction.status === "add_pending" &&
+        !hasError) ||
+      (hasError && reaction.lastErrorCategory?.trim().length === 0) ||
+      (reaction.status === "permanent_failure" && (hasRetry || !hasError))
+    ) {
+      return storeFailure("validate", "invalid-completion-reaction-state");
+    }
+  }
+  return null;
+};
+
 const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   const acknowledgementFailure = validateAcknowledgements(state);
   if (acknowledgementFailure !== null) {
     return acknowledgementFailure;
+  }
+  const completionReactionFailure = validateCompletionReactions(state);
+  if (completionReactionFailure !== null) {
+    return completionReactionFailure;
   }
   if (duplicateValue(state.seenEventIds) !== null) {
     return storeFailure("validate", "duplicate-event-id");
@@ -1983,6 +2218,8 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
 
   let changed = false;
   let seenEventIds: readonly unknown[] = value.seenEventIds;
+  const needsCompletionReactions = !Object.hasOwn(value, "completionReactions");
+  changed = needsCompletionReactions;
   const threads = pipe(
     value.threads,
     EffectArray.map((candidate, index) => {
@@ -2029,7 +2266,14 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
     })
   );
 
-  return changed ? { ...value, seenEventIds, threads } : value;
+  return changed
+    ? {
+        ...value,
+        ...(needsCompletionReactions ? { completionReactions: [] } : {}),
+        seenEventIds,
+        threads,
+      }
+    : value;
 };
 
 const loadSnapshot = (path: string, trustedRoot?: string) =>

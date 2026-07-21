@@ -18,6 +18,7 @@ import {
 import {
   type AcknowledgementState,
   type ClaimedTurn,
+  type CompletionReactionState,
   canonicalThreadId,
   type InboundDecision,
   NormalizedInboundEvent as NormalizedInboundEventSchema,
@@ -92,6 +93,27 @@ export class ActivationAcknowledger extends Context.Service<
 const noOpActivationAcknowledger: ActivationAcknowledgerShape = {
   acknowledge: () => Effect.void,
   complete: () => Effect.void,
+};
+
+export interface CompletionReactorShape {
+  readonly react: (request: {
+    readonly channelId: string;
+    readonly rootTs: string;
+  }) => Effect.Effect<void, DeliveryError>;
+}
+
+export class CompletionReactor extends Context.Service<
+  CompletionReactor,
+  CompletionReactorShape
+>()("@laborer/prototype/CompletionReactor") {
+  static layer = (
+    reactor: CompletionReactorShape
+  ): Layer.Layer<CompletionReactor> =>
+    Layer.succeed(CompletionReactor, reactor);
+}
+
+const noOpCompletionReactor: CompletionReactorShape = {
+  react: () => Effect.void,
 };
 
 export interface WorkHandlerShape {
@@ -205,7 +227,7 @@ interface AcknowledgementSemaphore {
 
 const CONTEXT_RETRY_MILLIS = 10;
 
-const acknowledgementRetryAt = (
+const reactionRetryAt = (
   error: DeliveryError,
   failedAt: number
 ): number | null =>
@@ -224,11 +246,12 @@ const runnerLayer = Layer.effect(
     const handler = yield* WorkHandler;
     const initializer = yield* ThreadInitializer;
     const activationAcknowledger = yield* ActivationAcknowledger;
+    const completionReactor = yield* CompletionReactor;
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
     const acknowledgementSemaphores = yield* Ref.make<
       readonly AcknowledgementSemaphore[]
     >([]);
-    const acknowledgementDriverScope = yield* Effect.scope;
+    const reactionDriverScope = yield* Effect.scope;
 
     const retainAcknowledgementSemaphore = (acknowledgementId: string) =>
       Ref.modify(acknowledgementSemaphores, (entries) =>
@@ -370,7 +393,7 @@ const runnerLayer = Layer.effect(
         id,
         error.category,
         error.disposition,
-        acknowledgementRetryAt(error, failedAt)
+        reactionRetryAt(error, failedAt)
       );
       if (error.disposition === "transient") {
         return "Retry" as const;
@@ -412,7 +435,7 @@ const runnerLayer = Layer.effect(
 
     const startAcknowledgementDriver = (id: string) =>
       superviseAcknowledgementDriver(id).pipe(
-        Effect.forkIn(acknowledgementDriverScope, { startImmediately: true }),
+        Effect.forkIn(reactionDriverScope, { startImmediately: true }),
         Effect.asVoid
       );
 
@@ -421,6 +444,97 @@ const runnerLayer = Layer.effect(
     ) {
       yield* store.requestAcknowledgementCleanup(id);
       yield* startAcknowledgementDriver(id);
+    });
+
+    const performCompletionReaction = Effect.fnUntraced(function* (
+      reaction: CompletionReactionState
+    ) {
+      const now = yield* Clock.currentTimeMillis;
+      const delayMillis = Math.max(0, (reaction.retryAtMillis ?? now) - now);
+      if (delayMillis > 0) {
+        yield* Effect.sleep(`${delayMillis} millis`);
+      }
+      return yield* Effect.result(
+        completionReactor.react({
+          channelId: reaction.channelId,
+          rootTs: reaction.rootTs,
+        })
+      );
+    });
+
+    const driveCompletionReaction = Effect.fnUntraced(function* (id: string) {
+      while (true) {
+        const reaction = pipe(
+          yield* store.completionReactions,
+          EffectArray.findFirst((candidate) => candidate.id === id),
+          Option.getOrNull
+        );
+        if (reaction === null || reaction.status === "permanent_failure") {
+          return;
+        }
+        const result = yield* performCompletionReaction(reaction);
+        if (result._tag === "Success") {
+          yield* store.completeCompletionReaction(id);
+          return;
+        }
+        const error = result.failure;
+        const failedAt = yield* Clock.currentTimeMillis;
+        yield* store.markCompletionReactionFailure(
+          id,
+          error.category,
+          error.disposition,
+          reactionRetryAt(error, failedAt)
+        );
+        if (error.disposition === "transient") {
+          continue;
+        }
+        yield* Effect.logError("Slack completion reaction failed permanently", {
+          category: error.category,
+        });
+        return;
+      }
+    });
+
+    const superviseCompletionReaction = Effect.fnUntraced(function* (
+      id: string
+    ) {
+      while (true) {
+        const result = yield* Effect.result(driveCompletionReaction(id));
+        if (result._tag === "Success") {
+          return;
+        }
+        yield* Effect.logError(
+          "Completion reaction driver retrying after local failure",
+          result.failure
+        );
+        yield* Effect.sleep("1 second");
+      }
+    });
+
+    const startCompletionReactionDriver = (id: string) =>
+      superviseCompletionReaction(id).pipe(
+        Effect.forkIn(reactionDriverScope, {
+          startImmediately: true,
+        }),
+        Effect.asVoid
+      );
+
+    const startCompletionReactionForTurn = Effect.fnUntraced(function* (
+      turnId: import("./domain.ts").TurnId
+    ) {
+      const reactions = pipe(
+        yield* store.completionReactions,
+        EffectArray.filter(
+          (reaction) =>
+            reaction.turnId === turnId &&
+            reaction.status !== "permanent_failure"
+        )
+      );
+      yield* Effect.forEach(
+        reactions,
+        (reaction) => startCompletionReactionDriver(reaction.id),
+        { discard: true }
+      );
     });
 
     const retainThreadSemaphore = (threadId: ThreadId) =>
@@ -540,6 +654,7 @@ const runnerLayer = Layer.effect(
         );
         if (result._tag === "Success") {
           yield* store.markDelivered(threadId, claim.itemId, result.success.ts);
+          yield* startCompletionReactionForTurn(claim.turnId);
           deliveredAny = true;
           continue;
         }
@@ -633,6 +748,7 @@ const runnerLayer = Layer.effect(
         yield* store.completeHandler(turn.threadId, turn.id, {
           _tag: "Success",
         });
+        yield* startCompletionReactionForTurn(turn.id);
         return;
       }
       if (result.failure instanceof StoreError) {
@@ -698,6 +814,15 @@ const runnerLayer = Layer.effect(
         acknowledgement.status === "permanent_failure"
           ? Effect.void
           : requestAcknowledgementCleanup(acknowledgement.id),
+      { discard: true }
+    );
+    const staleCompletionReactions = yield* store.completionReactions;
+    yield* Effect.forEach(
+      staleCompletionReactions,
+      (reaction) =>
+        reaction.status === "permanent_failure"
+          ? Effect.void
+          : startCompletionReactionDriver(reaction.id),
       { discard: true }
     );
 
@@ -784,6 +909,7 @@ export interface PrototypeHarness {
 
 export const makePrototypeHarness = (options: {
   readonly activationAcknowledger?: ActivationAcknowledgerShape;
+  readonly completionReactor?: CompletionReactorShape;
   readonly handler: WorkHandlerShape;
   readonly initializer?: ThreadInitializerShape;
   readonly laborerSlackId: string;
@@ -804,6 +930,7 @@ export const makePrototypeHarness = (options: {
     ActivationAcknowledger.layer(
       options.activationAcknowledger ?? noOpActivationAcknowledger
     ),
+    CompletionReactor.layer(options.completionReactor ?? noOpCompletionReactor),
     SlackGateway.layer(options.slack),
     ThreadInitializer.layer(options.initializer ?? unusedThreadInitializer),
     WorkHandler.layer(options.handler)

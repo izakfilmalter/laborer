@@ -268,6 +268,121 @@ describe("issue #204 store-driven tracer", () => {
   );
 
   it.live(
+    "delivers an accepted reply from a failed invocation without reacting",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* startEmulatedSlack();
+          const processHandler = yield* makeProcessHandler(
+            fixtureHandlerOptions(projectRoot)
+          );
+          const completionReactions = yield* Ref.make<
+            readonly { channelId: string; rootTs: string }[]
+          >([]);
+          const harness = yield* makePrototypeHarness({
+            completionReactor: {
+              react: (request) =>
+                Ref.update(completionReactions, (reactions) =>
+                  EffectArray.append(reactions, request)
+                ),
+            },
+            handler: processHandler.handler,
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: fixture.gateway,
+          });
+          const rootTs = yield* activate(
+            fixture,
+            harness,
+            "failed-with-reply",
+            `[fixture:exit-1] <@${LABORER_SLACK_ID}>`
+          );
+          const thread = yield* Effect.promise(() =>
+            fixture.humanClient.conversations.replies({
+              channel: fixture.channelId,
+              ts: rootTs,
+            })
+          );
+          const publicReplies = thread.messages?.filter((message) =>
+            message.text?.startsWith("[PUBLIC ")
+          );
+          const publicReply = publicReplies?.[0];
+          const failureNotice = thread.messages?.find((message) =>
+            message.text?.includes("failed (exit: exit code 7)")
+          );
+
+          assert.strictEqual(publicReplies?.length, 1);
+          assert.ok(publicReply);
+          assert.strictEqual(publicReply.user, fixture.botUserId);
+          assert.strictEqual(publicReply.thread_ts, rootTs);
+          assert.ok(failureNotice);
+          assert.strictEqual(failureNotice.user, fixture.botUserId);
+          assert.strictEqual(failureNotice.thread_ts, rootTs);
+          yield* Effect.sleep("25 millis");
+          assert.deepStrictEqual(yield* Ref.get(completionReactions), []);
+        })
+      )
+  );
+
+  it.live(
+    "does not react when a successful reply is blocked or later abandoned",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const processHandler = yield* makeProcessHandler(
+            fixtureHandlerOptions(projectRoot)
+          );
+          const completionReactions = yield* Ref.make<
+            readonly { channelId: string; rootTs: string }[]
+          >([]);
+          const harness = yield* makePrototypeHarness({
+            completionReactor: {
+              react: (request) =>
+                Ref.update(completionReactions, (reactions) =>
+                  EffectArray.append(reactions, request)
+                ),
+            },
+            handler: processHandler.handler,
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: {
+              postThreadMessage: () =>
+                DeliveryError.make({
+                  category: "restricted_action",
+                  disposition: "destination-permanent",
+                  retryAfterMillis: 0,
+                }),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CBLOCKEDCOMPLETION",
+              eventId: "event:blocked-completion",
+              messageTs: "1.0",
+              text: `<@${LABORER_SLACK_ID}> blocked completion`,
+            })
+          );
+
+          let thread = onlyThread((yield* harness.store.snapshot).threads);
+          assert.strictEqual(thread.turns[0]?.outcome?.kind, "success");
+          assert.strictEqual(thread.turns[0]?.status, "awaiting_delivery");
+          assert.deepStrictEqual(
+            thread.outbox.map((item) => [item.kind, item.status]),
+            [["public_reply", "blocked"]]
+          );
+          assert.deepStrictEqual(yield* Ref.get(completionReactions), []);
+
+          yield* harness.runner.abandonBlocked(thread.id);
+          thread = onlyThread((yield* harness.store.snapshot).threads);
+          assert.strictEqual(thread.turns[0]?.status, "completed");
+          assert.strictEqual(thread.outbox[0]?.status, "abandoned");
+          yield* Effect.sleep("25 millis");
+          assert.deepStrictEqual(yield* Ref.get(completionReactions), []);
+        })
+      )
+  );
+
+  it.live(
     "retries transient delivery and honestly blocks destination-wide failures without an undeliverable notice",
     () =>
       Effect.scoped(

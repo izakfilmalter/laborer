@@ -123,8 +123,14 @@ different initializer if that trust boundary is inappropriate.
    fails. A transient reaction outage never blocks accepted handler work:
    reaction state and retry time are persisted, and a scoped background driver
    awaits and serializes each add/remove request until cleanup converges.
-   Startup reconciles a stale reaction left by a hard crash. The tracked
-   initializer first creates the thread's sibling worktree. The handler then
+   Startup reconciles a stale reaction left by a hard crash. After a handler
+   succeeds and every deliberate public reply from that turn is delivered,
+   Laborer adds :white_check_mark: to the canonical thread root. That completion
+   reaction is also durable and retried independently; permanent reaction
+   failures remain observable without changing the successful turn outcome.
+   Failed turns and turns with blocked or abandoned public replies are never
+   marked complete. The tracked initializer first creates the thread's sibling
+   worktree. The handler then
    runs a classifier there and deterministically selects either the
    `bug-to-pr` or `feature-to-pr` skill for a coding worker. The
    classifier and coding worker use the user's default OpenCode agent and

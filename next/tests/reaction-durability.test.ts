@@ -2,7 +2,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Ref } from "effect";
-import type { PrototypeState } from "../src/prototype/domain.ts";
+import {
+  type PrototypeState,
+  PublicReplyProtocolRecord,
+  ReplyId,
+} from "../src/prototype/domain.ts";
 import { DeliveryError, type StoreError } from "../src/prototype/errors.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
@@ -483,6 +487,421 @@ describe("durable activation reaction lifecycle", () => {
               assert.deepStrictEqual(lifecycle, ["add-idempotently", "remove"]);
             })
           );
+        })
+      ),
+    10_000
+  );
+});
+
+describe("durable completion reaction lifecycle", () => {
+  it.live(
+    "retries a persisted completion reaction after restart interrupts an ambiguous call",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-completion-reaction-recovery-"
+          );
+          const snapshotPath = join(root, "snapshot.json");
+          const reactionCalls: string[] = [];
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              let markReactionStarted = (): void => undefined;
+              const reactionStarted = new Promise<void>((resolveStarted) => {
+                markReactionStarted = resolveStarted;
+              });
+              const firstHarness = yield* makePrototypeHarness({
+                completionReactor: {
+                  react: ({ channelId, rootTs }) =>
+                    Effect.sync(() => {
+                      reactionCalls.push(`first:${channelId}:${rootTs}`);
+                      markReactionStarted();
+                    }).pipe(Effect.andThen(Effect.never)),
+                },
+                handler: { invoke: () => Effect.void },
+                laborerSlackId: LABORER_SLACK_ID,
+                slack,
+                storeLayer: makeFileStoreLayer(
+                  LABORER_SLACK_ID,
+                  snapshotPath,
+                  root
+                ),
+              });
+
+              yield* firstHarness.runner.inject(
+                normalizedEvent({
+                  authorSlackId: "UHUMAN",
+                  channelId: "CRECOVERCOMPLETION",
+                  eventId: "event:recover-completion",
+                  messageTs: "5.0",
+                  text: `<@${LABORER_SLACK_ID}> complete before crashing`,
+                })
+              );
+              yield* Effect.promise(() => reactionStarted);
+
+              const persisted = yield* firstHarness.store.snapshot;
+              assert.strictEqual(
+                persisted.threads[0]?.turns[0]?.status,
+                "completed"
+              );
+              assert.strictEqual(
+                persisted.threads[0]?.turns[0]?.outcome?.kind,
+                "success"
+              );
+              assert.strictEqual(
+                persisted.completionReactions[0]?.status,
+                "add_pending"
+              );
+              assert.strictEqual(persisted.completionReactions[0]?.attempts, 0);
+            })
+          );
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const recoveredHarness = yield* makePrototypeHarness({
+                completionReactor: {
+                  react: ({ channelId, rootTs }) =>
+                    Effect.sync(() => {
+                      reactionCalls.push(`retry:${channelId}:${rootTs}`);
+                    }),
+                },
+                handler: { invoke: () => Effect.void },
+                laborerSlackId: LABORER_SLACK_ID,
+                slack,
+                storeLayer: makeFileStoreLayer(
+                  LABORER_SLACK_ID,
+                  snapshotPath,
+                  root
+                ),
+              });
+
+              const deadline = Date.now() + 5000;
+              let recovered = yield* recoveredHarness.store.snapshot;
+              while (
+                recovered.completionReactions.length > 0 &&
+                Date.now() < deadline
+              ) {
+                yield* Effect.sleep("10 millis");
+                recovered = yield* recoveredHarness.store.snapshot;
+              }
+
+              assert.deepStrictEqual(reactionCalls, [
+                "first:CRECOVERCOMPLETION:5.0",
+                "retry:CRECOVERCOMPLETION:5.0",
+              ]);
+              assert.deepStrictEqual(recovered.completionReactions, []);
+              assert.strictEqual(
+                recovered.threads[0]?.turns[0]?.status,
+                "completed"
+              );
+              assert.deepStrictEqual(recovered.threads[0]?.outbox, []);
+            })
+          );
+        })
+      ),
+    10_000
+  );
+
+  it.live(
+    "keeps permanent completion reaction errors observable without blocking later turns",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let handlerAttempts = 0;
+          let reactionAttempts = 0;
+          const harness = yield* makePrototypeHarness({
+            completionReactor: {
+              react: () => {
+                reactionAttempts += 1;
+                return reactionAttempts === 1
+                  ? DeliveryError.make({
+                      category: "missing_scope",
+                      disposition: "destination-permanent",
+                      retryAfterMillis: 0,
+                    })
+                  : Effect.void;
+              },
+            },
+            handler: {
+              invoke: () =>
+                Effect.sync(() => {
+                  handlerAttempts += 1;
+                }),
+            },
+            laborerSlackId: LABORER_SLACK_ID,
+            slack,
+          });
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CPERMANENTCOMPLETION",
+              eventId: "event:permanent-completion",
+              messageTs: "1.0",
+              text: `<@${LABORER_SLACK_ID}> complete despite reaction failure`,
+            })
+          );
+
+          const failureDeadline = Date.now() + 5000;
+          let state = yield* harness.store.snapshot;
+          while (
+            state.completionReactions[0]?.status !== "permanent_failure" &&
+            Date.now() < failureDeadline
+          ) {
+            yield* Effect.sleep("10 millis");
+            state = yield* harness.store.snapshot;
+          }
+
+          const firstTurn = state.threads[0]?.turns[0];
+          assert.strictEqual(firstTurn?.outcome?.kind, "success");
+          assert.strictEqual(firstTurn?.status, "completed");
+          assert.strictEqual(
+            state.completionReactions[0]?.status,
+            "permanent_failure"
+          );
+          assert.strictEqual(
+            state.completionReactions[0]?.lastErrorCategory,
+            "missing_scope"
+          );
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CPERMANENTCOMPLETION",
+              eventId: "event:after-permanent-completion",
+              messageTs: "2.0",
+              text: "run a later turn",
+              threadTs: "1.0",
+            })
+          );
+
+          const continuationDeadline = Date.now() + 5000;
+          state = yield* harness.store.snapshot;
+          while (
+            (reactionAttempts < 2 || state.completionReactions.length !== 1) &&
+            Date.now() < continuationDeadline
+          ) {
+            yield* Effect.sleep("10 millis");
+            state = yield* harness.store.snapshot;
+          }
+
+          assert.strictEqual(handlerAttempts, 2);
+          assert.strictEqual(reactionAttempts, 2);
+          assert.strictEqual(state.completionReactions.length, 1);
+          assert.strictEqual(
+            state.completionReactions[0]?.status,
+            "permanent_failure"
+          );
+          assert.strictEqual(
+            state.completionReactions[0]?.lastErrorCategory,
+            "missing_scope"
+          );
+          assert.strictEqual(state.completionReactions[0]?.attempts, 1);
+          assert.strictEqual(state.completionReactions[0]?.retryAtMillis, null);
+          assert.deepStrictEqual(
+            state.threads[0]?.turns.map((turn) => ({
+              outcome: turn.outcome?.kind,
+              status: turn.status,
+            })),
+            [
+              { outcome: "success", status: "completed" },
+              { outcome: "success", status: "completed" },
+            ]
+          );
+          assert.deepStrictEqual(state.threads[0]?.outbox, []);
+          assert.deepStrictEqual(state.threads[0]?.unassigned, []);
+        })
+      ),
+    10_000
+  );
+
+  it.live(
+    "persists and retries a transient zero-reply completion reaction failure",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let reactionAttempts = 0;
+          const retryAfterMillis = 1200;
+          const firstAttemptAt = Date.now();
+          const harness = yield* makePrototypeHarness({
+            completionReactor: {
+              react: () => {
+                reactionAttempts += 1;
+                return reactionAttempts === 1
+                  ? DeliveryError.make({
+                      category: "ratelimited",
+                      disposition: "transient",
+                      retryAfterMillis,
+                    })
+                  : Effect.void;
+              },
+            },
+            handler: { invoke: () => Effect.void },
+            laborerSlackId: LABORER_SLACK_ID,
+            slack,
+          });
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CRETRYCOMPLETION",
+              eventId: "event:retry-completion",
+              messageTs: "4.0",
+              text: `<@${LABORER_SLACK_ID}> complete silently after retry`,
+            })
+          );
+
+          const persistenceDeadline = Date.now() + 5000;
+          let persistedReaction = (yield* harness.store.snapshot)
+            .completionReactions[0];
+          while (
+            persistedReaction?.attempts !== 1 &&
+            Date.now() < persistenceDeadline
+          ) {
+            yield* Effect.sleep("10 millis");
+            persistedReaction = (yield* harness.store.snapshot)
+              .completionReactions[0];
+          }
+
+          assert.strictEqual(reactionAttempts, 1);
+          assert.strictEqual(persistedReaction?.status, "add_pending");
+          assert.strictEqual(persistedReaction?.attempts, 1);
+          assert.strictEqual(
+            persistedReaction?.lastErrorCategory,
+            "ratelimited"
+          );
+          assert.ok(
+            (persistedReaction?.retryAtMillis ?? 0) >=
+              firstAttemptAt + retryAfterMillis
+          );
+
+          const completionDeadline = Date.now() + 5000;
+          let finalState = yield* harness.store.snapshot;
+          while (
+            finalState.completionReactions.length > 0 &&
+            Date.now() < completionDeadline
+          ) {
+            yield* Effect.sleep("10 millis");
+            finalState = yield* harness.store.snapshot;
+          }
+
+          assert.strictEqual(reactionAttempts, 2);
+          assert.ok(Date.now() - firstAttemptAt >= retryAfterMillis - 100);
+          assert.deepStrictEqual(finalState.completionReactions, []);
+          assert.strictEqual(
+            finalState.threads[0]?.turns[0]?.status,
+            "completed"
+          );
+          assert.strictEqual(
+            finalState.threads[0]?.turns[0]?.outcome?.kind,
+            "success"
+          );
+          assert.deepStrictEqual(finalState.threads[0]?.outbox, []);
+        })
+      ),
+    10_000
+  );
+
+  it.live(
+    "reacts to the canonical root only after every deliberate reply is delivered, including zero replies",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle: string[] = [];
+          const reactions = {
+            add: (request: {
+              readonly channel: string;
+              readonly name: string;
+              readonly timestamp: string;
+            }): Promise<void> => {
+              lifecycle.push(
+                `reaction:${request.channel}:${request.timestamp}:${request.name}`
+              );
+              return Promise.resolve();
+            },
+          };
+          const harness = yield* makePrototypeHarness({
+            completionReactor: {
+              react: ({ channelId, rootTs }) =>
+                Effect.promise(() =>
+                  reactions.add({
+                    channel: channelId,
+                    name: "white_check_mark",
+                    timestamp: rootTs,
+                  })
+                ),
+            },
+            handler: {
+              invoke: (turn, acceptReply) =>
+                turn.messages[0]?.text.includes("with replies")
+                  ? acceptReply(
+                      PublicReplyProtocolRecord.make({
+                        protocolVersion: 1,
+                        replyId: ReplyId.make("completion-first"),
+                        text: "first deliberate reply",
+                        type: "public_reply",
+                      })
+                    ).pipe(
+                      Effect.andThen(
+                        acceptReply(
+                          PublicReplyProtocolRecord.make({
+                            protocolVersion: 1,
+                            replyId: ReplyId.make("completion-second"),
+                            text: "second deliberate reply",
+                            type: "public_reply",
+                          })
+                        )
+                      )
+                    )
+                  : Effect.void,
+            },
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: {
+              postThreadMessage: ({ text }) =>
+                Effect.sync(() => {
+                  lifecycle.push(`reply:${text}`);
+                  return { ts: `delivered:${lifecycle.length}` };
+                }),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CCOMPLETION",
+              eventId: "event:completion-with-replies",
+              messageTs: "2.0",
+              text: `<@${LABORER_SLACK_ID}> complete with replies`,
+              threadTs: "1.0",
+            })
+          );
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CZERO",
+              eventId: "event:completion-zero-replies",
+              messageTs: "3.0",
+              text: `<@${LABORER_SLACK_ID}> complete silently`,
+            })
+          );
+
+          const deadline = Date.now() + 5000;
+          while (
+            lifecycle.filter((event) => event.startsWith("reaction:")).length <
+              2 &&
+            Date.now() < deadline
+          ) {
+            yield* Effect.sleep("10 millis");
+          }
+
+          assert.deepStrictEqual(lifecycle, [
+            "reply:first deliberate reply",
+            "reply:second deliberate reply",
+            "reaction:CCOMPLETION:1.0:white_check_mark",
+            "reaction:CZERO:3.0:white_check_mark",
+          ]);
         })
       ),
     10_000

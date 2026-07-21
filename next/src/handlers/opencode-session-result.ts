@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const MAX_EXPORT_BYTES = 4 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -18,38 +21,86 @@ if (!Number.isSafeInteger(baseline) || baseline < 0) {
   fail("invalid invocation");
 }
 
-const child = spawn(command, ["export", sessionId], {
-  env: process.env,
-  shell: false,
-  stdio: ["pipe", "pipe", "pipe"] as const,
-});
-child.stdin.end();
-
-let stdout = Buffer.alloc(0);
+const exportDirectory = await mkdtemp(
+  join(tmpdir(), "laborer-opencode-export-")
+);
+const exportPath = join(exportDirectory, "session.json");
 let stderr = Buffer.alloc(0);
-child.stdout.on("data", (chunk: Buffer) => {
-  if (stdout.length + chunk.length > MAX_EXPORT_BYTES) {
-    child.kill("SIGKILL");
-    fail("export exceeds limit");
-  }
-  stdout = Buffer.concat([stdout, chunk], stdout.length + chunk.length);
-});
-child.stderr.on("data", (chunk: Buffer) => {
-  const combined = Buffer.concat([stderr, chunk]);
-  stderr = combined.subarray(-MAX_STDERR_BYTES);
-});
-
-const exit = await new Promise<{
+let exportExceededLimit = false;
+let exportFailure: string | null = null;
+let stdout = Buffer.alloc(0);
+let exit: {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
-}>((resolveExit) => {
-  child.once("error", () => resolveExit({ code: null, signal: null }));
-  child.once("exit", (code: number | null, signal: NodeJS.Signals | null) =>
-    resolveExit({ code, signal })
+} = { code: null, signal: null };
+
+try {
+  const child = spawn(
+    "/bin/sh",
+    [
+      "-c",
+      'umask 077; exec "$1" export "$2" > "$3"',
+      "laborer-opencode-export",
+      command,
+      sessionId,
+      exportPath,
+    ],
+    {
+      env: process.env,
+      shell: false,
+      stdio: ["ignore", "ignore", "pipe"] as const,
+    }
   );
-});
+  const childStderr = child.stderr;
+  if (childStderr === null) {
+    throw new Error("export stderr pipe unavailable");
+  }
+  childStderr.on("data", (chunk: Buffer) => {
+    const combined = Buffer.concat([stderr, chunk]);
+    stderr = combined.subarray(-MAX_STDERR_BYTES);
+  });
+  const sizeMonitor = setInterval(() => {
+    stat(exportPath)
+      .then((metadata) => {
+        if (metadata.size > MAX_EXPORT_BYTES) {
+          exportExceededLimit = true;
+          child.kill("SIGKILL");
+        }
+      })
+      .catch(() => undefined);
+  }, 25);
+  try {
+    exit = await new Promise<{
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }>((resolveExit) => {
+      child.once("error", () => resolveExit({ code: null, signal: null }));
+      child.once("exit", (code: number | null, signal: NodeJS.Signals | null) =>
+        resolveExit({ code, signal })
+      );
+    });
+  } finally {
+    clearInterval(sizeMonitor);
+  }
+  const metadata = await stat(exportPath);
+  if (metadata.size > MAX_EXPORT_BYTES) {
+    exportExceededLimit = true;
+  } else {
+    stdout = await readFile(exportPath);
+  }
+} catch {
+  exportFailure = "export capture failed";
+} finally {
+  await rm(exportDirectory, { force: true, recursive: true });
+}
 if (stderr.length > 0) {
   process.stderr.write(stderr);
+}
+if (exportExceededLimit) {
+  fail("export exceeds limit");
+}
+if (exportFailure !== null) {
+  fail(exportFailure);
 }
 if (exit.code !== 0 || exit.signal !== null) {
   fail("export command failed");

@@ -411,7 +411,7 @@ describe("fourth review UTF-8 and OpenCode completion boundaries", () => {
                 reasoning: 0,
               },
             },
-            parts: [{ text: "completed answer", type: "text" }],
+            parts: [{ text: "x".repeat(128 * 1024), type: "text" }],
           };
           yield* Effect.promise(() =>
             writeFile(
@@ -424,6 +424,7 @@ describe("fourth review UTF-8 and OpenCode completion boundaries", () => {
           );
           for (const [mode, expectedCode] of [
             ["normal", 0],
+            ["export-pipe-sensitive", 0],
             ["export-in-progress", 1],
             ["export-aborted", 1],
             ["export-invalid-utf8", 1],

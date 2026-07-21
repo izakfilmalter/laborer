@@ -23,6 +23,11 @@ if [[ "${1:-}" == "export" ]]; then
     printf '\303\050'
     exit 0
   fi
+  if [[ "${FAKE_OPENCODE_MODE:-normal}" == "export-pipe-sensitive" ]] &&
+    ! node -e 'process.exit(require("node:fs").fstatSync(1).isFile() ? 0 : 1)'; then
+    head -c 65536 "$session_store"
+    exit 0
+  fi
   jq -ce --arg mode "${FAKE_OPENCODE_MODE:-normal}" --arg sessionId "$export_session_id" '
     select(.info.id == $sessionId) |
     if $mode == "export-in-progress" then

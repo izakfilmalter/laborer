@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Redacted, Ref } from "effect";
 import { EventId, ThreadId } from "../src/prototype/domain.ts";
+import { makeSlackCompletionReactor } from "../src/prototype/emulated-slack.ts";
 import type {
   Runner,
   SlackGatewayShape,
@@ -105,6 +106,40 @@ const noContextGateway: SlackGatewayShape = {
   postThreadMessage: () => Effect.succeed({ ts: "unused" }),
   readActivationContext: () => Effect.succeed([]),
 };
+
+describe("Slack reaction adapters", () => {
+  it.effect("treats an already-present completion reaction as successful", () =>
+    Effect.gen(function* () {
+      const requests: {
+        readonly channel: string;
+        readonly name: string;
+        readonly timestamp: string;
+      }[] = [];
+      const completionReactor = makeSlackCompletionReactor({
+        reactions: {
+          add: (request) => {
+            requests.push(request);
+            return Promise.reject({ data: { error: "already_reacted" } });
+          },
+          remove: () => Promise.resolve(),
+        },
+      });
+
+      yield* completionReactor.react({
+        channelId: "CCOMPLETION",
+        rootTs: "123.456",
+      });
+
+      assert.deepStrictEqual(requests, [
+        {
+          channel: "CCOMPLETION",
+          name: "white_check_mark",
+          timestamp: "123.456",
+        },
+      ]);
+    })
+  );
+});
 
 describe("live Slack normalization", () => {
   it.effect(

@@ -28,6 +28,7 @@ import {
 } from "./errors.ts";
 import type {
   ActivationAcknowledgerShape,
+  CompletionReactorShape,
   SlackGatewayShape,
 } from "./runtime.ts";
 import type { ActivationContextRequest } from "./store.ts";
@@ -651,49 +652,72 @@ interface SlackReactionFailure {
   readonly cause: unknown;
 }
 
+const performSlackReaction = (
+  botClient: ReactionsClient,
+  operation: "add" | "remove",
+  name: string,
+  channelId: string,
+  timestamp: string
+): Effect.Effect<void, DeliveryError> =>
+  Effect.tryPromise({
+    try: () =>
+      botClient.reactions[operation]({
+        channel: channelId,
+        name,
+        timestamp,
+      }),
+    catch: (cause): SlackReactionFailure => ({ cause }),
+  }).pipe(
+    Effect.asVoid,
+    Effect.catch(({ cause }) => {
+      const isIdempotent =
+        (operation === "add" && isAlreadyReacted(cause)) ||
+        (operation === "remove" && isReactionAbsent(cause));
+      if (isIdempotent) {
+        return Effect.void;
+      }
+      const failure = classifySlackError(cause);
+      return DeliveryError.make({
+        category: failure.category,
+        disposition: failure.disposition,
+        retryAfterMillis: failure.retryAfterMillis,
+      });
+    })
+  );
+
 export const makeSlackActivationAcknowledger = (
   botClient: ReactionsClient
-): ActivationAcknowledgerShape => {
-  const reactionEffect = Effect.fnUntraced(function* (
-    operation: "add" | "remove",
-    channelId: string,
-    messageTs: string
-  ) {
-    const result = yield* Effect.result(
-      Effect.tryPromise({
-        try: () =>
-          botClient.reactions[operation]({
-            channel: channelId,
-            name: "hourglass_flowing_sand",
-            timestamp: messageTs,
-          }),
-        catch: (cause): SlackReactionFailure => ({ cause }),
-      })
-    );
-    if (result._tag === "Success") {
-      return;
-    }
-    const isIdempotent =
-      (operation === "add" && isAlreadyReacted(result.failure.cause)) ||
-      (operation === "remove" && isReactionAbsent(result.failure.cause));
-    if (isIdempotent) {
-      return;
-    }
-    const failure = classifySlackError(result.failure.cause);
-    return yield* DeliveryError.make({
-      category: failure.category,
-      disposition: failure.disposition,
-      retryAfterMillis: failure.retryAfterMillis,
-    });
-  });
+): ActivationAcknowledgerShape => ({
+  acknowledge: ({ channelId, messageTs }) =>
+    performSlackReaction(
+      botClient,
+      "add",
+      "hourglass_flowing_sand",
+      channelId,
+      messageTs
+    ),
+  complete: ({ channelId, messageTs }) =>
+    performSlackReaction(
+      botClient,
+      "remove",
+      "hourglass_flowing_sand",
+      channelId,
+      messageTs
+    ),
+});
 
-  return {
-    acknowledge: ({ channelId, messageTs }) =>
-      reactionEffect("add", channelId, messageTs),
-    complete: ({ channelId, messageTs }) =>
-      reactionEffect("remove", channelId, messageTs),
-  };
-};
+export const makeSlackCompletionReactor = (
+  botClient: ReactionsClient
+): CompletionReactorShape => ({
+  react: ({ channelId, rootTs }) =>
+    performSlackReaction(
+      botClient,
+      "add",
+      "white_check_mark",
+      channelId,
+      rootTs
+    ),
+});
 
 export interface EmulatedSlackFixture {
   readonly botClient: WebClient;

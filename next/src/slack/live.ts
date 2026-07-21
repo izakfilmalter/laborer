@@ -8,6 +8,7 @@ import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
 import {
   makeSlackActivationAcknowledger,
+  makeSlackCompletionReactor,
   makeSlackGateway,
 } from "../prototype/emulated-slack.ts";
 import {
@@ -87,6 +88,7 @@ const program = Effect.gen(function* () {
         });
   const harness = yield* makePrototypeHarness({
     activationAcknowledger: makeSlackActivationAcknowledger(botClient),
+    completionReactor: makeSlackCompletionReactor(botClient),
     handler: processHandler.handler,
     ...(processInitializer === undefined
       ? {}

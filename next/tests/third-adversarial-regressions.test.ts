@@ -7,13 +7,20 @@ import { Effect, Layer } from "effect";
 import {
   AcknowledgementState,
   type ClaimedTurn,
+  CompletionReactionState,
   EventId,
+  HandlerAttempt,
+  HandlerOutcomeState,
   NormalizedMessage,
+  OutboundItem,
   PrototypeState,
+  ReplyId,
   stableAcknowledgementId,
+  stableCompletionReactionId,
   stableMessageId,
   ThreadId,
   TurnId,
+  TurnState,
   WorkThreadState,
 } from "../src/prototype/domain.ts";
 import {
@@ -106,6 +113,7 @@ const baseAcknowledgementState = (): PrototypeState => {
         status: "add_pending",
       }),
     ],
+    completionReactions: [],
     ignoredInbound: [],
     schemaVersion: 1,
     seenEventIds: [eventId],
@@ -126,6 +134,67 @@ const baseAcknowledgementState = (): PrototypeState => {
         turns: [],
         unassigned: [message],
         workingDirectory: null,
+      }),
+    ],
+  });
+};
+
+const baseCompletionReactionState = (): PrototypeState => {
+  const base = baseAcknowledgementState();
+  const thread = base.threads[0];
+  const message = thread?.unassigned[0];
+  if (thread === undefined || message === undefined) {
+    throw new Error("completion reaction fixture is incomplete");
+  }
+  const turnId = TurnId.make(`turn:${message.id}`);
+  const replyId = ReplyId.make("completion-reply");
+  const turn = TurnState.make({
+    attempts: [HandlerAttempt.make({ number: 1, status: "succeeded" })],
+    context: [],
+    id: turnId,
+    messages: [message],
+    outcome: HandlerOutcomeState.make({
+      category: null,
+      kind: "success",
+      safeDetail: null,
+    }),
+    status: "completed",
+  });
+  const reply = OutboundItem.make({
+    deliveryAttempts: 1,
+    id: `reply:${replyId}`,
+    kind: "public_reply",
+    lastErrorCategory: null,
+    replyId,
+    retryAtMillis: null,
+    slackTs: "2.0",
+    status: "delivered",
+    text: "completed",
+    turnId,
+  });
+  return PrototypeState.make({
+    ...base,
+    completionReactions: [
+      CompletionReactionState.make({
+        attempts: 0,
+        channelId: thread.channelId,
+        id: stableCompletionReactionId(turnId),
+        lastErrorCategory: null,
+        retryAtMillis: null,
+        rootTs: thread.rootTs,
+        status: "add_pending",
+        threadId: thread.id,
+        turnId,
+      }),
+    ],
+    threads: [
+      WorkThreadState.make({
+        ...thread,
+        contextAttempts: 1,
+        contextStatus: "ready",
+        outbox: [reply],
+        turns: [turn],
+        unassigned: [],
       }),
     ],
   });
@@ -382,6 +451,167 @@ describe("third adversarial state and config verification", () => {
         assert.strictEqual(result._tag, "Failure");
       }
     })
+  );
+
+  it.effect("rejects corrupted completion reaction semantics", () =>
+    Effect.gen(function* () {
+      const base = baseCompletionReactionState();
+      const reaction = base.completionReactions[0];
+      const thread = base.threads[0];
+      const turn = thread?.turns[0];
+      const reply = thread?.outbox[0];
+      assert.ok(reaction);
+      assert.ok(thread);
+      assert.ok(turn);
+      assert.ok(reply);
+      assert.strictEqual(
+        (yield* Effect.result(validateControlledState(base)))._tag,
+        "Success"
+      );
+      const failedTurn = TurnState.make({
+        ...turn,
+        attempts: [HandlerAttempt.make({ number: 1, status: "failed" })],
+        outcome: HandlerOutcomeState.make({
+          category: "exit",
+          kind: "failure",
+          safeDetail: null,
+        }),
+        status: "failed",
+      });
+      const failureNotice = OutboundItem.make({
+        deliveryAttempts: 1,
+        id: `notice:${turn.id}:exit`,
+        kind: "operational_notice",
+        lastErrorCategory: null,
+        replyId: null,
+        retryAtMillis: null,
+        slackTs: "3.0",
+        status: "delivered",
+        text: "Turn failed.",
+        turnId: turn.id,
+      });
+      const corruptions: readonly {
+        readonly name: string;
+        readonly reason: string;
+        readonly state: PrototypeState;
+      }[] = [
+        {
+          name: "stable identity",
+          reason: "invalid-completion-reaction-state",
+          state: { ...base, completionReactions: [{ ...reaction, id: "bad" }] },
+        },
+        {
+          name: "duplicate turn reaction",
+          reason: "duplicate-completion-reaction",
+          state: {
+            ...base,
+            completionReactions: [reaction, { ...reaction }],
+          },
+        },
+        {
+          name: "canonical thread root",
+          reason: "invalid-completion-reaction-state",
+          state: {
+            ...base,
+            completionReactions: [{ ...reaction, rootTs: "wrong-root" }],
+          },
+        },
+        {
+          name: "successful outcome",
+          reason: "invalid-completion-reaction-state",
+          state: {
+            ...base,
+            threads: [
+              {
+                ...thread,
+                outbox: [reply, failureNotice],
+                turns: [failedTurn],
+              },
+            ],
+          },
+        },
+        {
+          name: "delivered public replies",
+          reason: "invalid-completion-reaction-state",
+          state: {
+            ...base,
+            threads: [
+              {
+                ...thread,
+                outbox: [{ ...reply, slackTs: null, status: "abandoned" }],
+              },
+            ],
+          },
+        },
+        {
+          name: "transient retry metadata",
+          reason: "invalid-completion-reaction-state",
+          state: {
+            ...base,
+            completionReactions: [
+              {
+                ...reaction,
+                attempts: 1,
+                lastErrorCategory: "ratelimited",
+              },
+            ],
+          },
+        },
+        {
+          name: "permanent failure metadata",
+          reason: "invalid-completion-reaction-state",
+          state: {
+            ...base,
+            completionReactions: [
+              { ...reaction, attempts: 1, status: "permanent_failure" },
+            ],
+          },
+        },
+      ];
+      for (const corruption of corruptions) {
+        const result = yield* Effect.result(
+          validateControlledState(corruption.state)
+        );
+        assert.strictEqual(result._tag, "Failure", corruption.name);
+        if (result._tag === "Failure") {
+          assert.strictEqual(
+            result.failure.reason,
+            corruption.reason,
+            corruption.name
+          );
+        }
+      }
+    })
+  );
+
+  it.effect(
+    "loads a schema version 1 snapshot without completion reactions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-completion-reaction-migration-"
+          );
+          const snapshotPath = join(root, "snapshot.json");
+          const {
+            completionReactions: _completionReactions,
+            ...legacySnapshot
+          } = baseAcknowledgementState();
+          yield* Effect.promise(() =>
+            writeFile(snapshotPath, JSON.stringify(legacySnapshot), "utf8")
+          );
+
+          const context = yield* Layer.build(
+            makeFileStoreLayer(LABORER_SLACK_ID, snapshotPath, root)
+          );
+          const store = yield* PrototypeStore.pipe(Effect.provide(context));
+
+          assert.deepStrictEqual(
+            (yield* store.snapshot).completionReactions,
+            []
+          );
+        })
+      )
   );
 
   it.effect(

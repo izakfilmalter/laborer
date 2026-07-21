@@ -8,6 +8,14 @@ export class SlackConfigValidationError extends Schema.TaggedErrorClass<SlackCon
   }
 ) {}
 
+export class LaborerConfigError extends Schema.TaggedErrorClass<LaborerConfigError>()(
+  "LaborerConfigError",
+  {
+    operation: Schema.String,
+    reason: Schema.String,
+  }
+) {}
+
 export class SlackBoundaryError extends Schema.TaggedErrorClass<SlackBoundaryError>()(
   "SlackBoundaryError",
   {

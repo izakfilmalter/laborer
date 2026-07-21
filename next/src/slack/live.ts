@@ -6,12 +6,17 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
-import { makeSlackGateway } from "../prototype/emulated-slack.ts";
+import {
+  makeSlackActivationAcknowledger,
+  makeSlackGateway,
+} from "../prototype/emulated-slack.ts";
 import { makeProcessHandler } from "../prototype/process-handler.ts";
 import { makePrototypeHarness } from "../prototype/runtime.ts";
 import { makeFileStoreLayer } from "../prototype/store.ts";
 import { loadSlackConfig } from "./config.ts";
+import { environmentForConfiguredHandler } from "./handler-environment.ts";
 import { authenticateSlackBot } from "./identity.ts";
+import { loadLaborerConfig } from "./laborer-config.ts";
 import { acquireRunnerLock } from "./runner-lock.ts";
 import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
@@ -39,8 +44,9 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 });
 
 const program = Effect.gen(function* () {
+  const laborer = yield* loadLaborerConfig({ defaultRoot: PROJECT_ROOT });
   const config = yield* loadSlackConfig;
-  const paths = yield* prepareSlackRuntimePaths(PROJECT_ROOT);
+  const paths = yield* prepareSlackRuntimePaths(laborer.root);
   yield* acquireRunnerLock(paths.root, paths.lock);
   const botToken = Redacted.value(config.botToken);
   const botClient = new WebClient(botToken, {
@@ -49,17 +55,19 @@ const program = Effect.gen(function* () {
   });
   const identity = yield* authenticateSlackBot(botClient);
   const processHandler = yield* makeProcessHandler({
-    args: [
-      fileURLToPath(
-        new URL("../prototype/fixture-handler.ts", import.meta.url)
-      ),
-    ],
-    command: process.execPath,
-    cwd: PROJECT_ROOT,
+    args: laborer.config.workHandler.args,
+    command: laborer.config.workHandler.command,
+    cwd: laborer.root,
+    environment: environmentForConfiguredHandler(
+      process.env,
+      laborer.config.workHandler.environment
+    ),
+    evidence: { mode: "production" },
     stateRoot: paths.workThreads,
     stateRootAnchor: paths.root,
   });
   const harness = yield* makePrototypeHarness({
+    activationAcknowledger: makeSlackActivationAcknowledger(botClient),
     handler: processHandler.handler,
     laborerSlackId: identity.botUserId,
     slack: makeSlackGateway({
@@ -83,11 +91,9 @@ const program = Effect.gen(function* () {
     identity,
     runner: harness.runner,
   });
-  yield* Console.log(
-    "LIVE SLACK FIXTURE SMOKE MODE — connected. The committed fixture handler is not arbitrary-handler production support."
-  );
+  yield* Console.log("LIVE SLACK CONFIGURED HANDLER MODE — connected.");
   yield* waitForShutdownSignal;
-  yield* Console.log("Slack fixture smoke mode stopped cleanly.");
+  yield* Console.log("Slack configured handler mode stopped cleanly.");
 }).pipe(Effect.scoped);
 
 await Effect.runPromise(program);

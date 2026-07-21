@@ -13,10 +13,12 @@ import {
   Option,
   Order,
   pipe,
+  Ref,
   Schema,
-  SynchronizedRef,
+  Semaphore,
 } from "effect";
 import {
+  AcknowledgementState,
   type ClaimedTurn,
   canonicalThreadId,
   HandlerAttempt,
@@ -31,6 +33,7 @@ import {
   type PrototypeState,
   PrototypeState as PrototypeStateSchema,
   type ReplyId,
+  stableAcknowledgementId,
   stableMessageId,
   type ThreadId,
   TurnId,
@@ -42,7 +45,12 @@ import {
   ReplyProtocolError,
   StoreError,
 } from "./errors.ts";
-import { assertSafeFilePath, openRegularFileNoFollow } from "./path-safety.ts";
+import {
+  assertSafeFilePath,
+  openRegularFileNoFollow,
+  retainTrustedDirectory,
+  verifyRetainedDirectory,
+} from "./path-safety.ts";
 
 export interface ActivationContextRequest {
   readonly activationTs: string;
@@ -80,6 +88,10 @@ export interface PrototypeStoreShape {
     replyId: ReplyId,
     text: string
   ) => Effect.Effect<void, StoreError | ReplyProtocolError>;
+  readonly acknowledgements: Effect.Effect<
+    readonly AcknowledgementState[],
+    StoreError
+  >;
   readonly claimNextTurn: (
     threadId: ThreadId
   ) => Effect.Effect<ClaimedTurn | null, StoreError>;
@@ -87,6 +99,9 @@ export interface PrototypeStoreShape {
     threadId: ThreadId,
     nowMillis: number
   ) => Effect.Effect<OutboxClaim, StoreError>;
+  readonly completeAcknowledgement: (
+    id: string
+  ) => Effect.Effect<void, StoreError>;
   readonly completeContext: (
     threadId: ThreadId,
     context: readonly NormalizedMessage[],
@@ -106,6 +121,18 @@ export interface PrototypeStoreShape {
   readonly contextRequest: (
     threadId: ThreadId
   ) => Effect.Effect<ActivationContextRequest | null, StoreError>;
+  readonly markAcknowledgementActive: (
+    id: string
+  ) => Effect.Effect<void, StoreError>;
+  readonly markAcknowledgementCleanupPending: (
+    id: string
+  ) => Effect.Effect<void, StoreError>;
+  readonly markAcknowledgementFailure: (
+    id: string,
+    category: string,
+    disposition: DeliveryFailureDisposition,
+    retryAtMillis: number | null
+  ) => Effect.Effect<void, StoreError>;
   readonly markContextAttemptFailed: (
     threadId: ThreadId,
     retryAtMillis: number
@@ -122,6 +149,10 @@ export interface PrototypeStoreShape {
     disposition: DeliveryFailureDisposition,
     retryAtMillis: number | null
   ) => Effect.Effect<void, StoreError>;
+  readonly persistenceHealth: Effect.Effect<StorePersistenceHealth>;
+  readonly requestAcknowledgementCleanup: (
+    id: string
+  ) => Effect.Effect<void, StoreError>;
   readonly retryBlocked: (
     threadId: ThreadId
   ) => Effect.Effect<void, StoreError>;
@@ -129,17 +160,35 @@ export interface PrototypeStoreShape {
   readonly threadIds: Effect.Effect<readonly ThreadId[], StoreError>;
 }
 
+export type StorePersistenceHealth =
+  | { readonly _tag: "Healthy" }
+  | {
+      readonly _tag: "Degraded";
+      readonly error: StoreError;
+      readonly operation: string;
+    };
+
 export class PrototypeStore extends Context.Service<
   PrototypeStore,
   PrototypeStoreShape
 >()("@laborer/issue-204/PrototypeStore") {}
 
-type Transition<A> = (
+type Transition<A, E extends StoreError | ReplyProtocolError = StoreError> = (
   state: PrototypeState
-) => readonly [A, PrototypeState] | StoreError;
+) => readonly [A, PrototypeState] | E;
+
+type PersistenceResult =
+  | { readonly _tag: "Published" }
+  | { readonly _tag: "PublishedWithError"; readonly error: StoreError };
+
+const published: PersistenceResult = { _tag: "Published" };
+const healthyPersistence: StorePersistenceHealth = { _tag: "Healthy" };
 
 const storeFailure = (operation: string, reason: string): StoreError =>
   StoreError.make({ operation, reason });
+
+const failTransition = <E>(error: E): Effect.Effect<never, E> =>
+  Effect.fail(error);
 
 const findThreadIndex = (state: PrototypeState, threadId: ThreadId): number =>
   pipe(
@@ -209,6 +258,34 @@ const modifyThread = <A>(
     PrototypeStateSchema.make({
       ...state,
       threads: replaceAt(state.threads, index, nextThread),
+    }),
+  ];
+};
+
+const modifyAcknowledgement = (
+  state: PrototypeState,
+  id: string,
+  operation: string,
+  update: (current: AcknowledgementState) => AcknowledgementState
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = pipe(
+    state.acknowledgements,
+    EffectArray.findFirstIndex((acknowledgement) => acknowledgement.id === id),
+    Option.getOrElse(() => -1)
+  );
+  const current = state.acknowledgements[index];
+  if (current === undefined) {
+    return storeFailure(operation, "acknowledgement-not-found");
+  }
+  return [
+    undefined,
+    PrototypeStateSchema.make({
+      ...state,
+      acknowledgements: replaceAt(
+        state.acknowledgements,
+        index,
+        update(current)
+      ),
     }),
   ];
 };
@@ -334,6 +411,7 @@ const acceptTransition = (
       ? EffectArray.append(
           state.threads,
           WorkThreadState.make({
+            activationEventId: event.eventId,
             activationTs: event.messageTs,
             channelId: event.channelId,
             context: [],
@@ -366,6 +444,22 @@ const acceptTransition = (
     { _tag: "Accepted", eventId: event.eventId, isActivation, threadId },
     PrototypeStateSchema.make({
       ...state,
+      acknowledgements: isActivation
+        ? EffectArray.append(
+            state.acknowledgements,
+            AcknowledgementState.make({
+              attempts: 0,
+              channelId: event.channelId,
+              cleanupRequested: false,
+              eventId: event.eventId,
+              id: stableAcknowledgementId(event.channelId, event.messageTs),
+              lastErrorCategory: null,
+              messageTs: event.messageTs,
+              retryAtMillis: null,
+              status: "add_pending",
+            })
+          )
+        : state.acknowledgements,
       seenEventIds: EffectArray.append(state.seenEventIds, event.eventId),
       threads,
     }),
@@ -490,31 +584,164 @@ const claimTurnInThread = (
 const makeStore = Effect.fnUntraced(function* (
   laborerSlackId: string,
   initial: PrototypeState,
-  persist: (state: PrototypeState) => Effect.Effect<void, StoreError>
+  persist: (
+    state: PrototypeState
+  ) => Effect.Effect<PersistenceResult, StoreError>
 ) {
   yield* validateState(initial);
-  const ref = yield* SynchronizedRef.make(initial);
+  const ref = yield* Ref.make(initial);
+  const persistenceHealth =
+    yield* Ref.make<StorePersistenceHealth>(healthyPersistence);
+  const semaphore = yield* Semaphore.make(1);
 
-  const transition = <A>(_operation: string, apply: Transition<A>) =>
-    SynchronizedRef.modifyEffect(ref, (state) => {
-      const result = apply(state);
-      if (result instanceof StoreError) {
-        return Effect.fail(result);
-      }
-      const [value, next] = result;
-      return validateState(next).pipe(
-        Effect.andThen(persist(next)),
-        Effect.as([value, next] as const)
-      );
-    });
+  const transition = <
+    A,
+    E extends StoreError | ReplyProtocolError = StoreError,
+  >(
+    operation: string,
+    apply: Transition<A, E>
+  ): Effect.Effect<A, E> =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        // Only waiting for the serialized transition permit is interruptible.
+        // Once acquired, validation, durable persistence, and the in-memory
+        // commit are one uninterruptible critical section.
+        const acquired = yield* restore(semaphore.take(1));
+        return yield* Effect.gen(function* () {
+          const state = yield* Ref.get(ref);
+          const result = apply(state);
+          if (
+            result instanceof StoreError ||
+            result instanceof ReplyProtocolError
+          ) {
+            return yield* failTransition(result as E);
+          }
+          const [value, next] = result as readonly [A, PrototypeState];
+          yield* validateState(next).pipe(
+            Effect.mapError((error) => error as E)
+          );
+          const persistence = yield* persist(next).pipe(
+            Effect.mapError((error) => error as E)
+          );
+          yield* Ref.set(ref, next);
+          if (persistence._tag === "PublishedWithError") {
+            yield* Ref.set(persistenceHealth, {
+              _tag: "Degraded",
+              error: persistence.error,
+              operation,
+            });
+            yield* Effect.logError(
+              "Snapshot was published with an ancillary durability failure",
+              {
+                operation,
+                reason: persistence.error.reason,
+              }
+            );
+            return value;
+          }
+          yield* Ref.set(persistenceHealth, healthyPersistence);
+          return value;
+        }).pipe(Effect.ensuring(semaphore.release(acquired)));
+      })
+    );
 
   const service: PrototypeStoreShape = {
+    acknowledgements: Ref.get(ref).pipe(
+      Effect.map((state) => state.acknowledgements),
+      Effect.mapError(() => storeFailure("acknowledgements", "read-failed"))
+    ),
     accept: (event) =>
       transition("accept", (state) =>
         acceptTransition(state, event, laborerSlackId)
       ),
+    markAcknowledgementActive: (id) =>
+      transition("markAcknowledgementActive", (state) =>
+        modifyAcknowledgement(
+          state,
+          id,
+          "markAcknowledgementActive",
+          (current) =>
+            AcknowledgementState.make({
+              ...current,
+              lastErrorCategory: null,
+              retryAtMillis: null,
+              status: "active",
+            })
+        )
+      ),
+    requestAcknowledgementCleanup: (id) =>
+      transition("requestAcknowledgementCleanup", (state) =>
+        modifyAcknowledgement(
+          state,
+          id,
+          "requestAcknowledgementCleanup",
+          (current) =>
+            AcknowledgementState.make({
+              ...current,
+              cleanupRequested: true,
+            })
+        )
+      ),
+    markAcknowledgementCleanupPending: (id) =>
+      transition("markAcknowledgementCleanupPending", (state) =>
+        modifyAcknowledgement(
+          state,
+          id,
+          "markAcknowledgementCleanupPending",
+          (current) =>
+            AcknowledgementState.make({
+              ...current,
+              cleanupRequested: true,
+              lastErrorCategory: null,
+              retryAtMillis: null,
+              status: "cleanup_pending",
+            })
+        )
+      ),
+    markAcknowledgementFailure: (id, category, disposition, retryAtMillis) =>
+      transition("markAcknowledgementFailure", (state) =>
+        modifyAcknowledgement(
+          state,
+          id,
+          "markAcknowledgementFailure",
+          (current) =>
+            AcknowledgementState.make({
+              ...current,
+              attempts: current.attempts + 1,
+              lastErrorCategory: category,
+              retryAtMillis: disposition === "transient" ? retryAtMillis : null,
+              status:
+                disposition === "transient"
+                  ? current.status
+                  : "permanent_failure",
+            })
+        )
+      ),
+    completeAcknowledgement: (id) =>
+      transition("completeAcknowledgement", (state) => {
+        const index = pipe(
+          state.acknowledgements,
+          EffectArray.findFirstIndex(
+            (acknowledgement) => acknowledgement.id === id
+          ),
+          Option.getOrElse(() => -1)
+        );
+        if (index < 0) {
+          return storeFailure(
+            "completeAcknowledgement",
+            "acknowledgement-not-found"
+          );
+        }
+        return [
+          undefined,
+          PrototypeStateSchema.make({
+            ...state,
+            acknowledgements: EffectArray.remove(state.acknowledgements, index),
+          }),
+        ];
+      }),
     contextRequest: (threadId) =>
-      SynchronizedRef.get(ref).pipe(
+      Ref.get(ref).pipe(
         Effect.map((state) => {
           const thread = pipe(
             state.threads,
@@ -566,63 +793,52 @@ const makeStore = Effect.fnUntraced(function* (
         )
       ),
     acceptPublicReply: (threadId, turnId, replyId, text) =>
-      SynchronizedRef.modifyEffect<
-        PrototypeState,
-        undefined,
-        StoreError | ReplyProtocolError,
-        never
-      >(ref, (state) => {
-        const threadIndex = findThreadIndex(state, threadId);
-        const thread = state.threads[threadIndex];
-        if (thread === undefined) {
-          return Effect.fail(
-            storeFailure("acceptPublicReply", "thread-not-found")
-          );
-        }
-        const duplicate = pipe(
-          thread.outbox,
-          EffectArray.findFirst((item) => item.replyId === replyId),
-          Option.getOrNull
-        );
-        if (duplicate !== null) {
-          return duplicate.text === text
-            ? Effect.succeed([undefined, state] as const)
-            : Effect.fail(
-                ReplyProtocolError.make({ reason: "conflicting-reply-id" })
-              );
-        }
-        if (text.trim().length === 0 || findTurnIndex(thread, turnId) < 0) {
-          return Effect.fail(
-            ReplyProtocolError.make({ reason: "invalid-public-reply" })
-          );
-        }
-        const nextThread = WorkThreadState.make({
-          ...thread,
-          outbox: EffectArray.append(
+      transition<undefined, StoreError | ReplyProtocolError>(
+        "acceptPublicReply",
+        (state) => {
+          const threadIndex = findThreadIndex(state, threadId);
+          const thread = state.threads[threadIndex];
+          if (thread === undefined) {
+            return storeFailure("acceptPublicReply", "thread-not-found");
+          }
+          const duplicate = pipe(
             thread.outbox,
-            OutboundItem.make({
-              deliveryAttempts: 0,
-              id: `reply:${replyId}`,
-              kind: "public_reply",
-              lastErrorCategory: null,
-              replyId,
-              retryAtMillis: null,
-              slackTs: null,
-              status: "pending",
-              text,
-              turnId,
-            })
-          ),
-        });
-        const next = PrototypeStateSchema.make({
-          ...state,
-          threads: replaceAt(state.threads, threadIndex, nextThread),
-        });
-        return validateState(next).pipe(
-          Effect.andThen(persist(next)),
-          Effect.as([undefined, next] as const)
-        );
-      }),
+            EffectArray.findFirst((item) => item.replyId === replyId),
+            Option.getOrNull
+          );
+          if (duplicate !== null) {
+            return duplicate.text === text
+              ? ([undefined, state] as const)
+              : ReplyProtocolError.make({ reason: "conflicting-reply-id" });
+          }
+          if (text.trim().length === 0 || findTurnIndex(thread, turnId) < 0) {
+            return ReplyProtocolError.make({ reason: "invalid-public-reply" });
+          }
+          const nextThread = WorkThreadState.make({
+            ...thread,
+            outbox: EffectArray.append(
+              thread.outbox,
+              OutboundItem.make({
+                deliveryAttempts: 0,
+                id: `reply:${replyId}`,
+                kind: "public_reply",
+                lastErrorCategory: null,
+                replyId,
+                retryAtMillis: null,
+                slackTs: null,
+                status: "pending",
+                text,
+                turnId,
+              })
+            ),
+          });
+          const next = PrototypeStateSchema.make({
+            ...state,
+            threads: replaceAt(state.threads, threadIndex, nextThread),
+          });
+          return [undefined, next] as const;
+        }
+      ),
     completeHandler: (threadId, turnId, outcome) =>
       transition("completeHandler", (state) =>
         modifyThread(state, threadId, "completeHandler", (thread) => {
@@ -841,6 +1057,7 @@ const makeStore = Effect.fnUntraced(function* (
           return [undefined, WorkThreadState.make({ ...thread, outbox })];
         })
       ),
+    persistenceHealth: Ref.get(persistenceHealth),
     retryBlocked: (threadId) =>
       transition("retryBlocked", (state) =>
         modifyThread(state, threadId, "retryBlocked", (thread) => {
@@ -901,10 +1118,10 @@ const makeStore = Effect.fnUntraced(function* (
           ];
         })
       ),
-    snapshot: SynchronizedRef.get(ref).pipe(
+    snapshot: Ref.get(ref).pipe(
       Effect.mapError(() => storeFailure("snapshot", "read-failed"))
     ),
-    threadIds: SynchronizedRef.get(ref).pipe(
+    threadIds: Ref.get(ref).pipe(
       Effect.map((state) =>
         pipe(
           state.threads,
@@ -946,7 +1163,10 @@ const validateAttempts = (turn: TurnState): StoreError | null => {
     return storeFailure("validate", "missing-handler-attempt");
   }
   for (const [index, attempt] of turn.attempts.entries()) {
-    if (attempt.number !== index + 1) {
+    if (
+      !(Number.isFinite(attempt.number) && Number.isInteger(attempt.number)) ||
+      attempt.number !== index + 1
+    ) {
       return storeFailure("validate", "nonsequential-attempt-number");
     }
     if (attempt.status !== expectedAttemptStatus(turn, index)) {
@@ -1044,6 +1264,12 @@ const validateOutboundItem = (
     return storeFailure("validate", "nonpending-outbound-has-retry");
   }
   if (
+    item.retryAtMillis !== null &&
+    (!Number.isFinite(item.retryAtMillis) || item.retryAtMillis < 0)
+  ) {
+    return storeFailure("validate", "invalid-outbound-retry");
+  }
+  if (
     !Number.isInteger(item.deliveryAttempts) ||
     item.deliveryAttempts < 0 ||
     (item.status !== "pending" && item.deliveryAttempts === 0)
@@ -1068,15 +1294,55 @@ const validateThreadMetadata = (thread: WorkThreadState): StoreError | null => {
     return storeFailure("validate", "noncanonical-thread-id");
   }
   if (
-    thread.contextStatus === "ready" &&
-    thread.contextRetryAtMillis !== null
+    !(
+      Number.isFinite(thread.contextAttempts) &&
+      Number.isInteger(thread.contextAttempts)
+    ) ||
+    thread.contextAttempts < 0
   ) {
-    return storeFailure("validate", "ready-context-has-retry");
+    return storeFailure("validate", "invalid-context-attempt-count");
   }
-  return !Number.isInteger(thread.contextAttempts) || thread.contextAttempts < 0
-    ? storeFailure("validate", "invalid-context-attempt-count")
-    : null;
+  const retryIsValid =
+    thread.contextRetryAtMillis === null ||
+    (Number.isFinite(thread.contextRetryAtMillis) &&
+      thread.contextRetryAtMillis >= 0);
+  if (!retryIsValid) {
+    return storeFailure("validate", "invalid-context-retry");
+  }
+  if (thread.contextStatus === "ready") {
+    return thread.contextRetryAtMillis !== null || thread.contextAttempts < 1
+      ? storeFailure("validate", "invalid-ready-context-state")
+      : null;
+  }
+  const pendingIsPristine =
+    thread.context.length === 0 && !thread.contextIsPartial;
+  const pendingRetryIsCoherent =
+    thread.contextAttempts === 0
+      ? thread.contextRetryAtMillis === null
+      : thread.contextRetryAtMillis !== null;
+  return pendingIsPristine && pendingRetryIsCoherent
+    ? null
+    : storeFailure("validate", "invalid-pending-context-state");
 };
+
+const messagesEqual = (
+  left: readonly NormalizedMessage[],
+  right: readonly NormalizedMessage[]
+): boolean =>
+  left.length === right.length &&
+  left.every((message, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      message.id === candidate.id &&
+      message.authorKind === candidate.authorKind &&
+      message.authorSlackId === candidate.authorSlackId &&
+      message.classification === candidate.classification &&
+      message.isActivation === candidate.isActivation &&
+      message.slackTs === candidate.slackTs &&
+      message.text === candidate.text
+    );
+  });
 
 const validateThreadMessages = (
   thread: WorkThreadState
@@ -1132,6 +1398,12 @@ const validateThreadTurns = (
     const failure = validateTurn(turn);
     if (failure !== null) {
       return failure;
+    }
+    if (
+      (turnIndex === 0 && !messagesEqual(turn.context, thread.context)) ||
+      (turnIndex > 0 && turn.context.length > 0)
+    ) {
+      return storeFailure("validate", "invalid-turn-context");
     }
     for (const message of turn.context) {
       const messageFailure = validateMessage(
@@ -1319,12 +1591,98 @@ const globalIdentityFailure = (
     : null;
 };
 
+const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
+  const acknowledgementIds = state.acknowledgements.map(({ id }) => id);
+  if (duplicateValue(acknowledgementIds) !== null) {
+    return storeFailure("validate", "duplicate-acknowledgement-id");
+  }
+  for (const acknowledgement of state.acknowledgements) {
+    const matchingActivationThreads = pipe(
+      state.threads,
+      EffectArray.filter(
+        (thread) =>
+          thread.channelId === acknowledgement.channelId &&
+          thread.activationEventId === acknowledgement.eventId &&
+          EffectArray.some(
+            allInputMessages(thread),
+            (message) =>
+              message.isActivation &&
+              message.slackTs === acknowledgement.messageTs
+          )
+      )
+    );
+    const hasRetry = acknowledgement.retryAtMillis !== null;
+    const hasError = acknowledgement.lastErrorCategory !== null;
+    if (
+      acknowledgement.id !==
+        stableAcknowledgementId(
+          acknowledgement.channelId,
+          acknowledgement.messageTs
+        ) ||
+      !EffectArray.contains(state.seenEventIds, acknowledgement.eventId) ||
+      matchingActivationThreads.length !== 1 ||
+      !Number.isInteger(acknowledgement.attempts) ||
+      acknowledgement.attempts < 0 ||
+      (hasRetry &&
+        (!Number.isFinite(acknowledgement.retryAtMillis) ||
+          (acknowledgement.retryAtMillis ?? -1) < 0)) ||
+      (acknowledgement.status !== "permanent_failure" &&
+        hasRetry !== hasError) ||
+      (acknowledgement.attempts === 0 && hasError) ||
+      (acknowledgement.status === "add_pending" &&
+        acknowledgement.attempts > 0 &&
+        !hasError) ||
+      (hasError && acknowledgement.lastErrorCategory?.trim().length === 0) ||
+      (acknowledgement.status === "active" && (hasRetry || hasError)) ||
+      (acknowledgement.status === "cleanup_pending" &&
+        !acknowledgement.cleanupRequested) ||
+      (acknowledgement.status === "permanent_failure" &&
+        (hasRetry || !hasError))
+    ) {
+      return storeFailure("validate", "invalid-acknowledgement-state");
+    }
+  }
+  if (
+    duplicateValue(
+      state.acknowledgements.map(
+        (acknowledgement) =>
+          `${acknowledgement.channelId}:${acknowledgement.messageTs}`
+      )
+    ) !== null
+  ) {
+    return storeFailure("validate", "duplicate-activation-acknowledgement");
+  }
+  return null;
+};
+
 const semanticStateFailure = (state: PrototypeState): StoreError | null => {
+  const acknowledgementFailure = validateAcknowledgements(state);
+  if (acknowledgementFailure !== null) {
+    return acknowledgementFailure;
+  }
   if (duplicateValue(state.seenEventIds) !== null) {
     return storeFailure("validate", "duplicate-event-id");
   }
+  if (
+    EffectArray.some(
+      state.ignoredInbound,
+      (ignoredInbound) =>
+        !EffectArray.contains(state.seenEventIds, ignoredInbound.eventId)
+    )
+  ) {
+    return storeFailure("validate", "ignored-event-not-found");
+  }
   if (duplicateValue(state.threads.map((thread) => thread.id)) !== null) {
     return storeFailure("validate", "duplicate-thread-id");
+  }
+  if (
+    EffectArray.some(
+      state.threads,
+      (thread) =>
+        !EffectArray.contains(state.seenEventIds, thread.activationEventId)
+    )
+  ) {
+    return storeFailure("validate", "activation-event-not-found");
   }
   const inputIds: string[] = [];
   const turnIds: string[] = [];
@@ -1342,7 +1700,9 @@ const semanticStateFailure = (state: PrototypeState): StoreError | null => {
 };
 
 const validateState = (state: PrototypeState) =>
-  Schema.decodeUnknownEffect(PrototypeStateSchema)(state).pipe(
+  Schema.decodeUnknownEffect(PrototypeStateSchema, {
+    onExcessProperty: "error",
+  })(state).pipe(
     Effect.mapError(() => storeFailure("validate", "invalid-state")),
     Effect.flatMap((decoded) => {
       const failure = semanticStateFailure(decoded);
@@ -1355,7 +1715,9 @@ export const makeInMemoryStoreLayer = (
 ): Layer.Layer<PrototypeStore, StoreError> =>
   Layer.effect(
     PrototypeStore,
-    makeStore(laborerSlackId, initialPrototypeState, validateState)
+    makeStore(laborerSlackId, initialPrototypeState, (state) =>
+      validateState(state).pipe(Effect.as(published))
+    )
   );
 
 export const makeControlledStoreLayer = (options: {
@@ -1368,7 +1730,7 @@ export const makeControlledStoreLayer = (options: {
     makeStore(
       options.laborerSlackId,
       options.state ?? initialPrototypeState,
-      options.persist
+      (state) => options.persist(state).pipe(Effect.as(published))
     )
   );
 
@@ -1387,70 +1749,164 @@ const closeFile = async (file: FileHandle): Promise<void> => {
   await file.close();
 };
 
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+
+type SnapshotPersistenceStage =
+  | "after-rename-hook"
+  | "assert-target"
+  | "close-directory"
+  | "close-temporary-file"
+  | "create-temporary-file"
+  | "prepare-directory"
+  | "rename"
+  | "remove-temporary-file"
+  | "sync-directory"
+  | "sync-temporary-file"
+  | "verify-directory-after-rename"
+  | "verify-directory-before-rename"
+  | "write-temporary-file";
+
+type SnapshotPublicationResult =
+  | { readonly _tag: "Published" }
+  | {
+      readonly _tag: "PublishedWithError";
+      readonly failureStage: SnapshotPersistenceStage;
+    };
+
 const persistSnapshotPromise = async (
   path: string,
   state: PrototypeState,
   signal: AbortSignal,
-  trustedRoot?: string
-): Promise<void> => {
+  trustedRoot?: string,
+  afterRename?: () => Promise<void>
+): Promise<SnapshotPublicationResult> => {
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  let stage: SnapshotPersistenceStage = "prepare-directory";
+  const directory = await retainTrustedDirectory(
+    dirname(path),
+    "persist-snapshot"
+  );
+  let failure:
+    | { readonly cause: unknown; readonly stage: SnapshotPersistenceStage }
+    | undefined;
+  let wasPublished = false;
   try {
     signal.throwIfAborted();
+    stage = "assert-target";
     await assertSafeFilePath({
       ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
       operation: "persist-snapshot",
       path,
     });
+    stage = "create-temporary-file";
     const file = await open(temporaryPath, "wx", 0o600);
     try {
+      stage = "write-temporary-file";
       await file.writeFile(JSON.stringify(state), { encoding: "utf8", signal });
+      stage = "sync-temporary-file";
       await file.sync();
     } finally {
+      stage = "close-temporary-file";
       await closeFile(file);
     }
     signal.throwIfAborted();
+    stage = "verify-directory-before-rename";
+    await verifyRetainedDirectory(directory, "persist-snapshot");
+    stage = "assert-target";
     await assertSafeFilePath({
       ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
       operation: "persist-snapshot",
       path,
     });
+    stage = "rename";
     await rename(temporaryPath, path);
-    const directory = await open(dirname(path), "r");
-    try {
-      await directory.sync();
-    } finally {
-      await closeFile(directory);
-    }
+    wasPublished = true;
+    stage = "after-rename-hook";
+    await afterRename?.();
+    stage = "verify-directory-after-rename";
+    await verifyRetainedDirectory(directory, "persist-snapshot");
+    stage = "sync-directory";
+    await directory.handle.sync();
   } catch (error) {
-    await rm(temporaryPath, { force: true });
-    throw error;
+    failure = { cause: error, stage };
   }
+
+  if (!wasPublished) {
+    try {
+      stage = "remove-temporary-file";
+      await rm(temporaryPath, { force: true });
+    } catch (error) {
+      failure ??= { cause: error, stage };
+    }
+  }
+  try {
+    stage = "close-directory";
+    await closeFile(directory.handle);
+  } catch (error) {
+    failure ??= { cause: error, stage };
+  }
+
+  if (failure === undefined) {
+    return { _tag: "Published" };
+  }
+  if (wasPublished) {
+    return {
+      _tag: "PublishedWithError",
+      failureStage: failure.stage,
+    };
+  }
+  throw failure.cause;
 };
 
 const persistSnapshot = (
   path: string,
   state: PrototypeState,
-  trustedRoot?: string
+  trustedRoot?: string,
+  afterRename?: () => Promise<void>
 ) =>
   Effect.tryPromise({
-    try: (signal) => persistSnapshotPromise(path, state, signal, trustedRoot),
+    try: (signal) =>
+      persistSnapshotPromise(path, state, signal, trustedRoot, afterRename),
     catch: () => storeFailure("persist", "snapshot-unwritable"),
-  });
+  }).pipe(
+    Effect.map(
+      (result): PersistenceResult =>
+        result._tag === "Published"
+          ? published
+          : {
+              _tag: "PublishedWithError",
+              error: storeFailure(
+                "persist",
+                `snapshot-published-${result.failureStage}-failed`
+              ),
+            }
+    )
+  );
 
 const readSnapshotPromise = async (
   path: string,
   trustedRoot?: string
 ): Promise<unknown> => {
-  await assertSafeFilePath({
-    ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
-    operation: "load-snapshot",
-    path,
-  });
-  const file = await openRegularFileNoFollow(path, "load-snapshot");
+  const directory = await retainTrustedDirectory(
+    dirname(path),
+    "load-snapshot"
+  );
   try {
-    return JSON.parse(await file.readFile("utf8")) as unknown;
+    await assertSafeFilePath({
+      ...(trustedRoot === undefined ? {} : { anchor: trustedRoot }),
+      operation: "load-snapshot",
+      path,
+    });
+    const file = await openRegularFileNoFollow(path, "load-snapshot");
+    try {
+      const source = fatalUtf8Decoder.decode(await file.readFile());
+      await verifyRetainedDirectory(directory, "load-snapshot");
+      return JSON.parse(source) as unknown;
+    } finally {
+      await closeFile(file);
+    }
   } finally {
-    await closeFile(file);
+    await closeFile(directory.handle);
   }
 };
 
@@ -1462,7 +1918,11 @@ const loadSnapshot = (path: string, trustedRoot?: string) =>
         ? SnapshotMissing.make()
         : storeFailure("load", "snapshot-unreadable"),
   }).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(PrototypeStateSchema)),
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(PrototypeStateSchema, {
+        onExcessProperty: "error",
+      })
+    ),
     Effect.mapError((error) =>
       error instanceof SnapshotMissing
         ? error
@@ -1470,7 +1930,11 @@ const loadSnapshot = (path: string, trustedRoot?: string) =>
     ),
     Effect.catchTag("SnapshotMissing", () =>
       persistSnapshot(path, initialPrototypeState, trustedRoot).pipe(
-        Effect.as(initialPrototypeState)
+        Effect.flatMap((result) =>
+          result._tag === "Published"
+            ? Effect.succeed(initialPrototypeState)
+            : Effect.fail(result.error)
+        )
       )
     )
   );
@@ -1478,14 +1942,22 @@ const loadSnapshot = (path: string, trustedRoot?: string) =>
 export const makeFileStoreLayer = (
   laborerSlackId: string,
   snapshotPath: string,
-  trustedRoot?: string
+  trustedRoot?: string,
+  testHooks?: {
+    readonly afterRename?: () => Promise<void>;
+  }
 ): Layer.Layer<PrototypeStore, StoreError> =>
   Layer.effect(
     PrototypeStore,
     Effect.gen(function* () {
       const initial = yield* loadSnapshot(snapshotPath, trustedRoot);
       return yield* makeStore(laborerSlackId, initial, (state) =>
-        persistSnapshot(snapshotPath, state, trustedRoot)
+        persistSnapshot(
+          snapshotPath,
+          state,
+          trustedRoot,
+          testHooks?.afterRename
+        )
       );
     })
   );

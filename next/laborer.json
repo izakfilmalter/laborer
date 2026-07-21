@@ -1,0 +1,15 @@
+{
+  "prototype": {
+    "issue": 207,
+    "throwaway": true
+  },
+  "workHandler": {
+    "command": "./src/handlers/classifier-worker-prototype.sh",
+    "environment": [
+      "ANTHROPIC_API_KEY",
+      "LABORER_OPENCODE_MODEL",
+      "OPENCODE_CONFIG_CONTENT",
+      "OPENAI_API_KEY"
+    ]
+  }
+}

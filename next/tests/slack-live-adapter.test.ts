@@ -1,4 +1,12 @@
-import { mkdtemp, stat } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -12,6 +20,7 @@ import type {
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import { makeFileStoreLayer } from "../src/prototype/store.ts";
 import { loadSlackConfig, SlackRuntimeIdentity } from "../src/slack/config.ts";
+import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
 import { normalizeSlackEvent } from "../src/slack/normalize.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 import {
@@ -20,6 +29,7 @@ import {
   type SocketModeClientBoundary,
   startSocketModeAdapter,
 } from "../src/slack/socket-mode.ts";
+import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const identity = SlackRuntimeIdentity.make({
   botId: "BLABORER",
@@ -346,6 +356,9 @@ describe("Socket Mode resource and delivery boundary", () => {
               })
             ),
           retryBlocked: () => Effect.void,
+          retryInterrupted: () => Effect.void,
+          lockCounts: Effect.succeed({ acknowledgements: 0, threads: 0 }),
+          persistenceHealth: Effect.succeed({ _tag: "Healthy" }),
         };
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -619,5 +632,267 @@ describe("safe local Slack configuration", () => {
         0o700
       );
     })
+  );
+
+  it.effect("starts the live Socket Mode adapter with Node", () =>
+    Effect.gen(function* () {
+      const packageJson = JSON.parse(
+        yield* Effect.promise(() =>
+          readFile(join(process.cwd(), "package.json"), "utf8")
+        )
+      ) as { readonly scripts?: Readonly<Record<string, string>> };
+      assert.strictEqual(
+        packageJson.scripts?.["start:slack"],
+        "node --env-file-if-exists=.env.local src/slack/live.ts"
+      );
+    })
+  );
+
+  it.effect(
+    "loads a root-owned executable work handler while preserving unrelated configuration",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* makeTempDirectoryScoped(
+          "laborer-handler-config-"
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(directory, "laborer.json"),
+            JSON.stringify({
+              unrelated: { retained: true },
+              workHandler: {
+                command: "./handler.sh",
+                environment: ["PROVIDER_API_KEY"],
+              },
+            })
+          )
+        );
+        yield* Effect.promise(() =>
+          writeFile(join(directory, "handler.sh"), "#!/bin/sh\nexit 0\n", {
+            mode: 0o700,
+          })
+        );
+
+        const loaded = yield* loadLaborerConfig({
+          defaultRoot: "/unused",
+          environment: {
+            LABORER_ROOT: directory,
+            PATH: process.env.PATH,
+          },
+        });
+        const canonicalDirectory = yield* Effect.promise(() =>
+          realpath(directory)
+        );
+        assert.strictEqual(loaded.root, canonicalDirectory);
+        assert.strictEqual(
+          loaded.config.workHandler.command,
+          join(canonicalDirectory, "handler.sh")
+        );
+        assert.deepStrictEqual(loaded.config.workHandler.args, []);
+        assert.deepStrictEqual(loaded.config.workHandler.environment, [
+          "PROVIDER_API_KEY",
+        ]);
+        assert.deepStrictEqual(loaded.config.unrelated, { retained: true });
+      })
+  );
+
+  it.effect(
+    "rejects invalid work handler configuration without path details",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* makeTempDirectoryScoped(
+          "laborer-invalid-handler-config-"
+        );
+        const sensitivePath = "./must-not-appear-in-errors";
+        yield* Effect.promise(() =>
+          writeFile(
+            join(directory, "laborer.json"),
+            JSON.stringify({ workHandler: { command: sensitivePath } })
+          )
+        );
+        const result = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: directory,
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(result._tag, "Failure");
+        assert.ok(!JSON.stringify(result).includes(sensitivePath));
+
+        yield* Effect.promise(() =>
+          writeFile(
+            join(directory, "laborer.json"),
+            JSON.stringify({
+              workHandler: {
+                args: [sensitivePath, 42],
+                command: "./handler.sh",
+              },
+            })
+          )
+        );
+        const decodeResult = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: directory,
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(decodeResult._tag, "Failure");
+        assert.ok(!JSON.stringify(decodeResult).includes(sensitivePath));
+
+        yield* Effect.promise(() =>
+          writeFile(
+            join(directory, "laborer.json"),
+            JSON.stringify({
+              workHandler: {
+                command: "./handler.sh",
+                environment: { PROVIDER_API_KEY: "must-not-be-persisted" },
+              },
+            })
+          )
+        );
+        const valueResult = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: directory,
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(valueResult._tag, "Failure");
+        assert.ok(
+          !JSON.stringify(valueResult).includes("must-not-be-persisted")
+        );
+
+        yield* Effect.promise(() =>
+          writeFile(
+            join(directory, "laborer.json"),
+            JSON.stringify({
+              workHandler: {
+                command: "./handler.sh",
+                environment: ["SLACK_BOT_TOKEN"],
+              },
+            })
+          )
+        );
+        const slackNameResult = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: directory,
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(slackNameResult._tag, "Failure");
+
+        for (const names of [
+          ["NOT-PORTABLE"],
+          ["PROVIDER_API_KEY", "PROVIDER_API_KEY"],
+        ]) {
+          yield* Effect.promise(() =>
+            writeFile(
+              join(directory, "laborer.json"),
+              JSON.stringify({
+                workHandler: {
+                  command: "./handler.sh",
+                  environment: names,
+                },
+              })
+            )
+          );
+          const namesResult = yield* Effect.result(
+            loadLaborerConfig({
+              defaultRoot: directory,
+              environment: { PATH: process.env.PATH },
+            })
+          );
+          assert.strictEqual(namesResult._tag, "Failure");
+        }
+      })
+  );
+
+  it.effect("rejects a symlinked laborer.json without reading its target", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const anchor = yield* makeTempDirectoryScoped(
+          "laborer-config-symlink-"
+        );
+        const root = join(anchor, "root");
+        const realParent = join(anchor, "real-parent");
+        const linkedParent = join(anchor, "linked-parent");
+        const outside = join(anchor, "outside.json");
+        yield* Effect.promise(() => mkdir(root));
+        yield* Effect.promise(() =>
+          writeFile(
+            outside,
+            JSON.stringify({ workHandler: { command: "/bin/sh" } })
+          )
+        );
+        yield* Effect.promise(() =>
+          symlink(outside, join(root, "laborer.json"))
+        );
+        const result = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: root,
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(result._tag, "Failure");
+        yield* Effect.promise(() => mkdir(realParent));
+        yield* Effect.promise(() => mkdir(join(realParent, "nested")));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(realParent, "nested", "laborer.json"),
+            JSON.stringify({ workHandler: { command: "sh" } })
+          )
+        );
+        yield* Effect.promise(() => symlink(realParent, linkedParent));
+        const parentResult = yield* Effect.result(
+          loadLaborerConfig({
+            defaultRoot: join(linkedParent, "nested"),
+            environment: { PATH: process.env.PATH },
+          })
+        );
+        assert.strictEqual(parentResult._tag, "Failure");
+      })
+    )
+  );
+
+  it.effect(
+    "rejects absolute, escaping, and outside-root symlink handler commands",
+    () =>
+      Effect.gen(function* () {
+        const anchor = yield* makeTempDirectoryScoped(
+          "laborer-handler-path-safety-"
+        );
+        const root = join(anchor, "root");
+        const outsideHandler = join(anchor, "outside-handler.sh");
+        yield* Effect.promise(() => mkdir(root));
+        yield* Effect.promise(() =>
+          writeFile(outsideHandler, "#!/bin/sh\nexit 0\n", { mode: 0o700 })
+        );
+
+        const loadCommand = Effect.fnUntraced(function* (command: string) {
+          yield* Effect.promise(() =>
+            writeFile(
+              join(root, "laborer.json"),
+              JSON.stringify({ workHandler: { command } })
+            )
+          );
+          return yield* Effect.result(
+            loadLaborerConfig({
+              defaultRoot: root,
+              environment: { PATH: process.env.PATH },
+            })
+          );
+        });
+
+        const absolute = yield* loadCommand(outsideHandler);
+        const escaping = yield* loadCommand("../outside-handler.sh");
+        const linkedHandler = join(root, "linked-handler.sh");
+        yield* Effect.promise(() =>
+          symlink(outsideHandler, linkedHandler, "file")
+        );
+        const symlinked = yield* loadCommand("./linked-handler.sh");
+
+        assert.strictEqual(absolute._tag, "Failure");
+        assert.strictEqual(escaping._tag, "Failure");
+        assert.strictEqual(symlinked._tag, "Failure");
+      })
   );
 });

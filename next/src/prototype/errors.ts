@@ -66,4 +66,8 @@ export class ScenarioError extends Schema.TaggedErrorClass<ScenarioError>()(
   { operation: Schema.String }
 ) {}
 
-export type RunnerError = StoreError | ContextReadError | DeliveryError;
+export type RunnerError =
+  | StoreError
+  | ContextReadError
+  | DeliveryError
+  | HandlerFailure;

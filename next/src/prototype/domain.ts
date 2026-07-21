@@ -2,7 +2,7 @@
  * THROWAWAY ISSUE #204 PROTOTYPE.
  * Runtime-decoded boundary and durable-state records for the tracer bullet.
  */
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 export const ProtocolVersion = Schema.Literal(1);
 export type ProtocolVersion = typeof ProtocolVersion.Type;
@@ -15,7 +15,9 @@ export const ThreadId = Schema.String.pipe(Schema.brand("ThreadId"));
 export type ThreadId = typeof ThreadId.Type;
 export const TurnId = Schema.String.pipe(Schema.brand("TurnId"));
 export type TurnId = typeof TurnId.Type;
-export const ReplyId = Schema.String.pipe(Schema.brand("ReplyId"));
+export const ReplyId = Schema.String.check(Schema.isPattern(/\S/)).pipe(
+  Schema.brand("ReplyId")
+);
 export type ReplyId = typeof ReplyId.Type;
 
 export const ChannelKind = Schema.Literals(["public", "private", "direct"]);
@@ -159,6 +161,7 @@ export class TurnState extends Schema.Class<TurnState>("TurnState")({
 export class WorkThreadState extends Schema.Class<WorkThreadState>(
   "WorkThreadState"
 )({
+  activationEventId: EventId,
   activationTs: Schema.String,
   channelId: Schema.String,
   context: Schema.Array(NormalizedMessage),
@@ -173,9 +176,33 @@ export class WorkThreadState extends Schema.Class<WorkThreadState>(
   unassigned: Schema.Array(NormalizedMessage),
 }) {}
 
+export class AcknowledgementState extends Schema.Class<AcknowledgementState>(
+  "AcknowledgementState"
+)({
+  attempts: Schema.Number,
+  channelId: Schema.String,
+  cleanupRequested: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false))
+  ),
+  eventId: EventId,
+  id: Schema.String,
+  lastErrorCategory: Schema.NullOr(Schema.String),
+  messageTs: Schema.String,
+  retryAtMillis: Schema.NullOr(Schema.Number),
+  status: Schema.Literals([
+    "add_pending",
+    "active",
+    "cleanup_pending",
+    "permanent_failure",
+  ]),
+}) {}
+
 export class PrototypeState extends Schema.Class<PrototypeState>(
   "PrototypeState"
 )({
+  acknowledgements: Schema.Array(AcknowledgementState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
   ignoredInbound: Schema.Array(IgnoredInbound),
   schemaVersion: Schema.Literal(1),
   seenEventIds: Schema.Array(EventId),
@@ -183,6 +210,7 @@ export class PrototypeState extends Schema.Class<PrototypeState>(
 }) {}
 
 export const initialPrototypeState = PrototypeState.make({
+  acknowledgements: [],
   schemaVersion: 1,
   seenEventIds: [],
   ignoredInbound: [],
@@ -221,3 +249,8 @@ export const stableMessageId = (
   channelId: string,
   messageTs: string
 ): MessageId => MessageId.make(`${channelId}:${messageTs}`);
+
+export const stableAcknowledgementId = (
+  channelId: string,
+  messageTs: string
+): string => `ack:${channelId}:${messageTs}`;

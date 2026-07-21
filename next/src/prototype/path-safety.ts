@@ -36,6 +36,70 @@ const closeHandle = async (handle: FileHandle): Promise<void> => {
   await handle.close();
 };
 
+const currentUserId = (): number | null =>
+  typeof process.getuid === "function" ? process.getuid() : null;
+
+const assertTrustedDirectoryMetadata = (
+  metadata: Awaited<ReturnType<FileHandle["stat"]>>,
+  operation: string
+): void => {
+  const userId = currentUserId();
+  if (
+    !metadata.isDirectory() ||
+    (userId !== null && metadata.uid !== userId && metadata.uid !== 0) ||
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+    (Number(metadata.mode) & 0o022) !== 0
+  ) {
+    throw pathFailure(operation, "untrusted-directory-owner-or-mode");
+  }
+};
+
+export interface RetainedDirectory {
+  readonly handle: FileHandle;
+  readonly path: string;
+}
+
+/**
+ * Retains and fingerprints a non-writable, same-UID directory. Node does not
+ * expose openat/renameat/execveat, so same-UID processes remain inside the
+ * trust boundary; this guard removes races available to other local users.
+ */
+export const retainTrustedDirectory = async (
+  path: string,
+  operation: string
+): Promise<RetainedDirectory> => {
+  const canonicalPath = await canonicalDirectory(path, operation);
+  const handle = await open(canonicalPath, SAFE_DIRECTORY_OPEN_FLAGS);
+  try {
+    assertTrustedDirectoryMetadata(await handle.stat(), operation);
+    return { handle, path: canonicalPath };
+  } catch (error) {
+    await closeHandle(handle);
+    throw error;
+  }
+};
+
+export const verifyRetainedDirectory = async (
+  retained: RetainedDirectory,
+  operation: string
+): Promise<void> => {
+  const retainedMetadata = await retained.handle.stat();
+  assertTrustedDirectoryMetadata(retainedMetadata, operation);
+  const pathHandle = await open(retained.path, SAFE_DIRECTORY_OPEN_FLAGS);
+  try {
+    const pathMetadata = await pathHandle.stat();
+    assertTrustedDirectoryMetadata(pathMetadata, operation);
+    if (
+      pathMetadata.dev !== retainedMetadata.dev ||
+      pathMetadata.ino !== retainedMetadata.ino
+    ) {
+      throw pathFailure(operation, "directory-identity-changed");
+    }
+  } finally {
+    await closeHandle(pathHandle);
+  }
+};
+
 const inspectDirectory = async (
   path: string,
   operation: string,
@@ -101,6 +165,25 @@ export const canonicalDirectory = async (
   const canonicalPath = await realpath(resolvedPath);
   await inspectDirectory(resolvedPath, operation, canonicalPath, false);
   return canonicalPath;
+};
+
+export const assertNoSymlinkPathComponents = async (
+  path: string,
+  operation: string
+): Promise<void> => {
+  const resolvedPath = resolve(path);
+  let component = resolvedPath;
+  while (true) {
+    const componentMetadata = await lstat(component);
+    if (componentMetadata.isSymbolicLink()) {
+      throw pathFailure(operation, "symbolic-link-component");
+    }
+    const parent = dirname(component);
+    if (parent === component) {
+      break;
+    }
+    component = parent;
+  }
 };
 
 export const ensureOwnerOnlyDirectoryTree = async (options: {

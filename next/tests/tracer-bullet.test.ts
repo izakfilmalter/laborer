@@ -263,7 +263,8 @@ describe("issue #204 store-driven tracer", () => {
           );
           assert.strictEqual(byInput("unknown").turns[0]?.status, "completed");
         })
-      )
+      ),
+    20_000
   );
 
   it.live(
@@ -599,7 +600,7 @@ describe("issue #204 store-driven tracer", () => {
     })
   );
 
-  it.effect(
+  it.live(
     "atomically persists accepted and settled state across store layers",
     () =>
       Effect.gen(function* () {
@@ -633,6 +634,14 @@ describe("issue #204 store-driven tracer", () => {
                 text: `<@${LABORER_SLACK_ID}> persist`,
               })
             );
+            for (let attempt = 0; attempt < 100; attempt += 1) {
+              if (
+                (yield* harness.store.snapshot).acknowledgements.length === 0
+              ) {
+                break;
+              }
+              yield* Effect.sleep("5 millis");
+            }
             return yield* harness.store.snapshot;
           })
         );

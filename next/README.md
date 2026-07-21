@@ -1,8 +1,13 @@
-# Slack-to-handler tracer bullet and live fixture smoke
+# Slack-to-handler tracer bullet and classifier/worker conversation
 
 > **THROWAWAY LOGIC PROTOTYPE for issue #204.** This is a local vertical proof,
 > not the production Runner. Every file under `src/prototype/` exists only for
 > this tracer.
+>
+> **THROWAWAY HANDLER PROTOTYPE for issue #207.** The tracked
+> `laborer.json` and `src/handlers/classifier-worker-prototype.sh` prove a
+> user-owned classifier-to-worker conversation through the generic process
+> seam. The Runner remains unaware of OpenCode, classification, and agents.
 
 ## Run it
 
@@ -27,12 +32,25 @@ Run the adversarial proof with:
 bun run check
 ```
 
-## Run the live Slack fixture smoke mode
+## Run the live issue #207 configured-handler prototype
 
-> **FIXTURE MODE ONLY.** `start:slack` connects the production Socket Mode and
-> Web API adapters to a real workspace, but deliberately invokes the committed
-> `src/prototype/fixture-handler.ts`. It is not arbitrary-handler support and
-> cannot be configured to execute a command or shell string.
+`start:slack` reads `<root>/laborer.json` once before any Slack network call,
+then connects the Socket Mode and Web API adapters to a real workspace. The
+root is `LABORER_ROOT` when that variable is set and otherwise this `next`
+directory. The tracked configuration selects the throwaway issue #207 Bash
+handler. It requires `jq` and an authenticated `opencode` executable on `PATH`.
+
+`workHandler.command` is required and nonblank; `workHandler.args` is an
+optional string array. `workHandler.environment` is an optional array of
+environment variable **names** whose existing Runner values may cross the
+handler boundary. Names must use portable shell-variable syntax, duplicates are
+rejected, values cannot be placed in `laborer.json`, and the two Slack token
+names are always forbidden. The child otherwise receives only a small runtime
+allowlist (`PATH`, `HOME`, temporary-directory, locale, user, shell, and XDG
+locations). Commands containing `/` resolve relative to the Laborer root and
+must be executable. Bare commands are validated through inherited `PATH`.
+Arguments are passed literally, no shell is used, and the handler starts in the
+Laborer root. Other `laborer.json` fields are retained.
 
 ### Provision the app manually
 
@@ -43,7 +61,7 @@ bun run check
    create the app. The manifest enables Socket Mode, creates the Laborer bot,
    subscribes only to `app_mention`, `message.channels`, and `message.groups`,
    and requests only `app_mentions:read`, `channels:history`, `groups:history`,
-   and `chat:write` bot scopes.
+   `chat:write`, and `reactions:write` bot scopes.
 3. In **OAuth & Permissions**, choose **Install to Workspace** (or reinstall
    after a manifest change), approve it, and copy the **Bot User OAuth Token**.
 4. In **Basic Information → App-Level Tokens**, choose **Generate Token and
@@ -65,16 +83,47 @@ bun run check
 6. In each public or private channel used for the smoke test, invite the app
    with `/invite @Laborer`. The app cannot read or reply in a channel it has not
    joined.
-7. Start the Runner from `next`:
+7. Start the Runner from `next`. This is the complete one-command live run:
 
    ```sh
    bun run start:slack
    ```
 
+   The package script loads the ignored `.env.local` with Node and launches the
+   live adapter there. The Slack Socket Mode SDK requires Undici's WebSocket
+   `ping` API, which Node exposes but Bun does not; running
+   `src/slack/live.ts` directly with Bun creates a connection that drops at its
+   first health check.
+
 8. In an invited channel, post a new nonblank message such as
-   `@Laborer fixture smoke`, then reply in its thread. The fixture posts an
-   intentionally obvious `[PUBLIC ...]` echo for each turn. Press Ctrl-C to
-   disconnect cleanly.
+   `@Laborer help me outline a short essay`, then reply in its thread. On the
+   first turn Laborer schedules an `:hourglass_flowing_sand:` acknowledgement
+   without blocking the handler and removes it after the turn finishes or
+   fails. A transient reaction outage never blocks accepted handler work:
+   reaction state and retry time are persisted, and a scoped background driver
+   awaits and serializes each add/remove request until cleanup converges.
+   Startup reconciles a stale reaction left by a hard crash. The
+   handler runs a tool-denied classifier and a fresh tool-denied safe
+   essay/advice worker. Later replies resume the persisted worker session
+   without reclassification. Press Ctrl-C to disconnect cleanly.
+
+`LABORER_OPENCODE_MODEL` is a live-supported optional model override and is
+explicitly allowed through tracked `laborer.json` configuration.
+`LABORER_OPENCODE_COMMAND` overrides the executable for automated tests only.
+The handler removes both Slack token variables from every OpenCode child, sends the
+bounded (2 MiB) prompt through non-TTY stdin rather than argv, keeps stdout
+protocol-only, fatally decodes JSONL and export UTF-8 before JSON parsing, and
+caps each OpenCode invocation at 1,280 KiB and 256 events.
+One atomically replaced `opencode-stderr.log` per work thread retains at most
+the latest 64 KiB, so diagnostics cannot accumulate without bound. A durable
+staged mutation record is written before the first classifier, initial worker,
+and every resumed worker mutation. A completed classifier result and completed
+worker output/session are persisted before reply finalization; a started window that lacks a
+recoverable session is reported as explicitly unresolved instead of silently
+rerun. Resumed-session recovery accepts only a full terminal assistant with a
+finite completion time and no abort/error. Public reply records, including
+their trailing newline, remain limited
+to 1 MiB.
 
 Live state is stored in ignored `next/.laborer-runtime/`. Its state and
 work-thread directories are forced to owner-only permissions, and the atomic
@@ -108,21 +157,34 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   normalized, deduplicated, oldest-first partial or activation-only context, as
   decided by #208.
 - Handler execution crosses a real fresh-process boundary. The adapter writes a
-  versioned JSON envelope to stdin, incrementally parses protocol-only NDJSON,
-  enforces the 1 MiB record limit before a newline or EOF, ignores valid unknown
-  record types, rejects malformed records, and persists accepted `public_reply`
-  records before process completion.
+  versioned JSON envelope to stdin, rejects it before spawn when its one-time
+  UTF-8 serialization exceeds 4 MiB, supervises the backpressured stdin write,
+  incrementally parses protocol-only NDJSON with fatal UTF-8 decoding,
+  enforces the 1 MiB record limit before a newline or EOF plus aggregate
+  per-invocation stdout record/byte and stderr-throughput limits, ignores valid
+  extensible unknown record types, strictly rejects excess `public_reply`
+  fields and blank reply IDs, and persists accepted replies before completion.
+- The issue #207 user-owned Bash handler stages every external mutation,
+  classifies only the first turn, starts
+  a tool-denied safe worker, and resumes that worker's persisted OpenCode
+  session on later turns. Per-turn persisted replies make handler replay
+  idempotent without teaching the Runner about either role.
 - `replyId` replay with identical text is idempotent; conflicting text is a
   terminal protocol outcome. Valid replies survive malformed output or nonzero
   exit and precede the sanitized operational notice.
 - Stdout is never implicitly public and stderr remains internal. The fixture's
   secret diagnostic text is asserted absent from Slack.
-- The process adapter uses a POSIX detached process group, the #203 two-hour
-  deadline, TERM then a ten-second KILL fallback, waits for process reap, caps
+- The process adapter uses a POSIX detached process group with a stable owned
+  leader/sentinel, never signals a numeric group after that leader exits, uses
+  the #203 two-hour deadline, TERM then a ten-second KILL fallback, waits for process reap, caps
   inherited-pipe draining, forces every new or existing handler state directory
-  to owner-only `0700`, and performs scoped cleanup. An interrupted attempt is
-  recorded as such and replayed invisibly with the same turn ID and a new
-  attempt.
+  to owner-only `0700`, and performs scoped cleanup. Signal/timeout deaths leave
+  the durable turn running; startup or the
+  explicit Runner retry path marks the prior attempt interrupted and re-enters
+  it invisibly with the same turn ID and a new attempt. Spawn, protocol, and
+  ordinary nonzero-exit failures remain terminal.
+  Live mode retains only a bounded metadata ring with no envelope payload or
+  stderr evidence; tests must explicitly select bounded fixture evidence.
 - Slack history normalization preserves human/external-bot kind and Slack ID,
   uses channel-qualified stable message IDs, excludes Laborer/system/blank/
   edited/deleted records, bounds root context to the preceding ten top-level
@@ -147,9 +209,13 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   own outbound items; running turns may contain only pending accepted replies;
   awaiting-delivery turns require pending, delivering, or blocked output; and
   completed/failed turns allow only delivered or explicitly abandoned output.
-  It fails closed without repair on impossible, corrupt, unreadable, or
+  Structural decoding rejects excess properties at every snapshot level while
+  retaining the missing-acknowledgements migration. It fails closed without repair on impossible, corrupt, unreadable, or
   unwritable snapshots, closes handles on every path, and cleans temporary
-  files; it is not the demo's persistence backend.
+  files; it is not the demo's persistence backend. After a transition acquires
+  its synchronization permit, validation, atomic rename/fsync persistence, and
+  the in-memory ref commit are uninterruptible; waiting for the permit remains
+  interruptible.
 - Effect services are narrow `Context.Service` contracts assembled with
   `Layer`s. Boundary/domain records use `Schema` classes and branded IDs;
   expected failures use tagged schema errors; resources use scopes.
@@ -161,21 +227,32 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   public/private channel roots and replies, human/external-bot/Laborer authors,
   original text, edits, deletes, system records, blank messages, and excluded
   DM/MPIM channel kinds. Startup derives Slack identity with `auth.test`.
-- Live fixture mode wires the fail-closed atomic filesystem store and fresh
-  process boundary into a scoped Socket Mode resource. Listener removal,
+- Live configured-handler mode wires the fail-closed atomic filesystem store
+  and fresh process boundary into a scoped Socket Mode resource. Listener removal,
   disconnect, and in-flight fiber/process interruption are scope-finalized.
 - Live startup holds one OS-enforced, root-scoped loopback TCP lease for its
   full lifetime before any Slack connection or durable-state load. Filesystem
   boundaries combine `lstat`, canonical containment, no-follow opens, and
   descriptor-based chmod to reject symlink redirection.
 
-## Remaining scope after this live smoke adapter
+### Local filesystem threat boundary
 
-- A production `laborer.json` loader, PATH/executable validation,
-  installation/packaging, and a real user work handler. The child is a fixture
-  that exercises the real adapter/parser/supervisor boundary.
-- State migrations, retention, and operator retry/abandon CLI/UX.
-  Live fixture mode now uses the atomic filesystem store; Emulate scenarios
+Sensitive config, snapshot, command, and handler-state operations retain and
+fingerprint trusted parent directory descriptors, reject symlink leaves,
+require parent directories to be owned by the current user (or root), and
+reject group/world-writable parents. Node does not expose the required
+`openat`/`renameat`/`execveat` primitives on macOS, so this prototype explicitly
+trusts other processes running under the same OS UID. It does not claim race
+safety against a malicious same-UID process; run only one trusted Runner and do
+not mutate these paths while it is running.
+
+## Remaining scope after these prototypes
+
+- Production hardening, installation/packaging, and non-prototype work handlers.
+  The issue #207 Bash handler intentionally proves only the classifier/worker
+  conversation and is not a coding agent or repository-editing workflow.
+- State migrations, retention, and operator retry/abandon CLI/UX. Live
+  configured-handler mode uses the atomic filesystem store; Emulate scenarios
   retain the in-memory layer where they need inspectable isolation.
 - Hard-crash process overlap and ambiguous real Slack delivery outcomes. Those
   accepted #201/#199 risks require process-level restart and real Slack tests.

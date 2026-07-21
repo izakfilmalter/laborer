@@ -26,7 +26,10 @@ import {
   type DeliveryFailureDisposition,
   EmulatorError,
 } from "./errors.ts";
-import type { SlackGatewayShape } from "./runtime.ts";
+import type {
+  ActivationAcknowledgerShape,
+  SlackGatewayShape,
+} from "./runtime.ts";
 import type { ActivationContextRequest } from "./store.ts";
 
 const HUMAN_TOKEN = "prototype-human-token";
@@ -608,6 +611,87 @@ export const makeSlackGateway = (options: {
           });
         },
       }),
+  };
+};
+
+const isAlreadyReacted = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "data" in cause &&
+  typeof cause.data === "object" &&
+  cause.data !== null &&
+  "error" in cause.data &&
+  cause.data.error === "already_reacted";
+
+const isReactionAbsent = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "data" in cause &&
+  typeof cause.data === "object" &&
+  cause.data !== null &&
+  "error" in cause.data &&
+  cause.data.error === "no_reaction";
+
+interface ReactionsClient {
+  readonly reactions: {
+    readonly add: (request: {
+      readonly channel: string;
+      readonly name: string;
+      readonly timestamp: string;
+    }) => Promise<unknown>;
+    readonly remove: (request: {
+      readonly channel: string;
+      readonly name: string;
+      readonly timestamp: string;
+    }) => Promise<unknown>;
+  };
+}
+
+interface SlackReactionFailure {
+  readonly cause: unknown;
+}
+
+export const makeSlackActivationAcknowledger = (
+  botClient: ReactionsClient
+): ActivationAcknowledgerShape => {
+  const reactionEffect = Effect.fnUntraced(function* (
+    operation: "add" | "remove",
+    channelId: string,
+    messageTs: string
+  ) {
+    const result = yield* Effect.result(
+      Effect.tryPromise({
+        try: () =>
+          botClient.reactions[operation]({
+            channel: channelId,
+            name: "hourglass_flowing_sand",
+            timestamp: messageTs,
+          }),
+        catch: (cause): SlackReactionFailure => ({ cause }),
+      })
+    );
+    if (result._tag === "Success") {
+      return;
+    }
+    const isIdempotent =
+      (operation === "add" && isAlreadyReacted(result.failure.cause)) ||
+      (operation === "remove" && isReactionAbsent(result.failure.cause));
+    if (isIdempotent) {
+      return;
+    }
+    const failure = classifySlackError(result.failure.cause);
+    return yield* DeliveryError.make({
+      category: failure.category,
+      disposition: failure.disposition,
+      retryAfterMillis: failure.retryAfterMillis,
+    });
+  });
+
+  return {
+    acknowledge: ({ channelId, messageTs }) =>
+      reactionEffect("add", channelId, messageTs),
+    complete: ({ channelId, messageTs }) =>
+      reactionEffect("remove", channelId, messageTs),
   };
 };
 

@@ -5,7 +5,7 @@
   "scripts": {
     "prepare": "effect-language-service patch",
     "prototype": "bun run src/prototype/demo.ts",
-    "start:slack": "bun run src/slack/live.ts",
+    "start:slack": "node --env-file-if-exists=.env.local src/slack/live.ts",
     "check:secrets": "vitest run tests/secret-safety.test.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

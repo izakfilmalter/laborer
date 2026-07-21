@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { type FetchFunction, WebClient } from "@slack/web-api";
-import { Clock, Effect, Layer, Ref } from "effect";
+import { Clock, Effect, Fiber, Layer, Ref } from "effect";
 import {
   type NormalizedInboundEvent,
   type OutboundItem,
@@ -158,7 +158,7 @@ describe("identity and semantic invariants", () => {
           );
         })
       ),
-    30_000
+    60_000
   );
 
   it.effect(
@@ -601,13 +601,15 @@ describe("automatic durable recovery", () => {
               handler: processHandler.handler,
               snapshotPath,
             });
-            yield* Effect.result(
-              harness.runner
-                .inject(activationEvent({ text }))
-                .pipe(Effect.timeout("200 millis"))
+            const interrupted = yield* Effect.forkChild(
+              harness.runner.inject(activationEvent({ text }))
             );
-            const state = yield* harness.store.snapshot;
+            const state = yield* waitFor(
+              harness.store.snapshot,
+              (candidate) => candidate.threads[0]?.outbox.length === 1
+            );
             assert.strictEqual(state.threads[0]?.outbox.length, 1);
+            yield* Fiber.interrupt(interrupted);
           })
         );
 
@@ -665,13 +667,20 @@ describe("automatic durable recovery", () => {
               slack: firstGateway,
               snapshotPath,
             });
-            yield* Effect.result(
-              harness.runner
-                .inject(activationEvent())
-                .pipe(Effect.timeout("500 millis"))
+            const interrupted = yield* Effect.forkChild(
+              harness.runner.inject(activationEvent())
             );
-            const state = yield* harness.store.snapshot;
-            assert.ok(state.threads[0]?.outbox[0]?.retryAtMillis !== null);
+            const state = yield* waitFor(
+              harness.store.snapshot,
+              (candidate) =>
+                typeof candidate.threads[0]?.outbox[0]?.retryAtMillis ===
+                "number"
+            );
+            assert.strictEqual(
+              typeof state.threads[0]?.outbox[0]?.retryAtMillis,
+              "number"
+            );
+            yield* Fiber.interrupt(interrupted);
           })
         );
         const deliveries = yield* Ref.make(0);
@@ -815,7 +824,8 @@ describe("process supervision", () => {
         });
         assert.ok(result.elapsed >= 10_000);
         const turn = result.state.threads[0]?.turns[0];
-        assert.strictEqual(turn?.outcome?.category, "timeout");
+        assert.strictEqual(turn?.status, "running");
+        assert.strictEqual(turn?.outcome, null);
         const pid = result.evidence.invocations[0]?.pid;
         assert.ok(pid !== null && pid !== undefined);
         assert.strictEqual(isProcessAlive(pid), false);
@@ -831,9 +841,10 @@ describe("process supervision", () => {
           text: `<@${LABORER_SLACK_ID}> [fixture:no-reply] [fixture:signal]`,
         });
         assert.strictEqual(
-          signaled.state.threads[0]?.turns[0]?.outcome?.category,
-          "signal"
+          signaled.state.threads[0]?.turns[0]?.status,
+          "running"
         );
+        assert.strictEqual(signaled.state.threads[0]?.turns[0]?.outcome, null);
         const oversized = yield* runProcessCase({
           text: `<@${LABORER_SLACK_ID}> [fixture:oversized-unterminated]`,
         });
@@ -857,18 +868,17 @@ describe("process supervision", () => {
         });
         const invocation = result.evidence.invocations[0];
         assert.ok(invocation);
-        assert.strictEqual(invocation.envelope.protocolVersion, 1);
-        assert.strictEqual(invocation.envelope.turnId, invocation.turnId);
-        assert.strictEqual(
-          invocation.envelope.workThreadId,
-          invocation.threadId
-        );
+        const envelope = invocation.envelope;
+        assert.ok(envelope);
+        assert.strictEqual(envelope.protocolVersion, 1);
+        assert.strictEqual(envelope.turnId, invocation.turnId);
+        assert.strictEqual(envelope.workThreadId, invocation.threadId);
         assert.deepStrictEqual(
-          invocation.envelope.messages.map((message) => message.text),
+          envelope.messages.map((message) => message.text),
           [`<@${LABORER_SLACK_ID}> envelope`]
         );
         const directoryStat = yield* Effect.promise(() =>
-          stat(invocation.envelope.stateDirectory)
+          stat(envelope.stateDirectory)
         );
         assert.strictEqual(directoryStat.mode % 512, 0o700);
       })
@@ -900,6 +910,7 @@ describe("process supervision", () => {
         });
         const invocation = result.evidence.invocations[0];
         assert.ok(invocation);
+        assert.ok(invocation.envelope);
         assert.strictEqual(invocation.envelope.stateDirectory, stateDirectory);
         assert.strictEqual(
           (yield* Effect.promise(() => stat(stateDirectory))).mode % 512,

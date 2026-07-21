@@ -14,6 +14,7 @@ oauth_config:
       - channels:history
       - groups:history
       - chat:write
+      - reactions:write
 settings:
   event_subscriptions:
     bot_events:

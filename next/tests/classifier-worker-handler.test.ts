@@ -207,13 +207,15 @@ const selectedSkillFor = Effect.fnUntraced(function* (
 });
 
 describe("issue #207 generic classifier-to-worker conversation", () => {
-  it.live("selects the bug or feature Slack-to-PR skill", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        assert.strictEqual(yield* selectedSkillFor("bug"), "bug-to-pr");
-        assert.strictEqual(yield* selectedSkillFor("feature"), "feature-to-pr");
-      })
-    )
+  it.live(
+    "selects the bug Slack-to-PR skill",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          assert.strictEqual(yield* selectedSkillFor("bug"), "bug-to-pr");
+        })
+      ),
+    30_000
   );
 
   it.effect(

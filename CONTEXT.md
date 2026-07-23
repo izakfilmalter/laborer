@@ -10,8 +10,14 @@ The generic bridge that accepts work through Slack, invokes user-controlled loca
 **Laborer Slack app**:
 Laborer's conversational identity in Slack. People mention it in a conversation and receive its updates there.
 
+**Laborer daemon**:
+The local Laborer service that connects the Laborer Slack app to one or more Slack workspaces and supervises their configured local runtimes. One daemon may serve several workspace bindings without merging their conversations or state.
+
+**Slack workspace binding**:
+The daemon-owned association from one authenticated Slack workspace installation to one Laborer root. Each Slack workspace has one binding, while several workspaces may deliberately share a root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
+
 **Laborer Runner**:
-The local service that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root.
+The root-bound runtime that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root and may be supervised by a Laborer daemon alongside other Runners.
 
 **Laborer root**:
 The directory that binds a Laborer Runner to its configuration and work handler. It is the default handler working directory and does not need to be a Git repository. A configured thread initializer may select a different working directory for a new work thread.

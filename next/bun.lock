@@ -6,6 +6,7 @@
       "name": "@laborer/slack-tracer-prototype",
       "dependencies": {
         "@effect/platform-bun": "4.0.0-beta.99",
+        "@effect/sql-sqlite-bun": "4.0.0-beta.99",
         "@slack/socket-mode": "^3.0.0",
         "@slack/web-api": "^8.0.0",
         "effect": "4.0.0-beta.99",
@@ -53,6 +54,8 @@
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-beta.99", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.99" }, "peerDependencies": { "effect": "^4.0.0-beta.99" } }, "sha512-CCjzD7BY6wvG8tWEBvup2Ko4ME65RX2zZnt8sD+SLwrSEEGJhTliwmQyjyesm8WjAJpALv8NL9/Tv17ocxUPNg=="],
 
     "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.99", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-beta.99" } }, "sha512-POBAowafsAAb3bH1x1rJlWnv32yMAazFgEuRW5LhkW/JJA5VGoEk9OnuoUkIH1OW6K/X6IrdNpqcO+5e9lPQJA=="],
+
+    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.0.0-beta.99", "", { "peerDependencies": { "effect": "^4.0.0-beta.99" } }, "sha512-3htc9hPNghxCGdUgx4f/yzoUchTYnnueBb03n+62gqXXdi7GI1bEhtGPkFhXHkmoyAdcmddEO79aoGPmdyyyAA=="],
 
     "@effect/vitest": ["@effect/vitest@4.0.0-beta.99", "", { "peerDependencies": { "effect": "^4.0.0-beta.99", "vitest": "^3.0.0 || ^4.0.0" } }, "sha512-SiZo3UGTsG2itbqLU1SJVmFraK+0AkrEU7ZLRpQALx3lFRBaohzB/7UQKVsRjCHHjDg0kNkGitZusGRN3mVAhg=="],
 

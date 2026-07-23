@@ -171,6 +171,33 @@ different initializer if that trust boundary is inappropriate.
 `LABORER_OPENCODE_MODEL` is a live-supported optional model override and is
 explicitly allowed through tracked `laborer.json` configuration.
 `LABORER_OPENCODE_COMMAND` overrides the executable for automated tests only.
+
+### Expose a temporary Slack OAuth callback
+
+The local installation flow can expose an OAuth callback server listening on
+`127.0.0.1:8787` through Tailscale Funnel. Funnel is needed only while installing
+the Slack app into another workspace; it is not part of ordinary Slack runtime
+operation.
+
+```sh
+bun run slack:funnel:on
+```
+
+The command runs Funnel in the background and prints the public callback URL,
+local target, and Slack app-management URL. It finds the macOS App Store
+Tailscale binary automatically; set `TAILSCALE_BIN` to override the executable.
+The command does not start the callback server itself.
+
+Inspect or disable the Funnel with:
+
+```sh
+bun run slack:funnel:status
+bun run slack:funnel:off
+```
+
+The off command resets the current Tailscale Funnel configuration. Do not use it
+when the machine intentionally hosts another Funnel.
+
 The handler removes both Slack token variables from every OpenCode child, sends the
 bounded (2 MiB) prompt through non-TTY stdin rather than argv, keeps stdout
 protocol-only, fatally decodes JSONL and export UTF-8 before JSON parsing, and

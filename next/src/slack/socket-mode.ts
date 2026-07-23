@@ -1,5 +1,5 @@
 import { Effect, FiberSet, type Scope } from "effect";
-import type { Runner } from "../prototype/runtime.ts";
+import type { NormalizedInboundEvent } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SocketModeAdapterError } from "./errors.ts";
 import { normalizeSlackEvent } from "./normalize.ts";
@@ -18,13 +18,19 @@ export interface SocketModeClientBoundary {
   readonly start: () => Promise<unknown>;
 }
 
+export interface SlackEventInjector {
+  readonly inject: (
+    event: NormalizedInboundEvent
+  ) => Effect.Effect<unknown, unknown>;
+}
+
 const adapterFailure = (operation: string): SocketModeAdapterError =>
   SocketModeAdapterError.make({ operation, reason: "socket-mode-failed" });
 
 const processEnvelope = (
   envelope: SlackEventEnvelope,
   identity: SlackRuntimeIdentity,
-  runner: Runner
+  runner: SlackEventInjector
 ): Effect.Effect<void> =>
   Effect.tryPromise({
     try: () => envelope.ack(),
@@ -36,7 +42,13 @@ const processEnvelope = (
     ),
     Effect.catch((error) =>
       Effect.logError("Slack event processing stopped safely", {
-        errorTag: error._tag,
+        errorTag:
+          typeof error === "object" &&
+          error !== null &&
+          "_tag" in error &&
+          typeof error._tag === "string"
+            ? error._tag
+            : "unknown",
       })
     )
   );
@@ -44,7 +56,7 @@ const processEnvelope = (
 export const startSocketModeAdapter = (options: {
   readonly client: SocketModeClientBoundary;
   readonly identity: SlackRuntimeIdentity;
-  readonly runner: Runner;
+  readonly runner: SlackEventInjector;
 }): Effect.Effect<void, SocketModeAdapterError, Scope.Scope> =>
   Effect.gen(function* () {
     const fibers = yield* FiberSet.make<void, never>();

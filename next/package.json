@@ -10,6 +10,7 @@
     "prototype": "bun run src/prototype/demo.ts",
     "prototype:actions": "bun run src/action-toolkit-prototype/cli.ts",
     "prototype:conversation-execution": "bun run src/conversation-execution-tracer-prototype/demo.ts",
+    "start:conversation-execution-canary": "node --env-file-if-exists=.env.local src/conversation-execution-live-canary-prototype/live.ts",
     "start:slack": "node --env-file-if-exists=.env.local src/slack/live.ts",
     "check:secrets": "vitest run tests/secret-safety.test.ts",
     "test": "vitest run",
@@ -20,7 +21,9 @@
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.0-beta.99",
+    "@effect/platform-node": "4.0.0-beta.99",
     "@effect/sql-sqlite-bun": "4.0.0-beta.99",
+    "@effect/sql-sqlite-node": "4.0.0-beta.99",
     "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
     "effect": "4.0.0-beta.99",

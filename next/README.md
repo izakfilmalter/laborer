@@ -198,6 +198,11 @@ bun run slack:funnel:off
 The off command resets the current Tailscale Funnel configuration. Do not use it
 when the machine intentionally hosts another Funnel.
 
+See [`docs/slack-local-secrets.md`](../docs/slack-local-secrets.md) for the
+Keychain service names and the multi-workspace launch command. Slack credentials
+must not be stored in `.env.local` because the reference initializer copies that
+file into agent worktrees.
+
 The handler removes both Slack token variables from every OpenCode child, sends the
 bounded (2 MiB) prompt through non-TTY stdin rather than argv, keeps stdout
 protocol-only, fatally decodes JSONL and export UTF-8 before JSON parsing, and

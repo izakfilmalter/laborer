@@ -5,6 +5,23 @@
       "repository": "Effect-TS/effect",
       "branch": "main",
       "description": "Use for Effect APIs, implementation patterns, tests, and examples"
+    },
+    "opencode": {
+      "repository": "anomalyco/opencode",
+      "description": "Use for OpenCode APIs, configuration, implementation patterns, tests, and examples"
+    },
+    "openclaw": {
+      "repository": "openclaw/openclaw",
+      "description": "Use for OpenClaw APIs, architecture, implementation patterns, tests, and examples"
+    },
+    "hermes-agent": {
+      "repository": "NousResearch/hermes-agent",
+      "branch": "main",
+      "description": "Use for Hermes Agent architecture, implementation patterns, tools, tests, and examples"
+    },
+    "chat": {
+      "repository": "vercel/chat",
+      "description": "Use for Vercel Chat architecture, implementation patterns, tests, and examples"
     }
   }
 }

@@ -8,8 +8,8 @@ future hosted service?
 
 ## Verified platform behavior
 
-- One distributed Slack app uses an app-level `xapp-` token for Socket Mode and
-  receives a distinct `xoxb-` bot token for each ordinary workspace
+- One distributed Slack app uses an app-level `xapp-[REDACTED]` token for Socket
+  Mode and receives a distinct `xoxb-[REDACTED]` bot token for each ordinary workspace
   installation. An organization-wide installation is a separate topology in
   which one installation can cover multiple workspaces. See Slack's
   [token types](https://docs.slack.dev/authentication/tokens/) and

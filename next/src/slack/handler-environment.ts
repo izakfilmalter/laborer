@@ -1,4 +1,5 @@
 import { Array as EffectArray, pipe, Record } from "effect";
+import { isSlackTokenEnvironmentName } from "./secret-environment.ts";
 
 const REQUIRED_RUNTIME_VARIABLES = [
   "HOME",
@@ -17,8 +18,6 @@ const REQUIRED_RUNTIME_VARIABLES = [
   "XDG_STATE_HOME",
 ] as const;
 
-const FORBIDDEN_VARIABLES = ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"] as const;
-
 /**
  * Slack credentials belong to the adapter and must never cross the generic
  * configured-handler process boundary.
@@ -32,9 +31,7 @@ export const environmentForConfiguredHandler = (
   const allowedNames = pipe(
     REQUIRED_RUNTIME_VARIABLES,
     EffectArray.appendAll(optedInNames),
-    EffectArray.filter(
-      (name) => !EffectArray.contains(FORBIDDEN_VARIABLES, name)
-    )
+    EffectArray.filter((name) => !isSlackTokenEnvironmentName(name))
   );
   return Record.filter(
     inheritedRecord,

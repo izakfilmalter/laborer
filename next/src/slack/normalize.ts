@@ -3,6 +3,7 @@ import {
   EventId,
   type InboundRecordKind,
   NormalizedInboundEvent,
+  stableEventId,
 } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SlackBoundaryError } from "./errors.ts";
@@ -133,7 +134,8 @@ const authorFor = (
 
 export const normalizeSlackEvent = (
   input: unknown,
-  identity: SlackRuntimeIdentity
+  identity: SlackRuntimeIdentity,
+  options?: { readonly namespaceWorkspace?: boolean }
 ): Effect.Effect<NormalizedInboundEvent | null, SlackBoundaryError> =>
   Effect.gen(function* () {
     const callback = yield* Schema.decodeUnknownEffect(SlackEventCallback)(
@@ -175,10 +177,16 @@ export const normalizeSlackEvent = (
       authorSlackId: author.id,
       channelId,
       channelKind,
-      eventId: EventId.make(callback.event_id),
+      eventId:
+        options?.namespaceWorkspace === true
+          ? stableEventId(identity.teamId, callback.event_id)
+          : EventId.make(callback.event_id),
       messageTs,
       recordKind,
       text,
       threadTs: authored.thread_ts ?? raw.thread_ts ?? null,
+      ...(options?.namespaceWorkspace === true
+        ? { workspaceId: identity.teamId }
+        : {}),
     });
   });

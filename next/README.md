@@ -39,18 +39,25 @@ bun run check
 
 ## Run the live issue #207 configured-handler prototype
 
-`start:slack` reads `<root>/laborer.json` once before any Slack network call,
-then connects the Socket Mode and Web API adapters to a real workspace. The
-root is `LABORER_ROOT` when that variable is set and otherwise this `next`
-directory. The tracked configuration selects the throwaway issue #207 Bash
-handler. It requires `jq` and an authenticated `opencode` executable on `PATH`.
+With an explicit workspace registry, `start:slack` initializes bindings
+concurrently. Each binding reads its bound `<root>/laborer.json` before that
+binding's `auth.test`, so one slow root does not delay another workspace. The
+daemon uses one app-wide Socket Mode connection and one Web API client per
+authenticated workspace installation. Without a workspace registry it retains
+the fail-closed one-workspace startup order: resolve the root, validate
+`laborer.json`, and acquire the exclusive root lock before `auth.test` or Socket
+Mode. The root is `LABORER_ROOT` when that variable is set and otherwise this
+`next` directory. The tracked configuration selects the throwaway issue #207
+Bash handler. It requires `jq` and an authenticated `opencode` executable on
+`PATH`.
 
 `workHandler.command` is required and nonblank; `workHandler.args` is an
 optional string array. `workHandler.environment` is an optional array of
 environment variable **names** whose existing Runner values may cross the
 handler boundary. Names must use portable shell-variable syntax, duplicates are
-rejected, values cannot be placed in `laborer.json`, and the two Slack token
-names are always forbidden. The child otherwise receives only a small runtime
+rejected, values cannot be placed in `laborer.json`, and all
+`SLACK_APP_TOKEN*` and `SLACK_BOT_TOKEN*` names are always forbidden. The child
+otherwise receives only a small runtime
 allowlist (`PATH`, `HOME`, temporary-directory, locale, user, shell, and XDG
 locations). Commands containing `/` resolve relative to the Laborer root and
 must be executable. Bare commands are validated through inherited `PATH`.
@@ -101,6 +108,28 @@ different initializer if that trust boundary is inappropriate.
    kinds while keeping them redacted. No app, bot, user, or workspace ID is
    configured manually: startup calls `auth.test` to derive the bot user, bot,
    and team identifiers.
+
+   To serve several ordinary workspace installations, set
+   `LABORER_SLACK_WORKSPACES` to a one-line JSON array. Each entry contains the
+   expected `teamId`, an existing Laborer `root` (omit it deliberately to leave
+   that authenticated installation setup-incomplete), and the name of a
+   dedicated bot-token environment variable in `botTokenEnvironment`. The
+   token values remain separate environment secrets; they are never embedded
+   in the registry or passed to configured handlers. For example:
+
+   ```dotenv
+   LABORER_SLACK_WORKSPACES=[{"teamId":"TFIRST","botTokenEnvironment":"SLACK_BOT_TOKEN_FIRST","root":"/existing/laborer/root"},{"teamId":"TSECOND","botTokenEnvironment":"SLACK_BOT_TOKEN_SECOND","root":"/existing/other/root"}]
+   SLACK_BOT_TOKEN_FIRST=
+   SLACK_BOT_TOKEN_SECOND=
+   ```
+
+   Startup prepares each local binding before authenticating its token and
+   requires the derived workspace to match the configured `teamId`. A bad
+   token, invalid root, or mismatched workspace leaves that installation
+   unavailable without stopping healthy bindings. Several bindings may share a
+   root; the daemon takes one root lock while keeping workspace snapshots and
+   handler state in separate namespaced directories. Registry changes require
+   a restart.
 6. In each public or private channel used for the smoke test, invite the app
    with `/invite @Laborer`. The app cannot read or reply in a channel it has not
    joined.
@@ -160,11 +189,14 @@ to 1 MiB.
 Live state is stored in ignored `next/.laborer-runtime/`. Its state and
 work-thread directories are forced to owner-only permissions, and the atomic
 filesystem snapshot fails closed if it is corrupt or unwritable. Delete or
-inspect this directory only while the Runner is stopped. A root-derived
-exclusive loopback TCP lease is acquired before `auth.test`, Socket Mode, or
-snapshot loading; a second Runner fails closed, clean shutdown releases the
-lease, and a crash-stale nonsecret marker is safely replaced only by the new
-lease owner. Runtime, lock, snapshot, and handler-state paths reject
+inspect this directory only while the Runner is stopped. Legacy startup acquires
+its root-derived exclusive loopback TCP lease before any Slack network call.
+Explicit multi-workspace startup acquires each lease after that binding's local
+preparation and `auth.test`, before snapshot loading or Runner construction;
+the app-wide Socket Mode receiver may already be connected while a binding
+waits. A second Runner fails closed, clean shutdown releases the lease, and a
+crash-stale nonsecret marker is safely replaced only by the new lease owner.
+Runtime, lock, snapshot, and handler-state paths reject
 pre-existing or traversed symlinks rather than chmodding or reading through
 them. If the root-derived loopback port is occupied for any reason, startup
 fails closed rather than risking a second owner.
@@ -261,10 +293,21 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
 - Effect services are narrow `Context.Service` contracts assembled with
   `Layer`s. Boundary/domain records use `Schema` classes and branded IDs;
   expected failures use tagged schema errors; resources use scopes.
-- The live adapter acknowledges each Socket Mode envelope before normalization
-  or asynchronous Runner work, then injects the existing normalized ingress
-  boundary. Durable event and channel/timestamp message identities absorb Slack
-  retries and duplicate mention/message subscription delivery.
+- The live adapter resolves each Socket Mode envelope independently. Events for
+  configured bindings remain unacknowledged while that route is pending, and a
+  ready route persists the normalized ingress decision before acknowledgement;
+  acknowledgement is initiated before even synchronous handler work, which
+  continues in the scoped serialized Runner driver. Concurrent retries for one
+  Events API identity share one bounded in-flight acceptance through ACK
+  settlement. Capacity is reserved independently per configured workspace.
+  Unknown, malformed, ambiguous, and identity-less envelopes share a separate
+  bounded quarantine partition, so they cannot consume configured workspace
+  capacity. Coalescing ownership remains until durable processing is terminal
+  and every dynamically attached acknowledgement has settled.
+  Each work thread has at most one active scoped driver regardless of queued
+  event count. Durable event and channel/timestamp message identities absorb
+  later retries and duplicate mention/message subscription delivery while still
+  waking the active driver, or starting one when persisted work needs recovery.
 - Production ingress defensively decodes Events API callbacks and normalizes
   public/private channel roots and replies, human/external-bot/Laborer authors,
   original text, edits, deletes, system records, blank messages, and excluded
@@ -272,10 +315,11 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
 - Live configured-handler mode wires the fail-closed atomic filesystem store
   and fresh process boundary into a scoped Socket Mode resource. Listener removal,
   disconnect, and in-flight fiber/process interruption are scope-finalized.
-- Live startup holds one OS-enforced, root-scoped loopback TCP lease for its
-  full lifetime before any Slack connection or durable-state load. Filesystem
-  boundaries combine `lstat`, canonical containment, no-follow opens, and
-  descriptor-based chmod to reject symlink redirection.
+- Each live Runner holds one OS-enforced, root-scoped loopback TCP lease for its
+  full lifetime before durable-state load. Acquisition is bounded and
+  cancellation-safe even though the app-wide Slack receiver starts
+  independently. Filesystem boundaries combine `lstat`, canonical containment,
+  no-follow opens, and descriptor-based chmod to reject symlink redirection.
 
 ### Local filesystem threat boundary
 

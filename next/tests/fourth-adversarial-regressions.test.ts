@@ -921,6 +921,7 @@ describe("fourth review acknowledgement progress and lock eviction", () => {
           }
           assert.deepStrictEqual(yield* harness.runner.lockCounts, {
             acknowledgements: 0,
+            drivers: 0,
             threads: 0,
           });
         })

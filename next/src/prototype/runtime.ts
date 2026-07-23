@@ -192,12 +192,16 @@ export interface Runner {
   readonly abandonBlocked: (
     threadId: ThreadId
   ) => Effect.Effect<void, RunnerError>;
+  readonly accept: (
+    event: unknown
+  ) => Effect.Effect<DurableAcceptance, RunnerError | BoundaryDecodeError>;
   readonly drain: (threadId: ThreadId) => Effect.Effect<void, RunnerError>;
   readonly inject: (
     event: unknown
   ) => Effect.Effect<InboundDecision, RunnerError | BoundaryDecodeError>;
   readonly lockCounts: Effect.Effect<{
     readonly acknowledgements: number;
+    readonly drivers: number;
     readonly threads: number;
   }>;
   readonly persistenceHealth: Effect.Effect<StorePersistenceHealth>;
@@ -209,6 +213,11 @@ export interface Runner {
   ) => Effect.Effect<void, RunnerError>;
 }
 
+export interface DurableAcceptance {
+  readonly decision: InboundDecision;
+  readonly scheduling: "AlreadyDurable" | "Scheduled";
+}
+
 export class PrototypeRunner extends Context.Service<PrototypeRunner, Runner>()(
   "@laborer/issue-204/PrototypeRunner"
 ) {}
@@ -217,6 +226,33 @@ interface ThreadSemaphore {
   readonly semaphore: Semaphore.Semaphore;
   readonly threadId: ThreadId;
   readonly users: number;
+}
+
+interface ActiveThreadDriver {
+  readonly acknowledgementIds: readonly string[];
+  readonly driverId: number;
+  readonly signals: number;
+  readonly threadId: ThreadId;
+}
+
+interface ThreadDriverRegistry {
+  readonly active: readonly ActiveThreadDriver[];
+  readonly nextDriverId: number;
+}
+
+type ThreadDriverCompletion =
+  | { readonly _tag: "Continue" }
+  | { readonly _tag: "Stop"; readonly acknowledgementIds: readonly string[] };
+
+type ThreadDriverRegistration =
+  | { readonly _tag: "Signaled" }
+  | { readonly _tag: "Started"; readonly driverId: number };
+
+interface AcceptedInbound {
+  readonly acknowledgementId: string;
+  readonly decision: InboundDecision;
+  readonly isAcceptedActivation: boolean;
+  readonly threadId: ThreadId | null;
 }
 
 interface AcknowledgementSemaphore {
@@ -248,6 +284,10 @@ const runnerLayer = Layer.effect(
     const activationAcknowledger = yield* ActivationAcknowledger;
     const completionReactor = yield* CompletionReactor;
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
+    const threadDrivers = yield* Ref.make<ThreadDriverRegistry>({
+      active: [],
+      nextDriverId: 0,
+    });
     const acknowledgementSemaphores = yield* Ref.make<
       readonly AcknowledgementSemaphore[]
     >([]);
@@ -807,6 +847,177 @@ const runnerLayer = Layer.effect(
       );
     });
 
+    const requestAcknowledgementCleanups = (
+      acknowledgementIds: readonly string[]
+    ): Effect.Effect<void> =>
+      Effect.forEach(
+        acknowledgementIds,
+        (acknowledgementId) =>
+          Effect.result(requestAcknowledgementCleanup(acknowledgementId)).pipe(
+            Effect.flatMap((result) =>
+              result._tag === "Failure"
+                ? Effect.logError(
+                    "Could not schedule activation acknowledgement cleanup",
+                    result.failure
+                  )
+                : Effect.void
+            )
+          ),
+        { discard: true }
+      );
+
+    const completeThreadDriverCycle = (
+      threadId: ThreadId,
+      driverId: number,
+      observedSignals: number
+    ) =>
+      Ref.modify(
+        threadDrivers,
+        (registry): readonly [ThreadDriverCompletion, ThreadDriverRegistry] => {
+          const active = pipe(
+            registry.active,
+            EffectArray.findFirst(
+              (entry) =>
+                entry.threadId === threadId && entry.driverId === driverId
+            ),
+            Option.getOrNull
+          );
+          if (active === null) {
+            return [
+              { _tag: "Stop", acknowledgementIds: [] } as const,
+              registry,
+            ];
+          }
+          if (active.signals !== observedSignals) {
+            return [{ _tag: "Continue" } as const, registry];
+          }
+          return [
+            {
+              _tag: "Stop" as const,
+              acknowledgementIds: active.acknowledgementIds,
+            },
+            {
+              ...registry,
+              active: pipe(
+                registry.active,
+                EffectArray.filter(
+                  (entry) =>
+                    entry.threadId !== threadId || entry.driverId !== driverId
+                )
+              ),
+            },
+          ] as const;
+        }
+      );
+
+    const driveActiveThread = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      driverId: number
+    ) {
+      while (true) {
+        const observedSignals = pipe(
+          (yield* Ref.get(threadDrivers)).active,
+          EffectArray.findFirst(
+            (entry) =>
+              entry.threadId === threadId && entry.driverId === driverId
+          ),
+          Option.map((entry) => entry.signals),
+          Option.getOrNull
+        );
+        if (observedSignals === null) {
+          return;
+        }
+        const driveExit = yield* Effect.exit(serializedDrive(threadId));
+        if (driveExit._tag === "Failure") {
+          yield* Effect.logError(
+            "Background Runner drive stopped",
+            driveExit.cause
+          );
+        }
+        const completion = yield* completeThreadDriverCycle(
+          threadId,
+          driverId,
+          observedSignals
+        );
+        if (completion._tag === "Continue") {
+          continue;
+        }
+        yield* requestAcknowledgementCleanups(completion.acknowledgementIds);
+        return;
+      }
+    });
+
+    const signalThreadDriver = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      acknowledgementId: string | null
+    ) {
+      const registration = yield* Ref.modify(
+        threadDrivers,
+        (
+          registry
+        ): readonly [ThreadDriverRegistration, ThreadDriverRegistry] => {
+          const existing = pipe(
+            registry.active,
+            EffectArray.findFirst((entry) => entry.threadId === threadId),
+            Option.getOrNull
+          );
+          if (existing !== null) {
+            const acknowledgementIds =
+              acknowledgementId === null ||
+              EffectArray.contains(
+                existing.acknowledgementIds,
+                acknowledgementId
+              )
+                ? existing.acknowledgementIds
+                : EffectArray.append(
+                    existing.acknowledgementIds,
+                    acknowledgementId
+                  );
+            return [
+              { _tag: "Signaled" } as const,
+              {
+                ...registry,
+                active: pipe(
+                  registry.active,
+                  EffectArray.map((entry) =>
+                    entry.driverId === existing.driverId
+                      ? {
+                          ...entry,
+                          acknowledgementIds,
+                          signals: entry.signals + 1,
+                        }
+                      : entry
+                  )
+                ),
+              },
+            ] as const;
+          }
+          const driverId = registry.nextDriverId;
+          return [
+            { _tag: "Started" as const, driverId },
+            {
+              active: EffectArray.append(registry.active, {
+                acknowledgementIds:
+                  acknowledgementId === null ? [] : [acknowledgementId],
+                driverId,
+                signals: 1,
+                threadId,
+              }),
+              nextDriverId: driverId + 1,
+            },
+          ] as const;
+        }
+      );
+      if (registration._tag === "Signaled") {
+        return "AlreadyDurable" as const;
+      }
+      yield* Effect.yieldNow.pipe(
+        Effect.andThen(driveActiveThread(threadId, registration.driverId)),
+        Effect.forkIn(reactionDriverScope)
+      );
+      return "Scheduled" as const;
+    });
+
     const staleAcknowledgements = yield* store.acknowledgements;
     yield* Effect.forEach(
       staleAcknowledgements,
@@ -826,9 +1037,7 @@ const runnerLayer = Layer.effect(
       { discard: true }
     );
 
-    const inject = Effect.fn("PrototypeRunner.inject")(function* (
-      input: unknown
-    ) {
+    const acceptInbound = Effect.fnUntraced(function* (input: unknown) {
       const event = yield* Schema.decodeUnknownEffect(
         NormalizedInboundEventSchema
       )(input).pipe(
@@ -844,22 +1053,38 @@ const runnerLayer = Layer.effect(
         decision._tag === "Accepted" && decision.isActivation;
       const acknowledgementId = stableAcknowledgementId(
         event.channelId,
-        event.messageTs
+        event.messageTs,
+        event.workspaceId
       );
       const candidateThreadId = canonicalThreadId(
         event.channelId,
-        event.threadTs ?? event.messageTs
+        event.threadTs ?? event.messageTs,
+        event.workspaceId
       );
       const threadIds = yield* store.threadIds;
-      const drive = EffectArray.contains(threadIds, candidateThreadId)
-        ? serializedDrive(candidateThreadId)
-        : Effect.void;
-      yield* isAcceptedActivation
-        ? startAcknowledgementDriver(acknowledgementId).pipe(
+      return {
+        acknowledgementId,
+        decision,
+        isAcceptedActivation,
+        threadId: EffectArray.contains(threadIds, candidateThreadId)
+          ? candidateThreadId
+          : null,
+      };
+    });
+
+    const continueAcceptedInbound = Effect.fnUntraced(function* (
+      accepted: AcceptedInbound
+    ) {
+      const drive =
+        accepted.threadId === null
+          ? Effect.void
+          : serializedDrive(accepted.threadId);
+      yield* accepted.isAcceptedActivation
+        ? startAcknowledgementDriver(accepted.acknowledgementId).pipe(
             Effect.andThen(drive),
             Effect.ensuring(
               Effect.result(
-                requestAcknowledgementCleanup(acknowledgementId)
+                requestAcknowledgementCleanup(accepted.acknowledgementId)
               ).pipe(
                 Effect.flatMap((result) =>
                   result._tag === "Failure"
@@ -873,14 +1098,48 @@ const runnerLayer = Layer.effect(
             )
           )
         : drive;
-      return decision;
+    });
+
+    const accept = Effect.fn("PrototypeRunner.accept")(function* (
+      input: unknown
+    ) {
+      const accepted = yield* acceptInbound(input);
+      if (accepted.isAcceptedActivation) {
+        yield* startAcknowledgementDriver(accepted.acknowledgementId);
+      }
+      if (accepted.threadId === null) {
+        return {
+          decision: accepted.decision,
+          scheduling: "AlreadyDurable" as const,
+        };
+      }
+      const scheduling = yield* signalThreadDriver(
+        accepted.threadId,
+        accepted.isAcceptedActivation ? accepted.acknowledgementId : null
+      );
+      return {
+        decision: accepted.decision,
+        scheduling,
+      };
+    });
+
+    const inject = Effect.fn("PrototypeRunner.inject")(function* (
+      input: unknown
+    ) {
+      const accepted = yield* acceptInbound(input);
+      yield* continueAcceptedInbound(accepted);
+      return accepted.decision;
     });
 
     const runner = PrototypeRunner.of({
+      accept,
       inject,
       lockCounts: Effect.all({
         acknowledgements: Ref.get(acknowledgementSemaphores).pipe(
           Effect.map((entries) => entries.length)
+        ),
+        drivers: Ref.get(threadDrivers).pipe(
+          Effect.map((registry) => registry.active.length)
         ),
         threads: Ref.get(threadSemaphores).pipe(
           Effect.map((entries) => entries.length)

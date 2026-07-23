@@ -11,6 +11,7 @@ import {
   verifyRetainedDirectory,
 } from "../prototype/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
+import { isSlackTokenEnvironmentName } from "./secret-environment.ts";
 
 export interface ProcessCommandConfig {
   readonly args: readonly string[];
@@ -36,11 +37,6 @@ const configFailure = (operation: string, reason: string): LaborerConfigError =>
 
 const HandlerCommand = Schema.Trim.check(Schema.isMinLength(1));
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const FORBIDDEN_HANDLER_ENVIRONMENT_NAMES = [
-  "SLACK_APP_TOKEN",
-  "SLACK_BOT_TOKEN",
-] as const;
-
 const ProcessCommandConfigFromJson = Schema.Struct({
   args: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
@@ -134,8 +130,7 @@ const validateEnvironmentNames = (
   const invalidName = EffectArray.findFirst(
     names,
     (name) =>
-      !ENVIRONMENT_NAME_PATTERN.test(name) ||
-      EffectArray.contains(FORBIDDEN_HANDLER_ENVIRONMENT_NAMES, name)
+      !ENVIRONMENT_NAME_PATTERN.test(name) || isSlackTokenEnvironmentName(name)
   );
   if (invalidName._tag === "Some") {
     return configFailure(operation, "invalid-environment-name");

@@ -45,6 +45,7 @@ export class NormalizedInboundEvent extends Schema.Class<NormalizedInboundEvent>
   recordKind: InboundRecordKind,
   text: Schema.NullOr(Schema.String),
   threadTs: Schema.NullOr(Schema.String),
+  workspaceId: Schema.optional(Schema.String),
 }) {}
 
 export class NormalizedMessage extends Schema.Class<NormalizedMessage>(
@@ -188,6 +189,7 @@ export class WorkThreadState extends Schema.Class<WorkThreadState>(
   turns: Schema.Array(TurnState),
   unassigned: Schema.Array(NormalizedMessage),
   workingDirectory: Schema.NullOr(Schema.String),
+  workspaceId: Schema.optional(Schema.String),
 }) {}
 
 export class AcknowledgementState extends Schema.Class<AcknowledgementState>(
@@ -276,18 +278,34 @@ export interface ClaimedTurn {
 
 export const canonicalThreadId = (
   channelId: string,
-  rootTs: string
-): ThreadId => ThreadId.make(`${channelId}:${rootTs}`);
+  rootTs: string,
+  workspaceId?: string
+): ThreadId =>
+  ThreadId.make(
+    workspaceId === undefined
+      ? `${channelId}:${rootTs}`
+      : `workspace:${workspaceId}:${channelId}:${rootTs}`
+  );
 
 export const stableMessageId = (
   channelId: string,
-  messageTs: string
-): MessageId => MessageId.make(`${channelId}:${messageTs}`);
+  messageTs: string,
+  workspaceId?: string
+): MessageId =>
+  MessageId.make(
+    workspaceId === undefined
+      ? `${channelId}:${messageTs}`
+      : `workspace:${workspaceId}:${channelId}:${messageTs}`
+  );
 
 export const stableAcknowledgementId = (
   channelId: string,
-  messageTs: string
-): string => `ack:${channelId}:${messageTs}`;
+  messageTs: string,
+  workspaceId?: string
+): string => `ack:${stableMessageId(channelId, messageTs, workspaceId)}`;
+
+export const stableEventId = (workspaceId: string, eventId: string): EventId =>
+  EventId.make(`workspace:${workspaceId}:event:${eventId}`);
 
 export const stableCompletionReactionId = (turnId: TurnId): string =>
   `completion-reaction:${turnId}`;

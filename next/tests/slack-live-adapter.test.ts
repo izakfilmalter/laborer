@@ -25,6 +25,7 @@ import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
 import { normalizeSlackEvent } from "../src/slack/normalize.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 import {
+  makeSlackWorkspaceRouteDirectory,
   type SlackEventEnvelope,
   type SlackEventListener,
   type SocketModeClientBoundary,
@@ -37,6 +38,14 @@ const identity = SlackRuntimeIdentity.make({
   botUserId: "ULABORER",
   teamId: "TLABORER",
 });
+
+const secondIdentity = SlackRuntimeIdentity.make({
+  botId: "BSECOND",
+  botUserId: "USECOND",
+  teamId: "TSECOND",
+});
+
+const IN_FLIGHT_WORKSPACE_CAPACITY = 1024;
 
 const eventCallback = (options?: {
   readonly event?: Readonly<Record<string, unknown>>;
@@ -365,34 +374,344 @@ describe("live Slack normalization", () => {
 });
 
 describe("Socket Mode resource and delivery boundary", () => {
+  it.effect(
+    "releases coalescer ownership after processing failures, defects, and interruptions",
+    () =>
+      Effect.gen(function* () {
+        const cases = [
+          { fail: Effect.fail("fixture typed failure"), label: "failure" },
+          {
+            fail: Effect.die(new Error("fixture processing defect")),
+            label: "defect",
+          },
+          { fail: Effect.interrupt, label: "interruption" },
+        ] as const;
+        for (const testCase of cases) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const client = new FakeSocketModeClient();
+              let acceptances = 0;
+              let retryAcknowledged = false;
+              const runner = {
+                accept: () => {
+                  acceptances += 1;
+                  return acceptances === 1 ? testCase.fail : Effect.void;
+                },
+                inject: () => Effect.void,
+              };
+              yield* startSocketModeAdapter({ client, identity, runner });
+              const body = eventCallback({
+                eventId: `EvTerminalCause${testCase.label}`,
+              });
+              client.emit({ ack: () => Promise.resolve(), body });
+              yield* Effect.promise(
+                () => new Promise<void>((resolve) => setImmediate(resolve))
+              );
+              client.emit({
+                ack: () => {
+                  retryAcknowledged = true;
+                  return Promise.resolve();
+                },
+                body,
+              });
+              yield* Effect.promise(
+                () => new Promise<void>((resolve) => setImmediate(resolve))
+              );
+              assert.strictEqual(acceptances, 2, testCase.label);
+              assert.strictEqual(retryAcknowledged, true, testCase.label);
+            })
+          );
+        }
+      })
+  );
+
+  it.effect(
+    "retains terminal coalescing ownership while a late ACK remains unresolved",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = new FakeSocketModeClient();
+          let acceptances = 0;
+          const runner = {
+            accept: () =>
+              Effect.sync(() => {
+                acceptances += 1;
+              }),
+            inject: () => Effect.void,
+          };
+          yield* startSocketModeAdapter({ client, identity, runner });
+
+          let observeFirstAck: (() => void) | undefined;
+          const firstAckStarted = new Promise<void>((resolve) => {
+            observeFirstAck = resolve;
+          });
+          let releaseFirstAck: (() => void) | undefined;
+          client.emit({
+            ack: () =>
+              new Promise<void>((resolve) => {
+                releaseFirstAck = resolve;
+                observeFirstAck?.();
+              }),
+            body: eventCallback({ eventId: "EvLateAckOwner" }),
+          });
+          yield* Effect.promise(() => firstAckStarted);
+
+          let observeLateAck: (() => void) | undefined;
+          const lateAckStarted = new Promise<void>((resolve) => {
+            observeLateAck = resolve;
+          });
+          let releaseLateAck: (() => void) | undefined;
+          client.emit({
+            ack: () =>
+              new Promise<void>((resolve) => {
+                releaseLateAck = resolve;
+                observeLateAck?.();
+              }),
+            body: eventCallback({ eventId: "EvLateAckOwner" }),
+          });
+          yield* Effect.promise(() => lateAckStarted);
+          releaseFirstAck?.();
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve))
+          );
+
+          let acknowledgeFurtherRetry: (() => void) | undefined;
+          const furtherRetryAcknowledged = new Promise<void>((resolve) => {
+            acknowledgeFurtherRetry = resolve;
+          });
+          client.emit({
+            ack: () => {
+              acknowledgeFurtherRetry?.();
+              return Promise.resolve();
+            },
+            body: eventCallback({ eventId: "EvLateAckOwner" }),
+          });
+          yield* Effect.promise(() => furtherRetryAcknowledged);
+          assert.strictEqual(acceptances, 1);
+
+          releaseLateAck?.();
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve))
+          );
+          let acknowledgeNextOwner: (() => void) | undefined;
+          const nextOwnerAcknowledged = new Promise<void>((resolve) => {
+            acknowledgeNextOwner = resolve;
+          });
+          client.emit({
+            ack: () => {
+              acknowledgeNextOwner?.();
+              return Promise.resolve();
+            },
+            body: eventCallback({ eventId: "EvLateAckOwner" }),
+          });
+          yield* Effect.promise(() => nextOwnerAcknowledged);
+          assert.strictEqual(acceptances, 2);
+        })
+      )
+  );
+
+  it.effect(
+    "bounds unknown ingress without consuming configured workspace capacity",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const routeDirectory = yield* makeSlackWorkspaceRouteDirectory;
+          yield* routeDirectory.registerPending(0, secondIdentity.teamId);
+          let healthyAcceptances = 0;
+          let setupIncompleteReplies = 0;
+          yield* routeDirectory.settleReady(0, {
+            identity: secondIdentity,
+            namespaceWorkspace: true,
+            postSetupIncomplete: () =>
+              Effect.sync(() => {
+                setupIncompleteReplies += 1;
+              }),
+            runner: {
+              accept: () =>
+                Effect.sync(() => {
+                  healthyAcceptances += 1;
+                }),
+              inject: () => Effect.void,
+            },
+          });
+          const client = new FakeSocketModeClient();
+          yield* startSocketModeAdapter({ client, routeDirectory });
+
+          let hangingUnknownAcknowledgements = 0;
+          for (
+            let index = 0;
+            index < IN_FLIGHT_WORKSPACE_CAPACITY;
+            index += 1
+          ) {
+            client.emit({
+              ack: () => {
+                hangingUnknownAcknowledgements += 1;
+                return new Promise<void>(() => undefined);
+              },
+              body: {
+                ...eventCallback({ eventId: `EvUnknownCapacity${index}` }),
+                team_id: "TUNCONFIGURED",
+              },
+            });
+          }
+          yield* waitUntil(
+            () =>
+              hangingUnknownAcknowledgements === IN_FLIGHT_WORKSPACE_CAPACITY
+          );
+
+          let quarantinedAcknowledgements = 0;
+          const quarantinedBodies: readonly unknown[] = [
+            null,
+            { event: {}, type: "event_callback" },
+            {
+              ...eventCallback({ eventId: "EvMalformedConfigured" }),
+              event: null,
+              team_id: secondIdentity.teamId,
+            },
+            {
+              ...eventCallback({ eventId: "EvInstalledUnconfigured" }),
+              team_id: "TINSTALLEDUNCONFIGURED",
+            },
+            {
+              ...eventCallback({ eventId: "EvAmbiguousAuthorization" }),
+              authorizations: [
+                {
+                  is_enterprise_install: false,
+                  team_id: "TOTHER",
+                },
+              ],
+              team_id: secondIdentity.teamId,
+            },
+          ];
+          for (const body of quarantinedBodies) {
+            client.emit({
+              ack: () => {
+                quarantinedAcknowledgements += 1;
+                return Promise.resolve();
+              },
+              body,
+            });
+          }
+
+          let acknowledgeHealthy: (() => void) | undefined;
+          const healthyAcknowledged = new Promise<void>((resolve) => {
+            acknowledgeHealthy = resolve;
+          });
+          client.emit({
+            ack: () => {
+              acknowledgeHealthy?.();
+              return Promise.resolve();
+            },
+            body: {
+              ...eventCallback({
+                event: { text: `<@${secondIdentity.botUserId}> run` },
+                eventId: "EvHealthyAfterUnknownCapacity",
+              }),
+              team_id: secondIdentity.teamId,
+            },
+          });
+
+          yield* Effect.promise(() => healthyAcknowledged);
+          assert.strictEqual(quarantinedAcknowledgements, 0);
+          assert.strictEqual(healthyAcceptances, 1);
+          assert.strictEqual(setupIncompleteReplies, 0);
+        })
+      )
+  );
+
+  it.effect(
+    "reserves in-flight capacity independently for each configured workspace",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const routeDirectory = yield* makeSlackWorkspaceRouteDirectory;
+          yield* routeDirectory.registerPending(0, identity.teamId);
+          let healthyAcceptances = 0;
+          yield* routeDirectory.settleReady(1, {
+            identity: secondIdentity,
+            namespaceWorkspace: true,
+            runner: {
+              accept: () =>
+                Effect.sync(() => {
+                  healthyAcceptances += 1;
+                  return {
+                    decision: {
+                      _tag: "Accepted" as const,
+                      eventId: EventId.make("EvHealthyCapacity"),
+                      isActivation: true,
+                      threadId: ThreadId.make("workspace:TSECOND:CWORK:1.0"),
+                    },
+                    scheduling: "Scheduled" as const,
+                  };
+                }),
+              inject: () => Effect.void,
+            },
+          });
+          const client = new FakeSocketModeClient();
+          yield* startSocketModeAdapter({ client, routeDirectory });
+          for (
+            let index = 0;
+            index < IN_FLIGHT_WORKSPACE_CAPACITY;
+            index += 1
+          ) {
+            client.emit({
+              ack: () => new Promise<void>(() => undefined),
+              body: eventCallback({ eventId: `EvPendingCapacity${index}` }),
+            });
+          }
+          let acknowledgeHealthy: (() => void) | undefined;
+          const healthyAcknowledged = new Promise<void>((resolve) => {
+            acknowledgeHealthy = resolve;
+          });
+          client.emit({
+            ack: () => {
+              acknowledgeHealthy?.();
+              return Promise.resolve();
+            },
+            body: {
+              ...eventCallback({
+                event: { text: `<@${secondIdentity.botUserId}> run` },
+                eventId: "EvHealthyCapacity",
+              }),
+              team_id: secondIdentity.teamId,
+            },
+          });
+
+          yield* Effect.promise(() => healthyAcknowledged);
+          assert.strictEqual(healthyAcceptances, 1);
+        })
+      )
+  );
+
   it.live(
-    "acknowledges before work and disconnects while interrupting work",
+    "acknowledges durable acceptance without awaiting the blocking inject path",
     () =>
       Effect.gen(function* () {
         const client = new FakeSocketModeClient();
         const order: string[] = [];
-        let interrupted = false;
         const runner: Runner = {
-          abandonBlocked: () => Effect.void,
-          drain: () => Effect.void,
-          inject: () =>
-            Effect.sync(() => order.push("work")).pipe(
-              Effect.andThen(Effect.never),
-              Effect.onInterrupt(() =>
-                Effect.sync(() => {
-                  interrupted = true;
-                })
-              ),
+          accept: () =>
+            Effect.sync(() => order.push("accepted")).pipe(
               Effect.as({
-                _tag: "Accepted" as const,
-                eventId: EventId.make("EvActivation"),
-                isActivation: true,
-                threadId: ThreadId.make("CWORK:1.0"),
+                decision: {
+                  _tag: "Accepted" as const,
+                  eventId: EventId.make("EvActivation"),
+                  isActivation: true,
+                  threadId: ThreadId.make("CWORK:1.0"),
+                },
+                scheduling: "Scheduled" as const,
               })
             ),
+          abandonBlocked: () => Effect.void,
+          drain: () => Effect.void,
+          inject: () => Effect.die(new Error("Socket Mode called inject")),
           retryBlocked: () => Effect.void,
           retryInterrupted: () => Effect.void,
-          lockCounts: Effect.succeed({ acknowledgements: 0, threads: 0 }),
+          lockCounts: Effect.succeed({
+            acknowledgements: 0,
+            drivers: 0,
+            threads: 0,
+          }),
           persistenceHealth: Effect.succeed({ _tag: "Healthy" }),
         };
         yield* Effect.scoped(
@@ -406,13 +725,12 @@ describe("Socket Mode resource and delivery boundary", () => {
               },
               body: eventCallback(),
             });
-            yield* waitUntil(() => order.includes("work"));
-            assert.deepStrictEqual(order, ["ack", "work"]);
+            yield* waitUntil(() => order.includes("ack"));
+            assert.deepStrictEqual(order, ["accepted", "ack"]);
           })
         );
         assert.strictEqual(client.disconnected, true);
         assert.strictEqual(client.listenerRemoved, true);
-        assert.strictEqual(interrupted, true);
       })
   );
 

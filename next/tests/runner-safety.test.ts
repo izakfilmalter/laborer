@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -14,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import {
   fixtureHandlerOptions,
   makeProcessHandler,
@@ -25,7 +26,10 @@ import {
 } from "../src/prototype/runtime.ts";
 import { normalizedEvent } from "../src/prototype/scenario.ts";
 import { makeFileStoreLayer } from "../src/prototype/store.ts";
-import { acquireRunnerLock } from "../src/slack/runner-lock.ts";
+import {
+  acquireRunnerLock,
+  makeRunnerLockAcquirer,
+} from "../src/slack/runner-lock.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 
 const LABORER_ID = "ULABORER";
@@ -65,6 +69,138 @@ const noContextGateway: SlackGatewayShape = {
 };
 
 describe("exclusive Runner lock", () => {
+  it.live(
+    "keeps port ownership until marker cleanup and preserves a replacement marker",
+    () =>
+      Effect.gen(function* () {
+        const runtimeRoot = yield* Effect.promise(() =>
+          canonicalTempDirectory("lt-")
+        );
+        const lockPath = join(runtimeRoot, "runner.lock");
+        const acquired = yield* Deferred.make<void>();
+        let markCleanupStarted: (() => void) | undefined;
+        const cleanupStarted = new Promise<void>((resolveStarted) => {
+          markCleanupStarted = resolveStarted;
+        });
+        let finishCleanup: (() => void) | undefined;
+        const cleanupGate = new Promise<void>((resolveCleanup) => {
+          finishCleanup = resolveCleanup;
+        });
+        const acquire = makeRunnerLockAcquirer({
+          afterOwnedMarkerRemoved: () => {
+            markCleanupStarted?.();
+            return cleanupGate;
+          },
+        });
+        const holder = yield* Effect.forkChild(
+          Effect.scoped(
+            acquire(runtimeRoot, lockPath).pipe(
+              Effect.andThen(Deferred.succeed(acquired, undefined)),
+              Effect.andThen(Effect.never)
+            )
+          )
+        );
+        yield* Deferred.await(acquired);
+        const interrupt = yield* Effect.forkChild(Fiber.interrupt(holder));
+        yield* Effect.promise(() => cleanupStarted);
+
+        const competing = yield* Effect.result(
+          Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
+        );
+        assert.strictEqual(competing._tag, "Failure");
+        yield* Effect.promise(() => writeFile(lockPath, "replacement", "utf8"));
+        finishCleanup?.();
+        yield* Fiber.join(interrupt);
+
+        assert.strictEqual(
+          yield* Effect.promise(() => readFile(lockPath, "utf8")),
+          "replacement"
+        );
+        yield* Effect.promise(() => rm(lockPath));
+        const reacquired = yield* Effect.result(
+          Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
+        );
+        assert.strictEqual(reacquired._tag, "Success");
+      })
+  );
+
+  it.live(
+    "closes a stalled acquisition during scoped shutdown without releasing its gate",
+    () =>
+      Effect.gen(function* () {
+        const runtimeRoot = yield* Effect.promise(() =>
+          canonicalTempDirectory("li-")
+        );
+        const lockPath = join(runtimeRoot, "runner.lock");
+        const acquisitionGate = yield* Deferred.make<void>();
+        const serverStarted = yield* Deferred.make<void>();
+        const stalledAcquire = makeRunnerLockAcquirer({
+          afterServerStarted: Deferred.succeed(serverStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(acquisitionGate))
+          ),
+        });
+        const acquisitionFiber = yield* Effect.forkChild(
+          Effect.scoped(stalledAcquire(runtimeRoot, lockPath))
+        );
+        yield* Deferred.await(serverStarted);
+
+        yield* Fiber.interrupt(acquisitionFiber);
+
+        assert.strictEqual(yield* Deferred.isDone(acquisitionGate), false);
+        const reacquired = yield* Effect.result(
+          Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
+        );
+        assert.strictEqual(reacquired._tag, "Success");
+      })
+  );
+
+  it.live("awaits marker-write cleanup before completing scoped shutdown", () =>
+    Effect.gen(function* () {
+      const runtimeRoot = yield* Effect.promise(() =>
+        canonicalTempDirectory("lm-")
+      );
+      const lockPath = join(runtimeRoot, "runner.lock");
+      let markOpened: (() => void) | undefined;
+      const markerOpened = new Promise<void>((resolveOpened) => {
+        markOpened = resolveOpened;
+      });
+      let gateReleased = false;
+      let releaseGate: (() => void) | undefined;
+      const stalledAcquire = makeRunnerLockAcquirer({
+        afterTemporaryFileOpened: (signal) =>
+          new Promise<void>((resolveGate, rejectGate) => {
+            markOpened?.();
+            releaseGate = () => {
+              gateReleased = true;
+              resolveGate();
+            };
+            signal.addEventListener(
+              "abort",
+              () => rejectGate(new Error("marker write interrupted")),
+              { once: true }
+            );
+          }),
+      });
+      const acquisitionFiber = yield* Effect.forkChild(
+        Effect.scoped(stalledAcquire(runtimeRoot, lockPath))
+      );
+      yield* Effect.promise(() => markerOpened);
+
+      yield* Fiber.interrupt(acquisitionFiber);
+
+      assert.strictEqual(gateReleased, false);
+      assert.deepStrictEqual(
+        yield* Effect.promise(() => readdir(runtimeRoot)),
+        []
+      );
+      const reacquired = yield* Effect.result(
+        Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
+      );
+      assert.strictEqual(reacquired._tag, "Success");
+      releaseGate?.();
+    })
+  );
+
   it.live(
     "rejects concurrent ownership and permits acquisition after release",
     () =>

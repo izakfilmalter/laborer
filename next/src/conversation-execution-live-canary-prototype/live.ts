@@ -110,7 +110,10 @@ const program = Effect.gen(function* () {
     yield* startSocketModeAdapter({
       client: socketClient,
       identity,
-      runner: conversation,
+      runner: {
+        accept: conversation.inject,
+        inject: conversation.inject,
+      },
     });
     yield* Console.log(
       "LIVE CONVERSATION/EXECUTION CANARY — connected; Ctrl-C to stop."

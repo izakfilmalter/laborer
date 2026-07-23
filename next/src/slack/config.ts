@@ -3,6 +3,9 @@ import { SlackConfigValidationError } from "./errors.ts";
 
 const APP_TOKEN_PREFIX = ["x", "app", "-"].join("");
 const BOT_TOKEN_PREFIX = ["x", "oxb", "-"].join("");
+const WORKSPACE_REGISTRY_VARIABLE = "LABORER_SLACK_WORKSPACES";
+const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
+const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
 
 export interface SlackConfigShape {
   readonly appToken: Redacted.Redacted<string>;
@@ -30,6 +33,188 @@ const validateToken = (
         reason: "unexpected-token-kind",
       });
 };
+
+const SlackWorkspaceConfigFromJson = Schema.Struct({
+  botTokenEnvironment: Schema.String,
+  root: Schema.optional(Schema.String),
+  teamId: Schema.String,
+});
+
+export interface SlackInstallationConfig {
+  readonly bindingIndex: number;
+  readonly botToken: Redacted.Redacted<string>;
+  readonly botTokenEnvironment: string;
+  readonly expectedTeamId?: string;
+  readonly namespaceWorkspace: boolean;
+  readonly root?: string;
+  readonly tokenIsValid: boolean;
+  readonly validation:
+    | { readonly _tag: "Valid" }
+    | { readonly _tag: "Invalid"; readonly reason: string };
+}
+
+export interface SlackDaemonConfig {
+  readonly appToken: Redacted.Redacted<string>;
+  readonly installations: readonly SlackInstallationConfig[];
+  readonly startupMode: "legacy" | "multi-workspace";
+}
+
+const configFailure = (
+  variable: string,
+  reason: string
+): SlackConfigValidationError =>
+  SlackConfigValidationError.make({ variable, reason });
+
+const readToken = (
+  environment: NodeJS.ProcessEnv,
+  variable: string,
+  prefix: string
+): Effect.Effect<Redacted.Redacted<string>, SlackConfigValidationError> => {
+  const value = environment[variable];
+  return validateToken(variable, Redacted.make(value ?? ""), prefix);
+};
+
+const invalidInstallation = (
+  bindingIndex: number,
+  reason: string
+): SlackInstallationConfig => ({
+  bindingIndex,
+  botToken: Redacted.make(""),
+  botTokenEnvironment: "",
+  namespaceWorkspace: true,
+  tokenIsValid: false,
+  validation: { _tag: "Invalid", reason },
+});
+
+const bindingValidationReason = (
+  entry: typeof SlackWorkspaceConfigFromJson.Type,
+  teamIds: ReadonlySet<string>,
+  tokenReferences: ReadonlySet<string>
+): string | null => {
+  const teamIdHasUnexpectedFormat = !TEAM_ID_PATTERN.test(entry.teamId);
+  const teamIdIsDuplicated = teamIds.has(entry.teamId);
+  const tokenReferenceHasUnexpectedFormat = !BOT_TOKEN_REFERENCE_PATTERN.test(
+    entry.botTokenEnvironment
+  );
+  const tokenReferenceIsDuplicated = tokenReferences.has(
+    entry.botTokenEnvironment
+  );
+  const rootIsBlank = entry.root?.trim().length === 0;
+
+  if (teamIdHasUnexpectedFormat) {
+    return "invalid-team-id";
+  }
+  if (teamIdIsDuplicated) {
+    return "duplicate-team-id";
+  }
+  if (tokenReferenceHasUnexpectedFormat) {
+    return "invalid-token-reference";
+  }
+  if (tokenReferenceIsDuplicated) {
+    return "duplicate-token-reference";
+  }
+  return rootIsBlank ? "blank-root" : null;
+};
+
+export const loadSlackDaemonConfig = Effect.fn("loadSlackDaemonConfig")(
+  function* (options: {
+    readonly defaultRoot: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }) {
+    const environment = options.environment ?? process.env;
+    const appToken = yield* readToken(
+      environment,
+      "SLACK_APP_TOKEN",
+      APP_TOKEN_PREFIX
+    );
+    const registrySource = environment[WORKSPACE_REGISTRY_VARIABLE];
+    if (registrySource === undefined) {
+      const botToken = yield* readToken(
+        environment,
+        "SLACK_BOT_TOKEN",
+        BOT_TOKEN_PREFIX
+      );
+      return {
+        appToken,
+        installations: [
+          {
+            bindingIndex: 0,
+            botToken,
+            botTokenEnvironment: "SLACK_BOT_TOKEN",
+            namespaceWorkspace: false,
+            root: environment.LABORER_ROOT ?? options.defaultRoot,
+            tokenIsValid: true,
+            validation: { _tag: "Valid" },
+          },
+        ],
+        startupMode: "legacy",
+      } satisfies SlackDaemonConfig;
+    }
+
+    if (registrySource.trim().length === 0) {
+      return yield* configFailure(WORKSPACE_REGISTRY_VARIABLE, "blank");
+    }
+    const source = yield* Effect.try({
+      try: () => JSON.parse(registrySource) as unknown,
+      catch: () => configFailure(WORKSPACE_REGISTRY_VARIABLE, "invalid-json"),
+    });
+    if (!Array.isArray(source)) {
+      return yield* configFailure(
+        WORKSPACE_REGISTRY_VARIABLE,
+        "invalid-registry"
+      );
+    }
+    if (source.length === 0) {
+      return yield* configFailure(
+        WORKSPACE_REGISTRY_VARIABLE,
+        "empty-registry"
+      );
+    }
+
+    const teamIds = new Set<string>();
+    const tokenReferences = new Set<string>();
+    const installations: SlackInstallationConfig[] = [];
+    for (const [bindingIndex, rawEntry] of source.entries()) {
+      const decoded = yield* Effect.result(
+        Schema.decodeUnknownEffect(SlackWorkspaceConfigFromJson)(rawEntry)
+      );
+      if (decoded._tag === "Failure") {
+        installations.push(invalidInstallation(bindingIndex, "invalid-shape"));
+        continue;
+      }
+      const entry = decoded.success;
+      const validationReason = bindingValidationReason(
+        entry,
+        teamIds,
+        tokenReferences
+      );
+      if (validationReason !== null) {
+        installations.push(invalidInstallation(bindingIndex, validationReason));
+        continue;
+      }
+      teamIds.add(entry.teamId);
+      tokenReferences.add(entry.botTokenEnvironment);
+      const tokenValue = environment[entry.botTokenEnvironment] ?? "";
+      installations.push({
+        bindingIndex,
+        botToken: Redacted.make(tokenValue),
+        botTokenEnvironment: entry.botTokenEnvironment,
+        expectedTeamId: entry.teamId,
+        namespaceWorkspace: true,
+        ...(entry.root === undefined ? {} : { root: entry.root }),
+        tokenIsValid:
+          tokenValue.trim().length > 0 &&
+          tokenValue.startsWith(BOT_TOKEN_PREFIX),
+        validation: { _tag: "Valid" },
+      });
+    }
+    return {
+      appToken,
+      installations,
+      startupMode: "multi-workspace",
+    } satisfies SlackDaemonConfig;
+  }
+);
 
 export const loadSlackConfig: Effect.Effect<
   SlackConfigShape,

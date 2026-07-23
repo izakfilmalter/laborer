@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { type FetchFunction, WebClient } from "@slack/web-api";
-import { Clock, Effect, Fiber, Layer, Ref } from "effect";
+import { Clock, Deferred, Effect, Fiber, Layer, Ref } from "effect";
 import {
   type NormalizedInboundEvent,
   type OutboundItem,
@@ -51,6 +51,7 @@ import {
 import {
   makeControlledStoreLayer,
   makeFileStoreLayer,
+  PrototypeStore,
 } from "../src/prototype/store.ts";
 
 const noContextGateway = (): SlackGatewayShape => ({
@@ -542,6 +543,49 @@ describe("identity and semantic invariants", () => {
 });
 
 describe("automatic durable recovery", () => {
+  it.effect(
+    "uses one active driver for over a thousand accepted events behind a stalled handler",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handlerStarted = yield* Deferred.make<void>();
+          const releaseHandler = yield* Deferred.make<void>();
+          const harness = yield* makePrototypeHarness({
+            handler: {
+              invoke: () =>
+                Deferred.succeed(handlerStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseHandler))
+                ),
+            },
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: noContextGateway(),
+          });
+          yield* harness.runner.accept(activationEvent());
+          yield* Deferred.await(handlerStarted);
+
+          for (let index = 0; index < 1100; index += 1) {
+            const acceptance = yield* harness.runner.accept(
+              normalizedEvent({
+                authorSlackId: "UHUMAN",
+                channelId: "CVERIFY",
+                eventId: `event:queued:${index}`,
+                messageTs: `${index + 2}.0`,
+                text: `queued ${index}`,
+                threadTs: "1.0",
+              })
+            );
+            assert.strictEqual(acceptance.decision._tag, "Accepted");
+            assert.strictEqual(acceptance.scheduling, "AlreadyDurable");
+          }
+
+          assert.strictEqual((yield* harness.runner.lockCounts).drivers, 1);
+          yield* Deferred.succeed(releaseHandler, undefined);
+          yield* harness.runner.drain(ThreadId.make("CVERIFY:1.0"));
+        })
+      ),
+    60_000
+  );
+
   it.effect("uses duplicate event delivery as a safe recovery wake-up", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -581,6 +625,148 @@ describe("automatic durable recovery", () => {
         );
       })
     )
+  );
+
+  it.live(
+    "uses duplicate production acceptance to re-drive persisted work after a failed drive",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const failOutcome = yield* Ref.make(true);
+          const harness = yield* makePrototypeHarness({
+            handler: noReplyHandler,
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: noContextGateway(),
+            storeLayer: makeControlledStoreLayer({
+              laborerSlackId: LABORER_SLACK_ID,
+              persist: (state) =>
+                Effect.gen(function* () {
+                  const shouldFail = yield* Ref.get(failOutcome);
+                  const hasOutcome = state.threads.some((thread) =>
+                    thread.turns.some((turn) => turn.outcome !== null)
+                  );
+                  if (shouldFail && hasOutcome) {
+                    return yield* StoreError.make({
+                      operation: "persist",
+                      reason: "injected-accept-outcome-failure",
+                    });
+                  }
+                }),
+            }),
+          });
+          const event = activationEvent({
+            eventId: "event:production-recovery",
+          });
+          const first = yield* harness.runner.accept(event);
+          assert.strictEqual(first.decision._tag, "Accepted");
+          yield* waitFor(
+            harness.store.snapshot,
+            (state) => state.threads[0]?.turns[0]?.status === "running"
+          );
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if ((yield* harness.runner.lockCounts).drivers === 0) {
+              break;
+            }
+            yield* Effect.sleep("5 millis");
+          }
+          assert.strictEqual((yield* harness.runner.lockCounts).drivers, 0);
+
+          yield* Ref.set(failOutcome, false);
+          const duplicate = yield* harness.runner.accept(event);
+          assert.strictEqual(duplicate.decision._tag, "Ignored");
+          assert.strictEqual(duplicate.scheduling, "Scheduled");
+          const recovered = yield* waitFor(
+            harness.store.snapshot,
+            (state) => state.threads[0]?.turns[0]?.status === "completed"
+          );
+          assert.deepStrictEqual(
+            recovered.threads[0]?.turns[0]?.attempts.map(
+              (attempt) => attempt.status
+            ),
+            ["interrupted", "succeeded"]
+          );
+        })
+      )
+  );
+
+  it.effect(
+    "does not lose a concurrent wake-up while the active driver completes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const idleObserved = yield* Deferred.make<void>();
+          const releaseIdle = yield* Deferred.make<void>();
+          const secondHandled = yield* Deferred.make<void>();
+          let armIdleGate = false;
+          let handlerInvocations = 0;
+          const baseStoreLayer = makeControlledStoreLayer({
+            laborerSlackId: LABORER_SLACK_ID,
+            persist: () => Effect.void,
+          });
+          const gatedStoreLayer = Layer.effect(
+            PrototypeStore,
+            Effect.gen(function* () {
+              const store = yield* PrototypeStore;
+              return PrototypeStore.of({
+                ...store,
+                claimNextTurn: (threadId) =>
+                  store.claimNextTurn(threadId).pipe(
+                    Effect.flatMap((turn) => {
+                      if (turn !== null || !armIdleGate) {
+                        return Effect.succeed(turn);
+                      }
+                      armIdleGate = false;
+                      return Deferred.succeed(idleObserved, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseIdle)),
+                        Effect.as(null)
+                      );
+                    })
+                  ),
+              });
+            })
+          ).pipe(Layer.provide(baseStoreLayer));
+          const harness = yield* makePrototypeHarness({
+            handler: {
+              invoke: () =>
+                Effect.sync(() => {
+                  handlerInvocations += 1;
+                  if (handlerInvocations === 1) {
+                    armIdleGate = true;
+                  }
+                  return handlerInvocations;
+                }).pipe(
+                  Effect.flatMap((invocations) =>
+                    invocations === 2
+                      ? Deferred.succeed(secondHandled, undefined)
+                      : Effect.void
+                  )
+                ),
+            },
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: noContextGateway(),
+            storeLayer: gatedStoreLayer,
+          });
+          yield* harness.runner.accept(
+            activationEvent({ eventId: "event:wakeup:first" })
+          );
+          yield* Deferred.await(idleObserved);
+
+          const second = yield* harness.runner.accept(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CVERIFY",
+              eventId: "event:wakeup:second",
+              messageTs: "2.0",
+              text: `<@${LABORER_SLACK_ID}> wake again`,
+              threadTs: "1.0",
+            })
+          );
+          assert.strictEqual(second.decision._tag, "Accepted");
+          yield* Deferred.succeed(releaseIdle, undefined);
+          yield* Deferred.await(secondHandled);
+          assert.strictEqual(handlerInvocations, 2);
+        })
+      )
   );
 
   it.live(

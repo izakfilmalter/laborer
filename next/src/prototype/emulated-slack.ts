@@ -357,6 +357,7 @@ export const normalizeSlackHistoryMessage = (options: {
   readonly botUserId: string;
   readonly channelId: string;
   readonly message: Record<string, unknown>;
+  readonly workspaceId?: string;
 }): NormalizedMessage | null => {
   const { message } = options;
   const slackTs = typeof message.ts === "string" ? message.ts : null;
@@ -382,7 +383,7 @@ export const normalizeSlackHistoryMessage = (options: {
     return null;
   }
   return NormalizedMessage.make({
-    id: stableMessageId(options.channelId, slackTs),
+    id: stableMessageId(options.channelId, slackTs, options.workspaceId),
     classification: "context",
     isActivation: false,
     authorKind: isBot ? "externalBot" : "human",
@@ -416,7 +417,8 @@ const normalizeReplyPage = (
   messages: readonly Record<string, unknown>[],
   request: ActivationContextRequest,
   botId: string,
-  botUserId: string
+  botUserId: string,
+  workspaceId?: string
 ): NormalizedMessage[] =>
   pipe(
     messages,
@@ -429,6 +431,7 @@ const normalizeReplyPage = (
         botUserId,
         channelId: request.channelId,
         message,
+        ...(workspaceId === undefined ? {} : { workspaceId }),
       });
       return result === null ? Result.failVoid : Result.succeed(result);
     })
@@ -454,6 +457,7 @@ export const makeSlackGateway = (options: {
   readonly botId?: string;
   readonly botUserId?: string;
   readonly pageSize: number;
+  readonly workspaceId?: string;
 }): SlackGatewayShape => {
   const readRootContext = Effect.fnUntraced(function* (
     request: ActivationContextRequest
@@ -491,6 +495,9 @@ export const makeSlackGateway = (options: {
             botUserId: options.botUserId ?? BOT_USER_ID,
             channelId: request.channelId,
             message: message as Record<string, unknown>,
+            ...(options.workspaceId === undefined
+              ? {}
+              : { workspaceId: options.workspaceId }),
           });
           return result === null ? Result.failVoid : Result.succeed(result);
         })
@@ -546,7 +553,8 @@ export const makeSlackGateway = (options: {
         (response.messages ?? []) as Record<string, unknown>[],
         request,
         options.botId ?? BOT_ID,
-        options.botUserId ?? BOT_USER_ID
+        options.botUserId ?? BOT_USER_ID,
+        options.workspaceId
       );
       collected = EffectArray.appendAll(collected, normalized);
       cursor = nextPageCursor(
@@ -579,7 +587,8 @@ export const makeSlackGateway = (options: {
         (fallback.messages ?? []) as Record<string, unknown>[],
         request,
         options.botId ?? BOT_ID,
-        options.botUserId ?? BOT_USER_ID
+        options.botUserId ?? BOT_USER_ID,
+        options.workspaceId
       );
     }
     return finalizeContext(collected, "reply");

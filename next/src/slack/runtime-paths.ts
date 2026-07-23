@@ -14,7 +14,8 @@ export interface SlackRuntimePaths {
 }
 
 export const prepareSlackRuntimePaths = (
-  projectRoot: string
+  projectRoot: string,
+  workspaceId?: string
 ): Effect.Effect<SlackRuntimePaths, SlackStartupError> =>
   Effect.gen(function* () {
     const canonicalProjectRoot = yield* Effect.tryPromise({
@@ -26,7 +27,11 @@ export const prepareSlackRuntimePaths = (
         }),
     });
     const root = resolve(canonicalProjectRoot, ".laborer-runtime");
-    const workThreads = resolve(root, "work-threads");
+    const workspaceRoot =
+      workspaceId === undefined
+        ? root
+        : resolve(root, "slack-workspaces", encodeURIComponent(workspaceId));
+    const workThreads = resolve(workspaceRoot, "work-threads");
     yield* Effect.tryPromise({
       try: async () => {
         await ensureOwnerOnlyDirectoryTree({
@@ -36,6 +41,11 @@ export const prepareSlackRuntimePaths = (
         });
         await ensureOwnerOnlyDirectoryTree({
           anchor: root,
+          operation: "prepare-runtime-directory",
+          target: workspaceRoot,
+        });
+        await ensureOwnerOnlyDirectoryTree({
+          anchor: workspaceRoot,
           operation: "prepare-runtime-directory",
           target: workThreads,
         });
@@ -49,7 +59,7 @@ export const prepareSlackRuntimePaths = (
     return {
       lock: resolve(root, "runner.lock"),
       root,
-      snapshot: resolve(root, "state.json"),
+      snapshot: resolve(workspaceRoot, "state.json"),
       workThreads,
     };
   });

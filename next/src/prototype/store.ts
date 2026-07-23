@@ -399,6 +399,29 @@ const inputMessageOrder = pipe(
   Order.mapInput((message: NormalizedMessage) => Number(message.slackTs))
 );
 
+const durableInboundIdentity = (event: NormalizedInboundEvent) => {
+  const rootTs = event.threadTs ?? event.messageTs;
+  return {
+    acknowledgementId: stableAcknowledgementId(
+      event.channelId,
+      event.messageTs,
+      event.workspaceId
+    ),
+    messageId: stableMessageId(
+      event.channelId,
+      event.messageTs,
+      event.workspaceId
+    ),
+    rootTs,
+    threadId: canonicalThreadId(event.channelId, rootTs, event.workspaceId),
+  };
+};
+
+const optionalWorkspaceIdentity = (
+  workspaceId: string | undefined
+): { readonly workspaceId?: string } =>
+  workspaceId === undefined ? {} : { workspaceId };
+
 const acceptTransition = (
   state: PrototypeState,
   event: NormalizedInboundEvent,
@@ -424,9 +447,8 @@ const acceptTransition = (
     return ignored(state, event, "blank");
   }
 
-  const rootTs = event.threadTs ?? event.messageTs;
-  const threadId = canonicalThreadId(event.channelId, rootTs);
-  const messageId = stableMessageId(event.channelId, event.messageTs);
+  const { acknowledgementId, messageId, rootTs, threadId } =
+    durableInboundIdentity(event);
   const existing = findInputMessage(state, messageId);
   if (existing !== null) {
     const isIdentical =
@@ -478,6 +500,7 @@ const acceptTransition = (
             turns: [],
             unassigned: [message],
             workingDirectory: null,
+            ...optionalWorkspaceIdentity(event.workspaceId),
           })
         )
       : pipe(
@@ -506,7 +529,7 @@ const acceptTransition = (
               channelId: event.channelId,
               cleanupRequested: false,
               eventId: event.eventId,
-              id: stableAcknowledgementId(event.channelId, event.messageTs),
+              id: acknowledgementId,
               lastErrorCategory: null,
               messageTs: event.messageTs,
               retryAtMillis: null,
@@ -1398,9 +1421,10 @@ const validateOutcome = (turn: TurnState): StoreError | null => {
 const validateMessage = (
   message: NormalizedMessage,
   channelId: string,
-  classification: "context" | "input"
+  classification: "context" | "input",
+  workspaceId?: string
 ): StoreError | null => {
-  if (message.id !== stableMessageId(channelId, message.slackTs)) {
+  if (message.id !== stableMessageId(channelId, message.slackTs, workspaceId)) {
     return storeFailure("validate", "noncanonical-message-id");
   }
   if (message.classification !== classification) {
@@ -1507,7 +1531,10 @@ const hasValidThreadInitialization = (thread: WorkThreadState): boolean => {
 };
 
 const validateThreadMetadata = (thread: WorkThreadState): StoreError | null => {
-  if (thread.id !== canonicalThreadId(thread.channelId, thread.rootTs)) {
+  if (
+    thread.id !==
+    canonicalThreadId(thread.channelId, thread.rootTs, thread.workspaceId)
+  ) {
     return storeFailure("validate", "noncanonical-thread-id");
   }
   if (!hasValidThreadInitialization(thread)) {
@@ -1582,13 +1609,23 @@ const validateThreadMessages = (
     return storeFailure("validate", "invalid-activation-message");
   }
   for (const message of inputMessages) {
-    const failure = validateMessage(message, thread.channelId, "input");
+    const failure = validateMessage(
+      message,
+      thread.channelId,
+      "input",
+      thread.workspaceId
+    );
     if (failure !== null) {
       return failure;
     }
   }
   for (const message of thread.context) {
-    const failure = validateMessage(message, thread.channelId, "context");
+    const failure = validateMessage(
+      message,
+      thread.channelId,
+      "context",
+      thread.workspaceId
+    );
     if (failure !== null) {
       return failure;
     }
@@ -1629,7 +1666,8 @@ const validateThreadTurns = (
       const messageFailure = validateMessage(
         message,
         thread.channelId,
-        "context"
+        "context",
+        thread.workspaceId
       );
       if (messageFailure !== null) {
         return messageFailure;
@@ -1837,7 +1875,8 @@ const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
       acknowledgement.id !==
         stableAcknowledgementId(
           acknowledgement.channelId,
-          acknowledgement.messageTs
+          acknowledgement.messageTs,
+          matchingActivationThreads[0]?.workspaceId
         ) ||
       !EffectArray.contains(state.seenEventIds, acknowledgement.eventId) ||
       matchingActivationThreads.length !== 1 ||

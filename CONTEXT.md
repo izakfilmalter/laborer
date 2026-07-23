@@ -75,6 +75,15 @@ A user-configured agent that stands between a work-thread conversation and any d
 **Conversation runtime**:
 The long-lived, root-bound service that serializes work-thread events and resumes conversation-agent sessions. It may request delegated work but does not own the resulting Executions.
 
+**Conversation event**:
+One accepted Slack input or Execution lifecycle change presented to a conversation agent. A conversation event belongs to one work thread, retains its identity across replay, and is handled in that thread's serialized event order.
+
+**Conversation-agent session**:
+The durable conversational identity bound to one work thread and resumed across its conversation events. It preserves the conversation agent's context while allowing the underlying agent process to remain idle between events.
+
+**Conversation response**:
+The completed text a conversation agent deliberately returns for one conversation event. Laborer treats its contents as opaque and publishes a nonempty response as one logical public reply; returning no response is intentional silence.
+
 **Action**:
 A user-registered, named kind of work that a conversation agent may delegate. An Action may invoke an agent, run a script, execute a workflow, or perform any other author-defined work. Starting an Action creates an Execution.
 

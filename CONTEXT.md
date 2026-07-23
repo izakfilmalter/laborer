@@ -72,11 +72,17 @@ The following terms belong to the first intended coding-workflow use case, not t
 **Conversation agent**:
 A user-configured agent that stands between a work-thread conversation and any delegated execution. It interprets conversational input and execution events, decides whether to answer or delegate, and turns selected execution activity into deliberate public replies. Laborer does not define its prompt, tools, workflow, or delegation topology.
 
+**Conversation runtime**:
+The long-lived, root-bound service that serializes work-thread events and resumes conversation-agent sessions. It may request delegated work but does not own the resulting Executions.
+
 **Action**:
 A user-registered, named kind of work that a conversation agent may delegate. An Action may invoke an agent, run a script, execute a workflow, or perform any other author-defined work. Starting an Action creates an Execution.
 
 **Execution**:
 One invocation of a registered Action, tracked independently from both the conversation-agent session and any underlying provider identity.
+
+**Execution runtime**:
+The long-lived, root-bound service that accepts delegated Actions and owns each Execution's lifecycle, resources, and observable status. It reports execution activity back to the conversation runtime and never publishes directly to Slack.
 
 **Intake pass**:
 A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.

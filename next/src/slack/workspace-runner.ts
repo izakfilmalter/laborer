@@ -30,6 +30,7 @@ import {
   type ReferenceCodingApplicationRepository,
   type WorktreeManagerShape,
 } from "../reference-coding-application.ts";
+import { makeHotReloadingConversationPromptConfig } from "./conversation-prompt-config.ts";
 import { environmentForConfiguredHandler } from "./handler-environment.ts";
 import type {
   ReferenceCodingApplicationConfig,
@@ -93,17 +94,15 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
   const worktreeManager = (
     dependencies.makeWorktreeManager ?? makeGitWorktreeManager
   )({ repository: options.root });
-  const conversationConfig = options.config.conversation;
+  const loadPromptConfig = yield* makeHotReloadingConversationPromptConfig({
+    environment: options.environment,
+    initialConfig: options.config,
+    root: options.root,
+  });
   return yield* makeReferenceCodingApplication({
     conversationAgent: makeOpenCodeConversationAgent({
       client: sessionClient,
-      ...(conversationConfig === undefined
-        ? {}
-        : {
-            instructions: conversationConfig.instructions,
-            operationResultInstructions:
-              conversationConfig.operationResultInstructions,
-          }),
+      loadPromptConfig,
       repositoryDirectory: options.root,
     }),
     implementationAgent: makeOpenCodeImplementationAgent({

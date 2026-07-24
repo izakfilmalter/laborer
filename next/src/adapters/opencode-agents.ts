@@ -940,14 +940,22 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
 export interface OpenCodeConversationAgentOptions {
   readonly client: OpenCodeSessionClient;
   readonly instructions?: readonly string[];
+  readonly loadPromptConfig?: OpenCodeConversationPromptConfigLoader;
   readonly operationResultInstructions?: readonly string[];
   readonly repositoryDirectory: string;
 }
 
+export interface OpenCodeConversationPromptConfig {
+  readonly instructions?: readonly string[];
+  readonly operationResultInstructions?: readonly string[];
+}
+
+export type OpenCodeConversationPromptConfigLoader =
+  () => Effect.Effect<OpenCodeConversationPromptConfig>;
+
 interface ResolvedOpenCodeConversationAgentOptions {
   readonly client: OpenCodeSessionClient;
-  readonly instructions: readonly string[];
-  readonly operationResultInstructions: readonly string[];
+  readonly loadPromptConfig: OpenCodeConversationPromptConfigLoader;
   readonly repositoryDirectory: string;
 }
 
@@ -985,6 +993,18 @@ const DEFAULT_OPERATION_RESULT_INSTRUCTIONS: readonly string[] = Object.freeze([
   'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
   "Do not request another Action or Execution control.",
 ]);
+
+const resolvedConversationPromptConfig = (
+  config: OpenCodeConversationPromptConfig
+): Required<OpenCodeConversationPromptConfig> => ({
+  instructions: Object.freeze([
+    ...(config.instructions ?? DEFAULT_CONVERSATION_INSTRUCTIONS),
+  ]),
+  operationResultInstructions: Object.freeze([
+    ...(config.operationResultInstructions ??
+      DEFAULT_OPERATION_RESULT_INSTRUCTIONS),
+  ]),
+});
 
 const protocolFailure = (safeDetail: string): HandlerFailure =>
   HandlerFailure.make({ category: "protocol", safeDetail });
@@ -1262,8 +1282,11 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
     workingDirectory: options.repositoryDirectory,
   };
   if (submitInitialPrompt) {
+    const promptConfig = resolvedConversationPromptConfig(
+      yield* options.loadPromptConfig()
+    );
     const promptText = yield* boundedPrompt(
-      renderConversationPrompt(request, options.instructions)
+      renderConversationPrompt(request, promptConfig.instructions)
     );
     yield* ensureConversationSession(options.client, identity, request);
     yield* submitConversationPrompt(options.client, {
@@ -1316,12 +1339,15 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
       request,
       record
     );
+    const promptConfig = resolvedConversationPromptConfig(
+      yield* options.loadPromptConfig()
+    );
     const actionResultPromptId = `${request.promptId}:action-result:${round}`;
     const actionResultText = yield* boundedPrompt(
       renderActionResultPrompt(
         request,
         invocationResult,
-        options.operationResultInstructions
+        promptConfig.operationResultInstructions
       )
     );
     if (!hasPrompt(messages, actionResultPromptId)) {
@@ -1341,15 +1367,18 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
 export const makeOpenCodeConversationAgent = (
   options: OpenCodeConversationAgentOptions
 ): ConversationAgentShape => {
+  const startupPromptConfig = resolvedConversationPromptConfig({
+    ...(options.instructions === undefined
+      ? {}
+      : { instructions: options.instructions }),
+    ...(options.operationResultInstructions === undefined
+      ? {}
+      : { operationResultInstructions: options.operationResultInstructions }),
+  });
   const resolvedOptions: ResolvedOpenCodeConversationAgentOptions = {
     client: options.client,
-    instructions: Object.freeze([
-      ...(options.instructions ?? DEFAULT_CONVERSATION_INSTRUCTIONS),
-    ]),
-    operationResultInstructions: Object.freeze([
-      ...(options.operationResultInstructions ??
-        DEFAULT_OPERATION_RESULT_INSTRUCTIONS),
-    ]),
+    loadPromptConfig:
+      options.loadPromptConfig ?? (() => Effect.succeed(startupPromptConfig)),
     repositoryDirectory: options.repositoryDirectory,
   };
   return {

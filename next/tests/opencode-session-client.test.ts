@@ -1,11 +1,183 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
+  makeOpenCodeLegacySessionTransport,
   makeOpenCodeSessionClientFromV2Api,
+  type OpenCodeLegacySessionApi,
   type OpenCodeV2SessionApi,
 } from "../src/adapters/opencode-agents.ts";
 
 const OPENCODE_MAX_SESSION_MESSAGES = 200;
+
+describe("OpenCode legacy session transport", () => {
+  it("projects legacy messages into descending transport order", async () => {
+    const calls: unknown[] = [];
+    const api: OpenCodeLegacySessionApi = {
+      messages: (input, requestOptions) => {
+        calls.push([input, requestOptions]);
+        return Promise.resolve({
+          data: [
+            {
+              info: { id: "prompt-1", role: "user", time: { created: 1 } },
+              parts: [{ text: "input", type: "text" }],
+            },
+            {
+              info: {
+                finish: "tool-calls",
+                id: "assistant-tool-only",
+                role: "assistant",
+                time: { completed: 2 },
+              },
+              parts: [{ type: "tool" }],
+            },
+            {
+              info: {
+                finish: "stop",
+                id: "assistant-terminal",
+                role: "assistant",
+                time: { completed: 3 },
+              },
+              parts: [
+                { text: "final", type: "text" },
+                { type: "tool" },
+                { text: "response", type: "text" },
+              ],
+            },
+          ],
+        });
+      },
+      promptAsync: () => Promise.resolve(),
+    };
+    const transport = makeOpenCodeLegacySessionTransport(api);
+
+    const messages = await transport.messages({
+      limit: OPENCODE_MAX_SESSION_MESSAGES,
+      order: "desc",
+      sessionId: "session-1",
+      workingDirectory: "/repo/worktree",
+    });
+
+    assert.deepStrictEqual(messages, [
+      {
+        finish: "stop",
+        id: "assistant-terminal",
+        role: "assistant",
+        status: "completed",
+        text: "final\nresponse",
+      },
+      {
+        finish: "tool-calls",
+        id: "assistant-tool-only",
+        role: "assistant",
+        status: "completed",
+        text: "",
+      },
+      { id: "prompt-1", role: "user", text: "input" },
+    ]);
+    assert.deepStrictEqual(calls, [
+      [
+        {
+          directory: "/repo/worktree",
+          limit: OPENCODE_MAX_SESSION_MESSAGES,
+          sessionID: "session-1",
+        },
+        { throwOnError: true },
+      ],
+    ]);
+  });
+
+  it("projects legacy assistant failures and in-progress responses", async () => {
+    const api: OpenCodeLegacySessionApi = {
+      messages: () =>
+        Promise.resolve({
+          data: [
+            {
+              info: { id: "prompt-1", role: "user", time: { created: 1 } },
+              parts: [{ text: "input", type: "text" }],
+            },
+            {
+              info: {
+                id: "assistant-progress",
+                role: "assistant",
+                time: { created: 2 },
+              },
+              parts: [{ text: "partial", type: "text" }],
+            },
+            {
+              info: {
+                error: { name: "ProviderAuthError" },
+                id: "assistant-error",
+                role: "assistant",
+                time: { completed: 3 },
+              },
+              parts: [],
+            },
+          ],
+        }),
+      promptAsync: () => Promise.resolve(),
+    };
+    const transport = makeOpenCodeLegacySessionTransport(api);
+
+    const messages = await transport.messages({
+      limit: OPENCODE_MAX_SESSION_MESSAGES,
+      order: "desc",
+      sessionId: "session-1",
+      workingDirectory: "/repo/worktree",
+    });
+
+    assert.deepStrictEqual(messages, [
+      {
+        id: "assistant-error",
+        role: "assistant",
+        status: "error",
+        text: "",
+      },
+      {
+        id: "assistant-progress",
+        role: "assistant",
+        status: "in-progress",
+        text: "partial",
+      },
+      { id: "prompt-1", role: "user", text: "input" },
+    ]);
+  });
+
+  it("submits the exact prompt ID, configured model, and optional agent", async () => {
+    const calls: unknown[] = [];
+    const api: OpenCodeLegacySessionApi = {
+      messages: () => Promise.resolve({ data: [] }),
+      promptAsync: (input, requestOptions) => {
+        calls.push([input, requestOptions]);
+        return Promise.resolve();
+      },
+    };
+    const transport = makeOpenCodeLegacySessionTransport(api);
+
+    const admitted = await transport.prompt({
+      agent: "laborer",
+      model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+      promptId: "prompt-1",
+      sessionId: "session-1",
+      text: "input",
+      workingDirectory: "/repo/worktree",
+    });
+
+    assert.deepStrictEqual(admitted, { id: "prompt-1" });
+    assert.deepStrictEqual(calls, [
+      [
+        {
+          agent: "laborer",
+          directory: "/repo/worktree",
+          messageID: "prompt-1",
+          model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+          parts: [{ text: "input", type: "text" }],
+          sessionID: "session-1",
+        },
+        { throwOnError: true },
+      ],
+    ]);
+  });
+});
 
 describe("OpenCode v2 session client", () => {
   it.effect(
@@ -544,7 +716,14 @@ describe("OpenCode v2 session client", () => {
         ],
         [
           "prompt",
-          { promptId: "prompt-1", sessionId: "session-1", text: "input" },
+          {
+            agent: "laborer",
+            model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+            promptId: "prompt-1",
+            sessionId: "session-1",
+            text: "input",
+            workingDirectory: "/repo/worktree",
+          },
         ],
         ["wait", { sessionId: "session-1" }],
         [
@@ -553,6 +732,7 @@ describe("OpenCode v2 session client", () => {
             limit: OPENCODE_MAX_SESSION_MESSAGES,
             order: "desc",
             sessionId: "session-1",
+            workingDirectory: "/repo/worktree",
           },
         ],
         [
@@ -561,6 +741,7 @@ describe("OpenCode v2 session client", () => {
             limit: OPENCODE_MAX_SESSION_MESSAGES,
             order: "desc",
             sessionId: "session-1",
+            workingDirectory: "/repo/worktree",
           },
         ],
         ["interrupt", { sessionId: "session-1" }],

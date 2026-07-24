@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import type { SessionMessage } from "@opencode-ai/sdk/v2/types";
 import type { Scope } from "effect";
 import { Effect, Array as EffectArray, Option, pipe, Semaphore } from "effect";
 import { HandlerFailure } from "../prototype/errors.ts";
@@ -75,13 +74,69 @@ export interface OpenCodeV2SessionApi {
     readonly limit: number;
     readonly order: "desc";
     readonly sessionId: string;
+    readonly workingDirectory: string;
   }) => Promise<readonly OpenCodeSessionMessage[]>;
   readonly prompt: (input: {
+    readonly agent?: string;
+    readonly model?: OpenCodeModel;
     readonly promptId: string;
     readonly sessionId: string;
     readonly text: string;
+    readonly workingDirectory: string;
   }) => Promise<{ readonly id: string }>;
   readonly wait: (input: { readonly sessionId: string }) => Promise<void>;
+}
+
+export interface OpenCodeLegacyMessage {
+  readonly info: {
+    readonly error?: unknown;
+    readonly finish?: string;
+    readonly id: string;
+    readonly role: "assistant" | "user";
+    readonly time: {
+      readonly completed?: number;
+      readonly created?: number;
+    };
+  };
+  readonly parts: readonly {
+    readonly text?: string;
+    readonly type: string;
+  }[];
+}
+
+interface OpenCodeLegacyMessagesRequest {
+  readonly directory: string;
+  readonly limit: number;
+  readonly sessionID: string;
+}
+
+interface OpenCodeLegacyPromptAsyncRequest {
+  readonly agent?: string;
+  readonly directory: string;
+  readonly messageID: string;
+  readonly model?: OpenCodeModel;
+  readonly parts: [
+    {
+      readonly text: string;
+      readonly type: "text";
+    },
+  ];
+  readonly sessionID: string;
+}
+
+interface OpenCodeLegacyRequestOptions {
+  readonly throwOnError: true;
+}
+
+export interface OpenCodeLegacySessionApi {
+  readonly messages: (
+    input: OpenCodeLegacyMessagesRequest,
+    options: OpenCodeLegacyRequestOptions
+  ) => Promise<{ readonly data: readonly OpenCodeLegacyMessage[] }>;
+  readonly promptAsync: (
+    input: OpenCodeLegacyPromptAsyncRequest,
+    options: OpenCodeLegacyRequestOptions
+  ) => Promise<void>;
 }
 
 export interface OpenCodeSessionClientOptions {
@@ -200,6 +255,7 @@ const readPromptWaitState = (
       limit: MAX_SESSION_MESSAGES,
       order: "desc",
       sessionId: input.sessionId,
+      workingDirectory: input.workingDirectory,
     })
   ).pipe(
     Effect.map(EffectArray.reverse),
@@ -438,6 +494,7 @@ export const makeOpenCodeSessionClientFromV2Api = (
           limit: MAX_SESSION_MESSAGES,
           order: "desc",
           sessionId: identity.sessionId,
+          workingDirectory: identity.workingDirectory,
         })
       ).pipe(Effect.map(EffectArray.reverse)),
     sessionExists: (identity) =>
@@ -462,9 +519,12 @@ export const makeOpenCodeSessionClientFromV2Api = (
     submitPrompt: (input) =>
       apiEffect("prompt submission", () =>
         api.prompt({
+          ...(options.agent === undefined ? {} : { agent: options.agent }),
+          ...(options.model === undefined ? {} : { model: options.model }),
           promptId: input.promptId,
           sessionId: input.sessionId,
           text: input.text,
+          workingDirectory: input.workingDirectory,
         })
       ).pipe(
         Effect.flatMap((admitted) =>
@@ -495,7 +555,7 @@ export const makeOpenCodeSessionClientFromV2Api = (
 };
 
 const projectedAssistantStatus = (
-  message: Extract<SessionMessage, { readonly type: "assistant" }>
+  message: OpenCodeLegacyMessage["info"]
 ): "completed" | "error" | "in-progress" => {
   if (message.error !== undefined) {
     return "error";
@@ -506,36 +566,67 @@ const projectedAssistantStatus = (
   return "in-progress";
 };
 
-const projectedMessages = (
-  messages: readonly SessionMessage[]
+const projectedLegacyMessages = (
+  messages: readonly OpenCodeLegacyMessage[]
 ): readonly OpenCodeSessionMessage[] =>
   pipe(
     messages,
-    EffectArray.flatMap((message): readonly OpenCodeSessionMessage[] => {
-      if (message.type === "user") {
-        return [{ id: message.id, role: "user", text: message.text }];
-      }
-      if (message.type !== "assistant") {
-        return [];
-      }
+    EffectArray.map((message): OpenCodeSessionMessage => {
       const text = pipe(
-        message.content,
-        EffectArray.flatMap((content): readonly string[] =>
-          content.type === "text" ? [content.text] : []
+        message.parts,
+        EffectArray.flatMap((part): readonly string[] =>
+          part.type === "text" && typeof part.text === "string"
+            ? [part.text]
+            : []
         ),
         EffectArray.join("\n")
       );
-      return [
-        {
-          ...(message.finish === undefined ? {} : { finish: message.finish }),
-          id: message.id,
-          role: "assistant",
-          status: projectedAssistantStatus(message),
-          text,
-        },
-      ];
+      if (message.info.role === "user") {
+        return { id: message.info.id, role: "user", text };
+      }
+      return {
+        ...(message.info.finish === undefined
+          ? {}
+          : { finish: message.info.finish }),
+        id: message.info.id,
+        role: "assistant",
+        status: projectedAssistantStatus(message.info),
+        text,
+      };
     })
   );
+
+export const makeOpenCodeLegacySessionTransport = (
+  api: OpenCodeLegacySessionApi
+): Pick<OpenCodeV2SessionApi, "messages" | "prompt"> => ({
+  messages: async (input) => {
+    const response = await api.messages(
+      {
+        directory: input.workingDirectory,
+        limit: input.limit,
+        sessionID: input.sessionId,
+      },
+      { throwOnError: true }
+    );
+    // Legacy messages are oldest-first; the shared transport contract is
+    // newest-first so its client can normalize every transport consistently.
+    return pipe(projectedLegacyMessages(response.data), EffectArray.reverse);
+  },
+  prompt: async (input) => {
+    await api.promptAsync(
+      {
+        ...(input.agent === undefined ? {} : { agent: input.agent }),
+        directory: input.workingDirectory,
+        messageID: input.promptId,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        parts: [{ text: input.text, type: "text" }],
+        sessionID: input.sessionId,
+      },
+      { throwOnError: true }
+    );
+    return { id: input.promptId };
+  },
+});
 
 export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
   "makeOpenCodeWorkspaceSessionClient"
@@ -564,6 +655,19 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
     directory: options.workspaceDirectory,
   });
   const session = client.v2.session;
+  const legacySession = client.session;
+  const legacyTransport = makeOpenCodeLegacySessionTransport({
+    messages: async (input, requestOptions) => {
+      const response = await legacySession.messages<true>(
+        input,
+        requestOptions
+      );
+      return { data: response.data };
+    },
+    promptAsync: async (input, requestOptions) => {
+      await legacySession.promptAsync<true>(input, requestOptions);
+    },
+  });
   const api: OpenCodeV2SessionApi = {
     create: async (input) => {
       const response = await session.create<true>(
@@ -600,30 +704,8 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
         { throwOnError: true }
       );
     },
-    messages: async (input) => {
-      const response = await session.messages<true>(
-        {
-          limit: input.limit,
-          order: input.order,
-          sessionID: input.sessionId,
-        },
-        { throwOnError: true }
-      );
-      return projectedMessages(response.data.data);
-    },
-    prompt: async (input) => {
-      const response = await session.prompt<true>(
-        {
-          delivery: "queue",
-          id: input.promptId,
-          prompt: { text: input.text },
-          resume: true,
-          sessionID: input.sessionId,
-        },
-        { throwOnError: true }
-      );
-      return { id: response.data.data.id };
-    },
+    messages: legacyTransport.messages,
+    prompt: legacyTransport.prompt,
     wait: async (input) => {
       await session.wait<true>(
         { sessionID: input.sessionId },

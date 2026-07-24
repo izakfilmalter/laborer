@@ -134,6 +134,10 @@ export class HandlerOutcomeState extends Schema.Class<HandlerOutcomeState>(
   safeDetail: Schema.NullOr(Schema.String),
 }) {}
 
+export type JsonValue = typeof Schema.Json.Type;
+export type JsonArray = Schema.JsonArray;
+export type JsonObject = Schema.JsonObject;
+
 export class OutboundItem extends Schema.Class<OutboundItem>("OutboundItem")({
   deliveryAttempts: Schema.Number,
   id: Schema.String,
@@ -167,17 +171,57 @@ export class TurnState extends Schema.Class<TurnState>("TurnState")({
   ]),
 }) {}
 
+export class ApplicationEventState extends Schema.Class<ApplicationEventState>(
+  "ApplicationEventState"
+)({
+  eventId: Schema.String,
+  outcome: Schema.NullOr(HandlerOutcomeState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
+  payload: Schema.Json,
+  source: Schema.String,
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "awaiting_delivery",
+    "completed",
+    "failed",
+  ]),
+}) {}
+
+export class ParticipantApplicationInput extends Schema.TaggedClass<ParticipantApplicationInput>()(
+  "ParticipantInput",
+  { messageId: Schema.String }
+) {}
+
+export class ExternalApplicationInput extends Schema.TaggedClass<ExternalApplicationInput>()(
+  "ExternalInput",
+  { eventId: Schema.String }
+) {}
+
+export const ApplicationInput = Schema.Union([
+  ParticipantApplicationInput,
+  ExternalApplicationInput,
+]);
+export type ApplicationInput = typeof ApplicationInput.Type;
+
 export class WorkThreadState extends Schema.Class<WorkThreadState>(
   "WorkThreadState"
 )({
   activationEventId: EventId,
   activationTs: Schema.String,
+  applicationInputQueue: Schema.Array(ApplicationInput).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
   channelId: Schema.String,
   context: Schema.Array(NormalizedMessage),
   contextAttempts: Schema.Number,
   contextIsPartial: Schema.Boolean,
   contextRetryAtMillis: Schema.NullOr(Schema.Number),
   contextStatus: Schema.Literals(["pending", "ready"]),
+  applicationEvents: Schema.Array(ApplicationEventState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
   id: ThreadId,
   initializationStatus: Schema.Literals([
     "not_applicable",

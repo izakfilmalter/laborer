@@ -7,9 +7,11 @@ import {
 import { SlackStartupError } from "./errors.ts";
 
 export interface SlackRuntimePaths {
+  readonly applicationState: string;
+  readonly legacyHandlerState: string;
   readonly lock: string;
   readonly root: string;
-  readonly snapshot: string;
+  readonly runnerState: string;
   readonly workThreads: string;
 }
 
@@ -56,10 +58,13 @@ export const prepareSlackRuntimePaths = (
           reason: "directory-unsafe-or-unavailable",
         }),
     });
+    const runnerState = resolve(workspaceRoot, "runner-state.json");
     return {
+      applicationState: resolve(workspaceRoot, "application-state.json"),
+      legacyHandlerState: resolve(workspaceRoot, "state.json"),
       lock: resolve(root, "runner.lock"),
       root,
-      snapshot: resolve(workspaceRoot, "state.json"),
+      runnerState,
       workThreads,
     };
   });

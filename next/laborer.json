@@ -1,19 +1,11 @@
 {
-  "prototype": {
-    "issue": 207,
-    "throwaway": true
-  },
-  "workHandler": {
-    "command": "./src/handlers/classifier-worker-prototype.sh",
+  "application": {
     "environment": [
       "ANTHROPIC_API_KEY",
       "LABORER_OPENCODE_MODEL",
       "OPENCODE_CONFIG_CONTENT",
       "OPENAI_API_KEY"
     ],
-    "initialize": {
-      "args": ["./src/handlers/create-thread-worktree.ts"],
-      "command": "node"
-    }
+    "type": "reference-coding"
   }
 }

@@ -206,11 +206,14 @@ const makeTestStartupAdapter = (options: {
         slack: runtime.gateway,
         storeLayer: makeFileStoreLayer(
           runtime.identity.botUserId,
-          runtime.paths.snapshot,
+          runtime.paths.runnerState,
           runtime.paths.root
         ),
       });
-      options.statePaths.set(runtime.identity.teamId, runtime.paths.snapshot);
+      options.statePaths.set(
+        runtime.identity.teamId,
+        runtime.paths.runnerState
+      );
       options.handlerStatePaths?.set(
         runtime.identity.teamId,
         runtime.paths.workThreads

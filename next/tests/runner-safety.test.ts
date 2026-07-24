@@ -333,11 +333,13 @@ describe("symlink-safe runtime state", () => {
       assert.strictEqual(unsafeLock._tag, "Failure");
       yield* Effect.promise(() => rm(paths.lock));
 
-      yield* Effect.promise(() => symlink(outsideFile, paths.snapshot, "file"));
+      yield* Effect.promise(() =>
+        symlink(outsideFile, paths.runnerState, "file")
+      );
       const unsafeSnapshot = yield* Effect.result(
         Effect.scoped(
           Layer.build(
-            makeFileStoreLayer(LABORER_ID, paths.snapshot, paths.root)
+            makeFileStoreLayer(LABORER_ID, paths.runnerState, paths.root)
           )
         )
       );
@@ -346,7 +348,7 @@ describe("symlink-safe runtime state", () => {
         yield* Effect.promise(() => readFile(outsideFile, "utf8")),
         "unchanged"
       );
-      yield* Effect.promise(() => rm(paths.snapshot));
+      yield* Effect.promise(() => rm(paths.runnerState));
 
       const linkedParent = join(paths.root, "linked-parent");
       yield* Effect.promise(() => symlink(outside, linkedParent, "dir"));

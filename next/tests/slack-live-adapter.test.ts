@@ -702,6 +702,11 @@ describe("Socket Mode resource and delivery boundary", () => {
                 scheduling: "Scheduled" as const,
               })
             ),
+          acceptApplicationEvent: (event) =>
+            Effect.succeed({
+              decision: { _tag: "Accepted", eventId: event.eventId },
+              scheduling: "Scheduled",
+            }),
           abandonBlocked: () => Effect.void,
           drain: () => Effect.void,
           inject: () => Effect.die(new Error("Socket Mode called inject")),
@@ -1046,16 +1051,16 @@ describe("safe local Slack configuration", () => {
         const canonicalDirectory = yield* Effect.promise(() =>
           realpath(directory)
         );
+        const workHandler = loaded.config.workHandler;
+        assert.ok(workHandler);
         assert.strictEqual(loaded.root, canonicalDirectory);
         assert.strictEqual(
-          loaded.config.workHandler.command,
+          workHandler.command,
           join(canonicalDirectory, "handler.sh")
         );
-        assert.deepStrictEqual(loaded.config.workHandler.args, []);
-        assert.deepStrictEqual(loaded.config.workHandler.environment, [
-          "PROVIDER_API_KEY",
-        ]);
-        assert.deepStrictEqual(loaded.config.workHandler.initialize, {
+        assert.deepStrictEqual(workHandler.args, []);
+        assert.deepStrictEqual(workHandler.environment, ["PROVIDER_API_KEY"]);
+        assert.deepStrictEqual(workHandler.initialize, {
           args: ["--prototype"],
           command: join(canonicalDirectory, "initialize.sh"),
           environment: ["WORKTREE_BASE"],

@@ -2,7 +2,6 @@
  * THROWAWAY ISSUE #204 PROTOTYPE.
  * Store-driven per-thread FIFO worker and narrow Effect service contracts.
  */
-import { isAbsolute } from "node:path";
 import {
   Clock,
   Context,
@@ -15,6 +14,16 @@ import {
   Schema,
   Semaphore,
 } from "effect";
+import {
+  type AcceptApplicationEvent,
+  Application,
+  type ApplicationEventAcceptance,
+  type ApplicationShape,
+  applicationFromConfiguredProcessHandler,
+  type ExternalInputEvent,
+  ParticipantInputEvent,
+  toPublicReplyProtocolRecord,
+} from "../application.ts";
 import {
   type AcknowledgementState,
   type ClaimedTurn,
@@ -35,10 +44,6 @@ import {
   type RunnerError,
   StoreError,
 } from "./errors.ts";
-import {
-  assertNoSymlinkPathComponents,
-  canonicalDirectory,
-} from "./path-safety.ts";
 import {
   type ActivationContextRequest,
   makeInMemoryStoreLayer,
@@ -152,42 +157,6 @@ export class ThreadInitializer extends Context.Service<
     Layer.succeed(ThreadInitializer, initializer);
 }
 
-const unusedThreadInitializer: ThreadInitializerShape = {
-  initialize: () =>
-    HandlerFailure.make({
-      category: "protocol",
-      safeDetail: "thread initializer unavailable",
-    }),
-};
-
-const validateInitializedWorkingDirectory = (
-  candidate: string
-): Effect.Effect<string, HandlerFailure> =>
-  Effect.tryPromise({
-    try: async () => {
-      if (!isAbsolute(candidate)) {
-        throw new Error("working directory is not absolute");
-      }
-      await assertNoSymlinkPathComponents(
-        candidate,
-        "validate-initialized-working-directory"
-      );
-      const canonical = await canonicalDirectory(
-        candidate,
-        "validate-initialized-working-directory"
-      );
-      if (canonical !== candidate) {
-        throw new Error("working directory is not canonical");
-      }
-      return canonical;
-    },
-    catch: () =>
-      HandlerFailure.make({
-        category: "protocol",
-        safeDetail: "initializer returned an invalid working directory",
-      }),
-  });
-
 export interface Runner {
   readonly abandonBlocked: (
     threadId: ThreadId
@@ -195,6 +164,9 @@ export interface Runner {
   readonly accept: (
     event: unknown
   ) => Effect.Effect<DurableAcceptance, RunnerError | BoundaryDecodeError>;
+  readonly acceptApplicationEvent: (
+    event: ExternalInputEvent
+  ) => Effect.Effect<ApplicationEventAcceptance, RunnerError>;
   readonly drain: (threadId: ThreadId) => Effect.Effect<void, RunnerError>;
   readonly inject: (
     event: unknown
@@ -279,8 +251,7 @@ const runnerLayer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* PrototypeStore;
     const slack = yield* SlackGateway;
-    const handler = yield* WorkHandler;
-    const initializer = yield* ThreadInitializer;
+    const application = yield* Application;
     const activationAcknowledger = yield* ActivationAcknowledger;
     const completionReactor = yield* CompletionReactor;
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
@@ -730,58 +701,24 @@ const runnerLayer = Layer.effect(
             )
           );
 
-    const initializeClaimedTurn = Effect.fnUntraced(function* (
-      turn: ClaimedTurn,
-      persistReply: ReturnType<typeof persistReplyFor>
-    ) {
-      if (turn.initializationStatus !== "pending") {
-        return {
-          _tag: "Ready" as const,
-          workingDirectory: turn.workingDirectory,
-        };
-      }
-      const initialization = yield* Effect.result(
-        initializer
-          .initialize(turn, persistReply)
-          .pipe(Effect.flatMap(validateInitializedWorkingDirectory))
-      );
-      if (initialization._tag === "Success") {
-        yield* store.completeInitialization(
-          turn.threadId,
-          initialization.success
-        );
-        return {
-          _tag: "Ready" as const,
-          workingDirectory: initialization.success,
-        };
-      }
-      if (initialization.failure instanceof StoreError) {
-        return yield* initialization.failure;
-      }
-      if (
-        initialization.failure.category === "signal" ||
-        initialization.failure.category === "timeout"
-      ) {
-        return { _tag: "Replayable" as const };
-      }
-      yield* store.completeHandler(turn.threadId, turn.id, {
-        _tag: "Failure",
-        category: initialization.failure.category,
-        safeDetail: initialization.failure.safeDetail,
-      });
-      return { _tag: "Completed" as const };
-    });
-
     const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
       const persistReply = persistReplyFor(turn);
-      const initialization = yield* initializeClaimedTurn(turn, persistReply);
-      if (initialization._tag !== "Ready") {
-        return initialization._tag;
-      }
       const result = yield* Effect.result(
-        handler.invoke(
-          { ...turn, workingDirectory: initialization.workingDirectory },
-          persistReply
+        application.handle(
+          ParticipantInputEvent.make({
+            attemptNumber: turn.attemptNumber,
+            channelId: turn.channelId,
+            context: turn.context,
+            conversationId: turn.threadId,
+            initializationStatus: turn.initializationStatus,
+            messages: turn.messages,
+            rootTs: turn.rootTs,
+            source: "slack",
+            turnId: turn.id,
+            workingDirectory: turn.workingDirectory,
+          }),
+          (reply) => persistReply(toPublicReplyProtocolRecord(reply)),
+          acceptApplicationEvent
         )
       );
       if (result._tag === "Success") {
@@ -789,7 +726,7 @@ const runnerLayer = Layer.effect(
           _tag: "Success",
         });
         yield* startCompletionReactionForTurn(turn.id);
-        return;
+        return "Completed" as const;
       }
       if (result.failure instanceof StoreError) {
         return yield* result.failure;
@@ -810,6 +747,76 @@ const runnerLayer = Layer.effect(
       return "Completed" as const;
     });
 
+    const executeClaimedApplicationEvent = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      event: import("./domain.ts").ApplicationEventState
+    ) {
+      const result = yield* Effect.result(
+        application.handle(
+          {
+            _tag: "ExternalInput",
+            conversationId: threadId,
+            eventId: event.eventId,
+            payload: event.payload,
+            source: event.source,
+          },
+          (reply) =>
+            store
+              .acceptApplicationReply(
+                threadId,
+                event.eventId,
+                toPublicReplyProtocolRecord(reply).replyId,
+                reply.text
+              )
+              .pipe(
+                Effect.catchTag("ReplyProtocolError", () =>
+                  HandlerFailure.make({
+                    category: "protocol",
+                    safeDetail: "conflicting or invalid public reply",
+                  })
+                )
+              ),
+          acceptApplicationEvent
+        )
+      );
+      if (result._tag === "Success") {
+        yield* store.completeApplicationEvent(threadId, event.eventId, {
+          _tag: "Success",
+        });
+        return "Completed" as const;
+      }
+      if (result.failure instanceof StoreError) {
+        return yield* result.failure;
+      }
+      if (
+        result.failure.category === "signal" ||
+        result.failure.category === "timeout"
+      ) {
+        return "Replayable" as const;
+      }
+      yield* store.completeApplicationEvent(threadId, event.eventId, {
+        _tag: "Failure",
+        category: result.failure.category,
+      });
+      return "Completed" as const;
+    });
+
+    const executeNextThreadInput = Effect.fnUntraced(function* (
+      threadId: ThreadId
+    ) {
+      const applicationEvent = yield* store.claimNextApplicationEvent(threadId);
+      if (applicationEvent !== null) {
+        return yield* executeClaimedApplicationEvent(
+          threadId,
+          applicationEvent
+        );
+      }
+      const turn = yield* store.claimNextTurn(threadId);
+      return turn === null
+        ? ("None" as const)
+        : yield* executeClaimedTurn(turn);
+    });
+
     const driveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
       let contextRequest = yield* store.contextRequest(threadId);
       while (contextRequest !== null) {
@@ -818,12 +825,11 @@ const runnerLayer = Layer.effect(
       }
 
       while (true) {
-        const turn = yield* store.claimNextTurn(threadId);
-        if (turn !== null) {
-          const completion = yield* executeClaimedTurn(turn);
-          if (completion === "Replayable") {
-            return;
-          }
+        const inputCompletion = yield* executeNextThreadInput(threadId);
+        if (inputCompletion === "Replayable") {
+          return;
+        }
+        if (inputCompletion === "Completed") {
           continue;
         }
         const deliveryState = yield* deliverHead(threadId);
@@ -947,76 +953,113 @@ const runnerLayer = Layer.effect(
       }
     });
 
-    const signalThreadDriver = Effect.fnUntraced(function* (
+    const signalThreadDriver: (
       threadId: ThreadId,
       acknowledgementId: string | null
-    ) {
-      const registration = yield* Ref.modify(
-        threadDrivers,
-        (
-          registry
-        ): readonly [ThreadDriverRegistration, ThreadDriverRegistry] => {
-          const existing = pipe(
-            registry.active,
-            EffectArray.findFirst((entry) => entry.threadId === threadId),
-            Option.getOrNull
-          );
-          if (existing !== null) {
-            const acknowledgementIds =
-              acknowledgementId === null ||
-              EffectArray.contains(
-                existing.acknowledgementIds,
-                acknowledgementId
-              )
-                ? existing.acknowledgementIds
-                : EffectArray.append(
-                    existing.acknowledgementIds,
-                    acknowledgementId
-                  );
+    ) => Effect.Effect<"AlreadyDurable" | "Scheduled"> = Effect.fnUntraced(
+      function* (threadId: ThreadId, acknowledgementId: string | null) {
+        const registration = yield* Ref.modify(
+          threadDrivers,
+          (
+            registry
+          ): readonly [ThreadDriverRegistration, ThreadDriverRegistry] => {
+            const existing = pipe(
+              registry.active,
+              EffectArray.findFirst((entry) => entry.threadId === threadId),
+              Option.getOrNull
+            );
+            if (existing !== null) {
+              const acknowledgementIds =
+                acknowledgementId === null ||
+                EffectArray.contains(
+                  existing.acknowledgementIds,
+                  acknowledgementId
+                )
+                  ? existing.acknowledgementIds
+                  : EffectArray.append(
+                      existing.acknowledgementIds,
+                      acknowledgementId
+                    );
+              return [
+                { _tag: "Signaled" } as const,
+                {
+                  ...registry,
+                  active: pipe(
+                    registry.active,
+                    EffectArray.map((entry) =>
+                      entry.driverId === existing.driverId
+                        ? {
+                            ...entry,
+                            acknowledgementIds,
+                            signals: entry.signals + 1,
+                          }
+                        : entry
+                    )
+                  ),
+                },
+              ] as const;
+            }
+            const driverId = registry.nextDriverId;
             return [
-              { _tag: "Signaled" } as const,
+              { _tag: "Started" as const, driverId },
               {
-                ...registry,
-                active: pipe(
-                  registry.active,
-                  EffectArray.map((entry) =>
-                    entry.driverId === existing.driverId
-                      ? {
-                          ...entry,
-                          acknowledgementIds,
-                          signals: entry.signals + 1,
-                        }
-                      : entry
-                  )
-                ),
+                active: EffectArray.append(registry.active, {
+                  acknowledgementIds:
+                    acknowledgementId === null ? [] : [acknowledgementId],
+                  driverId,
+                  signals: 1,
+                  threadId,
+                }),
+                nextDriverId: driverId + 1,
               },
             ] as const;
           }
-          const driverId = registry.nextDriverId;
-          return [
-            { _tag: "Started" as const, driverId },
-            {
-              active: EffectArray.append(registry.active, {
-                acknowledgementIds:
-                  acknowledgementId === null ? [] : [acknowledgementId],
-                driverId,
-                signals: 1,
-                threadId,
-              }),
-              nextDriverId: driverId + 1,
-            },
-          ] as const;
+        );
+        if (registration._tag === "Signaled") {
+          return "AlreadyDurable" as const;
         }
-      );
-      if (registration._tag === "Signaled") {
-        return "AlreadyDurable" as const;
+        yield* Effect.yieldNow.pipe(
+          Effect.andThen(driveActiveThread(threadId, registration.driverId)),
+          Effect.forkIn(reactionDriverScope)
+        );
+        return "Scheduled" as const;
       }
-      yield* Effect.yieldNow.pipe(
-        Effect.andThen(driveActiveThread(threadId, registration.driverId)),
-        Effect.forkIn(reactionDriverScope)
+    );
+
+    const acceptApplicationEvent: AcceptApplicationEvent = Effect.fn(
+      "PrototypeRunner.acceptApplicationEvent"
+    )(function* (event: ExternalInputEvent) {
+      const payload = yield* Schema.decodeUnknownEffect(Schema.Json)(
+        event.payload
+      ).pipe(
+        Effect.mapError(() =>
+          HandlerFailure.make({
+            category: "protocol",
+            safeDetail: "external input payload must be JSON-serializable",
+          })
+        )
       );
-      return "Scheduled" as const;
+      const decision = yield* store.acceptApplicationEvent({
+        conversationId: event.conversationId,
+        eventId: event.eventId,
+        payload,
+        source: event.source,
+      });
+      const scheduling = yield* signalThreadDriver(event.conversationId, null);
+      return { decision, scheduling };
     });
+
+    if (application.recover !== undefined) {
+      const recovery = yield* Effect.result(
+        application.recover(acceptApplicationEvent)
+      );
+      if (recovery._tag === "Failure") {
+        yield* Effect.logError(
+          "Application recovery stopped",
+          recovery.failure
+        );
+      }
+    }
 
     const staleAcknowledgements = yield* store.acknowledgements;
     yield* Effect.forEach(
@@ -1133,6 +1176,7 @@ const runnerLayer = Layer.effect(
 
     const runner = PrototypeRunner.of({
       accept,
+      acceptApplicationEvent,
       inject,
       lockCounts: Effect.all({
         acknowledgements: Ref.get(acknowledgementSemaphores).pipe(
@@ -1166,15 +1210,31 @@ export interface PrototypeHarness {
   readonly store: PrototypeStoreShape;
 }
 
-export const makePrototypeHarness = (options: {
+interface PrototypeHarnessCommonOptions {
   readonly activationAcknowledger?: ActivationAcknowledgerShape;
   readonly completionReactor?: CompletionReactorShape;
-  readonly handler: WorkHandlerShape;
-  readonly initializer?: ThreadInitializerShape;
   readonly laborerSlackId: string;
   readonly slack: SlackGatewayShape;
   readonly storeLayer?: Layer.Layer<PrototypeStore, StoreError>;
-}): Effect.Effect<
+}
+
+type PrototypeHarnessApplicationOptions = PrototypeHarnessCommonOptions &
+  (
+    | {
+        readonly application: ApplicationShape;
+        readonly handler?: never;
+        readonly initializer?: never;
+      }
+    | {
+        readonly application?: never;
+        readonly handler: WorkHandlerShape;
+        readonly initializer?: ThreadInitializerShape;
+      }
+  );
+
+export const makePrototypeHarness = (
+  options: PrototypeHarnessApplicationOptions
+): Effect.Effect<
   PrototypeHarness,
   StoreError,
   import("effect").Scope.Scope
@@ -1184,22 +1244,36 @@ export const makePrototypeHarness = (options: {
     makeInMemoryStoreLayer(options.laborerSlackId, {
       initializeNewThreads: options.initializer !== undefined,
     });
+  const configuredApplicationLayer =
+    options.application === undefined
+      ? Layer.effect(
+          Application,
+          Effect.gen(function* () {
+            const store = yield* PrototypeStore;
+            return applicationFromConfiguredProcessHandler({
+              completeInitialization: store.completeInitialization,
+              handler: options.handler,
+              ...(options.initializer === undefined
+                ? {}
+                : { initializer: options.initializer }),
+            });
+          })
+        )
+      : Application.layer(options.application);
   const dependencies = Layer.mergeAll(
-    storeLayer,
+    configuredApplicationLayer.pipe(Layer.provideMerge(storeLayer)),
     ActivationAcknowledger.layer(
       options.activationAcknowledger ?? noOpActivationAcknowledger
     ),
     CompletionReactor.layer(options.completionReactor ?? noOpCompletionReactor),
-    SlackGateway.layer(options.slack),
-    ThreadInitializer.layer(options.initializer ?? unusedThreadInitializer),
-    WorkHandler.layer(options.handler)
+    SlackGateway.layer(options.slack)
   );
-  const applicationLayer: Layer.Layer<
+  const runtimeLayer: Layer.Layer<
     PrototypeRunner | PrototypeStore,
     StoreError
   > = runnerLayer.pipe(Layer.provideMerge(dependencies));
   return Effect.gen(function* () {
-    const context = yield* Layer.build(applicationLayer);
+    const context = yield* Layer.build(runtimeLayer);
     const services = yield* Effect.all({
       runner: PrototypeRunner,
       store: PrototypeStore,

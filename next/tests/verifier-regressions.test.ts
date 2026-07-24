@@ -19,6 +19,7 @@ import { Clock, Deferred, Effect, Fiber, Layer, Ref } from "effect";
 import {
   type NormalizedInboundEvent,
   type OutboundItem,
+  ParticipantApplicationInput,
   type PrototypeState,
   ReplyId,
   ThreadId,
@@ -522,6 +523,11 @@ describe("identity and semantic invariants", () => {
             threads: [
               {
                 ...thread,
+                applicationInputQueue: [
+                  ParticipantApplicationInput.make({
+                    messageId: activation.id,
+                  }),
+                ],
                 outbox: testCase.outbox,
                 turns: [],
                 unassigned: [activation],

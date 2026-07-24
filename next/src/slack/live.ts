@@ -6,26 +6,12 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
-import {
-  makeSlackActivationAcknowledger,
-  makeSlackCompletionReactor,
-  makeSlackGateway,
-} from "../prototype/emulated-slack.ts";
-import {
-  makeProcessHandler,
-  makeProcessInitializer,
-} from "../prototype/process-handler.ts";
-import type { SlackGatewayShape } from "../prototype/runtime.ts";
-import { makePrototypeHarness } from "../prototype/runtime.ts";
-import { makeFileStoreLayer } from "../prototype/store.ts";
+import { makeSlackGateway } from "../prototype/emulated-slack.ts";
 import { loadSlackDaemonConfig } from "./config.ts";
-import { environmentForConfiguredHandler } from "./handler-environment.ts";
 import { authenticateSlackBot } from "./identity.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
-import {
-  type SlackWorkspaceRuntimeOptions,
-  startSlackWorkspaceDirectory,
-} from "./workspace-startup.ts";
+import { makeSlackWorkspaceRunner } from "./workspace-runner.ts";
+import { startSlackWorkspaceDirectory } from "./workspace-startup.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -49,57 +35,6 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
   });
 });
 
-const makeWorkspaceRunner = Effect.fn("makeSlackWorkspaceRunner")(function* (
-  options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>
-) {
-  const processHandler = yield* makeProcessHandler({
-    args: options.laborer.config.workHandler.args,
-    command: options.laborer.config.workHandler.command,
-    cwd: options.laborer.root,
-    environment: environmentForConfiguredHandler(
-      process.env,
-      options.laborer.config.workHandler.environment
-    ),
-    evidence: { mode: "production" },
-    stateRoot: options.paths.workThreads,
-    stateRootAnchor: options.paths.root,
-  });
-  const initializerConfig = options.laborer.config.workHandler.initialize;
-  const processInitializer =
-    initializerConfig === undefined
-      ? undefined
-      : yield* makeProcessInitializer({
-          args: initializerConfig.args,
-          command: initializerConfig.command,
-          cwd: options.laborer.root,
-          environment: environmentForConfiguredHandler(
-            process.env,
-            initializerConfig.environment
-          ),
-          evidence: { mode: "production" },
-          stateRoot: options.paths.workThreads,
-          stateRootAnchor: options.paths.root,
-        });
-  const harness = yield* makePrototypeHarness({
-    activationAcknowledger: makeSlackActivationAcknowledger(options.client),
-    completionReactor: makeSlackCompletionReactor(options.client),
-    handler: processHandler.handler,
-    ...(processInitializer === undefined
-      ? {}
-      : { initializer: processInitializer.initializer }),
-    laborerSlackId: options.identity.botUserId,
-    slack: options.gateway,
-    storeLayer: makeFileStoreLayer(
-      options.identity.botUserId,
-      options.paths.snapshot,
-      options.paths.root,
-      undefined,
-      { initializeNewThreads: processInitializer !== undefined }
-    ),
-  });
-  return harness.runner;
-});
-
 const program = Effect.gen(function* () {
   const config = yield* loadSlackDaemonConfig({ defaultRoot: PROJECT_ROOT });
   const routeDirectory = yield* startSlackWorkspaceDirectory({
@@ -118,7 +53,7 @@ const program = Effect.gen(function* () {
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
-      makeRunner: makeWorkspaceRunner,
+      makeRunner: makeSlackWorkspaceRunner,
       makeSetupIncompleteResponder: (gateway) => (request) =>
         gateway.postThreadMessage(request).pipe(Effect.asVoid),
     },

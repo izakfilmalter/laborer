@@ -14,23 +14,31 @@ import {
   Order,
   pipe,
   Ref,
+  Result,
   Schema,
   Semaphore,
+  Struct,
 } from "effect";
 import {
   AcknowledgementState,
+  ApplicationEventState,
   type ClaimedTurn,
   CompletionReactionState,
   canonicalThreadId,
+  ExternalApplicationInput,
   HandlerAttempt,
   type HandlerFailureCategory,
   HandlerOutcomeState,
   type IgnoredReason,
   type InboundDecision,
   initialPrototypeState,
+  type JsonArray,
+  type JsonObject,
+  type JsonValue,
   type NormalizedInboundEvent,
   NormalizedMessage,
   OutboundItem,
+  ParticipantApplicationInput,
   type PrototypeState,
   PrototypeState as PrototypeStateSchema,
   type ReplyId,
@@ -86,6 +94,22 @@ export interface PrototypeStoreShape {
   readonly accept: (
     event: NormalizedInboundEvent
   ) => Effect.Effect<InboundDecision, StoreError>;
+  readonly acceptApplicationEvent: (event: {
+    readonly conversationId: ThreadId;
+    readonly eventId: string;
+    readonly payload: JsonValue;
+    readonly source: string;
+  }) => Effect.Effect<
+    | { readonly _tag: "Accepted"; readonly eventId: string }
+    | { readonly _tag: "Duplicate"; readonly eventId: string },
+    StoreError
+  >;
+  readonly acceptApplicationReply: (
+    threadId: ThreadId,
+    eventId: string,
+    replyId: ReplyId,
+    text: string
+  ) => Effect.Effect<void, StoreError | ReplyProtocolError>;
   readonly acceptPublicReply: (
     threadId: ThreadId,
     turnId: TurnId,
@@ -96,6 +120,9 @@ export interface PrototypeStoreShape {
     readonly AcknowledgementState[],
     StoreError
   >;
+  readonly claimNextApplicationEvent: (
+    threadId: ThreadId
+  ) => Effect.Effect<ApplicationEventState | null, StoreError>;
   readonly claimNextTurn: (
     threadId: ThreadId
   ) => Effect.Effect<ClaimedTurn | null, StoreError>;
@@ -105,6 +132,16 @@ export interface PrototypeStoreShape {
   ) => Effect.Effect<OutboxClaim, StoreError>;
   readonly completeAcknowledgement: (
     id: string
+  ) => Effect.Effect<void, StoreError>;
+  readonly completeApplicationEvent: (
+    threadId: ThreadId,
+    eventId: string,
+    outcome:
+      | { readonly _tag: "Success" }
+      | {
+          readonly _tag: "Failure";
+          readonly category: HandlerFailureCategory;
+        }
   ) => Effect.Effect<void, StoreError>;
   readonly completeCompletionReaction: (
     id: string
@@ -252,6 +289,46 @@ const settleEligibleTurns = (thread: WorkThreadState): WorkThreadState => {
   );
   return WorkThreadState.make({ ...thread, turns });
 };
+
+const applicationEventTurnId = (eventId: string): TurnId =>
+  TurnId.make(`application-event:${eventId}`);
+
+const applicationEventFailureNoticeId = (eventId: string): string =>
+  `notice:${applicationEventTurnId(eventId)}:handler-failure`;
+
+const settleEligibleApplicationEvents = (
+  thread: WorkThreadState
+): WorkThreadState =>
+  WorkThreadState.make({
+    ...thread,
+    applicationEvents: pipe(
+      thread.applicationEvents,
+      EffectArray.map((event) => {
+        if (event.status !== "awaiting_delivery") {
+          return event;
+        }
+        const hasUnsettledOutbound = pipe(
+          thread.outbox,
+          EffectArray.filter(
+            (item) => item.turnId === applicationEventTurnId(event.eventId)
+          ),
+          EffectArray.some(
+            (item) => item.status !== "delivered" && item.status !== "abandoned"
+          )
+        );
+        if (hasUnsettledOutbound) {
+          return event;
+        }
+        return ApplicationEventState.make({
+          ...event,
+          status: event.outcome?.kind === "failure" ? "failed" : "completed",
+        });
+      })
+    ),
+  });
+
+const settleEligibleWork = (thread: WorkThreadState): WorkThreadState =>
+  settleEligibleApplicationEvents(settleEligibleTurns(thread));
 
 const modifyThread = <A>(
   state: PrototypeState,
@@ -485,6 +562,10 @@ const acceptTransition = (
           WorkThreadState.make({
             activationEventId: event.eventId,
             activationTs: event.messageTs,
+            applicationEvents: [],
+            applicationInputQueue: [
+              ParticipantApplicationInput.make({ messageId }),
+            ],
             channelId: event.channelId,
             context: [],
             contextAttempts: 0,
@@ -509,6 +590,10 @@ const acceptTransition = (
             thread.id === threadId
               ? WorkThreadState.make({
                   ...thread,
+                  applicationInputQueue: EffectArray.append(
+                    thread.applicationInputQueue,
+                    ParticipantApplicationInput.make({ messageId })
+                  ),
                   unassigned: pipe(
                     EffectArray.append(thread.unassigned, message),
                     EffectArray.sort(inputMessageOrder)
@@ -548,6 +633,189 @@ const findTurnIndex = (thread: WorkThreadState, turnId: TurnId): number =>
     EffectArray.findFirstIndex(thread.turns, (turn) => turn.id === turnId),
     Option.getOrElse(() => -1)
   );
+
+const findApplicationEventIndex = (
+  thread: WorkThreadState,
+  eventId: string
+): number =>
+  pipe(
+    thread.applicationEvents,
+    EffectArray.findFirstIndex((event) => event.eventId === eventId),
+    Option.getOrElse(() => -1)
+  );
+
+const isJsonArray = (value: JsonValue): value is JsonArray =>
+  globalThis.Array.isArray(value);
+
+const equivalentJson = (left: JsonValue, right: JsonValue): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (isJsonArray(left)) {
+    return (
+      isJsonArray(right) &&
+      left.length === right.length &&
+      EffectArray.every(left, (value, index) => {
+        const candidate = right[index];
+        return candidate !== undefined && equivalentJson(value, candidate);
+      })
+    );
+  }
+  if (
+    isJsonArray(right) ||
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  const leftObject: JsonObject = left;
+  const rightObject: JsonObject = right;
+  const leftKeys = pipe(
+    Struct.keys(leftObject),
+    EffectArray.sort(Order.String)
+  );
+  const rightKeys = pipe(
+    Struct.keys(rightObject),
+    EffectArray.sort(Order.String)
+  );
+  if (
+    leftKeys.length !== rightKeys.length ||
+    !EffectArray.every(leftKeys, (key, index) => key === rightKeys[index])
+  ) {
+    return false;
+  }
+  return EffectArray.every(leftKeys, (key) => {
+    const leftValue = Struct.get(leftObject, key);
+    const rightValue = Struct.get(rightObject, key);
+    return (
+      leftValue !== undefined &&
+      rightValue !== undefined &&
+      equivalentJson(leftValue, rightValue)
+    );
+  });
+};
+
+const sameApplicationEvent = (
+  current: ApplicationEventState,
+  candidate: {
+    readonly payload: JsonValue;
+    readonly source: string;
+  }
+): boolean =>
+  current.source === candidate.source &&
+  equivalentJson(current.payload, candidate.payload);
+
+type ApplicationEventDecision =
+  | { readonly _tag: "Accepted"; readonly eventId: string }
+  | { readonly _tag: "Duplicate"; readonly eventId: string };
+
+const acceptApplicationEventTransition = (
+  state: PrototypeState,
+  event: {
+    readonly conversationId: ThreadId;
+    readonly eventId: string;
+    readonly payload: JsonValue;
+    readonly source: string;
+  }
+): readonly [ApplicationEventDecision, PrototypeState] | StoreError =>
+  modifyThread<ApplicationEventDecision>(
+    state,
+    event.conversationId,
+    "acceptApplicationEvent",
+    (thread) => {
+      const duplicate = pipe(
+        thread.applicationEvents,
+        EffectArray.findFirst(
+          (candidate) => candidate.eventId === event.eventId
+        ),
+        Option.getOrNull
+      );
+      if (duplicate !== null) {
+        return sameApplicationEvent(duplicate, event)
+          ? [
+              {
+                _tag: "Duplicate" as const,
+                eventId: event.eventId,
+              },
+              thread,
+            ]
+          : storeFailure(
+              "acceptApplicationEvent",
+              "conflicting-application-event-id"
+            );
+      }
+      return [
+        { _tag: "Accepted" as const, eventId: event.eventId },
+        WorkThreadState.make({
+          ...thread,
+          applicationEvents: EffectArray.append(
+            thread.applicationEvents,
+            ApplicationEventState.make({
+              eventId: event.eventId,
+              outcome: null,
+              payload: event.payload,
+              source: event.source,
+              status: "pending",
+            })
+          ),
+          applicationInputQueue: EffectArray.append(
+            thread.applicationInputQueue,
+            ExternalApplicationInput.make({ eventId: event.eventId })
+          ),
+        }),
+      ];
+    }
+  );
+
+const claimApplicationEventInThread = (
+  thread: WorkThreadState
+): readonly [ApplicationEventState | null, WorkThreadState] => {
+  const activeTurn = pipe(
+    thread.turns,
+    EffectArray.some(
+      (turn) => turn.status === "running" || turn.status === "awaiting_delivery"
+    )
+  );
+  if (activeTurn) {
+    return [null, thread];
+  }
+  const activeEvent = pipe(
+    thread.applicationEvents,
+    EffectArray.findFirst(
+      (event) =>
+        event.status === "running" || event.status === "awaiting_delivery"
+    ),
+    Option.getOrNull
+  );
+  if (activeEvent !== null) {
+    return activeEvent.status === "running"
+      ? [activeEvent, thread]
+      : [null, thread];
+  }
+  const head = thread.applicationInputQueue[0];
+  if (head?._tag !== "ExternalInput") {
+    return [null, thread];
+  }
+  const index = findApplicationEventIndex(thread, head.eventId);
+  const event = thread.applicationEvents[index];
+  if (event?.status !== "pending") {
+    return [null, thread];
+  }
+  const running = ApplicationEventState.make({
+    ...event,
+    status: "running",
+  });
+  return [
+    running,
+    WorkThreadState.make({
+      ...thread,
+      applicationEvents: replaceAt(thread.applicationEvents, index, running),
+      applicationInputQueue: EffectArray.drop(thread.applicationInputQueue, 1),
+    }),
+  ];
+};
 
 const enqueueEligibleCompletionReaction = (
   state: PrototypeState,
@@ -625,6 +893,15 @@ const claimTurnInThread = (
   thread: WorkThreadState,
   threadId: ThreadId
 ): readonly [ClaimedTurn | null, WorkThreadState] | StoreError => {
+  if (
+    EffectArray.some(
+      thread.applicationEvents,
+      (event) =>
+        event.status === "running" || event.status === "awaiting_delivery"
+    )
+  ) {
+    return [null, thread];
+  }
   const activeTurn = pipe(
     thread.turns,
     EffectArray.findFirst(
@@ -677,7 +954,35 @@ const claimTurnInThread = (
   if (thread.contextStatus !== "ready" || thread.unassigned.length === 0) {
     return [null, thread];
   }
-  const first = thread.unassigned[0];
+  const queuedParticipantInputs = pipe(
+    thread.applicationInputQueue,
+    EffectArray.takeWhile((input) => input._tag === "ParticipantInput")
+  );
+  if (queuedParticipantInputs.length === 0) {
+    return [null, thread];
+  }
+  const queuedMessageIds = pipe(
+    queuedParticipantInputs,
+    EffectArray.map((input) => input.messageId)
+  );
+  const messages = pipe(
+    queuedMessageIds,
+    EffectArray.filterMap((messageId) =>
+      pipe(
+        thread.unassigned,
+        EffectArray.findFirst((message) => message.id === messageId),
+        Option.match({
+          onNone: () => Result.failVoid,
+          onSome: Result.succeed,
+        })
+      )
+    ),
+    EffectArray.sort(inputMessageOrder)
+  );
+  if (messages.length !== queuedMessageIds.length) {
+    return storeFailure("claimNextTurn", "queued-message-not-found");
+  }
+  const first = messages[0];
   if (first === undefined) {
     return storeFailure("claimNextTurn", "empty-unassigned-invariant");
   }
@@ -687,7 +992,7 @@ const claimTurnInThread = (
     attempts: [HandlerAttempt.make({ number: 1, status: "running" })],
     context,
     id: turnId,
-    messages: thread.unassigned,
+    messages,
     outcome: null,
     status: "running",
   });
@@ -697,7 +1002,7 @@ const claimTurnInThread = (
       channelId: thread.channelId,
       context,
       id: turnId,
-      messages: thread.unassigned,
+      messages,
       rootTs: thread.rootTs,
       threadId,
       initializationStatus: thread.initializationStatus,
@@ -705,8 +1010,70 @@ const claimTurnInThread = (
     },
     WorkThreadState.make({
       ...thread,
+      applicationInputQueue: EffectArray.drop(
+        thread.applicationInputQueue,
+        queuedParticipantInputs.length
+      ),
       turns: EffectArray.append(thread.turns, turn),
-      unassigned: [],
+      unassigned: pipe(
+        thread.unassigned,
+        EffectArray.filter(
+          (message) => !EffectArray.contains(queuedMessageIds, message.id)
+        )
+      ),
+    }),
+  ];
+};
+
+const acceptReplyTransition = (
+  state: PrototypeState,
+  threadId: ThreadId,
+  ownerId: TurnId,
+  ownerExists: (thread: WorkThreadState) => boolean,
+  replyId: ReplyId,
+  text: string
+): readonly [undefined, PrototypeState] | StoreError | ReplyProtocolError => {
+  const threadIndex = findThreadIndex(state, threadId);
+  const thread = state.threads[threadIndex];
+  if (thread === undefined) {
+    return storeFailure("acceptApplicationReply", "thread-not-found");
+  }
+  const duplicate = pipe(
+    thread.outbox,
+    EffectArray.findFirst((item) => item.replyId === replyId),
+    Option.getOrNull
+  );
+  if (duplicate !== null) {
+    return duplicate.text === text
+      ? ([undefined, state] as const)
+      : ReplyProtocolError.make({ reason: "conflicting-reply-id" });
+  }
+  if (text.trim().length === 0 || !ownerExists(thread)) {
+    return ReplyProtocolError.make({ reason: "invalid-public-reply" });
+  }
+  const nextThread = WorkThreadState.make({
+    ...thread,
+    outbox: EffectArray.append(
+      thread.outbox,
+      OutboundItem.make({
+        deliveryAttempts: 0,
+        id: `reply:${replyId}`,
+        kind: "public_reply",
+        lastErrorCategory: null,
+        replyId,
+        retryAtMillis: null,
+        slackTs: null,
+        status: "pending",
+        text,
+        turnId: ownerId,
+      })
+    ),
+  });
+  return [
+    undefined,
+    PrototypeStateSchema.make({
+      ...state,
+      threads: replaceAt(state.threads, threadIndex, nextThread),
     }),
   ];
 };
@@ -788,6 +1155,10 @@ const makeStore = Effect.fnUntraced(function* (
     accept: (event) =>
       transition("accept", (state) =>
         acceptTransition(state, event, laborerSlackId, initializeNewThreads)
+      ),
+    acceptApplicationEvent: (event) =>
+      transition("acceptApplicationEvent", (state) =>
+        acceptApplicationEventTransition(state, event)
       ),
     markAcknowledgementActive: (id) =>
       transition("markAcknowledgementActive", (state) =>
@@ -989,52 +1360,101 @@ const makeStore = Effect.fnUntraced(function* (
           claimTurnInThread(thread, threadId)
         )
       ),
+    claimNextApplicationEvent: (threadId) =>
+      transition("claimNextApplicationEvent", (state) =>
+        modifyThread(
+          state,
+          threadId,
+          "claimNextApplicationEvent",
+          claimApplicationEventInThread
+        )
+      ),
     acceptPublicReply: (threadId, turnId, replyId, text) =>
       transition<undefined, StoreError | ReplyProtocolError>(
         "acceptPublicReply",
-        (state) => {
-          const threadIndex = findThreadIndex(state, threadId);
-          const thread = state.threads[threadIndex];
-          if (thread === undefined) {
-            return storeFailure("acceptPublicReply", "thread-not-found");
+        (state) =>
+          acceptReplyTransition(
+            state,
+            threadId,
+            turnId,
+            (thread) => findTurnIndex(thread, turnId) >= 0,
+            replyId,
+            text
+          )
+      ),
+    acceptApplicationReply: (threadId, eventId, replyId, text) =>
+      transition<undefined, StoreError | ReplyProtocolError>(
+        "acceptApplicationReply",
+        (state) =>
+          acceptReplyTransition(
+            state,
+            threadId,
+            applicationEventTurnId(eventId),
+            (thread) => findApplicationEventIndex(thread, eventId) >= 0,
+            replyId,
+            text
+          )
+      ),
+    completeApplicationEvent: (threadId, eventId, outcome) =>
+      transition("completeApplicationEvent", (state) =>
+        modifyThread(state, threadId, "completeApplicationEvent", (thread) => {
+          const index = findApplicationEventIndex(thread, eventId);
+          const event = thread.applicationEvents[index];
+          if (event?.status !== "running") {
+            return storeFailure(
+              "completeApplicationEvent",
+              "application-event-not-running"
+            );
           }
-          const duplicate = pipe(
-            thread.outbox,
-            EffectArray.findFirst((item) => item.replyId === replyId),
-            Option.getOrNull
-          );
-          if (duplicate !== null) {
-            return duplicate.text === text
-              ? ([undefined, state] as const)
-              : ReplyProtocolError.make({ reason: "conflicting-reply-id" });
-          }
-          if (text.trim().length === 0 || findTurnIndex(thread, turnId) < 0) {
-            return ReplyProtocolError.make({ reason: "invalid-public-reply" });
-          }
-          const nextThread = WorkThreadState.make({
-            ...thread,
-            outbox: EffectArray.append(
-              thread.outbox,
-              OutboundItem.make({
-                deliveryAttempts: 0,
-                id: `reply:${replyId}`,
-                kind: "public_reply",
-                lastErrorCategory: null,
-                replyId,
-                retryAtMillis: null,
-                slackTs: null,
-                status: "pending",
-                text,
-                turnId,
+          const awaitingDelivery = ApplicationEventState.make({
+            ...event,
+            outcome: HandlerOutcomeState.make(
+              outcome._tag === "Success"
+                ? { category: null, kind: "success", safeDetail: null }
+                : {
+                    category: outcome.category,
+                    kind: "failure",
+                    safeDetail: null,
+                  }
+            ),
+            status: "awaiting_delivery",
+          });
+          const ownerId = applicationEventTurnId(eventId);
+          const noticeId = applicationEventFailureNoticeId(eventId);
+          const outbox =
+            outcome._tag === "Failure" &&
+            !EffectArray.some(thread.outbox, (item) => item.id === noticeId)
+              ? EffectArray.append(
+                  thread.outbox,
+                  OutboundItem.make({
+                    deliveryAttempts: 0,
+                    id: noticeId,
+                    kind: "operational_notice",
+                    lastErrorCategory: null,
+                    replyId: null,
+                    retryAtMillis: null,
+                    slackTs: null,
+                    status: "pending",
+                    text: "Application event failed. See Runner logs.",
+                    turnId: ownerId,
+                  })
+                )
+              : thread.outbox;
+          return [
+            undefined,
+            settleEligibleApplicationEvents(
+              WorkThreadState.make({
+                ...thread,
+                applicationEvents: replaceAt(
+                  thread.applicationEvents,
+                  index,
+                  awaitingDelivery
+                ),
+                outbox,
               })
             ),
-          });
-          const next = PrototypeStateSchema.make({
-            ...state,
-            threads: replaceAt(state.threads, threadIndex, nextThread),
-          });
-          return [undefined, next] as const;
-        }
+          ];
+        })
       ),
     completeHandler: (threadId, turnId, outcome) =>
       transition("completeHandler", (state) => {
@@ -1132,7 +1552,7 @@ const makeStore = Effect.fnUntraced(function* (
               Option.getOrElse(() => -1)
             );
             if (index < 0) {
-              return [{ _tag: "None" } as const, settleEligibleTurns(thread)];
+              return [{ _tag: "None" } as const, settleEligibleWork(thread)];
             }
             const claimIndex = nextClaimableOutboundIndex(thread, index);
             const item = thread.outbox[claimIndex];
@@ -1200,7 +1620,7 @@ const makeStore = Effect.fnUntraced(function* (
             deliveredTurnId = item.turnId;
             return [
               undefined,
-              settleEligibleTurns(
+              settleEligibleWork(
                 WorkThreadState.make({
                   ...thread,
                   outbox: replaceAt(
@@ -1331,7 +1751,7 @@ const makeStore = Effect.fnUntraced(function* (
           }
           return [
             undefined,
-            settleEligibleTurns(
+            settleEligibleWork(
               WorkThreadState.make({
                 ...thread,
                 outbox: replaceAt(
@@ -1473,9 +1893,9 @@ const validateTurn = (turn: TurnState): StoreError | null => {
 
 const validateOutboundItem = (
   item: OutboundItem,
-  turnIds: readonly string[]
+  ownerIds: readonly string[]
 ): StoreError | null => {
-  if (!turnIds.includes(item.turnId)) {
+  if (!ownerIds.includes(item.turnId)) {
     return storeFailure("validate", "outbound-turn-not-found");
   }
   const invalidPublicReply =
@@ -1633,6 +2053,52 @@ const validateThreadMessages = (
   return inputIds;
 };
 
+const validateApplicationInputQueue = (
+  thread: WorkThreadState
+): StoreError | null => {
+  const queuedParticipantIds = pipe(
+    thread.applicationInputQueue,
+    EffectArray.filterMap((input) =>
+      input._tag === "ParticipantInput"
+        ? Result.succeed(input.messageId)
+        : Result.failVoid
+    )
+  );
+  const unassignedIds = pipe(
+    thread.unassigned,
+    EffectArray.map((message) => message.id)
+  );
+  if (
+    duplicateValue(queuedParticipantIds) !== null ||
+    queuedParticipantIds.length !== unassignedIds.length ||
+    !EffectArray.every(queuedParticipantIds, (id) =>
+      EffectArray.contains(unassignedIds, id)
+    )
+  ) {
+    return storeFailure("validate", "participant-input-queue-mismatch");
+  }
+  const queuedExternalIds = pipe(
+    thread.applicationInputQueue,
+    EffectArray.filterMap((input) =>
+      input._tag === "ExternalInput"
+        ? Result.succeed(input.eventId)
+        : Result.failVoid
+    )
+  );
+  const pendingExternalIds = pipe(
+    thread.applicationEvents,
+    EffectArray.filter((event) => event.status === "pending"),
+    EffectArray.map((event) => event.eventId)
+  );
+  return duplicateValue(queuedExternalIds) !== null ||
+    queuedExternalIds.length !== pendingExternalIds.length ||
+    !EffectArray.every(queuedExternalIds, (id) =>
+      EffectArray.contains(pendingExternalIds, id)
+    )
+    ? storeFailure("validate", "external-input-queue-mismatch")
+    : null;
+};
+
 const validateThreadTurns = (
   thread: WorkThreadState,
   turnIds: readonly string[]
@@ -1711,6 +2177,9 @@ const validateOutboxTurnOrder = (
   let previousTurnIndex = -1;
   for (const item of outbox) {
     const turnIndex = turnIds.indexOf(item.turnId);
+    if (turnIndex < 0) {
+      continue;
+    }
     if (turnIndex < previousTurnIndex) {
       return storeFailure("validate", "outbox-turn-order-mismatch");
     }
@@ -1772,6 +2241,115 @@ const validateTurnOutbox = (
   return null;
 };
 
+const validateApplicationEventOutcome = (
+  event: ApplicationEventState
+): StoreError | null => {
+  const isActive = event.status === "pending" || event.status === "running";
+  if (
+    (isActive && event.outcome !== null) ||
+    (!isActive && event.outcome === null)
+  ) {
+    return storeFailure("validate", "application-event-outcome-mismatch");
+  }
+  if (
+    event.outcome?.kind === "success" &&
+    (event.outcome.category !== null || event.outcome.safeDetail !== null)
+  ) {
+    return storeFailure("validate", "invalid-application-event-success");
+  }
+  if (
+    event.outcome?.kind === "failure" &&
+    (event.outcome.category === null || event.outcome.safeDetail !== null)
+  ) {
+    return storeFailure("validate", "invalid-application-event-failure");
+  }
+  if (
+    (event.status === "completed" && event.outcome?.kind !== "success") ||
+    (event.status === "failed" && event.outcome?.kind !== "failure")
+  ) {
+    return storeFailure("validate", "application-event-status-mismatch");
+  }
+  return null;
+};
+
+const validateApplicationEventSettlement = (
+  event: ApplicationEventState,
+  outbox: readonly OutboundItem[]
+): StoreError | null => {
+  if (event.status === "pending" && outbox.length > 0) {
+    return storeFailure("validate", "pending-application-event-with-outbound");
+  }
+  if (
+    event.status === "running" &&
+    EffectArray.some(outbox, (item) => item.status !== "pending")
+  ) {
+    return storeFailure(
+      "validate",
+      "running-application-event-with-nonpending-outbound"
+    );
+  }
+  if (
+    event.status === "awaiting_delivery" &&
+    !EffectArray.some(outbox, isUnsettledOutbound)
+  ) {
+    return storeFailure(
+      "validate",
+      "awaiting-application-event-without-unsettled-outbound"
+    );
+  }
+  if (
+    (event.status === "completed" || event.status === "failed") &&
+    !EffectArray.every(outbox, isSettledOutbound)
+  ) {
+    return storeFailure(
+      "validate",
+      "settled-application-event-with-unsettled-outbound"
+    );
+  }
+  return null;
+};
+
+const validateApplicationEventFailureNotice = (
+  event: ApplicationEventState,
+  outbox: readonly OutboundItem[]
+): StoreError | null => {
+  const failureNoticeId = applicationEventFailureNoticeId(event.eventId);
+  const failureNotices = pipe(
+    outbox,
+    EffectArray.filter((item) => item.id === failureNoticeId)
+  );
+  if (event.outcome?.kind === "failure") {
+    return failureNotices.length === 1 &&
+      failureNotices[0]?.kind === "operational_notice" &&
+      failureNotices[0]?.text === "Application event failed. See Runner logs."
+      ? null
+      : storeFailure(
+          "validate",
+          "failed-application-event-without-sanitized-notice"
+        );
+  }
+  return failureNotices.length === 0
+    ? null
+    : storeFailure(
+        "validate",
+        "successful-application-event-with-failure-notice"
+      );
+};
+
+const validateApplicationEventOutbox = (
+  event: ApplicationEventState,
+  outbox: readonly OutboundItem[]
+): StoreError | null => {
+  const outcomeFailure = validateApplicationEventOutcome(event);
+  if (outcomeFailure !== null) {
+    return outcomeFailure;
+  }
+  const settlementFailure = validateApplicationEventSettlement(event, outbox);
+  return (
+    settlementFailure ?? validateApplicationEventFailureNotice(event, outbox)
+  );
+};
+
 const validateThreadOutbox = (
   thread: WorkThreadState,
   turnIds: readonly string[],
@@ -1791,7 +2369,14 @@ const validateThreadOutbox = (
     return orderFailure;
   }
   for (const item of thread.outbox) {
-    const failure = validateOutboundItem(item, turnIds);
+    const applicationEventOwnerIds = pipe(
+      thread.applicationEvents,
+      EffectArray.map((event) => applicationEventTurnId(event.eventId))
+    );
+    const failure = validateOutboundItem(
+      item,
+      EffectArray.appendAll(turnIds, applicationEventOwnerIds)
+    );
     if (failure !== null) {
       return failure;
     }
@@ -1802,6 +2387,18 @@ const validateThreadOutbox = (
       EffectArray.filter((item) => item.turnId === turn.id)
     );
     const failure = validateTurnOutbox(turn, turnOutbox);
+    if (failure !== null) {
+      return failure;
+    }
+  }
+  for (const event of thread.applicationEvents) {
+    const eventOutbox = pipe(
+      thread.outbox,
+      EffectArray.filter(
+        (item) => item.turnId === applicationEventTurnId(event.eventId)
+      )
+    );
+    const failure = validateApplicationEventOutbox(event, eventOutbox);
     if (failure !== null) {
       return failure;
     }
@@ -1819,6 +2416,10 @@ const validateThread = (
   const inputIds = validateThreadMessages(thread);
   if (inputIds instanceof StoreError) {
     return inputIds;
+  }
+  const applicationInputQueueFailure = validateApplicationInputQueue(thread);
+  if (applicationInputQueueFailure !== null) {
+    return applicationInputQueueFailure;
   }
   const turnIds = thread.turns.map((turn) => turn.id);
   const outboundIds = thread.outbox.map((item) => item.id);
@@ -2245,6 +2846,56 @@ const readSnapshotPromise = async (
 const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const migrateApplicationEventOutcomes = (
+  value: unknown
+): { readonly changed: boolean; readonly value: unknown } => {
+  if (!Array.isArray(value)) {
+    return { changed: false, value };
+  }
+  const changed = EffectArray.some(
+    value,
+    (event) => isUnknownRecord(event) && !Object.hasOwn(event, "outcome")
+  );
+  if (!changed) {
+    return { changed: false, value };
+  }
+  return {
+    changed: true,
+    value: pipe(
+      value,
+      EffectArray.map((event) => {
+        if (!isUnknownRecord(event) || Object.hasOwn(event, "outcome")) {
+          return event;
+        }
+        const isPreviouslyCompleted =
+          event.status === "awaiting_delivery" || event.status === "completed";
+        return {
+          ...event,
+          outcome: isPreviouslyCompleted
+            ? { category: null, kind: "success", safeDetail: null }
+            : null,
+        };
+      })
+    ),
+  };
+};
+
+const participantInputQueueFromUnassigned = (
+  value: unknown
+): readonly unknown[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return pipe(
+    value,
+    EffectArray.flatMap((message) =>
+      isUnknownRecord(message) && typeof message.id === "string"
+        ? [{ _tag: "ParticipantInput", messageId: message.id }]
+        : []
+    )
+  );
+};
+
 const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
   if (
     !isUnknownRecord(value) ||
@@ -2289,11 +2940,23 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
         candidate,
         "workingDirectory"
       );
+      const needsApplicationInputQueue = !Object.hasOwn(
+        candidate,
+        "applicationInputQueue"
+      );
+      const applicationInputQueue = participantInputQueueFromUnassigned(
+        candidate.unassigned
+      );
+      const applicationEventMigration = migrateApplicationEventOutcomes(
+        candidate.applicationEvents
+      );
       changed =
         changed ||
         needsActivationEventId ||
         needsInitializationStatus ||
-        needsWorkingDirectory;
+        needsWorkingDirectory ||
+        needsApplicationInputQueue ||
+        applicationEventMigration.changed;
       return {
         ...candidate,
         ...(needsActivationEventId ? { activationEventId } : {}),
@@ -2301,6 +2964,10 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
           ? { initializationStatus: "not_applicable" }
           : {}),
         ...(needsWorkingDirectory ? { workingDirectory: null } : {}),
+        ...(needsApplicationInputQueue ? { applicationInputQueue } : {}),
+        ...(applicationEventMigration.changed
+          ? { applicationEvents: applicationEventMigration.value }
+          : {}),
       };
     })
   );

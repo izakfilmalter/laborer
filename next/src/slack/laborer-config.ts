@@ -23,9 +23,23 @@ export interface WorkHandlerConfig extends ProcessCommandConfig {
   readonly initialize?: ProcessCommandConfig;
 }
 
-export interface LaborerConfig extends Readonly<Record<string, unknown>> {
-  readonly workHandler: WorkHandlerConfig;
+export interface ReferenceCodingApplicationConfig {
+  readonly agent?: string;
+  readonly environment: readonly string[];
+  readonly type: "reference-coding";
 }
+
+export type LaborerConfig = Readonly<Record<string, unknown>> &
+  (
+    | {
+        readonly application: ReferenceCodingApplicationConfig;
+        readonly workHandler?: never;
+      }
+    | {
+        readonly application?: never;
+        readonly workHandler: WorkHandlerConfig;
+      }
+  );
 
 export interface LoadedLaborerConfig {
   readonly config: LaborerConfig;
@@ -52,9 +66,20 @@ const WorkHandlerConfigFromJson = Schema.Struct({
   initialize: Schema.optional(ProcessCommandConfigFromJson),
 });
 
+const ReferenceCodingApplicationConfigFromJson = Schema.Struct({
+  agent: Schema.optional(HandlerCommand),
+  environment: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
+  type: Schema.Literal("reference-coding"),
+});
+
 const LaborerConfigFromJson = Schema.fromJsonString(
   Schema.StructWithRest(
-    Schema.Struct({ workHandler: WorkHandlerConfigFromJson }),
+    Schema.Struct({
+      application: Schema.optional(ReferenceCodingApplicationConfigFromJson),
+      workHandler: Schema.optional(WorkHandlerConfigFromJson),
+    }),
     [Schema.Record(Schema.String, Schema.Unknown)]
   )
 );
@@ -210,7 +235,33 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
     })(source).pipe(
       Effect.mapError(() => configFailure("parse-config", "invalid-config"))
     );
+    const hasApplication = rawConfig.application !== undefined;
+    const hasWorkHandler = rawConfig.workHandler !== undefined;
+    if (hasApplication === hasWorkHandler) {
+      return yield* configFailure("parse-config", "invalid-config");
+    }
+    if (rawConfig.application !== undefined) {
+      const application: ReferenceCodingApplicationConfig = {
+        ...(rawConfig.application.agent === undefined
+          ? {}
+          : { agent: rawConfig.application.agent }),
+        environment: yield* validateEnvironmentNames(
+          rawConfig.application.environment,
+          "validate-reference-coding-application"
+        ),
+        type: "reference-coding",
+      };
+      const { workHandler: _workHandler, ...retainedConfig } = rawConfig;
+      const config: LaborerConfig = {
+        ...retainedConfig,
+        application,
+      };
+      return { config, root };
+    }
     const rawWorkHandler = rawConfig.workHandler;
+    if (rawWorkHandler === undefined) {
+      return yield* configFailure("parse-config", "invalid-config");
+    }
     const validatedWorkHandler = yield* validateProcessCommand(
       rawWorkHandler,
       root,
@@ -230,10 +281,8 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
       ...validatedWorkHandler,
       ...(initialize === undefined ? {} : { initialize }),
     } satisfies WorkHandlerConfig;
-    const config: LaborerConfig = {
-      ...rawConfig,
-      workHandler,
-    };
+    const { application: _application, ...retainedConfig } = rawConfig;
+    const config: LaborerConfig = { ...retainedConfig, workHandler };
     return {
       config,
       root,

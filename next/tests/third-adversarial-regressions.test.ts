@@ -13,6 +13,7 @@ import {
   HandlerOutcomeState,
   NormalizedMessage,
   OutboundItem,
+  ParticipantApplicationInput,
   PrototypeState,
   ReplyId,
   stableAcknowledgementId,
@@ -121,6 +122,10 @@ const baseAcknowledgementState = (): PrototypeState => {
       WorkThreadState.make({
         activationEventId: eventId,
         activationTs: messageTs,
+        applicationEvents: [],
+        applicationInputQueue: [
+          ParticipantApplicationInput.make({ messageId: message.id }),
+        ],
         channelId,
         context: [],
         contextAttempts: 0,
@@ -190,6 +195,7 @@ const baseCompletionReactionState = (): PrototypeState => {
     threads: [
       WorkThreadState.make({
         ...thread,
+        applicationInputQueue: [],
         contextAttempts: 1,
         contextStatus: "ready",
         outbox: [reply],

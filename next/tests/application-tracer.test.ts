@@ -299,6 +299,15 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
               ["cancel", "prompt"],
             ]
           );
+          assert.deepStrictEqual(
+            requests[0]?.executionControls.map(
+              (control) => control.description
+            ),
+            [
+              'Cancel an owned active Execution. Input must be {"control":"cancel","executionId":"<owned id>"}.',
+              'Send a follow-up prompt to an owned Execution. Input must be {"executionId":"<owned id>","prompt":"<follow-up request>"}.',
+            ]
+          );
           assert.strictEqual(requests[0]?.executions.length, 0);
           assert.deepStrictEqual(requests[1]?.executions, [
             {

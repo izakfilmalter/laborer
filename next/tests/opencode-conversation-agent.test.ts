@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
   makeOpenCodeConversationAgent,
+  type OpenCodePromptInput,
   type OpenCodeSessionClient,
   type OpenCodeSessionMessage,
 } from "../src/adapters/opencode-agents.ts";
@@ -11,6 +12,15 @@ import type { ConversationAgentRequest } from "../src/reference-coding-applicati
 const CREATE_FEATURE_PATTERN = /create-feature/;
 const EXISTING_EXECUTION_PATTERN = /existing-execution/;
 const NO_ORCHESTRATION_TOOLS_PATTERN = /Do not call todowrite/;
+const CONVERSATION_TOOL_POLICY = {
+  apply_patch: false,
+  bash: false,
+  edit: false,
+  skill: false,
+  task: false,
+  todowrite: false,
+  write: false,
+} as const;
 
 const request = (
   overrides: Partial<ConversationAgentRequest> = {}
@@ -158,11 +168,7 @@ describe("OpenCode ConversationAgent", () => {
           readonly sessionId: string;
           readonly workingDirectory: string;
         }> = [];
-        const prompted: Array<{
-          readonly promptId: string;
-          readonly sessionId: string;
-          readonly text: string;
-        }> = [];
+        const prompted: OpenCodePromptInput[] = [];
         const actionInputs: unknown[] = [];
         const readPromptIds: string[] = [];
         const waitedPromptIds: string[] = [];
@@ -265,6 +271,8 @@ describe("OpenCode ConversationAgent", () => {
         assert.match(prompted[0]?.text ?? "", CREATE_FEATURE_PATTERN);
         assert.match(prompted[0]?.text ?? "", EXISTING_EXECUTION_PATTERN);
         assert.match(prompted[0]?.text ?? "", NO_ORCHESTRATION_TOOLS_PATTERN);
+        assert.deepStrictEqual(prompted[0]?.tools, CONVERSATION_TOOL_POLICY);
+        assert.deepStrictEqual(prompted[1]?.tools, CONVERSATION_TOOL_POLICY);
         assert.deepStrictEqual(actionInputs, [
           { prompt: "Build it", worktreeName: "build-it" },
         ]);

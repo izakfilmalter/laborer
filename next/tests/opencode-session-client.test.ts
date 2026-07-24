@@ -166,6 +166,7 @@ describe("OpenCode legacy session transport", () => {
       promptId: "prompt-1",
       sessionId: "session-1",
       text: "input",
+      tools: { bash: false, read: true },
       workingDirectory: "/repo/worktree",
     });
     const beforePromptCompletion = await Promise.race([
@@ -188,6 +189,7 @@ describe("OpenCode legacy session transport", () => {
           model: { modelID: "gpt-5.6-sol", providerID: "openai" },
           parts: [{ text: "input", type: "text" }],
           sessionID: "session-1",
+          tools: { bash: false, read: true },
         },
         { throwOnError: true },
       ],
@@ -277,7 +279,11 @@ describe("OpenCode v2 session client", () => {
         sessionId: "logical-session",
         workingDirectory: "/repo/worktree",
       });
-      yield* client.submitPrompt({ ...promptIdentity, text: "input" });
+      yield* client.submitPrompt({
+        ...promptIdentity,
+        text: "input",
+        tools: { bash: false, read: true },
+      });
       yield* client.wait(promptIdentity);
       assert.deepStrictEqual(yield* client.readMessages(promptIdentity), [
         { id: "prompt-1", role: "user", text: "input" },
@@ -290,7 +296,11 @@ describe("OpenCode v2 session client", () => {
         },
       ]);
       yield* client.interrupt(promptIdentity);
-      yield* client.submitPrompt({ ...promptIdentity, text: "input" });
+      yield* client.submitPrompt({
+        ...promptIdentity,
+        text: "input",
+        tools: { bash: false, read: true },
+      });
 
       assert.deepStrictEqual(
         calls.filter(([operation]) => operation === "create"),
@@ -326,6 +336,7 @@ describe("OpenCode v2 session client", () => {
               promptId: "prompt-1",
               sessionId: expectedPhysicalId,
               text: "input",
+              tools: { bash: false, read: true },
               workingDirectory: "/repo/worktree",
             },
           ],

@@ -2129,13 +2129,15 @@ export const makeReferenceCodingApplication = Effect.fn(
     acceptEvent: AcceptApplicationEvent
   ): readonly ConversationExecutionControl[] => [
     {
-      description: "Cancel an owned active Execution.",
+      description:
+        'Cancel an owned active Execution. Input must be {"control":"cancel","executionId":"<owned id>"}.',
       invoke: (input) =>
         invokeExecutionControl(conversationId, input, acceptEvent),
       name: "cancel",
     },
     {
-      description: "Send a follow-up prompt to an owned Execution.",
+      description:
+        'Send a follow-up prompt to an owned Execution. Input must be {"executionId":"<owned id>","prompt":"<follow-up request>"}.',
       invoke: (input) => invokeExecutionPrompt(conversationId, input),
       name: "prompt",
     },

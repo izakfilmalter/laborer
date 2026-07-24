@@ -29,9 +29,13 @@ export interface OpenCodeModel {
 export interface OpenCodePromptInput extends OpenCodeSessionIdentity {
   readonly promptId: string;
   readonly text: string;
+  readonly tools?: Record<string, boolean>;
 }
 
-export type OpenCodePromptIdentity = Omit<OpenCodePromptInput, "text">;
+export type OpenCodePromptIdentity = Omit<
+  OpenCodePromptInput,
+  "text" | "tools"
+>;
 
 export interface OpenCodeSessionMessage {
   readonly finish?: string;
@@ -86,6 +90,7 @@ export interface OpenCodeV2SessionApi {
     readonly promptId: string;
     readonly sessionId: string;
     readonly text: string;
+    readonly tools?: Record<string, boolean>;
     readonly workingDirectory: string;
   }) => Promise<{ readonly id: string }>;
   readonly wait: (input: { readonly sessionId: string }) => Promise<void>;
@@ -126,6 +131,7 @@ interface OpenCodeLegacyPromptRequest {
     },
   ];
   readonly sessionID: string;
+  readonly tools?: Record<string, boolean>;
 }
 
 interface OpenCodeLegacyRequestOptions {
@@ -595,6 +601,7 @@ export const makeOpenCodeSessionClientFromV2Api = (
             promptId: input.promptId,
             sessionId: sessionIdentity.sessionId,
             text: input.text,
+            ...(input.tools === undefined ? {} : { tools: input.tools }),
             workingDirectory: sessionIdentity.workingDirectory,
           })
         );
@@ -698,6 +705,7 @@ export const makeOpenCodeLegacySessionTransport = (
         ...(input.model === undefined ? {} : { model: input.model }),
         parts: [{ text: input.text, type: "text" }],
         sessionID: input.sessionId,
+        ...(input.tools === undefined ? {} : { tools: input.tools }),
       },
       { throwOnError: true }
     );
@@ -817,6 +825,16 @@ type ConversationProtocolRecord =
       readonly type: "execution_control";
     }
   | { readonly text: string; readonly type: "reply" };
+
+const CONVERSATION_TOOL_POLICY: Record<string, boolean> = Object.freeze({
+  apply_patch: false,
+  bash: false,
+  edit: false,
+  skill: false,
+  task: false,
+  todowrite: false,
+  write: false,
+});
 
 const protocolFailure = (safeDetail: string): HandlerFailure =>
   HandlerFailure.make({ category: "protocol", safeDetail });
@@ -962,6 +980,12 @@ const ensureSession = (
       )
     );
 
+const submitConversationPrompt = (
+  client: OpenCodeSessionClient,
+  input: Omit<OpenCodePromptInput, "tools">
+): Effect.Effect<void, HandlerFailure> =>
+  client.submitPrompt({ ...input, tools: CONVERSATION_TOOL_POLICY });
+
 const isFirstConversationPrompt = (
   request: ConversationAgentRequest
 ): boolean => request.conversationSessionIsNew;
@@ -1101,7 +1125,7 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
   if (submitInitialPrompt) {
     const promptText = yield* boundedPrompt(renderConversationPrompt(request));
     yield* ensureConversationSession(options.client, identity, request);
-    yield* options.client.submitPrompt({
+    yield* submitConversationPrompt(options.client, {
       ...identity,
       promptId: request.promptId,
       text: promptText,
@@ -1155,7 +1179,7 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
     const actionResultText = yield* boundedPrompt(
       renderActionResultPrompt(request, invocationResult)
     );
-    yield* options.client.submitPrompt({
+    yield* submitConversationPrompt(options.client, {
       ...identity,
       promptId: actionResultPromptId,
       text: actionResultText,

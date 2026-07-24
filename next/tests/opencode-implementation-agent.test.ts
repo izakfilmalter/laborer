@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
   makeOpenCodeImplementationAgent,
+  type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
 
@@ -140,11 +141,7 @@ describe("OpenCode ImplementationAgent", () => {
           readonly sessionId: string;
           readonly workingDirectory: string;
         }> = [];
-        const prompted: Array<{
-          readonly promptId: string;
-          readonly sessionId: string;
-          readonly text: string;
-        }> = [];
+        const prompted: OpenCodePromptInput[] = [];
         const accepted: Array<{
           readonly responseId: string;
           readonly text: string;
@@ -207,6 +204,7 @@ describe("OpenCode ImplementationAgent", () => {
           },
         ]);
         assert.strictEqual(prompted[0]?.promptId, "implementation-prompt-1");
+        assert.ok(!(prompted[0] && "tools" in prompted[0]));
         assert.match(prompted[0]?.text ?? "", FEATURE_WORKFLOW_PATTERN);
         assert.match(prompted[0]?.text ?? "", INITIAL_REQUEST_PATTERN);
         assert.deepStrictEqual(waitedPromptIds, ["implementation-prompt-1"]);

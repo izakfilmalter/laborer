@@ -8,6 +8,9 @@ import {
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
 const INITIAL_REQUEST_PATTERN = /Build the requested capability/;
 const BUG_WORKFLOW_PATTERN = /bug workflow/i;
+const FRESH_ISOLATED_SESSION_PATTERN = /fresh isolated OpenCode session/i;
+const INSPECT_EXISTING_WORKTREE_PATTERN = /Inspect the existing worktree/i;
+const FOLLOW_UP_REQUEST_PATTERN = /Now add coverage/;
 
 describe("OpenCode ImplementationAgent", () => {
   it.effect(
@@ -228,10 +231,16 @@ describe("OpenCode ImplementationAgent", () => {
         readonly text: string;
       }> = [];
       const accepted: string[] = [];
+      const interruptedPromptIds: string[] = [];
+      const readPromptIds: string[] = [];
       const client: OpenCodeSessionClient = {
         createSession: () => Effect.void,
-        interrupt: () => Effect.void,
-        readMessages: () => {
+        interrupt: (input) =>
+          Effect.sync(() => {
+            interruptedPromptIds.push(input.promptId);
+          }),
+        readMessages: (input) => {
+          readPromptIds.push(input.promptId);
           const latest = prompted.at(-1);
           return Effect.succeed(
             latest === undefined
@@ -273,7 +282,6 @@ describe("OpenCode ImplementationAgent", () => {
             accepted.push(response.responseId);
           })
       );
-
       yield* session.completion;
       yield* session.resume(
         {
@@ -289,6 +297,14 @@ describe("OpenCode ImplementationAgent", () => {
             accepted.push(response.responseId);
           })
       );
+      assert.ok(session.control);
+      yield* session.control({
+        control: "cancel",
+        conversationId: "conversation-1" as never,
+        executionId: "execution-1",
+        implementationSessionId: "implementation-session-1",
+        workingDirectory: "/repo/worktree",
+      });
 
       assert.deepStrictEqual(
         prompted.map(({ promptId, sessionId }) => ({ promptId, sessionId })),
@@ -304,6 +320,14 @@ describe("OpenCode ImplementationAgent", () => {
         ]
       );
       assert.match(prompted[0]?.text ?? "", BUG_WORKFLOW_PATTERN);
+      assert.match(prompted[1]?.text ?? "", FRESH_ISOLATED_SESSION_PATTERN);
+      assert.match(prompted[1]?.text ?? "", INSPECT_EXISTING_WORKTREE_PATTERN);
+      assert.match(prompted[1]?.text ?? "", FOLLOW_UP_REQUEST_PATTERN);
+      assert.deepStrictEqual(readPromptIds, [
+        "implementation-prompt-1",
+        "implementation-prompt-2",
+      ]);
+      assert.deepStrictEqual(interruptedPromptIds, ["implementation-prompt-2"]);
       assert.deepStrictEqual(accepted, [
         "response:implementation-prompt-1",
         "response:implementation-prompt-2",
@@ -364,6 +388,7 @@ describe("OpenCode ImplementationAgent", () => {
   it.effect("cancels by interrupting the supplied session", () =>
     Effect.gen(function* () {
       const interrupted: Array<{
+        readonly promptId: string;
         readonly sessionId: string;
         readonly workingDirectory: string;
       }> = [];
@@ -403,6 +428,7 @@ describe("OpenCode ImplementationAgent", () => {
 
       assert.deepStrictEqual(interrupted, [
         {
+          promptId: "implementation-prompt-1",
           sessionId: "implementation-session-1",
           workingDirectory: "/repo/worktree",
         },

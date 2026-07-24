@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
@@ -225,6 +226,188 @@ describe("OpenCode legacy session transport", () => {
 });
 
 describe("OpenCode v2 session client", () => {
+  it.effect("isolates durable prompts in deterministic physical sessions", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const sessions = new Map<string, string>();
+      const messages = new Map<
+        string,
+        readonly {
+          readonly finish?: string;
+          readonly id: string;
+          readonly role: "assistant" | "user";
+          readonly status?: "completed" | "error" | "in-progress";
+          readonly text: string;
+        }[]
+      >();
+      const physicalId = (promptId: string): string =>
+        `ses_${createHash("sha256")
+          .update(JSON.stringify(["logical-session", promptId]))
+          .digest("hex")}`;
+      const api: OpenCodeV2SessionApi = {
+        create: (input) => {
+          calls.push(["create", input]);
+          sessions.set(input.id, input.workingDirectory);
+          return Promise.resolve({ id: input.id });
+        },
+        get: (input) => {
+          calls.push(["get", input]);
+          const workingDirectory = sessions.get(input.sessionId);
+          return workingDirectory === undefined
+            ? Promise.reject({ _tag: "SessionNotFoundError" })
+            : Promise.resolve({ id: input.sessionId, workingDirectory });
+        },
+        interrupt: (input) => {
+          calls.push(["interrupt", input]);
+          return Promise.resolve();
+        },
+        messages: (input) => {
+          calls.push(["messages", input]);
+          return Promise.resolve(messages.get(input.sessionId) ?? []);
+        },
+        prompt: (input) => {
+          calls.push(["prompt", input]);
+          messages.set(input.sessionId, [
+            {
+              finish: "stop",
+              id: `response:${input.promptId}`,
+              role: "assistant",
+              status: "completed",
+              text: "done",
+            },
+            { id: input.promptId, role: "user", text: input.text },
+          ]);
+          return Promise.resolve({ id: input.promptId });
+        },
+        wait: (input) => {
+          calls.push(["wait", input]);
+          return Promise.resolve();
+        },
+      };
+      const client = makeOpenCodeSessionClientFromV2Api(api, {
+        agent: "laborer",
+        model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+        promptIsolation: true,
+      });
+      const promptIdentity = {
+        promptId: "prompt-1",
+        sessionId: "logical-session",
+        workingDirectory: "/repo/worktree",
+      };
+      const expectedPhysicalId = physicalId("prompt-1");
+
+      assert.strictEqual(
+        yield* client.sessionExists({
+          sessionId: "logical-session",
+          workingDirectory: "/repo/worktree",
+        }),
+        false
+      );
+      yield* client.createSession({
+        sessionId: "logical-session",
+        workingDirectory: "/repo/worktree",
+      });
+      yield* client.submitPrompt({ ...promptIdentity, text: "input" });
+      yield* client.wait(promptIdentity);
+      assert.deepStrictEqual(yield* client.readMessages(promptIdentity), [
+        { id: "prompt-1", role: "user", text: "input" },
+        {
+          finish: "stop",
+          id: "response:prompt-1",
+          role: "assistant",
+          status: "completed",
+          text: "done",
+        },
+      ]);
+      yield* client.interrupt(promptIdentity);
+      yield* client.submitPrompt({ ...promptIdentity, text: "input" });
+
+      assert.deepStrictEqual(
+        calls.filter(([operation]) => operation === "create"),
+        [
+          [
+            "create",
+            {
+              agent: "laborer",
+              id: "logical-session",
+              model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+          [
+            "create",
+            {
+              agent: "laborer",
+              id: expectedPhysicalId,
+              model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+        ]
+      );
+      assert.deepStrictEqual(
+        calls.filter(([operation]) => operation === "prompt"),
+        [
+          [
+            "prompt",
+            {
+              agent: "laborer",
+              model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+              promptId: "prompt-1",
+              sessionId: expectedPhysicalId,
+              text: "input",
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+        ]
+      );
+      assert.ok(
+        calls
+          .filter(([operation]) =>
+            ["messages", "wait", "interrupt"].includes(operation)
+          )
+          .every(([, input]) =>
+            JSON.stringify(input).includes(expectedPhysicalId)
+          )
+      );
+
+      const conflictingPromptId = "prompt-conflict";
+      sessions.set(physicalId(conflictingPromptId), "/wrong/worktree");
+      const conflict = yield* Effect.result(
+        client.submitPrompt({
+          promptId: conflictingPromptId,
+          sessionId: "logical-session",
+          text: "must not run",
+          workingDirectory: "/repo/worktree",
+        })
+      );
+      assert.strictEqual(conflict._tag, "Failure");
+      if (conflict._tag === "Failure") {
+        assert.strictEqual(
+          conflict.failure.safeDetail,
+          "OpenCode session identity conflicts"
+        );
+      }
+      assert.ok(
+        !calls.some(
+          ([operation, input]) =>
+            operation === "prompt" &&
+            JSON.stringify(input).includes(conflictingPromptId)
+        )
+      );
+      assert.deepStrictEqual(
+        calls.filter(([operation]) => operation === "get"),
+        [
+          ["get", { sessionId: "logical-session" }],
+          ["get", { sessionId: expectedPhysicalId }],
+          ["get", { sessionId: expectedPhysicalId }],
+          ["get", { sessionId: expectedPhysicalId }],
+          ["get", { sessionId: physicalId(conflictingPromptId) }],
+        ]
+      );
+    })
+  );
+
   it.effect(
     "does not complete the exact prompt on completed tool-call assistants",
     () =>
@@ -736,17 +919,20 @@ describe("OpenCode v2 session client", () => {
         text: "input",
       });
       yield* client.wait({ ...identity, promptId: "prompt-1" });
-      assert.deepStrictEqual(yield* client.readMessages(identity), [
-        { id: "prompt-1", role: "user", text: "input" },
-        {
-          finish: "stop",
-          id: "response-1",
-          role: "assistant",
-          status: "completed",
-          text: "output",
-        },
-      ]);
-      yield* client.interrupt(identity);
+      assert.deepStrictEqual(
+        yield* client.readMessages({ ...identity, promptId: "prompt-1" }),
+        [
+          { id: "prompt-1", role: "user", text: "input" },
+          {
+            finish: "stop",
+            id: "response-1",
+            role: "assistant",
+            status: "completed",
+            text: "output",
+          },
+        ]
+      );
+      yield* client.interrupt({ ...identity, promptId: "prompt-1" });
 
       assert.deepStrictEqual(calls, [
         ["get", { sessionId: "session-1" }],

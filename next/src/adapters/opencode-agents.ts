@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { Scope } from "effect";
 import { Effect, Array as EffectArray, Option, pipe, Semaphore } from "effect";
@@ -10,6 +11,7 @@ import type {
   ConversationAgentShape,
   ConversationExecutionControl,
   ImplementationAgentRequest,
+  ImplementationAgentResumeRequest,
   ImplementationAgentSession,
   ImplementationAgentShape,
 } from "../reference-coding-application.ts";
@@ -29,6 +31,8 @@ export interface OpenCodePromptInput extends OpenCodeSessionIdentity {
   readonly text: string;
 }
 
+export type OpenCodePromptIdentity = Omit<OpenCodePromptInput, "text">;
+
 export interface OpenCodeSessionMessage {
   readonly finish?: string;
   readonly id: string;
@@ -42,10 +46,10 @@ export interface OpenCodeSessionClient {
     input: OpenCodeSessionIdentity
   ) => Effect.Effect<void, HandlerFailure>;
   readonly interrupt: (
-    input: OpenCodeSessionIdentity
+    input: OpenCodePromptIdentity
   ) => Effect.Effect<void, HandlerFailure>;
   readonly readMessages: (
-    input: OpenCodeSessionIdentity
+    input: OpenCodePromptIdentity
   ) => Effect.Effect<readonly OpenCodeSessionMessage[], HandlerFailure>;
   readonly sessionExists: (
     input: OpenCodeSessionIdentity
@@ -54,7 +58,7 @@ export interface OpenCodeSessionClient {
     input: OpenCodePromptInput
   ) => Effect.Effect<void, HandlerFailure>;
   readonly wait: (
-    input: Omit<OpenCodePromptInput, "text">
+    input: OpenCodePromptIdentity
   ) => Effect.Effect<void, HandlerFailure>;
 }
 
@@ -156,6 +160,7 @@ export interface OpenCodeLegacySessionApi {
 export interface OpenCodeSessionClientOptions {
   readonly agent?: string;
   readonly model?: OpenCodeModel;
+  readonly promptIsolation?: boolean;
   readonly waitPollIntervalMs?: number;
   readonly waitPollMaxAttempts?: number;
 }
@@ -182,6 +187,24 @@ const LEGACY_RELEASE_POLL_MAX_ATTEMPTS = 200;
 const SERVER_STOP_GRACE_MILLIS = 250;
 const SERVER_URL_PATTERN =
   /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
+
+const physicalSessionId = (
+  logicalSessionId: string,
+  promptId: string
+): string =>
+  `ses_${createHash("sha256")
+    .update(JSON.stringify([logicalSessionId, promptId]))
+    .digest("hex")}`;
+
+const promptSessionIdentity = (
+  identity: OpenCodePromptIdentity,
+  isolatePrompt: boolean
+): OpenCodeSessionIdentity => ({
+  sessionId: isolatePrompt
+    ? physicalSessionId(identity.sessionId, identity.promptId)
+    : identity.sessionId,
+  workingDirectory: identity.workingDirectory,
+});
 
 const sdkFailure = (operation: string): HandlerFailure =>
   HandlerFailure.make({
@@ -481,78 +504,129 @@ export const makeOpenCodeSessionClientFromV2Api = (
   api: OpenCodeV2SessionApi,
   options: OpenCodeSessionClientOptions = {}
 ): OpenCodeSessionClient => {
+  const isolatePrompts = options.promptIsolation ?? false;
   const waitPollIntervalMs =
     options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_INTERVAL_MILLIS;
   const waitPollMaxAttempts =
     options.waitPollMaxAttempts ?? DEFAULT_WAIT_POLL_MAX_ATTEMPTS;
+  const createSession = (
+    identity: OpenCodeSessionIdentity
+  ): Effect.Effect<void, HandlerFailure> =>
+    apiEffect("session creation", () =>
+      api.create({
+        ...(options.agent === undefined ? {} : { agent: options.agent }),
+        id: identity.sessionId,
+        ...(options.model === undefined ? {} : { model: options.model }),
+        workingDirectory: identity.workingDirectory,
+      })
+    ).pipe(
+      Effect.flatMap((created) =>
+        created.id === identity.sessionId
+          ? Effect.void
+          : protocolFailure("OpenCode session identity conflicts")
+      )
+    );
+  const sessionExists = (
+    identity: OpenCodeSessionIdentity
+  ): Effect.Effect<boolean, HandlerFailure> =>
+    Effect.tryPromise({
+      try: () => api.get({ sessionId: identity.sessionId }),
+      catch: (error) => ({
+        notFound: isNotFound(error),
+      }),
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          error.notFound
+            ? Effect.succeed(false)
+            : Effect.fail(sdkFailure("session lookup")),
+        onSuccess: (existing) =>
+          existing.id === identity.sessionId &&
+          existing.workingDirectory === identity.workingDirectory
+            ? Effect.succeed(true)
+            : protocolFailure("OpenCode session identity conflicts"),
+      })
+    );
+  const readSessionMessages = (
+    identity: OpenCodeSessionIdentity
+  ): Effect.Effect<readonly OpenCodeSessionMessage[], HandlerFailure> =>
+    apiEffect("message read", () =>
+      api.messages({
+        limit: MAX_SESSION_MESSAGES,
+        order: "desc",
+        sessionId: identity.sessionId,
+        workingDirectory: identity.workingDirectory,
+      })
+    ).pipe(Effect.map(EffectArray.reverse));
+  const prepareIsolatedPrompt = Effect.fnUntraced(function* (
+    input: OpenCodePromptInput,
+    sessionIdentity: OpenCodeSessionIdentity
+  ) {
+    const exists = yield* sessionExists(sessionIdentity);
+    if (!exists) {
+      yield* createSession(sessionIdentity);
+      const createdAtExpectedIdentity = yield* sessionExists(sessionIdentity);
+      if (!createdAtExpectedIdentity) {
+        return yield* protocolFailure(
+          "OpenCode session is unavailable after creation"
+        );
+      }
+    }
+    const persistedMessages = yield* readSessionMessages(sessionIdentity);
+    const persistedPrompt = EffectArray.findFirst(
+      persistedMessages,
+      (message) => message.role === "user" && message.id === input.promptId
+    );
+    if (Option.isNone(persistedPrompt)) {
+      return false;
+    }
+    if (persistedPrompt.value.text !== input.text) {
+      return yield* protocolFailure("OpenCode prompt identity conflicts");
+    }
+    return true;
+  });
   return {
-    createSession: (identity) =>
-      apiEffect("session creation", () =>
-        api.create({
-          ...(options.agent === undefined ? {} : { agent: options.agent }),
-          id: identity.sessionId,
-          ...(options.model === undefined ? {} : { model: options.model }),
-          workingDirectory: identity.workingDirectory,
-        })
-      ).pipe(
-        Effect.flatMap((created) =>
-          created.id === identity.sessionId
-            ? Effect.void
-            : protocolFailure("OpenCode session identity conflicts")
-        )
-      ),
-    interrupt: (identity) =>
-      apiEffect("session interruption", () =>
-        api.interrupt({ sessionId: identity.sessionId })
-      ),
+    createSession,
+    interrupt: (identity) => {
+      const sessionIdentity = promptSessionIdentity(identity, isolatePrompts);
+      return apiEffect("session interruption", () =>
+        api.interrupt({ sessionId: sessionIdentity.sessionId })
+      );
+    },
     readMessages: (identity) =>
-      apiEffect("message read", () =>
-        api.messages({
-          limit: MAX_SESSION_MESSAGES,
-          order: "desc",
-          sessionId: identity.sessionId,
-          workingDirectory: identity.workingDirectory,
-        })
-      ).pipe(Effect.map(EffectArray.reverse)),
-    sessionExists: (identity) =>
-      Effect.tryPromise({
-        try: () => api.get({ sessionId: identity.sessionId }),
-        catch: (error) => ({
-          notFound: isNotFound(error),
-        }),
-      }).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            error.notFound
-              ? Effect.succeed(false)
-              : Effect.fail(sdkFailure("session lookup")),
-          onSuccess: (existing) =>
-            existing.id === identity.sessionId &&
-            existing.workingDirectory === identity.workingDirectory
-              ? Effect.succeed(true)
-              : protocolFailure("OpenCode session identity conflicts"),
-        })
-      ),
+      readSessionMessages(promptSessionIdentity(identity, isolatePrompts)),
+    sessionExists,
     submitPrompt: (input) =>
-      apiEffect("prompt submission", () =>
-        api.prompt({
-          ...(options.agent === undefined ? {} : { agent: options.agent }),
-          ...(options.model === undefined ? {} : { model: options.model }),
-          promptId: input.promptId,
-          sessionId: input.sessionId,
-          text: input.text,
-          workingDirectory: input.workingDirectory,
-        })
-      ).pipe(
-        Effect.flatMap((admitted) =>
-          admitted.id === input.promptId
-            ? Effect.void
-            : protocolFailure("OpenCode prompt identity conflicts")
-        )
-      ),
-    wait: (input) =>
-      Effect.tryPromise({
-        try: () => api.wait({ sessionId: input.sessionId }),
+      Effect.gen(function* () {
+        const sessionIdentity = promptSessionIdentity(input, isolatePrompts);
+        const alreadySubmitted = isolatePrompts
+          ? yield* prepareIsolatedPrompt(input, sessionIdentity)
+          : false;
+        if (alreadySubmitted) {
+          return;
+        }
+        const admitted = yield* apiEffect("prompt submission", () =>
+          api.prompt({
+            ...(options.agent === undefined ? {} : { agent: options.agent }),
+            ...(options.model === undefined ? {} : { model: options.model }),
+            promptId: input.promptId,
+            sessionId: sessionIdentity.sessionId,
+            text: input.text,
+            workingDirectory: sessionIdentity.workingDirectory,
+          })
+        );
+        if (admitted.id !== input.promptId) {
+          return yield* protocolFailure("OpenCode prompt identity conflicts");
+        }
+      }),
+    wait: (input) => {
+      const sessionIdentity = promptSessionIdentity(input, isolatePrompts);
+      const physicalInput: OpenCodePromptIdentity = {
+        ...sessionIdentity,
+        promptId: input.promptId,
+      };
+      return Effect.tryPromise({
+        try: () => api.wait({ sessionId: sessionIdentity.sessionId }),
         catch: (error) => ({ unavailable: isSessionWaitUnavailable(error) }),
       }).pipe(
         Effect.matchEffect({
@@ -560,14 +634,15 @@ export const makeOpenCodeSessionClientFromV2Api = (
             error.unavailable
               ? pollForPromptCompletion(
                   api,
-                  input,
+                  physicalInput,
                   waitPollIntervalMs,
                   waitPollMaxAttempts
                 )
               : Effect.fail(sdkFailure("session wait")),
-          onSuccess: () => verifyPromptCompletion(api, input),
+          onSuccess: () => verifyPromptCompletion(api, physicalInput),
         })
-      ),
+      );
+    },
   };
 };
 
@@ -768,7 +843,10 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
       );
     },
   };
-  return makeOpenCodeSessionClientFromV2Api(api, options);
+  return makeOpenCodeSessionClientFromV2Api(api, {
+    ...options,
+    promptIsolation: true,
+  });
 });
 
 export interface OpenCodeConversationAgentOptions {
@@ -1034,6 +1112,28 @@ const invokeConversationOperation = Effect.fnUntraced(function* (
       };
 });
 
+const renderActionResultPrompt = (
+  request: ConversationAgentRequest,
+  invocationResult: unknown
+): string =>
+  JSON.stringify({
+    instructions: [
+      "You are the Conversation agent completing an operation result in a fresh isolated session with no prior model history.",
+      "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
+      "Return exactly one JSON object and no markdown.",
+      'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
+      "Do not request another Action or Execution control.",
+    ],
+    conversation: {
+      context: request.context,
+      executions: request.executions,
+      input: request.input,
+      messages: request.messages,
+      source: request.source,
+    },
+    operationResult: invocationResult,
+  });
+
 const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
   options: OpenCodeConversationAgentOptions,
   request: ConversationAgentRequest,
@@ -1058,7 +1158,10 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
         "OpenCode Conversation session is unavailable"
       );
     }
-    const persistedMessages = yield* options.client.readMessages(identity);
+    const persistedMessages = yield* options.client.readMessages({
+      ...identity,
+      promptId: request.promptId,
+    });
     if (!hasPrompt(persistedMessages, request.promptId)) {
       return yield* protocolFailure(
         "OpenCode Conversation prompt is unavailable"
@@ -1070,7 +1173,10 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
   let activePromptId = request.promptId;
   for (let round = 1; round <= 8; round += 1) {
     yield* options.client.wait({ ...identity, promptId: activePromptId });
-    const messages = yield* options.client.readMessages(identity);
+    const messages = yield* options.client.readMessages({
+      ...identity,
+      promptId: activePromptId,
+    });
     const assistantMessage = nextUnprocessedAssistantMessage(
       messages,
       processed,
@@ -1091,21 +1197,14 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
       record
     );
     const actionResultPromptId = `${request.promptId}:action-result:${round}`;
-    const resultAlreadySubmitted = EffectArray.some(
-      messages,
-      (message) =>
-        message.role === "user" && message.id === actionResultPromptId
+    const actionResultText = yield* boundedPrompt(
+      renderActionResultPrompt(request, invocationResult)
     );
-    if (!resultAlreadySubmitted) {
-      const actionResultText = yield* boundedPrompt(
-        JSON.stringify(invocationResult)
-      );
-      yield* options.client.submitPrompt({
-        ...identity,
-        promptId: actionResultPromptId,
-        text: actionResultText,
-      });
-    }
+    yield* options.client.submitPrompt({
+      ...identity,
+      promptId: actionResultPromptId,
+      text: actionResultText,
+    });
     activePromptId = actionResultPromptId;
   }
   return yield* protocolFailure(
@@ -1129,6 +1228,17 @@ const implementationWorkflow = (
       : "Feature workflow: implement a vertical slice, add focused behavioral tests, preserve repository conventions, and run focused validation.";
   return `${guidance}\n\nUser request:\n${request.prompt}`;
 };
+
+const implementationFollowUpWorkflow = (
+  request: ImplementationAgentResumeRequest
+): string =>
+  [
+    "Continue an existing coding execution in the current working directory.",
+    "This is a fresh isolated OpenCode session with no prior model history. Inspect the existing worktree, git diff, and relevant files to reconstruct the completed work and current state before changing anything.",
+    "Execute the new user request fully, preserve repository conventions, add or update focused tests when appropriate, and validate the resulting worktree.",
+    `Execution: ${request.executionId}`,
+    `New user request:\n${request.prompt}`,
+  ].join("\n\n");
 
 const messagesAfterPrompt = (
   messages: readonly OpenCodeSessionMessage[],
@@ -1196,7 +1306,7 @@ const runImplementationPrompt = Effect.fn("OpenCodeImplementationAgent.run")(
     });
     yield* client.wait({ ...identity, promptId });
     yield* acceptImplementationMessages(
-      yield* client.readMessages(identity),
+      yield* client.readMessages({ ...identity, promptId }),
       promptId,
       acceptResponse,
       true
@@ -1208,9 +1318,11 @@ const implementationSession = (
   options: OpenCodeImplementationAgentOptions,
   identity: OpenCodeSessionIdentity,
   executionId: string,
+  initialPromptId: string,
   completion: Effect.Effect<void, HandlerFailure>
 ): ImplementationAgentSession => {
   const serial = Semaphore.makeUnsafe(1);
+  let activePromptId = initialPromptId;
   return {
     completion: serial.withPermit(completion),
     control: (controlRequest) => {
@@ -1223,7 +1335,10 @@ const implementationSession = (
           "OpenCode Implementation control identity conflicts"
         );
       }
-      return options.client.interrupt(identity);
+      return options.client.interrupt({
+        ...identity,
+        promptId: activePromptId,
+      });
     },
     resume: (resumeRequest, resumeAcceptResponse) => {
       if (
@@ -1235,14 +1350,18 @@ const implementationSession = (
           "OpenCode Implementation follow-up identity conflicts"
         );
       }
+      const promptId = resumeRequest.promptId;
       return serial.withPermit(
-        runImplementationPrompt(
-          options.client,
-          identity,
-          resumeRequest.promptId,
-          resumeRequest.prompt,
-          resumeAcceptResponse
-        )
+        Effect.gen(function* () {
+          activePromptId = promptId;
+          yield* runImplementationPrompt(
+            options.client,
+            identity,
+            promptId,
+            implementationFollowUpWorkflow(resumeRequest),
+            resumeAcceptResponse
+          );
+        })
       );
     },
     sessionId: identity.sessionId,
@@ -1263,6 +1382,7 @@ export const makeOpenCodeImplementationAgent = (
         options,
         identity,
         request.executionId,
+        request.promptId,
         runImplementationPrompt(
           options.client,
           identity,
@@ -1289,13 +1409,17 @@ export const makeOpenCodeImplementationAgent = (
         options,
         identity,
         request.executionId,
+        request.promptId,
         Effect.gen(function* () {
           yield* options.client.wait({
             ...identity,
             promptId: request.promptId,
           });
           yield* acceptImplementationMessages(
-            yield* options.client.readMessages(identity),
+            yield* options.client.readMessages({
+              ...identity,
+              promptId: request.promptId,
+            }),
             request.promptId,
             acceptResponse,
             true

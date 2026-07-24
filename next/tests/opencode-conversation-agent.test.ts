@@ -131,9 +131,12 @@ describe("OpenCode ConversationAgent", () => {
           readonly text: string;
         }> = [];
         const actionInputs: unknown[] = [];
+        const readPromptIds: string[] = [];
         const waitedPromptIds: string[] = [];
-        const messages = (): readonly OpenCodeSessionMessage[] => {
-          if (prompted.length === 1) {
+        const messages = (
+          promptId: string
+        ): readonly OpenCodeSessionMessage[] => {
+          if (promptId === "conversation-prompt-1") {
             return [
               {
                 id: "conversation-prompt-1",
@@ -153,20 +156,6 @@ describe("OpenCode ConversationAgent", () => {
           }
           return [
             {
-              id: "conversation-prompt-1",
-              role: "user",
-              text: prompted[0]?.text ?? "",
-            },
-            {
-              id: "assistant-action-1",
-              role: "assistant",
-              text: JSON.stringify({
-                action: "create-feature",
-                input: { prompt: "Build it", worktreeName: "build-it" },
-                type: "action",
-              }),
-            },
-            {
               id: "conversation-prompt-1:action-result:1",
               role: "user",
               text: prompted[1]?.text ?? "",
@@ -184,7 +173,11 @@ describe("OpenCode ConversationAgent", () => {
               created.push(input);
             }),
           interrupt: () => Effect.void,
-          readMessages: () => Effect.sync(messages),
+          readMessages: (input) =>
+            Effect.sync(() => {
+              readPromptIds.push(input.promptId);
+              return messages(input.promptId);
+            }),
           sessionExists: () => Effect.succeed(false),
           submitPrompt: (input) =>
             Effect.sync(() => {
@@ -246,6 +239,7 @@ describe("OpenCode ConversationAgent", () => {
           "conversation-prompt-1",
           "conversation-prompt-1:action-result:1",
         ]);
+        assert.deepStrictEqual(readPromptIds, waitedPromptIds);
         assert.deepStrictEqual(replies, [
           { replyId: "assistant-reply-1", text: "Work started." },
         ]);
@@ -470,15 +464,31 @@ describe("OpenCode ConversationAgent", () => {
           },
         ]);
         assert.deepStrictEqual(JSON.parse(submitted[1] ?? "{}"), {
-          action: "create-feature",
-          result: {
-            error: {
-              category: "protocol",
-              safeDetail: "worktree name already exists",
-            },
-            status: "failure",
+          conversation: {
+            context: [],
+            executions: [],
+            input: "Please implement it",
+            messages: [],
+            source: "slack",
           },
-          type: "action_result",
+          instructions: [
+            "You are the Conversation agent completing an operation result in a fresh isolated session with no prior model history.",
+            "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
+            "Return exactly one JSON object and no markdown.",
+            'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
+            "Do not request another Action or Execution control.",
+          ],
+          operationResult: {
+            action: "create-feature",
+            result: {
+              error: {
+                category: "protocol",
+                safeDetail: "worktree name already exists",
+              },
+              status: "failure",
+            },
+            type: "action_result",
+          },
         });
       })
   );

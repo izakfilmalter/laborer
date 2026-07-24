@@ -128,14 +128,6 @@ interface OpenCodeLegacyPromptRequest {
   readonly sessionID: string;
 }
 
-interface OpenCodeLegacyStatusRequest {
-  readonly directory: string;
-}
-
-interface OpenCodeLegacySessionStatus {
-  readonly type: "busy" | "idle" | "retry";
-}
-
 interface OpenCodeLegacyRequestOptions {
   readonly throwOnError: true;
 }
@@ -149,12 +141,6 @@ export interface OpenCodeLegacySessionApi {
     input: OpenCodeLegacyPromptRequest,
     options: OpenCodeLegacyRequestOptions
   ) => Promise<void>;
-  readonly status: (
-    input: OpenCodeLegacyStatusRequest,
-    options: OpenCodeLegacyRequestOptions
-  ) => Promise<{
-    readonly data: Readonly<Record<string, OpenCodeLegacySessionStatus>>;
-  }>;
 }
 
 export interface OpenCodeSessionClientOptions {
@@ -181,9 +167,6 @@ const MAX_PROMPT_LENGTH = 65_536;
 const MAX_SERVER_STARTUP_OUTPUT_LENGTH = 65_536;
 const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 1000;
 const DEFAULT_WAIT_POLL_MAX_ATTEMPTS = 3600;
-const LEGACY_RELEASE_IMMEDIATE_POLL_ATTEMPTS = 2;
-const LEGACY_RELEASE_POLL_INTERVAL_MILLIS = 25;
-const LEGACY_RELEASE_POLL_MAX_ATTEMPTS = 200;
 const SERVER_STOP_GRACE_MILLIS = 250;
 const SERVER_URL_PATTERN =
   /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
@@ -688,33 +671,6 @@ const projectedLegacyMessages = (
     })
   );
 
-const waitForLegacySessionRelease = async (
-  api: OpenCodeLegacySessionApi,
-  sessionId: string,
-  workingDirectory: string
-): Promise<void> => {
-  for (
-    let attempt = 0;
-    attempt < LEGACY_RELEASE_POLL_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
-    if (attempt >= LEGACY_RELEASE_IMMEDIATE_POLL_ATTEMPTS) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, LEGACY_RELEASE_POLL_INTERVAL_MILLIS);
-      });
-    }
-    const response = await api.status(
-      { directory: workingDirectory },
-      { throwOnError: true }
-    );
-    const status = response.data[sessionId];
-    if (status === undefined || status.type === "idle") {
-      return;
-    }
-  }
-  throw new Error(`Legacy OpenCode session ${sessionId} did not become idle`);
-};
-
 export const makeOpenCodeLegacySessionTransport = (
   api: OpenCodeLegacySessionApi
 ): Pick<OpenCodeV2SessionApi, "messages" | "prompt"> => ({
@@ -732,8 +688,8 @@ export const makeOpenCodeLegacySessionTransport = (
     return pipe(projectedLegacyMessages(response.data), EffectArray.reverse);
   },
   prompt: async (input) => {
-    // The legacy runner drops overlapping async follow-ups. Await the complete
-    // turn so each prompt starts only after the prior run has released.
+    // The legacy async endpoint can drop a prompt. Await the synchronous turn;
+    // prompt isolation guarantees this physical session has no follow-up.
     await api.prompt(
       {
         ...(input.agent === undefined ? {} : { agent: input.agent }),
@@ -744,11 +700,6 @@ export const makeOpenCodeLegacySessionTransport = (
         sessionID: input.sessionId,
       },
       { throwOnError: true }
-    );
-    await waitForLegacySessionRelease(
-      api,
-      input.sessionId,
-      input.workingDirectory
     );
     return { id: input.promptId };
   },
@@ -792,10 +743,6 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
     },
     prompt: async (input, requestOptions) => {
       await legacySession.prompt<true>(input, requestOptions);
-    },
-    status: async (input, requestOptions) => {
-      const response = await legacySession.status<true>(input, requestOptions);
-      return { data: response.data };
     },
   });
   const api: OpenCodeV2SessionApi = {

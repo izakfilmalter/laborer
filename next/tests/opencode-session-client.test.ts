@@ -48,7 +48,6 @@ describe("OpenCode legacy session transport", () => {
         });
       },
       prompt: () => Promise.resolve(),
-      status: () => Promise.resolve({ data: {} }),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -117,7 +116,6 @@ describe("OpenCode legacy session transport", () => {
           ],
         }),
       prompt: () => Promise.resolve(),
-      status: () => Promise.resolve({ data: {} }),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -145,45 +143,19 @@ describe("OpenCode legacy session transport", () => {
     ]);
   });
 
-  it("waits for the legacy run to release before admitting the exact prompt", async () => {
+  it("returns after the exact synchronous prompt completes without querying status", async () => {
     const calls: unknown[] = [];
-    let resolveIdleStatus = (_value: {
-      readonly data: Readonly<
-        Record<string, { readonly type: "busy" | "idle" | "retry" }>
-      >;
-    }): void => {
-      throw new Error("Idle status resolver was not initialized");
+    let resolvePrompt = (): void => {
+      throw new Error("Prompt resolver was not initialized");
     };
-    const idleStatus = new Promise<{
-      readonly data: Readonly<
-        Record<string, { readonly type: "busy" | "idle" | "retry" }>
-      >;
-    }>((resolve) => {
-      resolveIdleStatus = resolve;
+    const promptCompletion = new Promise<void>((resolve) => {
+      resolvePrompt = resolve;
     });
-    let resolveSecondStatusRead = (): void => {
-      throw new Error("Status read resolver was not initialized");
-    };
-    const secondStatusRead = new Promise<void>((resolve) => {
-      resolveSecondStatusRead = resolve;
-    });
-    let statusReads = 0;
     const api: OpenCodeLegacySessionApi = {
       messages: () => Promise.resolve({ data: [] }),
       prompt: (input, requestOptions) => {
         calls.push(["prompt", input, requestOptions]);
-        return Promise.resolve();
-      },
-      status: (input, requestOptions) => {
-        calls.push(["status", input, requestOptions]);
-        statusReads += 1;
-        if (statusReads === 1) {
-          return Promise.resolve({
-            data: { "session-1": { type: "busy" } },
-          });
-        }
-        resolveSecondStatusRead();
-        return idleStatus;
+        return promptCompletion;
       },
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
@@ -196,13 +168,13 @@ describe("OpenCode legacy session transport", () => {
       text: "input",
       workingDirectory: "/repo/worktree",
     });
-    const firstCompletion = await Promise.race([
+    const beforePromptCompletion = await Promise.race([
       admittedPromise.then(() => "prompt" as const),
-      secondStatusRead.then(() => "second-status" as const),
+      Promise.resolve("pending" as const),
     ]);
 
-    assert.strictEqual(firstCompletion, "second-status");
-    resolveIdleStatus({ data: { "session-1": { type: "idle" } } });
+    assert.strictEqual(beforePromptCompletion, "pending");
+    resolvePrompt();
     const admitted = await admittedPromise;
 
     assert.deepStrictEqual(admitted, { id: "prompt-1" });
@@ -219,8 +191,6 @@ describe("OpenCode legacy session transport", () => {
         },
         { throwOnError: true },
       ],
-      ["status", { directory: "/repo/worktree" }, { throwOnError: true }],
-      ["status", { directory: "/repo/worktree" }, { throwOnError: true }],
     ]);
   });
 });

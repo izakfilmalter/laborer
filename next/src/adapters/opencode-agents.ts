@@ -20,12 +20,18 @@ export interface OpenCodeSessionIdentity {
   readonly workingDirectory: string;
 }
 
+export interface OpenCodeModel {
+  readonly modelID: string;
+  readonly providerID: string;
+}
+
 export interface OpenCodePromptInput extends OpenCodeSessionIdentity {
   readonly promptId: string;
   readonly text: string;
 }
 
 export interface OpenCodeSessionMessage {
+  readonly finish?: string;
   readonly id: string;
   readonly role: "assistant" | "user";
   readonly status?: "completed" | "error" | "in-progress";
@@ -57,6 +63,7 @@ export interface OpenCodeV2SessionApi {
   readonly create: (input: {
     readonly agent?: string;
     readonly id: string;
+    readonly model?: OpenCodeModel;
     readonly workingDirectory: string;
   }) => Promise<{ readonly id: string }>;
   readonly get: (input: { readonly sessionId: string }) => Promise<{
@@ -79,6 +86,7 @@ export interface OpenCodeV2SessionApi {
 
 export interface OpenCodeSessionClientOptions {
   readonly agent?: string;
+  readonly model?: OpenCodeModel;
   readonly waitPollIntervalMs?: number;
   readonly waitPollMaxAttempts?: number;
 }
@@ -147,6 +155,14 @@ const apiEffect = <A>(
 
 type PromptWaitState = "completed" | "error" | "missing-prompt" | "pending";
 
+const isTerminalAssistant = (message: OpenCodeSessionMessage): boolean =>
+  message.role === "assistant" &&
+  message.status === "completed" &&
+  typeof message.finish === "string" &&
+  message.finish.trim().length > 0 &&
+  message.finish !== "tool-calls" &&
+  message.finish !== "unknown";
+
 const promptWaitState = (
   messages: readonly OpenCodeSessionMessage[],
   promptId: string
@@ -161,15 +177,13 @@ const promptWaitState = (
   const assistants = pipe(
     messages,
     EffectArray.drop(promptIndex.value + 1),
+    EffectArray.takeWhile((message) => message.role !== "user"),
     EffectArray.filter((message) => message.role === "assistant")
   );
   if (EffectArray.some(assistants, (message) => message.status === "error")) {
     return "error";
   }
-  return EffectArray.some(
-    assistants,
-    (message) => message.status === "completed"
-  )
+  return EffectArray.some(assistants, isTerminalAssistant)
     ? "completed"
     : "pending";
 };
@@ -404,6 +418,7 @@ export const makeOpenCodeSessionClientFromV2Api = (
         api.create({
           ...(options.agent === undefined ? {} : { agent: options.agent }),
           id: identity.sessionId,
+          ...(options.model === undefined ? {} : { model: options.model }),
           workingDirectory: identity.workingDirectory,
         })
       ).pipe(
@@ -512,6 +527,7 @@ const projectedMessages = (
       );
       return [
         {
+          ...(message.finish === undefined ? {} : { finish: message.finish }),
           id: message.id,
           role: "assistant",
           status: projectedAssistantStatus(message),
@@ -555,6 +571,14 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
           ...(input.agent === undefined ? {} : { agent: input.agent }),
           id: input.id,
           location: { directory: input.workingDirectory },
+          ...(input.model === undefined
+            ? {}
+            : {
+                model: {
+                  id: input.model.modelID,
+                  providerID: input.model.providerID,
+                },
+              }),
         },
         { throwOnError: true }
       );
@@ -808,12 +832,20 @@ const nextUnprocessedAssistantMessage = (
         (message) => message.role === "user" && message.id === promptId
       );
       if (Option.isSome(promptIndex)) {
-        return EffectArray.drop(messages, promptIndex.value + 1);
+        return pipe(
+          messages,
+          EffectArray.drop(promptIndex.value + 1),
+          EffectArray.takeWhile((message) => message.role !== "user")
+        );
       }
       return [];
     })(),
     EffectArray.findFirst(
-      (message) => message.role === "assistant" && !processed.has(message.id)
+      (message) =>
+        message.role === "assistant" &&
+        !processed.has(message.id) &&
+        message.text.trim().length > 0 &&
+        (message.status === undefined || isTerminalAssistant(message))
     ),
     Option.getOrNull
   );
@@ -969,7 +1001,11 @@ const messagesAfterPrompt = (
     (message) => message.role === "user" && message.id === promptId
   );
   return Option.isSome(promptIndex)
-    ? EffectArray.drop(messages, promptIndex.value + 1)
+    ? pipe(
+        messages,
+        EffectArray.drop(promptIndex.value + 1),
+        EffectArray.takeWhile((message) => message.role !== "user")
+      )
     : null;
 };
 
@@ -987,7 +1023,7 @@ const acceptImplementationMessages = (
   }
   const responses = EffectArray.filter(
     messagesAfterPersistedPrompt ?? messages,
-    (message) => message.role === "assistant"
+    (message) => message.role === "assistant" && message.text.trim().length > 0
   );
   const exceedsLimit =
     responses.length > MAX_IMPLEMENTATION_RESPONSES ||

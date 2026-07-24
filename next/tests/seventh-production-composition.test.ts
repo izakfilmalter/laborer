@@ -27,6 +27,7 @@ describe("Tracer 7 production composition", () => {
               application: {
                 agent: "build",
                 environment: ["OPENAI_API_KEY"],
+                model: "openai/gpt-5.6-sol",
                 type: "reference-coding",
               },
               retained: true,
@@ -42,6 +43,7 @@ describe("Tracer 7 production composition", () => {
         assert.deepStrictEqual(loaded.config.application, {
           agent: "build",
           environment: ["OPENAI_API_KEY"],
+          model: "openai/gpt-5.6-sol",
           type: "reference-coding",
         });
         assert.ok(!("workHandler" in loaded.config));
@@ -65,6 +67,12 @@ describe("Tracer 7 production composition", () => {
           {
             application: {
               environment: ["SLACK_BOT_TOKEN"],
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              model: "missing-provider-separator",
               type: "reference-coding",
             },
           },
@@ -194,6 +202,7 @@ describe("Tracer 7 production composition", () => {
               config: {
                 agent: "build",
                 environment: ["OPENAI_API_KEY"],
+                model: "openai/gpt-5.6-sol",
                 type: "reference-coding",
               },
               environment: {
@@ -214,6 +223,10 @@ describe("Tracer 7 production composition", () => {
                 clientCalls += 1;
                 serverEnvironment = options.environment;
                 assert.strictEqual(options.agent, "build");
+                assert.deepStrictEqual(options.model, {
+                  modelID: "gpt-5.6-sol",
+                  providerID: "openai",
+                });
                 assert.strictEqual(options.workspaceDirectory, root);
                 return Effect.succeed(client);
               },
@@ -257,6 +270,7 @@ describe("Tracer 7 production composition", () => {
           "OPENCODE_CONFIG_CONTENT",
           "OPENAI_API_KEY",
         ],
+        model: "openai/gpt-5.6-sol",
         type: "reference-coding",
       });
       assert.ok(!("prototype" in config));

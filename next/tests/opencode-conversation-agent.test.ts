@@ -31,6 +31,92 @@ const request = (
 
 describe("OpenCode ConversationAgent", () => {
   it.effect(
+    "selects the terminal nonempty protocol response after tool-only assistants",
+    () =>
+      Effect.gen(function* () {
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          readMessages: () =>
+            Effect.succeed([
+              { id: "conversation-prompt-1", role: "user", text: "input" },
+              {
+                finish: "tool-calls",
+                id: "assistant-tool-1",
+                role: "assistant",
+                status: "completed",
+                text: "",
+              },
+              {
+                finish: "tool-calls",
+                id: "assistant-tool-2",
+                role: "assistant",
+                status: "completed",
+                text: "",
+              },
+              {
+                finish: "stop",
+                id: "assistant-terminal",
+                role: "assistant",
+                status: "completed",
+                text: JSON.stringify({ type: "reply", text: "Done." }),
+              },
+            ]),
+          sessionExists: () => Effect.succeed(false),
+          submitPrompt: () => Effect.void,
+          wait: () => Effect.void,
+        };
+        const agent = makeOpenCodeConversationAgent({
+          client,
+          repositoryDirectory: "/repo",
+        });
+
+        const replies = yield* agent.handle(request());
+
+        assert.deepStrictEqual(replies, [
+          { replyId: "assistant-terminal", text: "Done." },
+        ]);
+      })
+  );
+
+  it.effect("reports a terminal empty stop as no response", () =>
+    Effect.gen(function* () {
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        readMessages: () =>
+          Effect.succeed([
+            { id: "conversation-prompt-1", role: "user", text: "input" },
+            {
+              finish: "stop",
+              id: "assistant-terminal",
+              role: "assistant",
+              status: "completed",
+              text: "",
+            },
+          ]),
+        sessionExists: () => Effect.succeed(false),
+        submitPrompt: () => Effect.void,
+        wait: () => Effect.void,
+      };
+      const agent = makeOpenCodeConversationAgent({
+        client,
+        repositoryDirectory: "/repo",
+      });
+
+      const result = yield* Effect.result(agent.handle(request()));
+
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.safeDetail,
+          "OpenCode Conversation produced no response"
+        );
+      }
+    })
+  );
+
+  it.effect(
     "uses supplied identities, invokes a requested Action, and returns only the final reply",
     () =>
       Effect.gen(function* () {

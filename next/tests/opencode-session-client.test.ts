@@ -9,6 +9,164 @@ const OPENCODE_MAX_SESSION_MESSAGES = 200;
 
 describe("OpenCode v2 session client", () => {
   it.effect(
+    "does not complete the exact prompt on completed tool-call assistants",
+    () =>
+      Effect.gen(function* () {
+        let messageReads = 0;
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          interrupt: () => Promise.resolve(),
+          messages: () => {
+            messageReads += 1;
+            const responses = [
+              {
+                finish: "tool-calls",
+                id: "tool-call-assistant",
+                role: "assistant" as const,
+                status: "completed" as const,
+                text: "",
+              },
+            ];
+            if (messageReads > 1) {
+              responses.unshift({
+                finish: "stop",
+                id: "terminal-assistant",
+                role: "assistant" as const,
+                status: "completed" as const,
+                text: "final response",
+              });
+            }
+            return Promise.resolve([
+              ...responses,
+              { id: "prompt-1", role: "user" as const, text: "input" },
+            ]);
+          },
+          prompt: (input) => Promise.resolve({ id: input.promptId }),
+          wait: () =>
+            Promise.reject({
+              _tag: "ServiceUnavailableError",
+              message: "Session wait is not available yet",
+              service: "session.wait",
+            }),
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api, {
+          waitPollIntervalMs: 0,
+          waitPollMaxAttempts: 2,
+        });
+
+        yield* client.wait({
+          promptId: "prompt-1",
+          sessionId: "session-1",
+          workingDirectory: "/repo/worktree",
+        });
+
+        assert.strictEqual(messageReads, 2);
+      })
+  );
+
+  it.effect("does not use a later prompt's terminal assistant", () =>
+    Effect.gen(function* () {
+      const api: OpenCodeV2SessionApi = {
+        create: (input) => Promise.resolve({ id: input.id }),
+        get: (input) =>
+          Promise.resolve({
+            id: input.sessionId,
+            workingDirectory: "/repo/worktree",
+          }),
+        interrupt: () => Promise.resolve(),
+        messages: () =>
+          Promise.resolve([
+            {
+              finish: "stop",
+              id: "later-terminal-assistant",
+              role: "assistant" as const,
+              status: "completed" as const,
+              text: "later response",
+            },
+            { id: "prompt-2", role: "user" as const, text: "later input" },
+            {
+              finish: "tool-calls",
+              id: "tool-call-assistant",
+              role: "assistant" as const,
+              status: "completed" as const,
+              text: "",
+            },
+            { id: "prompt-1", role: "user" as const, text: "input" },
+          ]),
+        prompt: (input) => Promise.resolve({ id: input.promptId }),
+        wait: () => Promise.resolve(),
+      };
+      const client = makeOpenCodeSessionClientFromV2Api(api);
+
+      const result = yield* Effect.result(
+        client.wait({
+          promptId: "prompt-1",
+          sessionId: "session-1",
+          workingDirectory: "/repo/worktree",
+        })
+      );
+
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.safeDetail,
+          "OpenCode prompt response did not complete"
+        );
+      }
+    })
+  );
+
+  it.effect(
+    "does not treat a completed timestamp without finish as terminal",
+    () =>
+      Effect.gen(function* () {
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          interrupt: () => Promise.resolve(),
+          messages: () =>
+            Promise.resolve([
+              {
+                id: "intermediate-assistant",
+                role: "assistant" as const,
+                status: "completed" as const,
+                text: "intermediate",
+              },
+              { id: "prompt-1", role: "user" as const, text: "input" },
+            ]),
+          prompt: (input) => Promise.resolve({ id: input.promptId }),
+          wait: () => Promise.resolve(),
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api);
+
+        const result = yield* Effect.result(
+          client.wait({
+            promptId: "prompt-1",
+            sessionId: "session-1",
+            workingDirectory: "/repo/worktree",
+          })
+        );
+
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.strictEqual(
+            result.failure.safeDetail,
+            "OpenCode prompt response did not complete"
+          );
+        }
+      })
+  );
+
+  it.effect(
     "polls the exact prompt to terminal completion when native wait is unavailable",
     () =>
       Effect.gen(function* () {
@@ -54,6 +212,7 @@ describe("OpenCode v2 session client", () => {
             }
             return Promise.resolve([
               {
+                finish: "stop",
                 id: "completed-assistant",
                 role: "assistant" as const,
                 status: "completed" as const,
@@ -325,6 +484,7 @@ describe("OpenCode v2 session client", () => {
           calls.push(["messages", input]);
           return Promise.resolve([
             {
+              finish: "stop",
               id: "response-1",
               role: "assistant",
               status: "completed",
@@ -344,6 +504,7 @@ describe("OpenCode v2 session client", () => {
       };
       const client = makeOpenCodeSessionClientFromV2Api(api, {
         agent: "laborer",
+        model: { modelID: "gpt-5.6-sol", providerID: "openai" },
       });
       const identity = {
         sessionId: "session-1",
@@ -361,6 +522,7 @@ describe("OpenCode v2 session client", () => {
       assert.deepStrictEqual(yield* client.readMessages(identity), [
         { id: "prompt-1", role: "user", text: "input" },
         {
+          finish: "stop",
           id: "response-1",
           role: "assistant",
           status: "completed",
@@ -376,6 +538,7 @@ describe("OpenCode v2 session client", () => {
           {
             agent: "laborer",
             id: "session-1",
+            model: { modelID: "gpt-5.6-sol", providerID: "openai" },
             workingDirectory: "/repo/worktree",
           },
         ],

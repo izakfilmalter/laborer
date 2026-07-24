@@ -11,6 +11,125 @@ const BUG_WORKFLOW_PATTERN = /bug workflow/i;
 
 describe("OpenCode ImplementationAgent", () => {
   it.effect(
+    "forwards each textual response while excluding empty tool-only assistants",
+    () =>
+      Effect.gen(function* () {
+        const accepted: Array<{
+          readonly responseId: string;
+          readonly text: string;
+        }> = [];
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          readMessages: () =>
+            Effect.succeed([
+              { id: "prompt-1", role: "user", text: "Build" },
+              {
+                finish: "tool-calls",
+                id: "assistant-tool-only",
+                role: "assistant",
+                status: "completed",
+                text: "",
+              },
+              {
+                finish: "tool-calls",
+                id: "assistant-progress",
+                role: "assistant",
+                status: "completed",
+                text: "Implemented the change.",
+              },
+              {
+                finish: "stop",
+                id: "assistant-terminal",
+                role: "assistant",
+                status: "completed",
+                text: "Tests pass.",
+              },
+            ]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () => Effect.void,
+          wait: () => Effect.void,
+        };
+        const agent = makeOpenCodeImplementationAgent({ client });
+        const session = yield* agent.start(
+          {
+            actionName: "create-feature",
+            conversationId: "conversation-1",
+            executionId: "execution-1",
+            implementationSessionId: "session-1",
+            prompt: "Build",
+            promptId: "prompt-1",
+            workingDirectory: "/repo/worktree",
+          },
+          (response) =>
+            Effect.sync(() => {
+              accepted.push(response);
+            })
+        );
+
+        yield* session.completion;
+
+        assert.deepStrictEqual(accepted, [
+          {
+            responseId: "assistant-progress",
+            text: "Implemented the change.",
+          },
+          { responseId: "assistant-terminal", text: "Tests pass." },
+        ]);
+      })
+  );
+
+  it.effect("forwards responses only for the exact durable prompt", () =>
+    Effect.gen(function* () {
+      const accepted: string[] = [];
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        readMessages: () =>
+          Effect.succeed([
+            { id: "prompt-1", role: "user", text: "Build" },
+            {
+              id: "assistant-for-prompt-1",
+              role: "assistant",
+              text: "First response.",
+            },
+            { id: "prompt-2", role: "user", text: "Later" },
+            {
+              id: "assistant-for-prompt-2",
+              role: "assistant",
+              text: "Later response.",
+            },
+          ]),
+        sessionExists: () => Effect.succeed(true),
+        submitPrompt: () => Effect.void,
+        wait: () => Effect.void,
+      };
+      const agent = makeOpenCodeImplementationAgent({ client });
+      assert.ok(agent.recover);
+      const session = yield* agent.recover(
+        {
+          actionName: "create-feature",
+          conversationId: "conversation-1",
+          executionId: "execution-1",
+          implementationSessionId: "session-1",
+          prompt: "Build",
+          promptId: "prompt-1",
+          promptKind: "initial",
+          workingDirectory: "/repo/worktree",
+        },
+        (response) =>
+          Effect.sync(() => {
+            accepted.push(response.responseId);
+          })
+      );
+
+      yield* session.completion;
+
+      assert.deepStrictEqual(accepted, ["assistant-for-prompt-1"]);
+    })
+  );
+
+  it.effect(
     "uses supplied identities and accepts each durable assistant response",
     () =>
       Effect.gen(function* () {

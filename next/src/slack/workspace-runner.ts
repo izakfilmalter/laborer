@@ -66,6 +66,8 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
 ): Effect.fn.Return<ApplicationShape, HandlerFailure, Scope.Scope> {
   const makeOpenCodeClient =
     dependencies.makeOpenCodeClient ?? makeOpenCodeWorkspaceSessionClient;
+  const configuredModel = options.config.model;
+  const modelSeparatorIndex = configuredModel?.indexOf("/") ?? -1;
   const sessionClient = yield* makeOpenCodeClient({
     ...(options.config.agent === undefined
       ? {}
@@ -74,6 +76,14 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
       options.environment,
       options.config.environment
     ),
+    ...(configuredModel === undefined
+      ? {}
+      : {
+          model: {
+            modelID: configuredModel.slice(modelSeparatorIndex + 1),
+            providerID: configuredModel.slice(0, modelSeparatorIndex),
+          },
+        }),
     workspaceDirectory: options.root,
   });
   const repository = yield* (

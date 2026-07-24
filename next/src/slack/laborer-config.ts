@@ -26,6 +26,7 @@ export interface WorkHandlerConfig extends ProcessCommandConfig {
 export interface ReferenceCodingApplicationConfig {
   readonly agent?: string;
   readonly environment: readonly string[];
+  readonly model?: string;
   readonly type: "reference-coding";
 }
 
@@ -51,6 +52,10 @@ const configFailure = (operation: string, reason: string): LaborerConfigError =>
 
 const HandlerCommand = Schema.Trim.check(Schema.isMinLength(1));
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const OPENCODE_MODEL_PATTERN = /^[^/\s]+\/[^/\s]+(?:\/[^/\s]+)*$/;
+const OpenCodeModel = Schema.Trim.check(
+  Schema.isPattern(OPENCODE_MODEL_PATTERN)
+);
 const ProcessCommandConfigFromJson = Schema.Struct({
   args: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
@@ -71,6 +76,7 @@ const ReferenceCodingApplicationConfigFromJson = Schema.Struct({
   environment: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
+  model: Schema.optional(OpenCodeModel),
   type: Schema.Literal("reference-coding"),
 });
 
@@ -249,6 +255,9 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
           rawConfig.application.environment,
           "validate-reference-coding-application"
         ),
+        ...(rawConfig.application.model === undefined
+          ? {}
+          : { model: rawConfig.application.model }),
         type: "reference-coding",
       };
       const { workHandler: _workHandler, ...retainedConfig } = rawConfig;

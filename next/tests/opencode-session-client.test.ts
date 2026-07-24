@@ -5,12 +5,15 @@ import {
   type OpenCodeV2SessionApi,
 } from "../src/adapters/opencode-agents.ts";
 
+const OPENCODE_MAX_SESSION_MESSAGES = 200;
+
 describe("OpenCode v2 session client", () => {
   it.effect(
     "polls the exact prompt to terminal completion when native wait is unavailable",
     () =>
       Effect.gen(function* () {
         let messageReads = 0;
+        const messageReadLimits: number[] = [];
         const api: OpenCodeV2SessionApi = {
           create: (input) => Promise.resolve({ id: input.id }),
           get: (input) =>
@@ -19,8 +22,9 @@ describe("OpenCode v2 session client", () => {
               workingDirectory: "/repo/worktree",
             }),
           interrupt: () => Promise.resolve(),
-          messages: () => {
+          messages: (input) => {
             messageReads += 1;
+            messageReadLimits.push(input.limit);
             if (messageReads === 1) {
               return Promise.resolve([
                 {
@@ -91,6 +95,12 @@ describe("OpenCode v2 session client", () => {
         });
 
         assert.strictEqual(messageReads, 3);
+        assert.ok(
+          messageReadLimits.every(
+            (limit) => limit <= OPENCODE_MAX_SESSION_MESSAGES
+          ),
+          `all message reads must use a limit at most ${OPENCODE_MAX_SESSION_MESSAGES}`
+        );
       })
   );
 
@@ -374,8 +384,22 @@ describe("OpenCode v2 session client", () => {
           { promptId: "prompt-1", sessionId: "session-1", text: "input" },
         ],
         ["wait", { sessionId: "session-1" }],
-        ["messages", { limit: 256, order: "desc", sessionId: "session-1" }],
-        ["messages", { limit: 256, order: "desc", sessionId: "session-1" }],
+        [
+          "messages",
+          {
+            limit: OPENCODE_MAX_SESSION_MESSAGES,
+            order: "desc",
+            sessionId: "session-1",
+          },
+        ],
+        [
+          "messages",
+          {
+            limit: OPENCODE_MAX_SESSION_MESSAGES,
+            order: "desc",
+            sessionId: "session-1",
+          },
+        ],
         ["interrupt", { sessionId: "session-1" }],
       ]);
     })

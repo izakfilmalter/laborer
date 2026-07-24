@@ -92,7 +92,7 @@ export interface OpenCodeWorkspaceSessionClientOptions
   readonly workspaceDirectory: string;
 }
 
-const MAX_SESSION_MESSAGES = 256;
+const MAX_SESSION_MESSAGES = 200;
 const MAX_PROTOCOL_RESPONSE_LENGTH = 16_384;
 const MAX_IMPLEMENTATION_RESPONSES = 64;
 const MAX_PROMPT_LENGTH = 65_536;

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -66,11 +67,18 @@ export interface OpenCodeSessionClient {
   ) => Effect.Effect<void, HandlerFailure>;
 }
 
+export interface OpenCodePermissionRule {
+  readonly action: "allow" | "ask" | "deny";
+  readonly pattern: string;
+  readonly permission: string;
+}
+
 export interface OpenCodeV2SessionApi {
   readonly create: (input: {
     readonly agent?: string;
     readonly id: string;
     readonly model?: OpenCodeModel;
+    readonly permission: readonly OpenCodePermissionRule[];
     readonly workingDirectory: string;
   }) => Promise<{ readonly id: string }>;
   readonly get: (input: { readonly sessionId: string }) => Promise<{
@@ -93,6 +101,10 @@ export interface OpenCodeV2SessionApi {
     readonly tools?: Record<string, boolean>;
     readonly workingDirectory: string;
   }) => Promise<{ readonly id: string }>;
+  readonly updatePermission?: (input: {
+    readonly permission: readonly OpenCodePermissionRule[];
+    readonly sessionId: string;
+  }) => Promise<void>;
   readonly wait: (input: { readonly sessionId: string }) => Promise<void>;
 }
 
@@ -175,6 +187,17 @@ const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 1000;
 const DEFAULT_WAIT_POLL_MAX_ATTEMPTS = 3600;
 const OPEN_CODE_SESSION_DIGEST_LENGTH = 60;
 const SERVER_STOP_GRACE_MILLIS = 250;
+const OPEN_CODE_MESSAGE_TIME_RADIX = 0x1000n;
+const OPEN_CODE_MESSAGE_TIME_MODULUS = 2n ** 48n;
+const OPEN_CODE_MESSAGE_CLOCK_WAIT_MAX_ATTEMPTS = 1000;
+const UNRESTRICTED_OPEN_CODE_PERMISSION: readonly OpenCodePermissionRule[] =
+  Object.freeze([
+    Object.freeze({ action: "allow", pattern: "*", permission: "*" }),
+  ]);
+const OPEN_CODE_NATIVE_MESSAGE_ID_PATTERN =
+  /^msg_([0-9a-f]{12})[0-9A-Za-z]{14}$/;
+const LABORER_WIRE_MESSAGE_ID_PATTERN =
+  /^msg_([0-9a-f]{12})_laborer_([0-9A-Za-z_-]+)$/;
 const SERVER_URL_PATTERN =
   /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
 
@@ -508,6 +531,7 @@ export const makeOpenCodeSessionClientFromV2Api = (
         ...(options.agent === undefined ? {} : { agent: options.agent }),
         id: identity.sessionId,
         ...(options.model === undefined ? {} : { model: options.model }),
+        permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
         workingDirectory: identity.workingDirectory,
       })
     ).pipe(
@@ -531,11 +555,24 @@ export const makeOpenCodeSessionClientFromV2Api = (
           error.notFound
             ? Effect.succeed(false)
             : Effect.fail(sdkFailure("session lookup")),
-        onSuccess: (existing) =>
-          existing.id === identity.sessionId &&
-          existing.workingDirectory === identity.workingDirectory
-            ? Effect.succeed(true)
-            : protocolFailure("OpenCode session identity conflicts"),
+        onSuccess: (existing) => {
+          if (
+            existing.id !== identity.sessionId ||
+            existing.workingDirectory !== identity.workingDirectory
+          ) {
+            return protocolFailure("OpenCode session identity conflicts");
+          }
+          const updatePermission = api.updatePermission;
+          if (updatePermission === undefined) {
+            return Effect.succeed(true);
+          }
+          return apiEffect("session permission update", () =>
+            updatePermission({
+              permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
+              sessionId: identity.sessionId,
+            })
+          ).pipe(Effect.as(true));
+        },
       })
     );
   const readSessionMessages = (
@@ -650,6 +687,60 @@ const projectedAssistantStatus = (
   return "in-progress";
 };
 
+const logicalPromptIdFromWireId = (wireId: string): string | null => {
+  const match = LABORER_WIRE_MESSAGE_ID_PATTERN.exec(wireId);
+  if (match?.[2] === undefined) {
+    return null;
+  }
+  try {
+    return Buffer.from(match[2], "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+};
+
+const chronologicalMessageTime = (messageId: string): bigint | null => {
+  const match =
+    OPEN_CODE_NATIVE_MESSAGE_ID_PATTERN.exec(messageId) ??
+    LABORER_WIRE_MESSAGE_ID_PATTERN.exec(messageId);
+  return match?.[1] === undefined ? null : BigInt(`0x${match[1]}`);
+};
+
+const currentOpenCodeMessageTime = (): bigint =>
+  (BigInt(Date.now()) * OPEN_CODE_MESSAGE_TIME_RADIX) %
+  OPEN_CODE_MESSAGE_TIME_MODULUS;
+
+const makeChronologicalWirePromptId = async (
+  logicalPromptId: string,
+  messages: readonly OpenCodeLegacyMessage[]
+): Promise<string> => {
+  let latestMessageTime = 0n;
+  for (const message of messages) {
+    const messageTime = chronologicalMessageTime(message.info.id);
+    if (messageTime !== null && messageTime > latestMessageTime) {
+      latestMessageTime = messageTime;
+    }
+  }
+  for (
+    let attempt = 0;
+    attempt <= OPEN_CODE_MESSAGE_CLOCK_WAIT_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    const messageTime = currentOpenCodeMessageTime();
+    if (messageTime > latestMessageTime) {
+      const encodedLogicalPromptId = Buffer.from(
+        logicalPromptId,
+        "utf8"
+      ).toString("base64url");
+      return `msg_${messageTime.toString(16).padStart(12, "0")}_laborer_${encodedLogicalPromptId}`;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 1);
+    });
+  }
+  throw new Error("OpenCode message clock did not advance");
+};
+
 const projectedLegacyMessages = (
   messages: readonly OpenCodeLegacyMessage[]
 ): readonly OpenCodeSessionMessage[] =>
@@ -666,7 +757,11 @@ const projectedLegacyMessages = (
         EffectArray.join("\n")
       );
       if (message.info.role === "user") {
-        return { id: message.info.id, role: "user", text };
+        return {
+          id: logicalPromptIdFromWireId(message.info.id) ?? message.info.id,
+          role: "user",
+          text,
+        };
       }
       return {
         ...(message.info.finish === undefined
@@ -697,13 +792,34 @@ export const makeOpenCodeLegacySessionTransport = (
     return pipe(projectedLegacyMessages(response.data), EffectArray.reverse);
   },
   prompt: async (input) => {
+    const persisted = await api.messages(
+      {
+        directory: input.workingDirectory,
+        limit: MAX_SESSION_MESSAGES,
+        sessionID: input.sessionId,
+      },
+      { throwOnError: true }
+    );
+    const existingPrompt = projectedLegacyMessages(persisted.data).find(
+      (message) => message.role === "user" && message.id === input.promptId
+    );
+    if (existingPrompt !== undefined) {
+      if (existingPrompt.text !== input.text) {
+        throw new Error("OpenCode prompt identity conflicts");
+      }
+      return { id: input.promptId };
+    }
+    const wirePromptId = await makeChronologicalWirePromptId(
+      input.promptId,
+      persisted.data
+    );
     // The legacy async endpoint can drop a prompt. Await the synchronous turn;
     // callers serialize follow-ups within each durable session.
     await api.prompt(
       {
         ...(input.agent === undefined ? {} : { agent: input.agent }),
         directory: input.workingDirectory,
-        messageID: input.promptId,
+        messageID: wirePromptId,
         ...(input.model === undefined ? {} : { model: input.model }),
         parts: [{ text: input.text, type: "text" }],
         sessionID: input.sessionId,
@@ -773,6 +889,14 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
         },
         { throwOnError: true }
       );
+      await legacySession.update<true>(
+        {
+          directory: input.workingDirectory,
+          permission: [...input.permission],
+          sessionID: response.data.data.id,
+        },
+        { throwOnError: true }
+      );
       return { id: response.data.data.id };
     },
     get: async (input) => {
@@ -793,6 +917,16 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
     },
     messages: legacyTransport.messages,
     prompt: legacyTransport.prompt,
+    updatePermission: async (input) => {
+      await legacySession.update<true>(
+        {
+          directory: options.workspaceDirectory,
+          permission: [...input.permission],
+          sessionID: input.sessionId,
+        },
+        { throwOnError: true }
+      );
+    },
     wait: async (input) => {
       await session.wait<true>(
         { sessionID: input.sessionId },
@@ -834,18 +968,9 @@ type ConversationProtocolRecord =
     }
   | { readonly text: string; readonly type: "reply" };
 
-const CONVERSATION_TOOL_POLICY: Record<string, boolean> = Object.freeze({
-  apply_patch: false,
-  bash: false,
-  edit: false,
-  skill: false,
-  task: false,
-  todowrite: false,
-  write: false,
-});
 const DEFAULT_CONVERSATION_INSTRUCTIONS: readonly string[] = Object.freeze([
   "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
-  "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
+  "You have unrestricted access to all tools and MCP servers configured by the user. Use any of them as needed to fulfill the user's request.",
   "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
   "Return exactly one JSON object and no markdown.",
   'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
@@ -1003,8 +1128,7 @@ const ensureSession = (
 const submitConversationPrompt = (
   client: OpenCodeSessionClient,
   input: Omit<OpenCodePromptInput, "tools">
-): Effect.Effect<void, HandlerFailure> =>
-  client.submitPrompt({ ...input, tools: CONVERSATION_TOOL_POLICY });
+): Effect.Effect<void, HandlerFailure> => client.submitPrompt(input);
 
 const isFirstConversationPrompt = (
   request: ConversationAgentRequest

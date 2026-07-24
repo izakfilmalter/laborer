@@ -11,10 +11,10 @@ import type { ConversationAgentRequest } from "../src/reference-coding-applicati
 
 const CREATE_FEATURE_PATTERN = /create-feature/;
 const EXISTING_EXECUTION_PATTERN = /existing-execution/;
-const NO_ORCHESTRATION_TOOLS_PATTERN = /Do not call todowrite/;
+const FULL_TOOL_ACCESS_PATTERN = /all tools and MCP servers/;
 const DEFAULT_CONVERSATION_INSTRUCTIONS = [
   "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
-  "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
+  "You have unrestricted access to all tools and MCP servers configured by the user. Use any of them as needed to fulfill the user's request.",
   "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
   "Return exactly one JSON object and no markdown.",
   'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
@@ -29,16 +29,6 @@ const DEFAULT_OPERATION_RESULT_INSTRUCTIONS = [
   'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
   "Do not request another Action or Execution control.",
 ] as const;
-const CONVERSATION_TOOL_POLICY = {
-  apply_patch: false,
-  bash: false,
-  edit: false,
-  skill: false,
-  task: false,
-  todowrite: false,
-  write: false,
-} as const;
-
 const request = (
   overrides: Partial<ConversationAgentRequest> = {}
 ): ConversationAgentRequest => ({
@@ -178,7 +168,7 @@ describe("OpenCode ConversationAgent", () => {
   );
 
   it.effect(
-    "uses default routing instructions, supplied identities, and only the final reply",
+    "uses unrestricted default instructions, supplied identities, and only the final reply",
     () =>
       Effect.gen(function* () {
         const created: Array<{
@@ -287,7 +277,7 @@ describe("OpenCode ConversationAgent", () => {
         assert.strictEqual(prompted[0]?.promptId, "conversation-prompt-1");
         assert.match(prompted[0]?.text ?? "", CREATE_FEATURE_PATTERN);
         assert.match(prompted[0]?.text ?? "", EXISTING_EXECUTION_PATTERN);
-        assert.match(prompted[0]?.text ?? "", NO_ORCHESTRATION_TOOLS_PATTERN);
+        assert.match(prompted[0]?.text ?? "", FULL_TOOL_ACCESS_PATTERN);
         const initialPrompt = JSON.parse(prompted[0]?.text ?? "{}") as {
           readonly instructions?: unknown;
         };
@@ -295,8 +285,8 @@ describe("OpenCode ConversationAgent", () => {
           initialPrompt.instructions,
           DEFAULT_CONVERSATION_INSTRUCTIONS
         );
-        assert.deepStrictEqual(prompted[0]?.tools, CONVERSATION_TOOL_POLICY);
-        assert.deepStrictEqual(prompted[1]?.tools, CONVERSATION_TOOL_POLICY);
+        assert.ok(prompted[0] && !("tools" in prompted[0]));
+        assert.ok(prompted[1] && !("tools" in prompted[1]));
         assert.deepStrictEqual(actionInputs, [
           { prompt: "Build it", worktreeName: "build-it" },
         ]);

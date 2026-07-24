@@ -76,7 +76,11 @@ The Runner-owned, versioned record of accepted inbound identities, work-thread q
 The following terms belong to the first intended coding-workflow use case, not to Laborer's generic core.
 
 **Conversation agent**:
-A user-configured agent that stands between a work-thread conversation and any delegated execution. It interprets conversational input and execution events, decides whether to answer or delegate, and turns selected execution activity into deliberate public replies. Laborer does not define its prompt, tools, workflow, or delegation topology. Laborer binds one durable conversation-agent session to each work thread, preserving prior messages, tool activity, and operation results across turns.
+A user-configured, general-purpose agent supervised by Laborer for one work thread. One work thread continues one durable agent session, retaining prior messages, tool activity, and operation results; within the authority granted by the user, the agent may answer, investigate, execute, modify, delegate, orchestrate, or invoke Actions as it chooses.
+
+**Conversation-agent authority**:
+The user alone determines what a conversation agent may do and which capabilities it can access, including shell execution, filesystem and network access, tools, skills, MCP servers, Actions, and orchestration. Laborer must never narrow, disable, hide, replace, or reinterpret those user-granted capabilities; Actions are additional capabilities, not the boundary of the agent's authority.
+_Avoid_: Routing-only agent, restricted conversation agent, read-only conversation agent
 
 **Conversation runtime**:
 The long-lived, root-bound service that serializes work-thread events and resumes conversation-agent sessions. It may request delegated work but does not own the resulting Executions.

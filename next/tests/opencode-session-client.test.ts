@@ -47,6 +47,7 @@ describe("OpenCode legacy session transport", () => {
         });
       },
       prompt: () => Promise.resolve(),
+      status: () => Promise.resolve({ data: {} }),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -115,6 +116,7 @@ describe("OpenCode legacy session transport", () => {
           ],
         }),
       prompt: () => Promise.resolve(),
+      status: () => Promise.resolve({ data: {} }),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -142,18 +144,50 @@ describe("OpenCode legacy session transport", () => {
     ]);
   });
 
-  it("submits the exact prompt ID, configured model, and optional agent", async () => {
+  it("waits for the legacy run to release before admitting the exact prompt", async () => {
     const calls: unknown[] = [];
+    let resolveIdleStatus = (_value: {
+      readonly data: Readonly<
+        Record<string, { readonly type: "busy" | "idle" | "retry" }>
+      >;
+    }): void => {
+      throw new Error("Idle status resolver was not initialized");
+    };
+    const idleStatus = new Promise<{
+      readonly data: Readonly<
+        Record<string, { readonly type: "busy" | "idle" | "retry" }>
+      >;
+    }>((resolve) => {
+      resolveIdleStatus = resolve;
+    });
+    let resolveSecondStatusRead = (): void => {
+      throw new Error("Status read resolver was not initialized");
+    };
+    const secondStatusRead = new Promise<void>((resolve) => {
+      resolveSecondStatusRead = resolve;
+    });
+    let statusReads = 0;
     const api: OpenCodeLegacySessionApi = {
       messages: () => Promise.resolve({ data: [] }),
       prompt: (input, requestOptions) => {
-        calls.push([input, requestOptions]);
+        calls.push(["prompt", input, requestOptions]);
         return Promise.resolve();
+      },
+      status: (input, requestOptions) => {
+        calls.push(["status", input, requestOptions]);
+        statusReads += 1;
+        if (statusReads === 1) {
+          return Promise.resolve({
+            data: { "session-1": { type: "busy" } },
+          });
+        }
+        resolveSecondStatusRead();
+        return idleStatus;
       },
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
-    const admitted = await transport.prompt({
+    const admittedPromise = transport.prompt({
       agent: "laborer",
       model: { modelID: "gpt-5.6-sol", providerID: "openai" },
       promptId: "prompt-1",
@@ -161,10 +195,19 @@ describe("OpenCode legacy session transport", () => {
       text: "input",
       workingDirectory: "/repo/worktree",
     });
+    const firstCompletion = await Promise.race([
+      admittedPromise.then(() => "prompt" as const),
+      secondStatusRead.then(() => "second-status" as const),
+    ]);
+
+    assert.strictEqual(firstCompletion, "second-status");
+    resolveIdleStatus({ data: { "session-1": { type: "idle" } } });
+    const admitted = await admittedPromise;
 
     assert.deepStrictEqual(admitted, { id: "prompt-1" });
     assert.deepStrictEqual(calls, [
       [
+        "prompt",
         {
           agent: "laborer",
           directory: "/repo/worktree",
@@ -175,6 +218,8 @@ describe("OpenCode legacy session transport", () => {
         },
         { throwOnError: true },
       ],
+      ["status", { directory: "/repo/worktree" }, { throwOnError: true }],
+      ["status", { directory: "/repo/worktree" }, { throwOnError: true }],
     ]);
   });
 });

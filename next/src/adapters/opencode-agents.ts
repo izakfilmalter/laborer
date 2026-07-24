@@ -28,6 +28,7 @@ export interface OpenCodePromptInput extends OpenCodeSessionIdentity {
 export interface OpenCodeSessionMessage {
   readonly id: string;
   readonly role: "assistant" | "user";
+  readonly status?: "completed" | "error" | "in-progress";
   readonly text: string;
 }
 
@@ -48,7 +49,7 @@ export interface OpenCodeSessionClient {
     input: OpenCodePromptInput
   ) => Effect.Effect<void, HandlerFailure>;
   readonly wait: (
-    input: OpenCodeSessionIdentity
+    input: Omit<OpenCodePromptInput, "text">
   ) => Effect.Effect<void, HandlerFailure>;
 }
 
@@ -78,6 +79,8 @@ export interface OpenCodeV2SessionApi {
 
 export interface OpenCodeSessionClientOptions {
   readonly agent?: string;
+  readonly waitPollIntervalMs?: number;
+  readonly waitPollMaxAttempts?: number;
 }
 
 export interface OpenCodeWorkspaceSessionClientOptions
@@ -94,6 +97,8 @@ const MAX_PROTOCOL_RESPONSE_LENGTH = 16_384;
 const MAX_IMPLEMENTATION_RESPONSES = 64;
 const MAX_PROMPT_LENGTH = 65_536;
 const MAX_SERVER_STARTUP_OUTPUT_LENGTH = 65_536;
+const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 1000;
+const DEFAULT_WAIT_POLL_MAX_ATTEMPTS = 3600;
 const SERVER_STOP_GRACE_MILLIS = 250;
 const SERVER_URL_PATTERN =
   /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
@@ -114,6 +119,23 @@ const isNotFound = (error: unknown): boolean => {
   return error.cause.status === 404;
 };
 
+const isSessionWaitUnavailableBody = (error: unknown): boolean =>
+  isRecord(error) &&
+  error._tag === "ServiceUnavailableError" &&
+  error.service === "session.wait";
+
+const isSessionWaitUnavailable = (error: unknown): boolean => {
+  if (isSessionWaitUnavailableBody(error)) {
+    return true;
+  }
+  if (!(error instanceof Error && isRecord(error.cause))) {
+    return false;
+  }
+  return (
+    error.cause.status === 503 && isSessionWaitUnavailableBody(error.cause.body)
+  );
+};
+
 const apiEffect = <A>(
   operation: string,
   evaluate: () => Promise<A>
@@ -122,6 +144,98 @@ const apiEffect = <A>(
     try: evaluate,
     catch: () => sdkFailure(operation),
   });
+
+type PromptWaitState = "completed" | "error" | "missing-prompt" | "pending";
+
+const promptWaitState = (
+  messages: readonly OpenCodeSessionMessage[],
+  promptId: string
+): PromptWaitState => {
+  const promptIndex = EffectArray.findFirstIndex(
+    messages,
+    (message) => message.role === "user" && message.id === promptId
+  );
+  if (Option.isNone(promptIndex)) {
+    return "missing-prompt";
+  }
+  const assistants = pipe(
+    messages,
+    EffectArray.drop(promptIndex.value + 1),
+    EffectArray.filter((message) => message.role === "assistant")
+  );
+  if (EffectArray.some(assistants, (message) => message.status === "error")) {
+    return "error";
+  }
+  return EffectArray.some(
+    assistants,
+    (message) => message.status === "completed"
+  )
+    ? "completed"
+    : "pending";
+};
+
+const promptWaitFailure = (safeDetail: string): HandlerFailure =>
+  HandlerFailure.make({ category: "protocol", safeDetail });
+
+const readPromptWaitState = (
+  api: OpenCodeV2SessionApi,
+  input: Omit<OpenCodePromptInput, "text">
+): Effect.Effect<PromptWaitState, HandlerFailure> =>
+  apiEffect("message read", () =>
+    api.messages({
+      limit: MAX_SESSION_MESSAGES,
+      order: "desc",
+      sessionId: input.sessionId,
+    })
+  ).pipe(
+    Effect.map(EffectArray.reverse),
+    Effect.map((messages) => promptWaitState(messages, input.promptId))
+  );
+
+const verifyPromptCompletion = Effect.fnUntraced(function* (
+  api: OpenCodeV2SessionApi,
+  input: Omit<OpenCodePromptInput, "text">
+) {
+  const state = yield* readPromptWaitState(api, input);
+  if (state === "completed") {
+    return;
+  }
+  if (state === "error") {
+    return yield* promptWaitFailure("OpenCode assistant response failed");
+  }
+  return yield* promptWaitFailure(
+    state === "missing-prompt"
+      ? "OpenCode prompt is unavailable"
+      : "OpenCode prompt response did not complete"
+  );
+});
+
+const pollForPromptCompletion = Effect.fnUntraced(function* (
+  api: OpenCodeV2SessionApi,
+  input: Omit<OpenCodePromptInput, "text">,
+  pollIntervalMs: number,
+  maxAttempts: number
+) {
+  let observedPrompt = false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const state = yield* readPromptWaitState(api, input);
+    if (state === "completed") {
+      return;
+    }
+    if (state === "error") {
+      return yield* promptWaitFailure("OpenCode assistant response failed");
+    }
+    observedPrompt ||= state === "pending";
+    if (attempt < maxAttempts && pollIntervalMs > 0) {
+      yield* Effect.sleep(`${pollIntervalMs} millis`);
+    }
+  }
+  return yield* promptWaitFailure(
+    observedPrompt
+      ? "OpenCode prompt response timed out"
+      : "OpenCode prompt is unavailable"
+  );
+});
 
 interface RunningOpenCodeServer {
   readonly close: () => Promise<void>;
@@ -279,71 +393,103 @@ export const launchOpenCodeServer = async (options: {
 export const makeOpenCodeSessionClientFromV2Api = (
   api: OpenCodeV2SessionApi,
   options: OpenCodeSessionClientOptions = {}
-): OpenCodeSessionClient => ({
-  createSession: (identity) =>
-    apiEffect("session creation", () =>
-      api.create({
-        ...(options.agent === undefined ? {} : { agent: options.agent }),
-        id: identity.sessionId,
-        workingDirectory: identity.workingDirectory,
-      })
-    ).pipe(
-      Effect.flatMap((created) =>
-        created.id === identity.sessionId
-          ? Effect.void
-          : protocolFailure("OpenCode session identity conflicts")
-      )
-    ),
-  interrupt: (identity) =>
-    apiEffect("session interruption", () =>
-      api.interrupt({ sessionId: identity.sessionId })
-    ),
-  readMessages: (identity) =>
-    apiEffect("message read", () =>
-      api.messages({
-        limit: MAX_SESSION_MESSAGES,
-        order: "desc",
-        sessionId: identity.sessionId,
-      })
-    ).pipe(Effect.map(EffectArray.reverse)),
-  sessionExists: (identity) =>
-    Effect.tryPromise({
-      try: () => api.get({ sessionId: identity.sessionId }),
-      catch: (error) => ({
-        notFound: isNotFound(error),
-      }),
-    }).pipe(
-      Effect.matchEffect({
-        onFailure: (error) =>
-          error.notFound
-            ? Effect.succeed(false)
-            : Effect.fail(sdkFailure("session lookup")),
-        onSuccess: (existing) =>
-          existing.id === identity.sessionId &&
-          existing.workingDirectory === identity.workingDirectory
-            ? Effect.succeed(true)
-            : protocolFailure("OpenCode session identity conflicts"),
-      })
-    ),
-  submitPrompt: (input) =>
-    apiEffect("prompt submission", () =>
-      api.prompt({
-        promptId: input.promptId,
-        sessionId: input.sessionId,
-        text: input.text,
-      })
-    ).pipe(
-      Effect.flatMap((admitted) =>
-        admitted.id === input.promptId
-          ? Effect.void
-          : protocolFailure("OpenCode prompt identity conflicts")
-      )
-    ),
-  wait: (identity) =>
-    apiEffect("session wait", () =>
-      api.wait({ sessionId: identity.sessionId })
-    ),
-});
+): OpenCodeSessionClient => {
+  const waitPollIntervalMs =
+    options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_INTERVAL_MILLIS;
+  const waitPollMaxAttempts =
+    options.waitPollMaxAttempts ?? DEFAULT_WAIT_POLL_MAX_ATTEMPTS;
+  return {
+    createSession: (identity) =>
+      apiEffect("session creation", () =>
+        api.create({
+          ...(options.agent === undefined ? {} : { agent: options.agent }),
+          id: identity.sessionId,
+          workingDirectory: identity.workingDirectory,
+        })
+      ).pipe(
+        Effect.flatMap((created) =>
+          created.id === identity.sessionId
+            ? Effect.void
+            : protocolFailure("OpenCode session identity conflicts")
+        )
+      ),
+    interrupt: (identity) =>
+      apiEffect("session interruption", () =>
+        api.interrupt({ sessionId: identity.sessionId })
+      ),
+    readMessages: (identity) =>
+      apiEffect("message read", () =>
+        api.messages({
+          limit: MAX_SESSION_MESSAGES,
+          order: "desc",
+          sessionId: identity.sessionId,
+        })
+      ).pipe(Effect.map(EffectArray.reverse)),
+    sessionExists: (identity) =>
+      Effect.tryPromise({
+        try: () => api.get({ sessionId: identity.sessionId }),
+        catch: (error) => ({
+          notFound: isNotFound(error),
+        }),
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            error.notFound
+              ? Effect.succeed(false)
+              : Effect.fail(sdkFailure("session lookup")),
+          onSuccess: (existing) =>
+            existing.id === identity.sessionId &&
+            existing.workingDirectory === identity.workingDirectory
+              ? Effect.succeed(true)
+              : protocolFailure("OpenCode session identity conflicts"),
+        })
+      ),
+    submitPrompt: (input) =>
+      apiEffect("prompt submission", () =>
+        api.prompt({
+          promptId: input.promptId,
+          sessionId: input.sessionId,
+          text: input.text,
+        })
+      ).pipe(
+        Effect.flatMap((admitted) =>
+          admitted.id === input.promptId
+            ? Effect.void
+            : protocolFailure("OpenCode prompt identity conflicts")
+        )
+      ),
+    wait: (input) =>
+      Effect.tryPromise({
+        try: () => api.wait({ sessionId: input.sessionId }),
+        catch: (error) => ({ unavailable: isSessionWaitUnavailable(error) }),
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            error.unavailable
+              ? pollForPromptCompletion(
+                  api,
+                  input,
+                  waitPollIntervalMs,
+                  waitPollMaxAttempts
+                )
+              : Effect.fail(sdkFailure("session wait")),
+          onSuccess: () => verifyPromptCompletion(api, input),
+        })
+      ),
+  };
+};
+
+const projectedAssistantStatus = (
+  message: Extract<SessionMessage, { readonly type: "assistant" }>
+): "completed" | "error" | "in-progress" => {
+  if (message.error !== undefined) {
+    return "error";
+  }
+  if (message.time.completed !== undefined || message.finish !== undefined) {
+    return "completed";
+  }
+  return "in-progress";
+};
 
 const projectedMessages = (
   messages: readonly SessionMessage[]
@@ -364,9 +510,14 @@ const projectedMessages = (
         ),
         EffectArray.join("\n")
       );
-      return text.length > 0
-        ? [{ id: message.id, role: "assistant", text }]
-        : [];
+      return [
+        {
+          id: message.id,
+          role: "assistant",
+          status: projectedAssistantStatus(message),
+          text,
+        },
+      ];
     })
   );
 
@@ -648,8 +799,7 @@ const hasPrompt = (
 const nextUnprocessedAssistantMessage = (
   messages: readonly OpenCodeSessionMessage[],
   processed: ReadonlySet<string>,
-  promptId: string,
-  requirePrompt: boolean
+  promptId: string
 ): OpenCodeSessionMessage | null =>
   pipe(
     (() => {
@@ -660,7 +810,7 @@ const nextUnprocessedAssistantMessage = (
       if (Option.isSome(promptIndex)) {
         return EffectArray.drop(messages, promptIndex.value + 1);
       }
-      return requirePrompt ? [] : messages;
+      return [];
     })(),
     EffectArray.findFirst(
       (message) => message.role === "assistant" && !processed.has(message.id)
@@ -749,13 +899,12 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
   const processed = new Set<string>();
   let activePromptId = request.promptId;
   for (let round = 1; round <= 8; round += 1) {
-    yield* options.client.wait(identity);
+    yield* options.client.wait({ ...identity, promptId: activePromptId });
     const messages = yield* options.client.readMessages(identity);
     const assistantMessage = nextUnprocessedAssistantMessage(
       messages,
       processed,
-      activePromptId,
-      !submitInitialPrompt
+      activePromptId
     );
     if (assistantMessage === null) {
       return yield* protocolFailure(
@@ -871,12 +1020,12 @@ const runImplementationPrompt = Effect.fn("OpenCodeImplementationAgent.run")(
       promptId,
       text: yield* boundedPrompt(text),
     });
-    yield* client.wait(identity);
+    yield* client.wait({ ...identity, promptId });
     yield* acceptImplementationMessages(
       yield* client.readMessages(identity),
       promptId,
       acceptResponse,
-      false
+      true
     );
   }
 );
@@ -967,7 +1116,10 @@ export const makeOpenCodeImplementationAgent = (
         identity,
         request.executionId,
         Effect.gen(function* () {
-          yield* options.client.wait(identity);
+          yield* options.client.wait({
+            ...identity,
+            promptId: request.promptId,
+          });
           yield* acceptImplementationMessages(
             yield* options.client.readMessages(identity),
             request.promptId,

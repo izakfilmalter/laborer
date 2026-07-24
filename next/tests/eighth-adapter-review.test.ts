@@ -337,6 +337,11 @@ exit 1
         readMessages: () =>
           Effect.succeed([
             {
+              id: "persisted-prompt-1",
+              role: "user",
+              text: "Help",
+            },
+            {
               id: "assistant-reply",
               role: "assistant",
               text: JSON.stringify({ text: "hello", type: "reply" }),

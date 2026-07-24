@@ -44,9 +44,15 @@ describe("OpenCode ConversationAgent", () => {
           readonly text: string;
         }> = [];
         const actionInputs: unknown[] = [];
+        const waitedPromptIds: string[] = [];
         const messages = (): readonly OpenCodeSessionMessage[] => {
           if (prompted.length === 1) {
             return [
+              {
+                id: "conversation-prompt-1",
+                role: "user",
+                text: prompted[0]?.text ?? "",
+              },
               {
                 id: "assistant-action-1",
                 role: "assistant",
@@ -60,6 +66,11 @@ describe("OpenCode ConversationAgent", () => {
           }
           return [
             {
+              id: "conversation-prompt-1",
+              role: "user",
+              text: prompted[0]?.text ?? "",
+            },
+            {
               id: "assistant-action-1",
               role: "assistant",
               text: JSON.stringify({
@@ -67,6 +78,11 @@ describe("OpenCode ConversationAgent", () => {
                 input: { prompt: "Build it", worktreeName: "build-it" },
                 type: "action",
               }),
+            },
+            {
+              id: "conversation-prompt-1:action-result:1",
+              role: "user",
+              text: prompted[1]?.text ?? "",
             },
             {
               id: "assistant-reply-1",
@@ -87,7 +103,10 @@ describe("OpenCode ConversationAgent", () => {
             Effect.sync(() => {
               prompted.push(input);
             }),
-          wait: () => Effect.void,
+          wait: (input) =>
+            Effect.sync(() => {
+              waitedPromptIds.push(input.promptId);
+            }),
         };
         const agent = makeOpenCodeConversationAgent({
           client,
@@ -134,6 +153,10 @@ describe("OpenCode ConversationAgent", () => {
         assert.match(prompted[0]?.text ?? "", EXISTING_EXECUTION_PATTERN);
         assert.deepStrictEqual(actionInputs, [
           { prompt: "Build it", worktreeName: "build-it" },
+        ]);
+        assert.deepStrictEqual(waitedPromptIds, [
+          "conversation-prompt-1",
+          "conversation-prompt-1:action-result:1",
         ]);
         assert.deepStrictEqual(replies, [
           { replyId: "assistant-reply-1", text: "Work started." },
@@ -198,6 +221,11 @@ describe("OpenCode ConversationAgent", () => {
         interrupt: () => Effect.void,
         readMessages: () =>
           Effect.succeed([
+            {
+              id: "conversation-prompt-1",
+              role: "user",
+              text: "input",
+            },
             {
               id: "oversized-response",
               role: "assistant",
@@ -267,6 +295,11 @@ describe("OpenCode ConversationAgent", () => {
               submitted.length === 1
                 ? [
                     {
+                      id: "conversation-prompt-1",
+                      role: "user" as const,
+                      text: submitted[0] ?? "",
+                    },
+                    {
                       id: "assistant-collision",
                       role: "assistant" as const,
                       text: JSON.stringify({
@@ -281,6 +314,11 @@ describe("OpenCode ConversationAgent", () => {
                   ]
                 : [
                     {
+                      id: "conversation-prompt-1",
+                      role: "user" as const,
+                      text: submitted[0] ?? "",
+                    },
+                    {
                       id: "assistant-collision",
                       role: "assistant" as const,
                       text: JSON.stringify({
@@ -291,6 +329,11 @@ describe("OpenCode ConversationAgent", () => {
                         },
                         type: "action",
                       }),
+                    },
+                    {
+                      id: "conversation-prompt-1:action-result:1",
+                      role: "user" as const,
+                      text: submitted[1] ?? "",
                     },
                     {
                       id: "assistant-after-collision",

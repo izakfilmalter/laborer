@@ -27,6 +27,7 @@ describe("OpenCode ImplementationAgent", () => {
           readonly responseId: string;
           readonly text: string;
         }> = [];
+        const waitedPromptIds: string[] = [];
         const client: OpenCodeSessionClient = {
           createSession: (input) =>
             Effect.sync(() => {
@@ -52,7 +53,10 @@ describe("OpenCode ImplementationAgent", () => {
             Effect.sync(() => {
               prompted.push(input);
             }),
-          wait: () => Effect.void,
+          wait: (input) =>
+            Effect.sync(() => {
+              waitedPromptIds.push(input.promptId);
+            }),
         };
         const agent = makeOpenCodeImplementationAgent({ client });
         const session = yield* agent.start(
@@ -83,6 +87,7 @@ describe("OpenCode ImplementationAgent", () => {
         assert.strictEqual(prompted[0]?.promptId, "implementation-prompt-1");
         assert.match(prompted[0]?.text ?? "", FEATURE_WORKFLOW_PATTERN);
         assert.match(prompted[0]?.text ?? "", INITIAL_REQUEST_PATTERN);
+        assert.deepStrictEqual(waitedPromptIds, ["implementation-prompt-1"]);
         assert.deepStrictEqual(accepted, [
           {
             responseId: "assistant-response-1",

@@ -303,11 +303,12 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
           assert.deepStrictEqual(requests[1]?.executions, [
             {
               actionName: "create-feature",
-              activePromptId: "CFEATURE:1.0:execution:1:prompt:1",
+              activePromptId:
+                "msg_846dc0e98df36c83e5d06e7420ef993c7d90f33e41bcebac26fb69bb2d01834e",
               conversationId: ThreadId.make("CFEATURE:1.0"),
               executionId: "CFEATURE:1.0:execution:1",
               implementationSessionId:
-                "CFEATURE:1.0:execution:1:implementation-session:1",
+                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720aa6e3",
               status: "running",
               workingDirectory: `/tmp/laborer-worktrees/${worktreeName}`,
               worktreeName,
@@ -326,9 +327,10 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
               conversationId: "CFEATURE:1.0",
               executionId: "CFEATURE:1.0:execution:1",
               implementationSessionId:
-                "CFEATURE:1.0:execution:1:implementation-session:1",
+                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720aa6e3",
               prompt: completePrompt,
-              promptId: "CFEATURE:1.0:execution:1:prompt:1",
+              promptId:
+                "msg_846dc0e98df36c83e5d06e7420ef993c7d90f33e41bcebac26fb69bb2d01834e",
               workingDirectory: `/tmp/laborer-worktrees/${worktreeName}`,
             },
           ]);
@@ -735,16 +737,17 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
             conversationId: ThreadId.make("CRESUME:1.0"),
             executionId: "CRESUME:1.0:execution:1",
             implementationSessionId:
-              "CRESUME:1.0:execution:1:implementation-session:1",
+              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188dea88",
             prompt: "later prompt",
-            promptId: "CRESUME:1.0:execution:1:prompt:2",
+            promptId:
+              "msg_9f7c6e5249c11095641a35262c31c47fad6e074ad4d3bdc82af97cb18c70c4c8",
             workingDirectory: "/tmp/resumable-work",
           },
         ]);
         assert.deepStrictEqual(yield* Ref.get(observedExecutions), [
           {
             implementationSessionId:
-              "CRESUME:1.0:execution:1:implementation-session:1",
+              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188dea88",
             status: "running",
             worktreeName: "resumable-work",
           },

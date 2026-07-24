@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type FileHandle, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -38,6 +38,41 @@ export const ReferenceCodingActionName = Schema.Literals([
   "deal-with-bug",
 ]);
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
+
+const OPEN_CODE_ID_NAMESPACE = "laborer:reference-coding:v1";
+
+const stableOpenCodeId = (
+  prefix: "msg" | "ses",
+  purpose: string,
+  internalId: string
+): string => {
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        internalId,
+        namespace: OPEN_CODE_ID_NAMESPACE,
+        purpose,
+      })
+    )
+    .digest("hex");
+  return `${prefix}_${digest}`;
+};
+
+const conversationSessionId = (conversationId: string): string =>
+  stableOpenCodeId("ses", "conversation-session", conversationId);
+
+const implementationSessionId = (executionId: string): string =>
+  stableOpenCodeId("ses", "implementation-session", executionId);
+
+const implementationPromptId = (
+  executionId: string,
+  promptNumber: number
+): string =>
+  stableOpenCodeId(
+    "msg",
+    "implementation-prompt",
+    `${executionId}:prompt:${promptNumber}`
+  );
 
 const CodingActionInput = Schema.Struct({
   prompt: Schema.NonEmptyString,
@@ -696,9 +731,13 @@ export const makeReferenceCodingApplication = Effect.fn(
     );
 
   const conversationPromptId = (event: ApplicationEvent): string =>
-    `conversation:${event.conversationId}:prompt:${
-      event._tag === "ParticipantInput" ? event.turnId : event.eventId
-    }`;
+    stableOpenCodeId(
+      "msg",
+      "conversation-prompt",
+      `conversation:${event.conversationId}:prompt:${
+        event._tag === "ParticipantInput" ? event.turnId : event.eventId
+      }`
+    );
 
   const conversationFingerprint = (
     event: ApplicationEvent,
@@ -750,7 +789,7 @@ export const makeReferenceCodingApplication = Effect.fn(
           ? PersistedConversation.make({
               conversationId: event.conversationId,
               prompts: [prompt],
-              sessionId: `${event.conversationId}:conversation-session:1`,
+              sessionId: conversationSessionId(event.conversationId),
             })
           : PersistedConversation.make({
               ...conversation,
@@ -880,11 +919,11 @@ export const makeReferenceCodingApplication = Effect.fn(
         conversationId,
         events: [],
         executionId,
-        implementationSessionId: `${executionId}:implementation-session:1`,
+        implementationSessionId: implementationSessionId(executionId),
         prompts: [
           PersistedImplementationPrompt.make({
             kind: "initial",
-            promptId: `${executionId}:prompt:1`,
+            promptId: implementationPromptId(executionId, 1),
             status: "staged",
             text: prompt,
           }),
@@ -1915,7 +1954,10 @@ export const makeReferenceCodingApplication = Effect.fn(
             execution.prompts,
             PersistedImplementationPrompt.make({
               kind: "resume",
-              promptId: `${execution.executionId}:prompt:${promptNumber}`,
+              promptId: implementationPromptId(
+                execution.executionId,
+                promptNumber
+              ),
               status: "staged",
               text: decoded.prompt,
             })

@@ -329,7 +329,8 @@ describe("eighth reference coding Application review", () => {
             category: "exit",
             executionId: "CFAILURE:1.0:execution:1",
             kind: "implementation-failure",
-            promptId: "CFAILURE:1.0:execution:1:prompt:1",
+            promptId:
+              "msg_3c7c70858ba682c5cb827fade0368b338367c203a18156327a8b20ca7853a1c8",
           });
           yield* application.handle(failureEvent, publishNothing, captureEvent);
           assert.ok(application.recover);
@@ -734,9 +735,10 @@ describe("eighth reference coding Application review", () => {
               conversationId,
               executionId: "CCOMPLETEDRESTART:1.0:execution:1",
               implementationSessionId:
-                "CCOMPLETEDRESTART:1.0:execution:1:implementation-session:1",
+                "ses_6cbad5829b1f21a13aa316a0275ce71ea4b8c5beeddea27dce82f53313f778c4",
               prompt: "Continue after restart.",
-              promptId: "CCOMPLETEDRESTART:1.0:execution:1:prompt:2",
+              promptId:
+                "msg_b926db375ee45e478c3c29e0dd11693e97e9e82a0eb3ce2039832d0084f4b563",
               workingDirectory: "/tmp/completed-restart",
             },
           ]);

@@ -125,9 +125,10 @@ describe("fourth Application tracer", () => {
             conversationId: "CBUG:1.0",
             executionId: "CBUG:1.0:execution:1",
             implementationSessionId:
-              "CBUG:1.0:execution:1:implementation-session:1",
+              "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83",
             prompt: "Diagnose and fix the broken export.",
-            promptId: "CBUG:1.0:execution:1:prompt:1",
+            promptId:
+              "msg_704cc476495dfb1640b7a8195689e299b502963a0b7a1e4f5f0568378118b848",
             workingDirectory: "/tmp/laborer-worktrees/bug-broken-export",
           },
         ]);
@@ -136,11 +137,12 @@ describe("fourth Application tracer", () => {
           [
             {
               actionName: "deal-with-bug",
-              activePromptId: "CBUG:1.0:execution:1:prompt:1",
+              activePromptId:
+                "msg_704cc476495dfb1640b7a8195689e299b502963a0b7a1e4f5f0568378118b848",
               conversationId: ThreadId.make("CBUG:1.0"),
               executionId: "CBUG:1.0:execution:1",
               implementationSessionId:
-                "CBUG:1.0:execution:1:implementation-session:1",
+                "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83",
               status: "running",
               workingDirectory: "/tmp/laborer-worktrees/bug-broken-export",
               worktreeName: "bug-broken-export",
@@ -314,22 +316,24 @@ describe("fourth Application tracer", () => {
           assert.deepStrictEqual(requestsBeforeResponses[1]?.executions, [
             {
               actionName: "create-feature",
-              activePromptId: "CCONCURRENT:1.0:execution:1:prompt:1",
+              activePromptId:
+                "msg_ff1b344766b471643f5d218b7a6ca6d3711a10ba3f67393d05c024f3ccfb5c10",
               conversationId: ThreadId.make("CCONCURRENT:1.0"),
               executionId: "CCONCURRENT:1.0:execution:1",
               implementationSessionId:
-                "CCONCURRENT:1.0:execution:1:implementation-session:1",
+                "ses_9c2e55cb5e32b3e414bf148b0e605e6e1c1d8dbb46842057f53c68338aae6f8a",
               status: "running",
               workingDirectory: "/tmp/laborer-worktrees/feature-export",
               worktreeName: "feature-export",
             },
             {
               actionName: "deal-with-bug",
-              activePromptId: "CCONCURRENT:1.0:execution:2:prompt:1",
+              activePromptId:
+                "msg_f4c6864d074763fd1cc49dc9225c0e08e02858f664b0ef03f911b3b00816e89f",
               conversationId: ThreadId.make("CCONCURRENT:1.0"),
               executionId: "CCONCURRENT:1.0:execution:2",
               implementationSessionId:
-                "CCONCURRENT:1.0:execution:2:implementation-session:1",
+                "ses_d78e02f216634090695382a93f183d45166bb2ce8a4eabb55abce0d1e7526dc7",
               status: "running",
               workingDirectory: "/tmp/laborer-worktrees/bug-import",
               worktreeName: "bug-import",

@@ -135,7 +135,7 @@ const validClassifierWorkerState = {
     },
   },
   version: 3,
-  workerBrief: "feature-to-pr",
+  workerBrief: "laborer-feature-to-pr",
   workerSessionId: "session:worker",
 } as const;
 
@@ -212,7 +212,10 @@ describe("issue #207 generic classifier-to-worker conversation", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          assert.strictEqual(yield* selectedSkillFor("bug"), "bug-to-pr");
+          assert.strictEqual(
+            yield* selectedSkillFor("bug"),
+            "laborer-bug-to-pr"
+          );
         })
       ),
     30_000
@@ -508,7 +511,7 @@ describe("issue #207 generic classifier-to-worker conversation", () => {
               callLog,
               EffectArray.map((call) => call.selectedSkill)
             ),
-            ["none", "feature-to-pr", "feature-to-pr"]
+            ["none", "laborer-feature-to-pr", "laborer-feature-to-pr"]
           );
           const finalThread = (yield* harness.store.snapshot).threads[0];
           assert.strictEqual(finalThread?.turns.length, 2);

@@ -22,9 +22,9 @@ the Keychain service names below.
 
 | Keychain service | Credential |
 | --- | --- |
-| `laborer-slack-app-token-steeple` | App-level `xapp-…` token with `connections:write` |
-| `laborer-slack-bot-token-steeple` | Steeple installation `xoxb-…` token |
-| `laborer-slack-bot-token-freckle` | Freckle installation `xoxb-…` token |
+| `laborer-slack-app-token-steeple` | App-level `xapp-[REDACTED]` token with `connections:write` |
+| `laborer-slack-bot-token-steeple` | Steeple installation `xoxb-[REDACTED]` token |
+| `laborer-slack-bot-token-freckle` | Freckle installation `xoxb-[REDACTED]` token |
 | `laborer-slack-client-secret-steeple` | OAuth client secret for installing the app elsewhere |
 
 ## Store or rotate a credential

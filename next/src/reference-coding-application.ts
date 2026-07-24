@@ -19,6 +19,7 @@ import {
 import {
   type AcceptApplicationEvent,
   Application,
+  ApplicationConversationMessageChunk,
   type ApplicationEvent,
   ApplicationPublicReply,
   type ApplicationShape,
@@ -137,6 +138,15 @@ export interface ConversationAgentReply {
   readonly text: string;
 }
 
+export interface ConversationAgentMessageChunk {
+  readonly messageId: string;
+  readonly text: string;
+}
+
+export type PublishConversationAgentMessage = (
+  message: ConversationAgentMessageChunk
+) => Effect.Effect<void, HandlerFailure>;
+
 export interface ConversationAgentRequest {
   readonly actions: readonly ConversationAction[];
   readonly context: readonly NormalizedMessage[];
@@ -154,10 +164,12 @@ export interface ConversationAgentRequest {
 
 export interface ConversationAgentShape {
   readonly handle: (
-    request: ConversationAgentRequest
+    request: ConversationAgentRequest,
+    publishMessage?: PublishConversationAgentMessage
   ) => Effect.Effect<readonly ConversationAgentReply[], HandlerFailure>;
   readonly recover?: (
-    request: ConversationAgentRequest
+    request: ConversationAgentRequest,
+    publishMessage?: PublishConversationAgentMessage
   ) => Effect.Effect<readonly ConversationAgentReply[], HandlerFailure>;
 }
 
@@ -2276,15 +2288,36 @@ export const makeReferenceCodingApplication = Effect.fn(
           turnId:
             event._tag === "ParticipantInput" ? event.turnId : event.eventId,
         };
+        const publishMessage: PublishConversationAgentMessage = (message) =>
+          publish(
+            ApplicationConversationMessageChunk.make({
+              messageId: message.messageId,
+              text: message.text,
+            })
+          ).pipe(
+            Effect.mapError(() =>
+              HandlerFailure.make({
+                category: "protocol",
+                noticeStyle: "generic",
+                safeDetail: "Conversation message delivery failed",
+              })
+            )
+          );
         let replies: readonly ConversationAgentReply[];
         if (staged.prompt.status === "completed") {
           replies = staged.prompt.replies;
         } else {
           yield* markConversationPromptRunning(staged.prompt.promptId);
           if (staged.isNew) {
-            replies = yield* options.conversationAgent.handle(request);
+            replies = yield* options.conversationAgent.handle(
+              request,
+              publishMessage
+            );
           } else if (options.conversationAgent.recover !== undefined) {
-            replies = yield* options.conversationAgent.recover(request);
+            replies = yield* options.conversationAgent.recover(
+              request,
+              publishMessage
+            );
           } else {
             return yield* HandlerFailure.make({
               category: "protocol",

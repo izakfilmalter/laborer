@@ -22,6 +22,10 @@
     "chat": {
       "repository": "vercel/chat",
       "description": "Use for Vercel Chat architecture, implementation patterns, tests, and examples"
+    },
+    "agent-client-protocol": {
+      "repository": "agentclientprotocol/agent-client-protocol",
+      "description": "Use for Agent Client Protocol specifications, SDKs, implementation patterns, tests, and examples"
     }
   }
 }

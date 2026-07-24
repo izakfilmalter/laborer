@@ -11,6 +11,7 @@
     "prototype:actions": "bun run src/action-toolkit-prototype/cli.ts",
     "prototype:conversation-execution": "bun run src/conversation-execution-tracer-prototype/demo.ts",
     "start:conversation-execution-canary": "node --env-file-if-exists=.env.local src/conversation-execution-live-canary-prototype/live.ts",
+    "start:acp-canary": "node --env-file-if-exists=.env.local src/acp-conversation-prototype/live.ts",
     "start:slack": "node --env-file-if-exists=.env.local src/slack/live.ts",
     "slack:funnel": "bun run src/slack-funnel.ts",
     "slack:funnel:off": "bun run src/slack-funnel.ts off",
@@ -24,6 +25,7 @@
     "check": "bun run typecheck && bun run format && bun run test"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
     "@effect/platform-bun": "4.0.0-beta.99",
     "@effect/platform-node": "4.0.0-beta.99",
     "@effect/sql-sqlite-bun": "4.0.0-beta.99",

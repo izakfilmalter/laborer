@@ -1,9 +1,23 @@
-import { Config, Context, Effect, Layer, Redacted, Schema } from "effect";
+import {
+  Config,
+  Context,
+  Effect,
+  Array as EffectArray,
+  Layer,
+  pipe,
+  Record,
+  Redacted,
+  Schema,
+} from "effect";
 import { SlackConfigValidationError } from "./errors.ts";
 
 const APP_TOKEN_PREFIX = ["x", "app", "-"].join("");
 const BOT_TOKEN_PREFIX = ["x", "oxb", "-"].join("");
 const WORKSPACE_REGISTRY_VARIABLE = "LABORER_SLACK_WORKSPACES";
+export const ACP_CANARY_SLACK_APP_TOKEN_VARIABLE =
+  "LABORER_ACP_CANARY_SLACK_APP_TOKEN";
+export const ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE =
+  "LABORER_ACP_CANARY_SLACK_BOT_TOKEN";
 const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
 const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
 
@@ -72,6 +86,21 @@ const readToken = (
 ): Effect.Effect<Redacted.Redacted<string>, SlackConfigValidationError> => {
   const value = environment[variable];
   return validateToken(variable, Redacted.make(value ?? ""), prefix);
+};
+
+const matchesProductionBotToken = (
+  environment: NodeJS.ProcessEnv,
+  candidate: Redacted.Redacted<string>
+): boolean => {
+  const candidateValue = Redacted.value(candidate);
+  return pipe(
+    environment,
+    Record.toEntries,
+    EffectArray.some(
+      ([name, value]) =>
+        BOT_TOKEN_REFERENCE_PATTERN.test(name) && value === candidateValue
+    )
+  );
 };
 
 const invalidInstallation = (
@@ -235,6 +264,35 @@ export const loadSlackConfig: Effect.Effect<
     ),
   });
 });
+
+export const loadAcpCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv = process.env
+): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
+  Effect.gen(function* () {
+    const appToken = yield* readToken(
+      environment,
+      ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+      APP_TOKEN_PREFIX
+    );
+    const botToken = yield* readToken(
+      environment,
+      ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+      BOT_TOKEN_PREFIX
+    );
+    if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
+      return yield* configFailure(
+        ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+        "matches-production-token"
+      );
+    }
+    if (matchesProductionBotToken(environment, botToken)) {
+      return yield* configFailure(
+        ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+        "matches-production-token"
+      );
+    }
+    return SlackConfig.of({ appToken, botToken });
+  });
 
 export const slackConfigLayer: Layer.Layer<
   SlackConfig,

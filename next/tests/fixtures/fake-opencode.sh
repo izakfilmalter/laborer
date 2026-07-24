@@ -106,10 +106,10 @@ if [[ -n "${SLACK_APP_TOKEN+x}" || -n "${SLACK_BOT_TOKEN+x}" ]]; then
   slack_tokens_present=true
 fi
 selected_skill="none"
-if [[ "$prompt" == *'`bug-to-pr`'* ]]; then
-  selected_skill="bug-to-pr"
-elif [[ "$prompt" == *'`feature-to-pr`'* ]]; then
-  selected_skill="feature-to-pr"
+if [[ "$prompt" == *'`laborer-bug-to-pr`'* ]]; then
+  selected_skill="laborer-bug-to-pr"
+elif [[ "$prompt" == *'`laborer-feature-to-pr`'* ]]; then
+  selected_skill="laborer-feature-to-pr"
 fi
 
 fake_mode="${FAKE_OPENCODE_MODE:-normal}"

@@ -73,14 +73,30 @@ export class ApplicationPublicReply extends Schema.TaggedClass<ApplicationPublic
   }
 ) {}
 
+export class ApplicationConversationMessageChunk extends Schema.TaggedClass<ApplicationConversationMessageChunk>()(
+  "ConversationMessageChunk",
+  {
+    messageId: NonBlankString,
+    text: Schema.String,
+  }
+) {}
+
+export type ApplicationPublicOutput =
+  | ApplicationConversationMessageChunk
+  | ApplicationPublicReply;
+
 export type PublishApplicationReply = (
   reply: ApplicationPublicReply
+) => Effect.Effect<void, HandlerFailure | StoreError>;
+
+export type PublishApplicationOutput = (
+  output: ApplicationPublicOutput
 ) => Effect.Effect<void, HandlerFailure | StoreError>;
 
 export interface ApplicationShape {
   readonly handle: (
     event: ApplicationEvent,
-    publish: PublishApplicationReply,
+    publish: PublishApplicationOutput,
     acceptEvent: AcceptApplicationEvent
   ) => Effect.Effect<void, HandlerFailure | StoreError>;
   readonly recover?: (

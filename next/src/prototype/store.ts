@@ -159,6 +159,7 @@ export interface PrototypeStoreShape {
       | {
           readonly _tag: "Failure";
           readonly category: HandlerFailureCategory;
+          readonly noticeStyle: "diagnostic" | "generic";
           readonly safeDetail: string | null;
         }
   ) => Effect.Effect<void, StoreError>;
@@ -295,6 +296,22 @@ const applicationEventTurnId = (eventId: string): TurnId =>
 
 const applicationEventFailureNoticeId = (eventId: string): string =>
   `notice:${applicationEventTurnId(eventId)}:handler-failure`;
+
+const GENERIC_TURN_FAILURE_NOTICE =
+  "This conversation turn could not be completed. Please try again.";
+
+const turnFailureNotice = (
+  turnId: TurnId,
+  category: HandlerFailureCategory,
+  safeDetail: string | null,
+  noticeStyle: "diagnostic" | "generic"
+): string => {
+  if (noticeStyle === "generic") {
+    return GENERIC_TURN_FAILURE_NOTICE;
+  }
+  const detail = safeDetail === null ? "" : `: ${safeDetail}`;
+  return `Turn ${turnId} failed (${category}${detail}). See Runner logs.`;
+};
 
 const settleEligibleApplicationEvents = (
   thread: WorkThreadState
@@ -1497,8 +1514,6 @@ const makeStore = Effect.fnUntraced(function* (
             });
             let outbox = thread.outbox;
             if (outcome._tag === "Failure") {
-              const detail =
-                outcome.safeDetail === null ? "" : `: ${outcome.safeDetail}`;
               outbox = EffectArray.append(
                 outbox,
                 OutboundItem.make({
@@ -1510,7 +1525,12 @@ const makeStore = Effect.fnUntraced(function* (
                   retryAtMillis: null,
                   slackTs: null,
                   status: "pending",
-                  text: `Turn ${turnId} failed (${outcome.category}${detail}). See Runner logs.`,
+                  text: turnFailureNotice(
+                    turnId,
+                    outcome.category,
+                    outcome.safeDetail,
+                    outcome.noticeStyle
+                  ),
                   turnId,
                 })
               );

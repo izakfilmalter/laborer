@@ -45,6 +45,8 @@ import {
 import { makeFileStoreLayer } from "../src/prototype/store.ts";
 
 const projectRoot = process.cwd();
+const DIAGNOSTIC_TURN_FAILURE_NOTICE_PATTERN =
+  /^Turn turn:.+ failed \(exit: exit code 7\)\. See Runner logs\.$/;
 
 const onlyThread = (threads: readonly WorkThreadState[]): WorkThreadState => {
   assert.strictEqual(threads.length, 1);
@@ -315,6 +317,10 @@ describe("issue #204 store-driven tracer", () => {
           assert.strictEqual(publicReply.user, fixture.botUserId);
           assert.strictEqual(publicReply.thread_ts, rootTs);
           assert.ok(failureNotice);
+          assert.match(
+            failureNotice.text ?? "",
+            DIAGNOSTIC_TURN_FAILURE_NOTICE_PATTERN
+          );
           assert.strictEqual(failureNotice.user, fixture.botUserId);
           assert.strictEqual(failureNotice.thread_ts, rootTs);
           yield* Effect.sleep("25 millis");

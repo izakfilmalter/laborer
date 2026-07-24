@@ -21,8 +21,8 @@ slack-token*
 .slack-config-access-token*
 slack-config-access-token*
 
-# Local Slack Runner state
-next/.laborer-runtime/
+# Local Laborer runtime state
+.laborer-runtime/
 
 # IDEs and editors
 .vscode/*

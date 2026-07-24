@@ -20,7 +20,7 @@ The daemon-owned association from one authenticated Slack workspace installation
 The root-bound runtime that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root and may be supervised by a Laborer daemon alongside other Runners.
 
 **Laborer root**:
-The directory that binds a Laborer Runner to its configuration and work handler. It is the default handler working directory and does not need to be a Git repository. A configured thread initializer may select a different working directory for a new work thread.
+The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
 
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
@@ -35,13 +35,7 @@ One-time Slack conversation context included in a work thread's first turn. A ro
 The narrow text-oriented record Laborer presents to a work handler. It carries a stable identity, context-or-input classification, activation marker, author kind and Slack ID, original Slack timestamp, and verbatim Slack `mrkdwn` text. Laborer excludes its own messages, textless rich content, system notices, edits, deletions, and reactions; it does not resolve display names or expose raw Slack payloads.
 
 **Work handler**:
-The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run. It owns all workflow-specific behavior, resources, and continuation state.
-
-**Thread initializer**:
-An optional user-supplied local program Laborer invokes before the first work-handler invocation in a newly activated work thread. It receives the same first-turn envelope, may emit deliberate public replies, and returns one absolute working directory through the versioned protocol. Laborer durably binds that directory to the work thread. Initializers must be idempotent because an interrupted initialization is replayed with the same thread and turn identities.
-
-**Thread working directory**:
-The directory selected once by a thread initializer and used as the current working directory for every work-handler invocation in that work thread. Laborer validates and remembers its identity but does not interpret or clean up its contents. Without an initializer, the Laborer root remains the handler working directory.
+The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run from the Laborer root. It owns all workflow-specific behavior, resources, and continuation state, including any worktrees it creates.
 
 **Turn**:
 One serialized batch of work-thread input delivered to a work handler. A turn has one stable identity across replay attempts, and a known handler outcome permanently consumes its assigned input.
@@ -61,9 +55,6 @@ A stable filesystem directory Laborer assigns to one work thread and presents to
 **Public reply**:
 A conversational message the work handler explicitly chooses to send by emitting a public-reply protocol record. Laborer binds it to the work thread and posts it as the Laborer Slack app. Public replies are ordered, append-only, and the only handler-authored output shown in Slack; internal output remains private.
 
-**Completion reaction**:
-A per-turn durable attempt rendered as a sticky `:white_check_mark:` on the canonical thread root after the turn succeeds and all deliberate public replies attached to it are delivered. Eligibility includes replies from initialization and replayed attempts; any blocked or abandoned public reply suppresses the marker. Later successful turns converge idempotently on the same reaction.
-
 **Operational notice**:
 A sanitized, Laborer-authored Slack message reporting that a turn or reply failed. Operational notices identify the turn and failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They exist because Slack is the prototype's primary interface.
 
@@ -78,30 +69,27 @@ The following terms belong to the first intended coding-workflow use case, not t
 **Conversation agent**:
 A user-configured, general-purpose agent supervised by Laborer for one work thread. One work thread continues one durable agent session, retaining prior messages, tool activity, and operation results; within the authority granted by the user, the agent may answer, investigate, execute, modify, delegate, orchestrate, or invoke Actions as it chooses.
 
+**Soul**:
+The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when a work thread begins so later edits affect only new work threads.
+
+**Workspace memory**:
+Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when a work thread begins so later changes affect only new work threads.
+
+**User profile**:
+Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
+
+**Agent context snapshot**:
+The durable context fixed for one work thread from the Soul and Workspace memory present at activation, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to new work threads or participants not yet introduced into the thread.
+
 **Conversation-agent authority**:
 The user alone determines what a conversation agent may do and which capabilities it can access, including shell execution, filesystem and network access, tools, skills, MCP servers, Actions, and orchestration. Laborer must never narrow, disable, hide, replace, or reinterpret those user-granted capabilities; Actions are additional capabilities, not the boundary of the agent's authority.
 _Avoid_: Routing-only agent, restricted conversation agent, read-only conversation agent
 
-**Conversation runtime**:
-The long-lived, root-bound service that serializes work-thread events and resumes conversation-agent sessions. It may request delegated work but does not own the resulting Executions.
-
-**Conversation event**:
-One accepted Slack input or Execution lifecycle change presented to a conversation agent. A conversation event belongs to one work thread, retains its identity across replay, and is handled in that thread's serialized event order.
-
-**Conversation-agent session**:
-The durable conversational identity bound to one work thread and resumed across its conversation events. It preserves the conversation agent's context while allowing the underlying agent process to remain idle between events.
-
-**Conversation response**:
-The completed text a conversation agent deliberately returns for one conversation event. Laborer treats its contents as opaque and publishes a nonempty response as one logical public reply; returning no response is intentional silence.
+**Conversation-agent message**:
+Markdown authored by a conversation agent for the people in a work thread. Laborer streams each message directly to Slack as it is produced and does not require the agent to wrap it in a structured reply record. Content already delivered remains visible if the agent later fails.
 
 **Action**:
-A user-registered, named kind of work that a conversation agent may delegate. An Action may invoke an agent, run a script, execute a workflow, or perform any other author-defined work. Starting an Action creates an Execution.
-
-**Execution**:
-One invocation of a registered Action, tracked independently from both the conversation-agent session and any underlying provider identity.
-
-**Execution runtime**:
-The long-lived, root-bound service that accepts delegated Actions and owns each Execution's lifecycle, resources, and observable status. It reports execution activity back to the conversation runtime and never publishes directly to Slack.
+A user-defined, named operation made available to a conversation agent. The same Action definition may support both direct human invocation and agent invocation. Actions remain user-owned and never publish directly to Slack.
 
 **Intake pass**:
 A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.

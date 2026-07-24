@@ -13,6 +13,22 @@
 > process can select one durable working directory before a new work thread's
 > first handler invocation. The tracked initializer creates a sibling Git
 > worktree; Git and worktree policy remain user-owned process behavior.
+>
+> **THROWAWAY ACP STREAMING PROTOTYPE for issues #234 and #236.** The isolated
+> `acp-conversation-prototype` composition uses official stable-v1 ACP over
+> newline-delimited stdio and Emulate Slack. It preserves public ACP message
+> boundaries, filters private activity, reuses sessions, and serializes turns.
+> Emulate 0.9 does not implement Slack's native stream methods, so automated
+> integration retains the `chat.postMessage` then `chat.update` fallback. It is
+> test-only and does not replace `start:slack`, the current conversation-agent
+> startup path, or user Actions. Streamed Slack messages deliberately remain
+> outside the durable outbox in this proof, so crash retry/replay of a partially
+> delivered stream is not yet guaranteed.
+>
+> **OPT-IN LIVE ACP CANARY for issue #235.** `start:acp-canary` composes that
+> same streaming path with OpenCode's `acp` command. It is a manual canary, not
+> a production migration; `start:slack`, Actions, and implementation agents are
+> unchanged.
 
 ## Run it
 
@@ -36,6 +52,69 @@ Run the adversarial proof with:
 ```sh
 bun run check
 ```
+
+## Run the opt-in OpenCode ACP canary later
+
+This live step is deliberately **not** part of automated acceptance. Automated
+tests substitute a deterministic fake executable and publish through official
+Slack `WebClient` instances into Emulate; they need no Slack credentials, model
+provider, or real OpenCode process.
+
+For a later human smoke test, create and install a **separate Slack app** for the
+canary. Reusing the production Slack app is unsafe: Socket Mode delivers each
+event to only one connection, so two connections for one app can steal events
+from each other even when they serve different Laborer roots. The dedicated app
+and installation are mandatory, and its bot must be invited to the smoke-test
+channel separately.
+
+Provide only the explicitly named canary credentials in the launch environment:
+
+```dotenv
+LABORER_ACP_CANARY_SLACK_APP_TOKEN=
+LABORER_ACP_CANARY_SLACK_BOT_TOKEN=
+```
+
+The command never falls back to `SLACK_APP_TOKEN` or `SLACK_BOT_TOKEN`; missing
+or wrong-kind canary credentials fail startup, as do canary credentials equal
+to production credentials present in the same environment. Neither production nor canary
+Slack credentials cross into the ACP child environment. Once the separate app
+is installed, ensure the `opencode` CLI is authenticated and run from `next`:
+
+```sh
+bun run start:acp-canary
+```
+
+The explicit command defaults to `opencode acp`, with the configured
+`LABORER_ROOT` (or this `next` directory) as both process cwd and ACP session
+working context. It initializes ACP once, creates one in-memory ACP session per
+accepted Slack work thread, reuses that session for follow-up turns while the
+canary lives, and streams each public ACP message through Slack's native
+`chat.startStream`, `chat.appendStream`, and `chat.stopStream` methods. Appends
+carry only new ACP text; oversized Markdown is split at Slack's 12,000-character
+boundary without splitting Unicode surrogate pairs. Every started stream is
+stopped when the turn exits, including after partial ACP failure, defects, or
+interruption. This avoids the permanent `(edited)` marker produced by the
+Emulate-only post/update fallback. The stream recipient is the latest human in
+the turn. Native streaming uses the authenticated local workspace team ID:
+Socket ingress already quarantines Slack Connect, Enterprise, and otherwise
+ambiguous authorization envelopes through `isOrdinaryWorkspaceEvent`, so this
+path follows that existing boundary rather than adding external-team support.
+Press Ctrl-C to close its Effect scope, disconnect Slack, close ACP stdio, and
+reap the supervised child. Stop failures are attempted independently for every
+stream: a stop failure after otherwise successful ACP work becomes a sanitized
+delivery failure, while an existing ACP failure remains the primary turn
+outcome. This
+POC does not persist canary sessions and does not expose or migrate Laborer
+Actions or implementation agents. Because its dedicated Slack app owns a
+separate app-wide event stream and its Runner state is in memory, the canary does
+not take the production root lock and can run alongside the existing daemon.
+Inbound ACP NDJSON is capped before reaching the official SDK's otherwise
+unbounded line buffer: 2 MiB per line, 256 MiB over the canary-process lifetime,
+and 250,000 non-empty records. Post-start child failure closes the transport,
+and scoped cleanup waits after EOF, escalates through TERM and KILL, and treats a
+child that remains unreaped after KILL as a cleanup defect. The common
+unexpected-exit path is fixture-tested; synthetic injection of Node's rarer
+post-spawn ChildProcess `error` event remains a low residual test gap.
 
 ## Run the live issue #207 configured-handler prototype
 
@@ -161,7 +240,7 @@ different initializer if that trust boundary is inappropriate.
    marked complete. The tracked initializer first creates the thread's sibling
    worktree. The handler then
    runs a classifier there and deterministically selects either the
-   `bug-to-pr` or `feature-to-pr` skill for a coding worker. The
+   `laborer-bug-to-pr` or `laborer-feature-to-pr` skill for a coding worker. The
    classifier and coding worker use the user's default OpenCode agent and
    configuration; the handler does not override plugins, tools, permissions,
    or approval policy. Later
@@ -270,7 +349,7 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   `next/.env.local`; it does not clean worktrees up.
 - The issue #207 user-owned Bash handler stages every external mutation,
   classifies only the first turn, maps that classification to the
-  `bug-to-pr` or `feature-to-pr` skill, and resumes the selected
+  `laborer-bug-to-pr` or `laborer-feature-to-pr` skill, and resumes the selected
   coding worker's persisted OpenCode session on later turns. Its prompt adapts
   the legacy workspace planner's untrusted-Slack-context boundary to the
   already-bound Laborer thread. Per-turn persisted replies make handler replay idempotent

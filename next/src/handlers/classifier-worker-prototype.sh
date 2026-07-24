@@ -435,9 +435,9 @@ if [[ -z "$state_json" ]]; then
   ' 2>/dev/null)" || fail "classifier response is invalid"
   classification="$(printf '%s\n' "$classification_result" | jq -er '.classification')"
   if [[ "$classification" == "bug" ]]; then
-    worker_brief="bug-to-pr"
+    worker_brief="laborer-bug-to-pr"
   else
-    worker_brief="feature-to-pr"
+    worker_brief="laborer-feature-to-pr"
   fi
   state_json="$(printf '%s\n' "$state_json" | jq -ce \
     --arg classification "$classification" \
@@ -457,9 +457,9 @@ worker_session_id="$(printf '%s\n' "$state_json" | jq -er '.workerSessionId // e
 
 if [[ -z "$worker_session_id" ]]; then
   if [[ "$classification" == "bug" ]]; then
-    selected_skill="bug-to-pr"
+    selected_skill="laborer-bug-to-pr"
   else
-    selected_skill="feature-to-pr"
+    selected_skill="laborer-feature-to-pr"
   fi
   worker_prompt="$(printf '%s\n' "$envelope" | jq -jr \
     --arg classification "$classification" \
@@ -518,9 +518,9 @@ if [[ -z "$worker_session_id" ]]; then
   fi
 else
   if [[ "$classification" == "bug" ]]; then
-    selected_skill="bug-to-pr"
+    selected_skill="laborer-bug-to-pr"
   else
-    selected_skill="feature-to-pr"
+    selected_skill="laborer-feature-to-pr"
   fi
   follow_up_prompt="$(printf '%s\n' "$envelope" | jq -jr \
     --arg classification "$classification" \

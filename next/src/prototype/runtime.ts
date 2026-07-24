@@ -3,10 +3,12 @@
  * Store-driven per-thread FIFO worker and narrow Effect service contracts.
  */
 import {
+  type Cause,
   Clock,
   Context,
   Effect,
   Array as EffectArray,
+  Exit,
   Layer,
   Option,
   pipe,
@@ -18,6 +20,7 @@ import {
   type AcceptApplicationEvent,
   Application,
   type ApplicationEventAcceptance,
+  type ApplicationPublicOutput,
   type ApplicationShape,
   applicationFromConfiguredProcessHandler,
   type ExternalInputEvent,
@@ -52,7 +55,26 @@ import {
   type StorePersistenceHealth,
 } from "./store.ts";
 
+export interface SlackNativeStreamCapability {
+  readonly append: (request: {
+    readonly channelId: string;
+    readonly streamTs: string;
+    readonly text: string;
+  }) => Effect.Effect<void, DeliveryError>;
+  readonly start: (request: {
+    readonly channelId: string;
+    readonly recipientUserId: string;
+    readonly rootTs: string;
+    readonly text: string;
+  }) => Effect.Effect<{ readonly ts: string }, DeliveryError>;
+  readonly stop: (request: {
+    readonly channelId: string;
+    readonly streamTs: string;
+  }) => Effect.Effect<void, DeliveryError>;
+}
+
 export interface SlackGatewayShape {
+  readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly postThreadMessage: (request: {
     readonly channelId: string;
     readonly rootTs: string;
@@ -64,6 +86,11 @@ export interface SlackGatewayShape {
     readonly import("./domain.ts").NormalizedMessage[],
     ContextReadError
   >;
+  readonly updateThreadMessage?: (request: {
+    readonly channelId: string;
+    readonly messageTs: string;
+    readonly text: string;
+  }) => Effect.Effect<void, DeliveryError>;
 }
 
 export class SlackGateway extends Context.Service<
@@ -701,24 +728,186 @@ const runnerLayer = Layer.effect(
             )
           );
 
-    const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
+    const streamedDeliveryFailure = (): HandlerFailure =>
+      HandlerFailure.make({
+        category: "protocol",
+        noticeStyle: "generic",
+        safeDetail: "Conversation message delivery failed",
+      });
+
+    const publisherForTurn = (turn: ClaimedTurn) => {
+      const accumulated = new Map<
+        string,
+        { readonly slackTs: string | null; readonly text: string }
+      >();
+      const publicationSemaphore = Semaphore.makeUnsafe(1);
       const persistReply = persistReplyFor(turn);
-      const result = yield* Effect.result(
-        application.handle(
-          ParticipantInputEvent.make({
-            attemptNumber: turn.attemptNumber,
+      const recipientUserId = pipe(
+        turn.messages,
+        EffectArray.filter((message) => message.authorKind === "human"),
+        EffectArray.last,
+        Option.map((message) => message.authorSlackId)
+      );
+      const startConversationMessage = Effect.fnUntraced(function* (
+        messageId: string,
+        text: string
+      ) {
+        if (slack.nativeStreaming !== undefined) {
+          if (Option.isNone(recipientUserId)) {
+            return yield* streamedDeliveryFailure();
+          }
+          const started = yield* slack.nativeStreaming
+            .start({
+              channelId: turn.channelId,
+              recipientUserId: recipientUserId.value,
+              rootTs: turn.rootTs,
+              text,
+            })
+            .pipe(Effect.mapError(streamedDeliveryFailure));
+          accumulated.set(messageId, { slackTs: started.ts, text });
+          return;
+        }
+        const posted = yield* slack
+          .postThreadMessage({
             channelId: turn.channelId,
-            context: turn.context,
-            conversationId: turn.threadId,
-            initializationStatus: turn.initializationStatus,
-            messages: turn.messages,
             rootTs: turn.rootTs,
-            source: "slack",
-            turnId: turn.id,
-            workingDirectory: turn.workingDirectory,
-          }),
-          (reply) => persistReply(toPublicReplyProtocolRecord(reply)),
-          acceptApplicationEvent
+            text,
+          })
+          .pipe(Effect.mapError(streamedDeliveryFailure));
+        accumulated.set(messageId, { slackTs: posted.ts, text });
+      });
+      const appendConversationMessage = Effect.fnUntraced(function* (
+        streamTs: string,
+        delta: string,
+        text: string
+      ) {
+        if (slack.nativeStreaming !== undefined) {
+          yield* slack.nativeStreaming
+            .append({
+              channelId: turn.channelId,
+              streamTs,
+              text: delta,
+            })
+            .pipe(Effect.mapError(streamedDeliveryFailure));
+          return;
+        }
+        if (slack.updateThreadMessage === undefined) {
+          return yield* streamedDeliveryFailure();
+        }
+        yield* slack
+          .updateThreadMessage({
+            channelId: turn.channelId,
+            messageTs: streamTs,
+            text,
+          })
+          .pipe(Effect.mapError(streamedDeliveryFailure));
+      });
+      const publishUnserialized = Effect.fnUntraced(function* (
+        output: ApplicationPublicOutput
+      ) {
+        if (output._tag === "PublicReply") {
+          return yield* persistReply(toPublicReplyProtocolRecord(output));
+        }
+
+        const previous = accumulated.get(output.messageId);
+        const text = `${previous?.text ?? ""}${output.text}`;
+        accumulated.set(output.messageId, {
+          slackTs: previous?.slackTs ?? null,
+          text,
+        });
+        if (output.text.length === 0 || text.trim().length === 0) {
+          return;
+        }
+        if (previous?.slackTs === undefined || previous.slackTs === null) {
+          return yield* startConversationMessage(output.messageId, text);
+        }
+        return yield* appendConversationMessage(
+          previous.slackTs,
+          output.text,
+          text
+        );
+      });
+      const publish = (output: ApplicationPublicOutput) =>
+        publicationSemaphore.withPermit(
+          Effect.uninterruptible(publishUnserialized(output))
+        );
+      const finalize = Effect.fnUntraced(function* () {
+        const nativeStreaming = slack.nativeStreaming;
+        if (nativeStreaming === undefined) {
+          return;
+        }
+        let firstFailure: Cause.Cause<HandlerFailure> | undefined;
+        const streams = pipe(
+          accumulated.values(),
+          EffectArray.fromIterable,
+          EffectArray.filter(
+            (
+              state
+            ): state is { readonly slackTs: string; readonly text: string } =>
+              state.slackTs !== null
+          )
+        );
+        yield* Effect.forEach(
+          streams,
+          (state) =>
+            Effect.exit(
+              nativeStreaming
+                .stop({
+                  channelId: turn.channelId,
+                  streamTs: state.slackTs,
+                })
+                .pipe(Effect.mapError(streamedDeliveryFailure))
+            ).pipe(
+              Effect.tap((exit) =>
+                Effect.sync(() => {
+                  if (Exit.isFailure(exit)) {
+                    firstFailure ??= exit.cause;
+                  }
+                })
+              )
+            ),
+          { discard: true }
+        );
+        if (firstFailure !== undefined) {
+          return yield* Effect.failCause(firstFailure);
+        }
+      });
+      return { finalize, publish };
+    };
+
+    const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
+      const publisher = publisherForTurn(turn);
+      const result = yield* Effect.result(
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const applicationExit = yield* Effect.exit(
+              restore(
+                application.handle(
+                  ParticipantInputEvent.make({
+                    attemptNumber: turn.attemptNumber,
+                    channelId: turn.channelId,
+                    context: turn.context,
+                    conversationId: turn.threadId,
+                    initializationStatus: turn.initializationStatus,
+                    messages: turn.messages,
+                    rootTs: turn.rootTs,
+                    source: "slack",
+                    turnId: turn.id,
+                    workingDirectory: turn.workingDirectory,
+                  }),
+                  publisher.publish,
+                  acceptApplicationEvent
+                )
+              )
+            );
+            const finalizationExit = yield* Effect.exit(publisher.finalize());
+            if (Exit.isFailure(applicationExit)) {
+              return yield* Effect.failCause(applicationExit.cause);
+            }
+            if (Exit.isFailure(finalizationExit)) {
+              return yield* Effect.failCause(finalizationExit.cause);
+            }
+          })
         )
       );
       if (result._tag === "Success") {
@@ -742,6 +931,7 @@ const runnerLayer = Layer.effect(
       yield* store.completeHandler(turn.threadId, turn.id, {
         _tag: "Failure",
         category: result.failure.category,
+        noticeStyle: result.failure.noticeStyle ?? "diagnostic",
         safeDetail: result.failure.safeDetail,
       });
       return "Completed" as const;
@@ -760,13 +950,20 @@ const runnerLayer = Layer.effect(
             payload: event.payload,
             source: event.source,
           },
-          (reply) =>
-            store
+          (output) => {
+            if (output._tag === "ConversationMessageChunk") {
+              return HandlerFailure.make({
+                category: "protocol",
+                safeDetail:
+                  "Streamed conversation output is unavailable for external events",
+              });
+            }
+            return store
               .acceptApplicationReply(
                 threadId,
                 event.eventId,
-                toPublicReplyProtocolRecord(reply).replyId,
-                reply.text
+                toPublicReplyProtocolRecord(output).replyId,
+                output.text
               )
               .pipe(
                 Effect.catchTag("ReplyProtocolError", () =>
@@ -775,7 +972,8 @@ const runnerLayer = Layer.effect(
                     safeDetail: "conflicting or invalid public reply",
                   })
                 )
-              ),
+              );
+          },
           acceptApplicationEvent
         )
       );

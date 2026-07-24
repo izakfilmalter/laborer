@@ -49,6 +49,7 @@ export class HandlerFailure extends Schema.TaggedErrorClass<HandlerFailure>()(
   "HandlerFailure",
   {
     category: HandlerFailureCategory,
+    noticeStyle: Schema.optional(Schema.Literal("generic")),
     safeDetail: Schema.NullOr(Schema.String),
   }
 ) {}

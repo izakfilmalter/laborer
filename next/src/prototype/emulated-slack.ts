@@ -30,6 +30,7 @@ import type {
   ActivationAcknowledgerShape,
   CompletionReactorShape,
   SlackGatewayShape,
+  SlackNativeStreamCapability,
 } from "./runtime.ts";
 import type { ActivationContextRequest } from "./store.ts";
 
@@ -131,6 +132,8 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:read",
                       "groups:history",
                       "groups:write",
+                      "reactions:read",
+                      "reactions:write",
                     ],
                   },
                 ],
@@ -145,6 +148,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:read",
                       "groups:history",
                       "groups:write",
+                      "reactions:read",
                     ],
                   },
                   {
@@ -159,6 +163,8 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "channels:history",
                       "groups:read",
                       "groups:history",
+                      "reactions:read",
+                      "reactions:write",
                     ],
                   },
                 ],
@@ -456,6 +462,7 @@ export const makeSlackGateway = (options: {
   readonly botClient: WebClient;
   readonly botId?: string;
   readonly botUserId?: string;
+  readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly pageSize: number;
   readonly workspaceId?: string;
 }): SlackGatewayShape => {
@@ -595,6 +602,9 @@ export const makeSlackGateway = (options: {
   });
 
   return {
+    ...(options.nativeStreaming === undefined
+      ? {}
+      : { nativeStreaming: options.nativeStreaming }),
     readActivationContext: (request) =>
       request.isReplyActivation
         ? readReplyContext(request)
@@ -611,6 +621,24 @@ export const makeSlackGateway = (options: {
             throw new Error("missing timestamp");
           }
           return { ts: response.ts };
+        },
+        catch: (cause) => {
+          const failure = classifySlackError(cause);
+          return DeliveryError.make({
+            category: failure.category,
+            disposition: failure.disposition,
+            retryAfterMillis: failure.retryAfterMillis,
+          });
+        },
+      }),
+    updateThreadMessage: ({ channelId, messageTs, text }) =>
+      Effect.tryPromise({
+        try: async () => {
+          await options.botClient.chat.update({
+            channel: channelId,
+            ts: messageTs,
+            text,
+          });
         },
         catch: (cause) => {
           const failure = classifySlackError(cause);

@@ -4,8 +4,11 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import {
   launchOpenCodeServer,
+  type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
+import { ExternalInputEvent } from "../src/application.ts";
+import { ThreadId } from "../src/prototype/domain.ts";
 import { makeFileStoreLayer } from "../src/prototype/store.ts";
 import { makeInMemoryApplicationRepository } from "../src/reference-coding-application.ts";
 import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
@@ -14,7 +17,7 @@ import { makeReferenceCodingWorkspaceApplication } from "../src/slack/workspace-
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 describe("Tracer 7 production composition", () => {
-  it.effect("loads reference-coding as the exclusive application mode", () =>
+  it.effect("loads custom and omitted Conversation configuration", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const root = yield* makeTempDirectoryScoped(
@@ -26,6 +29,12 @@ describe("Tracer 7 production composition", () => {
             JSON.stringify({
               application: {
                 agent: "build",
+                conversation: {
+                  instructions: ["  Route this conversation.  "],
+                  operationResultInstructions: [
+                    "  Report this operation result.  ",
+                  ],
+                },
                 environment: ["OPENAI_API_KEY"],
                 model: "opencode/big-pickle",
                 type: "reference-coding",
@@ -42,12 +51,33 @@ describe("Tracer 7 production composition", () => {
 
         assert.deepStrictEqual(loaded.config.application, {
           agent: "build",
+          conversation: {
+            instructions: ["Route this conversation."],
+            operationResultInstructions: ["Report this operation result."],
+          },
           environment: ["OPENAI_API_KEY"],
           model: "opencode/big-pickle",
           type: "reference-coding",
         });
         assert.ok(!("workHandler" in loaded.config));
         assert.strictEqual(loaded.config.retained, true);
+
+        yield* Effect.promise(() =>
+          writeFile(
+            join(root, "laborer.json"),
+            JSON.stringify({
+              application: { type: "reference-coding" },
+            })
+          )
+        );
+        const backwardCompatible = yield* loadLaborerConfig({
+          defaultRoot: root,
+          environment: { PATH: process.env.PATH },
+        });
+        assert.deepStrictEqual(backwardCompatible.config.application, {
+          environment: [],
+          type: "reference-coding",
+        });
       })
     )
   );
@@ -73,6 +103,50 @@ describe("Tracer 7 production composition", () => {
           {
             application: {
               model: "missing-provider-separator",
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              conversation: {
+                instructions: [],
+                operationResultInstructions: ["Report the result."],
+              },
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              conversation: {
+                instructions: ["Route the turn."],
+              },
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              conversation: {
+                instructions: ["  \n  "],
+                operationResultInstructions: ["Report the result."],
+              },
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              conversation: {
+                instructions: ["Route the turn."],
+                operationResultInstructions: [],
+              },
+              type: "reference-coding",
+            },
+          },
+          {
+            application: {
+              conversation: {
+                instructions: ["Route the turn."],
+                operationResultInstructions: ["  "],
+              },
               type: "reference-coding",
             },
           },
@@ -183,12 +257,31 @@ describe("Tracer 7 production composition", () => {
             "laborer-reference-composition-"
           );
           const paths = yield* prepareSlackRuntimePaths(root, "T-COMPOSE");
+          const prompts: OpenCodePromptInput[] = [];
           const client: OpenCodeSessionClient = {
             createSession: () => Effect.void,
             interrupt: () => Effect.void,
-            readMessages: () => Effect.succeed([]),
+            readMessages: () =>
+              Effect.succeed([
+                {
+                  id: prompts[0]?.promptId ?? "missing-prompt",
+                  role: "user",
+                  text: prompts[0]?.text ?? "",
+                },
+                {
+                  id: "composition-reply",
+                  role: "assistant",
+                  text: JSON.stringify({
+                    text: "Composition configured.",
+                    type: "reply",
+                  }),
+                },
+              ]),
             sessionExists: () => Effect.succeed(false),
-            submitPrompt: () => Effect.void,
+            submitPrompt: (input) =>
+              Effect.sync(() => {
+                prompts.push(input);
+              }),
             wait: () => Effect.void,
           };
           let clientCalls = 0;
@@ -197,10 +290,16 @@ describe("Tracer 7 production composition", () => {
           let worktreeRoot = "";
           let serverEnvironment: NodeJS.ProcessEnv = {};
 
-          yield* makeReferenceCodingWorkspaceApplication(
+          const application = yield* makeReferenceCodingWorkspaceApplication(
             {
               config: {
                 agent: "build",
+                conversation: {
+                  instructions: ["Production routing instruction."],
+                  operationResultInstructions: [
+                    "Production operation-result instruction.",
+                  ],
+                },
                 environment: ["OPENAI_API_KEY"],
                 model: "opencode/big-pickle",
                 type: "reference-coding",
@@ -227,6 +326,7 @@ describe("Tracer 7 production composition", () => {
                   modelID: "big-pickle",
                   providerID: "opencode",
                 });
+                assert.strictEqual(options.promptIsolation, false);
                 assert.strictEqual(options.workspaceDirectory, root);
                 return Effect.succeed(client);
               },
@@ -243,6 +343,23 @@ describe("Tracer 7 production composition", () => {
               },
             }
           );
+          yield* application.handle(
+            ExternalInputEvent.make({
+              conversationId: ThreadId.make("production-composition-thread"),
+              eventId: "production-composition-event",
+              payload: {},
+              source: "test",
+            }),
+            () => Effect.void,
+            (event) =>
+              Effect.succeed({
+                decision: {
+                  _tag: "Accepted" as const,
+                  eventId: event.eventId,
+                },
+                scheduling: "Scheduled" as const,
+              })
+          );
 
           assert.strictEqual(clientCalls, 1);
           assert.strictEqual(repositoryPath, paths.applicationState);
@@ -253,6 +370,12 @@ describe("Tracer 7 production composition", () => {
             "provider-secret"
           );
           assert.ok(!("SLACK_BOT_TOKEN" in serverEnvironment));
+          const prompt = JSON.parse(prompts[0]?.text ?? "{}") as {
+            readonly instructions?: unknown;
+          };
+          assert.deepStrictEqual(prompt.instructions, [
+            "Production routing instruction.",
+          ]);
         })
       )
   );
@@ -264,13 +387,31 @@ describe("Tracer 7 production composition", () => {
       );
       const config = JSON.parse(source) as Record<string, unknown>;
       assert.deepStrictEqual(config.application, {
+        conversation: {
+          instructions: [
+            "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
+            "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
+            "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
+            "Return exactly one JSON object and no markdown.",
+            'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
+            'Execution control: {"type":"execution_control","control":"<available name>","input":<JSON>}.',
+            'Reply: {"type":"reply","text":"<Slack reply>"}.',
+            "Only a reply record is shown to Slack. Coding Actions and generic Execution controls are separate interfaces.",
+          ],
+          operationResultInstructions: [
+            "You are the Conversation agent continuing the current Slack thread after an operation result.",
+            "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
+            "Return exactly one JSON object and no markdown.",
+            'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
+            "Do not request another Action or Execution control.",
+          ],
+        },
         environment: [
           "ANTHROPIC_API_KEY",
           "LABORER_OPENCODE_MODEL",
           "OPENCODE_CONFIG_CONTENT",
           "OPENAI_API_KEY",
         ],
-        model: "opencode/big-pickle",
         type: "reference-coding",
       });
       assert.ok(!("prototype" in config));

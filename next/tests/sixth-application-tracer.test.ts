@@ -193,7 +193,7 @@ describe("sixth Application tracer", () => {
               conversationId: ThreadId.make("CCANCEL:1.0"),
               executionId,
               implementationSessionId:
-                "ses_b8340d6cd8b35a863b611c7416ecaa36c62ea6a967dd504168f060da8d397639",
+                "ses_b8340d6cd8b35a863b611c7416ecaa36c62ea6a967dd504168f060da8d39",
               workingDirectory: "/tmp/laborer-worktrees/cancellable-work",
             },
           ]);

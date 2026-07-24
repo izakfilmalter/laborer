@@ -9,8 +9,8 @@ import {
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
 const INITIAL_REQUEST_PATTERN = /Build the requested capability/;
 const BUG_WORKFLOW_PATTERN = /bug workflow/i;
-const FRESH_ISOLATED_SESSION_PATTERN = /fresh isolated OpenCode session/i;
-const INSPECT_EXISTING_WORKTREE_PATTERN = /Inspect the existing worktree/i;
+const PRIOR_SESSION_HISTORY_PATTERN = /prior messages, tool activity/i;
+const INSPECT_CURRENT_WORKTREE_PATTERN = /Inspect the current worktree/i;
 const FOLLOW_UP_REQUEST_PATTERN = /Now add coverage/;
 
 describe("OpenCode ImplementationAgent", () => {
@@ -318,8 +318,8 @@ describe("OpenCode ImplementationAgent", () => {
         ]
       );
       assert.match(prompted[0]?.text ?? "", BUG_WORKFLOW_PATTERN);
-      assert.match(prompted[1]?.text ?? "", FRESH_ISOLATED_SESSION_PATTERN);
-      assert.match(prompted[1]?.text ?? "", INSPECT_EXISTING_WORKTREE_PATTERN);
+      assert.match(prompted[1]?.text ?? "", PRIOR_SESSION_HISTORY_PATTERN);
+      assert.match(prompted[1]?.text ?? "", INSPECT_CURRENT_WORKTREE_PATTERN);
       assert.match(prompted[1]?.text ?? "", FOLLOW_UP_REQUEST_PATTERN);
       assert.deepStrictEqual(readPromptIds, [
         "implementation-prompt-1",

@@ -173,6 +173,7 @@ const MAX_PROMPT_LENGTH = 65_536;
 const MAX_SERVER_STARTUP_OUTPUT_LENGTH = 65_536;
 const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 1000;
 const DEFAULT_WAIT_POLL_MAX_ATTEMPTS = 3600;
+const OPEN_CODE_SESSION_DIGEST_LENGTH = 60;
 const SERVER_STOP_GRACE_MILLIS = 250;
 const SERVER_URL_PATTERN =
   /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
@@ -183,7 +184,8 @@ const physicalSessionId = (
 ): string =>
   `ses_${createHash("sha256")
     .update(JSON.stringify([logicalSessionId, promptId]))
-    .digest("hex")}`;
+    .digest("hex")
+    .slice(0, OPEN_CODE_SESSION_DIGEST_LENGTH)}`;
 
 const promptSessionIdentity = (
   identity: OpenCodePromptIdentity,
@@ -696,7 +698,7 @@ export const makeOpenCodeLegacySessionTransport = (
   },
   prompt: async (input) => {
     // The legacy async endpoint can drop a prompt. Await the synchronous turn;
-    // prompt isolation guarantees this physical session has no follow-up.
+    // callers serialize follow-ups within each durable session.
     await api.prompt(
       {
         ...(input.agent === undefined ? {} : { agent: input.agent }),
@@ -798,14 +800,20 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
       );
     },
   };
-  return makeOpenCodeSessionClientFromV2Api(api, {
-    ...options,
-    promptIsolation: true,
-  });
+  return makeOpenCodeSessionClientFromV2Api(api, options);
 });
 
 export interface OpenCodeConversationAgentOptions {
   readonly client: OpenCodeSessionClient;
+  readonly instructions?: readonly string[];
+  readonly operationResultInstructions?: readonly string[];
+  readonly repositoryDirectory: string;
+}
+
+interface ResolvedOpenCodeConversationAgentOptions {
+  readonly client: OpenCodeSessionClient;
+  readonly instructions: readonly string[];
+  readonly operationResultInstructions: readonly string[];
   readonly repositoryDirectory: string;
 }
 
@@ -835,6 +843,23 @@ const CONVERSATION_TOOL_POLICY: Record<string, boolean> = Object.freeze({
   todowrite: false,
   write: false,
 });
+const DEFAULT_CONVERSATION_INSTRUCTIONS: readonly string[] = Object.freeze([
+  "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
+  "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
+  "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
+  "Return exactly one JSON object and no markdown.",
+  'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
+  'Execution control: {"type":"execution_control","control":"<available name>","input":<JSON>}.',
+  'Reply: {"type":"reply","text":"<Slack reply>"}.',
+  "Only a reply record is shown to Slack. Coding Actions and generic Execution controls are separate interfaces.",
+]);
+const DEFAULT_OPERATION_RESULT_INSTRUCTIONS: readonly string[] = Object.freeze([
+  "You are the Conversation agent continuing the current Slack thread after an operation result.",
+  "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
+  "Return exactly one JSON object and no markdown.",
+  'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
+  "Do not request another Action or Execution control.",
+]);
 
 const protocolFailure = (safeDetail: string): HandlerFailure =>
   HandlerFailure.make({ category: "protocol", safeDetail });
@@ -937,17 +962,12 @@ const findExecutionControl = (
     Option.getOrNull
   );
 
-const renderConversationPrompt = (request: ConversationAgentRequest): string =>
+const renderConversationPrompt = (
+  request: ConversationAgentRequest,
+  instructions: readonly string[]
+): string =>
   JSON.stringify({
-    instructions: [
-      "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
-      "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
-      "Return exactly one JSON object and no markdown.",
-      'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
-      'Execution control: {"type":"execution_control","control":"<available name>","input":<JSON>}.',
-      'Reply: {"type":"reply","text":"<Slack reply>"}.',
-      "Only a reply record is shown to Slack. Coding Actions and generic Execution controls are separate interfaces.",
-    ],
+    instructions,
     availableActions: EffectArray.map(request.actions, (action) => ({
       description: action.description,
       name: action.name,
@@ -1093,16 +1113,11 @@ const invokeConversationOperation = Effect.fnUntraced(function* (
 
 const renderActionResultPrompt = (
   request: ConversationAgentRequest,
-  invocationResult: unknown
+  invocationResult: unknown,
+  instructions: readonly string[]
 ): string =>
   JSON.stringify({
-    instructions: [
-      "You are the Conversation agent completing an operation result in a fresh isolated session with no prior model history.",
-      "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
-      "Return exactly one JSON object and no markdown.",
-      'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
-      "Do not request another Action or Execution control.",
-    ],
+    instructions,
     conversation: {
       context: request.context,
       executions: request.executions,
@@ -1114,7 +1129,7 @@ const renderActionResultPrompt = (
   });
 
 const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
-  options: OpenCodeConversationAgentOptions,
+  options: ResolvedOpenCodeConversationAgentOptions,
   request: ConversationAgentRequest,
   submitInitialPrompt: boolean
 ) {
@@ -1123,7 +1138,9 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
     workingDirectory: options.repositoryDirectory,
   };
   if (submitInitialPrompt) {
-    const promptText = yield* boundedPrompt(renderConversationPrompt(request));
+    const promptText = yield* boundedPrompt(
+      renderConversationPrompt(request, options.instructions)
+    );
     yield* ensureConversationSession(options.client, identity, request);
     yield* submitConversationPrompt(options.client, {
       ...identity,
@@ -1177,13 +1194,19 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
     );
     const actionResultPromptId = `${request.promptId}:action-result:${round}`;
     const actionResultText = yield* boundedPrompt(
-      renderActionResultPrompt(request, invocationResult)
+      renderActionResultPrompt(
+        request,
+        invocationResult,
+        options.operationResultInstructions
+      )
     );
-    yield* submitConversationPrompt(options.client, {
-      ...identity,
-      promptId: actionResultPromptId,
-      text: actionResultText,
-    });
+    if (!hasPrompt(messages, actionResultPromptId)) {
+      yield* submitConversationPrompt(options.client, {
+        ...identity,
+        promptId: actionResultPromptId,
+        text: actionResultText,
+      });
+    }
     activePromptId = actionResultPromptId;
   }
   return yield* protocolFailure(
@@ -1193,10 +1216,23 @@ const runConversation = Effect.fn("OpenCodeConversationAgent.run")(function* (
 
 export const makeOpenCodeConversationAgent = (
   options: OpenCodeConversationAgentOptions
-): ConversationAgentShape => ({
-  handle: (request) => runConversation(options, request, true),
-  recover: (request) => runConversation(options, request, false),
-});
+): ConversationAgentShape => {
+  const resolvedOptions: ResolvedOpenCodeConversationAgentOptions = {
+    client: options.client,
+    instructions: Object.freeze([
+      ...(options.instructions ?? DEFAULT_CONVERSATION_INSTRUCTIONS),
+    ]),
+    operationResultInstructions: Object.freeze([
+      ...(options.operationResultInstructions ??
+        DEFAULT_OPERATION_RESULT_INSTRUCTIONS),
+    ]),
+    repositoryDirectory: options.repositoryDirectory,
+  };
+  return {
+    handle: (request) => runConversation(resolvedOptions, request, true),
+    recover: (request) => runConversation(resolvedOptions, request, false),
+  };
+};
 
 const implementationWorkflow = (
   request: ImplementationAgentRequest
@@ -1213,7 +1249,7 @@ const implementationFollowUpWorkflow = (
 ): string =>
   [
     "Continue an existing coding execution in the current working directory.",
-    "This is a fresh isolated OpenCode session with no prior model history. Inspect the existing worktree, git diff, and relevant files to reconstruct the completed work and current state before changing anything.",
+    "Continue from the prior messages, tool activity, and work already completed in this OpenCode session. Inspect the current worktree and git diff when needed to confirm the latest state.",
     "Execute the new user request fully, preserve repository conventions, add or update focused tests when appropriate, and validate the resulting worktree.",
     `Execution: ${request.executionId}`,
     `New user request:\n${request.prompt}`,

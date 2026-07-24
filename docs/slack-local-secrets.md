@@ -58,7 +58,7 @@ handler boundary filters Slack credential variables before invoking user code.
 SLACK_APP_TOKEN="$(security find-generic-password -a "$USER" -s "laborer-slack-app-token-steeple" -w)" \
 SLACK_BOT_TOKEN_STEEPLE="$(security find-generic-password -a "$USER" -s "laborer-slack-bot-token-steeple" -w)" \
 SLACK_BOT_TOKEN_FRECKLE="$(security find-generic-password -a "$USER" -s "laborer-slack-bot-token-freckle" -w)" \
-LABORER_SLACK_WORKSPACES='[{"teamId":"T0169RZR7MY","botTokenEnvironment":"SLACK_BOT_TOKEN_STEEPLE","root":"/Users/izakfilmalter/Projects/izakfilmalter/laborer/next"},{"teamId":"T04UDJP9283","botTokenEnvironment":"SLACK_BOT_TOKEN_FRECKLE","root":"/Users/izakfilmalter/Projects/Freckle/next"}]' \
+LABORER_SLACK_WORKSPACES='[{"teamId":"T0169RZR7MY","botTokenEnvironment":"SLACK_BOT_TOKEN_STEEPLE","root":"/Users/izakfilmalter/Projects/izakfilmalter/laborer"},{"teamId":"T04UDJP9283","botTokenEnvironment":"SLACK_BOT_TOKEN_FRECKLE","root":"/Users/izakfilmalter/Projects/Freckle/next"}]' \
 bun run --cwd next start:slack
 ```
 

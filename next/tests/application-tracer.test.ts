@@ -317,7 +317,7 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
               conversationId: ThreadId.make("CFEATURE:1.0"),
               executionId: "CFEATURE:1.0:execution:1",
               implementationSessionId:
-                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720aa6e3",
+                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720a",
               status: "running",
               workingDirectory: `/tmp/laborer-worktrees/${worktreeName}`,
               worktreeName,
@@ -336,7 +336,7 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
               conversationId: "CFEATURE:1.0",
               executionId: "CFEATURE:1.0:execution:1",
               implementationSessionId:
-                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720aa6e3",
+                "ses_36a0106cb8f830953dbb007ab6d832441a667ddb539904667b98947d720a",
               prompt: completePrompt,
               promptId:
                 "msg_846dc0e98df36c83e5d06e7420ef993c7d90f33e41bcebac26fb69bb2d01834e",
@@ -746,7 +746,7 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
             conversationId: ThreadId.make("CRESUME:1.0"),
             executionId: "CRESUME:1.0:execution:1",
             implementationSessionId:
-              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188dea88",
+              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188d",
             prompt: "later prompt",
             promptId:
               "msg_9f7c6e5249c11095641a35262c31c47fad6e074ad4d3bdc82af97cb18c70c4c8",
@@ -756,7 +756,7 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
         assert.deepStrictEqual(yield* Ref.get(observedExecutions), [
           {
             implementationSessionId:
-              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188dea88",
+              "ses_c8c96f1ba2f6a74384af4714602fdfd4443867320cbaa53a3e3c6b0f188d",
             status: "running",
             worktreeName: "resumable-work",
           },

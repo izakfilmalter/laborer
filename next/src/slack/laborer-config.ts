@@ -23,8 +23,14 @@ export interface WorkHandlerConfig extends ProcessCommandConfig {
   readonly initialize?: ProcessCommandConfig;
 }
 
+export interface ConversationApplicationConfig {
+  readonly instructions: readonly string[];
+  readonly operationResultInstructions: readonly string[];
+}
+
 export interface ReferenceCodingApplicationConfig {
   readonly agent?: string;
+  readonly conversation?: ConversationApplicationConfig;
   readonly environment: readonly string[];
   readonly model?: string;
   readonly type: "reference-coding";
@@ -56,6 +62,10 @@ const OPENCODE_MODEL_PATTERN = /^[^/\s]+\/[^/\s]+(?:\/[^/\s]+)*$/;
 const OpenCodeModel = Schema.Trim.check(
   Schema.isPattern(OPENCODE_MODEL_PATTERN)
 );
+const ConversationInstruction = Schema.Trim.check(Schema.isMinLength(1));
+const ConversationInstructions = Schema.Array(ConversationInstruction).check(
+  Schema.isMinLength(1)
+);
 const ProcessCommandConfigFromJson = Schema.Struct({
   args: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
@@ -71,8 +81,14 @@ const WorkHandlerConfigFromJson = Schema.Struct({
   initialize: Schema.optional(ProcessCommandConfigFromJson),
 });
 
+const ConversationApplicationConfigFromJson = Schema.Struct({
+  instructions: ConversationInstructions,
+  operationResultInstructions: ConversationInstructions,
+});
+
 const ReferenceCodingApplicationConfigFromJson = Schema.Struct({
   agent: Schema.optional(HandlerCommand),
+  conversation: Schema.optional(ConversationApplicationConfigFromJson),
   environment: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
@@ -247,10 +263,21 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
       return yield* configFailure("parse-config", "invalid-config");
     }
     if (rawConfig.application !== undefined) {
+      const rawConversation = rawConfig.application.conversation;
+      const conversation: ConversationApplicationConfig | undefined =
+        rawConversation === undefined
+          ? undefined
+          : Object.freeze({
+              instructions: Object.freeze([...rawConversation.instructions]),
+              operationResultInstructions: Object.freeze([
+                ...rawConversation.operationResultInstructions,
+              ]),
+            });
       const application: ReferenceCodingApplicationConfig = {
         ...(rawConfig.application.agent === undefined
           ? {}
           : { agent: rawConfig.application.agent }),
+        ...(conversation === undefined ? {} : { conversation }),
         environment: yield* validateEnvironmentNames(
           rawConfig.application.environment,
           "validate-reference-coding-application"

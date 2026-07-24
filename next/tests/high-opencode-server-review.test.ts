@@ -18,7 +18,7 @@ import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const sandboxes = new Set<string>();
 const OPEN_CODE_MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{64}$/;
-const OPEN_CODE_SESSION_ID_PATTERN = /^ses_[0-9a-f]{64}$/;
+const OPEN_CODE_SESSION_ID_PATTERN = /^ses_[0-9a-f]{60}$/;
 
 const waitForFile = async (path: string): Promise<void> => {
   const deadline = Date.now() + 3000;

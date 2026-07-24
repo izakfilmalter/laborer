@@ -1,6 +1,8 @@
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Array as EffectArray, Ref } from "effect";
+import { ExternalInputEvent } from "../src/application.ts";
 import { ThreadId } from "../src/prototype/domain.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
@@ -19,7 +21,89 @@ import {
 } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
+const LEGACY_OPEN_CODE_SESSION_ID =
+  "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83";
+
 describe("fifth restart tracer", () => {
+  it.effect("reads persisted legacy 68-character logical session IDs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDirectoryScoped(
+          "laborer-fifth-legacy-session-id-"
+        );
+        const applicationSnapshotPath = join(root, "application.json");
+        const conversationId = ThreadId.make("CLEGACYSESSION:1.0");
+        yield* Effect.promise(() =>
+          writeFile(
+            applicationSnapshotPath,
+            JSON.stringify({
+              conversations: [
+                {
+                  conversationId,
+                  prompts: [],
+                  sessionId: LEGACY_OPEN_CODE_SESSION_ID,
+                },
+              ],
+              executions: [],
+              schemaVersion: 1,
+            })
+          )
+        );
+        const requests = yield* Ref.make<readonly ConversationAgentRequest[]>(
+          []
+        );
+        const repository = yield* makeFileApplicationRepository(
+          applicationSnapshotPath,
+          root
+        );
+        const application = yield* makeReferenceCodingApplication({
+          conversationAgent: {
+            handle: (request) =>
+              Ref.update(requests, (current) =>
+                EffectArray.append(current, request)
+              ).pipe(Effect.as([] as const)),
+          },
+          implementationAgent: ImplementationAgent.of({
+            start: () =>
+              Effect.die(new Error("legacy Conversation must not start work")),
+          }),
+          repository,
+          worktreeManager: WorktreeManager.of({
+            create: () =>
+              Effect.die(
+                new Error("legacy Conversation must not create a worktree")
+              ),
+          }),
+        });
+
+        yield* application.handle(
+          ExternalInputEvent.make({
+            conversationId,
+            eventId: "event:legacy-session:future-prompt",
+            payload: {},
+            source: "test",
+          }),
+          () => Effect.void,
+          (event) =>
+            Effect.succeed({
+              decision: {
+                _tag: "Accepted" as const,
+                eventId: event.eventId,
+              },
+              scheduling: "Scheduled" as const,
+            })
+        );
+
+        const request = (yield* Ref.get(requests))[0];
+        assert.strictEqual(
+          request?.conversationSessionId,
+          LEGACY_OPEN_CODE_SESSION_ID
+        );
+        assert.strictEqual(request?.conversationSessionIsNew, false);
+      })
+    )
+  );
+
   it.effect(
     "preserves Conversation identity and session continuity across an application restart",
     () =>

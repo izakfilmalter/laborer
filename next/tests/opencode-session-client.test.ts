@@ -9,6 +9,9 @@ import {
 } from "../src/adapters/opencode-agents.ts";
 
 const OPENCODE_MAX_SESSION_MESSAGES = 200;
+const OPEN_CODE_SESSION_ID_PATTERN = /^ses_[0-9a-f]{60}$/;
+const LEGACY_LOGICAL_SESSION_ID =
+  "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83";
 
 describe("OpenCode legacy session transport", () => {
   it("projects legacy messages into descending transport order", async () => {
@@ -198,7 +201,7 @@ describe("OpenCode legacy session transport", () => {
 });
 
 describe("OpenCode v2 session client", () => {
-  it.effect("isolates durable prompts in deterministic physical sessions", () =>
+  it.effect("maps legacy logical IDs to deterministic safe physical IDs", () =>
     Effect.gen(function* () {
       const calls: Array<readonly [string, unknown]> = [];
       const sessions = new Map<string, string>();
@@ -214,8 +217,9 @@ describe("OpenCode v2 session client", () => {
       >();
       const physicalId = (promptId: string): string =>
         `ses_${createHash("sha256")
-          .update(JSON.stringify(["logical-session", promptId]))
-          .digest("hex")}`;
+          .update(JSON.stringify([LEGACY_LOGICAL_SESSION_ID, promptId]))
+          .digest("hex")
+          .slice(0, 60)}`;
       const api: OpenCodeV2SessionApi = {
         create: (input) => {
           calls.push(["create", input]);
@@ -263,20 +267,20 @@ describe("OpenCode v2 session client", () => {
       });
       const promptIdentity = {
         promptId: "prompt-1",
-        sessionId: "logical-session",
+        sessionId: LEGACY_LOGICAL_SESSION_ID,
         workingDirectory: "/repo/worktree",
       };
       const expectedPhysicalId = physicalId("prompt-1");
 
       assert.strictEqual(
         yield* client.sessionExists({
-          sessionId: "logical-session",
+          sessionId: LEGACY_LOGICAL_SESSION_ID,
           workingDirectory: "/repo/worktree",
         }),
         false
       );
       yield* client.createSession({
-        sessionId: "logical-session",
+        sessionId: LEGACY_LOGICAL_SESSION_ID,
         workingDirectory: "/repo/worktree",
       });
       yield* client.submitPrompt({
@@ -284,6 +288,14 @@ describe("OpenCode v2 session client", () => {
         text: "input",
         tools: { bash: false, read: true },
       });
+      const generatedPhysicalSessionIds = [...sessions.keys()].filter(
+        (sessionId) => sessionId !== LEGACY_LOGICAL_SESSION_ID
+      );
+      assert.strictEqual(generatedPhysicalSessionIds.length, 1);
+      for (const sessionId of generatedPhysicalSessionIds) {
+        assert.strictEqual(sessionId.length, 64);
+        assert.match(sessionId, OPEN_CODE_SESSION_ID_PATTERN);
+      }
       yield* client.wait(promptIdentity);
       assert.deepStrictEqual(yield* client.readMessages(promptIdentity), [
         { id: "prompt-1", role: "user", text: "input" },
@@ -309,7 +321,7 @@ describe("OpenCode v2 session client", () => {
             "create",
             {
               agent: "laborer",
-              id: "logical-session",
+              id: LEGACY_LOGICAL_SESSION_ID,
               model: { modelID: "gpt-5.6-sol", providerID: "openai" },
               workingDirectory: "/repo/worktree",
             },
@@ -357,7 +369,7 @@ describe("OpenCode v2 session client", () => {
       const conflict = yield* Effect.result(
         client.submitPrompt({
           promptId: conflictingPromptId,
-          sessionId: "logical-session",
+          sessionId: LEGACY_LOGICAL_SESSION_ID,
           text: "must not run",
           workingDirectory: "/repo/worktree",
         })
@@ -379,7 +391,7 @@ describe("OpenCode v2 session client", () => {
       assert.deepStrictEqual(
         calls.filter(([operation]) => operation === "get"),
         [
-          ["get", { sessionId: "logical-session" }],
+          ["get", { sessionId: LEGACY_LOGICAL_SESSION_ID }],
           ["get", { sessionId: expectedPhysicalId }],
           ["get", { sessionId: expectedPhysicalId }],
           ["get", { sessionId: expectedPhysicalId }],

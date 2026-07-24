@@ -14,6 +14,8 @@ import {
   WorktreeManager,
 } from "../src/reference-coding-application.ts";
 
+const OPEN_CODE_SESSION_ID_PATTERN = /^ses_[0-9a-f]{60}$/;
+
 describe("fourth Application tracer", () => {
   it.effect("selects deal-with-bug with bug workflow identities", () =>
     Effect.scoped(
@@ -119,36 +121,48 @@ describe("fourth Application tracer", () => {
           })
         );
 
-        assert.deepStrictEqual(yield* Ref.get(implementationRequests), [
+        const generatedConversationRequests =
+          yield* Ref.get(conversationRequests);
+        const generatedImplementationRequests = yield* Ref.get(
+          implementationRequests
+        );
+        const generatedSessionIds = [
+          generatedConversationRequests[0]?.conversationSessionId,
+          generatedImplementationRequests[0]?.implementationSessionId,
+        ];
+        for (const sessionId of generatedSessionIds) {
+          assert.ok(sessionId);
+          assert.strictEqual(sessionId.length, 64);
+          assert.match(sessionId, OPEN_CODE_SESSION_ID_PATTERN);
+        }
+
+        assert.deepStrictEqual(generatedImplementationRequests, [
           {
             actionName: "deal-with-bug",
             conversationId: "CBUG:1.0",
             executionId: "CBUG:1.0:execution:1",
             implementationSessionId:
-              "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83",
+              "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542",
             prompt: "Diagnose and fix the broken export.",
             promptId:
               "msg_704cc476495dfb1640b7a8195689e299b502963a0b7a1e4f5f0568378118b848",
             workingDirectory: "/tmp/laborer-worktrees/bug-broken-export",
           },
         ]);
-        assert.deepStrictEqual(
-          (yield* Ref.get(conversationRequests))[1]?.executions,
-          [
-            {
-              actionName: "deal-with-bug",
-              activePromptId:
-                "msg_704cc476495dfb1640b7a8195689e299b502963a0b7a1e4f5f0568378118b848",
-              conversationId: ThreadId.make("CBUG:1.0"),
-              executionId: "CBUG:1.0:execution:1",
-              implementationSessionId:
-                "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83",
-              status: "running",
-              workingDirectory: "/tmp/laborer-worktrees/bug-broken-export",
-              worktreeName: "bug-broken-export",
-            },
-          ]
-        );
+        assert.deepStrictEqual(generatedConversationRequests[1]?.executions, [
+          {
+            actionName: "deal-with-bug",
+            activePromptId:
+              "msg_704cc476495dfb1640b7a8195689e299b502963a0b7a1e4f5f0568378118b848",
+            conversationId: ThreadId.make("CBUG:1.0"),
+            executionId: "CBUG:1.0:execution:1",
+            implementationSessionId:
+              "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542",
+            status: "running",
+            workingDirectory: "/tmp/laborer-worktrees/bug-broken-export",
+            worktreeName: "bug-broken-export",
+          },
+        ]);
         assert.deepStrictEqual(yield* Ref.get(delivered), [
           "Started CBUG:1.0:execution:1.",
           "deal-with-bug is running.",
@@ -321,7 +335,7 @@ describe("fourth Application tracer", () => {
               conversationId: ThreadId.make("CCONCURRENT:1.0"),
               executionId: "CCONCURRENT:1.0:execution:1",
               implementationSessionId:
-                "ses_9c2e55cb5e32b3e414bf148b0e605e6e1c1d8dbb46842057f53c68338aae6f8a",
+                "ses_9c2e55cb5e32b3e414bf148b0e605e6e1c1d8dbb46842057f53c68338aae",
               status: "running",
               workingDirectory: "/tmp/laborer-worktrees/feature-export",
               worktreeName: "feature-export",
@@ -333,7 +347,7 @@ describe("fourth Application tracer", () => {
               conversationId: ThreadId.make("CCONCURRENT:1.0"),
               executionId: "CCONCURRENT:1.0:execution:2",
               implementationSessionId:
-                "ses_d78e02f216634090695382a93f183d45166bb2ce8a4eabb55abce0d1e7526dc7",
+                "ses_d78e02f216634090695382a93f183d45166bb2ce8a4eabb55abce0d1e752",
               status: "running",
               workingDirectory: "/tmp/laborer-worktrees/bug-import",
               worktreeName: "bug-import",

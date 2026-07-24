@@ -84,6 +84,7 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
             providerID: configuredModel.slice(0, modelSeparatorIndex),
           },
         }),
+    promptIsolation: false,
     workspaceDirectory: options.root,
   });
   const repository = yield* (
@@ -92,9 +93,17 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
   const worktreeManager = (
     dependencies.makeWorktreeManager ?? makeGitWorktreeManager
   )({ repository: options.root });
+  const conversationConfig = options.config.conversation;
   return yield* makeReferenceCodingApplication({
     conversationAgent: makeOpenCodeConversationAgent({
       client: sessionClient,
+      ...(conversationConfig === undefined
+        ? {}
+        : {
+            instructions: conversationConfig.instructions,
+            operationResultInstructions:
+              conversationConfig.operationResultInstructions,
+          }),
       repositoryDirectory: options.root,
     }),
     implementationAgent: makeOpenCodeImplementationAgent({

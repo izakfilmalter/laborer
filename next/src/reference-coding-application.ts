@@ -40,6 +40,7 @@ export const ReferenceCodingActionName = Schema.Literals([
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
 
 const OPEN_CODE_ID_NAMESPACE = "laborer:reference-coding:v1";
+const OPEN_CODE_SESSION_DIGEST_LENGTH = 60;
 
 const stableOpenCodeId = (
   prefix: "msg" | "ses",
@@ -55,7 +56,9 @@ const stableOpenCodeId = (
       })
     )
     .digest("hex");
-  return `${prefix}_${digest}`;
+  return `${prefix}_${
+    prefix === "ses" ? digest.slice(0, OPEN_CODE_SESSION_DIGEST_LENGTH) : digest
+  }`;
 };
 
 const conversationSessionId = (conversationId: string): string =>

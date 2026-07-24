@@ -6,7 +6,7 @@
       "OPENCODE_CONFIG_CONTENT",
       "OPENAI_API_KEY"
     ],
-    "model": "openai/gpt-5.6-sol",
+    "model": "opencode/big-pickle",
     "type": "reference-coding"
   }
 }

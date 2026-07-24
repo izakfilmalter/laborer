@@ -1408,7 +1408,46 @@ describe("real WebClient error and partial-context integration", () => {
   );
 
   it.live(
-    "normalizes, sorts, deduplicates, filters, and bounds partial paginated context",
+    "stops root-context pagination after the ten nearest eligible messages",
+    () =>
+      Effect.gen(function* () {
+        let requestCount = 0;
+        const client = makeClient(() => {
+          requestCount += 1;
+          return Promise.resolve(
+            requestCount === 1
+              ? Response.json({
+                  ok: true,
+                  messages: Array.from({ length: 10 }, (_, index) => ({
+                    ts: `${10 - index}`,
+                    text: `message-${10 - index}`,
+                    user: "U1",
+                  })),
+                  response_metadata: { next_cursor: "must-not-be-read" },
+                })
+              : Response.json({ error: "rate_limited", ok: false })
+          );
+        });
+        const gateway = makeSlackGateway({ botClient: client, pageSize: 10 });
+        const result = yield* gateway.readActivationContext({
+          activationTs: "20",
+          channelId: "C1",
+          isReplyActivation: false,
+          retryAtMillis: null,
+          rootTs: "20",
+          threadId: ThreadId.make("C1:20"),
+        });
+
+        assert.strictEqual(requestCount, 1);
+        assert.deepStrictEqual(
+          result.map((message) => message.slackTs),
+          ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+        );
+      })
+  );
+
+  it.live(
+    "normalizes, sorts, deduplicates, and filters partial paginated context",
     () =>
       Effect.gen(function* () {
         let requestCount = 0;
@@ -1424,7 +1463,7 @@ describe("real WebClient error and partial-context integration", () => {
                   { ts: "2", text: "two", user: "U1" },
                   { ts: "2", text: "two", user: "U1" },
                   { ts: "1", text: " ", user: "U1" },
-                  ...Array.from({ length: 9 }, (_, index) => ({
+                  ...Array.from({ length: 6 }, (_, index) => ({
                     ts: `${index + 4}`,
                     text: `message-${index + 4}`,
                     user: "U1",
@@ -1452,10 +1491,10 @@ describe("real WebClient error and partial-context integration", () => {
         assert.strictEqual(result._tag, "Failure");
         if (result._tag === "Failure") {
           assert.strictEqual(result.failure.isTransient, false);
-          assert.strictEqual(result.failure.partial.length, 10);
+          assert.strictEqual(result.failure.partial.length, 9);
           assert.deepStrictEqual(
             result.failure.partial.map((message) => message.slackTs),
-            ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]
+            ["2", "3", "4", "5", "6", "7", "8", "9", "12"]
           );
         }
         assert.deepStrictEqual(classifySlackError(new Error("network")), {

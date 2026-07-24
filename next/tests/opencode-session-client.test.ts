@@ -46,7 +46,7 @@ describe("OpenCode legacy session transport", () => {
           ],
         });
       },
-      promptAsync: () => Promise.resolve(),
+      prompt: () => Promise.resolve(),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -114,7 +114,7 @@ describe("OpenCode legacy session transport", () => {
             },
           ],
         }),
-      promptAsync: () => Promise.resolve(),
+      prompt: () => Promise.resolve(),
     };
     const transport = makeOpenCodeLegacySessionTransport(api);
 
@@ -146,7 +146,7 @@ describe("OpenCode legacy session transport", () => {
     const calls: unknown[] = [];
     const api: OpenCodeLegacySessionApi = {
       messages: () => Promise.resolve({ data: [] }),
-      promptAsync: (input, requestOptions) => {
+      prompt: (input, requestOptions) => {
         calls.push([input, requestOptions]);
         return Promise.resolve();
       },

@@ -110,7 +110,7 @@ interface OpenCodeLegacyMessagesRequest {
   readonly sessionID: string;
 }
 
-interface OpenCodeLegacyPromptAsyncRequest {
+interface OpenCodeLegacyPromptRequest {
   readonly agent?: string;
   readonly directory: string;
   readonly messageID: string;
@@ -133,8 +133,8 @@ export interface OpenCodeLegacySessionApi {
     input: OpenCodeLegacyMessagesRequest,
     options: OpenCodeLegacyRequestOptions
   ) => Promise<{ readonly data: readonly OpenCodeLegacyMessage[] }>;
-  readonly promptAsync: (
-    input: OpenCodeLegacyPromptAsyncRequest,
+  readonly prompt: (
+    input: OpenCodeLegacyPromptRequest,
     options: OpenCodeLegacyRequestOptions
   ) => Promise<void>;
 }
@@ -613,7 +613,9 @@ export const makeOpenCodeLegacySessionTransport = (
     return pipe(projectedLegacyMessages(response.data), EffectArray.reverse);
   },
   prompt: async (input) => {
-    await api.promptAsync(
+    // The legacy runner drops overlapping async follow-ups. Await the complete
+    // turn so each prompt starts only after the prior run has released.
+    await api.prompt(
       {
         ...(input.agent === undefined ? {} : { agent: input.agent }),
         directory: input.workingDirectory,
@@ -664,8 +666,8 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
       );
       return { data: response.data };
     },
-    promptAsync: async (input, requestOptions) => {
-      await legacySession.promptAsync<true>(input, requestOptions);
+    prompt: async (input, requestOptions) => {
+      await legacySession.prompt<true>(input, requestOptions);
     },
   });
   const api: OpenCodeV2SessionApi = {

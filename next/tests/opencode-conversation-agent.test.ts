@@ -31,6 +31,39 @@ const request = (
 });
 
 describe("OpenCode ConversationAgent", () => {
+  it.effect("accepts a single fenced JSON protocol response", () =>
+    Effect.gen(function* () {
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        readMessages: () =>
+          Effect.succeed([
+            { id: "conversation-prompt-1", role: "user", text: "input" },
+            {
+              finish: "stop",
+              id: "assistant-terminal",
+              role: "assistant",
+              status: "completed",
+              text: '```json\n{"type":"reply","text":"Done."}\n```',
+            },
+          ]),
+        sessionExists: () => Effect.succeed(false),
+        submitPrompt: () => Effect.void,
+        wait: () => Effect.void,
+      };
+      const agent = makeOpenCodeConversationAgent({
+        client,
+        repositoryDirectory: "/repo",
+      });
+
+      const replies = yield* agent.handle(request());
+
+      assert.deepStrictEqual(replies, [
+        { replyId: "assistant-terminal", text: "Done." },
+      ]);
+    })
+  );
+
   it.effect(
     "selects the terminal nonempty protocol response after tool-only assistants",
     () =>

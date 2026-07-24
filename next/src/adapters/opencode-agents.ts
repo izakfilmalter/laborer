@@ -882,6 +882,14 @@ const boundedPrompt = (text: string): Effect.Effect<string, HandlerFailure> =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const fencedJson = (text: string): string => {
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith("```json\n") && trimmed.endsWith("\n```"))) {
+    return trimmed;
+  }
+  return trimmed.slice("```json\n".length, -"\n```".length).trim();
+};
+
 const parseConversationRecord = (
   text: string
 ): Effect.Effect<ConversationProtocolRecord, HandlerFailure> => {
@@ -891,7 +899,7 @@ const parseConversationRecord = (
     );
   }
   return Effect.try({
-    try: () => JSON.parse(text) as unknown,
+    try: () => JSON.parse(fencedJson(text)) as unknown,
     catch: (): HandlerFailure =>
       protocolFailure("OpenCode Conversation response is invalid"),
   }).pipe(

@@ -10,6 +10,7 @@ import type { ConversationAgentRequest } from "../src/reference-coding-applicati
 
 const CREATE_FEATURE_PATTERN = /create-feature/;
 const EXISTING_EXECUTION_PATTERN = /existing-execution/;
+const NO_ORCHESTRATION_TOOLS_PATTERN = /Do not call todowrite/;
 
 const request = (
   overrides: Partial<ConversationAgentRequest> = {}
@@ -237,6 +238,7 @@ describe("OpenCode ConversationAgent", () => {
         assert.strictEqual(prompted[0]?.promptId, "conversation-prompt-1");
         assert.match(prompted[0]?.text ?? "", CREATE_FEATURE_PATTERN);
         assert.match(prompted[0]?.text ?? "", EXISTING_EXECUTION_PATTERN);
+        assert.match(prompted[0]?.text ?? "", NO_ORCHESTRATION_TOOLS_PATTERN);
         assert.deepStrictEqual(actionInputs, [
           { prompt: "Build it", worktreeName: "build-it" },
         ]);

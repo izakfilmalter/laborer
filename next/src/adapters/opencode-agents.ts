@@ -753,6 +753,7 @@ const renderConversationPrompt = (request: ConversationAgentRequest): string =>
   JSON.stringify({
     instructions: [
       "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
+      "You are a routing agent, not an implementation agent. Do not call todowrite, task, skill, or other orchestration tools. Decide directly from the supplied conversation. Use repository inspection tools only when required to answer a repository question.",
       "Return exactly one JSON object and no markdown.",
       'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
       'Execution control: {"type":"execution_control","control":"<available name>","input":<JSON>}.',

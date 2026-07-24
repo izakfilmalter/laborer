@@ -2096,7 +2096,8 @@ export const makeReferenceCodingApplication = Effect.fn(
     };
     return [
       {
-        description: "Implement a feature in an isolated named worktree.",
+        description:
+          'Implement a feature in an isolated named worktree. Input must be {"prompt":"<implementation request>","worktreeName":"<requested name>"}.',
         invoke: (input) =>
           invokeCodingAction(
             conversationId,
@@ -2108,7 +2109,8 @@ export const makeReferenceCodingApplication = Effect.fn(
         name: "create-feature",
       },
       {
-        description: "Diagnose and fix a bug in an isolated named worktree.",
+        description:
+          'Diagnose and fix a bug in an isolated named worktree. Input must be {"prompt":"<bug report>","worktreeName":"<requested name>"}.',
         invoke: (input) =>
           invokeCodingAction(
             conversationId,

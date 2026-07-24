@@ -79,6 +79,7 @@ const program = Effect.gen(function* () {
       ),
     }),
     slack: gateway,
+    workspaceId: identity.teamId,
   });
   const socketClient = new SocketModeClient({
     appToken: Redacted.value(config.appToken),

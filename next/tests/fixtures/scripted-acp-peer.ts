@@ -20,6 +20,7 @@ const cancelledPath = process.env.SCRIPTED_ACP_CANCELLED_PATH;
 const exitPath = process.env.SCRIPTED_ACP_EXIT_PATH;
 const pidPath = process.env.SCRIPTED_ACP_PID_PATH;
 const promptLogPath = process.env.SCRIPTED_ACP_PROMPT_LOG_PATH;
+const promptJsonlPath = process.env.SCRIPTED_ACP_PROMPT_JSONL_PATH;
 const lifecycleLogPath = process.env.SCRIPTED_ACP_LIFECYCLE_LOG_PATH;
 const sessionLogPath = process.env.SCRIPTED_ACP_SESSION_LOG_PATH;
 const signalLogPath = process.env.SCRIPTED_ACP_SIGNAL_LOG_PATH;
@@ -185,6 +186,16 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
         await appendFile(
           promptLogPath,
           `${params.sessionId}\t${promptText(params.prompt)}\n`,
+          { encoding: "utf8", mode: 0o600 }
+        );
+      }
+      if (promptJsonlPath !== undefined) {
+        await appendFile(
+          promptJsonlPath,
+          `${JSON.stringify({
+            prompt: promptText(params.prompt),
+            sessionId: params.sessionId,
+          })}\n`,
           { encoding: "utf8", mode: 0o600 }
         );
       }

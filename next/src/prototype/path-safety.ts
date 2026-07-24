@@ -14,6 +14,9 @@ const SAFE_DIRECTORY_OPEN_FLAGS =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags are bit masks.
 const SAFE_FILE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW;
+const SAFE_NONBLOCKING_FILE_OPEN_FLAGS =
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags are bit masks.
+  SAFE_FILE_OPEN_FLAGS | constants.O_NONBLOCK;
 
 export class UnsafePathError extends Schema.TaggedErrorClass<UnsafePathError>()(
   "UnsafePathError",
@@ -295,6 +298,24 @@ export const openRegularFileNoFollow = async (
   operation: string
 ): Promise<FileHandle> => {
   const handle = await open(path, SAFE_FILE_OPEN_FLAGS);
+  try {
+    if ((await handle.stat()).isFile()) {
+      return handle;
+    }
+  } catch (error) {
+    await closeHandle(handle);
+    throw error;
+  }
+  await closeHandle(handle);
+  throw pathFailure(operation, "not-regular-file");
+};
+
+/** Opens even special files without waiting, then retains only regular files. */
+export const openRegularFileNoFollowNonBlocking = async (
+  path: string,
+  operation: string
+): Promise<FileHandle> => {
+  const handle = await open(path, SAFE_NONBLOCKING_FILE_OPEN_FLAGS);
   try {
     if ((await handle.stat()).isFile()) {
       return handle;

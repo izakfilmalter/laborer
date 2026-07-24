@@ -15,6 +15,7 @@ import {
   type AcpConversationAgentOptions,
   makeAcpConversationAgent,
 } from "./acp-conversation-agent.ts";
+import { prepareAcpAgentContextSources } from "./agent-context.ts";
 
 export const OPEN_CODE_ACP_COMMAND = "opencode";
 export const OPEN_CODE_ACP_ARGS = ["acp"] as const;
@@ -42,6 +43,7 @@ export interface AcpConversationCanaryOptions {
   readonly laborerSlackId: string;
   readonly process: AcpConversationAgentOptions;
   readonly slack: SlackGatewayShape;
+  readonly workspaceId?: string;
 }
 
 const outsideCanary = (resource: string) =>
@@ -63,7 +65,17 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
     HandlerFailure | StoreError,
     Scope.Scope
   > {
-    const conversationAgent = yield* makeAcpConversationAgent(options.process);
+    const agentContext =
+      options.workspaceId === undefined
+        ? undefined
+        : yield* prepareAcpAgentContextSources({
+            root: options.process.cwd,
+            workspaceId: options.workspaceId,
+          });
+    const conversationAgent = yield* makeAcpConversationAgent({
+      ...options.process,
+      ...(agentContext === undefined ? {} : { agentContext }),
+    });
     const application = yield* makeReferenceCodingApplication({
       conversationAgent,
       implementationAgent: {

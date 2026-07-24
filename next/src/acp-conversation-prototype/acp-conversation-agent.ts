@@ -17,6 +17,12 @@ import type {
   ConversationAgentShape,
   PublishConversationAgentMessage,
 } from "../reference-coding-application.ts";
+import {
+  type AcpAgentContextSources,
+  loadAcpAgentContextSnapshot,
+  renderAcpPrompt,
+  renderAcpPromptWithinByteLimit,
+} from "./agent-context.ts";
 
 const MAX_PROMPT_BYTES = 256 * 1024;
 const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024;
@@ -36,6 +42,7 @@ class AcpConversationFailure extends Schema.TaggedErrorClass<AcpConversationFail
 ) {}
 
 export interface AcpConversationAgentOptions {
+  readonly agentContext?: AcpAgentContextSources;
   readonly args?: readonly string[];
   readonly childExitGraceMillis?: number;
   readonly command: string;
@@ -69,6 +76,11 @@ interface ActivePrompt {
   readonly completion: Promise<
     import("@agentclientprotocol/sdk").PromptResponse
   >;
+}
+
+interface ManagedSession {
+  needsInitialContext: boolean;
+  readonly session: ActiveSession;
 }
 
 const failure = (
@@ -365,18 +377,31 @@ const publicTextChunk = (
 const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   session: ActiveSession,
   request: ConversationAgentRequest,
+  requiredInput: string,
+  agentContext: AcpAgentContextSources | undefined,
+  needsInitialContext: boolean,
+  markInitialContextSent: () => void,
   publishMessage: PublishConversationAgentMessage,
   invalidate: (prompt: ActivePrompt) => Effect.Effect<void>
 ) {
-  if (textEncoder.encode(request.input).byteLength > MAX_PROMPT_BYTES) {
+  if (textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES) {
     return yield* failure("prompt");
   }
+  const input =
+    agentContext === undefined || !needsInitialContext
+      ? requiredInput
+      : yield* renderAcpPromptWithinByteLimit(
+          request,
+          yield* loadAcpAgentContextSnapshot(agentContext),
+          MAX_PROMPT_BYTES
+        );
   return yield* Effect.acquireUseRelease(
     Effect.sync(() => {
       const cancellation = new AbortController();
-      const completion = session.prompt(request.input, {
+      const completion = session.prompt(input, {
         cancellationSignal: cancellation.signal,
       });
+      markInitialContextSent();
       completion.catch(() => undefined);
       return { cancellation, completion };
     }),
@@ -463,13 +488,13 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         return yield* toHandlerFailure();
       }
 
-      const sessions = new Map<string, ActiveSession>();
+      const sessions = new Map<string, ManagedSession>();
       const turnGates = new Map<string, Semaphore.Semaphore>();
       const turnGateRegistrySemaphore = yield* Semaphore.make(1);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          for (const session of sessions.values()) {
-            session.dispose();
+          for (const managed of sessions.values()) {
+            managed.session.dispose();
           }
           sessions.clear();
           turnGates.clear();
@@ -495,12 +520,21 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           if (existing !== undefined) {
             return existing;
           }
-          const created = yield* Effect.tryPromise({
-            try: () => connection.agent.buildSession(options.cwd).start(),
-            catch: () => failure("session"),
-          });
-          sessions.set(conversationId, created);
-          return created;
+          return yield* Effect.uninterruptible(
+            Effect.tryPromise({
+              try: () => connection.agent.buildSession(options.cwd).start(),
+              catch: () => failure("session"),
+            }).pipe(
+              Effect.map((session) => {
+                const created: ManagedSession = {
+                  needsInitialContext: options.agentContext !== undefined,
+                  session,
+                };
+                sessions.set(conversationId, created);
+                return created;
+              })
+            )
+          );
         }
       );
 
@@ -518,7 +552,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             catch: () => undefined,
           }).pipe(Effect.ignore);
           session.dispose();
-          if (sessions.get(conversationId) === session) {
+          if (sessions.get(conversationId)?.session === session) {
             sessions.delete(conversationId);
           }
           const settled = yield* Effect.promise(() =>
@@ -541,12 +575,27 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           const turnGate = yield* turnGateFor(request.conversationId);
           return yield* turnGate.withPermit(
             Effect.gen(function* () {
-              const session = yield* sessionFor(request.conversationId);
+              const requiredInput =
+                options.agentContext === undefined
+                  ? request.input
+                  : renderAcpPrompt(request);
+              if (
+                textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES
+              ) {
+                return yield* failure("prompt");
+              }
+              const managed = yield* sessionFor(request.conversationId);
               return yield* runPrompt(
-                session,
+                managed.session,
                 request,
+                requiredInput,
+                options.agentContext,
+                managed.needsInitialContext,
+                () => {
+                  managed.needsInitialContext = false;
+                },
                 publishMessage,
-                invalidateSession(request.conversationId, session)
+                invalidateSession(request.conversationId, managed.session)
               );
             })
           );

@@ -68,11 +68,9 @@ const program = Effect.gen(function* () {
     client: socketClient,
     routeDirectory,
   });
-  yield* Console.log(
-    "LIVE SLACK CONFIGURED HANDLER MODE — receiver connected."
-  );
+  yield* Console.log("LIVE SLACK LABORER — receiver connected.");
   yield* waitForShutdownSignal;
-  yield* Console.log("Slack configured handler mode stopped cleanly.");
+  yield* Console.log("Slack Laborer stopped cleanly.");
 }).pipe(Effect.scoped);
 
 await Effect.runPromise(program);

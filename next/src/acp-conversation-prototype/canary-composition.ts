@@ -1,5 +1,5 @@
 /** Isolated issue #235 composition; it is not part of production startup. */
-import { Effect, type Scope } from "effect";
+import { Effect, type Layer, type Scope } from "effect";
 import type { HandlerFailure, StoreError } from "../prototype/errors.ts";
 import type {
   ActivationAcknowledgerShape,
@@ -10,7 +10,10 @@ import {
   makePrototypeHarness,
   type PrototypeHarness,
 } from "../prototype/runtime.ts";
+import type { PrototypeStore } from "../prototype/store.ts";
+import { makeFileStoreLayer } from "../prototype/store.ts";
 import { makeReferenceCodingApplication } from "../reference-coding-application.ts";
+import { prepareSlackRuntimePaths } from "../slack/runtime-paths.ts";
 import {
   type AcpConversationAgentOptions,
   makeAcpConversationAgent,
@@ -46,8 +49,16 @@ export interface AcpConversationCanaryOptions {
   readonly participantLookup?: SlackParticipantLookupShape;
   readonly process: AcpConversationAgentOptions;
   readonly slack: SlackGatewayShape;
+  readonly storeLayer?: Layer.Layer<PrototypeStore, StoreError>;
   readonly workspaceId?: string;
 }
+
+export type WorkspaceBoundAcpConversationCanaryOptions = Omit<
+  AcpConversationCanaryOptions,
+  "storeLayer" | "workspaceId"
+> & {
+  readonly workspaceId: string;
+};
 
 const outsideCanary = (resource: string) =>
   Effect.die(
@@ -104,6 +115,29 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
       completionReactor: options.completionReactor,
       laborerSlackId: options.laborerSlackId,
       slack: options.slack,
+      ...(options.storeLayer === undefined
+        ? {}
+        : { storeLayer: options.storeLayer }),
     });
   }
 );
+
+/** Live workspace binding with Runner and ACP durability in distinct files. */
+export const makeWorkspaceBoundAcpConversationCanary = Effect.fn(
+  "makeWorkspaceBoundAcpConversationCanary"
+)(function* (options: WorkspaceBoundAcpConversationCanaryOptions) {
+  const paths = yield* prepareSlackRuntimePaths(
+    options.process.cwd,
+    options.workspaceId
+  );
+  return yield* makeAcpConversationCanary({
+    ...options,
+    storeLayer: makeFileStoreLayer(
+      options.laborerSlackId,
+      paths.acpRunnerState,
+      paths.root,
+      undefined,
+      { initializeNewThreads: false }
+    ),
+  });
+});

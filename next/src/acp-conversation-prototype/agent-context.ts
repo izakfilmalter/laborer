@@ -22,6 +22,9 @@ export const SOUL_FILE_NAME = "SOUL.md";
 export const WORKSPACE_MEMORY_FILE_NAME = "workspace-memory.md";
 export const USER_PROFILES_DIRECTORY_NAME = "user-profiles";
 export const MEMORY_DIAGNOSTICS_FILE_NAME = "memory-diagnostics.log";
+export const ACP_CONVERSATION_STATE_FILE_NAME = "acp-conversations.json";
+export const ACP_CONVERSATION_DIAGNOSTICS_FILE_NAME =
+  "acp-conversation-diagnostics.log";
 /** Maximum participant enrichments running concurrently for one ACP prompt. */
 const ACP_PARTICIPANT_LOOKUP_CONCURRENCY_LIMIT = 4;
 
@@ -29,6 +32,8 @@ export const DEFAULT_SOUL =
   "You are a thoughtful, candid, and direct collaborator. Adapt your level of detail and tone to the people and situation. Ask questions when ambiguity materially affects the outcome. Favor useful substance over performative filler.";
 
 export interface AcpAgentContextSources {
+  readonly acpConversationDiagnosticsPath: string;
+  readonly acpConversationStatePath: string;
   readonly memoryDiagnosticsPath: string;
   readonly root: string;
   readonly rootDirectoryIdentity: TrustedDirectoryIdentity;
@@ -145,6 +150,14 @@ export const acpAgentContextPaths = (options: {
   const encodedWorkspaceId = encodeURIComponent(options.workspaceId);
   const workspaceDirectory = resolve(workspaceRoot, encodedWorkspaceId);
   return {
+    acpConversationDiagnosticsPath: resolve(
+      workspaceDirectory,
+      ACP_CONVERSATION_DIAGNOSTICS_FILE_NAME
+    ),
+    acpConversationStatePath: resolve(
+      workspaceDirectory,
+      ACP_CONVERSATION_STATE_FILE_NAME
+    ),
     memoryDiagnosticsPath: resolve(
       workspaceDirectory,
       MEMORY_DIAGNOSTICS_FILE_NAME

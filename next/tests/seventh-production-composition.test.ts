@@ -225,6 +225,17 @@ describe("Tracer 7 production composition", () => {
             join(first.root, "slack-workspaces", "T-FIRST", "runner-state.json")
           );
           assert.notStrictEqual(first.runnerState, second.runnerState);
+          assert.strictEqual(
+            first.acpRunnerState,
+            join(
+              first.root,
+              "slack-workspaces",
+              "T-FIRST",
+              "acp-runner-state.json"
+            )
+          );
+          assert.notStrictEqual(first.acpRunnerState, first.runnerState);
+          assert.notStrictEqual(first.acpRunnerState, second.acpRunnerState);
           assert.strictEqual(legacyPaths.lock, first.lock);
           assert.strictEqual(first.lock, second.lock);
           assert.strictEqual(first.lock, join(first.root, "runner.lock"));

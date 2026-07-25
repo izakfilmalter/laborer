@@ -7,6 +7,7 @@ import {
 import { SlackStartupError } from "./errors.ts";
 
 export interface SlackRuntimePaths {
+  readonly acpRunnerState: string;
   readonly applicationState: string;
   readonly legacyHandlerState: string;
   readonly lock: string;
@@ -60,6 +61,7 @@ export const prepareSlackRuntimePaths = (
     });
     const runnerState = resolve(workspaceRoot, "runner-state.json");
     return {
+      acpRunnerState: resolve(workspaceRoot, "acp-runner-state.json"),
       applicationState: resolve(workspaceRoot, "application-state.json"),
       legacyHandlerState: resolve(workspaceRoot, "state.json"),
       lock: resolve(root, "runner.lock"),

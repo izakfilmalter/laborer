@@ -7,9 +7,9 @@ import type {
   ChatStopStreamResponse,
 } from "@slack/web-api";
 import { Effect } from "effect";
-import { classifySlackError } from "../prototype/emulated-slack.ts";
 import { DeliveryError } from "../prototype/errors.ts";
 import type { SlackNativeStreamCapability } from "../prototype/runtime.ts";
+import { classifySlackError } from "./error-classification.ts";
 
 const SLACK_MARKDOWN_TEXT_LIMIT = 12_000;
 

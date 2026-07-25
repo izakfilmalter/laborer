@@ -53,9 +53,7 @@ const outsideCanary = (resource: string) =>
 
 /**
  * Reuses the reference application and Runner's capability-selected publisher.
- * Live composition supplies native Slack streaming; Emulate omits it and uses
- * the post-then-update fallback. Actions and implementation agents intentionally
- * remain outside this proof.
+ * Actions and implementation agents intentionally remain outside this proof.
  */
 export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
   function* (

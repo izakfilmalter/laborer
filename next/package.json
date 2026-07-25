@@ -34,7 +34,7 @@
     "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
     "effect": "4.0.0-beta.99",
-    "emulate": "^0.9.0"
+    "emulate": "file:../../emulate/packages/emulate"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.0",

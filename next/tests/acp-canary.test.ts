@@ -9,6 +9,7 @@ import {
   Redacted,
   Schema,
 } from "effect";
+import { vi } from "vitest";
 import {
   makeAcpConversationCanary,
   OPEN_CODE_ACP_ARGS,
@@ -285,7 +286,51 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
           assert.strictEqual(defaultTarget.cwd, projectRoot);
 
           const fixture = yield* startEmulatedSlack();
-          assert.strictEqual(fixture.gateway.nativeStreaming, undefined);
+          assert.ok(fixture.gateway.nativeStreaming !== undefined);
+          const botChatCalls: Array<{
+            readonly body: unknown;
+            readonly method:
+              | "chat.appendStream"
+              | "chat.postMessage"
+              | "chat.startStream"
+              | "chat.stopStream"
+              | "chat.update";
+          }> = [];
+          const botChat = fixture.botClient.chat;
+          const appendStream = botChat.appendStream;
+          const postMessage = botChat.postMessage;
+          const startStream = botChat.startStream;
+          const stopStream = botChat.stopStream;
+          const update = botChat.update;
+          const chatSpies = [
+            vi.spyOn(botChat, "appendStream").mockImplementation((body) => {
+              botChatCalls.push({ body, method: "chat.appendStream" });
+              return appendStream(body);
+            }),
+            vi.spyOn(botChat, "postMessage").mockImplementation((body) => {
+              botChatCalls.push({ body, method: "chat.postMessage" });
+              return postMessage(body);
+            }),
+            vi.spyOn(botChat, "startStream").mockImplementation((body) => {
+              botChatCalls.push({ body, method: "chat.startStream" });
+              return startStream(body);
+            }),
+            vi.spyOn(botChat, "stopStream").mockImplementation((body) => {
+              botChatCalls.push({ body, method: "chat.stopStream" });
+              return stopStream(body);
+            }),
+            vi.spyOn(botChat, "update").mockImplementation((body) => {
+              botChatCalls.push({ body, method: "chat.update" });
+              return update(body);
+            }),
+          ];
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              for (const spy of chatSpies) {
+                spy.mockRestore();
+              }
+            })
+          );
           const laborerRoot = yield* makeTempDirectoryScoped(
             "laborer-acp-canary-root-"
           );
@@ -394,6 +439,18 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
                 "**Streaming** from ACP",
               ]);
               const streamedMessageTs = String(partialReplies[0]?.ts);
+              assert.deepStrictEqual(botChatCalls, [
+                {
+                  body: {
+                    channel: fixture.channelId,
+                    markdown_text: "**Streaming** from ACP",
+                    recipient_team_id: fixture.teamId,
+                    recipient_user_id: fixture.humanUserId,
+                    thread_ts: rootTs,
+                  },
+                  method: "chat.startStream",
+                },
+              ]);
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
               );
@@ -407,11 +464,44 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
                 completedFirstReplies[0]?.ts,
                 streamedMessageTs
               );
+              assert.strictEqual(
+                completedFirstReplies[0]?.streaming_state,
+                "completed"
+              );
+              assert.strictEqual(completedFirstReplies[0]?.thread_ts, rootTs);
+              assert.strictEqual(completedFirstReplies[0]?.edited, undefined);
               assert.ok(
                 !String(completedFirstReplies[0]?.text).includes(
                   '{"type":"reply"'
                 )
               );
+              assert.deepStrictEqual(botChatCalls, [
+                {
+                  body: {
+                    channel: fixture.channelId,
+                    markdown_text: "**Streaming** from ACP",
+                    recipient_team_id: fixture.teamId,
+                    recipient_user_id: fixture.humanUserId,
+                    thread_ts: rootTs,
+                  },
+                  method: "chat.startStream",
+                },
+                {
+                  body: {
+                    channel: fixture.channelId,
+                    markdown_text: "\n\n- complete\n- unchanged",
+                    ts: streamedMessageTs,
+                  },
+                  method: "chat.appendStream",
+                },
+                {
+                  body: {
+                    channel: fixture.channelId,
+                    ts: streamedMessageTs,
+                  },
+                  method: "chat.stopStream",
+                },
+              ]);
               const completedReaction = yield* Effect.promise(() =>
                 fixture.humanClient.reactions.get({
                   channel: fixture.channelId,
@@ -480,6 +570,14 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
                   "session:new:acp-session-secret-234-2",
                   `prompt:acp-session-secret-234-2:${secondThreadInput}`,
                 ]
+              );
+              assert.deepStrictEqual(
+                botChatCalls.filter(
+                  (call) =>
+                    call.method === "chat.postMessage" ||
+                    call.method === "chat.update"
+                ),
+                []
               );
             })
           );

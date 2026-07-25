@@ -1,15 +1,6 @@
-import { createHash, randomInt, randomUUID } from "node:crypto";
-import {
-  chmod,
-  link,
-  lstat,
-  open,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { createHash, randomUUID } from "node:crypto";
+import { open, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   McpServerStdio,
@@ -39,10 +30,12 @@ import {
   isSlackUserId,
   prepareAcpAgentContextSources,
   USER_PROFILE_CHARACTER_LIMIT,
+  userProfileLockPath,
   userProfilePath,
   verifyAcpAgentContextSources,
   WORKSPACE_MEMORY_CHARACTER_LIMIT,
 } from "./agent-context.ts";
+import { withCrossProcessContextLocks } from "./context-lock.ts";
 import {
   containsMemoryEntryFrameDelimiter,
   framedMemoryEntries,
@@ -68,12 +61,8 @@ const MAX_MEMORY_SOURCE_BYTES = 512 * 1024;
 const MAX_MEMORY_DIAGNOSTIC_BYTES = 4096;
 const MEMORY_MCP_READINESS_WAIT_MILLIS = 5000;
 const MEMORY_MCP_READINESS_POLL_MILLIS = 20;
-const MUTATION_LOCK_RETRY_MILLIS = 25;
-const MUTATION_LOCK_MAX_RETRY_MILLIS = 2000;
-const MUTATION_LOCK_WAIT_MILLIS = 30_000;
 const MAX_TEST_CRITICAL_SECTION_DELAY_MILLIS = 7000;
 const MEMORY_ENTRY_SEPARATOR = "\n\n";
-const MUTATION_LOCK_DATABASE_SUFFIX = ".lock.sqlite";
 const MEMORY_MCP_READINESS_FILE_NAME = "memory-mcp-readiness";
 const MEMORY_REGISTRATION_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 const MEMORY_AUTHORITY_GUARD_PATTERN = /^[0-9a-f]{64}$/;
@@ -164,238 +153,8 @@ const cancellableDelay = (
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 
-interface HeldMutationLock {
-  readonly assertCanCommit: () => Promise<void>;
-  readonly assertOwned: () => Promise<void>;
-  readonly canonicalTargetPath: string;
-  readonly database: DatabaseSync;
-}
-
-interface LockDatabaseIdentity {
-  readonly device: bigint | number;
-  readonly inode: bigint | number;
-}
-
 const canonicalTargetPath = async (targetPath: string): Promise<string> =>
   resolve(await realpath(dirname(targetPath)), basename(targetPath));
-
-const mutationLockDatabasePath = (canonicalPath: string): string =>
-  `${canonicalPath}${MUTATION_LOCK_DATABASE_SUFFIX}`;
-
-const isSqliteContention = (error: unknown): boolean => {
-  const code = errorCode(error);
-  const resultCode =
-    typeof error === "object" &&
-    error !== null &&
-    "errcode" in error &&
-    typeof error.errcode === "number"
-      ? error.errcode
-      : null;
-  return (
-    code?.startsWith("SQLITE_BUSY") === true ||
-    code?.startsWith("SQLITE_LOCKED") === true ||
-    resultCode === 5 ||
-    resultCode === 6 ||
-    (error instanceof Error &&
-      (error.message.includes("database is locked") ||
-        error.message.includes("database table is locked")))
-  );
-};
-
-const ensureOwnerOnlyLockDatabase = async (
-  canonicalPath: string
-): Promise<{
-  readonly identity: LockDatabaseIdentity;
-  readonly path: string;
-}> => {
-  const lockDatabasePath = mutationLockDatabasePath(canonicalPath);
-  await assertSafeFilePath({
-    anchor: dirname(canonicalPath),
-    operation: "prepare-memory-mutation-lock",
-    path: lockDatabasePath,
-  });
-  let metadata: Awaited<ReturnType<typeof lstat>> | undefined;
-  try {
-    metadata = await lstat(lockDatabasePath);
-  } catch (error) {
-    if (errorCode(error) !== "ENOENT") {
-      throw mutationFailure("storage-unavailable");
-    }
-  }
-  if (metadata === undefined) {
-    const temporaryPath = `${lockDatabasePath}.${randomUUID()}.tmp`;
-    let temporaryDatabase: DatabaseSync | undefined;
-    try {
-      temporaryDatabase = new DatabaseSync(temporaryPath, {
-        defensive: true,
-        timeout: 0,
-      });
-      temporaryDatabase.exec(
-        "CREATE TABLE lock_guard (singleton INTEGER PRIMARY KEY CHECK (singleton = 1))"
-      );
-      temporaryDatabase.close();
-      temporaryDatabase = undefined;
-      await chmod(temporaryPath, 0o600);
-      try {
-        await link(temporaryPath, lockDatabasePath);
-      } catch (error) {
-        if (errorCode(error) !== "EEXIST") {
-          throw error;
-        }
-      }
-    } catch {
-      throw mutationFailure("storage-unavailable");
-    } finally {
-      temporaryDatabase?.close();
-      await rm(temporaryPath, { force: true });
-    }
-    metadata = await lstat(lockDatabasePath);
-  }
-  const currentUserId = process.getuid?.();
-  if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    (currentUserId !== undefined && metadata.uid !== currentUserId)
-  ) {
-    throw mutationFailure("storage-unavailable");
-  }
-  return {
-    identity: { device: metadata.dev, inode: metadata.ino },
-    path: lockDatabasePath,
-  };
-};
-
-const hardenLockDatabaseFile = async (path: string): Promise<void> => {
-  const metadata = await lstat(path);
-  const currentUserId = process.getuid?.();
-  if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    (currentUserId !== undefined && metadata.uid !== currentUserId)
-  ) {
-    throw mutationFailure("storage-unavailable");
-  }
-  try {
-    await chmod(path, 0o600);
-  } catch {
-    throw mutationFailure("storage-unavailable");
-  }
-};
-
-const verifyLockDatabaseIdentity = async (
-  path: string,
-  expected: LockDatabaseIdentity
-): Promise<void> => {
-  const metadata = await lstat(path);
-  const currentUserId = process.getuid?.();
-  if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    metadata.dev !== expected.device ||
-    metadata.ino !== expected.inode ||
-    (currentUserId !== undefined && metadata.uid !== currentUserId)
-  ) {
-    throw mutationFailure("storage-unavailable");
-  }
-};
-
-const acquireMutationLock = async (
-  targetPath: string,
-  signal?: AbortSignal
-): Promise<HeldMutationLock> => {
-  const canonicalPath = await canonicalTargetPath(targetPath);
-  const lockDatabase = await ensureOwnerOnlyLockDatabase(canonicalPath);
-  const database = new DatabaseSync(lockDatabase.path, {
-    defensive: true,
-    timeout: 0,
-  });
-  try {
-    await hardenLockDatabaseFile(lockDatabase.path);
-    database.exec("PRAGMA busy_timeout = 0");
-    const deadline = Date.now() + MUTATION_LOCK_WAIT_MILLIS;
-    let retryMillis = MUTATION_LOCK_RETRY_MILLIS;
-    while (Date.now() < deadline) {
-      assertNotCancelled(signal);
-      try {
-        database.exec("BEGIN IMMEDIATE");
-        await verifyLockDatabaseIdentity(
-          lockDatabase.path,
-          lockDatabase.identity
-        );
-        const assertOwned = async (): Promise<void> => {
-          if (!database.isTransaction) {
-            throw mutationFailure("storage-unavailable");
-          }
-          await verifyLockDatabaseIdentity(
-            lockDatabase.path,
-            lockDatabase.identity
-          );
-        };
-        return {
-          assertCanCommit: async () => {
-            assertNotCancelled(signal);
-            await assertOwned();
-          },
-          assertOwned,
-          canonicalTargetPath: canonicalPath,
-          database,
-        };
-      } catch (error) {
-        if (!isSqliteContention(error)) {
-          throw error;
-        }
-      }
-      const jitter = randomInt(0, Math.max(2, Math.ceil(retryMillis / 4)));
-      const remainingMillis = deadline - Date.now();
-      if (remainingMillis <= 0) {
-        break;
-      }
-      await cancellableDelay(
-        Math.min(remainingMillis, retryMillis + jitter),
-        signal
-      );
-      retryMillis = Math.min(
-        MUTATION_LOCK_MAX_RETRY_MILLIS,
-        Math.ceil(retryMillis * 1.5)
-      );
-    }
-    throw mutationFailure("storage-unavailable");
-  } catch (error) {
-    database.close();
-    throw error instanceof MemoryMutationError
-      ? error
-      : mutationFailure("storage-unavailable");
-  }
-};
-
-const withCrossProcessMutationLock = async <A>(
-  targetPath: string,
-  signal: AbortSignal | undefined,
-  operation: (lock: HeldMutationLock) => Promise<A>
-): Promise<A> => {
-  const heldLock = await acquireMutationLock(targetPath, signal);
-  try {
-    await heldLock.assertCanCommit();
-    const result = await operation(heldLock);
-    await heldLock.assertOwned();
-    // SQLite stores no memory data here. ROLLBACK is the contention-safe
-    // transaction release: COMMIT may need an exclusive-lock upgrade and can
-    // starve behind simultaneous nonblocking BEGIN attempts.
-    heldLock.database.exec("ROLLBACK");
-    return result;
-  } catch (error) {
-    if (heldLock.database.isTransaction) {
-      try {
-        heldLock.database.exec("ROLLBACK");
-      } catch {
-        // The original mutation failure remains the actionable result.
-      }
-    }
-    throw error;
-  } finally {
-    heldLock.database.close();
-  }
-};
 
 const testCriticalSectionDelayMillis = (): number => {
   const configured = Number.parseInt(
@@ -663,25 +422,27 @@ const writeLaborerMemoryDiagnostic = async (
   const canonicalWorkspaceDirectory = await realpath(
     sources.workspaceDirectory
   );
-  await withCrossProcessMutationLock(
-    sources.memoryDiagnosticsPath,
-    undefined,
-    async (heldLock) => {
+  const canonicalDiagnosticsPath = await canonicalTargetPath(
+    sources.memoryDiagnosticsPath
+  );
+  await withCrossProcessContextLocks({
+    lockPaths: [sources.memoryDiagnosticsLockPath],
+    operation: async (locks) => {
       let current = "";
       try {
-        current = await readLatestSource(heldLock.canonicalTargetPath);
+        current = await readLatestSource(canonicalDiagnosticsPath);
       } catch {
         // An invalid or manually oversized sink is replaced with bounded data.
       }
-      await heldLock.assertCanCommit();
+      await locks.assertCanCommit();
       await publishAtomically({
         anchor: canonicalWorkspaceDirectory,
-        assertCanCommit: heldLock.assertCanCommit,
+        assertCanCommit: locks.assertCanCommit,
         content: boundedDiagnosticContent(current, code),
-        path: heldLock.canonicalTargetPath,
+        path: canonicalDiagnosticsPath,
       });
-    }
-  );
+    },
+  });
 };
 
 export const recordLaborerMemoryDiagnostic = Effect.fn(
@@ -689,7 +450,9 @@ export const recordLaborerMemoryDiagnostic = Effect.fn(
 )(function* (options: {
   readonly authorityGuard?: string;
   readonly code: LaborerMemoryDiagnosticCode;
+  readonly configRoot?: string;
   readonly root: string;
+  readonly stateRoot?: string;
   readonly workspaceId: string;
 }) {
   const sources = yield* prepareAcpAgentContextSources(options);
@@ -722,6 +485,7 @@ const targetDetails = (
   mutation: MemoryMutation
 ): {
   readonly characterLimit: number;
+  readonly lockPath: string;
   readonly path: string;
 } => {
   if (mutation.target === "workspace") {
@@ -730,6 +494,7 @@ const targetDetails = (
     }
     return {
       characterLimit: WORKSPACE_MEMORY_CHARACTER_LIMIT,
+      lockPath: sources.workspaceMemoryLockPath,
       path: sources.workspaceMemoryPath,
     };
   }
@@ -738,6 +503,7 @@ const targetDetails = (
   }
   return {
     characterLimit: USER_PROFILE_CHARACTER_LIMIT,
+    lockPath: userProfileLockPath(sources, mutation.userId),
     path: userProfilePath(sources, mutation.userId),
   };
 };
@@ -764,7 +530,9 @@ const validateMutation = (mutation: MemoryMutation): void => {
 
 export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
   function* (options: {
+    readonly configRoot?: string;
     readonly root: string;
+    readonly stateRoot?: string;
     readonly workspaceId: string;
   }): Effect.fn.Return<LaborerMemoryStore> {
     const sources = yield* prepareAcpAgentContextSources(options);
@@ -793,30 +561,36 @@ export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
           assertNotCancelled(signal);
           await verifyAcpAgentContextSources(sources, "mutate-agent-memory");
           if (mutation.target === "user") {
-            await ensureOwnerOnlyDirectoryTree({
-              anchor: sources.workspaceDirectory,
-              operation: "prepare-user-profile-directory",
-              target: sources.userProfilesDirectory,
-            });
+            await Promise.all([
+              ensureOwnerOnlyDirectoryTree({
+                anchor: sources.workspaceContextDirectory,
+                operation: "prepare-user-profile-directory",
+                target: sources.userProfilesDirectory,
+              }),
+              ensureOwnerOnlyDirectoryTree({
+                anchor: sources.workspaceLockDirectory,
+                operation: "prepare-user-profile-lock-directory",
+                target: sources.userProfileLocksDirectory,
+              }),
+            ]);
           }
-          const canonicalWorkspaceDirectory = await realpath(
-            sources.workspaceDirectory
+          const canonicalWorkspaceContextDirectory = await realpath(
+            sources.workspaceContextDirectory
           );
-          return withCrossProcessMutationLock(
-            details.path,
-            signal,
-            async (heldLock) => {
+          const canonicalMemoryPath = await canonicalTargetPath(details.path);
+          return withCrossProcessContextLocks({
+            lockPaths: [details.lockPath],
+            onCancelled: () => mutationFailure("cancelled"),
+            operation: async (heldLocks) => {
               const assertCanCommit = async (): Promise<void> => {
-                await heldLock.assertCanCommit();
+                await heldLocks.assertCanCommit();
                 await verifyAcpAgentContextSources(
                   sources,
                   "mutate-agent-memory"
                 );
               };
               await assertCanCommit();
-              const current = await readLatestSource(
-                heldLock.canonicalTargetPath
-              );
+              const current = await readLatestSource(canonicalMemoryPath);
               const configuredDelay = testCriticalSectionDelayMillis();
               if (configuredDelay > 0) {
                 await cancellableDelay(configuredDelay, signal);
@@ -838,10 +612,10 @@ export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
               if (next.changed) {
                 await assertCanCommit();
                 await publishAtomically({
-                  anchor: canonicalWorkspaceDirectory,
+                  anchor: canonicalWorkspaceContextDirectory,
                   assertCanCommit,
                   content: next.content,
-                  path: heldLock.canonicalTargetPath,
+                  path: canonicalMemoryPath,
                 });
               }
               return {
@@ -849,8 +623,9 @@ export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
                 renderedCharacters,
                 target: mutation.target,
               };
-            }
-          );
+            },
+            signal,
+          });
         },
         catch: (error) =>
           error instanceof MemoryMutationError
@@ -896,8 +671,10 @@ export const makeLaborerMemoryMcpServer = Effect.fn(
   "makeLaborerMemoryMcpServer"
 )(function* (options: {
   readonly authorityGuard?: string;
+  readonly configRoot?: string;
   readonly root: string;
   readonly serverName?: string;
+  readonly stateRoot?: string;
   readonly workspaceId: string;
 }) {
   const diagnosticSources = yield* prepareAcpAgentContextSources(options);
@@ -910,7 +687,7 @@ export const makeLaborerMemoryMcpServer = Effect.fn(
   const store = yield* makeLaborerMemoryStore(options);
   const runMutation = Effect.runPromiseWith(yield* Effect.context<never>());
   const server = new McpServer({
-    name: options.serverName ?? laborerMemoryServerName(options),
+    name: options.serverName ?? laborerMemoryServerName(diagnosticSources),
     version: "1.0.0",
   });
   server.registerTool(
@@ -972,11 +749,17 @@ export const makeLaborerMemoryMcpServer = Effect.fn(
 });
 
 const laborerMemoryServerName = (options: {
+  readonly configRoot: string;
   readonly root: string;
+  readonly stateRoot: string;
   readonly workspaceId: string;
 }): string => {
   const authority = createHash("sha256")
     .update(options.root)
+    .update("\0")
+    .update(options.configRoot)
+    .update("\0")
+    .update(options.stateRoot)
     .update("\0")
     .update(options.workspaceId)
     .digest("hex")
@@ -988,6 +771,18 @@ const laborerMemoryAuthorityGuard = (sources: AcpAgentContextSources): string =>
   createHash("sha256")
     .update(sources.root)
     .update("\0")
+    .update(sources.configRoot)
+    .update("\0")
+    .update(String(sources.configRootDirectoryIdentity.device))
+    .update("\0")
+    .update(String(sources.configRootDirectoryIdentity.inode))
+    .update("\0")
+    .update(sources.stateRoot)
+    .update("\0")
+    .update(String(sources.stateRootDirectoryIdentity.device))
+    .update("\0")
+    .update(String(sources.stateRootDirectoryIdentity.inode))
+    .update("\0")
     .update(String(sources.rootDirectoryIdentity.device))
     .update("\0")
     .update(String(sources.rootDirectoryIdentity.inode))
@@ -997,6 +792,18 @@ const laborerMemoryAuthorityGuard = (sources: AcpAgentContextSources): string =>
     .update(String(sources.workspaceDirectoryIdentity.device))
     .update("\0")
     .update(String(sources.workspaceDirectoryIdentity.inode))
+    .update("\0")
+    .update(sources.rootContextDirectory)
+    .update("\0")
+    .update(String(sources.rootContextDirectoryIdentity.device))
+    .update("\0")
+    .update(String(sources.rootContextDirectoryIdentity.inode))
+    .update("\0")
+    .update(sources.workspaceContextDirectory)
+    .update("\0")
+    .update(String(sources.workspaceContextDirectoryIdentity.device))
+    .update("\0")
+    .update(String(sources.workspaceContextDirectoryIdentity.inode))
     .digest("hex");
 
 const serverEnvironmentValue = (
@@ -1008,7 +815,9 @@ const serverEnvironmentValue = (
 };
 
 export interface LaborerMemoryMcpAuthority {
+  readonly configRoot: string;
   readonly root: string;
+  readonly stateRoot: string;
   readonly workspaceId: string;
 }
 
@@ -1016,15 +825,24 @@ export const laborerMemoryMcpAuthority = (
   server: McpServerStdio
 ): LaborerMemoryMcpAuthority | null => {
   const root = serverEnvironmentValue(server, "LABORER_MEMORY_ROOT");
+  const configRoot = serverEnvironmentValue(
+    server,
+    "LABORER_MEMORY_CONFIG_ROOT"
+  );
+  const stateRoot = serverEnvironmentValue(server, "LABORER_MEMORY_STATE_ROOT");
   const workspaceId = serverEnvironmentValue(
     server,
     "LABORER_MEMORY_WORKSPACE_ID"
   );
   return root === undefined ||
+    configRoot === undefined ||
+    !isAbsolute(configRoot) ||
+    stateRoot === undefined ||
+    !isAbsolute(stateRoot) ||
     workspaceId === undefined ||
     !isSlackTeamId(workspaceId)
     ? null
-    : { root, workspaceId };
+    : { configRoot, root, stateRoot, workspaceId };
 };
 
 export const laborerMemoryOpenCodePermission = (serverName: string): string =>
@@ -1042,6 +860,8 @@ export const makeLaborerMemoryMcpServerConfiguration = (
     command: process.execPath,
     env: [
       { name: "LABORER_MEMORY_ROOT", value: sources.root },
+      { name: "LABORER_MEMORY_CONFIG_ROOT", value: sources.configRoot },
+      { name: "LABORER_MEMORY_STATE_ROOT", value: sources.stateRoot },
       { name: "LABORER_MEMORY_WORKSPACE_ID", value: sources.workspaceId },
       { name: LABORER_MEMORY_SERVER_NAME_ENV, value: name },
       {
@@ -1061,7 +881,7 @@ export const isLaborerMemoryMcpServerConfiguration = (
     server.command !== process.execPath ||
     server.args.length !== 1 ||
     server.args[0] !== MEMORY_SERVER_PATH ||
-    server.env.length !== 4
+    server.env.length !== 6
   ) {
     return false;
   }
@@ -1077,6 +897,18 @@ export const isLaborerMemoryMcpServerConfiguration = (
       ({ name }) => name === "LABORER_MEMORY_WORKSPACE_ID"
     )
   )?.value;
+  const configRoot = Option.getOrUndefined(
+    EffectArray.findFirst(
+      server.env,
+      ({ name }) => name === "LABORER_MEMORY_CONFIG_ROOT"
+    )
+  )?.value;
+  const stateRoot = Option.getOrUndefined(
+    EffectArray.findFirst(
+      server.env,
+      ({ name }) => name === "LABORER_MEMORY_STATE_ROOT"
+    )
+  )?.value;
   const serverName = serverEnvironmentValue(
     server,
     LABORER_MEMORY_SERVER_NAME_ENV
@@ -1085,15 +917,27 @@ export const isLaborerMemoryMcpServerConfiguration = (
     server,
     LABORER_MEMORY_AUTHORITY_GUARD_ENV
   );
-  if (configuredRoot === undefined || workspaceId === undefined) {
+  if (
+    configuredRoot === undefined ||
+    configRoot === undefined ||
+    stateRoot === undefined ||
+    workspaceId === undefined
+  ) {
     return false;
   }
   return (
     configuredRoot === root &&
+    isAbsolute(configRoot) &&
+    isAbsolute(stateRoot) &&
     workspaceId !== undefined &&
     isSlackTeamId(workspaceId) &&
     serverName ===
-      laborerMemoryServerName({ root: configuredRoot, workspaceId }) &&
+      laborerMemoryServerName({
+        configRoot,
+        root: configuredRoot,
+        stateRoot,
+        workspaceId,
+      }) &&
     authorityGuard !== undefined &&
     MEMORY_AUTHORITY_GUARD_PATTERN.test(authorityGuard) &&
     server.name === serverName
@@ -1242,10 +1086,12 @@ export const publishLaborerMemoryMcpReadiness = Effect.fn(
   "publishLaborerMemoryMcpReadiness"
 )(function* (options: {
   readonly authorityGuard?: string;
+  readonly configRoot: string;
   readonly nonce: string;
   readonly path: string;
   readonly root: string;
   readonly serverName: string;
+  readonly stateRoot: string;
   readonly workspaceId: string;
 }) {
   const registrationToken = registrationTokenFromName(

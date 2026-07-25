@@ -1002,10 +1002,12 @@ describe("issue #241 reviewed ACP restart edges", () => {
             assert.match(String(secondServer.name), MEMORY_SERVER_NAME_PATTERN);
             const expectedEnvironmentNames = [
               "LABORER_MEMORY_AUTHORITY_GUARD",
+              "LABORER_MEMORY_CONFIG_ROOT",
               "LABORER_MEMORY_READY_PATH",
               "LABORER_MEMORY_REGISTRATION_NONCE",
               "LABORER_MEMORY_ROOT",
               "LABORER_MEMORY_SERVER_NAME",
+              "LABORER_MEMORY_STATE_ROOT",
               "LABORER_MEMORY_WORKSPACE_ID",
             ];
             for (const server of [firstServer, secondServer]) {
@@ -1021,6 +1023,14 @@ describe("issue #241 reviewed ACP restart edges", () => {
                 environment.map((entry) => [entry.name, entry.value])
               );
               assert.strictEqual(values.LABORER_MEMORY_ROOT, root);
+              assert.strictEqual(
+                values.LABORER_MEMORY_CONFIG_ROOT,
+                sources.configRoot
+              );
+              assert.strictEqual(
+                values.LABORER_MEMORY_STATE_ROOT,
+                sources.stateRoot
+              );
               assert.strictEqual(
                 values.LABORER_MEMORY_WORKSPACE_ID,
                 sources.workspaceId

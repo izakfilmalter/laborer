@@ -22,6 +22,12 @@ The root-bound runtime that receives work-thread events and invokes the configur
 **Laborer root**:
 The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
 
+**Laborer global config root**:
+The user-owned directory containing only durable Markdown Agent context and its directory partitions. It is `~/.config/laborer` by default or `$XDG_CONFIG_HOME/laborer` when `XDG_CONFIG_HOME` is absolute and nonblank. It is outside every Laborer root: Souls are partitioned there by canonical Laborer-root identity, while Workspace memory and User profiles are partitioned by authenticated Slack workspace identity.
+
+**Laborer global state root**:
+The user-owned coordination directory for cross-process Agent-context mutation locks. It is `~/.local/state/laborer` by default or `$XDG_STATE_HOME/laborer` when `XDG_STATE_HOME` is absolute and nonblank. Workspace and User-profile locks are keyed by authenticated Slack workspace and target so different Laborer roots coordinate the same memory. Runtime JSON, logs, diagnostics, readiness files, and Runner state remain under each Laborer root's `.laborer-runtime` directory; they are not global state.
+
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
 
@@ -70,13 +76,13 @@ The following terms belong to the first intended coding-workflow use case, not t
 A user-configured, general-purpose agent supervised by Laborer for one work thread. One work thread continues one durable agent session, retaining prior messages, tool activity, and operation results; within the authority granted by the user, the agent may answer, investigate, execute, modify, delegate, orchestrate, or invoke Actions as it chooses.
 
 **Soul**:
-The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when an agent session begins so later edits affect only subsequently created agent sessions.
+The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. It is stored under the Laborer global config root using a stable identity derived from the canonical Laborer root, so path aliases share one Soul and distinct roots do not. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when an agent session begins so later edits affect only subsequently created agent sessions.
 
 **Workspace memory**:
-Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when an agent session begins so later changes affect only subsequently created agent sessions.
+Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. It is stored under that Slack workspace's partition in the Laborer global config root, independently of the bound Laborer root. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when an agent session begins so later changes affect only subsequently created agent sessions.
 
 **User profile**:
-Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
+Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. Profiles are stored in the workspace's partition in the Laborer global config root and never cross Slack workspace boundaries. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
 
 **Agent context snapshot**:
 The context fixed for one agent session from the Soul and Workspace memory present when that session begins, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to subsequently created agent sessions or participants not yet introduced into the current session. If a work thread's agent session cannot be resumed and must be replaced, the replacement receives a new snapshot.

@@ -149,7 +149,17 @@ introduced human is enriched; only lookups that fail or time out fall back to a
 stable Slack-ID name and produce a bounded local warning. Each new ACP session also receives one
 workspace-bound `laborer-memory` MCP server. Its sole `memory` tool can add,
 replace, or remove Workspace memory and validated Slack User-profile content;
-Soul is not mutable. Writes are owner-only, atomic, cross-process serialized,
+Soul is not mutable. These Markdown sources live in the user-global
+`~/.config/laborer` directory, or `$XDG_CONFIG_HOME/laborer` when that variable
+is absolute and nonblank. Souls are keyed by canonical Laborer-root identity;
+Workspace memory and User profiles are keyed by authenticated Slack workspace,
+including when roots are shared. Legacy root `SOUL.md` and workspace Markdown
+are staged and migrated under their legacy locks without overwriting an
+existing global target. Interrupted byte-identical publications finish on retry;
+conflicting or concurrently replaced data is retained. Cross-root mutation locks
+live separately in `~/.local/state/laborer`, or `$XDG_STATE_HOME/laborer` when
+that variable is absolute and nonblank. Writes are owner-only, atomic,
+cross-process serialized,
 and reread the operator-editable Markdown while holding the lock. Root and
 workspace directory identities are retained and rechecked before reads and
 writes. Each ACP session uses a bounded unique registration name so OpenCode's
@@ -360,7 +370,8 @@ finite completion time and no abort/error. Public reply records, including
 their trailing newline, remain limited
 to 1 MiB.
 
-Live state is stored in ignored `next/.laborer-runtime/`. Its state and
+Live runtime state is stored in ignored `next/.laborer-runtime/`; Agent-context
+Markdown is not. Runtime state and
 work-thread directories are forced to owner-only permissions, and the atomic
 filesystem snapshot fails closed if it is corrupt or unwritable. Delete or
 inspect this directory only while the Runner is stopped. Legacy startup acquires

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
@@ -27,7 +27,11 @@ describe("repository secret safety", () => {
   it("contains no unredacted Slack token prefixes in trackable files", () => {
     const violations: string[] = [];
     for (const relativePath of trackableFiles()) {
-      const content = readFileSync(resolve(repositoryRoot, relativePath));
+      const path = resolve(repositoryRoot, relativePath);
+      if (!existsSync(path)) {
+        continue;
+      }
+      const content = readFileSync(path);
       if (content.includes(0)) {
         continue;
       }

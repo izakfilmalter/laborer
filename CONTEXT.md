@@ -70,16 +70,16 @@ The following terms belong to the first intended coding-workflow use case, not t
 A user-configured, general-purpose agent supervised by Laborer for one work thread. One work thread continues one durable agent session, retaining prior messages, tool activity, and operation results; within the authority granted by the user, the agent may answer, investigate, execute, modify, delegate, orchestrate, or invoke Actions as it chooses.
 
 **Soul**:
-The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when a work thread begins so later edits affect only new work threads.
+The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when an agent session begins so later edits affect only subsequently created agent sessions.
 
 **Workspace memory**:
-Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when a work thread begins so later changes affect only new work threads.
+Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when an agent session begins so later changes affect only subsequently created agent sessions.
 
 **User profile**:
 Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
 
 **Agent context snapshot**:
-The durable context fixed for one work thread from the Soul and Workspace memory present at activation, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to new work threads or participants not yet introduced into the thread.
+The context fixed for one agent session from the Soul and Workspace memory present when that session begins, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to subsequently created agent sessions or participants not yet introduced into the current session. If a work thread's agent session cannot be resumed and must be replaced, the replacement receives a new snapshot.
 
 **Conversation-agent authority**:
 The user alone determines what a conversation agent may do and which capabilities it can access, including shell execution, filesystem and network access, tools, skills, MCP servers, Actions, and orchestration. Laborer must never narrow, disable, hide, replace, or reinterpret those user-granted capabilities; Actions are additional capabilities, not the boundary of the agent's authority.
@@ -101,7 +101,7 @@ Existing or promised behavior producing the wrong result.
 Net-new or intentionally changed behavior.
 
 **Agent session**:
-An optional durable conversational identity managed by a work handler. Laborer treats agent choice and session continuation as handler concerns.
+An optional durable conversational identity managed by a work handler. The current conversation agent binds one agent session to each work thread and minimally resumes it across daemon restarts; Laborer otherwise treats agent choice and session continuation as handler concerns.
 
 **Legacy Laborer app**:
 The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by coding work handlers.

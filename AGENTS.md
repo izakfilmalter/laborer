@@ -1,190 +1,26 @@
-# Ultracite Code Standards
+# Laborer Repository
 
-This project uses **Ultracite**, a zero-config preset that enforces strict code quality standards through automated formatting and linting.
+This repository contains two implementations with different architectures and dependencies:
 
-## Quick Reference
+- `next/` is the primary Slack-native Laborer and supersedes the legacy app.
+- `current/` is the legacy desktop mission-control app.
 
-- **Check formatting**: `bun run --cwd current format`
-- **Fix formatting**: `bun run --cwd current format:fix`
-- **Run all checks** (typecheck + format fix + tests): `bun run --cwd current check`
-- **Diagnose setup**: `cd current && bun x ultracite doctor`
+Use the nearest `AGENTS.md` for implementation-specific guidance. Default new product work to `next/`; change `current/` only when the task explicitly concerns the legacy app. Keep changes inside the target implementation unless the task explicitly crosses that boundary.
 
-Biome (the underlying engine) provides robust linting and formatting. Most issues are automatically fixable.
+## Domain and Decisions
 
----
+Before changing behavior, read the relevant parts of root `CONTEXT.md` and any applicable ADRs in `docs/adr/`. Use their canonical terms and surface conflicts with recorded decisions.
 
-## Core Principles
+Issues and PRDs live in GitHub Issues for `izakfilmalter/laborer`. Tracker conventions are in `docs/agents/issue-tracker.md`; triage labels are in `docs/agents/triage-labels.md`.
 
-Write code that is **accessible, performant, type-safe, and maintainable**. Focus on clarity and explicit intent over brevity.
+## Project References
 
-### Type Safety & Explicitness
+OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 
-- Use explicit types for function parameters and return values when they enhance clarity
-- Prefer `unknown` over `any` when the type is genuinely unknown
-- Use const assertions (`as const`) for immutable values and literal types
-- Leverage TypeScript's type narrowing instead of type assertions
-- Use meaningful variable names instead of magic numbers - extract constants with descriptive names
+- `@effect` — `github.com/Effect-TS/effect`
+- `@opencode` — `github.com/anomalyco/opencode`
+- `@openclaw` — `github.com/openclaw/openclaw`
+- `@hermes-agent` — `github.com/NousResearch/hermes-agent`
+- `@agent-client-protocol` — `github.com/agentclientprotocol/agent-client-protocol`
 
-### Modern JavaScript/TypeScript
-
-- Use arrow functions for callbacks and short functions
-- Use optional chaining (`?.`) and nullish coalescing (`??`) for safer property access
-- Prefer template literals over string concatenation
-- Use destructuring for object and array assignments
-- Use `const` by default, `let` only when reassignment is needed, never `var`
-
-### Async & Promises
-
-- Always `await` promises in async functions - don't forget to use the return value
-- Use `async/await` syntax instead of promise chains for better readability
-- Handle errors appropriately in async code with try-catch blocks
-- Don't use async functions as Promise executors
-
-### React & JSX
-
-- Use function components over class components
-- Call hooks at the top level only, never conditionally
-- Specify all dependencies in hook dependency arrays correctly
-- Use the `key` prop for elements in iterables (prefer unique IDs over array indices)
-- Nest children between opening and closing tags instead of passing as props
-- Don't define components inside other components
-- Use semantic HTML and ARIA attributes for accessibility:
-  - Provide meaningful alt text for images
-  - Use proper heading hierarchy
-  - Add labels for form inputs
-  - Include keyboard event handlers alongside mouse events
-  - Use semantic elements (`<button>`, `<nav>`, etc.) instead of divs with roles
-
-### Error Handling & Debugging
-
-- Remove `console.log`, `debugger`, and `alert` statements from production code
-- Throw `Error` objects with descriptive messages, not strings or other values
-- Use `try-catch` blocks meaningfully - don't catch errors just to rethrow them
-- Prefer early returns over nested conditionals for error cases
-
-### Code Organization
-
-- Keep functions focused and under reasonable cognitive complexity limits
-- Extract complex conditions into well-named boolean variables
-- Use early returns to reduce nesting
-- Prefer simple conditionals over nested ternary operators
-- Group related code together and separate concerns
-
-### Security
-
-- Add `rel="noopener"` when using `target="_blank"` on links
-- Avoid `dangerouslySetInnerHTML` unless absolutely necessary
-- Don't use `eval()` or assign directly to `document.cookie`
-- Validate and sanitize user input
-
-### Performance
-
-- Avoid spread syntax in accumulators within loops
-- Use top-level regex literals instead of creating them in loops
-- Prefer specific imports over namespace imports
-- Avoid barrel files (index files that re-export everything)
-
-### Framework-Specific Guidance
-
-**React 19+:**
-
-- Use ref as a prop instead of `React.forwardRef`
-
-**Solid/Svelte/Vue/Qwik:**
-
-- Use `class` and `for` attributes (not `className` or `htmlFor`)
-
----
-
-## Testing
-
-- Write assertions inside `it()` or `test()` blocks
-- Avoid done callbacks in async tests - use async/await instead
-- Don't use `.only` or `.skip` in committed code
-- Keep test suites reasonably flat - avoid excessive `describe` nesting
-
-## When Biome Can't Help
-
-Biome's linter will catch most issues automatically. Focus your attention on:
-
-1. **Business logic correctness** - Biome can't validate your algorithms
-2. **Meaningful naming** - Use descriptive names for functions, variables, and types
-3. **Architecture decisions** - Component structure, data flow, and API design
-4. **Edge cases** - Handle boundary conditions and error states
-5. **User experience** - Accessibility, performance, and usability considerations
-6. **Documentation** - Add comments for complex logic, but prefer self-documenting code
-
----
-
-Most formatting and common issues are automatically fixed by Biome. Run `bun run --cwd current format:fix` before committing changes to the current app.
-
-## Source References
-
-The `.reference/` directory contains shallow clones of key dependency repositories. Search these for real implementations, type definitions, API usage examples, and patterns when documentation isn't enough.
-
-- `.reference/effect/` — [Effect](https://github.com/Effect-TS/effect) monorepo (core, platform, cli, schema, sql, etc.)
-- `.reference/livestore/` — [LiveStore](https://github.com/livestorejs/livestore) local-first reactive data store
-- `.reference/opencode/` — [OpenCode](https://github.com/anomalyco/opencode) AI coding agent CLI
-- `.reference/vscode/` — [VS Code](https://github.com/microsoft/vscode) editor (extension API, UI patterns, terminal integration)
-- `.reference/xterm/` — [xterm.js](https://github.com/xtermjs/xterm.js) terminal emulator for the browser
-- `.reference/desktop/` — [GitHub Desktop](https://github.com/desktop/desktop) Git GUI client (Electron, TypeScript, React)
-- `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
-- `.reference/superhq/` — [SuperHQ](https://github.com/superhq-ai/superhq) sandboxed AI agent orchestration platform (Rust, GPUI, isolated coding agents)
-- `.reference/cmux/` — [cmux](https://github.com/manaflow-ai/cmux) terminal multiplexer
-- `.reference/brrr/` — [brrr](https://github.com/hsubra89/brrr) autonomous AI development loop CLI (ralph-loops, task orchestration)
-- `.reference/ghostty/` — [Ghostty](https://github.com/ghostty-org/ghostty) fast, native terminal emulator (Zig, GPU-accelerated rendering, platform integration)
-- `.reference/ghostty-web/` — [ghostty-web](https://github.com/coder/ghostty-web) Ghostty terminal emulator compiled for the web (WebAssembly, browser-based terminal)
-- `.reference/mux/` — [Mux](https://github.com/coder/mux) desktop app for isolated, parallel agentic development (coding agent multiplexer, Electron, TypeScript)
-- `.reference/pierre/` — [Pierre](https://github.com/pierrecomputer/pierre) monorepo (@pierre/trees file tree UI, @pierre/diffs diff viewer, Shadow DOM components)
-
-<!-- effect-solutions:start -->
-## Effect Best Practices
-
-**IMPORTANT:** Always consult effect-solutions before writing Effect code.
-
-1. Run `effect-solutions list` to see available guides
-2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
-3. Search `.reference/effect/` for real implementations (run `effect-solutions setup` first)
-
-Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
-
-Never guess at Effect patterns - check the guide first.
-<!-- effect-solutions:end -->
-
-## LiveStore
-
-When working with LiveStore, search `.reference/livestore/` for schema definitions, store setup patterns, and React integration examples. Key areas to explore:
-
-- `packages/@livestore/livestore/` — core library (schema, store, events)
-- `packages/@livestore/react/` — React bindings and hooks
-- `packages/@livestore/wa-sqlite/` — SQLite adapter for web
-- Look at the examples in the repo for full integration patterns
-
-### Event Schema Evolution
-
-The eventlog is immutable and append-only — old events are never rewritten. State tables are automatically rematerialized from the eventlog when their schema changes, but event definitions must always be **backward-compatible** with previously persisted data.
-
-Rules when modifying event schemas:
-
-- **Adding a field:** Must use `Schema.optional(...)` or `Schema.withDefault(...)` so old events without the field still decode.
-- **Removing a field:** Allowed — old events with the extra field still decode fine.
-- **Renaming/changing a field type:** Not safe — create a new event version instead (e.g. `v2.EventName`).
-- **Deleting an event definition:** Not allowed — LiveStore validates that all previously used event definitions still exist.
-
-In materializers, use `?? null` (or a suitable default) for optional fields to convert `undefined` to the value expected by the SQLite column.
-
-**Never add a required field to an existing event.** This breaks rematerialization for any user with old events in their eventlog.
-
-## Agent skills
-
-### Issue tracker
-
-Issues and PRDs are tracked in GitHub Issues for `izakfilmalter/laborer`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Triage uses the canonical default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This repo uses a single-context domain docs layout: root `CONTEXT.md` and root `docs/adr/`. See `docs/agents/domain.md`.
+Use them for specifications, implementation patterns, tests, and examples. Prefer the target implementation's installed dependency versions when APIs differ.

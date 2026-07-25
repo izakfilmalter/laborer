@@ -31,6 +31,7 @@ const BOT_ID = "B204000001";
 const BOT_USER_ID = "U204LABORER";
 const PUBLIC_CHANNEL_NAME = "tracer-bullet";
 const PRIVATE_CHANNEL_NAME = "private-tracer";
+const SECONDARY_HUMAN_NAME = "external-bot-user";
 const MAX_START_ATTEMPTS = 5;
 const DEFAULT_PAGE_SIZE = 2;
 
@@ -95,7 +96,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                     email: "human@example.com",
                   },
                   {
-                    name: "external-bot-user",
+                    name: SECONDARY_HUMAN_NAME,
                     real_name: "External Bot User",
                     email: "external-bot@example.com",
                   },
@@ -124,6 +125,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:write",
                       "reactions:read",
                       "reactions:write",
+                      "users:read",
                     ],
                   },
                 ],
@@ -155,6 +157,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:history",
                       "reactions:read",
                       "reactions:write",
+                      "users:read",
                     ],
                   },
                 ],
@@ -611,6 +614,7 @@ export interface EmulatedSlackFixture {
   readonly humanClient: WebClient;
   readonly humanUserId: string;
   readonly privateChannelId: string;
+  readonly secondaryHumanUserId: string;
   readonly teamId: string;
 }
 
@@ -643,18 +647,23 @@ const validateFixture = (
         rejectRateLimitedCalls: true,
         slackApiUrl: `${emulator.url}/api/`,
       });
-      const [humanAuth, botAuth, channelId, privateChannelId] =
+      const [humanAuth, botAuth, channelId, privateChannelId, users] =
         await Promise.all([
           humanClient.auth.test(),
           botClient.auth.test(),
           findChannelId(humanClient, PUBLIC_CHANNEL_NAME),
           findChannelId(humanClient, PRIVATE_CHANNEL_NAME),
+          botClient.users.list({}),
         ]);
+      const secondaryHumanUserId = users.members?.find(
+        (user) => user.name === SECONDARY_HUMAN_NAME
+      )?.id;
       if (
         humanAuth.user_id === undefined ||
         botAuth.team_id === undefined ||
         botAuth.user_id !== BOT_USER_ID ||
-        humanAuth.user_id === botAuth.user_id
+        humanAuth.user_id === botAuth.user_id ||
+        secondaryHumanUserId === undefined
       ) {
         throw new Error("Emulate actor identities were not distinct");
       }
@@ -681,6 +690,7 @@ const validateFixture = (
         humanClient,
         humanUserId: humanAuth.user_id,
         privateChannelId,
+        secondaryHumanUserId,
         teamId: botAuth.team_id,
       };
     },

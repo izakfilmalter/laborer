@@ -86,9 +86,9 @@ bun run start:acp-canary
 
 The explicit command defaults to `opencode acp`, with the configured
 `LABORER_ROOT` (or this `next` directory) as both process cwd and ACP session
-working context. It initializes ACP once, creates one in-memory ACP session per
-accepted Slack work thread, reuses that session for follow-up turns while the
-canary lives, and streams each public ACP message through Slack's native
+working context. It initializes ACP once, creates one ACP session per accepted
+Slack work thread, reuses that session for follow-up turns, and streams each
+public ACP message through Slack's native
 `chat.startStream`, `chat.appendStream`, and `chat.stopStream` methods. Appends
 carry only new ACP text; oversized Markdown is split at Slack's 12,000-character
 boundary without splitting Unicode surrogate pairs. Every started stream is
@@ -104,10 +104,72 @@ reap the supervised child. Stop failures are attempted independently for every
 stream: a stop failure after otherwise successful ACP work becomes a sanitized
 delivery failure, while an existing ACP failure remains the primary turn
 outcome. This
-POC does not persist canary sessions and does not expose or migrate Laborer
-Actions or implementation agents. Because its dedicated Slack app owns a
-separate app-wide event stream and its Runner state is in memory, the canary does
-not take the production root lock and can run alongside the existing daemon.
+POC does not expose or migrate Laborer Actions or implementation agents. Issue
+#241 durably associates the opaque ACP session ID and introduced participant IDs
+with each workspace-scoped canonical work thread. After a clean application
+restart, the next turn uses stable ACP v1 `session/resume` with the original
+absolute cwd and memory MCP server, without `session/load` or transcript replay.
+ACP v1 does not define a portable "session unavailable" error. An exact
+JSON-RPC invalid-params (`-32602`) response containing only
+`{ sessionId: <requested ID> }` is definitive. Current OpenCode can instead
+return generic internal-error (`-32603`), so any other completed resume failure
+is checked with advertised stable-v1 `session/list`. OpenCode's cursor is derived
+only from `updatedAt`, so tied timestamps can make paginated absence ambiguous:
+replacement is allowed only when one complete first page omits the ID and has no
+next cursor. The pinned OpenCode adapter's underlying list defaults to 100 and
+can silently truncate at exactly 100 without returning a cursor, so generic
+absence additionally requires fewer than 100 entries. Finding the target,
+receiving any cursor, receiving 100 entries, or encountering an unsupported,
+failed, timed-out, malformed, or oversized listing preserves the durable mapping
+and fails closed. Listing is bounded by the five-second session-establishment
+deadline and 1,000,000 entries. No message text or `session/load` is used. An
+unavailable durable OpenCode session is replaced with a current Agent context
+snapshot and the replacement mapping is atomically published. MCP
+readiness failure after a successful resume disables memory
+authorization for that attachment but preserves the one resumed session and its
+history; stable ACP cannot detach that server safely. A durably marked
+in-flight prompt is not replayed after an ambiguous interruption; this prototype
+does not claim exactly-once ACP prompt recovery. Known terminal peer rejection,
+public-output limit, and Slack-publication failures durably suppress that prompt
+ID before local invalidation; transport-ambiguous interruption retains the
+in-flight marker. Session-ID claims are connection-wide serialized through peer
+establishment, collision checking, durable publication, and local installation.
+Duplicate peer session IDs, establishment timeouts, and failed or timed-out
+session close requests quarantine and reap the owned ACP connection instead of
+allowing ambiguous routes or late child activity. Resumed public updates are
+queued only inside an active prompt boundary; delayed pre/post-prompt chunks are
+discarded while private memory-tool observation remains active. ACP updates carry
+no prompt ID, so this relies on the protocol-order assumption that conforming
+peers send a prompt's updates before its response. An update arriving after that
+response and after another prompt begins is un-attributable protocol corruption;
+Laborer does not invent unsafe cross-turn attribution. Slack participant-name
+enrichment admits at most four concurrent `users.info` requests per authenticated workspace. Each
+lookup has a five-second total deadline including capacity wait. Every newly
+introduced human is enriched; only lookups that fail or time out fall back to a
+stable Slack-ID name and produce a bounded local warning. Each new ACP session also receives one
+workspace-bound `laborer-memory` MCP server. Its sole `memory` tool can add,
+replace, or remove Workspace memory and validated Slack User-profile content;
+Soul is not mutable. Writes are owner-only, atomic, cross-process serialized,
+and reread the operator-editable Markdown while holding the lock. Root and
+workspace directory identities are retained and rechecked before reads and
+writes. Each ACP session uses a bounded unique registration name so OpenCode's
+process-global MCP registry cannot replace an older session's client. Memory
+permission is granted once only after a preceding pinned-OpenCode tool update
+identified the exact generated tool and call ID; request titles are never an
+authorization source. Workspace
+memory is limited to 4,000 rendered characters, User profiles to 2,000, and
+profiles are created only by a successful mutation. Tool activity and bounded
+registration or mutation diagnostics remain private rather than becoming Slack
+messages. Routine maintenance chatter stays private, while explicit questions
+about remembered information can still receive substantive answers. The live
+canary binds authenticated workspace identity to the ordinary workspace runtime
+paths and persists accepted Runner threads in
+`.laborer-runtime/slack-workspaces/<team>/acp-runner-state.json`, deliberately
+separate from production's `runner-state.json`. Its independent ACP mapping
+remains in the distinct `acp-conversations.json` file in that workspace; none of
+the three layers replaces another, and shared-root workspaces remain isolated.
+Because its dedicated Slack app owns a separate app-wide event stream, the canary
+does not take the production root lock and can run alongside the existing daemon.
 Inbound ACP NDJSON is capped before reaching the official SDK's otherwise
 unbounded line buffer: 2 MiB per line, 256 MiB over the canary-process lifetime,
 and 250,000 non-empty records. Post-start child failure closes the transport,
@@ -168,7 +230,8 @@ different initializer if that trust boundary is inappropriate.
    create the app. The manifest enables Socket Mode, creates the Laborer bot,
    subscribes only to `app_mention`, `message.channels`, and `message.groups`,
    and requests only `app_mentions:read`, `channels:history`, `groups:history`,
-   `chat:write`, and `reactions:write` bot scopes.
+   `chat:write`, `reactions:write`, and `users:read` bot scopes. It does not
+   request `users:read.email`.
 3. In **OAuth & Permissions**, choose **Install to Workspace** (or reinstall
    after a manifest change), approve it, and copy the **Bot User OAuth Token**.
 4. In **Basic Information → App-Level Tokens**, choose **Generate Token and

@@ -19,9 +19,10 @@ import { loadLaborerConfig } from "../slack/laborer-config.ts";
 import { makeSlackNativeStreamCapability } from "../slack/native-stream.ts";
 import { startSocketModeAdapter } from "../slack/socket-mode.ts";
 import {
-  makeAcpConversationCanary,
+  makeWorkspaceBoundAcpConversationCanary,
   openCodeAcpProcessOptions,
 } from "./canary-composition.ts";
+import { makeBoundedSlackParticipantLookup } from "./slack-participant-lookup.ts";
 
 const DEFAULT_LABORER_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -67,10 +68,14 @@ const program = Effect.gen(function* () {
     pageSize: 100,
   });
   const optedInEnvironment = laborer.config.application?.environment ?? [];
-  const harness = yield* makeAcpConversationCanary({
+  const harness = yield* makeWorkspaceBoundAcpConversationCanary({
     activationAcknowledger: makeSlackActivationAcknowledger(botClient),
     completionReactor: makeSlackCompletionReactor(botClient),
     laborerSlackId: identity.botUserId,
+    participantLookup: makeBoundedSlackParticipantLookup({
+      logger: silentSocketLogger,
+      token: Redacted.value(config.botToken),
+    }),
     process: openCodeAcpProcessOptions({
       cwd: laborer.root,
       environment: environmentForConfiguredHandler(

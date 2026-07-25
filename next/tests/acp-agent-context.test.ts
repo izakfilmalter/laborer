@@ -16,7 +16,10 @@ import {
   DEFAULT_SOUL,
   loadAcpAgentContextSnapshot,
   prepareAcpAgentContextSources,
+  renderAcpPrompt,
+  renderAcpPromptWithinByteLimit,
   SOUL_FILE_NAME,
+  userProfilePath,
   WORKSPACE_MEMORY_FILE_NAME,
 } from "../src/acp-conversation-prototype/agent-context.ts";
 import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
@@ -41,6 +44,8 @@ const scriptedPeerPath = resolve(
   "tests/fixtures/scripted-acp-peer.ts"
 );
 const OBSERVATION_TIMEOUT_MILLIS = 5000;
+const MAX_ACP_PROMPT_BYTES = 256 * 1024;
+const textEncoder = new TextEncoder();
 const SOUL_CONTENT_PATTERN = /<soul>([\s\S]*)<\/soul>/;
 const WORKSPACE_MEMORY_CONTENT_PATTERN =
   /<workspace-memory>([\s\S]*)<\/workspace-memory>/;
@@ -441,6 +446,235 @@ describe("issue #238 ACP Agent context", () => {
   );
 
   it.live(
+    "sheds a User profile before Workspace memory or Soul while retaining participant identity",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const laborerRoot = yield* makeTempDirectoryScoped(
+            "laborer-acp-context-profile-budget-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-acp-context-profile-budget-controls-"
+          );
+          const promptJsonlPath = join(controls, "prompts.jsonl");
+          const releasePath = join(controls, "release");
+          yield* Effect.promise(() => writeFile(releasePath, "release"));
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId: "T239-PROFILE-BUDGET",
+          });
+          yield* Effect.promise(() => mkdir(sources.userProfilesDirectory));
+          const soul = "S".repeat(3000);
+          const workspaceMemory = "M".repeat(3000);
+          const userProfile = "P".repeat(2000);
+          yield* Effect.promise(() => writeFile(sources.soulPath, soul));
+          yield* Effect.promise(() =>
+            writeFile(sources.workspaceMemoryPath, workspaceMemory)
+          );
+          yield* Effect.promise(() =>
+            writeFile(userProfilePath(sources, "U238DIRECT"), userProfile)
+          );
+          const emptyRequest = directConversationRequest({
+            conversationId: "conversation:239-profile-budget",
+            input: "",
+            messageText: "",
+            promptId: "prompt:one",
+          });
+          const completeOverhead = textEncoder.encode(
+            renderAcpPrompt(emptyRequest, {
+              participants: [
+                {
+                  slackUserId: "U238DIRECT",
+                  userProfile,
+                  visibleName: "U238DIRECT",
+                },
+              ],
+              soul,
+              workspaceMemory,
+            })
+          ).byteLength;
+          const messageText = "I".repeat(
+            MAX_ACP_PROMPT_BYTES - completeOverhead + 1000
+          );
+          const conversationAgent = yield* makeAcpConversationAgent({
+            agentContext: sources,
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: laborerRoot,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_PROMPT_JSONL_PATH: promptJsonlPath,
+              SCRIPTED_ACP_READY_PATH: join(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: releasePath,
+            },
+          });
+
+          yield* conversationAgent.handle(
+            directConversationRequest({
+              conversationId: "conversation:239-profile-budget",
+              input: messageText,
+              messageText,
+              promptId: "prompt:one",
+            }),
+            () => Effect.void
+          );
+
+          const prompt = (yield* readPromptRecords(promptJsonlPath))[0]?.prompt;
+          assert.ok(prompt?.includes(`<soul>${soul}</soul>`));
+          assert.ok(
+            prompt?.includes(
+              `<workspace-memory>${workspaceMemory}</workspace-memory>`
+            )
+          );
+          assert.ok(!prompt?.includes("<user-profile>"));
+          assert.ok(prompt?.includes('slack-user-id="U238DIRECT"'));
+          assert.ok(prompt?.includes(messageText));
+        })
+      ),
+    30_000
+  );
+
+  it.live(
+    "fails before ACP submission when participant identity and Slack messages cannot fit",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const laborerRoot = yield* makeTempDirectoryScoped(
+            "laborer-acp-context-identity-budget-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-acp-context-identity-budget-controls-"
+          );
+          const promptJsonlPath = join(controls, "prompts.jsonl");
+          const releasePath = join(controls, "release");
+          yield* Effect.promise(() => writeFile(releasePath, "release"));
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId: "T239-IDENTITY-BUDGET",
+          });
+          const emptyRequest = directConversationRequest({
+            conversationId: "conversation:239-identity-budget",
+            input: "",
+            messageText: "",
+            promptId: "prompt:one",
+          });
+          const requiredOverhead = textEncoder.encode(
+            renderAcpPrompt(emptyRequest)
+          ).byteLength;
+          const messageText = "I".repeat(
+            MAX_ACP_PROMPT_BYTES - requiredOverhead
+          );
+          const oversizedIdentityRequest = directConversationRequest({
+            conversationId: "conversation:239-identity-budget",
+            input: messageText,
+            messageText,
+            promptId: "prompt:one",
+          });
+          assert.strictEqual(
+            textEncoder.encode(renderAcpPrompt(oversizedIdentityRequest))
+              .byteLength,
+            MAX_ACP_PROMPT_BYTES
+          );
+          const conversationAgent = yield* makeAcpConversationAgent({
+            agentContext: sources,
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: laborerRoot,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_PROMPT_JSONL_PATH: promptJsonlPath,
+              SCRIPTED_ACP_READY_PATH: join(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: releasePath,
+            },
+          });
+
+          const rejected = yield* Effect.result(
+            conversationAgent.handle(
+              oversizedIdentityRequest,
+              () => Effect.void
+            )
+          );
+          assert.strictEqual(rejected._tag, "Failure");
+          assert.strictEqual(
+            yield* Effect.promise(async () => {
+              try {
+                return (await stat(promptJsonlPath)).size;
+              } catch {
+                return 0;
+              }
+            }),
+            0
+          );
+
+          yield* conversationAgent.handle(
+            directConversationRequest({
+              conversationId: "conversation:239-identity-budget",
+              input: "small follow-up",
+              messageText: "small follow-up",
+              promptId: "prompt:two",
+            }),
+            () => Effect.void
+          );
+          const records = yield* readPromptRecords(promptJsonlPath);
+          assert.strictEqual(records.length, 1);
+          assert.ok(records[0]?.prompt.includes('slack-user-id="U238DIRECT"'));
+        })
+      ),
+    30_000
+  );
+
+  it.effect(
+    "sheds Soul after profile and Workspace memory before participant identity",
+    () =>
+      Effect.gen(function* () {
+        const participant = {
+          slackUserId: "U238DIRECT",
+          userProfile: "P".repeat(2000),
+          visibleName: "Direct Participant",
+        } as const;
+        const emptyRequest = directConversationRequest({
+          conversationId: "conversation:239-soul-budget",
+          input: "",
+          messageText: "",
+          promptId: "prompt:one",
+        });
+        const identityOverhead = textEncoder.encode(
+          renderAcpPrompt(emptyRequest, {
+            participants: [{ ...participant, userProfile: null }],
+            soul: null,
+            workspaceMemory: null,
+          })
+        ).byteLength;
+        const messageText = "I".repeat(
+          MAX_ACP_PROMPT_BYTES - identityOverhead - 1000
+        );
+        const rendered = yield* renderAcpPromptWithinByteLimit(
+          directConversationRequest({
+            conversationId: "conversation:239-soul-budget",
+            input: messageText,
+            messageText,
+            promptId: "prompt:one",
+          }),
+          {
+            participants: [participant],
+            soul: "S".repeat(3000),
+            workspaceMemory: "M".repeat(3000),
+          },
+          MAX_ACP_PROMPT_BYTES
+        );
+
+        assert.ok(rendered !== null);
+        assert.deepStrictEqual(rendered.introducedParticipantIds, [
+          "U238DIRECT",
+        ]);
+        assert.ok(rendered.prompt.includes('slack-user-id="U238DIRECT"'));
+        assert.ok(!rendered.prompt.includes("<user-profile>"));
+        assert.ok(!rendered.prompt.includes("<workspace-memory>"));
+        assert.ok(!rendered.prompt.includes("<soul>"));
+      })
+  );
+
+  it.live(
     "snapshots Soul and workspace memory once per ACP session while preserving attributed Slack input",
     () =>
       Effect.scoped(
@@ -718,7 +952,8 @@ describe("issue #238 ACP Agent context", () => {
 
           const invalidPrompt = records[1]?.prompt ?? "";
           assert.ok(!invalidPrompt.includes("<soul>"));
-          assert.ok(!invalidPrompt.includes("<agent-context"));
+          assert.ok(!invalidPrompt.includes("<workspace-memory>"));
+          assert.ok(invalidPrompt.includes("<slack-participant"));
           assert.ok(invalidPrompt.includes("degraded context"));
           const replies = yield* Effect.promise(() =>
             fixture.humanClient.conversations.replies({

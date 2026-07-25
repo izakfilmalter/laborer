@@ -5,6 +5,7 @@ import {
   type ActiveSession,
   type ActiveSessionMessage,
   client,
+  type McpServerStdio,
   methods,
   ndJsonStream,
   PROTOCOL_VERSION,
@@ -20,13 +21,30 @@ import type {
 import {
   type AcpAgentContextSources,
   loadAcpAgentContextSnapshot,
+  loadAcpSlackParticipantContexts,
   renderAcpPrompt,
   renderAcpPromptWithinByteLimit,
 } from "./agent-context.ts";
+import {
+  authorizeLaborerMemoryPermission,
+  awaitLaborerMemoryMcpReadiness,
+  type LaborerMemoryDiagnosticCode,
+  type LaborerMemoryPermissionRegistration,
+  laborerMemoryMcpAuthority,
+  observeLaborerMemoryToolCall,
+  type PreparedLaborerMemoryMcpRegistration,
+  prepareLaborerMemoryMcpRegistration,
+  recordLaborerMemoryDiagnostic,
+  recordLaborerMemoryDiagnosticForSources,
+} from "./memory-mcp.ts";
+import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
 
 const MAX_PROMPT_BYTES = 256 * 1024;
 const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024;
 const MAX_PUBLIC_MESSAGES = 32;
+const MEMORY_REGISTRATION_UNAVAILABLE = Symbol(
+  "memory-registration-unavailable"
+);
 const CHILD_EXIT_GRACE_MILLIS = 2000;
 const MAX_ACP_NDJSON_LINE_BYTES = 2 * 1024 * 1024;
 const MAX_ACP_INBOUND_PROCESS_BYTES = 256 * 1024 * 1024;
@@ -53,6 +71,9 @@ export interface AcpConversationAgentOptions {
     readonly maxProcessBytes?: number;
     readonly maxProcessRecords?: number;
   };
+  readonly laborerSlackId?: string;
+  readonly memoryMcpServer?: McpServerStdio;
+  readonly participantLookup?: SlackParticipantLookupShape;
 }
 
 interface AcpInboundLimits {
@@ -79,6 +100,8 @@ interface ActivePrompt {
 }
 
 interface ManagedSession {
+  /** #241 will persist this set beside session.sessionId for restart resume. */
+  readonly introducedParticipantIds: Set<string>;
   needsInitialContext: boolean;
   readonly session: ActiveSession;
 }
@@ -374,34 +397,72 @@ const publicTextChunk = (
   return { messageId: update.messageId, text: update.content.text };
 };
 
+const newHumanParticipantIds = (
+  request: ConversationAgentRequest,
+  introducedParticipantIds: ReadonlySet<string>,
+  laborerSlackId: string | undefined
+): string[] => {
+  const pending = new Set<string>();
+  for (const message of [...request.context, ...request.messages]) {
+    if (
+      message.authorKind !== "human" ||
+      message.authorSlackId === laborerSlackId ||
+      introducedParticipantIds.has(message.authorSlackId)
+    ) {
+      continue;
+    }
+    pending.add(message.authorSlackId);
+  }
+  return [...pending];
+};
+
 const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   session: ActiveSession,
   request: ConversationAgentRequest,
   requiredInput: string,
   agentContext: AcpAgentContextSources | undefined,
   needsInitialContext: boolean,
-  markInitialContextSent: () => void,
+  participantLookup: SlackParticipantLookupShape | undefined,
+  participantIds: readonly string[],
+  markContextSent: (introducedParticipantIds: readonly string[]) => void,
   publishMessage: PublishConversationAgentMessage,
   invalidate: (prompt: ActivePrompt) => Effect.Effect<void>
 ) {
   if (textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES) {
     return yield* failure("prompt");
   }
-  const input =
-    agentContext === undefined || !needsInitialContext
-      ? requiredInput
-      : yield* renderAcpPromptWithinByteLimit(
-          request,
-          yield* loadAcpAgentContextSnapshot(agentContext),
-          MAX_PROMPT_BYTES
-        );
+  let input = requiredInput;
+  let submittedParticipantIds = participantIds;
+  if (
+    agentContext !== undefined &&
+    (needsInitialContext || participantIds.length > 0)
+  ) {
+    const initialSnapshot = needsInitialContext
+      ? yield* loadAcpAgentContextSnapshot(agentContext)
+      : { participants: [], soul: null, workspaceMemory: null };
+    const participants = yield* loadAcpSlackParticipantContexts(
+      agentContext,
+      participantLookup,
+      participantIds
+    );
+    const rendered = yield* renderAcpPromptWithinByteLimit(
+      request,
+      { ...initialSnapshot, participants },
+      MAX_PROMPT_BYTES
+    );
+    if (rendered === null) {
+      return yield* failure("prompt");
+    }
+    input = rendered.prompt;
+    submittedParticipantIds = rendered.introducedParticipantIds;
+  }
   return yield* Effect.acquireUseRelease(
     Effect.sync(() => {
       const cancellation = new AbortController();
       const completion = session.prompt(input, {
         cancellationSignal: cancellation.signal,
       });
-      markInitialContextSent();
+      markContextSent(submittedParticipantIds);
       completion.catch(() => undefined);
       return { cancellation, completion };
     }),
@@ -465,9 +526,28 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         childOutput,
         configuredInboundLimits(options)
       );
+      const memoryMcpServer = options.memoryMcpServer;
+      const memoryTrustedRoot = options.agentContext?.root ?? options.cwd;
+      const memoryAuthorizedSessionPermissions = new Map<
+        string,
+        LaborerMemoryPermissionRegistration
+      >();
       const connection = client({
         name: "laborer-acp-conversation-proof",
-      }).connect(ndJsonStream(output, input));
+      })
+        .onNotification(methods.client.session.update, ({ params }) => {
+          observeLaborerMemoryToolCall(
+            params,
+            memoryAuthorizedSessionPermissions
+          );
+        })
+        .onRequest(methods.client.session.requestPermission, ({ params }) =>
+          authorizeLaborerMemoryPermission(
+            params,
+            memoryAuthorizedSessionPermissions
+          )
+        )
+        .connect(ndJsonStream(output, input));
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           connection.close();
@@ -489,6 +569,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       }
 
       const sessions = new Map<string, ManagedSession>();
+      const memoryRegistrationGate = yield* Semaphore.make(1);
       const turnGates = new Map<string, Semaphore.Semaphore>();
       const turnGateRegistrySemaphore = yield* Semaphore.make(1);
       yield* Effect.addFinalizer(() =>
@@ -497,6 +578,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             managed.session.dispose();
           }
           sessions.clear();
+          memoryAuthorizedSessionPermissions.clear();
           turnGates.clear();
         })
       );
@@ -514,26 +596,137 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           })
         );
 
+      const recordMemoryRegistrationDiagnostic = Effect.fn(
+        "AcpConversationAgent.recordMemoryRegistrationDiagnostic"
+      )(function* (
+        code: LaborerMemoryDiagnosticCode,
+        authority: { readonly root: string; readonly workspaceId: string }
+      ) {
+        yield* Effect.logWarning("Memory MCP registration failed", { code });
+        if (
+          options.agentContext !== undefined &&
+          options.agentContext.root === authority.root &&
+          options.agentContext.workspaceId === authority.workspaceId
+        ) {
+          yield* recordLaborerMemoryDiagnosticForSources({
+            code,
+            sources: options.agentContext,
+          });
+          return;
+        }
+        yield* recordLaborerMemoryDiagnostic({ code, ...authority });
+      });
+
+      const prepareMemoryRegistration = Effect.fn(
+        "AcpConversationAgent.prepareMemoryRegistration"
+      )(function* () {
+        if (memoryMcpServer === undefined) {
+          return null;
+        }
+        const prepared = yield* Effect.result(
+          prepareLaborerMemoryMcpRegistration(
+            memoryMcpServer,
+            memoryTrustedRoot
+          )
+        );
+        if (prepared._tag === "Success") {
+          return prepared.success;
+        }
+        const authority = laborerMemoryMcpAuthority(memoryMcpServer);
+        if (authority !== null) {
+          yield* recordMemoryRegistrationDiagnostic(
+            "registration-invalid",
+            authority
+          );
+        } else {
+          yield* Effect.logWarning("Memory MCP registration failed", {
+            code: "registration-invalid",
+          });
+        }
+        return MEMORY_REGISTRATION_UNAVAILABLE;
+      });
+
+      const verifyMemoryRegistrationReadiness = Effect.fn(
+        "AcpConversationAgent.verifyMemoryRegistrationReadiness"
+      )(function* (
+        registration: PreparedLaborerMemoryMcpRegistration,
+        session: ActiveSession
+      ) {
+        const readiness = yield* Effect.result(
+          awaitLaborerMemoryMcpReadiness(registration)
+        );
+        if (readiness._tag === "Failure") {
+          session.dispose();
+          yield* recordMemoryRegistrationDiagnostic(
+            readiness.failure.reason === "collision"
+              ? "registration-collision"
+              : "registration-missing",
+            registration.authority
+          );
+          return false;
+        }
+        memoryAuthorizedSessionPermissions.set(session.sessionId, {
+          observedToolCallIds: new Set<string>(),
+          permission: registration.permission,
+        });
+        return true;
+      });
+
+      const startSession = Effect.fn("AcpConversationAgent.startSession")(
+        function* (registration: PreparedLaborerMemoryMcpRegistration | null) {
+          return yield* Effect.tryPromise({
+            try: () =>
+              connection.agent
+                .buildSession({
+                  cwd: options.cwd,
+                  mcpServers:
+                    registration === null ? [] : [registration.server],
+                })
+                .start(),
+            catch: () => failure("session"),
+          });
+        }
+      );
+
+      const createManagedSession = Effect.fn(
+        "AcpConversationAgent.createManagedSession"
+      )(function* (conversationId: string) {
+        const registration = yield* prepareMemoryRegistration();
+        let session = yield* startSession(
+          registration === MEMORY_REGISTRATION_UNAVAILABLE ? null : registration
+        );
+        if (
+          registration !== null &&
+          registration !== MEMORY_REGISTRATION_UNAVAILABLE
+        ) {
+          const memoryIsReady = yield* verifyMemoryRegistrationReadiness(
+            registration,
+            session
+          );
+          if (!memoryIsReady) {
+            session = yield* startSession(null);
+          }
+        }
+        const created: ManagedSession = {
+          introducedParticipantIds: new Set<string>(),
+          needsInitialContext: options.agentContext !== undefined,
+          session,
+        };
+        sessions.set(conversationId, created);
+        return created;
+      });
+
       const sessionFor = Effect.fn("AcpConversationAgent.sessionFor")(
         function* (conversationId: string) {
           const existing = sessions.get(conversationId);
           if (existing !== undefined) {
             return existing;
           }
+          const createSession = createManagedSession(conversationId);
           return yield* Effect.uninterruptible(
-            Effect.tryPromise({
-              try: () => connection.agent.buildSession(options.cwd).start(),
-              catch: () => failure("session"),
-            }).pipe(
-              Effect.map((session) => {
-                const created: ManagedSession = {
-                  needsInitialContext: options.agentContext !== undefined,
-                  session,
-                };
-                sessions.set(conversationId, created);
-                return created;
-              })
-            )
+            memoryMcpServer === undefined
+              ? createSession
+              : memoryRegistrationGate.withPermit(createSession)
           );
         }
       );
@@ -552,6 +745,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             catch: () => undefined,
           }).pipe(Effect.ignore);
           session.dispose();
+          memoryAuthorizedSessionPermissions.delete(session.sessionId);
           if (sessions.get(conversationId)?.session === session) {
             sessions.delete(conversationId);
           }
@@ -585,14 +779,30 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 return yield* failure("prompt");
               }
               const managed = yield* sessionFor(request.conversationId);
+              if (managed === null) {
+                return [];
+              }
+              const participantIds =
+                options.agentContext === undefined
+                  ? []
+                  : newHumanParticipantIds(
+                      request,
+                      managed.introducedParticipantIds,
+                      options.laborerSlackId
+                    );
               return yield* runPrompt(
                 managed.session,
                 request,
                 requiredInput,
                 options.agentContext,
                 managed.needsInitialContext,
-                () => {
+                options.participantLookup,
+                participantIds,
+                (introducedParticipantIds) => {
                   managed.needsInitialContext = false;
+                  for (const participantId of introducedParticipantIds) {
+                    managed.introducedParticipantIds.add(participantId);
+                  }
                 },
                 publishMessage,
                 invalidateSession(request.conversationId, managed.session)

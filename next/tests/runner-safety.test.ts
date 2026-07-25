@@ -61,7 +61,16 @@ const waitForChildMessage = (
   });
 
 const waitForChildExit = (child: ChildProcess): Promise<void> =>
-  new Promise((resolveExit) => child.once("exit", () => resolveExit()));
+  child.exitCode !== null || child.signalCode !== null
+    ? Promise.resolve()
+    : new Promise((resolveExit) => child.once("exit", () => resolveExit()));
+
+const terminateOwnedChild = async (child: ChildProcess): Promise<void> => {
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+  }
+  await waitForChildExit(child);
+};
 
 const noContextGateway: SlackGatewayShape = {
   postThreadMessage: () => Effect.succeed({ ts: "unused" }),
@@ -249,29 +258,32 @@ describe("exclusive Runner lock", () => {
           process.cwd(),
           "tests/fixtures/runner-lock-holder.ts"
         );
-        const child = spawn(
-          process.execPath,
-          [holderPath, runtimeRoot, lockPath],
-          {
-            cwd: process.cwd(),
-            stdio: ["ignore", "ignore", "ignore", "ipc"],
-          }
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() =>
+            spawn(process.execPath, [holderPath, runtimeRoot, lockPath], {
+              cwd: process.cwd(),
+              stdio: ["ignore", "ignore", "ignore", "ipc"],
+            })
+          ),
+          (child) =>
+            Effect.gen(function* () {
+              yield* Effect.promise(() => waitForChildMessage(child, "ready"));
+              assert.strictEqual(
+                (yield* Effect.promise(() => lstat(lockPath))).isFile(),
+                true
+              );
+              yield* Effect.promise(() => terminateOwnedChild(child));
+              assert.strictEqual(
+                (yield* Effect.promise(() => lstat(lockPath))).isFile(),
+                true
+              );
+              const recovered = yield* Effect.result(
+                Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
+              );
+              assert.strictEqual(recovered._tag, "Success");
+            }),
+          (child) => Effect.promise(() => terminateOwnedChild(child))
         );
-        yield* Effect.promise(() => waitForChildMessage(child, "ready"));
-        assert.strictEqual(
-          (yield* Effect.promise(() => lstat(lockPath))).isFile(),
-          true
-        );
-        child.kill("SIGKILL");
-        yield* Effect.promise(() => waitForChildExit(child));
-        assert.strictEqual(
-          (yield* Effect.promise(() => lstat(lockPath))).isFile(),
-          true
-        );
-        const recovered = yield* Effect.result(
-          Effect.scoped(acquireRunnerLock(runtimeRoot, lockPath))
-        );
-        assert.strictEqual(recovered._tag, "Success");
       })
   );
 });

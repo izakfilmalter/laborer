@@ -105,7 +105,29 @@ stream: a stop failure after otherwise successful ACP work becomes a sanitized
 delivery failure, while an existing ACP failure remains the primary turn
 outcome. This
 POC does not persist canary sessions and does not expose or migrate Laborer
-Actions or implementation agents. Because its dedicated Slack app owns a
+Actions or implementation agents. Issue #239 keeps introduced participant IDs
+grouped with each in-memory ACP session so they can be persisted with its opaque
+session ID, but restart resumption and that durable association are intentionally
+deferred to dependent issue #241. Slack participant-name enrichment admits at
+most four concurrent `users.info` requests per authenticated workspace. Each
+lookup has a five-second total deadline including capacity wait. Every newly
+introduced human is enriched; only lookups that fail or time out fall back to a
+stable Slack-ID name and produce a bounded local warning. Each new ACP session also receives one
+workspace-bound `laborer-memory` MCP server. Its sole `memory` tool can add,
+replace, or remove Workspace memory and validated Slack User-profile content;
+Soul is not mutable. Writes are owner-only, atomic, cross-process serialized,
+and reread the operator-editable Markdown while holding the lock. Root and
+workspace directory identities are retained and rechecked before reads and
+writes. Each ACP session uses a bounded unique registration name so OpenCode's
+process-global MCP registry cannot replace an older session's client. Memory
+permission is granted once only after a preceding pinned-OpenCode tool update
+identified the exact generated tool and call ID; request titles are never an
+authorization source. Workspace
+memory is limited to 4,000 rendered characters, User profiles to 2,000, and
+profiles are created only by a successful mutation. Tool activity and bounded
+registration or mutation diagnostics remain private rather than becoming Slack
+messages. Routine maintenance chatter stays private, while explicit questions
+about remembered information can still receive substantive answers. Because its dedicated Slack app owns a
 separate app-wide event stream and its Runner state is in memory, the canary does
 not take the production root lock and can run alongside the existing daemon.
 Inbound ACP NDJSON is capped before reaching the official SDK's otherwise
@@ -168,7 +190,8 @@ different initializer if that trust boundary is inappropriate.
    create the app. The manifest enables Socket Mode, creates the Laborer bot,
    subscribes only to `app_mention`, `message.channels`, and `message.groups`,
    and requests only `app_mentions:read`, `channels:history`, `groups:history`,
-   `chat:write`, and `reactions:write` bot scopes.
+   `chat:write`, `reactions:write`, and `users:read` bot scopes. It does not
+   request `users:read.email`.
 3. In **OAuth & Permissions**, choose **Install to Workspace** (or reinstall
    after a manifest change), approve it, and copy the **Bot User OAuth Token**.
 4. In **Basic Information → App-Level Tokens**, choose **Generate Token and

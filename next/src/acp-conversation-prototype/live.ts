@@ -22,6 +22,7 @@ import {
   makeAcpConversationCanary,
   openCodeAcpProcessOptions,
 } from "./canary-composition.ts";
+import { makeBoundedSlackParticipantLookup } from "./slack-participant-lookup.ts";
 
 const DEFAULT_LABORER_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -71,6 +72,10 @@ const program = Effect.gen(function* () {
     activationAcknowledger: makeSlackActivationAcknowledger(botClient),
     completionReactor: makeSlackCompletionReactor(botClient),
     laborerSlackId: identity.botUserId,
+    participantLookup: makeBoundedSlackParticipantLookup({
+      logger: silentSocketLogger,
+      token: Redacted.value(config.botToken),
+    }),
     process: openCodeAcpProcessOptions({
       cwd: laborer.root,
       environment: environmentForConfiguredHandler(

@@ -134,6 +134,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:write",
                       "reactions:read",
                       "reactions:write",
+                      "users:read",
                     ],
                   },
                 ],
@@ -165,6 +166,7 @@ const startRawEmulator = Effect.fnUntraced(function* () {
                       "groups:history",
                       "reactions:read",
                       "reactions:write",
+                      "users:read",
                     ],
                   },
                 ],
@@ -404,6 +406,8 @@ const timestampOrder = pipe(
   Order.mapInput((message: NormalizedMessage) => Number(message.slackTs))
 );
 
+const ROOT_CONTEXT_MESSAGE_LIMIT = 10;
+
 const finalizeContext = (
   messages: readonly NormalizedMessage[],
   kind: "root" | "reply"
@@ -416,7 +420,9 @@ const finalizeContext = (
     EffectArray.fromIterable(byId.values()),
     EffectArray.sort(timestampOrder)
   );
-  return kind === "root" ? EffectArray.takeRight(sorted, 10) : sorted;
+  return kind === "root"
+    ? EffectArray.takeRight(sorted, ROOT_CONTEXT_MESSAGE_LIMIT)
+    : sorted;
 };
 
 const normalizeReplyPage = (
@@ -510,6 +516,10 @@ export const makeSlackGateway = (options: {
         })
       );
       collected = EffectArray.appendAll(collected, normalized);
+      const bounded = finalizeContext(collected, "root");
+      if (bounded.length === ROOT_CONTEXT_MESSAGE_LIMIT) {
+        return bounded;
+      }
       cursor = nextPageCursor(
         response.response_metadata?.next_cursor,
         seenCursors

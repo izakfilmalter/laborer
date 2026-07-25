@@ -4,11 +4,16 @@ import { access, appendFile, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 import {
   agent,
+  type McpServer,
   methods,
   ndJsonStream,
   PROTOCOL_VERSION,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Array as EffectArray, pipe } from "effect";
 
 const MESSAGE_ID = "acp-message-secret-234";
@@ -21,6 +26,27 @@ const exitPath = process.env.SCRIPTED_ACP_EXIT_PATH;
 const pidPath = process.env.SCRIPTED_ACP_PID_PATH;
 const promptLogPath = process.env.SCRIPTED_ACP_PROMPT_LOG_PATH;
 const promptJsonlPath = process.env.SCRIPTED_ACP_PROMPT_JSONL_PATH;
+const sessionRequestJsonlPath =
+  process.env.SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH;
+const permissionTitle = process.env.SCRIPTED_ACP_PERMISSION_TITLE;
+const permissionToolIdentity =
+  process.env.SCRIPTED_ACP_PERMISSION_TOOL_IDENTITY;
+const permissionToolName = process.env.SCRIPTED_ACP_PERMISSION_TOOL_NAME;
+const permissionResultPath = process.env.SCRIPTED_ACP_PERMISSION_RESULT_PATH;
+const memoryOperationJson = process.env.SCRIPTED_ACP_MEMORY_OPERATION_JSON;
+const memoryOperationEveryPrompt =
+  process.env.SCRIPTED_ACP_MEMORY_OPERATION_EVERY_PROMPT === "1";
+const memoryFailureOperationJson =
+  process.env.SCRIPTED_ACP_MEMORY_FAILURE_OPERATION_JSON;
+const memoryDiagnosticPath = process.env.SCRIPTED_ACP_MEMORY_DIAGNOSTIC_PATH;
+const memoryActivityJsonlPath =
+  process.env.SCRIPTED_ACP_MEMORY_ACTIVITY_JSONL_PATH;
+const rejectSessionWithMcp =
+  process.env.SCRIPTED_ACP_REJECT_SESSION_WITH_MCP === "1";
+const skipMcpRegistration =
+  process.env.SCRIPTED_ACP_SKIP_MCP_REGISTRATION === "1";
+const collideMcpRegistration =
+  process.env.SCRIPTED_ACP_COLLIDE_MCP_REGISTRATION === "1";
 const lifecycleLogPath = process.env.SCRIPTED_ACP_LIFECYCLE_LOG_PATH;
 const sessionLogPath = process.env.SCRIPTED_ACP_SESSION_LOG_PATH;
 const signalLogPath = process.env.SCRIPTED_ACP_SIGNAL_LOG_PATH;
@@ -54,6 +80,11 @@ if (stayAliveAfterStdioClose) {
 }
 
 const sessions = new Set<string>();
+const sessionMcpServers = new Map<string, readonly McpServer[]>();
+const registeredMcpClients = new Map<
+  string,
+  { readonly client: Client; readonly diagnostics: Buffer[] }
+>();
 const promptCancellations = new Map<string, AbortController>();
 let sessionCount = 0;
 let promptCount = 0;
@@ -88,7 +119,213 @@ const promptText = (
     EffectArray.join("")
   );
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 type NotifySessionUpdate = (update: SessionUpdate) => Promise<void>;
+
+const runMemoryOperation = async (options: {
+  readonly callId: string;
+  readonly notify: NotifySessionUpdate;
+  readonly operationJson: string;
+  readonly sessionId: string;
+}): Promise<void> => {
+  const stdioServer = sessionMcpServers
+    .get(options.sessionId)
+    ?.find((server) => !("type" in server));
+  if (stdioServer === undefined || "type" in stdioServer) {
+    throw new Error("scripted memory scenario requires a stdio MCP server");
+  }
+  const operation: unknown = JSON.parse(options.operationJson);
+  if (!isRecord(operation)) {
+    throw new Error("scripted memory operation must be an object");
+  }
+  const registered = registeredMcpClients.get(stdioServer.name);
+  if (registered === undefined) {
+    throw new Error("scripted memory server was not registered");
+  }
+  const emitPrivateUpdate = async (update: SessionUpdate): Promise<void> => {
+    if (memoryActivityJsonlPath !== undefined) {
+      await appendFile(memoryActivityJsonlPath, `${JSON.stringify(update)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    }
+    await options.notify(update);
+  };
+  try {
+    await emitPrivateUpdate({
+      rawInput: {
+        operation,
+        secret: "LABORER MEMORY TOOL INPUT SECRET 240",
+      },
+      sessionUpdate: "tool_call",
+      status: "pending",
+      title: "LABORER MEMORY TOOL SECRET 240",
+      toolCallId: options.callId,
+    });
+    const result = await registered.client.callTool({
+      arguments: operation,
+      name: "memory",
+    });
+    await emitPrivateUpdate({
+      rawOutput: {
+        result,
+        secret: "LABORER MEMORY TOOL OUTPUT SECRET 240",
+      },
+      sessionUpdate: "tool_call_update",
+      status: result.isError === true ? "failed" : "completed",
+      toolCallId: options.callId,
+    });
+  } finally {
+    if (
+      memoryDiagnosticPath !== undefined &&
+      registered.diagnostics.length > 0
+    ) {
+      await appendFile(
+        memoryDiagnosticPath,
+        Buffer.concat(registered.diagnostics),
+        {
+          mode: 0o600,
+        }
+      );
+      registered.diagnostics.length = 0;
+    }
+  }
+};
+
+const runInitialMemoryOperations = async (
+  sessionId: string,
+  notify: NotifySessionUpdate
+): Promise<void> => {
+  if (!memoryOperationEveryPrompt && promptCount !== 0) {
+    return;
+  }
+  if (memoryOperationJson !== undefined) {
+    await runMemoryOperation({
+      callId: "laborer-memory-success-240",
+      notify,
+      operationJson: memoryOperationJson,
+      sessionId,
+    });
+  }
+  if (memoryFailureOperationJson !== undefined) {
+    await runMemoryOperation({
+      callId: "laborer-memory-failure-240",
+      notify,
+      operationJson: memoryFailureOperationJson,
+      sessionId,
+    });
+  }
+};
+
+const collideWithMcpReadiness = async (
+  environment: Readonly<Record<string, string>>
+): Promise<void> => {
+  if (!collideMcpRegistration) {
+    return;
+  }
+  const readinessPath = environment.LABORER_MEMORY_READY_PATH;
+  if (readinessPath === undefined) {
+    return;
+  }
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    try {
+      await access(readinessPath);
+      break;
+    } catch {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+  }
+  await writeFile(readinessPath, "colliding-registration", {
+    mode: 0o600,
+  });
+};
+
+const registerMcpServers = async (
+  mcpServers: readonly McpServer[]
+): Promise<void> => {
+  if (skipMcpRegistration) {
+    return;
+  }
+  for (const server of mcpServers) {
+    if ("type" in server) {
+      continue;
+    }
+    const environment = Object.fromEntries(
+      server.env.map(({ name, value }) => [name, value])
+    );
+    const mcpClient = new Client({
+      name: "scripted-acp-registration",
+      version: "1.0.0",
+    });
+    const transport = new StdioClientTransport({
+      args: [...server.args],
+      command: server.command,
+      env: environment,
+      stderr: "pipe",
+    });
+    const diagnostics: Buffer[] = [];
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      diagnostics.push(Buffer.from(chunk));
+    });
+    await mcpClient.connect(transport);
+    const previous = registeredMcpClients.get(server.name);
+    registeredMcpClients.set(server.name, { client: mcpClient, diagnostics });
+    await previous?.client.close();
+    await collideWithMcpReadiness(environment);
+  }
+};
+
+const requestScriptedPermission = async (options: {
+  readonly notify: NotifySessionUpdate;
+  readonly request: (
+    request: RequestPermissionRequest
+  ) => Promise<RequestPermissionResponse>;
+  readonly sessionId: string;
+}): Promise<void> => {
+  if (permissionTitle === undefined || permissionResultPath === undefined) {
+    return;
+  }
+  if (permissionToolIdentity !== undefined) {
+    const attachedMemoryServer = sessionMcpServers
+      .get(options.sessionId)
+      ?.find((server) => !("type" in server));
+    const exactToolIdentity =
+      permissionToolIdentity === "attached-memory" &&
+      attachedMemoryServer !== undefined
+        ? `${attachedMemoryServer.name}_memory`
+        : permissionToolIdentity;
+    await options.notify({
+      kind: "other",
+      sessionUpdate: "tool_call",
+      status: "pending",
+      title: exactToolIdentity,
+      toolCallId: "scripted-permission",
+    });
+  }
+  const permission = await options.request({
+    options: [
+      {
+        kind: "allow_once",
+        name: "Allow once",
+        optionId: "scripted-allow-once",
+      },
+    ],
+    sessionId: options.sessionId,
+    toolCall: {
+      kind: "other",
+      ...(permissionToolName === undefined ? {} : { name: permissionToolName }),
+      status: "pending",
+      title: permissionTitle,
+      toolCallId: "scripted-permission",
+    },
+  });
+  await writeFile(permissionResultPath, JSON.stringify(permission), {
+    mode: 0o600,
+  });
+};
 
 const runFailingScenario = async (
   activeScenario: FailingScenario,
@@ -151,7 +388,18 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
     sessionCount += 1;
     const sessionId = `acp-session-secret-234-${sessionCount}`;
     sessions.add(sessionId);
+    sessionMcpServers.set(sessionId, params.mcpServers);
     await recordLifecycle(`session:new:${sessionId}`);
+    if (sessionRequestJsonlPath !== undefined) {
+      await appendFile(sessionRequestJsonlPath, `${JSON.stringify(params)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    }
+    if (rejectSessionWithMcp && params.mcpServers.length > 0) {
+      throw new Error("scripted session/new rejected MCP configuration");
+    }
+    await registerMcpServers(params.mcpServers);
     if (sessionLogPath !== undefined) {
       await appendFile(sessionLogPath, `${sessionId}\t${params.cwd}\n`, {
         encoding: "utf8",
@@ -178,6 +426,18 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
       };
       signal.addEventListener("abort", cancelFromRequest, { once: true });
       promptCancellations.set(params.sessionId, cancellation);
+      const notify = (update: SessionUpdate): Promise<void> =>
+        peer.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update,
+        });
+      await runInitialMemoryOperations(params.sessionId, notify);
+      await requestScriptedPermission({
+        notify,
+        request: (request) =>
+          peer.request(methods.client.session.requestPermission, request),
+        sessionId: params.sessionId,
+      });
       promptCount += 1;
       await recordLifecycle(
         `prompt:${params.sessionId}:${promptText(params.prompt)}`
@@ -199,11 +459,6 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
           { encoding: "utf8", mode: 0o600 }
         );
       }
-      const notify = (update: SessionUpdate): Promise<void> =>
-        peer.notify(methods.client.session.update, {
-          sessionId: params.sessionId,
-          update,
-        });
       try {
         process.stderr.write("ACP STDERR SECRET 234\n");
         if (failingScenario !== null) {
@@ -384,6 +639,11 @@ const input = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
 const connection = app.connect(ndJsonStream(output, input));
 process.stdin.resume();
 await connection.closed;
+await Promise.all(
+  [...registeredMcpClients.values()].map(({ client: mcpClient }) =>
+    mcpClient.close().catch(() => undefined)
+  )
+);
 await recordLifecycle("stdio:closed");
 if (stayAliveAfterStdioClose) {
   await new Promise<void>(() => {

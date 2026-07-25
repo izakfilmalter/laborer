@@ -16,6 +16,8 @@ import {
   makeAcpConversationAgent,
 } from "./acp-conversation-agent.ts";
 import { prepareAcpAgentContextSources } from "./agent-context.ts";
+import { makeLaborerMemoryMcpServerConfiguration } from "./memory-mcp.ts";
+import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
 
 export const OPEN_CODE_ACP_COMMAND = "opencode";
 export const OPEN_CODE_ACP_ARGS = ["acp"] as const;
@@ -41,6 +43,7 @@ export interface AcpConversationCanaryOptions {
   readonly activationAcknowledger: ActivationAcknowledgerShape;
   readonly completionReactor: CompletionReactorShape;
   readonly laborerSlackId: string;
+  readonly participantLookup?: SlackParticipantLookupShape;
   readonly process: AcpConversationAgentOptions;
   readonly slack: SlackGatewayShape;
   readonly workspaceId?: string;
@@ -75,6 +78,16 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
     const conversationAgent = yield* makeAcpConversationAgent({
       ...options.process,
       ...(agentContext === undefined ? {} : { agentContext }),
+      laborerSlackId: options.laborerSlackId,
+      ...(options.participantLookup === undefined
+        ? {}
+        : { participantLookup: options.participantLookup }),
+      ...(agentContext === undefined
+        ? {}
+        : {
+            memoryMcpServer:
+              makeLaborerMemoryMcpServerConfiguration(agentContext),
+          }),
     });
     const application = yield* makeReferenceCodingApplication({
       conversationAgent,

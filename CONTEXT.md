@@ -13,6 +13,10 @@ Laborer's conversational identity in Slack. People mention it in a conversation 
 **Laborer daemon**:
 The local Laborer service that connects the Laborer Slack app to one or more Slack workspaces and supervises their configured local runtimes. One daemon may serve several workspace bindings without merging their conversations or state.
 
+**Laborer companion**:
+The local macOS menu-bar application through which an operator observes the Laborer daemon and its current work. It is a client of the daemon and does not own work-thread, Runner, or Execution state.
+_Avoid_: Laborer app
+
 **Slack workspace binding**:
 The daemon-owned association from one authenticated Slack workspace installation to one Laborer root. Each Slack workspace has one binding, while several workspaces may deliberately share a root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
 
@@ -30,6 +34,16 @@ The user-owned coordination directory for cross-process Agent-context mutation l
 
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
+
+**In-progress work thread**:
+A work thread with accepted work for which Laborer still owes progress, including any nonterminal Execution. This transient activity state does not affect whether the work thread remains activated.
+_Avoid_: Active conversation
+
+**Needs-attention work thread**:
+A work thread whose current work cannot progress or settle without explicit intervention. It remains visible separately from both in-progress and dormant work threads.
+
+**Dormant work thread**:
+A work thread that has responded to all accepted participant input and has no nonterminal Executions. Dormancy is transient: later participant input moves the still-activated work thread back into progress.
 
 **Activation**:
 The first newly created, nonblank text message that explicitly mentions Laborer and asks it to accept a public or private channel thread as a work thread. Any human or external bot may activate Laborer from a channel root or existing thread reply; Laborer's own messages, edits, and direct messages cannot. After activation, authored text replies under the canonical root become handler input without another mention, while unrelated channel roots remain outside the work thread.
@@ -96,6 +110,9 @@ Markdown authored by a conversation agent for the people in a work thread. Labor
 
 **Action**:
 A user-defined, named operation made available to a conversation agent. The same Action definition may support both direct human invocation and agent invocation. Actions remain user-owned and never publish directly to Slack.
+
+**Execution**:
+One invocation of an Action for a work thread. An Execution has its own lifecycle and remains nonterminal while Laborer is waiting for that invocation to finish.
 
 **Intake pass**:
 A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.

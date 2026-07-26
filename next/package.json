@@ -9,6 +9,7 @@
     "prepare": "effect-language-service patch",
     "prototype": "bun run src/prototype/demo.ts",
     "prototype:actions": "bun run src/action-toolkit-prototype/cli.ts",
+    "prototype:blue-green-reload": "bun run src/blue-green-reload-prototype/demo.ts",
     "prototype:conversation-execution": "bun run src/conversation-execution-tracer-prototype/demo.ts",
     "start:conversation-execution-canary": "node --env-file-if-exists=.env.local src/conversation-execution-live-canary-prototype/live.ts",
     "start:acp-canary": "node --env-file-if-exists=.env.local src/acp-conversation-prototype/live.ts",

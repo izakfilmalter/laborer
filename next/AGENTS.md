@@ -27,6 +27,12 @@ Run commands from the repository root:
 
 The live Slack entry point runs on Node because the Socket Mode client depends on Node's Undici WebSocket behavior. Use the package scripts rather than invoking `src/slack/live.ts` with Bun.
 
+## Daemon Lifecycle
+
+- Start the live daemon from the repository root with `bun run --cwd next start:slack`.
+- Stop it with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before starting another instance.
+- Blue/green switching is currently an isolated state-machine prototype; it does not control the live daemon. Start it with `bun run --cwd next prototype:blue-green-reload`, prepare a generation with `prepare <name>`, switch with `reload <name>`, and finish any displayed in-flight work with `done <work-id>` to complete a draining switch. Enter `quit` to end the prototype.
+
 ## Effect 4
 
 This implementation pins Effect 4 beta packages. Before writing Effect code:

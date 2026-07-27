@@ -10,9 +10,9 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import {
-  assertAcceptedHeadIsCurrent,
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
+  classifyBranchRecovery,
 } from "./agent-completion/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
 import {
@@ -713,16 +713,31 @@ async function buildIssue(issue: PlannedIssue) {
     const acceptedHead =
       issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
     const startingHead = worktreeHead(sandbox.worktreePath);
-    if (startingHead !== acceptedHead) {
-      if (recordedCompletion(issue) !== startingHead) {
-        assertAcceptedHeadIsCurrent(acceptedHead, startingHead);
-      }
+    const recovery = classifyBranchRecovery(
+      acceptedHead,
+      startingHead,
+      recordedCompletion(issue),
+      recordedProgress(issue)
+    );
+    if (recovery !== "build") {
       assertCommitIsDescendant(
         sandbox.worktreePath,
         acceptedHead,
         startingHead
       );
-      return [];
+      if (recovery === "publish") {
+        return [];
+      }
+      const resumedCommits = await runReviewAndVerification(issue, sandbox);
+      const completedHead = worktreeHead(sandbox.worktreePath);
+      assertNewWorkAfterAcceptedHead(
+        acceptedHead,
+        completedHead,
+        `Issue #${issue.id}`
+      );
+      recordCompletion(issue, completedHead);
+      deleteRecordedProgress(issue);
+      return resumedCommits;
     }
     const commits: Array<{ sha: string }> = [];
     const implementation = await sandbox.run({
@@ -733,6 +748,7 @@ async function buildIssue(issue: PlannedIssue) {
       promptFile: ".sandcastle/implement-prompt.md",
       signal: agentRunSignal(),
     });
+    recordProgress(issue, worktreeHead(sandbox.worktreePath));
     assertAgentCompleted(implementation, `implementation for #${issue.id}`);
     commits.push(...implementation.commits);
 
@@ -745,6 +761,7 @@ async function buildIssue(issue: PlannedIssue) {
         promptFile: ".sandcastle/ui-prompt.md",
         signal: agentRunSignal(),
       });
+      recordProgress(issue, worktreeHead(sandbox.worktreePath));
       assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
       commits.push(...ui.commits);
     }
@@ -757,6 +774,7 @@ async function buildIssue(issue: PlannedIssue) {
       `Issue #${issue.id}`
     );
     recordCompletion(issue, completedHead);
+    deleteRecordedProgress(issue);
     return commits;
   } finally {
     await sandbox.close();
@@ -765,6 +783,10 @@ async function buildIssue(issue: PlannedIssue) {
 
 function completionRef(issue: PlannedIssue) {
   return `refs/sandcastle/completed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function progressRef(issue: PlannedIssue) {
+  return `refs/sandcastle/progress/${issue.kind}/${issue.root.number}/${issue.id}`;
 }
 
 function recordedCompletion(issue: PlannedIssue) {
@@ -779,6 +801,26 @@ function recordedCompletion(issue: PlannedIssue) {
 
 function recordCompletion(issue: PlannedIssue, completedHead: string) {
   runFile("git", ["update-ref", completionRef(issue), completedHead]);
+}
+
+function recordedProgress(issue: PlannedIssue) {
+  const output = tryFile("git", [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    progressRef(issue),
+  ]).trim();
+  return output || undefined;
+}
+
+function recordProgress(issue: PlannedIssue, progressHead: string) {
+  runFile("git", ["update-ref", progressRef(issue), progressHead]);
+}
+
+function deleteRecordedProgress(issue: PlannedIssue) {
+  if (recordedProgress(issue) !== undefined) {
+    runFile("git", ["update-ref", "-d", progressRef(issue)]);
+  }
 }
 
 function deleteRecordedCompletion(issue: PlannedIssue) {
@@ -884,8 +926,17 @@ function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
   ]);
 }
 
-async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
+async function runReviewAndVerification(
+  issue: PlannedIssue,
+  sandbox: Sandbox,
+  trackBuildProgress = true
+) {
   const commits: Array<{ sha: string }> = [];
+  const trackProgress = () => {
+    if (trackBuildProgress) {
+      recordProgress(issue, worktreeHead(sandbox.worktreePath));
+    }
+  };
   if (issue.needsUi) {
     const uiReview = await sandbox.run({
       agent: uiAgent(),
@@ -895,6 +946,7 @@ async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
       promptFile: ".sandcastle/ui-review-prompt.md",
       signal: agentRunSignal(),
     });
+    trackProgress();
     assertAgentCompleted(uiReview, `UI review for #${issue.id}`);
     commits.push(...uiReview.commits);
   }
@@ -907,6 +959,7 @@ async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
     promptFile: ".sandcastle/review-prompt.md",
     signal: agentRunSignal(),
   });
+  trackProgress();
   assertAgentCompleted(review, `code review for #${issue.id}`);
   commits.push(...review.commits);
 
@@ -921,13 +974,18 @@ async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
     promptFile: ".sandcastle/verify-fix-prompt.md",
     signal: agentRunSignal(),
   });
+  trackProgress();
   assertAgentCompleted(verify, `verification for #${issue.id}`);
   commits.push(...verify.commits);
-  commits.push(...(await enforceLocalGate(issue, sandbox)));
+  commits.push(...(await enforceLocalGate(issue, sandbox, trackBuildProgress)));
   return commits;
 }
 
-async function enforceLocalGate(issue: PlannedIssue, sandbox: Sandbox) {
+async function enforceLocalGate(
+  issue: PlannedIssue,
+  sandbox: Sandbox,
+  trackBuildProgress: boolean
+) {
   const commits: Array<{ sha: string }> = [];
   for (let attempt = 0; ; attempt++) {
     assertWorktreeClean(
@@ -960,6 +1018,9 @@ async function enforceLocalGate(issue: PlannedIssue, sandbox: Sandbox) {
       promptFile: ".sandcastle/verify-fix-prompt.md",
       signal: agentRunSignal(),
     });
+    if (trackBuildProgress) {
+      recordProgress(issue, worktreeHead(sandbox.worktreePath));
+    }
     assertAgentCompleted(repair, `local gate repair for #${issue.id}`);
     commits.push(...repair.commits);
   }
@@ -971,7 +1032,7 @@ async function reviewPublishedBranch(issue: PlannedIssue, prUrl: string) {
   let commits: Array<{ sha: string }> = [];
   let reviewedLocalHead: string;
   try {
-    commits = await runReviewAndVerification(issue, sandbox);
+    commits = await runReviewAndVerification(issue, sandbox, false);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
@@ -1050,7 +1111,7 @@ async function repairFailedChecks(
       signal: agentRunSignal(),
     });
     assertAgentCompleted(repair, `PR check repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox);
+    await runReviewAndVerification(issue, sandbox, false);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
@@ -1142,7 +1203,7 @@ async function repairConflict(
       signal: agentRunSignal(),
     });
     assertAgentCompleted(repair, `conflict repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox);
+    await runReviewAndVerification(issue, sandbox, false);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();

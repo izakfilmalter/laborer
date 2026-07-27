@@ -21,13 +21,22 @@ export const assertNewWorkAfterAcceptedHead = (
   }
 };
 
-export const assertAcceptedHeadIsCurrent = (
+export const classifyBranchRecovery = (
   acceptedHead: string,
-  currentHead: string
+  currentHead: string,
+  completedHead: string | undefined,
+  progressHead: string | undefined
 ) => {
-  if (currentHead !== acceptedHead) {
-    throw new Error(
-      `Branch contains unrecorded commits after accepted head ${acceptedHead}.`
-    );
+  if (currentHead === acceptedHead) {
+    return "build" as const;
   }
+  if (currentHead === completedHead) {
+    return "publish" as const;
+  }
+  if (currentHead === progressHead) {
+    return "verify" as const;
+  }
+  throw new Error(
+    `Branch contains unrecorded commits after accepted head ${acceptedHead}.`
+  );
 };

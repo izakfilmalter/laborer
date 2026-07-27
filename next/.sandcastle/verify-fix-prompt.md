@@ -15,6 +15,7 @@ NEEDS_UI: {{NEEDS_UI}}
 3. Run `bun run --cwd next format:fix`, inspect and commit any formatting changes, then run `bun run --cwd next check`.
 4. Fix every scoped formatting, type, unit, integration, compatibility, and policy failure. Repeat the gate until it passes.
 5. Add deterministic regression coverage for missing behavior. Never use real Slack, OpenCode sessions, or model providers in automated tests.
+6. Keep repairs within the issue's behavioral scope. If a failure is caused by the sandbox, process isolation, leaked processes, unavailable infrastructure, or an unrelated flaky test, do not alter product code, global test concurrency, or unrelated assertions to make the gate pass. Report the infrastructure blocker without a completion promise.
 
 {{VERIFICATION_POLICY}}
 

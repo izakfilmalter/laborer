@@ -1,8 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
-  assertAcceptedHeadIsCurrent,
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
+  classifyBranchRecovery,
 } from "../.sandcastle/agent-completion/index.ts";
 
 const missingCompletionPattern = /did not emit its completion signal/;
@@ -36,10 +36,21 @@ describe("Sandcastle agent completion gates", () => {
     );
   });
 
-  it("fails closed on unrecorded commits before the next agent run", () => {
-    assert.doesNotThrow(() => assertAcceptedHeadIsCurrent("abc", "abc"));
+  it("recovers only runner-recorded completed or in-progress heads", () => {
+    assert.strictEqual(
+      classifyBranchRecovery("base", "base", undefined, undefined),
+      "build"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery("base", "done", "done", undefined),
+      "publish"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery("base", "progress", undefined, "progress"),
+      "verify"
+    );
     assert.throws(
-      () => assertAcceptedHeadIsCurrent("abc", "unrecorded"),
+      () => classifyBranchRecovery("base", "unrecorded", "done", "progress"),
       unrecordedCommitsPattern
     );
   });

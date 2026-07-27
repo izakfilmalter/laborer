@@ -174,6 +174,31 @@ describe("root durable runtime", () => {
     20_000
   );
 
+  it.effect("encodes transformed Action results for durable storage", () =>
+    Effect.gen(function* () {
+      const action = defineAction({
+        description: "Exercise transformed durable values",
+        input: Schema.Struct({ value: Schema.NumberFromString }),
+        name: "fixture/transformed-values",
+        result: Schema.Struct({ doubled: Schema.NumberFromString }),
+        revision: "fixture-v1",
+        run: ({ value }) => Effect.succeed({ doubled: value * 2 }),
+      });
+      const result = yield* action.execute(
+        { value: "21" },
+        {
+          conversationId: "conversation-fixture",
+          executionId: "execution-fixture",
+          reportProgress: () => Effect.void,
+          rootIdentity: "root-fixture",
+        }
+      );
+      assert.deepStrictEqual(result, { doubled: 42 });
+      const encoded = yield* action.encodeResult(result);
+      assert.deepStrictEqual(encoded, { doubled: "42" });
+    })
+  );
+
   it("rejects conflicting registrations before publishing a catalog", () => {
     const action = defineAction({
       description: "One fixture Action",

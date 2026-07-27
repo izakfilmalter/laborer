@@ -250,7 +250,7 @@ const executeRegisteredActionActivity = (
   Effect.gen(function* () {
     const activityOutcome = yield* Activity.make({
       execute: action.execute(decodedInput, context).pipe(
-        Effect.flatMap(action.decodeResult),
+        Effect.flatMap(action.encodeResult),
         Effect.flatMap((result) =>
           boundedPayloadJson(result).pipe(
             Effect.map((encodedResult) => ({
@@ -713,10 +713,10 @@ const makeRuntimeService = Effect.gen(function* () {
       const action = yield* catalog
         .get(validatedRequest.actionName)
         .pipe(Effect.mapError(() => runtimeError("unavailable-action")));
-      const input = yield* action
+      yield* action
         .decodeInput(validatedRequest.input)
         .pipe(Effect.mapError(() => runtimeError("invalid-payload")));
-      const encodedInput = yield* boundedPayloadJson(input);
+      const encodedInput = yield* boundedPayloadJson(validatedRequest.input);
       const inputHash = createHash("sha256")
         .update(encodedInput, "utf8")
         .digest("base64url");

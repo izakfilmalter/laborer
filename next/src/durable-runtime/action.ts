@@ -66,6 +66,9 @@ export interface RegisteredAction<Name extends string = string> {
     result: unknown
   ) => Effect.Effect<unknown, ActionRegistrationError>;
   readonly description: string;
+  readonly encodeResult: (
+    result: unknown
+  ) => Effect.Effect<unknown, ActionRegistrationError>;
   readonly execute: (
     input: unknown,
     context: RegisteredActionContext
@@ -214,6 +217,10 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
             Effect.mapError(() => registrationError("invalid-result"))
           )
         )
+      ),
+    encodeResult: (result) =>
+      Schema.encodeUnknownEffect(options.result)(result).pipe(
+        Effect.mapError(() => registrationError("invalid-result"))
       ),
     inputJsonSchema: jsonSchemaFor(options.input),
     inputSchema: options.input,

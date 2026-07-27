@@ -20,6 +20,7 @@ import {
   makeOpenCodeImplementationAgent,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
+import { isProcessRunning } from "./support/process-state.ts";
 
 const execFilePromise = promisify(execFile);
 const sandboxes = new Set<string>();
@@ -75,15 +76,6 @@ const inertClient = (
   wait: () => Effect.void,
   ...overrides,
 });
-
-const processExists = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 const waitFor = async (predicate: () => Promise<boolean>): Promise<void> => {
   const deadline = Date.now() + 3000;
@@ -209,7 +201,7 @@ exit 1
 
       await Effect.runPromise(Fiber.interrupt(fiber));
       await waitFor(
-        async () => !(processExists(parentPid) || processExists(childPid))
+        async () => !(isProcessRunning(parentPid) || isProcessRunning(childPid))
       );
     } finally {
       process.env.PATH = previousPath;
@@ -283,6 +275,6 @@ while :; do /bin/sleep 1; done
 
     await server.close();
 
-    expect(processExists(pid)).toBe(false);
+    expect(isProcessRunning(pid)).toBe(false);
   });
 });

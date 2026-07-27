@@ -54,6 +54,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
   {
     error: DurableRuntimeError,
     payload: {
+      conversationId: RuntimeConversationId,
       eventId: RuntimeEventId,
       protocolVersion: ProtocolVersion,
     },
@@ -72,8 +73,8 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
   Effect.gen(function* () {
     const runtime = yield* RootDurableRuntime;
     return {
-      "RootRuntime.AcknowledgeExecutionEvent": ({ eventId }) =>
-        runtime.acknowledgeEvent(eventId),
+      "RootRuntime.AcknowledgeExecutionEvent": ({ conversationId, eventId }) =>
+        runtime.acknowledgeEvent(eventId, conversationId),
       "RootRuntime.GetExecution": ({ executionId }) =>
         runtime.getExecution(executionId),
       "RootRuntime.PendingExecutionEvents": ({ conversationId, limit }) =>

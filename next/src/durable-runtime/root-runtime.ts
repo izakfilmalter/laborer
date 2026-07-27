@@ -1,21 +1,24 @@
 import { createHash } from "node:crypto";
 import {
+  Cause,
   Context,
   Effect,
   Array as EffectArray,
   Layer,
   Option,
   pipe,
+  Schedule,
   Schema,
 } from "effect";
 import { ClusterWorkflowEngine, SingleRunner } from "effect/unstable/cluster";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { Workflow, WorkflowEngine } from "effect/unstable/workflow";
+import { Activity, Workflow, WorkflowEngine } from "effect/unstable/workflow";
 import { canonicalActionInput } from "../action-catalog.ts";
 import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
   ActionRegistrationError,
+  type RegisteredAction,
   type RegisteredActionCatalog,
   type RegisteredActionContext,
 } from "./action.ts";
@@ -120,6 +123,17 @@ const RegisteredActionWorkflowFailure = Schema.Struct({
     "needs-attention",
   ]),
 });
+
+const RegisteredActionActivityOutcome = Schema.Union([
+  Schema.TaggedStruct("Success", {
+    encodedResult: Schema.String.check(
+      Schema.isMaxLength(RUNTIME_PAYLOAD_MAX_BYTES)
+    ),
+  }),
+  Schema.TaggedStruct("Failure", {
+    ...RegisteredActionWorkflowFailure.fields,
+  }),
+]);
 
 const RegisteredActionWorkflowPayload = Schema.Struct({
   actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
@@ -228,6 +242,52 @@ const persistEvent = Effect.fn("persistExecutionEvent")(function* (options: {
   );
 });
 
+const executeRegisteredActionActivity = (
+  action: RegisteredAction,
+  decodedInput: unknown,
+  context: RegisteredActionContext
+) =>
+  Effect.gen(function* () {
+    const activityOutcome = yield* Activity.make({
+      execute: action.execute(decodedInput, context).pipe(
+        Effect.flatMap(action.decodeResult),
+        Effect.flatMap((result) =>
+          boundedPayloadJson(result).pipe(
+            Effect.map((encodedResult) => ({
+              _tag: "Success" as const,
+              encodedResult,
+            })),
+            Effect.mapError(() => ({ category: "invalid-result" as const }))
+          )
+        ),
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.interrupt;
+          }
+          const failure = cause.reasons.find(Cause.isFailReason)?.error;
+          return Effect.succeed({
+            _tag: "Failure" as const,
+            category:
+              failure instanceof ActionRegistrationError &&
+              failure.reason === "invalid-result"
+                ? ("invalid-result" as const)
+                : ("action-failed" as const),
+          });
+        })
+      ),
+      interruptRetryPolicy:
+        action.recoveryPolicy === "idempotent-retry"
+          ? undefined
+          : Schedule.recurs(0),
+      name: "Laborer/RegisteredActionExecution/run/v1",
+      success: RegisteredActionActivityOutcome,
+    });
+    if (activityOutcome._tag === "Failure") {
+      return yield* Effect.fail({ category: activityOutcome.category });
+    }
+    return activityOutcome.encodedResult;
+  });
+
 const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
   (payload, executionId) =>
     Effect.gen(function* () {
@@ -319,19 +379,12 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
       const decodedInput = yield* decodeStoredJson(payload.encodedInput).pipe(
         Effect.orDie
       );
-      const result = yield* action.execute(decodedInput, context).pipe(
-        Effect.flatMap(action.decodeResult),
-        Effect.mapError((error) => ({
-          category:
-            error instanceof ActionRegistrationError &&
-            error.reason === "invalid-result"
-              ? ("invalid-result" as const)
-              : ("action-failed" as const),
-        }))
+      const encodedResult = yield* executeRegisteredActionActivity(
+        action,
+        decodedInput,
+        context
       );
-      const encodedResult = yield* boundedPayloadJson(result).pipe(
-        Effect.mapError(() => ({ category: "invalid-result" as const }))
-      );
+      const result = yield* decodeStoredJson(encodedResult).pipe(Effect.orDie);
       yield* sql
         .withTransaction(
           Effect.gen(function* () {
@@ -457,6 +510,14 @@ const initializeLaborerTables = Effect.gen(function* () {
           event_id TEXT NOT NULL UNIQUE,
           acknowledged INTEGER NOT NULL
         )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS laborer_execution_outbox_pending
+        ON laborer_execution_outbox (acknowledged, outbox_sequence)
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS laborer_execution_events_conversation
+        ON laborer_execution_events (conversation_id, event_id)
       `;
       yield* sql`
         INSERT INTO laborer_schema_versions (component, version)
@@ -592,7 +653,8 @@ const snapshotFromRow = (
 
 export interface RootDurableRuntimeShape {
   readonly acknowledgeEvent: (
-    eventId: string
+    eventId: string,
+    conversationId: string
   ) => Effect.Effect<void, DurableRuntimeError>;
   readonly getExecution: (
     executionId: string
@@ -768,14 +830,25 @@ const makeRuntimeService = Effect.gen(function* () {
   );
 
   const acknowledgeEvent = Effect.fn("RootDurableRuntime.acknowledgeEvent")(
-    function* (eventId: string) {
+    function* (eventId: string, conversationId: string) {
       const validatedEventId = yield* Schema.decodeUnknownEffect(
         RuntimeEventId
       )(eventId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
+      const validatedConversationId = yield* Schema.decodeUnknownEffect(
+        RuntimeConversationId
+      )(conversationId).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload"))
+      );
       yield* sql`
         UPDATE laborer_execution_outbox
         SET acknowledged = 1
         WHERE event_id = ${validatedEventId}
+          AND EXISTS (
+            SELECT 1
+            FROM laborer_execution_events AS events
+            WHERE events.event_id = laborer_execution_outbox.event_id
+              AND events.conversation_id = ${validatedConversationId}
+          )
       `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
     }
   );

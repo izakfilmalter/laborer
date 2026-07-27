@@ -121,7 +121,21 @@ describe("root durable runtime", () => {
             );
             const firstEvent = events[0];
             assert.ok(firstEvent);
-            yield* runtime.acknowledgeEvent(firstEvent.eventId);
+            yield* runtime.acknowledgeEvent(
+              firstEvent.eventId,
+              "workspace:T2:thread:C2:2.0"
+            );
+            const stillPending = yield* runtime.pendingEvents(
+              request.conversationId
+            );
+            assert.deepStrictEqual(
+              stillPending.map(({ sequence }) => sequence),
+              [1, 2]
+            );
+            yield* runtime.acknowledgeEvent(
+              firstEvent.eventId,
+              request.conversationId
+            );
             const remaining = yield* runtime.pendingEvents(
               request.conversationId
             );

@@ -25,7 +25,12 @@ const canonicalCatalogJson = (value: unknown): string => {
     return `[${value.map(canonicalCatalogJson).join(",")}]`;
   }
   return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => {
+      if (left < right) {
+        return -1;
+      }
+      return left > right ? 1 : 0;
+    })
     .map(
       ([key, item]) => `${JSON.stringify(key)}:${canonicalCatalogJson(item)}`
     )

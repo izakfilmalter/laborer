@@ -23,10 +23,11 @@ pull-request job remains independent.
 The real suite invokes only the pinned local OpenCode executable. It uses an
 isolated owner-only home and workspace, a loopback fake model provider with a
 dummy key, and a local MCP fixture. It has no Slack or model credentials and
-proves initialization capabilities, streaming, MCP permission selection,
-cancellation, refusal, and durable resume in a fresh process. Scripted ACP
-coverage retains stable `max_tokens` and `max_turn_requests` behavior that
-OpenCode 1.18.4 cannot deterministically emit through this fixture.
+proves initialization capabilities, `agent_message_chunk` updates, MCP
+permission selection, cancellation, refusal, and durable resume in a fresh
+process. Scripted ACP coverage retains stable `max_tokens` and
+`max_turn_requests` behavior that OpenCode 1.18.4 cannot deterministically emit
+through this fixture.
 
 ## Deliberate upgrade procedure
 

@@ -22,8 +22,6 @@ export const SOUL_FILE_NAME = "SOUL.md";
 export const WORKSPACE_MEMORY_FILE_NAME = "workspace-memory.md";
 export const USER_PROFILES_DIRECTORY_NAME = "user-profiles";
 export const MEMORY_DIAGNOSTICS_FILE_NAME = "memory-diagnostics.log";
-/** Maximum participant enrichments running concurrently for one ACP prompt. */
-const ACP_PARTICIPANT_LOOKUP_CONCURRENCY_LIMIT = 4;
 
 export const DEFAULT_SOUL =
   "You are a thoughtful, candid, and direct collaborator. Adapt your level of detail and tone to the people and situation. Ask questions when ambiguity materially affects the outcome. Favor useful substance over performative filler.";
@@ -554,8 +552,21 @@ export const loadAcpSlackParticipantContexts = Effect.fn(
       : yield* Effect.forEach(
           slackUserIds,
           (slackUserId) => participantLookup.lookupVisibleName(slackUserId),
-          { concurrency: ACP_PARTICIPANT_LOOKUP_CONCURRENCY_LIMIT }
+          { concurrency: "unbounded" }
         );
+  const fallbackCount = pipe(
+    visibleNames,
+    EffectArray.filter(
+      (visibleName, index) =>
+        visibleName === safeSlackIdVisibleName(slackUserIds[index] ?? "")
+    )
+  ).length;
+  if (participantLookup !== undefined && fallbackCount > 0) {
+    yield* Effect.logWarning("Slack participant lookup fallback summary", {
+      fallbackCount,
+      participantCount: slackUserIds.length,
+    });
+  }
   return yield* Effect.forEach(slackUserIds, (slackUserId, index) =>
     Effect.gen(function* () {
       const visibleName =
@@ -580,10 +591,11 @@ const renderMessage = (message: NormalizedMessage): string =>
 
 const renderAttributedInput = (request: ConversationAgentRequest): string => {
   const messages = EffectArray.appendAll(request.context, request.messages);
+  const adoptionHistory = request.adoptionHistory ?? "";
   if (messages.length === 0) {
-    return request.input;
+    return `${adoptionHistory}${request.input}`;
   }
-  return `<slack-messages>${pipe(messages, EffectArray.map(renderMessage), EffectArray.join(""))}</slack-messages>`;
+  return `${adoptionHistory}<slack-messages>${pipe(messages, EffectArray.map(renderMessage), EffectArray.join(""))}</slack-messages>`;
 };
 
 export const renderAcpPrompt = (

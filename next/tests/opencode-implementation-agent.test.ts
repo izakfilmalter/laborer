@@ -5,6 +5,7 @@ import {
   type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
+import { HandlerFailure } from "../src/prototype/errors.ts";
 
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
 const INITIAL_REQUEST_PATTERN = /Build the requested capability/;
@@ -25,6 +26,7 @@ describe("OpenCode ImplementationAgent", () => {
         const client: OpenCodeSessionClient = {
           createSession: () => Effect.void,
           interrupt: () => Effect.void,
+          prepareSessionForReuse: () => Effect.void,
           readMessages: () =>
             Effect.succeed([
               { id: "prompt-1", role: "user", text: "Build" },
@@ -89,6 +91,7 @@ describe("OpenCode ImplementationAgent", () => {
       const client: OpenCodeSessionClient = {
         createSession: () => Effect.void,
         interrupt: () => Effect.void,
+        prepareSessionForReuse: () => Effect.void,
         readMessages: () =>
           Effect.succeed([
             { id: "prompt-1", role: "user", text: "Build" },
@@ -147,12 +150,17 @@ describe("OpenCode ImplementationAgent", () => {
           readonly text: string;
         }> = [];
         const waitedPromptIds: string[] = [];
+        let reusePreparations = 0;
         const client: OpenCodeSessionClient = {
           createSession: (input) =>
             Effect.sync(() => {
               created.push(input);
             }),
           interrupt: () => Effect.void,
+          prepareSessionForReuse: () =>
+            Effect.sync(() => {
+              reusePreparations += 1;
+            }),
           readMessages: () =>
             Effect.succeed([
               { id: "implementation-prompt-1", role: "user", text: "Build" },
@@ -203,6 +211,7 @@ describe("OpenCode ImplementationAgent", () => {
             workingDirectory: "/repo/worktree",
           },
         ]);
+        assert.strictEqual(reusePreparations, 0);
         assert.strictEqual(prompted[0]?.promptId, "implementation-prompt-1");
         assert.ok(!(prompted[0] && "tools" in prompted[0]));
         assert.match(prompted[0]?.text ?? "", FEATURE_WORKFLOW_PATTERN);
@@ -237,6 +246,7 @@ describe("OpenCode ImplementationAgent", () => {
           Effect.sync(() => {
             interruptedPromptIds.push(input.promptId);
           }),
+        prepareSessionForReuse: () => Effect.void,
         readMessages: (input) => {
           readPromptIds.push(input.promptId);
           const latest = prompted.at(-1);
@@ -333,54 +343,57 @@ describe("OpenCode ImplementationAgent", () => {
     })
   );
 
-  it.effect("recovers the supplied durable prompt without resubmitting", () =>
-    Effect.gen(function* () {
-      let submitCalls = 0;
-      const accepted: string[] = [];
-      const client: OpenCodeSessionClient = {
-        createSession: () => Effect.void,
-        interrupt: () => Effect.void,
-        readMessages: () =>
-          Effect.succeed([
-            { id: "implementation-prompt-1", role: "user", text: "Fix it" },
-            {
-              id: "recovered-response-1",
-              role: "assistant",
-              text: "Recovered durable output.",
-            },
-          ]),
-        sessionExists: () => Effect.succeed(true),
-        submitPrompt: () =>
-          Effect.sync(() => {
-            submitCalls += 1;
-          }),
-        wait: () => Effect.void,
-      };
-      const agent = makeOpenCodeImplementationAgent({ client });
+  it.effect(
+    "recovers the supplied durable prompt through idempotent submission",
+    () =>
+      Effect.gen(function* () {
+        let submitCalls = 0;
+        const accepted: string[] = [];
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () => Effect.void,
+          readMessages: () =>
+            Effect.succeed([
+              { id: "implementation-prompt-1", role: "user", text: "Fix it" },
+              {
+                id: "recovered-response-1",
+                role: "assistant",
+                text: "Recovered durable output.",
+              },
+            ]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () =>
+            Effect.sync(() => {
+              submitCalls += 1;
+            }),
+          wait: () => Effect.void,
+        };
+        const agent = makeOpenCodeImplementationAgent({ client });
 
-      assert.ok(agent.recover);
-      const session = yield* agent.recover(
-        {
-          actionName: "deal-with-bug",
-          conversationId: "conversation-1",
-          executionId: "execution-1",
-          implementationSessionId: "implementation-session-1",
-          prompt: "Fix it",
-          promptId: "implementation-prompt-1",
-          promptKind: "initial",
-          workingDirectory: "/repo/worktree",
-        },
-        (response) =>
-          Effect.sync(() => {
-            accepted.push(response.responseId);
-          })
-      );
-      yield* session.completion;
+        assert.ok(agent.recover);
+        const session = yield* agent.recover(
+          {
+            actionName: "deal-with-bug",
+            conversationId: "conversation-1",
+            executionId: "execution-1",
+            implementationSessionId: "implementation-session-1",
+            prompt: "Fix it",
+            promptId: "implementation-prompt-1",
+            promptKind: "initial",
+            workingDirectory: "/repo/worktree",
+          },
+          (response) =>
+            Effect.sync(() => {
+              accepted.push(response.responseId);
+            })
+        );
+        yield* session.completion;
 
-      assert.strictEqual(session.sessionId, "implementation-session-1");
-      assert.strictEqual(submitCalls, 0);
-      assert.deepStrictEqual(accepted, ["recovered-response-1"]);
-    })
+        assert.strictEqual(session.sessionId, "implementation-session-1");
+        assert.strictEqual(submitCalls, 1);
+        assert.deepStrictEqual(accepted, ["recovered-response-1"]);
+      })
   );
 
   it.effect("cancels by interrupting the supplied session", () =>
@@ -396,6 +409,7 @@ describe("OpenCode ImplementationAgent", () => {
           Effect.sync(() => {
             interrupted.push(input);
           }),
+        prepareSessionForReuse: () => Effect.void,
         readMessages: () => Effect.succeed([]),
         sessionExists: () => Effect.succeed(true),
         submitPrompt: () => Effect.void,
@@ -440,6 +454,7 @@ describe("OpenCode ImplementationAgent", () => {
       const client: OpenCodeSessionClient = {
         createSession: () => Effect.void,
         interrupt: () => Effect.void,
+        prepareSessionForReuse: () => Effect.void,
         readMessages: () =>
           Effect.succeed([
             { id: "prompt-1", role: "user", text: "Build" },
@@ -475,5 +490,109 @@ describe("OpenCode ImplementationAgent", () => {
       assert.strictEqual(result._tag, "Failure");
       assert.strictEqual(accepted, 0);
     })
+  );
+
+  it.effect(
+    "never creates a missing implementation session during recovery",
+    () =>
+      Effect.gen(function* () {
+        let creates = 0;
+        let submissions = 0;
+        const client: OpenCodeSessionClient = {
+          createSession: () =>
+            Effect.sync(() => {
+              creates += 1;
+            }),
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () => Effect.void,
+          readMessages: () => Effect.succeed([]),
+          sessionExists: () => Effect.succeed(false),
+          submitPrompt: () =>
+            Effect.sync(() => {
+              submissions += 1;
+            }),
+          wait: () => Effect.void,
+        };
+        const agent = makeOpenCodeImplementationAgent({ client });
+        const request = {
+          actionName: "create-feature" as const,
+          conversationId: "conversation-missing",
+          executionId: "execution-missing",
+          implementationSessionId: "session-missing",
+          prompt: "Persisted prompt",
+          promptId: "prompt-missing",
+          promptKind: "initial" as const,
+          workingDirectory: "/repo/worktree",
+        };
+        assert.ok(agent.inspect);
+        assert.deepStrictEqual(
+          yield* agent.inspect({ ...request, creationState: "confirmed" }),
+          {
+            certainty: "definitive",
+            evidence: "definitively-absent",
+            status: "missing",
+          }
+        );
+        assert.deepStrictEqual(
+          yield* agent.inspect({ ...request, creationState: "unknown" }),
+          {
+            certainty: "unknown",
+            evidence: "inspection-unavailable",
+            status: "ambiguous",
+          }
+        );
+        assert.ok(agent.recover);
+        const recovery = yield* Effect.result(
+          agent.recover(request, () => Effect.void)
+        );
+        assert.strictEqual(recovery._tag, "Failure");
+        assert.strictEqual(creates, 0);
+        assert.strictEqual(submissions, 0);
+      })
+  );
+
+  it.effect(
+    "fails closed before prompt submission when legacy permission cleanup fails",
+    () =>
+      Effect.gen(function* () {
+        let submissions = 0;
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () =>
+            HandlerFailure.make({
+              category: "exit",
+              safeDetail: "OpenCode legacy permission cleanup failed",
+            }),
+          readMessages: () => Effect.succeed([]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () =>
+            Effect.sync(() => {
+              submissions += 1;
+            }),
+          wait: () => Effect.void,
+        };
+        const agent = makeOpenCodeImplementationAgent({ client });
+        assert.ok(agent.recover);
+
+        const recovered = yield* Effect.result(
+          agent.recover(
+            {
+              actionName: "create-feature",
+              conversationId: "conversation-cleanup-failure",
+              executionId: "execution-cleanup-failure",
+              implementationSessionId: "session-cleanup-failure",
+              prompt: "Do not duplicate this prompt",
+              promptId: "prompt-cleanup-failure",
+              promptKind: "initial",
+              workingDirectory: "/repo/worktree",
+            },
+            () => Effect.void
+          )
+        );
+
+        assert.strictEqual(recovered._tag, "Failure");
+        assert.strictEqual(submissions, 0);
+      })
   );
 });

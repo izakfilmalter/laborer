@@ -4,6 +4,7 @@
  */
 import { createServer } from "node:net";
 import {
+  type FetchFunction,
   WebAPIHTTPError,
   WebAPIPlatformError,
   WebAPIRateLimitedError,
@@ -43,6 +44,23 @@ const PRIVATE_CHANNEL_NAME = "private-tracer";
 const MAX_START_ATTEMPTS = 5;
 const DEFAULT_PAGE_SIZE = 2;
 const DEFAULT_TRANSIENT_RETRY_MILLIS = 1000;
+
+const emulateMarkdownTextCompatibilityFetch: FetchFunction = (input, init) => {
+  const pathname = new URL(String(input)).pathname;
+  const usesUnsupportedEmulateMessageMethod =
+    pathname.endsWith("/chat.postMessage") || pathname.endsWith("/chat.update");
+  if (!usesUnsupportedEmulateMessageMethod || typeof init?.body !== "string") {
+    return fetch(input, init);
+  }
+  const parameters = new URLSearchParams(init.body);
+  const markdownText = parameters.get("markdown_text");
+  if (markdownText === null || parameters.has("text")) {
+    return fetch(input, init);
+  }
+  parameters.delete("markdown_text");
+  parameters.set("text", markdownText);
+  return fetch(input, { ...init, body: parameters.toString() });
+};
 
 const reserveAvailablePort = (): Effect.Effect<number, EmulatorError> =>
   Effect.callback<number, EmulatorError>((resume) => {
@@ -226,6 +244,7 @@ const TRANSIENT_PLATFORM_ERRORS = [
   "org_login_required",
   "rate_limited",
   "ratelimited",
+  "request_timeout",
   "service_unavailable",
   "team_added_to_org",
   "temporarily_unavailable",
@@ -249,7 +268,7 @@ const ITEM_PERMANENT_PLATFORM_ERRORS = [
   "msg_blocks_too_long",
   "msg_too_long",
   "no_text",
-  "request_timeout",
+  "stopped_by_user",
   "too_many_attachments",
   "too_many_contact_cards",
 ] as const;
@@ -313,12 +332,14 @@ export const classifySlackError = (
 ): {
   readonly category: string;
   readonly disposition: DeliveryFailureDisposition;
+  readonly outcomeCertainty?: "definitely-rejected" | "unknown";
   readonly retryAfterMillis: number;
 } => {
   if (cause instanceof WebAPIRateLimitedError) {
     return {
       category: "ratelimited",
       disposition: "transient",
+      outcomeCertainty: "definitely-rejected",
       retryAfterMillis: cause.retryAfter * 1000,
     };
   }
@@ -328,6 +349,12 @@ export const classifySlackError = (
     return {
       category,
       disposition,
+      outcomeCertainty:
+        category === "fatal_error" ||
+        category === "internal_error" ||
+        category === "request_timeout"
+          ? "unknown"
+          : "definitely-rejected",
       retryAfterMillis:
         disposition === "transient" ? DEFAULT_TRANSIENT_RETRY_MILLIS : 0,
     };
@@ -340,6 +367,8 @@ export const classifySlackError = (
     return {
       category: `http_${cause.statusCode}`,
       disposition: isTransient ? "transient" : "destination-permanent",
+      outcomeCertainty:
+        cause.statusCode === 429 ? "definitely-rejected" : "unknown",
       retryAfterMillis: isTransient ? retryAfterHeaderMillis(cause.headers) : 0,
     };
   }
@@ -347,6 +376,7 @@ export const classifySlackError = (
     return {
       category: "request_error",
       disposition: "transient",
+      outcomeCertainty: "unknown",
       retryAfterMillis: DEFAULT_TRANSIENT_RETRY_MILLIS,
     };
   }
@@ -355,6 +385,12 @@ export const classifySlackError = (
   return {
     category,
     disposition,
+    outcomeCertainty:
+      category === "fatal_error" ||
+      category === "internal_error" ||
+      category === "unknown"
+        ? "unknown"
+        : "definitely-rejected",
     retryAfterMillis:
       disposition === "transient" ? DEFAULT_TRANSIENT_RETRY_MILLIS : 0,
   };
@@ -468,6 +504,7 @@ export const makeSlackGateway = (options: {
   readonly botClient: WebClient;
   readonly botId?: string;
   readonly botUserId?: string;
+  readonly conversationStreamDeliveryPolicy?: import("./conversation-stream-delivery.ts").ConversationStreamDeliveryPolicy;
   readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly pageSize: number;
   readonly workspaceId?: string;
@@ -612,6 +649,12 @@ export const makeSlackGateway = (options: {
   });
 
   return {
+    ...(options.conversationStreamDeliveryPolicy === undefined
+      ? {}
+      : {
+          conversationStreamDeliveryPolicy:
+            options.conversationStreamDeliveryPolicy,
+        }),
     ...(options.nativeStreaming === undefined
       ? {}
       : { nativeStreaming: options.nativeStreaming }),
@@ -624,8 +667,8 @@ export const makeSlackGateway = (options: {
         try: async () => {
           const response = await options.botClient.chat.postMessage({
             channel: channelId,
+            markdown_text: text,
             thread_ts: rootTs,
-            text,
           });
           if (response.ts === undefined) {
             throw new Error("missing timestamp");
@@ -637,6 +680,7 @@ export const makeSlackGateway = (options: {
           return DeliveryError.make({
             category: failure.category,
             disposition: failure.disposition,
+            outcomeCertainty: failure.outcomeCertainty,
             retryAfterMillis: failure.retryAfterMillis,
           });
         },
@@ -646,8 +690,8 @@ export const makeSlackGateway = (options: {
         try: async () => {
           await options.botClient.chat.update({
             channel: channelId,
+            markdown_text: text,
             ts: messageTs,
-            text,
           });
         },
         catch: (cause) => {
@@ -655,6 +699,7 @@ export const makeSlackGateway = (options: {
           return DeliveryError.make({
             category: failure.category,
             disposition: failure.disposition,
+            outcomeCertainty: failure.outcomeCertainty,
             retryAfterMillis: failure.retryAfterMillis,
           });
         },
@@ -727,6 +772,7 @@ const performSlackReaction = (
       return DeliveryError.make({
         category: failure.category,
         disposition: failure.disposition,
+        outcomeCertainty: failure.outcomeCertainty,
         retryAfterMillis: failure.retryAfterMillis,
       });
     })
@@ -804,6 +850,7 @@ const validateFixture = (
         slackApiUrl: `${emulator.url}/api/`,
       });
       const botClient = new WebClient(BOT_TOKEN, {
+        fetch: emulateMarkdownTextCompatibilityFetch,
         rejectRateLimitedCalls: true,
         slackApiUrl: `${emulator.url}/api/`,
       });

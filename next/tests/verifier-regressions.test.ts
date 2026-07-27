@@ -1500,6 +1500,7 @@ describe("real WebClient error and partial-context integration", () => {
         assert.deepStrictEqual(classifySlackError(new Error("network")), {
           category: "unknown",
           disposition: "destination-permanent",
+          outcomeCertainty: "unknown",
           retryAfterMillis: 0,
         });
       })

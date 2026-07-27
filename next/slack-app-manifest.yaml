@@ -17,6 +17,8 @@ oauth_config:
       - reactions:write
       - users:read
 settings:
+  interactivity:
+    is_enabled: true
   event_subscriptions:
     bot_events:
       - app_mention

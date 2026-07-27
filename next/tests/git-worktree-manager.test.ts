@@ -88,6 +88,7 @@ describe("Git WorktreeManager", () => {
       manager.create({
         conversationId: "conversation-1",
         executionId: "execution-1",
+        operationId: "operation-1",
         worktreeName: "feature-safe-worktree",
       })
     );
@@ -108,6 +109,20 @@ describe("Git WorktreeManager", () => {
     expect((await stat(join(expectedPath, ".env.local"))).mode % 512).toBe(
       0o600
     );
+    expect(
+      JSON.parse(
+        await readFile(
+          join(dirname(expectedPath), ".laborer-worktree-owner.json"),
+          "utf8"
+        )
+      )
+    ).toMatchObject({
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      operationId: "operation-1",
+      schemaVersion: 1,
+      worktreeName: "feature-safe-worktree",
+    });
   });
 
   it("returns typed uncertainty after git add side effects and repairs only the exact checkout", async () => {
@@ -145,10 +160,76 @@ fi
     if (manager.recover === undefined) {
       throw new Error("recover is unavailable");
     }
+    expect(manager.inspect).toBeDefined();
+    if (manager.inspect === undefined) {
+      throw new Error("inspect is unavailable");
+    }
+    expect(
+      await Effect.runPromise(
+        manager.inspect({
+          ...request,
+          creationState: "staged",
+          workingDirectory: join(
+            fixture.sandbox,
+            "laborer.worktrees",
+            request.worktreeName,
+            "next"
+          ),
+        })
+      )
+    ).toEqual({
+      certainty: "definitive",
+      evidence: "exact-owned-incomplete",
+      status: "recoverable",
+    });
     const recovered = await Effect.runPromise(manager.recover(request));
     expect(
       await readFile(join(recovered.workingDirectory, ".env.local"), "utf8")
     ).toBe("SECRET=value\n");
+  });
+
+  it("never adopts an exact checkout when creation crashes before its ownership marker", async () => {
+    const fixture = await makeRepository();
+    const request = {
+      conversationId: "conversation-before-marker",
+      executionId: "execution-before-marker",
+      operationId: "operation-before-marker",
+      worktreeName: "before-marker",
+    } as const;
+    const manager = makeGitWorktreeManager({
+      repository: fixture.sourceDirectory,
+      testHooks: {
+        afterWorktreeAdded: () =>
+          Promise.reject(new Error("injected crash before marker")),
+      },
+    });
+
+    const creation = await Effect.runPromise(
+      Effect.result(manager.create(request))
+    );
+    expect(creation._tag).toBe("Failure");
+    if (creation._tag !== "Failure") {
+      throw new Error("crash-before-marker creation unexpectedly succeeded");
+    }
+    expect(creation.failure).toBeInstanceOf(WorktreeProvisioningUncertain);
+    const recoveryManager = makeGitWorktreeManager({
+      repository: fixture.sourceDirectory,
+    });
+    if (recoveryManager.recover === undefined) {
+      throw new Error("recover is unavailable");
+    }
+    expect(await effectFails(recoveryManager.recover(request))).toBe(true);
+    const checkout = join(
+      fixture.sandbox,
+      "laborer.worktrees",
+      request.worktreeName
+    );
+    expect(await git(checkout, ["branch", "--show-current"])).toBe(
+      `laborer/${request.worktreeName}`
+    );
+    await expect(
+      stat(join(checkout, ".laborer-worktree-owner.json"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("strictly rejects unsafe agent-supplied names without creating a worktree", async () => {
@@ -266,7 +347,7 @@ fi
     );
   });
 
-  it("recovers only the exact expected registered worktree", async () => {
+  it("rejects an exact registered worktree without a Laborer ownership marker", async () => {
     const fixture = await makeRepository();
     const manager = makeGitWorktreeManager({
       repository: fixture.sourceDirectory,
@@ -290,21 +371,21 @@ fi
     if (manager.recover === undefined) {
       throw new Error("recover is unavailable");
     }
-    const recovered = await Effect.runPromise(
-      manager.recover({
-        conversationId: "conversation-recover",
-        executionId: "execution-recover",
-        worktreeName: "recover-existing",
-      })
-    );
-
-    expect(recovered).toEqual({ workingDirectory: join(expectedPath, "next") });
+    expect(
+      await effectFails(
+        manager.recover({
+          conversationId: "conversation-recover",
+          executionId: "execution-recover",
+          worktreeName: "recover-existing",
+        })
+      )
+    ).toBe(true);
     expect(await git(expectedPath, ["branch", "--show-current"])).toBe(
       "laborer/recover-existing"
     );
-    expect(
-      await readFile(join(expectedPath, "next", ".env.local"), "utf8")
-    ).toBe("SECRET=value\n");
+    await expect(
+      readFile(join(expectedPath, "next", ".env.local"), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("recovers an ambiguous staged request by creating only when path and branch are absent", async () => {
@@ -478,6 +559,105 @@ fi
         "refs/heads/laborer/validate-existing",
       ])
     ).toContain("refs/heads/laborer/validate-existing");
+  });
+
+  it("classifies exact and definitively missing persisted worktrees without mutation", async () => {
+    const fixture = await makeRepository();
+    const manager = makeGitWorktreeManager({
+      repository: fixture.sourceDirectory,
+    });
+    const request = {
+      conversationId: "conversation-inspect",
+      executionId: "execution-inspect",
+      operationId: "operation-inspect",
+      worktreeName: "inspect-existing",
+    } as const;
+    const created = await Effect.runPromise(manager.create(request));
+    expect(manager.inspect).toBeDefined();
+    if (manager.inspect === undefined) {
+      throw new Error("inspect is unavailable");
+    }
+    const available = await Effect.runPromise(
+      manager.inspect({
+        ...request,
+        creationState: "confirmed",
+        workingDirectory: created.workingDirectory,
+      })
+    );
+    expect(available).toEqual({
+      certainty: "definitive",
+      evidence: "exact-owned-resource",
+      resource: created,
+      status: "available",
+    });
+
+    const checkout = dirname(created.workingDirectory);
+    await git(fixture.repository, ["worktree", "remove", "--force", checkout]);
+    await git(fixture.repository, [
+      "branch",
+      "-D",
+      `laborer/${request.worktreeName}`,
+    ]);
+    const missing = await Effect.runPromise(
+      manager.inspect({
+        ...request,
+        creationState: "confirmed",
+        workingDirectory: created.workingDirectory,
+      })
+    );
+    expect(missing).toEqual({
+      certainty: "definitive",
+      evidence: "definitively-absent",
+      status: "missing",
+    });
+  });
+
+  it("classifies an unmarked checkout as conflicting without repairing its environment", async () => {
+    const fixture = await makeRepository();
+    const manager = makeGitWorktreeManager({
+      repository: fixture.sourceDirectory,
+    });
+    const request = {
+      conversationId: "conversation-unmarked-inspect",
+      executionId: "execution-unmarked-inspect",
+      operationId: "operation-unmarked-inspect",
+      worktreeName: "inspect-unmarked",
+    } as const;
+    const checkout = join(
+      fixture.sandbox,
+      "laborer.worktrees",
+      request.worktreeName
+    );
+    await mkdir(dirname(checkout), { recursive: true });
+    await git(fixture.repository, [
+      "worktree",
+      "add",
+      "-b",
+      `laborer/${request.worktreeName}`,
+      checkout,
+      "HEAD",
+    ]);
+    expect(manager.inspect).toBeDefined();
+    if (manager.inspect === undefined) {
+      throw new Error("inspect is unavailable");
+    }
+    const outcome = await Effect.runPromise(
+      manager.inspect({
+        ...request,
+        creationState: "confirmed",
+        workingDirectory: join(checkout, "next"),
+      })
+    );
+    expect(outcome).toEqual({
+      certainty: "definitive",
+      evidence: "identity-conflict",
+      status: "conflicting",
+    });
+    await expect(
+      readFile(join(checkout, "next", ".env.local"), "utf8")
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("refuses to follow a source .env.local symlink", async () => {

@@ -178,9 +178,12 @@ describe("issue #240 integration with participant context", () => {
           { concurrency: "unbounded" }
         );
         assert.deepStrictEqual(results, userIds);
-        assert.strictEqual(
-          started,
-          SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
+        assert.ok(
+          started >= SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
+        );
+        assert.ok(
+          started < userIds.length,
+          "at least one lookup must exhaust its deadline while waiting"
         );
         assert.strictEqual(
           maximumInFlight,

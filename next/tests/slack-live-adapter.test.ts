@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Redacted, Ref } from "effect";
+import { ConfigProvider, Deferred, Effect, Redacted, Ref } from "effect";
 import { EventId, ThreadId } from "../src/prototype/domain.ts";
 import { makeSlackCompletionReactor } from "../src/prototype/emulated-slack.ts";
 import type {
@@ -64,6 +64,33 @@ const eventCallback = (options?: {
   event_id: options?.eventId ?? "EvActivation",
   team_id: identity.teamId,
   type: "event_callback",
+});
+
+const permissionEnvelope = (
+  teamId: string,
+  ack: SlackEventEnvelope["ack"]
+): SlackEventEnvelope => ({
+  ack,
+  body: {
+    actions: [
+      {
+        action_id: "laborer_permission_allow_once",
+        value: "opaque-capability",
+      },
+    ],
+    channel: { id: "CWORK" },
+    container: {
+      channel_id: "CWORK",
+      message_ts: "2.0",
+      thread_ts: "1.0",
+    },
+    message: { thread_ts: "1.0", ts: "2.0" },
+    team: { id: teamId },
+    type: "block_actions",
+    user: { id: "UHUMAN" },
+  },
+  envelope_id: `EiPermission${teamId}`,
+  type: "interactive",
 });
 
 class FakeSocketModeClient implements SocketModeClientBoundary {
@@ -374,6 +401,169 @@ describe("live Slack normalization", () => {
 });
 
 describe("Socket Mode resource and delivery boundary", () => {
+  it.effect(
+    "ACKs after the durable permission claim without waiting for downstream settlement",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = new FakeSocketModeClient();
+          const durableClaim = yield* Deferred.make<void>();
+          let attempts = 0;
+          let acknowledgements = 0;
+          const runner = {
+            accept: () => Effect.void,
+            handleInteraction: () =>
+              Effect.gen(function* () {
+                attempts += 1;
+                yield* Deferred.await(durableClaim);
+                return "claimed" as const;
+              }),
+            inject: () => Effect.void,
+          };
+          yield* startSocketModeAdapter({ client, identity, runner });
+          client.emit(
+            permissionEnvelope(identity.teamId, () => {
+              acknowledgements += 1;
+              return Promise.resolve();
+            })
+          );
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve))
+          );
+          assert.strictEqual(attempts, 1);
+          assert.strictEqual(acknowledgements, 0);
+          yield* Deferred.succeed(durableClaim, undefined);
+          yield* waitUntil(() => acknowledgements === 1);
+          assert.strictEqual(attempts, 1);
+        })
+      )
+  );
+
+  it.effect(
+    "leaves an uncertain durable publish unacknowledged and ACKs its reconciled retry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = new FakeSocketModeClient();
+          let claims = 0;
+          let acknowledgements = 0;
+          yield* startSocketModeAdapter({
+            client,
+            identity,
+            runner: {
+              accept: () => Effect.void,
+              handleInteraction: () =>
+                Effect.sync(() => {
+                  claims += 1;
+                  return claims === 1 ? "retry" : "claimed";
+                }),
+              inject: () => Effect.void,
+            },
+          });
+          const envelope = () =>
+            permissionEnvelope(identity.teamId, () => {
+              acknowledgements += 1;
+              return Promise.resolve();
+            });
+          client.emit(envelope());
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve))
+          );
+          assert.strictEqual(acknowledgements, 0);
+          client.emit(envelope());
+          yield* waitUntil(() => acknowledgements === 1);
+          assert.strictEqual(claims, 2);
+        })
+      )
+  );
+
+  it.effect(
+    "promptly ACKs malformed, unknown, pending, and unavailable permission routes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const routes = yield* makeSlackWorkspaceRouteDirectory;
+          yield* routes.registerPending(0, identity.teamId);
+          yield* routes.registerPending(1, secondIdentity.teamId);
+          let unavailableClaims = 0;
+          yield* routes.settleUnavailable(1, secondIdentity.teamId, {
+            identity: secondIdentity,
+            namespaceWorkspace: true,
+            runner: {
+              accept: () => Effect.void,
+              handleInteraction: () =>
+                Effect.sync(() => {
+                  unavailableClaims += 1;
+                  return "claimed" as const;
+                }),
+              inject: () => Effect.void,
+            },
+          });
+          const client = new FakeSocketModeClient();
+          yield* startSocketModeAdapter({ client, routeDirectory: routes });
+          let acknowledgements = 0;
+          const ack = (): Promise<void> => {
+            acknowledgements += 1;
+            return Promise.resolve();
+          };
+          client.emit(permissionEnvelope(identity.teamId, ack));
+          client.emit(permissionEnvelope(secondIdentity.teamId, ack));
+          client.emit(permissionEnvelope("TUNKNOWN", ack));
+          client.emit({ ack, body: { malformed: true }, type: "interactive" });
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => setImmediate(resolve))
+          );
+          assert.strictEqual(acknowledgements, 4);
+          assert.strictEqual(unavailableClaims, 0);
+        })
+      )
+  );
+
+  it.live(
+    "leaves a blocked durable interaction claim unacknowledged for Slack retry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = new FakeSocketModeClient();
+          let attempts = 0;
+          yield* startSocketModeAdapter({
+            client,
+            identity,
+            runner: {
+              accept: () => Effect.void,
+              handleInteraction: () => {
+                attempts += 1;
+                return attempts === 1
+                  ? Effect.never
+                  : Effect.succeed("claimed" as const);
+              },
+              inject: () => Effect.void,
+            },
+          });
+          const startedAt = Date.now();
+          let acknowledgements = 0;
+          client.emit(
+            permissionEnvelope(identity.teamId, () => {
+              acknowledgements += 1;
+              return Promise.resolve();
+            })
+          );
+          yield* Effect.sleep("900 millis");
+          assert.ok(Date.now() - startedAt < 1100);
+          assert.strictEqual(acknowledgements, 0);
+          client.emit(
+            permissionEnvelope(identity.teamId, () => {
+              acknowledgements += 1;
+              return Promise.resolve();
+            })
+          );
+          yield* waitUntil(() => acknowledgements === 1);
+          assert.strictEqual(attempts, 2);
+        })
+      ),
+    3000
+  );
+
   it.effect(
     "releases coalescer ownership after processing failures, defects, and interruptions",
     () =>

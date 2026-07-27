@@ -41,6 +41,9 @@ export class DeliveryError extends Schema.TaggedErrorClass<DeliveryError>()(
   {
     category: Schema.String,
     disposition: DeliveryFailureDisposition,
+    outcomeCertainty: Schema.optional(
+      Schema.Literals(["definitely-rejected", "unknown"])
+    ),
     retryAfterMillis: Schema.Number,
   }
 ) {}

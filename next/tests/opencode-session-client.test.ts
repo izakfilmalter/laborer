@@ -13,9 +13,6 @@ const OPENCODE_MAX_SESSION_MESSAGES = 200;
 const OPEN_CODE_SESSION_ID_PATTERN = /^ses_[0-9a-f]{60}$/;
 const LABORER_WIRE_MESSAGE_ID_PATTERN =
   /^msg_[0-9a-f]{12}_laborer_[0-9A-Za-z_-]+$/;
-const UNRESTRICTED_OPEN_CODE_PERMISSION = [
-  { action: "allow", pattern: "*", permission: "*" },
-] as const;
 const LEGACY_LOGICAL_SESSION_ID =
   "ses_d3308952a82b5844000a4eb5ceb2f4964c5a03fc273f29200f14a681f542ca83";
 
@@ -207,7 +204,7 @@ describe("OpenCode legacy session transport", () => {
     ]);
   });
 
-  it("returns after the exact synchronous prompt completes without querying status", async () => {
+  it("awaits exact prompt admission without querying unrelated status", async () => {
     const calls: unknown[] = [];
     let resolvePrompt = (): void => {
       throw new Error("Prompt resolver was not initialized");
@@ -390,7 +387,6 @@ describe("OpenCode v2 session client", () => {
               agent: "laborer",
               id: LEGACY_LOGICAL_SESSION_ID,
               model: { modelID: "gpt-5.6-sol", providerID: "openai" },
-              permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
               workingDirectory: "/repo/worktree",
             },
           ],
@@ -400,7 +396,6 @@ describe("OpenCode v2 session client", () => {
               agent: "laborer",
               id: expectedPhysicalId,
               model: { modelID: "gpt-5.6-sol", providerID: "openai" },
-              permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
               workingDirectory: "/repo/worktree",
             },
           ],
@@ -923,28 +918,351 @@ describe("OpenCode v2 session client", () => {
     })
   );
 
-  it.effect("maps caller identities to durable v2 session operations", () =>
+  it.effect(
+    "reports a user-policy denial without replay or secret detail",
+    () =>
+      Effect.gen(function* () {
+        let promptCalls = 0;
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          interrupt: () => Promise.resolve(),
+          messages: () => Promise.resolve([]),
+          prompt: () => {
+            promptCalls += 1;
+            return Promise.reject(
+              new Error("permission denied: SECRET_POLICY_DETAIL")
+            );
+          },
+          wait: () => Promise.resolve(),
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api);
+
+        const result = yield* Effect.result(
+          client.submitPrompt({
+            promptId: "prompt-denied",
+            sessionId: "session-1",
+            text: "attempt denied operation",
+            workingDirectory: "/repo/worktree",
+          })
+        );
+
+        assert.strictEqual(result._tag, "Failure");
+        assert.strictEqual(promptCalls, 1);
+        if (result._tag === "Failure") {
+          assert.strictEqual(
+            result.failure.safeDetail,
+            "OpenCode prompt submission failed"
+          );
+          assert.ok(
+            !result.failure.safeDetail?.includes("SECRET_POLICY_DETAIL")
+          );
+        }
+      })
+  );
+
+  it.effect(
+    "removes every exact legacy wildcard allow before reuse and is idempotent",
+    () =>
+      Effect.gen(function* () {
+        let permission: unknown = [
+          { action: "allow", pattern: "*", permission: "*" },
+          { action: "allow", pattern: "*", permission: "*" },
+        ];
+        const updates: unknown[] = [];
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          getPermission: () => Promise.resolve(permission),
+          interrupt: () => Promise.resolve(),
+          messages: () => Promise.resolve([]),
+          prompt: (input) => Promise.resolve({ id: input.promptId }),
+          updatePermission: (input) => {
+            updates.push(input);
+            permission = input.permission;
+            return Promise.resolve();
+          },
+          wait: () => Promise.resolve(),
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api);
+        const identity = {
+          sessionId: "legacy-session",
+          workingDirectory: "/repo/worktree",
+        };
+
+        assert.ok(client.prepareSessionForReuse);
+        yield* client.prepareSessionForReuse(identity);
+        yield* client.prepareSessionForReuse(identity);
+
+        assert.deepStrictEqual(permission, []);
+        assert.deepStrictEqual(updates, [
+          { permission: [], sessionId: "legacy-session" },
+        ]);
+      })
+  );
+
+  it.effect(
+    "preserves user rules and order while removing only exact legacy entries",
+    () =>
+      Effect.gen(function* () {
+        const userRules = [
+          { action: "deny" as const, pattern: "*", permission: "*" },
+          { action: "ask" as const, pattern: "*", permission: "bash" },
+          { action: "allow" as const, pattern: "safe-*", permission: "*" },
+          {
+            action: "allow" as const,
+            owner: "user",
+            pattern: "*",
+            permission: "*",
+          },
+        ];
+        let updated: unknown = null;
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          getPermission: () =>
+            Promise.resolve([
+              userRules[0],
+              { action: "allow", pattern: "*", permission: "*" },
+              userRules[1],
+              { action: "allow", pattern: "*", permission: "*" },
+              userRules[2],
+              userRules[3],
+            ]),
+          interrupt: () => Promise.resolve(),
+          messages: () => Promise.resolve([]),
+          prompt: (input) => Promise.resolve({ id: input.promptId }),
+          updatePermission: (input) => {
+            updated = input.permission;
+            return Promise.resolve();
+          },
+          wait: () => Promise.resolve(),
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api);
+
+        assert.ok(client.prepareSessionForReuse);
+        yield* client.prepareSessionForReuse({
+          sessionId: "mixed-session",
+          workingDirectory: "/repo/worktree",
+        });
+
+        assert.deepStrictEqual(updated, userRules);
+      })
+  );
+
+  it.effect("does not mutate a session without the legacy entry", () =>
     Effect.gen(function* () {
-      const calls: Array<readonly [string, unknown]> = [];
+      let updates = 0;
+      const permission = [
+        { action: "deny" as const, pattern: "*", permission: "*" },
+        { action: "ask" as const, pattern: "*", permission: "*" },
+        { action: "allow" as const, pattern: "command-*", permission: "*" },
+      ];
       const api: OpenCodeV2SessionApi = {
-        create: (input) => {
-          calls.push(["create", input]);
-          return Promise.resolve({ id: input.id });
-        },
-        get: (input) => {
-          calls.push(["get", input]);
-          return Promise.resolve({
+        create: (input) => Promise.resolve({ id: input.id }),
+        get: (input) =>
+          Promise.resolve({
             id: input.sessionId,
             workingDirectory: "/repo/worktree",
-          });
-        },
-        interrupt: (input) => {
-          calls.push(["interrupt", input]);
+          }),
+        getPermission: () => Promise.resolve(permission),
+        interrupt: () => Promise.resolve(),
+        messages: () => Promise.resolve([]),
+        prompt: (input) => Promise.resolve({ id: input.promptId }),
+        updatePermission: () => {
+          updates += 1;
           return Promise.resolve();
         },
-        messages: (input) => {
-          calls.push(["messages", input]);
-          return Promise.resolve([
+        wait: () => Promise.resolve(),
+      };
+      const client = makeOpenCodeSessionClientFromV2Api(api);
+
+      assert.ok(client.prepareSessionForReuse);
+      yield* client.prepareSessionForReuse({
+        sessionId: "current-session",
+        workingDirectory: "/repo/worktree",
+      });
+
+      assert.strictEqual(updates, 0);
+    })
+  );
+
+  it.effect(
+    "fails closed when legacy permission inspection is unavailable or ambiguous",
+    () =>
+      Effect.gen(function* () {
+        for (const permission of ["malformed", null] as const) {
+          let updates = 0;
+          const api: OpenCodeV2SessionApi = {
+            create: (input) => Promise.resolve({ id: input.id }),
+            get: (input) =>
+              Promise.resolve({
+                id: input.sessionId,
+                workingDirectory: "/repo/worktree",
+              }),
+            getPermission: () => Promise.resolve(permission),
+            interrupt: () => Promise.resolve(),
+            messages: () => Promise.resolve([]),
+            prompt: (input) => Promise.resolve({ id: input.promptId }),
+            updatePermission: () => {
+              updates += 1;
+              return Promise.resolve();
+            },
+            wait: () => Promise.resolve(),
+          };
+          const client = makeOpenCodeSessionClientFromV2Api(api);
+          assert.ok(client.prepareSessionForReuse);
+
+          const result = yield* Effect.result(
+            client.prepareSessionForReuse({
+              sessionId: "ambiguous-session",
+              workingDirectory: "/repo/worktree",
+            })
+          );
+
+          assert.strictEqual(result._tag, "Failure");
+          assert.strictEqual(updates, 0);
+        }
+
+        const unavailable = makeOpenCodeSessionClientFromV2Api({
+          create: (input) => Promise.resolve({ id: input.id }),
+          get: (input) =>
+            Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            }),
+          interrupt: () => Promise.resolve(),
+          messages: () => Promise.resolve([]),
+          prompt: (input) => Promise.resolve({ id: input.promptId }),
+          wait: () => Promise.resolve(),
+        });
+        assert.ok(unavailable.prepareSessionForReuse);
+        assert.strictEqual(
+          (yield* Effect.result(
+            unavailable.prepareSessionForReuse({
+              sessionId: "unavailable-session",
+              workingDirectory: "/repo/worktree",
+            })
+          ))._tag,
+          "Failure"
+        );
+      })
+  );
+
+  it.effect("fails closed when legacy permission cleanup cannot persist", () =>
+    Effect.gen(function* () {
+      const api: OpenCodeV2SessionApi = {
+        create: (input) => Promise.resolve({ id: input.id }),
+        get: (input) =>
+          Promise.resolve({
+            id: input.sessionId,
+            workingDirectory: "/repo/worktree",
+          }),
+        getPermission: () =>
+          Promise.resolve([{ action: "allow", pattern: "*", permission: "*" }]),
+        interrupt: () => Promise.resolve(),
+        messages: () => Promise.resolve([]),
+        prompt: (input) => Promise.resolve({ id: input.promptId }),
+        updatePermission: () => Promise.reject(new Error("private detail")),
+        wait: () => Promise.resolve(),
+      };
+      const client = makeOpenCodeSessionClientFromV2Api(api);
+      assert.ok(client.prepareSessionForReuse);
+
+      const result = yield* Effect.result(
+        client.prepareSessionForReuse({
+          sessionId: "cleanup-failure-session",
+          workingDirectory: "/repo/worktree",
+        })
+      );
+
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.safeDetail,
+          "OpenCode legacy permission cleanup failed"
+        );
+        assert.ok(!result.failure.safeDetail?.includes("private detail"));
+      }
+    })
+  );
+
+  it.effect(
+    "maps identities without installing or rewriting OpenCode permissions",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        const api: OpenCodeV2SessionApi = {
+          create: (input) => {
+            calls.push(["create", input]);
+            return Promise.resolve({ id: input.id });
+          },
+          get: (input) => {
+            calls.push(["get", input]);
+            return Promise.resolve({
+              id: input.sessionId,
+              workingDirectory: "/repo/worktree",
+            });
+          },
+          interrupt: (input) => {
+            calls.push(["interrupt", input]);
+            return Promise.resolve();
+          },
+          messages: (input) => {
+            calls.push(["messages", input]);
+            return Promise.resolve([
+              {
+                finish: "stop",
+                id: "response-1",
+                role: "assistant",
+                status: "completed",
+                text: "output",
+              },
+              { id: "prompt-1", role: "user", text: "input" },
+            ] as const);
+          },
+          prompt: (input) => {
+            calls.push(["prompt", input]);
+            return Promise.resolve({ id: input.promptId });
+          },
+          wait: (input) => {
+            calls.push(["wait", input]);
+            return Promise.resolve();
+          },
+        };
+        const client = makeOpenCodeSessionClientFromV2Api(api, {
+          agent: "laborer",
+          model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+        });
+        const identity = {
+          sessionId: "session-1",
+          workingDirectory: "/repo/worktree",
+        };
+
+        assert.strictEqual(yield* client.sessionExists(identity), true);
+        yield* client.createSession(identity);
+        yield* client.submitPrompt({
+          ...identity,
+          promptId: "prompt-1",
+          text: "input",
+        });
+        yield* client.wait({ ...identity, promptId: "prompt-1" });
+        assert.deepStrictEqual(
+          yield* client.readMessages({ ...identity, promptId: "prompt-1" }),
+          [
+            { id: "prompt-1", role: "user", text: "input" },
             {
               finish: "stop",
               id: "response-1",
@@ -952,105 +1270,52 @@ describe("OpenCode v2 session client", () => {
               status: "completed",
               text: "output",
             },
-            { id: "prompt-1", role: "user", text: "input" },
-          ] as const);
-        },
-        prompt: (input) => {
-          calls.push(["prompt", input]);
-          return Promise.resolve({ id: input.promptId });
-        },
-        updatePermission: (input) => {
-          calls.push(["updatePermission", input]);
-          return Promise.resolve();
-        },
-        wait: (input) => {
-          calls.push(["wait", input]);
-          return Promise.resolve();
-        },
-      };
-      const client = makeOpenCodeSessionClientFromV2Api(api, {
-        agent: "laborer",
-        model: { modelID: "gpt-5.6-sol", providerID: "openai" },
-      });
-      const identity = {
-        sessionId: "session-1",
-        workingDirectory: "/repo/worktree",
-      };
+          ]
+        );
+        yield* client.interrupt({ ...identity, promptId: "prompt-1" });
 
-      assert.strictEqual(yield* client.sessionExists(identity), true);
-      yield* client.createSession(identity);
-      yield* client.submitPrompt({
-        ...identity,
-        promptId: "prompt-1",
-        text: "input",
-      });
-      yield* client.wait({ ...identity, promptId: "prompt-1" });
-      assert.deepStrictEqual(
-        yield* client.readMessages({ ...identity, promptId: "prompt-1" }),
-        [
-          { id: "prompt-1", role: "user", text: "input" },
-          {
-            finish: "stop",
-            id: "response-1",
-            role: "assistant",
-            status: "completed",
-            text: "output",
-          },
-        ]
-      );
-      yield* client.interrupt({ ...identity, promptId: "prompt-1" });
-
-      assert.deepStrictEqual(calls, [
-        ["get", { sessionId: "session-1" }],
-        [
-          "updatePermission",
-          {
-            permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
-            sessionId: "session-1",
-          },
-        ],
-        [
-          "create",
-          {
-            agent: "laborer",
-            id: "session-1",
-            model: { modelID: "gpt-5.6-sol", providerID: "openai" },
-            permission: UNRESTRICTED_OPEN_CODE_PERMISSION,
-            workingDirectory: "/repo/worktree",
-          },
-        ],
-        [
-          "prompt",
-          {
-            agent: "laborer",
-            model: { modelID: "gpt-5.6-sol", providerID: "openai" },
-            promptId: "prompt-1",
-            sessionId: "session-1",
-            text: "input",
-            workingDirectory: "/repo/worktree",
-          },
-        ],
-        ["wait", { sessionId: "session-1" }],
-        [
-          "messages",
-          {
-            limit: OPENCODE_MAX_SESSION_MESSAGES,
-            order: "desc",
-            sessionId: "session-1",
-            workingDirectory: "/repo/worktree",
-          },
-        ],
-        [
-          "messages",
-          {
-            limit: OPENCODE_MAX_SESSION_MESSAGES,
-            order: "desc",
-            sessionId: "session-1",
-            workingDirectory: "/repo/worktree",
-          },
-        ],
-        ["interrupt", { sessionId: "session-1" }],
-      ]);
-    })
+        assert.deepStrictEqual(calls, [
+          ["get", { sessionId: "session-1" }],
+          [
+            "create",
+            {
+              agent: "laborer",
+              id: "session-1",
+              model: { modelID: "gpt-5.6-sol", providerID: "openai" },
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+          ["get", { sessionId: "session-1" }],
+          [
+            "messages",
+            {
+              limit: OPENCODE_MAX_SESSION_MESSAGES,
+              order: "desc",
+              sessionId: "session-1",
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+          ["wait", { sessionId: "session-1" }],
+          [
+            "messages",
+            {
+              limit: OPENCODE_MAX_SESSION_MESSAGES,
+              order: "desc",
+              sessionId: "session-1",
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+          [
+            "messages",
+            {
+              limit: OPENCODE_MAX_SESSION_MESSAGES,
+              order: "desc",
+              sessionId: "session-1",
+              workingDirectory: "/repo/worktree",
+            },
+          ],
+          ["interrupt", { sessionId: "session-1" }],
+        ]);
+      })
   );
 });

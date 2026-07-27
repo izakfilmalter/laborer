@@ -117,6 +117,26 @@ export class HandlerAttempt extends Schema.Class<HandlerAttempt>(
   status: Schema.Literals(["running", "interrupted", "succeeded", "failed"]),
 }) {}
 
+export class ConversationBlockedState extends Schema.Class<ConversationBlockedState>(
+  "ConversationBlockedState"
+)({
+  attemptId: Schema.NonEmptyString,
+  bindingGeneration: Schema.NullOr(Schema.Int),
+  blockedAt: Schema.Int,
+  conversationId: ThreadId,
+  decisionId: Schema.NullOr(Schema.NonEmptyString),
+  decisionKind: Schema.NullOr(Schema.Literals(["abandon", "retry"])),
+  ownerId: Schema.NonEmptyString,
+  ownerKind: Schema.Literals(["application-event", "participant-turn"]),
+  processGeneration: Schema.Int,
+  promptId: Schema.NonEmptyString,
+  replacementAttemptId: Schema.NullOr(Schema.NonEmptyString),
+  sessionDisposition: Schema.NullOr(
+    Schema.Literals(["replaced", "resumed-quiescent"])
+  ),
+  workspaceId: Schema.NonEmptyString,
+}) {}
+
 export const HandlerFailureCategory = Schema.Literals([
   "spawn",
   "protocol",
@@ -159,12 +179,14 @@ export class OutboundItem extends Schema.Class<OutboundItem>("OutboundItem")({
 
 export class TurnState extends Schema.Class<TurnState>("TurnState")({
   attempts: Schema.Array(HandlerAttempt),
+  blocked: Schema.optional(Schema.NullOr(ConversationBlockedState)),
   context: Schema.Array(NormalizedMessage),
   id: TurnId,
   messages: Schema.Array(NormalizedMessage),
   outcome: Schema.NullOr(HandlerOutcomeState),
   status: Schema.Literals([
     "running",
+    "blocked",
     "awaiting_delivery",
     "completed",
     "failed",
@@ -175,6 +197,7 @@ export class ApplicationEventState extends Schema.Class<ApplicationEventState>(
   "ApplicationEventState"
 )({
   eventId: Schema.String,
+  blocked: Schema.optional(Schema.NullOr(ConversationBlockedState)),
   outcome: Schema.NullOr(HandlerOutcomeState).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null))
   ),
@@ -183,6 +206,7 @@ export class ApplicationEventState extends Schema.Class<ApplicationEventState>(
   status: Schema.Literals([
     "pending",
     "running",
+    "blocked",
     "awaiting_delivery",
     "completed",
     "failed",
@@ -271,6 +295,193 @@ export class CompletionReactionState extends Schema.Class<CompletionReactionStat
   turnId: TurnId,
 }) {}
 
+export const ConversationStreamOwnerKind = Schema.Literals([
+  "application-event",
+  "participant-turn",
+]);
+export type ConversationStreamOwnerKind =
+  typeof ConversationStreamOwnerKind.Type;
+
+export const ConversationStreamMode = Schema.Literals(["fallback", "native"]);
+export type ConversationStreamMode = typeof ConversationStreamMode.Type;
+
+export const ConversationStreamOperationKind = Schema.Literals([
+  "fallback-post",
+  "fallback-update",
+  "native-append",
+  "native-start",
+  "native-stop",
+]);
+export type ConversationStreamOperationKind =
+  typeof ConversationStreamOperationKind.Type;
+
+export const ConversationStreamOperationStatus = Schema.Literals([
+  "prepared",
+  "in_flight",
+  "retry",
+  "acknowledged",
+  "rejected",
+  "stopped_by_user",
+  "unresolved",
+]);
+export type ConversationStreamOperationStatus =
+  typeof ConversationStreamOperationStatus.Type;
+
+export const ConversationStreamOperationOutcomeCertainty = Schema.Literals([
+  "definitely-rejected",
+  "unknown",
+]);
+export type ConversationStreamOperationOutcomeCertainty =
+  typeof ConversationStreamOperationOutcomeCertainty.Type;
+
+export class ConversationStreamChunkEvidence extends Schema.Class<ConversationStreamChunkEvidence>(
+  "ConversationStreamChunkEvidence"
+)({
+  sequence: Schema.Number,
+  text: Schema.String,
+  textHash: Schema.String,
+}) {}
+
+export class ConversationStreamChunkHashEvidence extends Schema.Class<ConversationStreamChunkHashEvidence>(
+  "ConversationStreamChunkHashEvidence"
+)({
+  sequence: Schema.Number,
+  textHash: Schema.String,
+}) {}
+
+export class ConversationStreamOperation extends Schema.Class<ConversationStreamOperation>(
+  "ConversationStreamOperation"
+)({
+  attempt: Schema.Number,
+  errorCategory: Schema.NullOr(Schema.String),
+  errorCertainty: Schema.NullOr(
+    ConversationStreamOperationOutcomeCertainty
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  id: Schema.String,
+  kind: ConversationStreamOperationKind,
+  payloadEndOffset: Schema.Number,
+  payloadHash: Schema.String,
+  payloadStartOffset: Schema.Number,
+  payloadText: Schema.String,
+  preparedAtMillis: Schema.Number,
+  inFlightAtMillis: Schema.NullOr(Schema.Number),
+  retryAtMillis: Schema.NullOr(Schema.Number),
+  settledAtMillis: Schema.NullOr(Schema.Number),
+  status: ConversationStreamOperationStatus,
+}) {}
+
+export class ConversationStreamOperationEvidence extends Schema.Class<ConversationStreamOperationEvidence>(
+  "ConversationStreamOperationEvidence"
+)({
+  attempt: Schema.Number,
+  errorCategory: Schema.NullOr(Schema.String),
+  errorCertainty: Schema.NullOr(ConversationStreamOperationOutcomeCertainty),
+  inFlightAtMillis: Schema.NullOr(Schema.Number),
+  kind: ConversationStreamOperationKind,
+  payloadEndOffset: Schema.Number,
+  payloadHash: Schema.String,
+  payloadStartOffset: Schema.Number,
+  preparedAtMillis: Schema.Number,
+  settledAtMillis: Schema.NullOr(Schema.Number),
+  status: Schema.Literals([
+    "acknowledged",
+    "rejected",
+    "stopped_by_user",
+    "unresolved",
+  ]),
+}) {}
+
+export class ConversationStreamState extends Schema.Class<ConversationStreamState>(
+  "ConversationStreamState"
+)({
+  acceptedSequence: Schema.Number,
+  channelId: Schema.String,
+  chunks: Schema.Array(ConversationStreamChunkEvidence),
+  compactedConfirmedHash: Schema.String.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(""))
+  ),
+  compactedConfirmedOffset: Schema.Number.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(0))
+  ),
+  compactedOperationCount: Schema.Number.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(0))
+  ),
+  confirmedHash: Schema.String,
+  confirmedOffset: Schema.Number,
+  createdAtMillis: Schema.Number.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(0))
+  ),
+  cumulativeHash: Schema.String,
+  cumulativeText: Schema.String,
+  flushDeadlineMillis: Schema.NullOr(Schema.Number),
+  id: Schema.String,
+  lifecycle: Schema.Literals(["open", "finalizing", "stopped", "unresolved"]),
+  messageId: Schema.String,
+  mode: Schema.NullOr(ConversationStreamMode),
+  operations: Schema.Array(ConversationStreamOperation),
+  ownerId: Schema.String,
+  ownerKind: ConversationStreamOwnerKind,
+  recipientUserId: Schema.NullOr(Schema.String),
+  replayBoundaryOffset: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
+  replayCursorOffset: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
+  rootTs: Schema.String,
+  slackTs: Schema.NullOr(Schema.String),
+  stoppedAtMillis: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
+  terminalReason: Schema.NullOr(Schema.String),
+  threadId: ThreadId,
+  workspaceId: Schema.String,
+}) {}
+
+export class ConversationStreamTombstone extends Schema.Class<ConversationStreamTombstone>(
+  "ConversationStreamTombstone"
+)({
+  acceptedSequence: Schema.Number,
+  channelId: Schema.String,
+  chunkHashes: Schema.Array(ConversationStreamChunkHashEvidence),
+  cumulativeHash: Schema.String,
+  confirmedHash: Schema.String,
+  confirmedOffset: Schema.Number,
+  id: Schema.String,
+  lifecycle: Schema.Literals(["stopped", "unresolved"]),
+  messageId: Schema.String,
+  mode: Schema.NullOr(ConversationStreamMode),
+  operations: Schema.Array(ConversationStreamOperationEvidence).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
+  ownerId: Schema.String,
+  ownerKind: ConversationStreamOwnerKind,
+  recipientUserId: Schema.NullOr(Schema.String),
+  rootTs: Schema.String,
+  slackTs: Schema.NullOr(Schema.String),
+  stoppedAtMillis: Schema.Number,
+  terminalReason: Schema.String,
+  threadId: ThreadId,
+  workspaceId: Schema.String,
+}) {}
+
+export const ConversationStreamRateBudgetScope = Schema.Literals([
+  "channel",
+  "method",
+]);
+export type ConversationStreamRateBudgetScope =
+  typeof ConversationStreamRateBudgetScope.Type;
+
+export class ConversationStreamRateBudget extends Schema.Class<ConversationStreamRateBudget>(
+  "ConversationStreamRateBudget"
+)({
+  channelId: Schema.NullOr(Schema.String),
+  method: Schema.String,
+  nextAvailableAtMillis: Schema.Number,
+  scope: ConversationStreamRateBudgetScope,
+  workspaceId: Schema.String,
+}) {}
+
 export class PrototypeState extends Schema.Class<PrototypeState>(
   "PrototypeState"
 )({
@@ -278,6 +489,15 @@ export class PrototypeState extends Schema.Class<PrototypeState>(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
   completionReactions: Schema.Array(CompletionReactionState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
+  conversationStreamRateBudgets: Schema.Array(
+    ConversationStreamRateBudget
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  conversationStreams: Schema.Array(ConversationStreamState).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
+  conversationStreamTombstones: Schema.Array(ConversationStreamTombstone).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
   ignoredInbound: Schema.Array(IgnoredInbound),
@@ -289,6 +509,9 @@ export class PrototypeState extends Schema.Class<PrototypeState>(
 export const initialPrototypeState = PrototypeState.make({
   acknowledgements: [],
   completionReactions: [],
+  conversationStreamRateBudgets: [],
+  conversationStreams: [],
+  conversationStreamTombstones: [],
   schemaVersion: 1,
   seenEventIds: [],
   ignoredInbound: [],

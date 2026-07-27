@@ -51,6 +51,7 @@ export const normalizedEvent = (options: {
     | "system";
   readonly text?: string | null;
   readonly threadTs?: string;
+  readonly workspaceId?: string;
 }): NormalizedInboundEvent =>
   NormalizedInboundEvent.make({
     eventId: EventId.make(options.eventId),
@@ -62,6 +63,9 @@ export const normalizedEvent = (options: {
     authorSlackId: options.authorSlackId,
     recordKind: options.recordKind ?? "message",
     text: options.text ?? null,
+    ...(options.workspaceId === undefined
+      ? {}
+      : { workspaceId: options.workspaceId }),
   });
 
 export interface ScenarioResult {

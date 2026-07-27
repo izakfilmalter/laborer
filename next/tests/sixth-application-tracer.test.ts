@@ -204,7 +204,7 @@ describe("sixth Application tracer", () => {
             revision: "original",
           });
           assert.deepStrictEqual(yield* Ref.get(promptRejections), [
-            "Execution is terminal and cannot accept prompts",
+            "Execution control is unavailable",
           ]);
           const requests = yield* Ref.get(conversationRequests);
           const cancellationEvents = requests.filter(
@@ -227,7 +227,7 @@ describe("sixth Application tracer", () => {
   );
 
   it.effect(
-    "fails recovery once when its persisted worktree is inaccessible without replacing anything",
+    "retains an inaccessible worktree reported through an untyped adapter for later inspection",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -236,8 +236,6 @@ describe("sixth Application tracer", () => {
           );
           const applicationSnapshotPath = join(root, "application.json");
           const runnerSnapshotPath = join(root, "runner.json");
-          const executionId = "CMISSINGWORKTREE:1.0:execution:1";
-          const recoveryEventHandled = yield* Deferred.make<void>();
           const worktreeCalls = yield* Ref.make({
             create: 0,
             recover: 0,
@@ -255,15 +253,6 @@ describe("sixth Application tracer", () => {
                 yield* Ref.update(conversationRequests, (current) =>
                   EffectArray.append(current, request)
                 );
-                if (request.source === "execution-recovery") {
-                  yield* Deferred.succeed(recoveryEventHandled, undefined);
-                  return [
-                    {
-                      replyId: `${request.turnId}:reported`,
-                      text: `Conversation reported ${executionId} recovery failed.`,
-                    },
-                  ];
-                }
                 const message = request.messages.at(-1)?.text ?? "";
                 if (message.includes("start work with persisted worktree")) {
                   const action = request.actions.find(
@@ -394,7 +383,6 @@ describe("sixth Application tracer", () => {
           yield* Effect.scoped(
             Effect.gen(function* () {
               const harness = yield* makeHarness;
-              yield* Deferred.await(recoveryEventHandled);
               yield* harness.runner.drain(
                 ThreadId.make("CMISSINGWORKTREE:1.0")
               );
@@ -421,7 +409,7 @@ describe("sixth Application tracer", () => {
             create: 1,
             recover: 0,
             remove: 0,
-            validate: 1,
+            validate: 2,
           });
           assert.deepStrictEqual(yield* Ref.get(implementationCalls), {
             recover: 0,
@@ -431,21 +419,15 @@ describe("sixth Application tracer", () => {
           const recoveryRequests = requests.filter(
             (request) => request.source === "execution-recovery"
           );
-          assert.strictEqual(recoveryRequests.length, 1);
-          assert.strictEqual(
-            recoveryRequests[0]?.input,
-            `<application-event source="execution-recovery" execution-id="${executionId}" kind="recovery-failure" resource="worktree" />`
-          );
-          assert.strictEqual(requests.at(-1)?.executions[0]?.status, "failed");
-          assert.deepStrictEqual(yield* Ref.get(delivered), [
-            `Conversation reported ${executionId} recovery failed.`,
-          ]);
+          assert.strictEqual(recoveryRequests.length, 0);
+          assert.strictEqual(requests.at(-1)?.executions[0]?.status, "running");
+          assert.deepStrictEqual(yield* Ref.get(delivered), []);
         })
       )
   );
 
   it.effect(
-    "fails recovery once when its implementation session is missing without starting a replacement",
+    "retains an unavailable session reported through an untyped adapter without replacement",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -454,8 +436,6 @@ describe("sixth Application tracer", () => {
           );
           const applicationSnapshotPath = join(root, "application.json");
           const runnerSnapshotPath = join(root, "runner.json");
-          const executionId = "CMISSINGSESSION:1.0:execution:1";
-          const recoveryEventHandled = yield* Deferred.make<void>();
           const worktreeCalls = yield* Ref.make({
             create: 0,
             recover: 0,
@@ -473,15 +453,6 @@ describe("sixth Application tracer", () => {
                 yield* Ref.update(conversationRequests, (current) =>
                   EffectArray.append(current, request)
                 );
-                if (request.source === "execution-recovery") {
-                  yield* Deferred.succeed(recoveryEventHandled, undefined);
-                  return [
-                    {
-                      replyId: `${request.turnId}:reported`,
-                      text: `Conversation reported ${executionId} session recovery failed.`,
-                    },
-                  ];
-                }
                 const message = request.messages.at(-1)?.text ?? "";
                 if (message.includes("start work with persisted session")) {
                   const action = request.actions.find(
@@ -605,7 +576,6 @@ describe("sixth Application tracer", () => {
           yield* Effect.scoped(
             Effect.gen(function* () {
               const harness = yield* makeHarness;
-              yield* Deferred.await(recoveryEventHandled);
               yield* harness.runner.drain(ThreadId.make("CMISSINGSESSION:1.0"));
             })
           );
@@ -630,7 +600,7 @@ describe("sixth Application tracer", () => {
             create: 1,
             recover: 0,
             remove: 0,
-            validate: 1,
+            validate: 2,
           });
           assert.deepStrictEqual(yield* Ref.get(implementationCalls), {
             recover: 1,
@@ -640,15 +610,9 @@ describe("sixth Application tracer", () => {
           const recoveryRequests = requests.filter(
             (request) => request.source === "execution-recovery"
           );
-          assert.strictEqual(recoveryRequests.length, 1);
-          assert.strictEqual(
-            recoveryRequests[0]?.input,
-            `<application-event source="execution-recovery" execution-id="${executionId}" kind="recovery-failure" resource="implementation-session" />`
-          );
-          assert.strictEqual(requests.at(-1)?.executions[0]?.status, "failed");
-          assert.deepStrictEqual(yield* Ref.get(delivered), [
-            `Conversation reported ${executionId} session recovery failed.`,
-          ]);
+          assert.strictEqual(recoveryRequests.length, 0);
+          assert.strictEqual(requests.at(-1)?.executions[0]?.status, "running");
+          assert.deepStrictEqual(yield* Ref.get(delivered), []);
         })
       )
   );

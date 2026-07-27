@@ -281,17 +281,12 @@ describe("issue #239 ACP Slack participant context", () => {
         assert.strictEqual(startedRequests, 2);
         assert.strictEqual(abortedRequests, 2);
         assert.strictEqual(inFlightRequests, 0);
-        assert.strictEqual(warnings.length, 2);
-        assert.ok(
-          EffectArray.every(warnings, (warning) =>
-            warning.startsWith("Slack participant lookup failed")
-          )
-        );
+        assert.deepStrictEqual(warnings, []);
       })
   );
 
   it.live(
-    "bounds users.info calls across concurrent conversations with one workspace semaphore",
+    "serializes users.info calls behind the workspace-wide ACP prompt gate",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -370,10 +365,7 @@ describe("issue #239 ACP Slack participant context", () => {
 
           assert.strictEqual(startedRequests, conversationCount);
           assert.strictEqual(inFlightRequests, 0);
-          assert.strictEqual(
-            maximumInFlightRequests,
-            SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
-          );
+          assert.strictEqual(maximumInFlightRequests, 1);
           assert.strictEqual(
             (yield* readPromptRecords(promptJsonlPath)).length,
             conversationCount
@@ -425,10 +417,12 @@ describe("issue #239 ACP Slack participant context", () => {
           { length: requestCount },
           (_, index) => `U239WAIT${index}`
         );
+        const startedAt = Date.now();
         const results = yield* Effect.all(
           userIds.map((userId) => lookup.lookupVisibleName(userId)),
           { concurrency: "unbounded" }
         ).pipe(Effect.provide(Logger.layer([warningLogger])));
+        const elapsedMillis = Date.now() - startedAt;
 
         assert.strictEqual(
           startedRequests,
@@ -440,20 +434,13 @@ describe("issue #239 ACP Slack participant context", () => {
         );
         assert.strictEqual(inFlightRequests, 0);
         assert.deepStrictEqual(results, userIds);
-        assert.strictEqual(warnings.length, requestCount);
-        assert.ok(
-          EffectArray.every(
-            warnings,
-            (warning) =>
-              warning.length < 200 &&
-              !warning.includes("PRIVATE CAPACITY WAIT ERROR 239")
-          )
-        );
+        assert.ok(elapsedMillis < 1000);
+        assert.deepStrictEqual(warnings, []);
       })
   );
 
   it.live(
-    "enriches every newly introduced human without a permanent prompt cap",
+    "attempts every participant in a large prompt within one bounded workspace traversal",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -478,6 +465,35 @@ describe("issue #239 ACP Slack participant context", () => {
             (_, index) => `U239BUDGET${String(index).padStart(2, "0")}`
           );
           const lookedUpIds: string[] = [];
+          let inFlightRequests = 0;
+          let maximumInFlightRequests = 0;
+          let startedRequests = 0;
+          const boundedLookup = makeBoundedSlackParticipantLookup({
+            fetch: async () => {
+              startedRequests += 1;
+              const shouldFail = startedRequests % 5 === 0;
+              inFlightRequests += 1;
+              maximumInFlightRequests = Math.max(
+                maximumInFlightRequests,
+                inFlightRequests
+              );
+              await new Promise((resolveRequest) => {
+                setTimeout(resolveRequest, 20);
+              });
+              inFlightRequests -= 1;
+              if (shouldFail) {
+                throw new Error("PRIVATE LARGE LOOKUP FAILURE 239");
+              }
+              return Response.json({
+                ok: true,
+                user: { profile: { display_name: "Resolved participant" } },
+              });
+            },
+            requestTimeoutMillis: 500,
+            slackApiUrl: "https://slack.invalid/api/",
+            token: "test-token",
+            usersInfoTimeoutMillis: 1000,
+          });
           const warnings: string[] = [];
           const publicOutput: string[] = [];
           const warningLogger = Logger.make<unknown, void>((options) => {
@@ -498,13 +514,13 @@ describe("issue #239 ACP Slack participant context", () => {
             },
             participantLookup: {
               lookupVisibleName: (slackUserId) =>
-                Effect.sync(() => {
-                  lookedUpIds.push(slackUserId);
-                  return `Resolved ${slackUserId}`;
-                }),
+                Effect.sync(() => lookedUpIds.push(slackUserId)).pipe(
+                  Effect.andThen(boundedLookup.lookupVisibleName(slackUserId))
+                ),
             },
           });
 
+          const lookupStartedAt = Date.now();
           yield* conversationAgent
             .handle(
               participantConversationRequest({
@@ -519,16 +535,19 @@ describe("issue #239 ACP Slack participant context", () => {
             )
             .pipe(Effect.provide(Logger.layer([warningLogger])));
 
+          const lookupElapsedMillis = Date.now() - lookupStartedAt;
           assert.deepStrictEqual(lookedUpIds, participantIds);
+          assert.strictEqual(startedRequests, participantIds.length);
+          assert.strictEqual(inFlightRequests, 0);
+          assert.strictEqual(
+            maximumInFlightRequests,
+            SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
+          );
+          assert.ok(lookupElapsedMillis < 1000);
           const prompt = (yield* readPromptRecords(promptJsonlPath))[0]?.prompt;
           assert.ok(prompt !== undefined);
           for (const participantId of participantIds) {
             assert.ok(prompt.includes(`slack-user-id="${participantId}"`));
-            assert.ok(
-              prompt.includes(
-                `slack-user-id="${participantId}" visible-name="Resolved ${participantId}"`
-              )
-            );
           }
           let previousParticipantIndex = -1;
           for (const participantId of participantIds) {
@@ -538,9 +557,14 @@ describe("issue #239 ACP Slack participant context", () => {
             assert.ok(participantIndex > previousParticipantIndex);
             previousParticipantIndex = participantIndex;
           }
-          assert.deepStrictEqual(warnings, []);
+          assert.strictEqual(warnings.length, 1);
+          assert.ok(
+            warnings[0]?.startsWith("Slack participant lookup fallback summary")
+          );
+          assert.ok((warnings[0]?.length ?? 0) < 200);
+          assert.ok(!warnings[0]?.includes("PRIVATE LARGE LOOKUP FAILURE 239"));
           const published = publicOutput.join("\n");
-          assert.ok(!published.includes("lookup budget"));
+          assert.ok(!published.includes("lookup fallback"));
           assert.ok(!published.includes(participantIds.at(-1) ?? "unexpected"));
         })
       ),
@@ -1203,11 +1227,11 @@ describe("issue #239 ACP Slack participant context", () => {
             )
           );
           assert.ok(prompts[3]?.prompt.includes("PRIVATE FAILURE PROFILE 239"));
+          assert.strictEqual(warnings.length, 1);
           assert.ok(
-            EffectArray.some(warnings, (warning) =>
-              warning.includes("Slack participant lookup failed")
-            )
+            warnings[0]?.startsWith("Slack participant lookup fallback summary")
           );
+          assert.ok((warnings[0]?.length ?? 0) < 200);
           assert.ok(
             !EffectArray.some(warnings, (warning) =>
               warning.includes("PRIVATE SLACK API FAILURE 239")

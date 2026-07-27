@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -7,6 +8,7 @@ import {
   type EmulatedSlackFixture,
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
+import { terminateSupervisedProcess } from "../src/prototype/process-supervisor.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -32,8 +34,8 @@ const fakeOpenCodePath = resolve(
 );
 const EXPECTED_PARTIAL = "**Streaming** from ACP";
 const EXPECTED_COMPLETE = `${EXPECTED_PARTIAL}\n\n- complete\n- unchanged`;
-const EXPECTED_FAILURE_NOTICE =
-  "This conversation turn could not be completed. Please try again.";
+const EXPECTED_BLOCKED_NOTICE =
+  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
 const EXPECTED_SEMANTIC_MESSAGES = [
   "**First** message",
   "Second message",
@@ -187,15 +189,19 @@ const waitForBotReplyText = Effect.fnUntraced(function* (
   expectedText: string
 ) {
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
+  let observed: readonly Record<string, unknown>[] = [];
   while (Date.now() < deadline) {
     const replies = yield* botReplies(fixture, rootTs);
+    observed = replies;
     if (replies.length === 1 && replies[0]?.text === expectedText) {
       return replies;
     }
     yield* Effect.sleep("10 millis");
   }
   return yield* Effect.die(
-    new Error(`timed out waiting for Emulate Slack text: ${expectedText}`)
+    new Error(
+      `timed out waiting for Emulate Slack text: ${expectedText}; observed: ${observed.map((reply) => String(reply.text ?? "")).join(" | ")}`
+    )
   );
 });
 
@@ -205,12 +211,14 @@ const waitForBotReplyTexts = Effect.fnUntraced(function* (
   expectedTexts: readonly string[]
 ) {
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
+  let observedTexts: readonly string[] = [];
   while (Date.now() < deadline) {
     const replies = yield* botReplies(fixture, rootTs);
     const texts = pipe(
       replies,
       EffectArray.map((message) => String(message.text ?? ""))
     );
+    observedTexts = texts;
     if (
       texts.length === expectedTexts.length &&
       EffectArray.every(texts, (text, index) => text === expectedTexts[index])
@@ -221,7 +229,7 @@ const waitForBotReplyTexts = Effect.fnUntraced(function* (
   }
   return yield* Effect.die(
     new Error(
-      `timed out waiting for Emulate Slack texts: ${expectedTexts.join(" | ")}`
+      `timed out waiting for Emulate Slack texts: ${expectedTexts.join(" | ")}; observed: ${observedTexts.join(" | ")}`
     )
   );
 });
@@ -280,6 +288,104 @@ const assertSafeBotReplies = (
 };
 
 describe("issues #234 and #236 ACP Markdown stream", () => {
+  it.live(
+    "handles fallback terminal stop reasons through the Laborer conversation adapter",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const temporaryRoot = yield* makeTempDirectoryScoped(
+            "laborer-acp-stop-reasons-"
+          );
+          const scenarios = [
+            { scenario: "max-tokens", stopReason: "max_tokens" },
+            {
+              scenario: "max-turn-requests",
+              stopReason: "max_turn_requests",
+            },
+          ] as const;
+          for (const scenario of scenarios) {
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const stopReasonLogPath = join(
+                  temporaryRoot,
+                  `${scenario.scenario}-stop-reason.log`
+                );
+                const conversationAgent = yield* makeAcpConversationAgent({
+                  args: [scriptedPeerPath],
+                  command: process.execPath,
+                  cwd: temporaryRoot,
+                  environment: {
+                    HOME: temporaryRoot,
+                    PATH: process.env.PATH,
+                    SCRIPTED_ACP_READY_PATH: join(
+                      temporaryRoot,
+                      `${scenario.scenario}-ready`
+                    ),
+                    SCRIPTED_ACP_RELEASE_PATH: join(
+                      temporaryRoot,
+                      `${scenario.scenario}-release`
+                    ),
+                    SCRIPTED_ACP_SCENARIO: scenario.scenario,
+                    SCRIPTED_ACP_STOP_REASON_LOG_PATH: stopReasonLogPath,
+                  },
+                });
+                const published = yield* Ref.make<readonly string[]>([]);
+                const publishMessage: PublishConversationAgentMessage = (
+                  message
+                ) =>
+                  Ref.update(published, (current) =>
+                    EffectArray.append(current, message.text)
+                  );
+                const result = yield* conversationAgent.handle(
+                  conversationRequest(`prompt:${scenario.scenario}`),
+                  publishMessage
+                );
+                assert.deepStrictEqual(result, []);
+                assert.deepStrictEqual(yield* Ref.get(published), [
+                  `Scripted ${scenario.stopReason} coverage`,
+                ]);
+                assert.deepStrictEqual(
+                  yield* nonEmptyFileLines(stopReasonLogPath),
+                  [scenario.stopReason]
+                );
+              })
+            );
+          }
+        })
+      ),
+    30_000
+  );
+
+  it.effect(
+    "never signals a numeric process group after its owned leader exits",
+    () =>
+      Effect.gen(function* () {
+        let directSignals = 0;
+        let groupSignals = 0;
+        const exitedLeader = {
+          exitCode: 0,
+          kill: () => {
+            directSignals += 1;
+            return true;
+          },
+          pid: 424_244,
+          signalCode: null,
+        } as unknown as ChildProcessWithoutNullStreams;
+
+        yield* Effect.promise(() =>
+          terminateSupervisedProcess(exitedLeader, 10, true, {
+            signalProcessGroup: () => {
+              groupSignals += 1;
+              return true;
+            },
+          })
+        );
+
+        assert.strictEqual(groupSignals, 0);
+        assert.strictEqual(directSignals, 0);
+      })
+  );
+
   it.live(
     "posts partial Markdown while the ACP prompt is pending and updates it after release",
     () =>
@@ -690,7 +796,7 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
               const failedReplies = yield* waitForBotReplyTexts(
                 fixture,
                 rootTs,
-                ["Partial answer stays.", EXPECTED_FAILURE_NOTICE]
+                ["Partial answer stays.", EXPECTED_BLOCKED_NOTICE]
               );
               assertSafeBotReplies(fixture, rootTs, failedReplies);
             })
@@ -948,5 +1054,42 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
           yield* waitForProcessExit(pidPath);
         })
       )
+  );
+
+  it.live(
+    "reaps a TERM-resistant descendant after the direct ACP child exits",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const temporaryRoot = yield* makeTempDirectoryScoped(
+            "laborer-acp-descendant-reaping-"
+          );
+          const descendantPidPath = join(temporaryRoot, "descendant-pid");
+          const pidPath = join(temporaryRoot, "peer-pid");
+          const readyPath = join(temporaryRoot, "prompt-pending");
+          const releasePath = join(temporaryRoot, "release-prompt");
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* makeAcpConversationAgent({
+                args: [scriptedPeerPath],
+                childExitGraceMillis: 100,
+                command: process.execPath,
+                cwd: projectRoot,
+                environment: {
+                  ...process.env,
+                  SCRIPTED_ACP_DESCENDANT_PID_PATH: descendantPidPath,
+                  SCRIPTED_ACP_PID_PATH: pidPath,
+                  SCRIPTED_ACP_READY_PATH: readyPath,
+                  SCRIPTED_ACP_RELEASE_PATH: releasePath,
+                },
+              });
+              yield* waitForFile(descendantPidPath);
+            })
+          );
+          yield* waitForProcessExit(pidPath);
+          yield* waitForProcessExit(descendantPidPath);
+        })
+      ),
+    10_000
   );
 });

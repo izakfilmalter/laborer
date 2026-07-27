@@ -20,15 +20,22 @@
 > boundaries, filters private activity, reuses sessions, and serializes turns.
 > Emulate 0.9 does not implement Slack's native stream methods, so automated
 > integration retains the `chat.postMessage` then `chat.update` fallback. It is
-> test-only and does not replace `start:slack`, the current conversation-agent
-> startup path, or user Actions. Streamed Slack messages deliberately remain
+> test-only and does not replace the production `start:slack` ACP runtime or
+> user Actions. Streamed Slack messages deliberately remain
 > outside the durable outbox in this proof, so crash retry/replay of a partially
 > delivered stream is not yet guaranteed.
 >
-> **OPT-IN LIVE ACP CANARY for issue #235.** `start:acp-canary` composes that
-> same streaming path with OpenCode's `acp` command. It is a manual canary, not
-> a production migration; `start:slack`, Actions, and implementation agents are
-> unchanged.
+> **DEDICATED LIVE ACP CANARY.** `start:acp-canary` composes the production ACP
+> runtime under isolated credentials and state. It is a manual gate and must
+> prove native streaming plus one Action/Execution scene.
+>
+> **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
+> the normal workspace registry, root lock, durable Runner and file Application
+> state, Git and implementation-agent adapters, and native Slack streaming, but
+> injects the durable ACP Conversation adapter. Each authenticated workspace
+> owns one scoped ACP child and isolated workspace state. Incompatible startup
+> quarantines only that binding. There is no legacy Conversation fallback and
+> no dual publication or alternate production entrypoint.
 
 ## Run it
 
@@ -53,12 +60,113 @@ Run the adversarial proof with:
 bun run check
 ```
 
-## Run the opt-in OpenCode ACP canary later
+To run the production lifecycle, use:
 
-This live step is deliberately **not** part of automated acceptance. Automated
-tests substitute a deterministic fake executable and publish through official
-Slack `WebClient` instances into Emulate; they need no Slack credentials, model
-provider, or real OpenCode process.
+```sh
+bun run start:slack
+```
+
+The ACP child receives only required runtime variables and application
+environment names explicitly opted into by `laborer.json`; Slack, workspace
+registry, and Laborer bridge or memory authority variables are removed. Project
+OpenCode configuration remains authoritative. Ordinary questions create no
+Action, Execution, branch, or worktree. The implementation-agent adapter stays
+available for explicit coding Actions and is acquired lazily.
+
+Public Conversation chunks in this composition are projected into the durable
+Runner state before Slack delivery. The projection records semantic message and
+chunk order, cumulative and confirmed hashes, Slack timestamps, and every
+start/append/stop or post/update intent and outcome. Deltas after the first
+visible chunk are coalesced until either 256 Unicode code points are pending or
+the oldest pending delta is one second old. The durable per-workspace,
+per-channel, per-method request budget spaces native starts and stops by three
+seconds, native appends and fallback posts by one second, and fallback updates
+by 1.2 seconds. Slack `Retry-After` extends that persisted schedule; each
+operation has at most five attempts. The WebClient performs no hidden retries
+and returns rate limits to the projection, and each HTTP attempt has a ten-second
+deadline. A definitely rejected transient operation may retry, while an outcome
+that could have reached Slack becomes explicitly unresolved instead of risking
+duplicate public text. Cumulative fallback updates are the exception because
+replay converges idempotently. Startup reconciles prepared and acknowledged
+operations from the same workspace-scoped state. A native request that was in
+flight when the daemon stopped remains unresolved because Slack provides no
+exactly-once key for these methods.
+
+Existing pre-ACP Conversations are adopted through the v15 migration ledger on
+their first ACP-handled participant turn, provided they have no ACP binding or
+live Execution. Laborer durably fixes the triggering-message cutoff before a
+dedicated `conversations.replies` read, then retains the newest chronological
+suffix up to 90 days, 200 messages, and 256 KiB including trust and degradation
+markers. The snapshot uses current visible Slack text, excludes the triggering
+turn, and is reference-only untrusted data; Agent context remains a separate
+authoritative input. Reads have bounded pages, requests, time, and transient
+retries. Permanent or exhausted reads seed an explicit partial/unavailable
+marker rather than invented history. The ledger persists only digest, counts,
+range, truncation, and sanitized diagnostic codes. A fresh ACP session and its
+deterministic seed attempt are never blindly repeated: an uncorrelatable
+`session/new` boundary becomes unresolved for operator recovery, while a
+persisted binding resumes the existing fresh ACP session and seed admission uses
+the normal no-blind-replay prompt ledger. Later participant and Execution events
+remain in the Runner FIFO until adoption is terminal.
+
+ACP tool permissions are fail-closed and one-shot. Laborer posts only a safe
+category, the authorized Slack actor, and **Allow once** or **Reject** controls;
+tool arguments and ACP titles stay private. A decision is durably claimed before
+Socket Mode acknowledges the interaction, and stale, replayed, or cross-actor,
+thread, session, and workspace clicks cannot authorize work. Pending authority
+is bounded to 4 requests per turn, 16 per Conversation, and 64 per workspace;
+the authority file is capped at 1 MiB. Terminal Slack control removal has a
+separate bounded durable outbox: transient and rate-limit failures retry with
+`Retry-After` or bounded backoff, while exhausted or permanent failures remain
+locally diagnosed and never restore authority. At most 64 unresolved
+presentations are admitted. Capacity is checked durably before Slack posting;
+the next request fails closed without evicting any older cleanup obligation.
+Successfully applied terminal updates are removed immediately. Explicit
+permanent diagnostics are retained for seven days before compaction, and the
+outbox remains bounded to 128 records and 128 KiB.
+Before posting controls, Laborer persists a random non-secret presentation
+marker and sends it in Slack's documented `chat.postMessage.metadata`
+`event_payload`. The installed `@slack/web-api` `chat.postMessage` contract does
+not expose `client_msg_id`, so it is not treated as an idempotency key. After an
+ambiguous post or real process restart, a bounded `conversations.replies` lookup
+with `include_all_metadata` accepts exactly one same-workspace, same-thread,
+Laborer-authored message carrying that marker, recovers its timestamp, and
+applies the already-durable terminal state. The 30-second live retry deadline is
+separate from durable reconciliation retention: ambiguous intents remain for
+seven days after permission expiry, and every startup in that window performs
+at least one exact-scope lookup. A still-unresolved intent becomes an explicit
+retained diagnostic when that window expires. Missing, duplicate, wrong-thread,
+wrong-bot, and wrong-workspace candidates never regain decision authority.
+
+Effective metadata distinguishes the ACP implementation (`OpenCode` and its
+version) from the selected Conversation agent/mode. A single keyed aggregate
+covers every admitted environment name and value; the readable name list is
+bounded diagnostic data, and neither values nor per-secret digests are persisted.
+OpenCode configuration binding inventories at most 128 regular files, 256 KiB
+per file, 1 MiB total, and 6 directory levels. It covers project
+`opencode.json[c]`, project `.opencode` config/resources, deterministic global
+XDG config/resources, and deterministic global `auth.json`. An ordinary root
+`skill/` directory is not an OpenCode source. Symlinks and source-identity
+changes fail closed; limit overflow is explicitly marked incomplete. The
+persisted binding contains only keyed aggregate content/path digests and category
+counts, not paths or source values. OpenCode's pinned version covers built-in
+native tool behavior; source hashes cover user policy, MCP, plugins, skills,
+commands, and tools. OpenCode exposes no complete redacted effective manifest,
+so remote/managed runtime provider and plugin behavior remains OpenCode-owned
+and the metadata records that limitation instead of inventing a manifest.
+
+The exact supported runtime matrix and sole green cutover signal are documented
+in [`docs/acp-runtime-matrix.md`](./docs/acp-runtime-matrix.md). The deployment,
+manual live-acceptance gate, and rollback policy are in
+[`docs/acp-production-cutover.md`](./docs/acp-production-cutover.md).
+
+## Run the production-runtime OpenCode ACP canary later
+
+This Slack-connected live step is deliberately **not** part of automated
+acceptance. The canary uses the production ACP supervisor, Action/Execution MCP,
+permission interactions, durable native stream projection, adoption, and
+recovery under dedicated Slack credentials and the isolated
+`acp-canary:<team>` runtime namespace. It has no legacy Conversation path.
 
 For a later human smoke test, create and install a **separate Slack app** for the
 canary. Reusing the production Slack app is unsafe: Socket Mode delivers each
@@ -90,8 +198,10 @@ working context. It initializes ACP once, creates one in-memory ACP session per
 accepted Slack work thread, reuses that session for follow-up turns while the
 canary lives, and streams each public ACP message through Slack's native
 `chat.startStream`, `chat.appendStream`, and `chat.stopStream` methods. Appends
-carry only new ACP text; oversized Markdown is split at Slack's 12,000-character
-boundary without splitting Unicode surrogate pairs. Every started stream is
+carry only new ACP text. Both native streaming and the post/update fallback
+limit one logical public message to Slack's documented 12,000-character
+`markdown_text` hard bound, counted as Unicode code points so surrogate pairs
+are never split. Every started stream is
 stopped when the turn exits, including after partial ACP failure, defects, or
 interruption. This avoids the permanent `(edited)` marker produced by the
 Emulate-only post/update fallback. The stream recipient is the latest human in
@@ -103,26 +213,146 @@ Press Ctrl-C to close its Effect scope, disconnect Slack, close ACP stdio, and
 reap the supervised child. Stop failures are attempted independently for every
 stream: a stop failure after otherwise successful ACP work becomes a sanitized
 delivery failure, while an existing ACP failure remains the primary turn
-outcome. This
-POC does not persist canary sessions and does not expose or migrate Laborer
-Actions or implementation agents. Issue #239 keeps introduced participant IDs
-grouped with each in-memory ACP session so they can be persisted with its opaque
-session ID, but restart resumption and that durable association are intentionally
-deferred to dependent issue #241. Slack participant-name enrichment admits at
+outcome. The live canary requires one `create-feature` Action through
+implementation and the final ACP result as an explicit operator gate. When
+composed with the reference Application repository, each logical Conversation
+stores a separate generation-numbered binding containing the opaque ACP session
+ID, its original canonical cwd, introduced and pending human Slack IDs, and an
+explicit `pending`, `submitting`, or `initialized` phase. A separate nullable
+ambiguous prompt ID records which logical prompt must not be replayed without
+changing whether a replacement session still needs initialization. Legacy
+schema-v1 snapshots decode explicitly through schema v2 and schema v3 into
+schema v4 with no invented ambiguity, so a deterministic logical session ID is
+never mistaken for an opaque transport ID. Conversation prompt staging,
+transition to `running`, new bindings, and participant additions all require a
+fully `Published` repository transaction before ACP submission; an ancillary
+post-rename directory-sync failure therefore prevents the call. File-backed mutations use an adjacent
+owner-only SQLite `BEGIN IMMEDIATE` lock, reread the latest snapshot while
+locked, and publish atomically; generation CAS therefore remains valid across
+independent processes. The initialization phases make each crash boundary
+explicit. `pending` safely retries the initial snapshot; `submitting` treats
+submission as ambiguous and retains its pending introductions; `initialized`
+never replays them. Application recovery submits an exact persisted running turn
+only when its binding is absent or is `pending` without an ambiguous prompt ID,
+which proves the prompt was not submitted. For ambiguous or otherwise
+non-pending running turns, recovery
+resumes or safely rebinds the ACP session to reconcile process health, emits no
+prompt or public output, and returns a conservative failure so the Application
+keeps the turn running rather than claiming model completion. Issue #253 will
+add operator resolution and explicit blocking for this ambiguous state. On
+restart, stable ACP v1
+`session/resume` receives the original cwd and a freshly readiness-verified copy
+of the exact workspace memory MCP configuration; `session/load` and transcript
+replay are not used, and updates outside an active prompt are dropped. Only an
+exact pinned-OpenCode session-not-found response or ACP `ResourceNotFound`
+response with its canonical message and either no URI or the requested session
+URI permits an atomic generation replacement. Explicitly conflicting identity,
+wrong-code, and wrong-message failures do not replace.
+Pinned OpenCode 1.18.4 first calls the backing SDK `session.get` during
+`session/resume`. Its missing-session HTTP error is not an ACP tagged error, so
+`fromUnknownError` serializes it as the otherwise-generic JSON-RPC shape
+`-32603 / "Internal error: OpenCode service failure" / {service:"session"}`.
+Laborer never replaces from that shape alone: only for the pinned OpenCode
+identity with advertised `session/list` support does it exhaust the cwd-scoped
+list (bounded to 100 cursor pages) and classify unavailable when the exact
+session ID is absent. The same wire failure with the session still listed
+remains a quarantining service failure.
+
+Slack public projection is intentionally narrower than ACP transport intake.
+ACP still accepts up to 1 MiB of public output as a transport-safety bound, but
+each logical message projected to Slack may contain at most 12,000 Unicode code
+points because both [`chat.postMessage`](https://docs.slack.dev/reference/methods/chat.postMessage)
+and [`chat.update`](https://docs.slack.dev/reference/methods/chat.update) impose
+that limit on `markdown_text`; `chat.update` instead hard-fails `text` above
+4,000 characters with `msg_too_long`. The fallback sends agent-authored
+Markdown only as `markdown_text`. Slack forbids combining that field with
+`text` or `blocks`, so duplicating the body into a top-level accessibility
+fallback would itself be invalid; Slack's top-level `text` accessibility
+guidance applies when composing block messages, which this projection does not
+use. The installed official `@slack/web-api` 8.0.0 request types model
+`markdown_text` as the same exclusive message-content variant for post and
+update. If the next ACP chunk
+would cross 12,000 code points, Laborer rejects that chunk, finalizes the
+already-confirmed native stream or fallback message in place, marks the
+Application event failed, and posts the existing sanitized failure notice as a
+separate operational item. Recovery retains the terminal evidence and does not
+repost or update the partial message.
+An unavailable replacement preserves the old ambiguous prompt ID while
+remaining `pending`; recovery therefore cannot replay the old prompt, while a
+later newly allowed turn still sends current Soul, Workspace memory, and all
+introduced, pending, and newly observed participant profiles exactly once.
+Capability, protocol, registration, and transport failures remain private,
+quarantine the affected work, poison and reap the shared ACP process, and never
+silently replace it. Durable mode requires advertised `session/resume` support
+before creating its first session. Generic durable agents must also negotiate
+`laborer.dev/prompt-epoch/v1`: Laborer offers it in client capability `_meta`
+and requires the agent capability response before `session/new`. A replacement snapshots current Soul,
+Workspace memory, and relevant profiles, then becomes the binding resumed by
+later processes. Slack participant-name enrichment admits at
 most four concurrent `users.info` requests per authenticated workspace. Each
 lookup has a five-second total deadline including capacity wait. Every newly
 introduced human is enriched; only lookups that fail or time out fall back to a
-stable Slack-ID name and produce a bounded local warning. Each new ACP session also receives one
-workspace-bound `laborer-memory` MCP server. Its sole `memory` tool can add,
-replace, or remove Workspace memory and validated Slack User-profile content;
-Soul is not mutable. Writes are owner-only, atomic, cross-process serialized,
-and reread the operator-editable Markdown while holding the lock. Root and
-workspace directory identities are retained and rechecked before reads and
-writes. Each ACP session uses a bounded unique registration name so OpenCode's
-process-global MCP registry cannot replace an older session's client. Memory
-permission is granted once only after a preceding pinned-OpenCode tool update
-identified the exact generated tool and call ID; request titles are never an
-authorization source. Workspace
+stable Slack-ID name; one bounded local summary covers a prompt's fallbacks.
+Every bootstrap and conversation `session/new` carries an equivalent trusted
+configuration for one stable workspace-bound `laborer-memory` MCP server and
+tool identity. Same-name process-global replacements are serialized, wait for
+authorized memory call lifecycles to finish, and independently prove readiness
+before exposing the new session. Unresolved calls remain process-owned after
+their conversation session is invalidated. A drain timeout atomically poisons
+the ACP process, claims every session, and clears its permission, lifecycle,
+turn, and registration state before shutdown; later handles cannot reuse it.
+Claim starts one shared detached cleanup that every reaper and scope shutdown
+awaits, so interrupting the caller cannot strand child or session release.
+Immediately before each ACP prompt, after all context and profile work, an
+atomic health check verifies that the process is healthy and the same session
+reference and generation remain registered to the conversation.
+Public agent chunks additionally require a verified current-prompt epoch. The
+portable Laborer extension sends an unpredictable ACP request `_meta` epoch and
+opens publication only when the agent echoes it in a session update. Pinned
+OpenCode does not emit live `user_message_chunk` updates: its resume tests emit
+no transcript chunks, its event bridge emits only assistant deltas, and its
+ascending `msg_` IDs encode a full 48-bit millisecond-plus-counter order in the
+first twelve hexadecimal digits. Laborer accepts only the reviewed OpenCode
+identity and version 1.18.4, waits at most 25 ms for a later local
+clock tick before sending `session/prompt`, and requires the full order to be
+strictly greater than both that boundary and every previously observed order.
+Older or same-prior-tick delayed IDs remain suppressed. Agents that
+provide neither marker have every public chunk suppressed, then fail and poison
+the process at prompt completion rather than risking replay; extension-based
+agents additionally have five seconds to echo the marker before cancellation
+and poison cleanup. A completed prompt response allows a bounded two-second
+transport-ordering grace for an already causal marker to arrive; time never
+opens the epoch by itself. OpenCode is not subject to the first-token deadline
+because its first valid current assistant chunk is itself the marker.
+Pinned OpenCode response-only `end_turn`, `max_tokens`, and `refusal` outcomes
+are valid textless settlements and leave publication closed. Although ACP v1
+defines `max_turn_requests`, pinned OpenCode's reviewed prompt mapper does not
+emit it, so a response-only instance remains fail-closed. `cancelled` is known
+settled: Laborer completes the binding transition to clear submission ambiguity,
+then returns a typed `signal` failure so the Application leaves the logical
+prompt `running` and recovery never mistakes cancellation for successful model
+completion or blindly replays it.
+Registration and active-call drain waits have five-second deadlines. The sole
+`memory` tool can add, replace, or remove
+Workspace memory and validated Slack User-profile content; Soul is not mutable.
+Writes are owner-only, atomic, cross-process serialized, and reread the
+operator-editable Markdown while holding the lock. Root and workspace directory
+identities are retained and rechecked before reads and writes, including
+immediately around lock-database creation/open and diagnostic temporary-file
+publication. Memory permission
+is granted once only after a preceding pinned-OpenCode tool update identified
+the exact generated tool, conversation session, and call ID; request titles are
+never an authorization source. A bounded FIFO/LRU window retains the 64 most
+recent consumed call IDs per session: immediate and near-term replay cannot
+rearm `allow_once`. Eviction skips session-qualified calls that remain active;
+fully active capacity denies new observations privately until a terminal update
+makes safe progress possible. Ordinary inactive eviction permits legitimate
+long-lived sessions to continue beyond 64 calls. Registration/readiness failure fails the
+current operation and reaps the polluted ACP child instead of using it for a
+fallback session. Scoped shutdown atomically claims each bootstrap or volatile
+conversation session once before explicitly closing it. Durable conversation
+sessions are detached so a later process can resume them; stdio is then closed
+and the child reaped. Workspace
 memory is limited to 4,000 rendered characters, User profiles to 2,000, and
 profiles are created only by a successful mutation. Tool activity and bounded
 registration or mutation diagnostics remain private rather than becoming Slack
@@ -270,8 +500,21 @@ different initializer if that trust boundary is inappropriate.
    replies resume the persisted coding session without reclassification. Press
    Ctrl-C to disconnect cleanly.
 
-`LABORER_OPENCODE_MODEL` is a live-supported optional model override and is
-explicitly allowed through tracked `laborer.json` configuration.
+Conversation agent and model selection come only from the user's OpenCode
+configuration. Optional implementation-only selection lives under
+`application.implementation.agent` and `application.implementation.model`.
+Implementation sessions also inherit the selected OpenCode agent's permission
+policy: Laborer never installs or restores a wildcard allow rule. Before it
+reattaches or resumes a persisted session, a one-time migration removes every
+exact `{ permission: "*", pattern: "*", action: "allow" }` entry left by the old
+adapter through OpenCode's session API. All other rules and their order are
+preserved; sessions without that exact entry are not updated. If inspection or
+cleanup fails, the Execution stays unresolved and the session is not resumed or
+prompted. Explicit allows execute, denies remain denied, and asks remain
+approval-gated rather than being silently promoted. Because Laborer does not present implementation-agent
+permission prompts in Slack, unattended coding Actions should use explicit
+allow/deny policy; a pending ask can be interrupted through the normal Execution
+cancel control or answered through OpenCode's own permission interface.
 `LABORER_OPENCODE_COMMAND` overrides the executable for automated tests only.
 
 ### Expose a temporary Slack OAuth callback
@@ -494,6 +737,10 @@ from Slack in two observed ways:
    but omits `bot_id`. Tests validate the bot token with `auth.test`, assert the
    distinct bot user on every outbound message, and record this omission rather
    than fabricating a field.
+3. Emulate 0.9 does not yet accept Slack's `markdown_text` request field. The
+   scoped test fixture translates `markdown_text` to legacy `text` only at the
+   final Emulate HTTP transport boundary. Production and direct official
+   `WebClient` gateway tests send `markdown_text` without `text`.
 
 Emulate startup uses bounded reserve/bind retries to safely handle the API's
 required numeric-port TOCTOU window. Validation happens inside the acquired

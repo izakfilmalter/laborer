@@ -131,10 +131,6 @@ export const makeSlackParticipantLookup = (
         )
       );
       if (response._tag === "Failure") {
-        yield* Effect.logWarning("Slack participant lookup failed", {
-          reason: response.failure,
-          slackUserId: safeSlackIdVisibleName(slackUserId),
-        });
         return safeSlackIdVisibleName(slackUserId);
       }
       return visibleNameFromResponse(response.success, slackUserId);
@@ -219,10 +215,6 @@ export const makeBoundedSlackParticipantLookup = (
           )
       );
       if (response._tag === "Failure") {
-        yield* Effect.logWarning("Slack participant lookup failed", {
-          reason: response.failure,
-          slackUserId: safeSlackIdVisibleName(slackUserId),
-        });
         return safeSlackIdVisibleName(slackUserId);
       }
       return visibleNameFromResponse(response.success, slackUserId);

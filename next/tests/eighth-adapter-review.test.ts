@@ -6,21 +6,20 @@ import {
   realpath,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { Effect, Fiber } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeGitWorktreeManager } from "../src/adapters/git-worktree-manager.ts";
 import {
   launchOpenCodeServer,
-  makeOpenCodeConversationAgent,
   makeOpenCodeImplementationAgent,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
-import type { ConversationAgentRequest } from "../src/reference-coding-application.ts";
 
 const execFilePromise = promisify(execFile);
 const sandboxes = new Set<string>();
@@ -64,29 +63,12 @@ const effectFailed = async (
   effect: Effect.Effect<unknown, unknown>
 ): Promise<boolean> => (await Effect.runPromiseExit(effect))._tag === "Failure";
 
-const conversationRequest = (
-  overrides: Partial<ConversationAgentRequest> = {}
-): ConversationAgentRequest => ({
-  actions: [],
-  context: [],
-  conversationId: "conversation-1",
-  conversationSessionId: "conversation-session-1",
-  conversationSessionIsNew: false,
-  executionControls: [],
-  executions: [],
-  input: "Help",
-  messages: [],
-  promptId: "persisted-prompt-1",
-  source: "slack",
-  turnId: "turn-1",
-  ...overrides,
-});
-
 const inertClient = (
   overrides: Partial<OpenCodeSessionClient> = {}
 ): OpenCodeSessionClient => ({
   createSession: () => Effect.void,
   interrupt: () => Effect.void,
+  prepareSessionForReuse: () => Effect.void,
   readMessages: () => Effect.succeed([]),
   sessionExists: () => Effect.succeed(true),
   submitPrompt: () => Effect.void,
@@ -130,15 +112,6 @@ describe("eighth adapter review regressions", () => {
       "laborer.worktrees",
       "interrupted-create"
     );
-    await mkdir(dirname(worktreePath), { recursive: true });
-    await git(fixture.repository, [
-      "worktree",
-      "add",
-      "-b",
-      "laborer/interrupted-create",
-      worktreePath,
-      "HEAD",
-    ]);
     const manager = makeGitWorktreeManager({
       repository: fixture.sourceDirectory,
     });
@@ -147,7 +120,11 @@ describe("eighth adapter review regressions", () => {
       executionId: "execution-1",
       worktreeName: "interrupted-create",
     } as const;
-    const workingDirectory = join(worktreePath, "next");
+    const { workingDirectory } = await Effect.runPromise(
+      manager.create(request)
+    );
+    expect(workingDirectory).toBe(join(worktreePath, "next"));
+    await unlink(join(workingDirectory, ".env.local"));
 
     expect(manager.validate).toBeDefined();
     expect(manager.recover).toBeDefined();
@@ -242,52 +219,6 @@ exit 1
     }
   });
 
-  it("fails closed instead of consuming stale Conversation recovery messages", async () => {
-    let actionCalls = 0;
-    const agent = makeOpenCodeConversationAgent({
-      client: inertClient({
-        readMessages: () =>
-          Effect.succeed([
-            {
-              id: "stale-assistant-action",
-              role: "assistant",
-              text: JSON.stringify({
-                action: "create-feature",
-                input: { prompt: "stale" },
-                type: "action",
-              }),
-            },
-          ]),
-      }),
-      repositoryDirectory: "/repo",
-    });
-
-    expect(agent.recover).toBeDefined();
-    if (agent.recover === undefined) {
-      throw new Error("Conversation recovery is unavailable");
-    }
-    const failed = await effectFailed(
-      agent.recover(
-        conversationRequest({
-          actions: [
-            {
-              description: "Create a feature",
-              invoke: () =>
-                Effect.sync(() => {
-                  actionCalls += 1;
-                  return { executionId: "execution-1", status: "running" };
-                }),
-              name: "create-feature",
-            },
-          ],
-        })
-      )
-    );
-
-    expect(failed).toBe(true);
-    expect(actionCalls).toBe(0);
-  });
-
   it("fails closed instead of accepting stale Implementation recovery output", async () => {
     let accepted = 0;
     const agent = makeOpenCodeImplementationAgent({
@@ -324,41 +255,6 @@ exit 1
 
     expect(await effectFailed(session.completion)).toBe(true);
     expect(accepted).toBe(0);
-  });
-
-  it("creates a missing Conversation session only for an explicit first prompt", async () => {
-    let createCalls = 0;
-    const agent = makeOpenCodeConversationAgent({
-      client: inertClient({
-        createSession: () =>
-          Effect.sync(() => {
-            createCalls += 1;
-          }),
-        readMessages: () =>
-          Effect.succeed([
-            {
-              id: "persisted-prompt-1",
-              role: "user",
-              text: "Help",
-            },
-            {
-              id: "assistant-reply",
-              role: "assistant",
-              text: JSON.stringify({ text: "hello", type: "reply" }),
-            },
-          ]),
-        sessionExists: () => Effect.succeed(false),
-      }),
-      repositoryDirectory: "/repo",
-    });
-
-    expect(await effectFailed(agent.handle(conversationRequest()))).toBe(true);
-    expect(createCalls).toBe(0);
-
-    await Effect.runPromise(
-      agent.handle(conversationRequest({ conversationSessionIsNew: true }))
-    );
-    expect(createCalls).toBe(1);
   });
 
   it("awaits OpenCode exit and escalates an ignored TERM to KILL", async () => {

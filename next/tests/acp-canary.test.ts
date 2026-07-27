@@ -5,16 +5,17 @@ import {
   Effect,
   Array as EffectArray,
   Fiber,
+  Order,
   pipe,
   Redacted,
   Schema,
 } from "effect";
+import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
 import {
-  makeAcpConversationCanary,
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
   openCodeAcpProcessOptions,
-} from "../src/acp-conversation-prototype/canary-composition.ts";
+} from "../src/acp-conversation-prototype/open-code-acp-process.ts";
 import {
   type EmulatedSlackFixture,
   makeSlackActivationAcknowledger,
@@ -485,18 +486,29 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
           );
 
           yield* waitForFile(exitPath);
+          const completedLifecycle = yield* waitForFileLineCount(
+            lifecycleLogPath,
+            9
+          );
+          assert.deepStrictEqual(completedLifecycle.slice(0, 6), [
+            "initialize",
+            "session:new:acp-session-secret-234-1",
+            `prompt:acp-session-secret-234-1:<@${LABORER_SLACK_ID}> stream via fake OpenCode ACP`,
+            "prompt:acp-session-secret-234-1:reuse the ACP session",
+            "session:new:acp-session-secret-234-2",
+            `prompt:acp-session-secret-234-2:<@${LABORER_SLACK_ID}> use a separate ACP session`,
+          ]);
           assert.deepStrictEqual(
-            yield* waitForFileLineCount(lifecycleLogPath, 7),
+            pipe(
+              completedLifecycle.slice(6, 8),
+              EffectArray.sort(Order.String)
+            ),
             [
-              "initialize",
-              "session:new:acp-session-secret-234-1",
-              `prompt:acp-session-secret-234-1:<@${LABORER_SLACK_ID}> stream via fake OpenCode ACP`,
-              "prompt:acp-session-secret-234-1:reuse the ACP session",
-              "session:new:acp-session-secret-234-2",
-              `prompt:acp-session-secret-234-2:<@${LABORER_SLACK_ID}> use a separate ACP session`,
-              "stdio:closed",
+              "session:close:acp-session-secret-234-1",
+              "session:close:acp-session-secret-234-2",
             ]
           );
+          assert.strictEqual(completedLifecycle[8], "stdio:closed");
           yield* waitForProcessExit(pidPath);
         })
       ),

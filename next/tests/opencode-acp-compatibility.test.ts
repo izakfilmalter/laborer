@@ -1,0 +1,223 @@
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { PROTOCOL_VERSION, type StopReason } from "@agentclientprotocol/sdk";
+import { assert, describe, it } from "@effect/vitest";
+import { SUPPORTED_ACP_RUNTIME_MATRIX } from "../src/acp-compatibility/runtime-matrix.ts";
+import { startFakeOpenAiProvider } from "./support/fake-openai-provider.ts";
+import {
+  readLocalOpenCodeVersion,
+  startOpenCodeAcpHarness,
+} from "./support/opencode-acp-harness.ts";
+
+const MCP_FIXTURE_PATH = resolve(
+  process.cwd(),
+  "tests/fixtures/acp-compatibility-mcp-server.ts"
+);
+
+const recordFrom = (
+  value: unknown
+): Readonly<Record<string, unknown>> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : null;
+
+const contentText = (content: unknown): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map(contentText).join("");
+  }
+  const record = recordFrom(content);
+  return record === null
+    ? ""
+    : [record.text, record.content].map(contentText).join("");
+};
+
+const modelMessages = (
+  requestBody: unknown
+): readonly { readonly role: string; readonly text: string }[] => {
+  const messages = recordFrom(requestBody)?.messages;
+  if (!Array.isArray(messages)) {
+    throw new Error("OpenCode provider request omitted messages");
+  }
+  return messages.flatMap((message) => {
+    const record = recordFrom(message);
+    return typeof record?.role === "string"
+      ? [{ role: record.role, text: contentText(record.content) }]
+      : [];
+  });
+};
+
+describe("issue #243 real OpenCode ACP compatibility", () => {
+  it("exercises the pinned local CLI without credentials and resumes durably in a fresh process", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "laborer-real-acp-compatibility-")
+    );
+    const home = join(root, "home");
+    const workspace = join(root, "workspace");
+    const mcpObservationPath = join(root, "mcp-invocations.jsonl");
+    const provider = await startFakeOpenAiProvider();
+    try {
+      await Promise.all([
+        mkdir(workspace, { mode: 0o700 }),
+        mkdir(home, { mode: 0o700 }),
+      ]);
+      const harnessOptions = {
+        cwd: workspace,
+        home,
+        providerBaseUrl: provider.baseUrl,
+      };
+      assert.strictEqual(
+        await readLocalOpenCodeVersion(harnessOptions),
+        SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
+      );
+      const observedStopReasons = new Set<StopReason>();
+      let durableSessionId = "";
+      const firstProcess = await startOpenCodeAcpHarness(harnessOptions);
+      try {
+        const initialized = await firstProcess.initialize();
+        assert.strictEqual(initialized.protocolVersion, PROTOCOL_VERSION);
+        const session = await firstProcess.newSession([
+          {
+            args: [MCP_FIXTURE_PATH],
+            command: process.execPath,
+            env: [
+              {
+                name: "ACP_COMPATIBILITY_MCP_OBSERVATION",
+                value: mcpObservationPath,
+              },
+            ],
+            name: "compat",
+          },
+        ]);
+        durableSessionId = session.sessionId;
+        provider.enqueue({
+          finishReason: "stop",
+          kind: "text",
+          textChunks: ["ordinary ", "ACP answer"],
+        });
+        const ordinary = await firstProcess.prompt(
+          durableSessionId,
+          "ordinary compatibility prompt"
+        );
+        observedStopReasons.add(ordinary.stopReason);
+        assert.strictEqual(ordinary.stopReason, "end_turn");
+
+        provider.enqueue(
+          {
+            input: { value: "client-provided-mcp-invoked" },
+            kind: "tool",
+            name: "compat_record",
+          },
+          {
+            finishReason: "stop",
+            kind: "text",
+            textChunks: ["MCP complete"],
+          }
+        );
+        assert.strictEqual(
+          (await firstProcess.prompt(durableSessionId, "invoke MCP"))
+            .stopReason,
+          "end_turn"
+        );
+        assert.strictEqual(firstProcess.permissionRequests.length, 1);
+        assert.ok(
+          firstProcess.permissionRequests[0]?.options.some(
+            (option) => option.kind === "allow_once"
+          )
+        );
+        assert.deepStrictEqual(
+          JSON.parse((await readFile(mcpObservationPath, "utf8")).trim()),
+          {
+            arguments: { value: "client-provided-mcp-invoked" },
+            name: "record",
+          }
+        );
+
+        provider.enqueue({ finishReason: "length", kind: "text" });
+        assert.strictEqual(
+          (await firstProcess.prompt(durableSessionId, "emit max_tokens"))
+            .stopReason,
+          "end_turn",
+          "OpenCode 1.18.4 changed finish_reason:length behavior"
+        );
+
+        provider.enqueue({ finishReason: "content_filter", kind: "text" });
+        const refused = await firstProcess.prompt(
+          durableSessionId,
+          "emit refusal"
+        );
+        observedStopReasons.add(refused.stopReason);
+        assert.strictEqual(refused.stopReason, "refusal");
+
+        const expectedRequestCount = provider.requests.length + 1;
+        provider.enqueue({ kind: "hang", textChunks: ["cancellable chunk"] });
+        const pending = firstProcess.prompt(
+          durableSessionId,
+          "cancel this prompt"
+        );
+        await provider.waitForRequestCount(expectedRequestCount);
+        await firstProcess.cancelSession(durableSessionId);
+        const cancelled = await pending;
+        observedStopReasons.add(cancelled.stopReason);
+        assert.strictEqual(cancelled.stopReason, "cancelled");
+      } finally {
+        await firstProcess.close();
+      }
+
+      const resumedProcess = await startOpenCodeAcpHarness(harnessOptions);
+      try {
+        await resumedProcess.initialize();
+        await resumedProcess.resumeSession(durableSessionId);
+        const requestStart = provider.requests.length;
+        provider.enqueue({
+          finishReason: "stop",
+          kind: "text",
+          textChunks: ["fresh-process resume complete"],
+        });
+        const resumed = await resumedProcess.prompt(
+          durableSessionId,
+          "continue after a fresh process"
+        );
+        assert.strictEqual(resumed.stopReason, "end_turn");
+        const messages = modelMessages(provider.requests[requestStart]?.body);
+        assert.ok(
+          messages.some((message) =>
+            message.text.includes("ordinary compatibility prompt")
+          )
+        );
+        assert.ok(
+          messages.some(
+            (message) =>
+              message.role === "assistant" &&
+              message.text.includes("ordinary ACP answer")
+          )
+        );
+        assert.ok(
+          messages.some((message) =>
+            message.text.includes("continue after a fresh process")
+          )
+        );
+      } finally {
+        await resumedProcess.close();
+      }
+      assert.deepStrictEqual([...observedStopReasons].sort(), [
+        "cancelled",
+        "end_turn",
+        "refusal",
+      ]);
+      for (const request of provider.requests) {
+        assert.strictEqual(
+          request.authorization,
+          "Bearer laborer-acp-compatibility-dummy-key"
+        );
+        assert.strictEqual(request.path, "/v1/chat/completions");
+      }
+    } finally {
+      await provider.close();
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 120_000);
+});

@@ -11,7 +11,7 @@ import {
   verifyRetainedDirectory,
 } from "../prototype/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
-import { isSlackTokenEnvironmentName } from "./secret-environment.ts";
+import { isSensitiveCredentialEnvironmentName } from "./secret-environment.ts";
 
 export interface ProcessCommandConfig {
   readonly args: readonly string[];
@@ -23,16 +23,12 @@ export interface WorkHandlerConfig extends ProcessCommandConfig {
   readonly initialize?: ProcessCommandConfig;
 }
 
-export interface ConversationApplicationConfig {
-  readonly instructions: readonly string[];
-  readonly operationResultInstructions: readonly string[];
-}
-
 export interface ReferenceCodingApplicationConfig {
-  readonly agent?: string;
-  readonly conversation?: ConversationApplicationConfig;
   readonly environment: readonly string[];
-  readonly model?: string;
+  readonly implementation?: {
+    readonly agent?: string;
+    readonly model?: string;
+  };
   readonly type: "reference-coding";
 }
 
@@ -62,10 +58,6 @@ const OPENCODE_MODEL_PATTERN = /^[^/\s]+\/[^/\s]+(?:\/[^/\s]+)*$/;
 const OpenCodeModel = Schema.Trim.check(
   Schema.isPattern(OPENCODE_MODEL_PATTERN)
 );
-const ConversationInstruction = Schema.Trim.check(Schema.isMinLength(1));
-const ConversationInstructions = Schema.Array(ConversationInstruction).check(
-  Schema.isMinLength(1)
-);
 const ProcessCommandConfigFromJson = Schema.Struct({
   args: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
@@ -81,18 +73,16 @@ const WorkHandlerConfigFromJson = Schema.Struct({
   initialize: Schema.optional(ProcessCommandConfigFromJson),
 });
 
-const ConversationApplicationConfigFromJson = Schema.Struct({
-  instructions: ConversationInstructions,
-  operationResultInstructions: ConversationInstructions,
+const ImplementationApplicationConfigFromJson = Schema.Struct({
+  agent: Schema.optional(HandlerCommand),
+  model: Schema.optional(OpenCodeModel),
 });
 
 const ReferenceCodingApplicationConfigFromJson = Schema.Struct({
-  agent: Schema.optional(HandlerCommand),
-  conversation: Schema.optional(ConversationApplicationConfigFromJson),
   environment: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([]))
   ),
-  model: Schema.optional(OpenCodeModel),
+  implementation: Schema.optional(ImplementationApplicationConfigFromJson),
   type: Schema.Literal("reference-coding"),
 });
 
@@ -107,6 +97,60 @@ const LaborerConfigFromJson = Schema.fromJsonString(
 );
 
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const LEGACY_CONVERSATION_CONFIG_KEYS = [
+  "conversation",
+  "agent",
+  "model",
+  "protocol",
+  "protocolVersion",
+] as const;
+
+const objectRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const acpConfigMigrationIssue = (source: string): string | null => {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(source) as unknown;
+  } catch {
+    return null;
+  }
+  const application = objectRecord(objectRecord(decoded)?.application);
+  if (application === null) {
+    return null;
+  }
+  if (
+    LEGACY_CONVERSATION_CONFIG_KEYS.some((key) =>
+      Object.hasOwn(application, key)
+    )
+  ) {
+    return "legacy-conversation-config-removed-use-opencode-agent-model-config";
+  }
+  return null;
+};
+
+const validateAcpConfigMigration = (
+  source: string
+): Effect.Effect<void, LaborerConfigError> => {
+  const issue = acpConfigMigrationIssue(source);
+  return issue === null
+    ? Effect.void
+    : configFailure("migrate-acp-config", issue);
+};
+
+const implementationConfig = (
+  raw: typeof ImplementationApplicationConfigFromJson.Type | undefined
+): Pick<ReferenceCodingApplicationConfig, "implementation"> | object =>
+  raw === undefined
+    ? {}
+    : {
+        implementation: {
+          ...(raw.agent === undefined ? {} : { agent: raw.agent }),
+          ...(raw.model === undefined ? {} : { model: raw.model }),
+        },
+      };
 
 const executableFile = Effect.fnUntraced(function* (path: string) {
   const fileResult = yield* Effect.result(
@@ -177,7 +221,8 @@ const validateEnvironmentNames = (
   const invalidName = EffectArray.findFirst(
     names,
     (name) =>
-      !ENVIRONMENT_NAME_PATTERN.test(name) || isSlackTokenEnvironmentName(name)
+      !ENVIRONMENT_NAME_PATTERN.test(name) ||
+      isSensitiveCredentialEnvironmentName(name)
   );
   if (invalidName._tag === "Some") {
     return configFailure(operation, "invalid-environment-name");
@@ -252,6 +297,7 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
       try: () => readConfig(root),
       catch: () => configFailure("read-config", "config-unavailable"),
     });
+    yield* validateAcpConfigMigration(source);
     const rawConfig = yield* Schema.decodeUnknownEffect(LaborerConfigFromJson, {
       onExcessProperty: "error",
     })(source).pipe(
@@ -263,28 +309,12 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
       return yield* configFailure("parse-config", "invalid-config");
     }
     if (rawConfig.application !== undefined) {
-      const rawConversation = rawConfig.application.conversation;
-      const conversation: ConversationApplicationConfig | undefined =
-        rawConversation === undefined
-          ? undefined
-          : Object.freeze({
-              instructions: Object.freeze([...rawConversation.instructions]),
-              operationResultInstructions: Object.freeze([
-                ...rawConversation.operationResultInstructions,
-              ]),
-            });
       const application: ReferenceCodingApplicationConfig = {
-        ...(rawConfig.application.agent === undefined
-          ? {}
-          : { agent: rawConfig.application.agent }),
-        ...(conversation === undefined ? {} : { conversation }),
         environment: yield* validateEnvironmentNames(
           rawConfig.application.environment,
           "validate-reference-coding-application"
         ),
-        ...(rawConfig.application.model === undefined
-          ? {}
-          : { model: rawConfig.application.model }),
+        ...implementationConfig(rawConfig.application.implementation),
         type: "reference-coding",
       };
       const { workHandler: _workHandler, ...retainedConfig } = rawConfig;

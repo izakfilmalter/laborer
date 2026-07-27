@@ -454,6 +454,7 @@ describe("fifth restart tracer", () => {
           assert.deepStrictEqual(yield* Ref.get(delivered), [
             "Started CEXECRESTART:1.0:execution:1.",
             "Handled CEXECRESTART:1.0:execution:1:response:response-1.",
+            "Handled CEXECRESTART:1.0:execution:1:terminal.",
             "Handled turn:CEXECRESTART:2.0.",
           ]);
         })
@@ -677,6 +678,15 @@ describe("fifth restart tracer", () => {
             return yield* makeReferenceCodingApplication({
               conversationAgent,
               implementationAgent: ImplementationAgent.of({
+                inspect: (request) =>
+                  Effect.succeed({
+                    certainty: "definitive",
+                    evidence: "exact-owned-resource",
+                    resource: {
+                      sessionId: request.implementationSessionId,
+                    },
+                    status: "available",
+                  }),
                 recover: (request) =>
                   Ref.update(recoveries, (current) =>
                     EffectArray.append(current, request)

@@ -10,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 import type {
   McpServerStdio,
   RequestPermissionRequest,
@@ -44,6 +43,10 @@ import {
   WORKSPACE_MEMORY_CHARACTER_LIMIT,
 } from "./agent-context.ts";
 import {
+  laborerMcpEnvironmentIsScrubbed,
+  laborerMcpServerLauncherArgs,
+} from "./mcp-server-launcher-config.ts";
+import {
   containsMemoryEntryFrameDelimiter,
   framedMemoryEntries,
   renderFramedMemoryEntry,
@@ -58,9 +61,6 @@ const LABORER_MEMORY_REGISTRATION_NONCE_ENV =
 const LABORER_MEMORY_READY_PATH_ENV = "LABORER_MEMORY_READY_PATH";
 const LABORER_MEMORY_AUTHORITY_GUARD_ENV = "LABORER_MEMORY_AUTHORITY_GUARD";
 
-const MEMORY_SERVER_PATH = fileURLToPath(
-  new URL("./memory-mcp-server.ts", import.meta.url)
-);
 // Canonical framing adds fixed metadata per entry. This cap accommodates the
 // worst valid 4,000-character state when every four-byte code point is stored
 // as its own framed entry, while still bounding operator-controlled reads.
@@ -77,7 +77,10 @@ const MUTATION_LOCK_DATABASE_SUFFIX = ".lock.sqlite";
 const MEMORY_MCP_READINESS_FILE_NAME = "memory-mcp-readiness";
 const MEMORY_REGISTRATION_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 const MEMORY_AUTHORITY_GUARD_PATTERN = /^[0-9a-f]{64}$/;
-const MAX_OBSERVED_MEMORY_TOOL_CALLS = 64;
+const MAX_TRACKED_MEMORY_TOOL_CALLS = 64;
+const MAX_MEMORY_PERMISSION_FINGERPRINT_BYTES = 64 * 1024;
+const MAX_MEMORY_PERMISSION_FINGERPRINT_DEPTH = 8;
+const MAX_MEMORY_PERMISSION_FINGERPRINT_ITEMS = 256;
 const MEMORY_DIAGNOSTIC_LINE_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z (?:startup-failed|mutation-[a-z-]+|registration-[a-z-]+)$/;
 const BLANK_LINE_BEFORE_PATTERN = /(?:\r?\n)[\t ]*(?:\r?\n)$/;
@@ -176,6 +179,18 @@ interface LockDatabaseIdentity {
   readonly inode: bigint | number;
 }
 
+export interface LaborerMemoryAuthorityTestHooks {
+  readonly beforeDiagnosticPublication?: () => Promise<void>;
+  readonly beforeLockDatabase?: () => Promise<void>;
+}
+
+interface MutationLockOptions {
+  readonly assertAuthority: () => Promise<void>;
+  readonly beforeLockDatabase: (() => Promise<void>) | undefined;
+  readonly signal: AbortSignal | undefined;
+  readonly targetPath: string;
+}
+
 const canonicalTargetPath = async (targetPath: string): Promise<string> =>
   resolve(await realpath(dirname(targetPath)), basename(targetPath));
 
@@ -203,17 +218,20 @@ const isSqliteContention = (error: unknown): boolean => {
 };
 
 const ensureOwnerOnlyLockDatabase = async (
-  canonicalPath: string
+  canonicalPath: string,
+  assertAuthority: () => Promise<void>
 ): Promise<{
   readonly identity: LockDatabaseIdentity;
   readonly path: string;
 }> => {
+  await assertAuthority();
   const lockDatabasePath = mutationLockDatabasePath(canonicalPath);
   await assertSafeFilePath({
     anchor: dirname(canonicalPath),
     operation: "prepare-memory-mutation-lock",
     path: lockDatabasePath,
   });
+  await assertAuthority();
   let metadata: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
     metadata = await lstat(lockDatabasePath);
@@ -223,9 +241,11 @@ const ensureOwnerOnlyLockDatabase = async (
     }
   }
   if (metadata === undefined) {
+    await assertAuthority();
     const temporaryPath = `${lockDatabasePath}.${randomUUID()}.tmp`;
     let temporaryDatabase: DatabaseSync | undefined;
     try {
+      await assertAuthority();
       temporaryDatabase = new DatabaseSync(temporaryPath, {
         defensive: true,
         timeout: 0,
@@ -236,6 +256,7 @@ const ensureOwnerOnlyLockDatabase = async (
       temporaryDatabase.close();
       temporaryDatabase = undefined;
       await chmod(temporaryPath, 0o600);
+      await assertAuthority();
       try {
         await link(temporaryPath, lockDatabasePath);
       } catch (error) {
@@ -249,8 +270,10 @@ const ensureOwnerOnlyLockDatabase = async (
       temporaryDatabase?.close();
       await rm(temporaryPath, { force: true });
     }
+    await assertAuthority();
     metadata = await lstat(lockDatabasePath);
   }
+  await assertAuthority();
   const currentUserId = process.getuid?.();
   if (
     !metadata.isFile() ||
@@ -300,22 +323,30 @@ const verifyLockDatabaseIdentity = async (
 };
 
 const acquireMutationLock = async (
-  targetPath: string,
-  signal?: AbortSignal
+  options: MutationLockOptions
 ): Promise<HeldMutationLock> => {
-  const canonicalPath = await canonicalTargetPath(targetPath);
-  const lockDatabase = await ensureOwnerOnlyLockDatabase(canonicalPath);
+  await options.assertAuthority();
+  const canonicalPath = await canonicalTargetPath(options.targetPath);
+  await options.assertAuthority();
+  await options.beforeLockDatabase?.();
+  await options.assertAuthority();
+  const lockDatabase = await ensureOwnerOnlyLockDatabase(
+    canonicalPath,
+    options.assertAuthority
+  );
+  await options.assertAuthority();
   const database = new DatabaseSync(lockDatabase.path, {
     defensive: true,
     timeout: 0,
   });
   try {
+    await options.assertAuthority();
     await hardenLockDatabaseFile(lockDatabase.path);
     database.exec("PRAGMA busy_timeout = 0");
     const deadline = Date.now() + MUTATION_LOCK_WAIT_MILLIS;
     let retryMillis = MUTATION_LOCK_RETRY_MILLIS;
     while (Date.now() < deadline) {
-      assertNotCancelled(signal);
+      assertNotCancelled(options.signal);
       try {
         database.exec("BEGIN IMMEDIATE");
         await verifyLockDatabaseIdentity(
@@ -333,7 +364,8 @@ const acquireMutationLock = async (
         };
         return {
           assertCanCommit: async () => {
-            assertNotCancelled(signal);
+            assertNotCancelled(options.signal);
+            await options.assertAuthority();
             await assertOwned();
           },
           assertOwned,
@@ -352,7 +384,7 @@ const acquireMutationLock = async (
       }
       await cancellableDelay(
         Math.min(remainingMillis, retryMillis + jitter),
-        signal
+        options.signal
       );
       retryMillis = Math.min(
         MUTATION_LOCK_MAX_RETRY_MILLIS,
@@ -369,15 +401,14 @@ const acquireMutationLock = async (
 };
 
 const withCrossProcessMutationLock = async <A>(
-  targetPath: string,
-  signal: AbortSignal | undefined,
+  options: MutationLockOptions,
   operation: (lock: HeldMutationLock) => Promise<A>
 ): Promise<A> => {
-  const heldLock = await acquireMutationLock(targetPath, signal);
+  const heldLock = await acquireMutationLock(options);
   try {
     await heldLock.assertCanCommit();
     const result = await operation(heldLock);
-    await heldLock.assertOwned();
+    await heldLock.assertCanCommit();
     // SQLite stores no memory data here. ROLLBACK is the contention-safe
     // transaction release: COMMIT may need an exclusive-lock upgrade and can
     // starve behind simultaneous nonblocking BEGIN attempts.
@@ -601,6 +632,7 @@ const publishAtomically = async (options: {
   readonly content: string;
   readonly path: string;
 }): Promise<void> => {
+  await options.assertCanCommit?.();
   const directory = await retainTrustedDirectory(
     dirname(options.path),
     "mutate-agent-memory"
@@ -608,11 +640,15 @@ const publishAtomically = async (options: {
   const temporaryPath = `${options.path}.${randomUUID()}.tmp`;
   let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    await options.assertCanCommit?.();
+    await verifyRetainedDirectory(directory, "mutate-agent-memory");
     await assertSafeFilePath({
       anchor: options.anchor,
       operation: "mutate-agent-memory",
       path: options.path,
     });
+    await options.assertCanCommit?.();
+    await verifyRetainedDirectory(directory, "mutate-agent-memory");
     temporaryFile = await open(temporaryPath, "wx", 0o600);
     await temporaryFile.writeFile(options.content, "utf8");
     await temporaryFile.sync();
@@ -632,6 +668,7 @@ const publishAtomically = async (options: {
 
 export type LaborerMemoryDiagnosticCode =
   | "startup-failed"
+  | "registration-active-call-timeout"
   | "registration-collision"
   | "registration-invalid"
   | "registration-missing"
@@ -657,15 +694,23 @@ const boundedDiagnosticContent = (
 
 const writeLaborerMemoryDiagnostic = async (
   sources: AcpAgentContextSources,
-  code: LaborerMemoryDiagnosticCode
+  code: LaborerMemoryDiagnosticCode,
+  testHooks?: LaborerMemoryAuthorityTestHooks
 ): Promise<void> => {
-  await verifyAcpAgentContextSources(sources, "record-memory-diagnostic");
+  const assertAuthority = (): Promise<void> =>
+    verifyAcpAgentContextSources(sources, "record-memory-diagnostic");
+  await assertAuthority();
   const canonicalWorkspaceDirectory = await realpath(
     sources.workspaceDirectory
   );
+  await assertAuthority();
   await withCrossProcessMutationLock(
-    sources.memoryDiagnosticsPath,
-    undefined,
+    {
+      assertAuthority,
+      beforeLockDatabase: testHooks?.beforeLockDatabase,
+      signal: undefined,
+      targetPath: sources.memoryDiagnosticsPath,
+    },
     async (heldLock) => {
       let current = "";
       try {
@@ -673,6 +718,8 @@ const writeLaborerMemoryDiagnostic = async (
       } catch {
         // An invalid or manually oversized sink is replaced with bounded data.
       }
+      await heldLock.assertCanCommit();
+      await testHooks?.beforeDiagnosticPublication?.();
       await heldLock.assertCanCommit();
       await publishAtomically({
         anchor: canonicalWorkspaceDirectory,
@@ -710,9 +757,15 @@ export const recordLaborerMemoryDiagnosticForSources = Effect.fn(
 )(function* (options: {
   readonly code: LaborerMemoryDiagnosticCode;
   readonly sources: AcpAgentContextSources;
+  readonly testHooks?: LaborerMemoryAuthorityTestHooks;
 }) {
   yield* Effect.tryPromise({
-    try: () => writeLaborerMemoryDiagnostic(options.sources, options.code),
+    try: () =>
+      writeLaborerMemoryDiagnostic(
+        options.sources,
+        options.code,
+        options.testHooks
+      ),
     catch: () => mutationFailure("storage-unavailable"),
   }).pipe(Effect.ignore);
 });
@@ -765,6 +818,7 @@ const validateMutation = (mutation: MemoryMutation): void => {
 export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
   function* (options: {
     readonly root: string;
+    readonly testHooks?: LaborerMemoryAuthorityTestHooks;
     readonly workspaceId: string;
   }): Effect.fn.Return<LaborerMemoryStore> {
     const sources = yield* prepareAcpAgentContextSources(options);
@@ -802,9 +856,16 @@ export const makeLaborerMemoryStore = Effect.fn("makeLaborerMemoryStore")(
           const canonicalWorkspaceDirectory = await realpath(
             sources.workspaceDirectory
           );
+          const assertAuthority = (): Promise<void> =>
+            verifyAcpAgentContextSources(sources, "mutate-agent-memory");
+          await assertAuthority();
           return withCrossProcessMutationLock(
-            details.path,
-            signal,
+            {
+              assertAuthority,
+              beforeLockDatabase: options.testHooks?.beforeLockDatabase,
+              signal,
+              targetPath: details.path,
+            },
             async (heldLock) => {
               const assertCanCommit = async (): Promise<void> => {
                 await heldLock.assertCanCommit();
@@ -1038,7 +1099,7 @@ export const makeLaborerMemoryMcpServerConfiguration = (
   }
   const name = laborerMemoryServerName(sources);
   return {
-    args: [MEMORY_SERVER_PATH],
+    args: [...laborerMcpServerLauncherArgs("memory")],
     command: process.execPath,
     env: [
       { name: "LABORER_MEMORY_ROOT", value: sources.root },
@@ -1059,8 +1120,8 @@ export const isLaborerMemoryMcpServerConfiguration = (
 ): boolean => {
   if (
     server.command !== process.execPath ||
-    server.args.length !== 1 ||
-    server.args[0] !== MEMORY_SERVER_PATH ||
+    JSON.stringify(server.args) !==
+      JSON.stringify(laborerMcpServerLauncherArgs("memory")) ||
     server.env.length !== 4
   ) {
     return false;
@@ -1115,24 +1176,38 @@ export interface PreparedLaborerMemoryMcpRegistration {
   readonly server: McpServerStdio;
 }
 
-const registrationName = (
-  authority: LaborerMemoryMcpAuthority,
-  token: string
-): string => `${laborerMemoryServerName(authority)}-${token}`;
-
-const registrationTokenFromName = (
-  authority: LaborerMemoryMcpAuthority,
-  name: string
-): string | null => {
-  const prefix = `${laborerMemoryServerName(authority)}-`;
-  const token = name.startsWith(prefix) ? name.slice(prefix.length) : "";
-  return MEMORY_REGISTRATION_TOKEN_PATTERN.test(token) ? token : null;
-};
-
 const registrationFailure = (
   reason: LaborerMemoryRegistrationError["reason"]
 ): LaborerMemoryRegistrationError =>
   LaborerMemoryRegistrationError.make({ reason });
+
+const decodeMemoryReadiness = (
+  source: string
+): {
+  readonly environmentNames: readonly string[];
+  readonly nonce: string;
+} | null => {
+  try {
+    const readiness = JSON.parse(source) as unknown;
+    if (
+      typeof readiness !== "object" ||
+      readiness === null ||
+      !("nonce" in readiness) ||
+      typeof readiness.nonce !== "string" ||
+      !("environmentNames" in readiness) ||
+      !Array.isArray(readiness.environmentNames) ||
+      !readiness.environmentNames.every((name) => typeof name === "string")
+    ) {
+      return null;
+    }
+    return {
+      environmentNames: readiness.environmentNames as string[],
+      nonce: readiness.nonce,
+    };
+  } catch {
+    return null;
+  }
+};
 
 export const prepareLaborerMemoryMcpRegistration = Effect.fn(
   "prepareLaborerMemoryMcpRegistration"
@@ -1157,13 +1232,11 @@ export const prepareLaborerMemoryMcpRegistration = Effect.fn(
   ) {
     return yield* registrationFailure("invalid");
   }
-  const registrationToken = randomUUID().replaceAll("-", "");
-  const name = registrationName(authority, registrationToken);
+  const readinessNonce = randomUUID().replaceAll("-", "");
   const readinessPath = resolve(
     sources.workspaceDirectory,
-    `${MEMORY_MCP_READINESS_FILE_NAME}-${registrationToken}`
+    `${MEMORY_MCP_READINESS_FILE_NAME}-${readinessNonce}`
   );
-  const readinessNonce = randomUUID();
   yield* Effect.tryPromise({
     try: async () => {
       await assertSafeFilePath({
@@ -1177,18 +1250,13 @@ export const prepareLaborerMemoryMcpRegistration = Effect.fn(
   });
   return {
     authority,
-    permission: laborerMemoryOpenCodePermission(name),
+    permission: laborerMemoryOpenCodePermission(server.name),
     readinessNonce,
     readinessPath,
     server: {
       ...server,
-      name,
       env: [
-        ...server.env.filter(
-          ({ name: environmentName }) =>
-            environmentName !== LABORER_MEMORY_SERVER_NAME_ENV
-        ),
-        { name: LABORER_MEMORY_SERVER_NAME_ENV, value: name },
+        ...server.env,
         {
           name: LABORER_MEMORY_REGISTRATION_NONCE_ENV,
           value: readinessNonce,
@@ -1203,15 +1271,19 @@ const waitForLaborerMemoryMcpReadiness = Effect.fn(
   "waitForLaborerMemoryMcpReadiness"
 )(function* (
   registration: PreparedLaborerMemoryMcpRegistration
-): Effect.fn.Return<void, LaborerMemoryRegistrationError> {
+): Effect.fn.Return<readonly string[], LaborerMemoryRegistrationError> {
   const deadline = Date.now() + MEMORY_MCP_READINESS_WAIT_MILLIS;
   while (Date.now() < deadline) {
     const observed = yield* Effect.tryPromise({
       try: () => readLatestSource(registration.readinessPath),
       catch: () => registrationFailure("missing"),
     });
-    if (observed === registration.readinessNonce) {
-      return;
+    const readiness = decodeMemoryReadiness(observed);
+    if (
+      readiness?.nonce === registration.readinessNonce &&
+      laborerMcpEnvironmentIsScrubbed("memory", readiness.environmentNames)
+    ) {
+      return readiness.environmentNames;
     }
     if (observed.length > 0) {
       return yield* registrationFailure("collision");
@@ -1225,17 +1297,15 @@ export const awaitLaborerMemoryMcpReadiness = Effect.fn(
   "awaitLaborerMemoryMcpReadiness"
 )(function* (
   registration: PreparedLaborerMemoryMcpRegistration
-): Effect.fn.Return<void, LaborerMemoryRegistrationError> {
-  const result = yield* Effect.result(
-    waitForLaborerMemoryMcpReadiness(registration)
+): Effect.fn.Return<readonly string[], LaborerMemoryRegistrationError> {
+  return yield* waitForLaborerMemoryMcpReadiness(registration).pipe(
+    Effect.ensuring(
+      Effect.tryPromise({
+        try: () => rm(registration.readinessPath, { force: true }),
+        catch: () => registrationFailure("missing"),
+      }).pipe(Effect.ignore)
+    )
   );
-  yield* Effect.tryPromise({
-    try: () => rm(registration.readinessPath, { force: true }),
-    catch: () => registrationFailure("missing"),
-  }).pipe(Effect.ignore);
-  if (result._tag === "Failure") {
-    return yield* result.failure;
-  }
 });
 
 export const publishLaborerMemoryMcpReadiness = Effect.fn(
@@ -1243,31 +1313,26 @@ export const publishLaborerMemoryMcpReadiness = Effect.fn(
 )(function* (options: {
   readonly authorityGuard?: string;
   readonly nonce: string;
+  readonly environmentNames: readonly string[];
   readonly path: string;
   readonly root: string;
   readonly serverName: string;
   readonly workspaceId: string;
 }) {
-  const registrationToken = registrationTokenFromName(
-    options,
-    options.serverName
-  );
   const sources = yield* prepareAcpAgentContextSources(options);
-  if (
-    options.authorityGuard !== undefined &&
-    options.authorityGuard !== laborerMemoryAuthorityGuard(sources)
-  ) {
+  const expectedGuard = laborerMemoryAuthorityGuard(sources);
+  if (options.authorityGuard !== expectedGuard) {
     return yield* registrationFailure("invalid");
   }
   const expectedPath = resolve(
     sources.workspaceDirectory,
-    `${MEMORY_MCP_READINESS_FILE_NAME}-${registrationToken ?? "invalid"}`
+    `${MEMORY_MCP_READINESS_FILE_NAME}-${options.nonce}`
   );
   if (
-    registrationToken === null ||
+    options.serverName !== laborerMemoryServerName(options) ||
     options.path !== expectedPath ||
-    options.nonce.length === 0 ||
-    options.nonce.length > 64
+    !MEMORY_REGISTRATION_TOKEN_PATTERN.test(options.nonce) ||
+    !laborerMcpEnvironmentIsScrubbed("memory", options.environmentNames)
   ) {
     return yield* registrationFailure("invalid");
   }
@@ -1275,7 +1340,12 @@ export const publishLaborerMemoryMcpReadiness = Effect.fn(
     try: () =>
       publishAtomically({
         anchor: sources.workspaceDirectory,
-        content: options.nonce,
+        assertCanCommit: () =>
+          verifyAcpAgentContextSources(sources, "publish-memory-readiness"),
+        content: JSON.stringify({
+          environmentNames: options.environmentNames,
+          nonce: options.nonce,
+        }),
         path: options.path,
       }),
     catch: () => registrationFailure("missing"),
@@ -1283,9 +1353,224 @@ export const publishLaborerMemoryMcpReadiness = Effect.fn(
 });
 
 export interface LaborerMemoryPermissionRegistration {
+  readonly consumedToolCallIds: Set<string>;
+  readonly gate: LaborerMemoryPermissionGate;
+  readonly generation: string;
+  readonly observedFingerprints: Map<
+    string,
+    { readonly fingerprint: string; readonly generation: string }
+  >;
   readonly observedToolCallIds: Set<string>;
   readonly permission: string;
+  readonly pinnedOpenCodeVersion: "1.18.4" | null;
+  readonly rejectedToolCallIds: Set<string>;
+  rejectUncorrelatedPermissions: boolean;
 }
+
+export interface LaborerMemoryPermissionGate {
+  acceptingCalls: boolean;
+  readonly activeToolCallIds: Set<string>;
+  readonly onSafetyDenial?: () => void;
+  safetyDenialObserved: boolean;
+}
+
+const memoryToolCallKey = (sessionId: string, toolCallId: string): string =>
+  `${sessionId}\0${toolCallId}`;
+
+const invalidFingerprintValue = Symbol("invalid-memory-fingerprint-value");
+
+const canonicalFingerprintValue = (
+  value: unknown,
+  depth = 0
+): unknown | typeof invalidFingerprintValue => {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : invalidFingerprintValue;
+  }
+  if (depth >= MAX_MEMORY_PERMISSION_FINGERPRINT_DEPTH) {
+    return invalidFingerprintValue;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_MEMORY_PERMISSION_FINGERPRINT_ITEMS) {
+      return invalidFingerprintValue;
+    }
+    const normalized: unknown[] = [];
+    for (const item of value) {
+      const canonical = canonicalFingerprintValue(item, depth + 1);
+      if (canonical === invalidFingerprintValue) {
+        return invalidFingerprintValue;
+      }
+      normalized.push(canonical);
+    }
+    return normalized;
+  }
+  if (typeof value !== "object" || value === null) {
+    return invalidFingerprintValue;
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.length > MAX_MEMORY_PERMISSION_FINGERPRINT_ITEMS) {
+    return invalidFingerprintValue;
+  }
+  const normalized = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    const item = (value as Record<string, unknown>)[key];
+    const canonical = canonicalFingerprintValue(item, depth + 1);
+    if (canonical === invalidFingerprintValue) {
+      return invalidFingerprintValue;
+    }
+    normalized[key] = canonical;
+  }
+  return normalized;
+};
+
+const memoryPermissionFingerprint = (toolCall: {
+  readonly kind?: unknown;
+  readonly rawInput?: unknown;
+  readonly status?: unknown;
+  readonly title?: unknown;
+}): string | null => {
+  const canonicalRawInput =
+    toolCall.rawInput === undefined
+      ? "<absent>"
+      : canonicalFingerprintValue(toolCall.rawInput);
+  if (canonicalRawInput === invalidFingerprintValue) {
+    return null;
+  }
+  const rawInput = JSON.stringify(canonicalRawInput);
+  if (
+    Buffer.byteLength(rawInput, "utf8") >
+    MAX_MEMORY_PERMISSION_FINGERPRINT_BYTES
+  ) {
+    return null;
+  }
+  const rawInputDigest = createHash("sha256")
+    .update(rawInput)
+    .digest("base64url");
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        kind: toolCall.kind,
+        rawInputDigest,
+        status: toolCall.status,
+        title: toolCall.title,
+      })
+    )
+    .digest("base64url");
+};
+
+const isPinnedOpenCodeMemoryTitle = (
+  registration: LaborerMemoryPermissionRegistration,
+  toolCall: {
+    readonly kind?: unknown;
+    readonly rawInput?: unknown;
+    readonly title?: unknown;
+  }
+): boolean => {
+  if (
+    registration.pinnedOpenCodeVersion === null ||
+    toolCall.title !== registration.permission
+  ) {
+    return false;
+  }
+  if (toolCall.kind !== "execute") {
+    return true;
+  }
+  if (typeof toolCall.rawInput !== "object" || toolCall.rawInput === null) {
+    return true;
+  }
+  let command: unknown;
+  if ("command" in toolCall.rawInput) {
+    command = toolCall.rawInput.command;
+  } else if ("cmd" in toolCall.rawInput) {
+    command = toolCall.rawInput.cmd;
+  }
+  return typeof command !== "string";
+};
+
+const rejectMemoryToolCall = (
+  registration: LaborerMemoryPermissionRegistration,
+  toolCallId: string
+): void => {
+  if (registration.rejectedToolCallIds.size < MAX_TRACKED_MEMORY_TOOL_CALLS) {
+    registration.rejectedToolCallIds.add(toolCallId);
+  } else {
+    registration.rejectUncorrelatedPermissions = true;
+  }
+  markMemoryPermissionSafetyDenial(registration.gate);
+};
+
+const refreshConsumedToolCall = (
+  registration: LaborerMemoryPermissionRegistration,
+  toolCallId: string
+): void => {
+  registration.consumedToolCallIds.delete(toolCallId);
+  registration.consumedToolCallIds.add(toolCallId);
+};
+
+const makeTrackingCapacity = (
+  registration: LaborerMemoryPermissionRegistration,
+  sessionId: string
+): boolean => {
+  while (
+    registration.consumedToolCallIds.size +
+      registration.observedToolCallIds.size >=
+    MAX_TRACKED_MEMORY_TOOL_CALLS
+  ) {
+    let inactiveConsumed: string | undefined;
+    for (const consumedToolCallId of registration.consumedToolCallIds) {
+      if (
+        !registration.gate.activeToolCallIds.has(
+          memoryToolCallKey(sessionId, consumedToolCallId)
+        )
+      ) {
+        inactiveConsumed = consumedToolCallId;
+        break;
+      }
+    }
+    if (inactiveConsumed === undefined) {
+      return false;
+    }
+    registration.consumedToolCallIds.delete(inactiveConsumed);
+  }
+  return true;
+};
+
+const markMemoryPermissionSafetyDenial = (
+  gate: LaborerMemoryPermissionGate
+): void => {
+  if (gate.safetyDenialObserved) {
+    return;
+  }
+  gate.safetyDenialObserved = true;
+  gate.onSafetyDenial?.();
+};
+
+export const clearLaborerMemoryPermissionRegistration = (
+  sessionId: string,
+  registration: LaborerMemoryPermissionRegistration,
+  options?: { readonly preserveActiveToolCalls?: boolean }
+): void => {
+  registration.consumedToolCallIds.clear();
+  registration.observedFingerprints.clear();
+  registration.observedToolCallIds.clear();
+  registration.rejectedToolCallIds.clear();
+  registration.rejectUncorrelatedPermissions = false;
+  if (options?.preserveActiveToolCalls === true) {
+    return;
+  }
+  const prefix = `${sessionId}\0`;
+  for (const activeToolCallId of registration.gate.activeToolCallIds) {
+    if (activeToolCallId.startsWith(prefix)) {
+      registration.gate.activeToolCallIds.delete(activeToolCallId);
+    }
+  }
+};
 
 export const observeLaborerMemoryToolCall = (
   notification: SessionNotification,
@@ -1301,48 +1586,143 @@ export const observeLaborerMemoryToolCall = (
     update.sessionUpdate === "tool_call_update" &&
     (update.status === "completed" || update.status === "failed")
   ) {
-    registration.observedToolCallIds.delete(update.toolCallId);
+    if (registration.observedToolCallIds.delete(update.toolCallId)) {
+      registration.observedFingerprints.delete(update.toolCallId);
+      refreshConsumedToolCall(registration, update.toolCallId);
+    }
+    registration.gate.activeToolCallIds.delete(
+      memoryToolCallKey(notification.sessionId, update.toolCallId)
+    );
     return;
   }
-  if (
-    registration === undefined ||
-    update.sessionUpdate !== "tool_call" ||
-    update.status !== "pending" ||
-    update.title !== registration.permission
-  ) {
+  if (registration === undefined || update.sessionUpdate !== "tool_call") {
     return;
   }
   // Pinned OpenCode emits the exact programmatic tool name as the first pending
-  // tool-call update before asking permission. The later permission request
-  // omits `name`, so authorization consumes only this correlated call ID and
-  // never trusts its human-readable title.
-  registration.observedToolCallIds.add(update.toolCallId);
-  while (
-    registration.observedToolCallIds.size > MAX_OBSERVED_MEMORY_TOOL_CALLS
-  ) {
-    const oldest = registration.observedToolCallIds.values().next().value;
-    if (oldest === undefined) {
-      break;
-    }
-    registration.observedToolCallIds.delete(oldest);
+  // tool-call update before asking permission. The later permission request can
+  // omit `name`, so authorization consumes only this correlated call ID and
+  // never trusts its human-readable title as authentication.
+  const hasExactExperimentalName = update.name === registration.permission;
+  const hasPinnedTitleAttempt = isPinnedOpenCodeMemoryTitle(
+    registration,
+    update
+  );
+  const hasPinnedFallbackIdentity =
+    update.name === undefined && hasPinnedTitleAttempt;
+  if (!(hasExactExperimentalName || hasPinnedTitleAttempt)) {
+    return;
   }
+  const fingerprint = memoryPermissionFingerprint(update);
+  const hasValidPendingShape =
+    (hasExactExperimentalName || hasPinnedFallbackIdentity) &&
+    update.status === "pending" &&
+    update.kind === "other" &&
+    fingerprint !== null;
+  if (!hasValidPendingShape) {
+    rejectMemoryToolCall(registration, update.toolCallId);
+    return;
+  }
+  if (registration.consumedToolCallIds.has(update.toolCallId)) {
+    refreshConsumedToolCall(registration, update.toolCallId);
+    return;
+  }
+  if (registration.observedToolCallIds.has(update.toolCallId)) {
+    return;
+  }
+  if (registration.rejectedToolCallIds.has(update.toolCallId)) {
+    return;
+  }
+  if (!makeTrackingCapacity(registration, notification.sessionId)) {
+    rejectMemoryToolCall(registration, update.toolCallId);
+    return;
+  }
+  registration.observedToolCallIds.add(update.toolCallId);
+  registration.observedFingerprints.set(update.toolCallId, {
+    fingerprint,
+    generation: registration.generation,
+  });
+  registration.gate.activeToolCallIds.add(
+    memoryToolCallKey(notification.sessionId, update.toolCallId)
+  );
 };
 
-export const authorizeLaborerMemoryPermission = (
+export const tryAuthorizeLaborerMemoryPermission = (
   request: RequestPermissionRequest,
   trustedSessionPermissions: ReadonlyMap<
     string,
     LaborerMemoryPermissionRegistration
   >
-): RequestPermissionResponse => {
+): RequestPermissionResponse | null => {
   const registration = trustedSessionPermissions.get(request.sessionId);
-  const requestNameMatches =
-    request.toolCall.name === undefined ||
-    request.toolCall.name === registration?.permission;
+  const hasExactRegisteredIdentity = [
+    ...trustedSessionPermissions.values(),
+  ].some((candidate) => request.toolCall.name === candidate.permission);
+  const hasPinnedRegisteredIdentity = [
+    ...trustedSessionPermissions.values(),
+  ].some((candidate) =>
+    isPinnedOpenCodeMemoryTitle(candidate, request.toolCall)
+  );
+  const wasConsumedMemoryCall =
+    registration?.consumedToolCallIds.has(request.toolCall.toolCallId) === true;
+  const isTrackedMemoryCall =
+    wasConsumedMemoryCall ||
+    registration?.observedToolCallIds.has(request.toolCall.toolCallId) ===
+      true ||
+    registration?.rejectedToolCallIds.has(request.toolCall.toolCallId) === true;
+  const isUncorrelatedMemoryCandidate =
+    registration !== undefined &&
+    request.toolCall.name === undefined &&
+    (registration.observedToolCallIds.size > 0 ||
+      registration.rejectUncorrelatedPermissions);
+  if (
+    !(
+      hasExactRegisteredIdentity ||
+      hasPinnedRegisteredIdentity ||
+      isTrackedMemoryCall ||
+      isUncorrelatedMemoryCandidate
+    )
+  ) {
+    return null;
+  }
+  if (registration === undefined) {
+    return { outcome: { outcome: "cancelled" } };
+  }
+  if (registration.rejectedToolCallIds.has(request.toolCall.toolCallId)) {
+    return { outcome: { outcome: "cancelled" } };
+  }
+  const observedFingerprint = registration.observedFingerprints.get(
+    request.toolCall.toolCallId
+  );
+  const wasObservedMemoryCall = registration.observedToolCallIds.delete(
+    request.toolCall.toolCallId
+  );
+  registration.observedFingerprints.delete(request.toolCall.toolCallId);
+  if (wasObservedMemoryCall) {
+    refreshConsumedToolCall(registration, request.toolCall.toolCallId);
+  } else if (wasConsumedMemoryCall) {
+    refreshConsumedToolCall(registration, request.toolCall.toolCallId);
+  }
+  const hasExactExperimentalName =
+    request.toolCall.name === registration.permission;
+  const requestFingerprint = memoryPermissionFingerprint(request.toolCall);
+  const hasExactPinnedShape =
+    request.toolCall.name === undefined &&
+    registration.pinnedOpenCodeVersion !== null &&
+    request.toolCall.title === registration.permission &&
+    request.toolCall.kind === "other" &&
+    request.toolCall.status === "pending" &&
+    requestFingerprint !== null &&
+    observedFingerprint?.generation === registration.generation &&
+    observedFingerprint.fingerprint === requestFingerprint;
+  const requestAuthenticationMatches =
+    hasExactExperimentalName || hasExactPinnedShape;
   const isObservedMemoryCall =
-    requestNameMatches &&
-    registration?.observedToolCallIds.delete(request.toolCall.toolCallId) ===
-      true;
+    wasObservedMemoryCall &&
+    requestAuthenticationMatches &&
+    registration.gate.acceptingCalls;
+  if (!wasObservedMemoryCall) {
+    return { outcome: { outcome: "cancelled" } };
+  }
   const option = isObservedMemoryCall
     ? Option.getOrUndefined(
         EffectArray.findFirst(
@@ -1351,7 +1731,26 @@ export const authorizeLaborerMemoryPermission = (
         )
       )
     : undefined;
+  if (!isObservedMemoryCall || option === undefined) {
+    markMemoryPermissionSafetyDenial(registration.gate);
+  }
+  if (option !== undefined) {
+    registration.gate.activeToolCallIds.add(
+      memoryToolCallKey(request.sessionId, request.toolCall.toolCallId)
+    );
+  }
   return option === undefined
     ? { outcome: { outcome: "cancelled" } }
     : { outcome: { optionId: option.optionId, outcome: "selected" } };
 };
+
+export const authorizeLaborerMemoryPermission = (
+  request: RequestPermissionRequest,
+  trustedSessionPermissions: ReadonlyMap<
+    string,
+    LaborerMemoryPermissionRegistration
+  >
+): RequestPermissionResponse =>
+  tryAuthorizeLaborerMemoryPermission(request, trustedSessionPermissions) ?? {
+    outcome: { outcome: "cancelled" },
+  };

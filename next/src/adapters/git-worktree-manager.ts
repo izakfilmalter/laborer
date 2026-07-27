@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import {
   link,
@@ -20,8 +20,11 @@ import {
   sep,
 } from "node:path";
 import { Effect, Array as EffectArray } from "effect";
+import { SAFE_WORKTREE_NAME_PATTERN } from "../action-catalog.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {
+  type ResourceInspectionOutcome,
+  type WorktreeInspectionRequest,
   type WorktreeManagerShape,
   WorktreeProvisioningUncertain,
   type WorktreeRequest,
@@ -31,7 +34,8 @@ import {
 const GIT_MAX_BUFFER_BYTES = 256 * 1024;
 const GIT_TIMEOUT_MILLIS = 30_000;
 const ENVIRONMENT_MAX_BYTES = 1024 * 1024;
-const SAFE_WORKTREE_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
+const WORKTREE_OWNER_MARKER = ".laborer-worktree-owner.json";
+const WORKTREE_OWNER_MARKER_MAX_BYTES = 4096;
 
 interface RegisteredWorktree {
   readonly branch: string | null;
@@ -54,6 +58,9 @@ interface EnvironmentCopy {
 export interface GitWorktreeManagerOptions {
   /** Any canonicalizable directory inside the source Git worktree. */
   readonly repository: string;
+  readonly testHooks?: {
+    readonly afterWorktreeAdded?: () => Promise<void>;
+  };
 }
 
 const worktreeFailure = (safeDetail: string): HandlerFailure =>
@@ -280,7 +287,7 @@ const workingDirectoryInWorktree = async (
 
 const validateWorktreeName = (name: string): void => {
   if (
-    !SAFE_WORKTREE_NAME.test(name) ||
+    !SAFE_WORKTREE_NAME_PATTERN.test(name) ||
     name.includes("..") ||
     name.toLowerCase().endsWith(".lock")
   ) {
@@ -311,6 +318,265 @@ const readRegisteredWorktrees = async (
   parseWorktrees(
     await runGit(repository, ["worktree", "list", "--porcelain", "-z"], signal)
   );
+
+interface WorktreeOwnerMarker {
+  readonly conversationId: string;
+  readonly executionId: string;
+  readonly operationId: string;
+  readonly rootAuthorityDigest: string;
+  readonly schemaVersion: 1;
+  readonly worktreeName: string;
+}
+
+const rootAuthorityDigest = (repository: string): string =>
+  createHash("sha256")
+    .update("laborer-worktree-root-authority-v1\0", "utf8")
+    .update(repository, "utf8")
+    .digest("base64url");
+
+const ownerMarkerFor = (
+  context: RepositoryContext,
+  request: WorktreeRequest
+): WorktreeOwnerMarker => ({
+  conversationId: request.conversationId,
+  executionId: request.executionId,
+  operationId: request.operationId ?? request.executionId,
+  rootAuthorityDigest: rootAuthorityDigest(context.repository),
+  schemaVersion: 1,
+  worktreeName: request.worktreeName,
+});
+
+const ownerMarkerPath = (worktreePath: string): string =>
+  join(worktreePath, WORKTREE_OWNER_MARKER);
+
+const writeOwnerMarker = async (
+  context: RepositoryContext,
+  worktreePath: string,
+  request: WorktreeRequest
+): Promise<void> => {
+  const path = ownerMarkerPath(worktreePath);
+  const file = await open(
+    path,
+    constants.O_WRONLY +
+      constants.O_CREAT +
+      constants.O_EXCL +
+      constants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    await file.writeFile(JSON.stringify(ownerMarkerFor(context, request)));
+    await file.chmod(0o600);
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  const directory = await open(worktreePath, constants.O_RDONLY);
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
+};
+
+const assertOwnerMarker = async (
+  context: RepositoryContext,
+  worktreePath: string,
+  request: WorktreeRequest
+): Promise<void> => {
+  const path = ownerMarkerPath(worktreePath);
+  const metadata = await lstat(path).catch((error: unknown) => {
+    if (isMissing(error)) {
+      throw worktreeFailure("worktree ownership marker conflicts");
+    }
+    throw error;
+  });
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isFile() ||
+    metadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES ||
+    metadata.mode % 0o1000 !== 0o600
+  ) {
+    throw worktreeFailure("worktree ownership marker conflicts");
+  }
+  const file = await open(path, constants.O_RDONLY + constants.O_NOFOLLOW);
+  let source: string;
+  try {
+    const openedMetadata = await file.stat();
+    if (
+      !openedMetadata.isFile() ||
+      openedMetadata.dev !== metadata.dev ||
+      openedMetadata.ino !== metadata.ino ||
+      openedMetadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES
+    ) {
+      throw worktreeFailure("worktree ownership marker conflicts");
+    }
+    source = await file.readFile("utf8");
+  } finally {
+    await file.close();
+  }
+  let marker: unknown;
+  try {
+    marker = JSON.parse(source) as unknown;
+  } catch {
+    throw worktreeFailure("worktree ownership marker conflicts");
+  }
+  if (
+    JSON.stringify(marker) !== JSON.stringify(ownerMarkerFor(context, request))
+  ) {
+    throw worktreeFailure("worktree ownership marker conflicts");
+  }
+};
+
+type GitWorktreeInspectionOutcome = ResourceInspectionOutcome<{
+  readonly workingDirectory: string;
+}>;
+
+const inspectEnvironmentCopy = async (
+  context: RepositoryContext,
+  checkoutDirectory: string,
+  creationState: WorktreeInspectionRequest["creationState"]
+): Promise<GitWorktreeInspectionOutcome | null> => {
+  try {
+    await assertEnvironmentCopy(
+      checkoutDirectory,
+      await readEnvironmentCopy(context)
+    );
+    return null;
+  } catch (error) {
+    if (isHandlerFailure(error) && creationState === "staged") {
+      return {
+        certainty: "definitive",
+        evidence: "exact-owned-incomplete",
+        status: "recoverable",
+      };
+    }
+    throw error;
+  }
+};
+
+const inspectWorktree = async (
+  options: GitWorktreeManagerOptions,
+  request: WorktreeInspectionRequest,
+  signal: AbortSignal
+): Promise<GitWorktreeInspectionOutcome> => {
+  try {
+    validateWorktreeName(request.worktreeName);
+    const context = await repositoryContext(options.repository, signal);
+    const worktreePath = join(context.worktreeRoot, request.worktreeName);
+    const branch = `laborer/${request.worktreeName}`;
+    const expectedWorkingDirectory = resolve(
+      worktreePath,
+      context.sourceRelativePath
+    );
+    if (
+      request.workingDirectory !== null &&
+      request.workingDirectory !== expectedWorkingDirectory
+    ) {
+      return {
+        certainty: "definitive",
+        evidence: "identity-conflict",
+        status: "conflicting",
+      };
+    }
+    const [registered, pathMetadata, branchIsPresent] = await Promise.all([
+      readRegisteredWorktrees(context.repository, signal),
+      metadataIfPresent(worktreePath),
+      branchExists(context.repository, branch, signal),
+    ]);
+    const pathMatches = EffectArray.filter(
+      registered,
+      (candidate) => resolve(candidate.path) === worktreePath
+    );
+    const branchMatches = EffectArray.filter(
+      registered,
+      (candidate) => candidate.branch === branch
+    );
+    const exact =
+      pathMatches.length === 1 &&
+      branchMatches.length === 1 &&
+      pathMatches[0] === branchMatches[0];
+    const absent =
+      pathMatches.length === 0 &&
+      branchMatches.length === 0 &&
+      pathMetadata === null &&
+      !branchIsPresent;
+    if (absent) {
+      return {
+        certainty: "definitive",
+        evidence: "definitively-absent",
+        status: request.creationState === "staged" ? "recoverable" : "missing",
+      };
+    }
+    if (!exact || pathMetadata === null || !branchIsPresent) {
+      return {
+        certainty: "definitive",
+        evidence: "identity-conflict",
+        status: "conflicting",
+      };
+    }
+    try {
+      await assertSafeWorktreeRoot(context.worktreeRoot, false);
+      const checkoutDirectory = await assertExactCheckout(
+        context,
+        worktreePath,
+        branch,
+        signal
+      );
+      await assertOwnerMarker(context, checkoutDirectory, request);
+      const workingDirectory = await workingDirectoryInWorktree(
+        context,
+        worktreePath
+      );
+      if (workingDirectory !== expectedWorkingDirectory) {
+        return {
+          certainty: "definitive",
+          evidence: "identity-conflict",
+          status: "conflicting",
+        };
+      }
+      const environmentOutcome = await inspectEnvironmentCopy(
+        context,
+        checkoutDirectory,
+        request.creationState
+      );
+      if (environmentOutcome !== null) {
+        return environmentOutcome;
+      }
+      return {
+        certainty: "definitive",
+        evidence: "exact-owned-resource",
+        resource: { workingDirectory },
+        status: "available",
+      };
+    } catch (error) {
+      if (isHandlerFailure(error) || isMissing(error)) {
+        return {
+          certainty: "definitive",
+          evidence: "identity-conflict",
+          status: "conflicting",
+        };
+      }
+      return {
+        certainty: "unknown",
+        evidence: "git-inspection-failed",
+        status: "ambiguous",
+      };
+    }
+  } catch (error) {
+    if (isHandlerFailure(error)) {
+      return {
+        certainty: "definitive",
+        evidence: "identity-conflict",
+        status: "conflicting",
+      };
+    }
+    return {
+      certainty: "unknown",
+      evidence: "git-inspection-failed",
+      status: "ambiguous",
+    };
+  }
+};
 
 const readEnvironmentCopy = async (
   context: RepositoryContext
@@ -623,6 +889,8 @@ const createWorktree = async (
       branch,
       signal
     );
+    await options.testHooks?.afterWorktreeAdded?.();
+    await writeOwnerMarker(context, checkoutDirectory, request);
     await copyEnvironment(checkoutDirectory, environment, false);
     return {
       workingDirectory: await workingDirectoryInWorktree(context, worktreePath),
@@ -674,6 +942,7 @@ const recoverWorktree = async (
       branch,
       signal
     );
+    await assertOwnerMarker(context, checkoutDirectory, request);
     await copyEnvironment(
       checkoutDirectory,
       await readEnvironmentCopy(context),
@@ -744,6 +1013,7 @@ const validateWorktree = async (
     branch,
     signal
   );
+  await assertOwnerMarker(context, checkoutDirectory, request);
   await assertEnvironmentCopy(
     checkoutDirectory,
     await readEnvironmentCopy(context)
@@ -765,6 +1035,8 @@ export const makeGitWorktreeManager = (
         mapProvisioningFailure(error, "Git worktree creation failed"),
       try: (signal) => createWorktree(options, request, signal),
     }),
+  inspect: (request) =>
+    Effect.promise((signal) => inspectWorktree(options, request, signal)),
   recover: (request) =>
     Effect.tryPromise({
       catch: (error) =>

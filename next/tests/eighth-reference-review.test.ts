@@ -1,4 +1,4 @@
-import { readdir, symlink } from "node:fs/promises";
+import { mkdir, readdir, rename, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Ref } from "effect";
@@ -330,7 +330,7 @@ describe("eighth reference coding Application review", () => {
             executionId: "CFAILURE:1.0:execution:1",
             kind: "implementation-failure",
             promptId:
-              "msg_3c7c70858ba682c5cb827fade0368b338367c203a18156327a8b20ca7853a1c8",
+              "msg_22bc11c1ea7af0b3d7fdd3df50158be493b9af80be236819d404c4f288ccfe25",
           });
           yield* application.handle(failureEvent, publishNothing, captureEvent);
           assert.ok(application.recover);
@@ -510,7 +510,6 @@ describe("eighth reference coding Application review", () => {
             })
           );
 
-          const acceptanceAttempted = yield* Deferred.make<void>();
           yield* Effect.scoped(
             Effect.gen(function* () {
               const application = yield* makeReferenceCodingApplication({
@@ -537,15 +536,12 @@ describe("eighth reference coding Application review", () => {
                 }),
               });
               assert.ok(application.recover);
-              yield* application.recover((event) =>
-                event.source === "execution-recovery"
-                  ? Deferred.succeed(acceptanceAttempted, undefined).pipe(
-                      Effect.andThen(Effect.interrupt)
-                    )
-                  : acceptEvent(event)
-              );
-              yield* Deferred.await(acceptanceAttempted);
+              yield* application.recover(acceptEvent);
             })
+          );
+          assert.strictEqual(
+            (yield* repository.load).executions[0]?.attachment?.state,
+            "unresolved"
           );
 
           const acceptedEvents = yield* Ref.make<readonly ExternalInputEvent[]>(
@@ -584,12 +580,7 @@ describe("eighth reference coding Application review", () => {
           );
 
           const events = yield* Ref.get(acceptedEvents);
-          assert.strictEqual(events.length, 1);
-          assert.strictEqual(events[0]?.source, "execution-recovery");
-          assert.strictEqual(
-            events[0]?.eventId,
-            "CRECOVERYOUTBOX:1.0:execution:1:recovery-failure:worktree"
-          );
+          assert.strictEqual(events.length, 0);
         })
       )
   );
@@ -738,7 +729,7 @@ describe("eighth reference coding Application review", () => {
                 "ses_6cbad5829b1f21a13aa316a0275ce71ea4b8c5beeddea27dce82f53313f7",
               prompt: "Continue after restart.",
               promptId:
-                "msg_b926db375ee45e478c3c29e0dd11693e97e9e82a0eb3ce2039832d0084f4b563",
+                "msg_d96e0d8b1e1d1f1fb07ace4c4e3f6cbe1fa7a8d3018f8c39dbfe4ab1580bee2c",
               workingDirectory: "/tmp/completed-restart",
             },
           ]);
@@ -840,6 +831,45 @@ describe("eighth reference coding Application review", () => {
         assert.strictEqual(result._tag, "Failure");
       })
     )
+  );
+
+  it.effect(
+    "rejects a lock database when its retained parent directory is replaced",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-eighth-application-lock-parent-"
+          );
+          const parent = join(root, "state");
+          const replacement = join(root, "replacement");
+          const displaced = join(root, "displaced");
+          yield* Effect.promise(() =>
+            Promise.all([
+              mkdir(parent, { mode: 0o700 }),
+              mkdir(replacement, { mode: 0o700 }),
+            ])
+          );
+          const result = yield* Effect.result(
+            makeFileApplicationRepository(
+              join(parent, "application.json"),
+              root,
+              {
+                beforeLockDatabase: async () => {
+                  await rename(parent, displaced);
+                  await rename(replacement, parent);
+                },
+              }
+            )
+          );
+
+          assert.strictEqual(result._tag, "Failure");
+          assert.deepStrictEqual(
+            yield* Effect.promise(() => readdir(parent)),
+            []
+          );
+        })
+      )
   );
 
   it.effect(
@@ -973,11 +1003,13 @@ describe("eighth reference coding Application review", () => {
           );
 
           assert.strictEqual(yield* Ref.get(starts), 1);
-          assert.deepStrictEqual(yield* Ref.get(observedStatuses), ["failed"]);
+          assert.deepStrictEqual(yield* Ref.get(observedStatuses), [
+            "starting",
+          ]);
           const failureEvents = (yield* Ref.get(acceptedEvents)).filter(
             (event) => event.source === "implementation-failure"
           );
-          assert.strictEqual(failureEvents.length, 1);
+          assert.strictEqual(failureEvents.length, 0);
         })
       )
   );

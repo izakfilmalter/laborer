@@ -256,6 +256,58 @@ describe("Runner/store review regressions", () => {
       )
   );
 
+  it.effect(
+    "enforces application event identity globally across Conversations",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const application = Application.of({ handle: () => Effect.void });
+          const harness = yield* makePrototypeHarness({
+            application,
+            laborerSlackId: LABORER_ID,
+            slack: {
+              postThreadMessage: () => Effect.succeed({ ts: "unused" }),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+          yield* activateConversation(harness.runner);
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CREVIEWOTHER",
+              eventId: "event:review:other-activation",
+              messageTs: "2.0",
+              text: `<@${LABORER_ID}> start`,
+            })
+          );
+          const event = ExternalInputEvent.make({
+            conversationId: THREAD_ID,
+            eventId: "external:workspace-global",
+            payload: { value: 1 },
+            source: "review-test",
+          });
+          const first = yield* harness.runner.acceptApplicationEvent(event);
+          const duplicate = yield* harness.runner.acceptApplicationEvent(event);
+          const conflict = yield* Effect.result(
+            harness.runner.acceptApplicationEvent(
+              ExternalInputEvent.make({
+                ...event,
+                conversationId: ThreadId.make("CREVIEWOTHER:2.0"),
+              })
+            )
+          );
+
+          assert.strictEqual(first.decision._tag, "Accepted");
+          assert.strictEqual(duplicate.decision._tag, "Duplicate");
+          assert.strictEqual(conflict._tag, "Failure");
+          const state = yield* harness.store.snapshot;
+          assert.strictEqual(state.threads[0]?.applicationEvents.length, 1);
+          assert.strictEqual(state.threads[1]?.applicationEvents.length, 0);
+          assert.strictEqual(state.threads[1]?.applicationInputQueue.length, 0);
+        })
+      )
+  );
+
   it.effect("propagates StoreError from an external application handler", () =>
     Effect.scoped(
       Effect.gen(function* () {

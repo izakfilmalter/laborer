@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Effect } from "effect";
 import {
@@ -7,13 +9,32 @@ import {
 import { SlackStartupError } from "./errors.ts";
 
 export interface SlackRuntimePaths {
+  readonly acpActionAuthorityState: string;
+  readonly acpActionBootstrap: string;
+  readonly acpAuthorityKey: string;
+  readonly acpAuthorityState: string;
+  readonly acpPermissionUiOutbox: string;
+  readonly acpProcessState: string;
   readonly applicationState: string;
   readonly legacyHandlerState: string;
   readonly lock: string;
+  readonly recoverySocket: string;
   readonly root: string;
   readonly runnerState: string;
   readonly workThreads: string;
 }
+
+const recoverySocketPath = (workspaceRoot: string): string => {
+  const preferred = resolve(workspaceRoot, "recovery.sock");
+  if (Buffer.byteLength(preferred, "utf8") <= 96) {
+    return preferred;
+  }
+  const digest = createHash("sha256")
+    .update(workspaceRoot, "utf8")
+    .digest("hex")
+    .slice(0, 32);
+  return resolve(tmpdir(), `laborer-recovery-${digest}.sock`);
+};
 
 export const prepareSlackRuntimePaths = (
   projectRoot: string,
@@ -60,10 +81,23 @@ export const prepareSlackRuntimePaths = (
     });
     const runnerState = resolve(workspaceRoot, "runner-state.json");
     return {
+      acpActionAuthorityState: resolve(
+        workspaceRoot,
+        "acp-action-capabilities.json"
+      ),
+      acpActionBootstrap: resolve(workspaceRoot, "acp-action-bootstrap"),
+      acpAuthorityKey: resolve(workspaceRoot, "acp-authority.key"),
+      acpAuthorityState: resolve(workspaceRoot, "acp-authority.json"),
+      acpPermissionUiOutbox: resolve(
+        workspaceRoot,
+        "acp-permission-ui-outbox.json"
+      ),
+      acpProcessState: resolve(workspaceRoot, "acp-process-state.json"),
       applicationState: resolve(workspaceRoot, "application-state.json"),
       legacyHandlerState: resolve(workspaceRoot, "state.json"),
       lock: resolve(root, "runner.lock"),
       root,
+      recoverySocket: recoverySocketPath(workspaceRoot),
       runnerState,
       workThreads,
     };

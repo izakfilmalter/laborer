@@ -6,11 +6,14 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
+import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
 import { makeSlackGateway } from "../prototype/emulated-slack.ts";
+import { makeAcpSlackWorkspaceRunner } from "./acp-workspace-runner.ts";
 import { loadSlackDaemonConfig } from "./config.ts";
 import { authenticateSlackBot } from "./identity.ts";
+import { makeSlackNativeStreamCapability } from "./native-stream.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
-import { makeSlackWorkspaceRunner } from "./workspace-runner.ts";
+import { slackWebApiRequestPolicy } from "./web-api-request-policy.ts";
 import { startSlackWorkspaceDirectory } from "./workspace-startup.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -43,17 +46,23 @@ const program = Effect.gen(function* () {
       makeClient: (botToken) =>
         new WebClient(botToken, {
           logger: silentSocketLogger,
-          rejectRateLimitedCalls: true,
+          ...slackWebApiRequestPolicy,
         }),
       makeGateway: ({ client, identity, namespaceWorkspace }) =>
         makeSlackGateway({
           botClient: client,
           botId: identity.botId,
           botUserId: identity.botUserId,
+          conversationStreamDeliveryPolicy:
+            slackConversationStreamDeliveryPolicy,
+          nativeStreaming: makeSlackNativeStreamCapability({
+            client: client.chat,
+            recipientTeamId: identity.teamId,
+          }),
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
-      makeRunner: makeSlackWorkspaceRunner,
+      makeRunner: makeAcpSlackWorkspaceRunner,
       makeSetupIncompleteResponder: (gateway) => (request) =>
         gateway.postThreadMessage(request).pipe(Effect.asVoid),
     },
@@ -68,7 +77,7 @@ const program = Effect.gen(function* () {
     client: socketClient,
     routeDirectory,
   });
-  yield* Console.log("LIVE SLACK LABORER — receiver connected.");
+  yield* Console.log("LIVE SLACK LABORER — durable ACP Conversations enabled.");
   yield* waitForShutdownSignal;
   yield* Console.log("Slack Laborer stopped cleanly.");
 }).pipe(Effect.scoped);

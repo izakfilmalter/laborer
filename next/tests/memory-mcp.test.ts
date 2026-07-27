@@ -1,10 +1,12 @@
 import {
   mkdir,
+  readdir,
   readFile,
   realpath,
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,8 +15,9 @@ import { assert, describe, it } from "@effect/vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { Effect, Logger } from "effect";
+import { Effect, Exit, Fiber, Logger, Scope } from "effect";
 import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import type { AcpPermissionBroker } from "../src/acp-conversation-prototype/acp-permission-broker.ts";
 import {
   acpAgentContextPaths,
   isSlackTeamId,
@@ -25,18 +28,24 @@ import {
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
 import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
+import { laborerMcpServerLauncherArgs } from "../src/acp-conversation-prototype/mcp-server-launcher-config.ts";
 import {
   framedMemoryEntries,
   renderFramedMemoryEntry,
 } from "../src/acp-conversation-prototype/memory-framing.ts";
 import {
   authorizeLaborerMemoryPermission,
+  clearLaborerMemoryPermissionRegistration,
   LABORER_MEMORY_MCP_TOOL_NAME,
   laborerMemoryOpenCodePermission,
   makeLaborerMemoryMcpServerConfiguration,
   makeLaborerMemoryStore,
+  observeLaborerMemoryToolCall,
   prepareLaborerMemoryMcpRegistration,
+  recordLaborerMemoryDiagnosticForSources,
+  tryAuthorizeLaborerMemoryPermission,
 } from "../src/acp-conversation-prototype/memory-mcp.ts";
+import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
 import {
   makeSlackActivationAcknowledger,
   makeSlackCompletionReactor,
@@ -70,6 +79,20 @@ const TRUNCATED_WORKSPACE_ASCII_PATTERN =
   /^\[TRUNCATED: bounded prefix of oversized workspace-memory\]\na+$/;
 const TRUNCATED_PROFILE_ASCII_PATTERN =
   /^\[TRUNCATED: bounded prefix of oversized user-profile\]\na+$/;
+
+const makePermissionBrokerCapture = (
+  onRequest: () => void
+): AcpPermissionBroker => ({
+  activateTurn: () => Effect.succeed(Effect.void),
+  cancelAll: Effect.void,
+  claimInteraction: () => Effect.succeed("ignored"),
+  handleInteraction: () => Effect.succeed("ignored"),
+  request: () =>
+    Effect.sync(() => {
+      onRequest();
+      return { outcome: { outcome: "cancelled" as const } };
+    }),
+});
 
 interface MemoryCall {
   readonly operation: "add" | "remove" | "replace";
@@ -126,6 +149,673 @@ const callMemoryWithSignal = (
     { signal }
   );
 
+it("classifies memory permissions without falling through failed authentication", () => {
+  const sessionId = "session:memory-classification";
+  const permission = "laborer-memory-classification_memory";
+  const registration = {
+    consumedToolCallIds: new Set<string>(),
+    gate: {
+      acceptingCalls: true,
+      activeToolCallIds: new Set<string>(),
+      safetyDenialObserved: false,
+    },
+    generation: "test-generation",
+    observedFingerprints: new Map(),
+    observedToolCallIds: new Set<string>(),
+    permission,
+    pinnedOpenCodeVersion: null,
+    rejectedToolCallIds: new Set<string>(),
+    rejectUncorrelatedPermissions: false,
+  };
+  const permissions = new Map([[sessionId, registration]]);
+  const observe = (toolCallId: string, name = permission): void =>
+    observeLaborerMemoryToolCall(
+      {
+        sessionId,
+        update: {
+          kind: "other",
+          name,
+          sessionUpdate: "tool_call",
+          status: "pending",
+          title: "spoofable human title",
+          toolCallId,
+        },
+      },
+      permissions
+    );
+  const request = (options: {
+    readonly includeAllow?: boolean;
+    readonly name?: string;
+    readonly omitName?: boolean;
+    readonly requestSessionId?: string;
+    readonly title?: string;
+    readonly toolCallId: string;
+  }) => ({
+    options:
+      options.includeAllow === false
+        ? [{ kind: "reject_once" as const, name: "Reject", optionId: "reject" }]
+        : [
+            {
+              kind: "allow_once" as const,
+              name: "Allow once",
+              optionId: "allow-once",
+            },
+          ],
+    sessionId: options.requestSessionId ?? sessionId,
+    toolCall: {
+      ...(options.omitName === true
+        ? {}
+        : { name: options.name ?? permission }),
+      title: options.title ?? permission,
+      toolCallId: options.toolCallId,
+    },
+  });
+
+  observe("tool:valid");
+  observe("tool:valid");
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({ toolCallId: "tool:valid" }),
+      permissions
+    ),
+    { outcome: { optionId: "allow-once", outcome: "selected" } }
+  );
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({ toolCallId: "tool:valid" }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+
+  observe("tool:wrong-name");
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({ name: "unrelated_tool", toolCallId: "tool:wrong-name" }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({ name: permission, toolCallId: "tool:unknown" }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+  observe("tool:expected-call-id");
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({
+        omitName: true,
+        title: "untrusted human title",
+        toolCallId: "tool:wrong-call-id",
+      }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({
+        title: "untrusted human title",
+        toolCallId: "tool:expected-call-id",
+      }),
+      permissions
+    ),
+    { outcome: { optionId: "allow-once", outcome: "selected" } }
+  );
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({
+        name: permission,
+        requestSessionId: "session:wrong",
+        toolCallId: "tool:wrong-session",
+      }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+
+  observe("tool:malformed");
+  assert.deepStrictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({ includeAllow: false, toolCallId: "tool:malformed" }),
+      permissions
+    ),
+    { outcome: { outcome: "cancelled" } }
+  );
+
+  observe("tool:unrelated", "unrelated_tool");
+  assert.strictEqual(
+    tryAuthorizeLaborerMemoryPermission(
+      request({
+        name: `${permission}-similar`,
+        title: `${permission}-similar`,
+        toolCallId: "tool:unrelated",
+      }),
+      permissions
+    ),
+    null
+  );
+});
+
+it("authenticates only exact pinned OpenCode name-less memory fingerprints", () => {
+  for (const pinnedOpenCodeVersion of ["1.18.4"] as const) {
+    const sessionId = `session:pinned:${pinnedOpenCodeVersion}`;
+    const permission = `laborer-memory-pinned-${pinnedOpenCodeVersion}_memory`;
+    const registration = {
+      consumedToolCallIds: new Set<string>(),
+      gate: {
+        acceptingCalls: true,
+        activeToolCallIds: new Set<string>(),
+        safetyDenialObserved: false,
+      },
+      generation: `generation:${pinnedOpenCodeVersion}`,
+      observedFingerprints: new Map(),
+      observedToolCallIds: new Set<string>(),
+      permission,
+      pinnedOpenCodeVersion,
+      rejectedToolCallIds: new Set<string>(),
+      rejectUncorrelatedPermissions: false,
+    };
+    const permissions = new Map([[sessionId, registration]]);
+    const notify = (options: {
+      readonly kind?: "execute" | "other" | "read";
+      readonly rawInput?: unknown;
+      readonly status?: "completed" | "pending";
+      readonly title?: string;
+      readonly toolCallId: string;
+    }): void =>
+      observeLaborerMemoryToolCall(
+        {
+          sessionId,
+          update: {
+            kind: options.kind ?? "other",
+            rawInput: options.rawInput ?? {
+              operation: "add",
+              target: "workspace",
+            },
+            sessionUpdate: "tool_call",
+            status: options.status ?? "pending",
+            title: options.title ?? permission,
+            toolCallId: options.toolCallId,
+          },
+        },
+        permissions
+      );
+    const request = (options: {
+      readonly kind?: "execute" | "other" | "read";
+      readonly rawInput?: unknown;
+      readonly requestSessionId?: string;
+      readonly title?: string;
+      readonly toolCallId: string;
+    }) => ({
+      options: [
+        {
+          kind: "allow_once" as const,
+          name: "Allow once",
+          optionId: "pinned-allow-once",
+        },
+      ],
+      sessionId: options.requestSessionId ?? sessionId,
+      toolCall: {
+        kind: options.kind ?? "other",
+        rawInput: options.rawInput ?? { target: "workspace", operation: "add" },
+        status: "pending" as const,
+        title: options.title ?? permission,
+        toolCallId: options.toolCallId,
+      },
+    });
+
+    notify({ toolCallId: "tool:pinned-valid" });
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({ toolCallId: "tool:pinned-valid" }),
+        permissions
+      ),
+      {
+        outcome: { optionId: "pinned-allow-once", outcome: "selected" },
+      }
+    );
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({ toolCallId: "tool:pinned-valid" }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    notify({ kind: "read", toolCallId: "tool:wrong-kind" });
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({ kind: "read", toolCallId: "tool:wrong-kind" }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    notify({ rawInput: { operation: "add" }, toolCallId: "tool:fingerprint" });
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({
+          rawInput: { operation: "remove" },
+          toolCallId: "tool:fingerprint",
+        }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    notify({ toolCallId: "tool:wrong-title" });
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({
+          title: "unrelated title",
+          toolCallId: "tool:wrong-title",
+        }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    notify({ toolCallId: "tool:generation" });
+    registration.generation = `replacement:${pinnedOpenCodeVersion}`;
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({ toolCallId: "tool:generation" }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({
+          requestSessionId: "session:wrong",
+          toolCallId: "tool:wrong-session",
+        }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({ toolCallId: "tool:wrong-call" }),
+        permissions
+      ),
+      { outcome: { outcome: "cancelled" } }
+    );
+
+    const shellRequest = request({
+      kind: "execute",
+      rawInput: { command: permission },
+      toolCallId: "tool:shell-spoof",
+    });
+    notify({
+      kind: "execute",
+      rawInput: { command: permission },
+      toolCallId: "tool:shell-spoof",
+    });
+    assert.strictEqual(
+      tryAuthorizeLaborerMemoryPermission(shellRequest, permissions),
+      null
+    );
+    assert.strictEqual(
+      tryAuthorizeLaborerMemoryPermission(
+        request({
+          title: `${permission}-similar`,
+          toolCallId: "tool:similar-other",
+        }),
+        permissions
+      ),
+      null
+    );
+
+    const capacitySessionId = `session:pinned-capacity:${pinnedOpenCodeVersion}`;
+    const capacityRegistration = {
+      consumedToolCallIds: new Set(
+        Array.from({ length: 64 }, (_, index) => `tool:active:${index}`)
+      ),
+      gate: {
+        acceptingCalls: true,
+        activeToolCallIds: new Set(
+          Array.from(
+            { length: 64 },
+            (_, index) => `${capacitySessionId}\0tool:active:${index}`
+          )
+        ),
+        safetyDenialObserved: false,
+      },
+      generation: `capacity-generation:${pinnedOpenCodeVersion}`,
+      observedFingerprints: new Map(),
+      observedToolCallIds: new Set<string>(),
+      permission,
+      pinnedOpenCodeVersion,
+      rejectedToolCallIds: new Set<string>(),
+      rejectUncorrelatedPermissions: false,
+    };
+    const capacityPermissions = new Map([
+      [capacitySessionId, capacityRegistration],
+    ]);
+    const capacityShape = {
+      kind: "other" as const,
+      rawInput: { operation: "add", target: "workspace" },
+      status: "pending" as const,
+      title: permission,
+      toolCallId: "tool:capacity-rejected",
+    };
+    observeLaborerMemoryToolCall(
+      {
+        sessionId: capacitySessionId,
+        update: { ...capacityShape, sessionUpdate: "tool_call" },
+      },
+      capacityPermissions
+    );
+    const capacityRequest = {
+      options: [
+        {
+          kind: "allow_once" as const,
+          name: "Allow once",
+          optionId: "must-not-select",
+        },
+      ],
+      sessionId: capacitySessionId,
+      toolCall: capacityShape,
+    };
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(capacityRequest, capacityPermissions),
+      { outcome: { outcome: "cancelled" } }
+    );
+    assert.deepStrictEqual(
+      tryAuthorizeLaborerMemoryPermission(capacityRequest, capacityPermissions),
+      { outcome: { outcome: "cancelled" } }
+    );
+  }
+});
+
+it("never rearms consumed permission call IDs after replayed observations", () => {
+  const permission = "laborer-memory-replay_memory";
+  let safetyDenials = 0;
+  const registration = {
+    consumedToolCallIds: new Set<string>(),
+    gate: {
+      acceptingCalls: true,
+      activeToolCallIds: new Set<string>(),
+      onSafetyDenial: () => {
+        safetyDenials += 1;
+      },
+      safetyDenialObserved: false,
+    },
+    generation: "test-generation",
+    observedFingerprints: new Map(),
+    observedToolCallIds: new Set<string>(),
+    permission,
+    pinnedOpenCodeVersion: null,
+    rejectedToolCallIds: new Set<string>(),
+    rejectUncorrelatedPermissions: false,
+  };
+  const permissions = new Map([["session:permission-replay", registration]]);
+  const observe = (toolCallId: string): void =>
+    observeLaborerMemoryToolCall(
+      {
+        sessionId: "session:permission-replay",
+        update: {
+          kind: "other",
+          name: permission,
+          sessionUpdate: "tool_call",
+          status: "pending",
+          title: permission,
+          toolCallId,
+        },
+      },
+      permissions
+    );
+  const complete = (toolCallId: string): void =>
+    observeLaborerMemoryToolCall(
+      {
+        sessionId: "session:permission-replay",
+        update: {
+          sessionUpdate: "tool_call_update",
+          status: "completed",
+          toolCallId,
+        },
+      },
+      permissions
+    );
+  const authorize = (toolCallId: string, name = permission) =>
+    authorizeLaborerMemoryPermission(
+      {
+        options: [
+          {
+            kind: "allow_once",
+            name: "Allow once",
+            optionId: "allow-once",
+          },
+        ],
+        sessionId: "session:permission-replay",
+        toolCall: {
+          name,
+          title: permission,
+          toolCallId,
+        },
+      },
+      permissions
+    );
+
+  observe("tool:valid-replay");
+  assert.deepStrictEqual(authorize("tool:valid-replay"), {
+    outcome: { optionId: "allow-once", outcome: "selected" },
+  });
+  observe("tool:valid-replay");
+  assert.deepStrictEqual(authorize("tool:valid-replay"), {
+    outcome: { outcome: "cancelled" },
+  });
+  complete("tool:valid-replay");
+
+  observe("tool:mismatch-replay");
+  assert.deepStrictEqual(authorize("tool:mismatch-replay", "malformed_tool"), {
+    outcome: { outcome: "cancelled" },
+  });
+  observe("tool:mismatch-replay");
+  assert.deepStrictEqual(authorize("tool:mismatch-replay"), {
+    outcome: { outcome: "cancelled" },
+  });
+  complete("tool:mismatch-replay");
+
+  for (let index = 0; index < 70; index += 1) {
+    const toolCallId = `tool:bounded:${index}`;
+    observe(toolCallId);
+    assert.deepStrictEqual(authorize(toolCallId), {
+      outcome: { optionId: "allow-once", outcome: "selected" },
+    });
+    complete(toolCallId);
+  }
+  assert.strictEqual(
+    registration.consumedToolCallIds.size +
+      registration.observedToolCallIds.size,
+    64
+  );
+  assert.strictEqual(registration.gate.activeToolCallIds.size, 0);
+  assert.strictEqual(safetyDenials, 1);
+  observe("tool:bounded:69");
+  assert.deepStrictEqual(authorize("tool:bounded:69"), {
+    outcome: { outcome: "cancelled" },
+  });
+
+  const isolatedRegistration = {
+    consumedToolCallIds: new Set<string>(),
+    gate: registration.gate,
+    generation: "isolated-generation",
+    observedFingerprints: new Map(),
+    observedToolCallIds: new Set<string>(),
+    permission,
+    pinnedOpenCodeVersion: null,
+    rejectedToolCallIds: new Set<string>(),
+    rejectUncorrelatedPermissions: false,
+  };
+  const isolatedPermissions = new Map([
+    ["session:permission-isolated", isolatedRegistration],
+  ]);
+  observeLaborerMemoryToolCall(
+    {
+      sessionId: "session:permission-isolated",
+      update: {
+        kind: "other",
+        name: permission,
+        sessionUpdate: "tool_call",
+        status: "pending",
+        title: permission,
+        toolCallId: "tool:bounded:69",
+      },
+    },
+    isolatedPermissions
+  );
+  assert.deepStrictEqual(
+    authorizeLaborerMemoryPermission(
+      {
+        options: [
+          {
+            kind: "allow_once",
+            name: "Allow once",
+            optionId: "allow-once",
+          },
+        ],
+        sessionId: "session:permission-isolated",
+        toolCall: {
+          name: permission,
+          title: permission,
+          toolCallId: "tool:bounded:69",
+        },
+      },
+      isolatedPermissions
+    ),
+    { outcome: { optionId: "allow-once", outcome: "selected" } }
+  );
+
+  clearLaborerMemoryPermissionRegistration(
+    "session:permission-replay",
+    registration
+  );
+  assert.strictEqual(registration.consumedToolCallIds.size, 0);
+  assert.strictEqual(registration.observedToolCallIds.size, 0);
+  assert.ok(
+    [...registration.gate.activeToolCallIds].every((callId) =>
+      callId.startsWith("session:permission-isolated\0")
+    )
+  );
+  for (let index = 0; index < 65; index += 1) {
+    observe(`tool:concurrent-capacity:${index}`);
+  }
+  assert.strictEqual(registration.observedToolCallIds.size, 64);
+  assert.strictEqual(safetyDenials, 1);
+  assert.deepStrictEqual(authorize("tool:concurrent-capacity:64"), {
+    outcome: { outcome: "cancelled" },
+  });
+});
+
+it("never evicts active consumed replay tombstones at bounded capacity", () => {
+  const permission = "laborer-memory-active-capacity_memory";
+  const sessionId = "session:active-capacity";
+  let safetyDenials = 0;
+  const registration = {
+    consumedToolCallIds: new Set<string>(),
+    gate: {
+      acceptingCalls: true,
+      activeToolCallIds: new Set<string>(),
+      onSafetyDenial: () => {
+        safetyDenials += 1;
+      },
+      safetyDenialObserved: false,
+    },
+    generation: "test-generation",
+    observedFingerprints: new Map(),
+    observedToolCallIds: new Set<string>(),
+    permission,
+    pinnedOpenCodeVersion: null,
+    rejectedToolCallIds: new Set<string>(),
+    rejectUncorrelatedPermissions: false,
+  };
+  const permissions = new Map([[sessionId, registration]]);
+  const observe = (toolCallId: string): void =>
+    observeLaborerMemoryToolCall(
+      {
+        sessionId,
+        update: {
+          kind: "other",
+          name: permission,
+          sessionUpdate: "tool_call",
+          status: "pending",
+          title: permission,
+          toolCallId,
+        },
+      },
+      permissions
+    );
+  const authorize = (toolCallId: string) =>
+    authorizeLaborerMemoryPermission(
+      {
+        options: [
+          {
+            kind: "allow_once",
+            name: "Allow once",
+            optionId: "allow-once",
+          },
+        ],
+        sessionId,
+        toolCall: { name: permission, title: permission, toolCallId },
+      },
+      permissions
+    );
+  const complete = (toolCallId: string): void =>
+    observeLaborerMemoryToolCall(
+      {
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          status: "completed",
+          toolCallId,
+        },
+      },
+      permissions
+    );
+
+  for (let index = 0; index < 64; index += 1) {
+    const toolCallId = `tool:active:${index}`;
+    observe(toolCallId);
+    assert.deepStrictEqual(authorize(toolCallId), {
+      outcome: { optionId: "allow-once", outcome: "selected" },
+    });
+  }
+  observe("tool:active:64");
+  assert.strictEqual(registration.consumedToolCallIds.size, 64);
+  assert.strictEqual(registration.observedToolCallIds.size, 0);
+  assert.strictEqual(registration.gate.activeToolCallIds.size, 64);
+  assert.strictEqual(safetyDenials, 1);
+
+  observe("tool:active:0");
+  assert.deepStrictEqual(authorize("tool:active:0"), {
+    outcome: { outcome: "cancelled" },
+  });
+  assert.strictEqual(
+    registration.consumedToolCallIds.size +
+      registration.observedToolCallIds.size,
+    64
+  );
+
+  complete("tool:active:0");
+  observe("tool:active:64");
+  assert.deepStrictEqual(authorize("tool:active:64"), {
+    outcome: { outcome: "cancelled" },
+  });
+  assert.strictEqual(
+    registration.consumedToolCallIds.size +
+      registration.observedToolCallIds.size,
+    64
+  );
+  assert.strictEqual(safetyDenials, 1);
+});
+
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolveWait) => {
     setTimeout(resolveWait, milliseconds);
@@ -144,6 +834,21 @@ const waitForPath = async (path: string): Promise<void> => {
     await wait(10);
   }
   throw new Error(`Timed out waiting for test path: ${path}`);
+};
+
+const waitForFileText = async (
+  path: string,
+  expected: string
+): Promise<void> => {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const source = await readFile(path, "utf8").catch(() => "");
+    if (source.includes(expected)) {
+      return;
+    }
+    await wait(10);
+  }
+  throw new Error(`Timed out waiting for test file content: ${path}`);
 };
 
 const waitForSqliteWriteLock = async (path: string): Promise<void> => {
@@ -452,7 +1157,7 @@ describe("issue #240 memory MCP", () => {
   );
 
   it.live(
-    "attaches a unique server registration and pre-authorizes only its observed exact tool call",
+    "bootstraps one stable server registration and pre-authorizes only its observed exact tool call",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -471,6 +1176,7 @@ describe("issue #240 memory MCP", () => {
           const memoryPermission = laborerMemoryOpenCodePermission(
             configuration.name
           );
+          let genericPermissionRequests = 0;
           const conversationAgent = yield* makeAcpConversationAgent({
             args: [scriptedPeerPath],
             command: process.execPath,
@@ -480,11 +1186,15 @@ describe("issue #240 memory MCP", () => {
               SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
               SCRIPTED_ACP_PERMISSION_TITLE: memoryPermission,
               SCRIPTED_ACP_PERMISSION_TOOL_IDENTITY: "attached-memory",
+              SCRIPTED_ACP_PERMISSION_TOOL_NAME: memoryPermission,
               SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
               SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
               SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
             },
             memoryMcpServer: configuration,
+            permissionBroker: makePermissionBrokerCapture(() => {
+              genericPermissionRequests += 1;
+            }),
           });
           yield* Effect.promise(() =>
             writeFile(resolve(controls, "release"), "release")
@@ -514,13 +1224,14 @@ describe("issue #240 memory MCP", () => {
             .trim()
             .split("\n")
             .map((line) => JSON.parse(line) as { mcpServers: unknown[] });
+          assert.strictEqual(requests.length, 2);
           const [attachedServer] = requests[0]?.mcpServers ?? [];
           assert.ok(
             typeof attachedServer === "object" && attachedServer !== null
           );
-          assert.match(
-            (attachedServer as { name?: string }).name ?? "",
-            new RegExp(`^${configuration.name}-[0-9a-f]{32}$`)
+          assert.strictEqual(
+            (attachedServer as { name?: string }).name,
+            configuration.name
           );
           assert.deepStrictEqual(
             (attachedServer as { args?: unknown }).args,
@@ -529,6 +1240,15 @@ describe("issue #240 memory MCP", () => {
           assert.strictEqual(
             (attachedServer as { env?: unknown[] }).env?.length,
             configuration.env.length + 2
+          );
+          assert.strictEqual(requests[1]?.mcpServers.length, 1);
+          assert.strictEqual(
+            (
+              requests[1]?.mcpServers[0] as
+                | { readonly name?: string }
+                | undefined
+            )?.name,
+            configuration.name
           );
           assert.deepStrictEqual(
             JSON.parse(
@@ -564,6 +1284,67 @@ describe("issue #240 memory MCP", () => {
             ),
             { outcome: { outcome: "cancelled" } }
           );
+          const oneShotRegistration = {
+            consumedToolCallIds: new Set<string>(),
+            gate: {
+              acceptingCalls: true,
+              activeToolCallIds: new Set<string>(),
+              safetyDenialObserved: false,
+            },
+            generation: "one-shot-generation",
+            observedFingerprints: new Map(),
+            observedToolCallIds: new Set(["tool:one-shot"]),
+            permission: memoryPermission,
+            pinnedOpenCodeVersion: null,
+            rejectedToolCallIds: new Set<string>(),
+            rejectUncorrelatedPermissions: false,
+          };
+          const oneShotPermissions = new Map([
+            ["session:one-shot", oneShotRegistration],
+          ]);
+          assert.deepStrictEqual(
+            authorizeLaborerMemoryPermission(
+              {
+                options: [
+                  {
+                    kind: "allow_once",
+                    name: "Allow once",
+                    optionId: "must-not-be-selected",
+                  },
+                ],
+                sessionId: "session:one-shot",
+                toolCall: {
+                  name: "mismatched_tool",
+                  title: memoryPermission,
+                  toolCallId: "tool:one-shot",
+                },
+              },
+              oneShotPermissions
+            ),
+            { outcome: { outcome: "cancelled" } }
+          );
+          assert.strictEqual(oneShotRegistration.observedToolCallIds.size, 0);
+          assert.deepStrictEqual(
+            authorizeLaborerMemoryPermission(
+              {
+                options: [
+                  {
+                    kind: "allow_once",
+                    name: "Allow once",
+                    optionId: "must-not-be-selected",
+                  },
+                ],
+                sessionId: "session:one-shot",
+                toolCall: {
+                  name: memoryPermission,
+                  title: memoryPermission,
+                  toolCallId: "tool:one-shot",
+                },
+              },
+              oneShotPermissions
+            ),
+            { outcome: { outcome: "cancelled" } }
+          );
           assert.deepStrictEqual(
             authorizeLaborerMemoryPermission(
               {
@@ -585,21 +1366,33 @@ describe("issue #240 memory MCP", () => {
                 [
                   "session:trusted",
                   {
+                    consumedToolCallIds: new Set<string>(),
+                    gate: {
+                      acceptingCalls: true,
+                      activeToolCallIds: new Set<string>(),
+                      safetyDenialObserved: false,
+                    },
+                    generation: "trusted-generation",
+                    observedFingerprints: new Map(),
                     observedToolCallIds: new Set<string>(),
                     permission: memoryPermission,
+                    pinnedOpenCodeVersion: null,
+                    rejectedToolCallIds: new Set<string>(),
+                    rejectUncorrelatedPermissions: false,
                   },
                 ],
               ])
             ),
             { outcome: { outcome: "cancelled" } }
           );
+          assert.strictEqual(genericPermissionRequests, 0);
         })
       ),
     20_000
   );
 
   it.live(
-    "keeps readiness failures silent through Slack Runner publication",
+    "keeps canary readiness construction failures in private diagnostics",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -607,7 +1400,9 @@ describe("issue #240 memory MCP", () => {
           const scenarios = [
             {
               code: "registration-missing",
-              environment: { SCRIPTED_ACP_SKIP_MCP_REGISTRATION: "1" },
+              environment: {
+                SCRIPTED_ACP_IGNORE_MCP_REGISTRATION_ERRORS: "1",
+              },
               workspaceId: "T240SLACKREGMISSING",
             },
             {
@@ -617,49 +1412,38 @@ describe("issue #240 memory MCP", () => {
             },
           ] as const;
 
-          for (const [index, scenario] of scenarios.entries()) {
+          for (const scenario of scenarios) {
             const root = yield* makeTempDirectoryScoped(
               "laborer-memory-slack-registration-failure-"
             );
             const controls = yield* makeTempDirectoryScoped(
               "laborer-memory-slack-registration-controls-"
             );
-            yield* Effect.promise(() =>
-              writeFile(resolve(controls, "release"), "release")
-            );
-            const harness = yield* makeAcpConversationCanary({
-              activationAcknowledger: makeSlackActivationAcknowledger(
-                fixture.botClient
-              ),
-              completionReactor: makeSlackCompletionReactor(fixture.botClient),
-              laborerSlackId: LABORER_SLACK_ID,
-              process: {
-                args: [scriptedPeerPath],
-                command: process.execPath,
-                cwd: root,
-                environment: {
-                  ...process.env,
-                  ...scenario.environment,
-                  SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
-                  SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+            const construction = yield* Effect.result(
+              makeAcpConversationCanary({
+                activationAcknowledger: makeSlackActivationAcknowledger(
+                  fixture.botClient
+                ),
+                completionReactor: makeSlackCompletionReactor(
+                  fixture.botClient
+                ),
+                laborerSlackId: LABORER_SLACK_ID,
+                process: {
+                  args: [scriptedPeerPath],
+                  command: process.execPath,
+                  cwd: root,
+                  environment: {
+                    ...process.env,
+                    ...scenario.environment,
+                    SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                    SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+                  },
                 },
-              },
-              slack: fixture.gateway,
-              workspaceId: scenario.workspaceId,
-            });
-            const privateInput = `PRIVATE REGISTRATION INPUT ${index}`;
-            const text = `<@${LABORER_SLACK_ID}> ${privateInput}`;
-            const posted = yield* postHumanMessage(fixture, text);
-            const rootTs = timestampOf(posted);
-            yield* harness.runner.inject(
-              normalizedEvent({
-                authorSlackId: fixture.humanUserId,
-                channelId: fixture.channelId,
-                eventId: `event:240-slack-registration-${index}`,
-                messageTs: rootTs,
-                text,
+                slack: fixture.gateway,
+                workspaceId: scenario.workspaceId,
               })
             );
+            assert.strictEqual(construction._tag, "Failure");
             const sources = yield* prepareAcpAgentContextSources({
               root,
               workspaceId: scenario.workspaceId,
@@ -669,26 +1453,7 @@ describe("issue #240 memory MCP", () => {
             );
             assert.ok(diagnostics.includes(scenario.code));
             assert.ok(diagnostics.length <= 4096);
-            assert.ok(!diagnostics.includes(privateInput));
             assert.ok(!diagnostics.includes(root));
-
-            const replies = yield* Effect.promise(() =>
-              fixture.humanClient.conversations.replies({
-                channel: fixture.channelId,
-                limit: 100,
-                ts: rootTs,
-              })
-            );
-            const publicText = (replies.messages ?? [])
-              .map((message) => String(message.text ?? ""))
-              .join("\n");
-            assert.ok(
-              !publicText.includes(
-                "This conversation turn could not be completed"
-              )
-            );
-            assert.ok(!publicText.includes("registration-"));
-            assert.ok(!publicText.includes(root));
           }
         })
       ),
@@ -753,7 +1518,7 @@ describe("issue #240 memory MCP", () => {
   );
 
   it.live(
-    "keeps older sessions on distinct registrations in a process-global OpenCode-style registry",
+    "keeps old and new sessions working across one stable-name replacement",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -764,6 +1529,15 @@ describe("issue #240 memory MCP", () => {
             "laborer-memory-shared-registry-controls-"
           );
           const activityPath = resolve(controls, "memory-activity.jsonl");
+          const registrationStatsPath = resolve(
+            controls,
+            "registration-stats.jsonl"
+          );
+          const permissionResultJsonlPath = resolve(
+            controls,
+            "permissions.jsonl"
+          );
+          const permissionResultPath = resolve(controls, "permission.json");
           const sessionRequestPath = resolve(controls, "sessions.jsonl");
           const configuration = makeLaborerMemoryMcpServerConfiguration(
             yield* prepareAcpAgentContextSources({
@@ -784,6 +1558,17 @@ describe("issue #240 memory MCP", () => {
                 target: "workspace",
                 text: "shared registry remains available",
               }),
+              SCRIPTED_ACP_MCP_REGISTRATION_STATS_JSONL_PATH:
+                registrationStatsPath,
+              SCRIPTED_ACP_PERMISSION_RESULT_JSONL_PATH:
+                permissionResultJsonlPath,
+              SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
+              SCRIPTED_ACP_PERMISSION_TITLE: laborerMemoryOpenCodePermission(
+                configuration.name
+              ),
+              SCRIPTED_ACP_PERMISSION_TOOL_IDENTITY: "attached-memory",
+              SCRIPTED_ACP_PERMISSION_TOOL_NAME:
+                laborerMemoryOpenCodePermission(configuration.name),
               SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
               SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
               SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
@@ -828,17 +1613,405 @@ describe("issue #240 memory MCP", () => {
             .map(
               (line) =>
                 JSON.parse(line) as {
-                  mcpServers: readonly { readonly name: string }[];
+                  mcpServers: readonly {
+                    readonly args: readonly string[];
+                    readonly env: readonly {
+                      readonly name: string;
+                      readonly value: string;
+                    }[];
+                    readonly name: string;
+                  }[];
                 }
             );
-          const names = registrations.map(
-            (entry) => entry.mcpServers[0]?.name ?? ""
+          assert.strictEqual(registrations.length, 3);
+          assert.deepStrictEqual(
+            registrations.map((entry) => entry.mcpServers.length),
+            [1, 1, 1]
           );
-          assert.strictEqual(names.length, 2);
-          assert.strictEqual(new Set(names).size, 2);
+          assert.deepStrictEqual(
+            registrations.map((entry) => entry.mcpServers[0]?.name),
+            [configuration.name, configuration.name, configuration.name]
+          );
+          for (const { mcpServers } of registrations) {
+            assert.deepStrictEqual(mcpServers[0]?.args, configuration.args);
+            assert.deepStrictEqual(
+              mcpServers[0]?.env.slice(0, configuration.env.length),
+              configuration.env
+            );
+          }
+          const readinessNonces = registrations.map(
+            ({ mcpServers }) =>
+              mcpServers[0]?.env.find(
+                ({ name }) => name === "LABORER_MEMORY_REGISTRATION_NONCE"
+              )?.value
+          );
+          assert.strictEqual(new Set(readinessNonces).size, 3);
+          const registrationStats = (yield* Effect.promise(() =>
+            readFile(registrationStatsPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  readonly catalogSize: number;
+                  readonly maximumInFlight: number;
+                  readonly name: string;
+                }
+            );
+          assert.deepStrictEqual(
+            registrationStats.map(({ catalogSize }) => catalogSize),
+            [1, 1, 1]
+          );
           assert.ok(
-            names.every((name) =>
-              new RegExp(`^${configuration.name}-[0-9a-f]{32}$`).test(name)
+            registrationStats.every(
+              ({ maximumInFlight, name }) =>
+                maximumInFlight === 1 && name === configuration.name
+            )
+          );
+          const activity = (yield* Effect.promise(() =>
+            readFile(activityPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as { readonly status?: string });
+          assert.strictEqual(
+            activity.filter(({ status }) => status === "completed").length,
+            3
+          );
+          assert.strictEqual(
+            activity.filter(({ status }) => status === "failed").length,
+            0
+          );
+          const permissions = (yield* Effect.promise(() =>
+            readFile(permissionResultJsonlPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          assert.deepStrictEqual(
+            permissions,
+            Array.from({ length: 3 }, () => ({
+              outcome: {
+                optionId: "scripted-allow-once",
+                outcome: "selected",
+              },
+            }))
+          );
+        })
+      ),
+    30_000
+  );
+
+  it.live(
+    "serializes concurrent stable-name registrations for new conversations",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-concurrent-registration-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-concurrent-registration-controls-"
+          );
+          const registrationStatsPath = resolve(
+            controls,
+            "registration-stats.jsonl"
+          );
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          const releasePath = resolve(controls, "release");
+          yield* Effect.promise(() => writeFile(releasePath, "release"));
+          const configuration = makeLaborerMemoryMcpServerConfiguration(
+            yield* prepareAcpAgentContextSources({
+              root,
+              workspaceId: "T240CONCURRENTREGISTRATION",
+            })
+          );
+          const agent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_MCP_REGISTRATION_DELAY_MILLIS: "100",
+              SCRIPTED_ACP_MCP_REGISTRATION_STATS_JSONL_PATH:
+                registrationStatsPath,
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: releasePath,
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpServer: configuration,
+          });
+          const request = (conversationId: string) => ({
+            actions: [],
+            context: [],
+            conversationId,
+            conversationSessionId: `logical:${conversationId}`,
+            conversationSessionIsNew: true,
+            executionControls: [],
+            executions: [],
+            input: `concurrent registration ${conversationId}`,
+            messages: [],
+            promptId: `prompt:${conversationId}`,
+            source: "slack" as const,
+            turnId: `turn:${conversationId}`,
+          });
+
+          yield* Effect.all(
+            [
+              agent.handle(
+                request("conversation:registration:first"),
+                () => Effect.void
+              ),
+              agent.handle(
+                request("conversation:registration:second"),
+                () => Effect.void
+              ),
+            ],
+            { concurrency: "unbounded", discard: true }
+          );
+
+          const sessionRequests = (yield* Effect.promise(() =>
+            readFile(sessionRequestPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  readonly mcpServers: readonly { readonly name: string }[];
+                }
+            );
+          assert.strictEqual(sessionRequests.length, 3);
+          assert.ok(
+            sessionRequests.every(
+              ({ mcpServers }) =>
+                mcpServers.length === 1 &&
+                mcpServers[0]?.name === configuration.name
+            )
+          );
+          const stats = (yield* Effect.promise(() =>
+            readFile(registrationStatsPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  readonly catalogSize: number;
+                  readonly maximumInFlight: number;
+                }
+            );
+          assert.strictEqual(stats.length, 3);
+          assert.ok(
+            stats.every(
+              ({ catalogSize, maximumInFlight }) =>
+                catalogSize === 1 && maximumInFlight === 1
+            )
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "holds one workspace-wide ACP prompt across session creation for identical and different inputs",
+    () =>
+      Effect.gen(function* () {
+        for (const inputVariant of ["identical", "different"] as const) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const root = yield* makeTempDirectoryScoped(
+                `laborer-workspace-prompt-gate-${inputVariant}-`
+              );
+              const controls = yield* makeTempDirectoryScoped(
+                `laborer-workspace-prompt-gate-controls-${inputVariant}-`
+              );
+              const promptAttemptsPath = resolve(
+                controls,
+                "prompt-attempts.jsonl"
+              );
+              const readyPath = resolve(controls, "ready");
+              const releasePath = resolve(controls, "release");
+              const sessionRequestPath = resolve(controls, "sessions.jsonl");
+              const agent = yield* makeAcpConversationAgent({
+                args: [scriptedPeerPath],
+                command: process.execPath,
+                cwd: root,
+                environment: {
+                  ...process.env,
+                  SCRIPTED_ACP_PROMPT_ATTEMPT_JSONL_PATH: promptAttemptsPath,
+                  SCRIPTED_ACP_READY_PATH: readyPath,
+                  SCRIPTED_ACP_RELEASE_PATH: releasePath,
+                  SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+                },
+              });
+              const request = (suffix: "first" | "second") => ({
+                actions: [],
+                context: [],
+                conversationId: `conversation:workspace-gate:${inputVariant}:${suffix}`,
+                conversationSessionId: `logical:workspace-gate:${inputVariant}:${suffix}`,
+                conversationSessionIsNew: true,
+                executionControls: [],
+                executions: [],
+                input:
+                  inputVariant === "identical"
+                    ? "same concurrent input"
+                    : `${suffix} concurrent input`,
+                messages: [],
+                promptId: `prompt:workspace-gate:${inputVariant}:${suffix}`,
+                source: "slack" as const,
+                turnId: `turn:workspace-gate:${inputVariant}:${suffix}`,
+              });
+              const first = yield* agent
+                .handle(request("first"), () => Effect.void)
+                .pipe(Effect.forkChild);
+              const second = yield* agent
+                .handle(request("second"), () => Effect.void)
+                .pipe(Effect.forkChild);
+
+              yield* Effect.promise(() => waitForPath(readyPath));
+              const attemptsBeforeRelease = (yield* Effect.promise(() =>
+                readFile(promptAttemptsPath, "utf8")
+              ))
+                .trim()
+                .split("\n");
+              const sessionsBeforeRelease = (yield* Effect.promise(() =>
+                readFile(sessionRequestPath, "utf8")
+              ))
+                .trim()
+                .split("\n");
+              assert.strictEqual(attemptsBeforeRelease.length, 1);
+              assert.strictEqual(sessionsBeforeRelease.length, 1);
+
+              yield* Effect.promise(() =>
+                writeFile(releasePath, "release", { mode: 0o600 })
+              );
+              yield* Effect.all([Fiber.join(first), Fiber.join(second)], {
+                concurrency: "unbounded",
+                discard: true,
+              });
+              const attemptsAfterRelease = (yield* Effect.promise(() =>
+                readFile(promptAttemptsPath, "utf8")
+              ))
+                .trim()
+                .split("\n");
+              assert.strictEqual(attemptsAfterRelease.length, 2);
+            })
+          );
+        }
+      }),
+    30_000
+  );
+
+  it.live(
+    "waits for an active memory lifecycle before replacement and keeps old and new sessions usable",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-active-replacement-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-active-replacement-controls-"
+          );
+          const activityPath = resolve(controls, "memory-activity.jsonl");
+          const callReleasePath = resolve(controls, "memory-call-release");
+          const callStartedPath = resolve(controls, "memory-call-started");
+          const promptReleasePath = resolve(controls, "prompt-release");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          yield* Effect.promise(() =>
+            writeFile(promptReleasePath, "release", { mode: 0o600 })
+          );
+          const configuration = makeLaborerMemoryMcpServerConfiguration(
+            yield* prepareAcpAgentContextSources({
+              root,
+              workspaceId: "T240ACTIVEREPLACEMENT",
+            })
+          );
+          const agent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_MEMORY_ACTIVITY_JSONL_PATH: activityPath,
+              SCRIPTED_ACP_MEMORY_CALL_RELEASE_PATH: callReleasePath,
+              SCRIPTED_ACP_MEMORY_CALL_STARTED_PATH: callStartedPath,
+              SCRIPTED_ACP_MEMORY_OPERATION_EVERY_PROMPT: "1",
+              SCRIPTED_ACP_MEMORY_OPERATION_JSON: JSON.stringify({
+                operation: "add",
+                target: "workspace",
+                text: "active replacement remains safe",
+              }),
+              SCRIPTED_ACP_MEMORY_OPERATION_REQUESTS_PERMISSION: "1",
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: promptReleasePath,
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpServer: configuration,
+          });
+          const request = (conversationId: string, promptId: string) => ({
+            actions: [],
+            context: [],
+            conversationId,
+            conversationSessionId: `logical:${conversationId}`,
+            conversationSessionIsNew: promptId === "one",
+            executionControls: [],
+            executions: [],
+            input: `${conversationId} ${promptId}`,
+            messages: [],
+            promptId: `prompt:${conversationId}:${promptId}`,
+            source: "slack" as const,
+            turnId: `turn:${conversationId}:${promptId}`,
+          });
+          const firstTurn = yield* agent
+            .handle(
+              request("conversation:active:first", "one"),
+              () => Effect.void
+            )
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => waitForPath(callStartedPath));
+          const secondTurn = yield* agent
+            .handle(
+              request("conversation:active:second", "one"),
+              () => Effect.void
+            )
+            .pipe(Effect.forkChild);
+          yield* Effect.sleep("100 millis");
+          assert.strictEqual(
+            (yield* Effect.promise(() => readFile(sessionRequestPath, "utf8")))
+              .trim()
+              .split("\n").length,
+            2
+          );
+          yield* Effect.promise(() =>
+            writeFile(callReleasePath, "release", { mode: 0o600 })
+          );
+          yield* Fiber.join(firstTurn);
+          yield* Fiber.join(secondTurn);
+          yield* agent.handle(
+            request("conversation:active:first", "two"),
+            () => Effect.void
+          );
+
+          const sessionRequests = (yield* Effect.promise(() =>
+            readFile(sessionRequestPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  readonly mcpServers: readonly { readonly name: string }[];
+                }
+            );
+          assert.strictEqual(sessionRequests.length, 3);
+          assert.ok(
+            sessionRequests.every(
+              ({ mcpServers }) =>
+                mcpServers.length === 1 &&
+                mcpServers[0]?.name === configuration.name
             )
           );
           const activity = (yield* Effect.promise(() =>
@@ -858,6 +2031,543 @@ describe("issue #240 memory MCP", () => {
         })
       ),
     30_000
+  );
+
+  it.live(
+    "queues replacement registration behind the active workspace prompt",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-active-drain-timeout-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-active-drain-timeout-controls-"
+          );
+          const callReleasePath = resolve(controls, "memory-call-release");
+          const callStartedPath = resolve(controls, "memory-call-started");
+          const promptReleasePath = resolve(controls, "prompt-release");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          yield* Effect.promise(() =>
+            writeFile(promptReleasePath, "release", { mode: 0o600 })
+          );
+          const workspaceId = "T240ACTIVEDRAINTIMEOUT";
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId,
+          });
+          const agent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_MEMORY_CALL_RELEASE_PATH: callReleasePath,
+              SCRIPTED_ACP_MEMORY_CALL_STARTED_PATH: callStartedPath,
+              SCRIPTED_ACP_MEMORY_OPERATION_JSON: JSON.stringify({
+                operation: "add",
+                target: "workspace",
+                text: "active drain must time out",
+              }),
+              SCRIPTED_ACP_MEMORY_OPERATION_REQUESTS_PERMISSION: "1",
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: promptReleasePath,
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpActiveCallDrainTimeoutMillis: 100,
+            memoryMcpServer: makeLaborerMemoryMcpServerConfiguration(sources),
+          });
+          const request = (conversationId: string) => ({
+            actions: [],
+            context: [],
+            conversationId,
+            conversationSessionId: `logical:${conversationId}`,
+            conversationSessionIsNew: true,
+            executionControls: [],
+            executions: [],
+            input: conversationId,
+            messages: [],
+            promptId: `prompt:${conversationId}`,
+            source: "slack" as const,
+            turnId: `turn:${conversationId}`,
+          });
+          const activeTurn = yield* agent
+            .handle(request("conversation:drain:active"), () => Effect.void)
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => waitForPath(callStartedPath));
+          const replacement = yield* agent
+            .handle(
+              request("conversation:drain:replacement"),
+              () => Effect.void
+            )
+            .pipe(Effect.forkChild);
+          yield* Effect.sleep("200 millis");
+          assert.strictEqual(replacement.pollUnsafe(), undefined);
+          yield* Effect.promise(() =>
+            writeFile(callReleasePath, "release", { mode: 0o600 })
+          );
+          yield* Fiber.join(activeTurn);
+          yield* Fiber.join(replacement);
+          assert.strictEqual(
+            (yield* Effect.promise(() => readFile(sessionRequestPath, "utf8")))
+              .trim()
+              .split("\n").length,
+            3
+          );
+          assert.ok(
+            !(yield* Effect.promise(() =>
+              readFile(sources.memoryDiagnosticsPath, "utf8").catch(() => "")
+            )).includes("registration-active-call-timeout")
+          );
+        })
+      ),
+    10_000
+  );
+
+  it.live(
+    "rechecks process and managed-session ownership after paused context preparation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-stale-prompt-race-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-stale-prompt-race-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lookupReleasePath = resolve(controls, "lookup-release");
+          const lookupStartedPath = resolve(controls, "lookup-started");
+          const poisonReleasePath = resolve(controls, "poison-release");
+          const poisonStartedPath = resolve(controls, "poison-started");
+          const promptAttemptPath = resolve(controls, "prompt-attempts.jsonl");
+          const promptReleasePath = resolve(controls, "prompt-release");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          yield* Effect.promise(() =>
+            writeFile(promptReleasePath, "release", { mode: 0o600 })
+          );
+          const workspaceId = "T240STALEPROMPTRAC";
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId,
+          });
+          const agent = yield* makeAcpConversationAgent({
+            agentContext: sources,
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_COLLIDE_MCP_REGISTRATION_AT: "3",
+              SCRIPTED_ACP_EXIT_PATH: exitPath,
+              SCRIPTED_ACP_PROMPT_ATTEMPT_JSONL_PATH: promptAttemptPath,
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: promptReleasePath,
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpServer: makeLaborerMemoryMcpServerConfiguration(sources),
+            participantLookup: {
+              lookupVisibleName: () =>
+                Effect.promise(async () => {
+                  await writeFile(lookupStartedPath, "started", {
+                    mode: 0o600,
+                  });
+                  while (true) {
+                    try {
+                      await stat(lookupReleasePath);
+                      return "Paused Participant";
+                    } catch {
+                      await wait(10);
+                    }
+                  }
+                }),
+            },
+            testHooks: {
+              afterProcessPoisoned: async () => {
+                await writeFile(poisonStartedPath, "started", { mode: 0o600 });
+                while (true) {
+                  try {
+                    await stat(poisonReleasePath);
+                    return;
+                  } catch {
+                    await wait(10);
+                  }
+                }
+              },
+            },
+          });
+          const request = (conversationId: string, promptId: string) => ({
+            actions: [],
+            context: [],
+            conversationId,
+            conversationSessionId: `logical:${conversationId}`,
+            conversationSessionIsNew: promptId === "first",
+            executionControls: [],
+            executions: [],
+            input: `${conversationId}:${promptId}`,
+            messages: [],
+            promptId: `prompt:${conversationId}:${promptId}`,
+            source: "slack" as const,
+            turnId: `turn:${conversationId}:${promptId}`,
+          });
+          yield* agent.handle(
+            request("conversation:retained", "first"),
+            () => Effect.void
+          );
+
+          const staleRequest = {
+            ...request("conversation:retained", "stale"),
+            messages: [
+              NormalizedMessage.make({
+                authorKind: "human",
+                authorSlackId: "U240STALEPROMPT",
+                classification: "input",
+                id: MessageId.make("message:240-stale-prompt"),
+                isActivation: false,
+                slackTs: "240.000001",
+                text: "pause participant context",
+              }),
+            ],
+          };
+          const staleTurn = yield* agent
+            .handle(staleRequest, () => Effect.void)
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => waitForPath(lookupStartedPath));
+
+          const poisonTurn = yield* agent
+            .handle(request("conversation:poison", "first"), () => Effect.void)
+            .pipe(Effect.forkChild);
+          yield* Effect.sleep("100 millis");
+          assert.strictEqual(poisonTurn.pollUnsafe(), undefined);
+          assert.strictEqual(
+            yield* Effect.promise(() =>
+              stat(poisonStartedPath).then(
+                () => true,
+                () => false
+              )
+            ),
+            false
+          );
+          yield* Effect.promise(() =>
+            writeFile(lookupReleasePath, "release", { mode: 0o600 })
+          );
+          const staleExit = yield* Fiber.await(staleTurn);
+          yield* Effect.promise(() => waitForPath(poisonStartedPath));
+          const promptAttempts = (yield* Effect.promise(() =>
+            readFile(promptAttemptPath, "utf8")
+          ))
+            .trim()
+            .split("\n");
+          yield* Effect.promise(() =>
+            writeFile(poisonReleasePath, "release", { mode: 0o600 })
+          );
+          const poisonExit = yield* Fiber.await(poisonTurn);
+          yield* Effect.promise(() => waitForPath(exitPath));
+
+          assert.ok(Exit.isSuccess(staleExit));
+          assert.ok(Exit.isFailure(poisonExit));
+          assert.strictEqual(promptAttempts.length, 2);
+          assert.strictEqual(
+            (yield* Effect.promise(() => readFile(sessionRequestPath, "utf8")))
+              .trim()
+              .split("\n").length,
+            3
+          );
+          assert.strictEqual(
+            (yield* Effect.result(
+              agent.handle(
+                request("conversation:after-poison-race", "first"),
+                () => Effect.void
+              )
+            ))._tag,
+            "Failure"
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "retains unresolved calls across invalidation and atomically poisons later registration attempts",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-invalidated-active-call-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-invalidated-active-call-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const releasePath = resolve(controls, "release");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          yield* Effect.promise(() =>
+            writeFile(releasePath, "release", { mode: 0o600 })
+          );
+          const workspaceId = "T240INVALIDATEDACTIVE";
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId,
+          });
+          const agent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_ABANDON_MEMORY_CALL_LIFECYCLE: "1",
+              SCRIPTED_ACP_EXIT_PATH: exitPath,
+              SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+              SCRIPTED_ACP_MEMORY_OPERATION_JSON: JSON.stringify({
+                operation: "add",
+                target: "workspace",
+                text: "invalidated active call remains process-owned",
+              }),
+              SCRIPTED_ACP_MEMORY_OPERATION_REQUESTS_PERMISSION: "1",
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: releasePath,
+              SCRIPTED_ACP_SCENARIO: "failure",
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpActiveCallDrainTimeoutMillis: 100,
+            memoryMcpServer: makeLaborerMemoryMcpServerConfiguration(sources),
+          });
+          const request = (conversationId: string) => ({
+            actions: [],
+            context: [],
+            conversationId,
+            conversationSessionId: `logical:${conversationId}`,
+            conversationSessionIsNew: true,
+            executionControls: [],
+            executions: [],
+            input: conversationId,
+            messages: [],
+            promptId: `prompt:${conversationId}`,
+            source: "slack" as const,
+            turnId: `turn:${conversationId}`,
+          });
+
+          const invalidated = yield* Effect.result(
+            agent.handle(request("conversation:invalidated"), () => Effect.void)
+          );
+          assert.strictEqual(invalidated._tag, "Failure");
+          const replacement = yield* Effect.result(
+            agent.handle(request("conversation:replacement"), () => Effect.void)
+          );
+          assert.strictEqual(replacement._tag, "Failure");
+          yield* Effect.promise(() => waitForPath(exitPath));
+          const afterPoison = yield* Effect.result(
+            agent.handle(
+              request("conversation:after-poison"),
+              () => Effect.void
+            )
+          );
+          assert.strictEqual(afterPoison._tag, "Failure");
+          assert.strictEqual(
+            (yield* Effect.promise(() => readFile(sessionRequestPath, "utf8")))
+              .trim()
+              .split("\n").length,
+            2
+          );
+          assert.ok(
+            (yield* Effect.promise(() =>
+              readFile(sources.memoryDiagnosticsPath, "utf8")
+            )).includes("registration-active-call-timeout")
+          );
+          const lifecycle = (yield* Effect.promise(() =>
+            readFile(lifecyclePath, "utf8")
+          ))
+            .trim()
+            .split("\n");
+          assert.strictEqual(
+            lifecycle.filter(
+              (entry) => entry === "session:close:acp-session-secret-234-1"
+            ).length,
+            1
+          );
+          assert.strictEqual(
+            lifecycle.filter(
+              (entry) => entry === "session:close:acp-session-secret-234-2"
+            ).length,
+            1
+          );
+          assert.strictEqual(lifecycle.at(-1), "stdio:closed");
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "closes bootstrap and managed sessions exactly once before child shutdown",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-session-cleanup-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-session-cleanup-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const releasePath = resolve(controls, "release");
+          yield* Effect.promise(() => writeFile(releasePath, "release"));
+          const configuration = makeLaborerMemoryMcpServerConfiguration(
+            yield* prepareAcpAgentContextSources({
+              root,
+              workspaceId: "T240SESSIONCLEANUP",
+            })
+          );
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const agent = yield* makeAcpConversationAgent({
+                args: [scriptedPeerPath],
+                command: process.execPath,
+                cwd: root,
+                environment: {
+                  ...process.env,
+                  SCRIPTED_ACP_EXIT_PATH: exitPath,
+                  SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+                  SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                  SCRIPTED_ACP_RELEASE_PATH: releasePath,
+                },
+                memoryMcpServer: configuration,
+              });
+              yield* agent.handle(
+                {
+                  actions: [],
+                  context: [],
+                  conversationId: "conversation:240-session-cleanup",
+                  conversationSessionId: "logical:240-session-cleanup",
+                  conversationSessionIsNew: true,
+                  executionControls: [],
+                  executions: [],
+                  input: "close every ACP session",
+                  messages: [],
+                  promptId: "prompt:240-session-cleanup",
+                  source: "slack",
+                  turnId: "turn:240-session-cleanup",
+                },
+                () => Effect.void
+              );
+            })
+          );
+
+          yield* Effect.promise(() => waitForPath(exitPath));
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => readFile(lifecyclePath, "utf8")))
+              .trim()
+              .split("\n"),
+            [
+              "initialize",
+              "session:new:acp-session-secret-234-1",
+              "session:new:acp-session-secret-234-2",
+              "prompt:acp-session-secret-234-2:close every ACP session",
+              "session:close:acp-session-secret-234-2",
+              "session:close:acp-session-secret-234-1",
+              "stdio:closed",
+            ]
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "claims a managed session once when prompt invalidation races scope shutdown",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-session-close-race-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-session-close-race-controls-"
+          );
+          const closeReleasePath = resolve(controls, "close-release");
+          const closeStartedPath = resolve(controls, "close-started");
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const promptReadyPath = resolve(controls, "prompt-ready");
+          const promptReleasePath = resolve(controls, "prompt-release");
+          const sessionRemainderPath = resolve(controls, "sessions-remaining");
+          const agentScope = yield* Scope.make();
+          yield* Effect.addFinalizer((exit) => Scope.close(agentScope, exit));
+          const agent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_CLOSE_SESSION_RELEASE_PATH: closeReleasePath,
+              SCRIPTED_ACP_CLOSE_SESSION_STARTED_PATH: closeStartedPath,
+              SCRIPTED_ACP_EXIT_PATH: exitPath,
+              SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+              SCRIPTED_ACP_READY_PATH: promptReadyPath,
+              SCRIPTED_ACP_RELEASE_PATH: promptReleasePath,
+              SCRIPTED_ACP_SCENARIO: "failure",
+              SCRIPTED_ACP_SESSION_REMAINDER_PATH: sessionRemainderPath,
+            },
+          }).pipe(Effect.provideService(Scope.Scope, agentScope));
+          const turn = yield* agent
+            .handle(
+              {
+                actions: [],
+                context: [],
+                conversationId: "conversation:240-close-race",
+                conversationSessionId: "logical:240-close-race",
+                conversationSessionIsNew: true,
+                executionControls: [],
+                executions: [],
+                input: "race invalidation with shutdown",
+                messages: [],
+                promptId: "prompt:240-close-race",
+                source: "slack",
+                turnId: "turn:240-close-race",
+              },
+              () => Effect.void
+            )
+            .pipe(Effect.forkChild);
+
+          yield* Effect.promise(() => waitForPath(promptReadyPath));
+          yield* Effect.promise(() =>
+            writeFile(promptReleasePath, "release", { mode: 0o600 })
+          );
+          yield* Effect.promise(() => waitForPath(closeStartedPath));
+          const shutdown = yield* Scope.close(
+            agentScope,
+            Exit.succeed(undefined)
+          ).pipe(Effect.forkChild);
+          yield* Effect.sleep("50 millis");
+          yield* Effect.promise(() =>
+            writeFile(closeReleasePath, "release", { mode: 0o600 })
+          );
+          yield* Fiber.join(shutdown);
+          const turnExit = yield* Fiber.await(turn);
+          assert.ok(Exit.isFailure(turnExit));
+          yield* Effect.promise(() => waitForPath(exitPath));
+
+          const lifecycle = (yield* Effect.promise(() =>
+            readFile(lifecyclePath, "utf8")
+          ))
+            .trim()
+            .split("\n");
+          assert.strictEqual(
+            lifecycle.filter(
+              (entry) => entry === "session:close:acp-session-secret-234-1"
+            ).length,
+            1
+          );
+          assert.strictEqual(lifecycle.at(-1), "stdio:closed");
+          assert.strictEqual(
+            yield* Effect.promise(() => readFile(sessionRemainderPath, "utf8")),
+            "0"
+          );
+        })
+      ),
+    20_000
   );
 
   it.live(
@@ -881,6 +2591,7 @@ describe("issue #240 memory MCP", () => {
           const memoryPermission = laborerMemoryOpenCodePermission(
             configuration.name
           );
+          let genericPermissionRequests = 0;
           const conversationAgent = yield* makeAcpConversationAgent({
             args: [scriptedPeerPath],
             command: process.execPath,
@@ -895,6 +2606,9 @@ describe("issue #240 memory MCP", () => {
               SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
             },
             memoryMcpServer: configuration,
+            permissionBroker: makePermissionBrokerCapture(() => {
+              genericPermissionRequests += 1;
+            }),
           });
           yield* Effect.promise(() =>
             writeFile(resolve(controls, "release"), "release")
@@ -924,13 +2638,88 @@ describe("issue #240 memory MCP", () => {
             ),
             { outcome: { outcome: "cancelled" } }
           );
+          assert.strictEqual(genericPermissionRequests, 0);
         })
       ),
     20_000
   );
 
   it.live(
-    "does not retry a failed session/new without the memory capability or mislabel the failure",
+    "delegates a genuinely unrelated similarly named tool to the generic broker",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-unrelated-permission-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-unrelated-permission-controls-"
+          );
+          const permissionResultPath = resolve(controls, "permission.json");
+          const configuration = makeLaborerMemoryMcpServerConfiguration(
+            yield* prepareAcpAgentContextSources({
+              root,
+              workspaceId: "T240UNRELATEDPERM",
+            })
+          );
+          const memoryPermission = laborerMemoryOpenCodePermission(
+            configuration.name
+          );
+          let genericPermissionRequests = 0;
+          const conversationAgent = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
+              SCRIPTED_ACP_PERMISSION_TITLE: `${memoryPermission}-similar`,
+              SCRIPTED_ACP_PERMISSION_TOOL_IDENTITY: "unrelated_tool",
+              SCRIPTED_ACP_PERMISSION_TOOL_NAME: "unrelated_tool",
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+            },
+            memoryMcpServer: configuration,
+            permissionBroker: makePermissionBrokerCapture(() => {
+              genericPermissionRequests += 1;
+            }),
+          });
+          yield* Effect.promise(() =>
+            writeFile(resolve(controls, "release"), "release")
+          );
+          yield* conversationAgent.handle(
+            {
+              actions: [],
+              context: [],
+              conversationId: "conversation:240-unrelated-permission",
+              conversationSessionId: "logical:240-unrelated-permission",
+              conversationSessionIsNew: true,
+              executionControls: [],
+              executions: [],
+              input: "unrelated permission",
+              messages: [],
+              promptId: "prompt:240-unrelated-permission",
+              source: "slack",
+              turnId: "turn:240-unrelated-permission",
+            },
+            () => Effect.void
+          );
+          assert.deepStrictEqual(
+            JSON.parse(
+              yield* Effect.promise(() =>
+                readFile(permissionResultPath, "utf8")
+              )
+            ),
+            { outcome: { outcome: "cancelled" } }
+          );
+          assert.strictEqual(genericPermissionRequests, 1);
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "fails construction without a fallback session when bootstrap session/new is rejected",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -940,6 +2729,8 @@ describe("issue #240 memory MCP", () => {
           const controls = yield* makeTempDirectoryScoped(
             "laborer-memory-session-failure-controls-"
           );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
           const sessionRequestPath = resolve(controls, "sessions.jsonl");
           const configuration = makeLaborerMemoryMcpServerConfiguration(
             yield* prepareAcpAgentContextSources({
@@ -947,52 +2738,25 @@ describe("issue #240 memory MCP", () => {
               workspaceId: "T240SESSIONFAILURE",
             })
           );
-          const conversationAgent = yield* makeAcpConversationAgent({
-            args: [scriptedPeerPath],
-            command: process.execPath,
-            cwd: root,
-            environment: {
-              ...process.env,
-              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
-              SCRIPTED_ACP_REJECT_SESSION_WITH_MCP: "1",
-              SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
-              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
-            },
-            memoryMcpServer: configuration,
-          });
-          yield* Effect.promise(() =>
-            writeFile(resolve(controls, "release"), "release")
+          const construction = yield* Effect.result(
+            makeAcpConversationAgent({
+              args: [scriptedPeerPath],
+              command: process.execPath,
+              cwd: root,
+              environment: {
+                ...process.env,
+                SCRIPTED_ACP_EXIT_PATH: exitPath,
+                SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+                SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                SCRIPTED_ACP_REJECT_SESSION_WITH_MCP: "1",
+                SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+                SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+              },
+              memoryMcpServer: configuration,
+            })
           );
-          const warnings: string[] = [];
-          const warningLogger = Logger.make<unknown, void>((options) => {
-            if (options.logLevel === "Warn") {
-              warnings.push(String(options.message));
-            }
-          });
-          const published: string[] = [];
-          const result = yield* Effect.result(
-            conversationAgent
-              .handle(
-                {
-                  actions: [],
-                  context: [],
-                  conversationId: "conversation:240-session-failure",
-                  conversationSessionId: "logical:240-session-failure",
-                  conversationSessionIsNew: true,
-                  executionControls: [],
-                  executions: [],
-                  input: "must fail once",
-                  messages: [],
-                  promptId: "prompt:240-session-failure",
-                  source: "slack",
-                  turnId: "turn:240-session-failure",
-                },
-                ({ text }) => Effect.sync(() => published.push(text))
-              )
-              .pipe(Effect.provide(Logger.layer([warningLogger])))
-          );
-          assert.strictEqual(result._tag, "Failure");
-          assert.deepStrictEqual(published, []);
+          assert.strictEqual(construction._tag, "Failure");
+          yield* Effect.promise(() => waitForPath(exitPath));
           const requests = (yield* Effect.promise(() =>
             readFile(sessionRequestPath, "utf8")
           ))
@@ -1004,35 +2768,234 @@ describe("issue #240 memory MCP", () => {
           assert.ok(
             typeof attachedServer === "object" && attachedServer !== null
           );
-          assert.match(
-            (attachedServer as { name?: string }).name ?? "",
-            new RegExp(`^${configuration.name}-[0-9a-f]{32}$`)
+          assert.strictEqual(
+            (attachedServer as { name?: string }).name,
+            configuration.name
           );
           assert.strictEqual(
             (attachedServer as { env?: unknown[] }).env?.length,
             configuration.env.length + 2
           );
-          assert.ok(
-            !warnings.some((warning) =>
-              warning.includes("Memory MCP registration failed")
-            )
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => readFile(lifecyclePath, "utf8")))
+              .trim()
+              .split("\n"),
+            ["initialize", "stdio:closed"]
           );
           const sources = yield* prepareAcpAgentContextSources({
             root,
             workspaceId: "T240SESSIONFAILURE",
           });
-          assert.strictEqual(
-            yield* Effect.promise(() =>
-              readFile(sources.memoryDiagnosticsPath, "utf8").then(
-                () => true,
-                () => false
-              )
-            ),
-            false
+          assert.ok(
+            (yield* Effect.promise(() =>
+              readFile(sources.memoryDiagnosticsPath, "utf8")
+            )).includes("registration-missing")
           );
         })
       ),
     20_000
+  );
+
+  it.live(
+    "reaps a process whose ignored MCP registration error returns a polluted session without readiness",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-ignored-registration-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-ignored-registration-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          const workspaceId = "T240IGNOREDREGISTER";
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId,
+          });
+          const configuration =
+            makeLaborerMemoryMcpServerConfiguration(sources);
+
+          const construction = yield* Effect.result(
+            makeAcpConversationAgent({
+              args: [scriptedPeerPath],
+              command: process.execPath,
+              cwd: root,
+              environment: {
+                ...process.env,
+                SCRIPTED_ACP_EXIT_PATH: exitPath,
+                SCRIPTED_ACP_IGNORE_MCP_REGISTRATION_ERRORS: "1",
+                SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+                SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+                SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+              },
+              memoryMcpServer: configuration,
+            })
+          );
+
+          assert.strictEqual(construction._tag, "Failure");
+          yield* Effect.promise(() => waitForPath(exitPath));
+          const requests = (yield* Effect.promise(() =>
+            readFile(sessionRequestPath, "utf8")
+          ))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as { mcpServers: unknown[] });
+          assert.strictEqual(requests.length, 1);
+          assert.strictEqual(requests[0]?.mcpServers.length, 1);
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => readFile(lifecyclePath, "utf8")))
+              .trim()
+              .split("\n"),
+            [
+              "initialize",
+              "session:new:acp-session-secret-234-1",
+              "session:close:acp-session-secret-234-1",
+              "stdio:closed",
+            ]
+          );
+          assert.ok(
+            (yield* Effect.promise(() =>
+              readFile(sources.memoryDiagnosticsPath, "utf8")
+            )).includes("registration-missing")
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "bounds a hanging bootstrap session/new and reaps the child",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-bootstrap-timeout-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-bootstrap-timeout-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId: "T240BOOTSTRAPTIMEOUT",
+          });
+          const startedAt = Date.now();
+
+          const construction = yield* Effect.result(
+            makeAcpConversationAgent({
+              args: [scriptedPeerPath],
+              command: process.execPath,
+              cwd: root,
+              environment: {
+                ...process.env,
+                SCRIPTED_ACP_EXIT_PATH: exitPath,
+                SCRIPTED_ACP_HANG_SESSION_WITH_MCP: "1",
+                SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+                SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+                SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+              },
+              memoryMcpBootstrapTimeoutMillis: 100,
+              memoryMcpServer: makeLaborerMemoryMcpServerConfiguration(sources),
+            })
+          );
+
+          assert.strictEqual(construction._tag, "Failure");
+          assert.ok(Date.now() - startedAt < 2000);
+          yield* Effect.promise(() => waitForPath(exitPath));
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => readFile(lifecyclePath, "utf8")))
+              .trim()
+              .split("\n"),
+            ["initialize", "stdio:closed"]
+          );
+          assert.strictEqual(
+            (yield* Effect.promise(() => readFile(sessionRequestPath, "utf8")))
+              .trim()
+              .split("\n").length,
+            1
+          );
+          assert.ok(
+            !(yield* Effect.promise(() =>
+              readdir(sources.workspaceDirectory)
+            )).some((entry) => entry.startsWith("memory-mcp-readiness-"))
+          );
+        })
+      ),
+    10_000
+  );
+
+  it.live(
+    "interrupts a bootstrap waiting for readiness and closes its retained session once",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-bootstrap-interruption-"
+          );
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-memory-bootstrap-interruption-controls-"
+          );
+          const exitPath = resolve(controls, "exited");
+          const lifecyclePath = resolve(controls, "lifecycle.log");
+          const sessionRequestPath = resolve(controls, "sessions.jsonl");
+          const sources = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId: "T240BOOTSTRAPINTERRUPT",
+          });
+          const construction = yield* makeAcpConversationAgent({
+            args: [scriptedPeerPath],
+            command: process.execPath,
+            cwd: root,
+            environment: {
+              ...process.env,
+              SCRIPTED_ACP_EXIT_PATH: exitPath,
+              SCRIPTED_ACP_IGNORE_MCP_REGISTRATION_ERRORS: "1",
+              SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+              SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+              SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+              SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
+            },
+            memoryMcpBootstrapTimeoutMillis: 5000,
+            memoryMcpServer: makeLaborerMemoryMcpServerConfiguration(sources),
+          }).pipe(Effect.forkChild);
+
+          yield* Effect.promise(() =>
+            waitForFileText(
+              lifecyclePath,
+              "session:new:acp-session-secret-234-1"
+            )
+          );
+          // The peer records before its JSON-RPC response reaches the client.
+          // Allow the client to retain ownership before testing interruption.
+          yield* Effect.sleep("100 millis");
+          yield* Fiber.interrupt(construction);
+          yield* Effect.promise(() => waitForPath(exitPath));
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => readFile(lifecyclePath, "utf8")))
+              .trim()
+              .split("\n"),
+            [
+              "initialize",
+              "session:new:acp-session-secret-234-1",
+              "session:close:acp-session-secret-234-1",
+              "stdio:closed",
+            ]
+          );
+          assert.ok(
+            !(yield* Effect.promise(() =>
+              readdir(sources.workspaceDirectory)
+            )).some((entry) => entry.startsWith("memory-mcp-readiness-"))
+          );
+        })
+      ),
+    10_000
   );
 
   it.live(
@@ -1046,21 +3009,20 @@ describe("issue #240 memory MCP", () => {
           const scenarios = [
             {
               code: "registration-invalid",
-              conversationId: "conversation:240-registration-invalid",
               environment: {},
               invalidateConfiguration: true,
               workspaceId: "T240REGINVALID",
             },
             {
               code: "registration-missing",
-              conversationId: "conversation:240-registration-missing",
-              environment: { SCRIPTED_ACP_SKIP_MCP_REGISTRATION: "1" },
+              environment: {
+                SCRIPTED_ACP_IGNORE_MCP_REGISTRATION_ERRORS: "1",
+              },
               invalidateConfiguration: false,
               workspaceId: "T240REGMISSING",
             },
             {
               code: "registration-collision",
-              conversationId: "conversation:240-registration-collision",
               environment: { SCRIPTED_ACP_COLLIDE_MCP_REGISTRATION: "1" },
               invalidateConfiguration: false,
               workspaceId: "T240REGCOLLISION",
@@ -1080,45 +3042,25 @@ describe("issue #240 memory MCP", () => {
             const memoryMcpServer = scenario.invalidateConfiguration
               ? { ...configuration, args: [...configuration.args, "invalid"] }
               : configuration;
-            const published: string[] = [];
+            const lifecyclePath = resolve(controls, "lifecycle.log");
             const sessionRequestPath = resolve(controls, "sessions.jsonl");
-            const agent = yield* makeAcpConversationAgent({
-              args: [scriptedPeerPath],
-              command: process.execPath,
-              cwd: root,
-              environment: {
-                ...process.env,
-                ...scenario.environment,
-                SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
-                SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
-                SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
-              },
-              memoryMcpServer,
-            });
-            yield* Effect.promise(() =>
-              writeFile(resolve(controls, "release"), "release")
-            );
-            const result = yield* Effect.result(
-              agent.handle(
-                {
-                  actions: [],
-                  context: [],
-                  conversationId: scenario.conversationId,
-                  conversationSessionId: `logical:${scenario.conversationId}`,
-                  conversationSessionIsNew: true,
-                  executionControls: [],
-                  executions: [],
-                  input: "registration failure must stay private",
-                  messages: [],
-                  promptId: `prompt:${scenario.conversationId}`,
-                  source: "slack",
-                  turnId: `turn:${scenario.conversationId}`,
+            const construction = yield* Effect.result(
+              makeAcpConversationAgent({
+                args: [scriptedPeerPath],
+                command: process.execPath,
+                cwd: root,
+                environment: {
+                  ...process.env,
+                  ...scenario.environment,
+                  SCRIPTED_ACP_LIFECYCLE_LOG_PATH: lifecyclePath,
+                  SCRIPTED_ACP_READY_PATH: resolve(controls, "ready"),
+                  SCRIPTED_ACP_RELEASE_PATH: resolve(controls, "release"),
+                  SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH: sessionRequestPath,
                 },
-                ({ text }) => Effect.sync(() => published.push(text))
-              )
+                memoryMcpServer,
+              })
             );
-            assert.strictEqual(result._tag, "Success");
-            assert.ok(published.length > 0);
+            assert.strictEqual(construction._tag, "Failure");
             const sessionRequestSource = yield* Effect.promise(() =>
               readFile(sessionRequestPath, "utf8").then(
                 (source) => source,
@@ -1131,15 +3073,30 @@ describe("issue #240 memory MCP", () => {
               .filter((line) => line.length > 0)
               .map((line) => JSON.parse(line) as { mcpServers: unknown[] });
             if (scenario.invalidateConfiguration) {
-              assert.strictEqual(sessionRequests.length, 1);
+              assert.deepStrictEqual(sessionRequests, []);
             } else {
-              assert.strictEqual(sessionRequests.length, 2);
+              assert.strictEqual(sessionRequests.length, 1);
               assert.strictEqual(
                 sessionRequests[0]?.mcpServers.length === 1,
                 true
               );
             }
-            assert.deepStrictEqual(sessionRequests.at(-1)?.mcpServers, []);
+            const lifecycle = (yield* Effect.promise(() =>
+              readFile(lifecyclePath, "utf8")
+            ))
+              .trim()
+              .split("\n");
+            if (scenario.invalidateConfiguration) {
+              assert.deepStrictEqual(lifecycle, ["initialize", "stdio:closed"]);
+            } else {
+              assert.strictEqual(
+                lifecycle.filter(
+                  (entry) => entry === "session:close:acp-session-secret-234-1"
+                ).length,
+                1
+              );
+              assert.ok(lifecycle.includes("stdio:closed"));
+            }
             const sources = yield* prepareAcpAgentContextSources({
               root,
               workspaceId: scenario.workspaceId,
@@ -2371,6 +4328,89 @@ describe("issue #240 memory MCP", () => {
   );
 
   it.live(
+    "revalidates retained authority immediately before lock creation and diagnostic publication",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const lockRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-lock-authority-race-"
+          );
+          const externalLockDirectory = yield* makeTempDirectoryScoped(
+            "laborer-memory-external-lock-race-"
+          );
+          const lockSources = yield* prepareAcpAgentContextSources({
+            root: lockRoot,
+            workspaceId: "T240LOCKAUTHORITYRACE",
+          });
+          const movedLockWorkspace = `${lockSources.workspaceDirectory}.old`;
+          const lockStore = yield* makeLaborerMemoryStore({
+            root: lockRoot,
+            testHooks: {
+              beforeLockDatabase: async () => {
+                await rename(
+                  lockSources.workspaceDirectory,
+                  movedLockWorkspace
+                );
+                await symlink(
+                  externalLockDirectory,
+                  lockSources.workspaceDirectory,
+                  "dir"
+                );
+              },
+            },
+            workspaceId: "T240LOCKAUTHORITYRACE",
+          });
+          const lockResult = yield* Effect.result(
+            lockStore.mutate({
+              operation: "add",
+              target: "workspace",
+              text: "must not create an external lock",
+            })
+          );
+          assert.strictEqual(lockResult._tag, "Failure");
+          assert.deepStrictEqual(
+            yield* Effect.promise(() => readdir(externalLockDirectory)),
+            []
+          );
+
+          const diagnosticRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-diagnostic-authority-race-"
+          );
+          const externalDiagnosticDirectory = yield* makeTempDirectoryScoped(
+            "laborer-memory-external-diagnostic-race-"
+          );
+          const diagnosticSources = yield* prepareAcpAgentContextSources({
+            root: diagnosticRoot,
+            workspaceId: "T240DIAGNOSTICAUTHORITYRACE",
+          });
+          const movedDiagnosticWorkspace = `${diagnosticSources.workspaceDirectory}.old`;
+          yield* recordLaborerMemoryDiagnosticForSources({
+            code: "startup-failed",
+            sources: diagnosticSources,
+            testHooks: {
+              beforeDiagnosticPublication: async () => {
+                await rename(
+                  diagnosticSources.workspaceDirectory,
+                  movedDiagnosticWorkspace
+                );
+                await symlink(
+                  externalDiagnosticDirectory,
+                  diagnosticSources.workspaceDirectory,
+                  "dir"
+                );
+              },
+            },
+          });
+          assert.deepStrictEqual(
+            yield* Effect.promise(() => readdir(externalDiagnosticDirectory)),
+            []
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
     "rejects root and workspace identity replacement before context reads or mutations",
     () =>
       Effect.scoped(
@@ -2663,7 +4703,9 @@ describe("issue #240 memory MCP", () => {
 
           const configuration = makeLaborerMemoryMcpServerConfiguration(first);
           assert.strictEqual(configuration.command, process.execPath);
-          assert.deepStrictEqual(configuration.args, [serverPath]);
+          assert.deepStrictEqual(configuration.args, [
+            ...laborerMcpServerLauncherArgs("memory"),
+          ]);
           assert.ok(
             configuration.env.some(
               ({ name, value }) =>

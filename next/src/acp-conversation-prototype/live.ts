@@ -1,4 +1,4 @@
-/** Explicitly opt-in live Slack/OpenCode ACP canary for issue #235. */
+/** Dedicated live canary using the production ACP workspace runtime. */
 import { fileURLToPath } from "node:url";
 import {
   type Logger as SocketLogger,
@@ -7,22 +7,16 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
-import {
-  makeSlackActivationAcknowledger,
-  makeSlackCompletionReactor,
-  makeSlackGateway,
-} from "../prototype/emulated-slack.ts";
+import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
+import { makeSlackGateway } from "../prototype/emulated-slack.ts";
+import { makeAcpSlackWorkspaceRunner } from "../slack/acp-workspace-runner.ts";
 import { loadAcpCanarySlackConfig } from "../slack/config.ts";
-import { environmentForConfiguredHandler } from "../slack/handler-environment.ts";
 import { authenticateSlackBot } from "../slack/identity.ts";
 import { loadLaborerConfig } from "../slack/laborer-config.ts";
 import { makeSlackNativeStreamCapability } from "../slack/native-stream.ts";
+import { prepareSlackRuntimePaths } from "../slack/runtime-paths.ts";
 import { startSocketModeAdapter } from "../slack/socket-mode.ts";
-import {
-  makeAcpConversationCanary,
-  openCodeAcpProcessOptions,
-} from "./canary-composition.ts";
-import { makeBoundedSlackParticipantLookup } from "./slack-participant-lookup.ts";
+import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
 
 const DEFAULT_LABORER_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -54,37 +48,31 @@ const program = Effect.gen(function* () {
 
   const botClient = new WebClient(Redacted.value(config.botToken), {
     logger: silentSocketLogger,
-    rejectRateLimitedCalls: true,
+    ...slackWebApiRequestPolicy,
   });
   const identity = yield* authenticateSlackBot(botClient);
   const gateway = makeSlackGateway({
     botClient,
     botId: identity.botId,
     botUserId: identity.botUserId,
+    conversationStreamDeliveryPolicy: slackConversationStreamDeliveryPolicy,
     nativeStreaming: makeSlackNativeStreamCapability({
       client: botClient.chat,
       recipientTeamId: identity.teamId,
     }),
     pageSize: 100,
-  });
-  const optedInEnvironment = laborer.config.application?.environment ?? [];
-  const harness = yield* makeAcpConversationCanary({
-    activationAcknowledger: makeSlackActivationAcknowledger(botClient),
-    completionReactor: makeSlackCompletionReactor(botClient),
-    laborerSlackId: identity.botUserId,
-    participantLookup: makeBoundedSlackParticipantLookup({
-      logger: silentSocketLogger,
-      token: Redacted.value(config.botToken),
-    }),
-    process: openCodeAcpProcessOptions({
-      cwd: laborer.root,
-      environment: environmentForConfiguredHandler(
-        process.env,
-        optedInEnvironment
-      ),
-    }),
-    slack: gateway,
     workspaceId: identity.teamId,
+  });
+  const paths = yield* prepareSlackRuntimePaths(
+    laborer.root,
+    `acp-canary:${identity.teamId}`
+  );
+  const runner = yield* makeAcpSlackWorkspaceRunner({
+    client: botClient,
+    gateway,
+    identity,
+    laborer,
+    paths,
   });
   const socketClient = new SocketModeClient({
     appToken: Redacted.value(config.appToken),
@@ -93,10 +81,10 @@ const program = Effect.gen(function* () {
   yield* startSocketModeAdapter({
     client: socketClient,
     identity,
-    runner: harness.runner,
+    runner,
   });
   yield* Console.log(
-    `LIVE ACP CANARY — OpenCode ACP in ${laborer.root}; Ctrl-C to stop.`
+    `LIVE ACP CANARY — production ACP runtime in isolated state for ${laborer.root}; Ctrl-C to stop.`
   );
   yield* waitForShutdownSignal;
   yield* Console.log("Live ACP canary stopped cleanly.");

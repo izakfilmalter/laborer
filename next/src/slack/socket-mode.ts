@@ -1,12 +1,17 @@
 import {
   Deferred,
   Effect,
+  Exit,
   FiberSet,
   Option,
   Ref,
   Schema,
   type Scope,
 } from "effect";
+import type {
+  AcpPermissionInteraction,
+  AcpPermissionInteractionResult,
+} from "../acp-conversation-prototype/acp-permission-broker.ts";
 import type { NormalizedInboundEvent } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SocketModeAdapterError } from "./errors.ts";
@@ -15,6 +20,8 @@ import { normalizeSlackEvent } from "./normalize.ts";
 export interface SlackEventEnvelope {
   readonly ack: (response?: Readonly<Record<string, unknown>>) => Promise<void>;
   readonly body: unknown;
+  readonly envelope_id?: string;
+  readonly type?: string;
 }
 
 export type SlackEventListener = (envelope: SlackEventEnvelope) => void;
@@ -30,6 +37,16 @@ export interface SlackEventInjector {
   readonly accept: (
     event: NormalizedInboundEvent
   ) => Effect.Effect<unknown, unknown, never>;
+  readonly handleInteraction?: (
+    interaction: AcpPermissionInteraction
+  ) => Effect.Effect<AcpPermissionInteractionResult, unknown, never>;
+  readonly health?: Effect.Effect<
+    {
+      readonly readiness: string;
+    },
+    unknown,
+    never
+  >;
   readonly inject: (
     event: NormalizedInboundEvent
   ) => Effect.Effect<unknown, unknown, never>;
@@ -40,6 +57,7 @@ export const SETUP_INCOMPLETE_REPLY =
 
 const MAX_IN_FLIGHT_EVENT_IDENTITIES = 1024;
 const MAX_IN_FLIGHT_ACKNOWLEDGEMENTS_PER_EVENT = 64;
+const INTERACTION_DURABLE_CLAIM_TIMEOUT_MILLIS = 750;
 
 export interface SlackWorkspaceInstallation {
   readonly identity: SlackRuntimeIdentity;
@@ -289,6 +307,28 @@ const SlackRoutingMetadata = Schema.Struct({
   event_id: Schema.String,
   team_id: Schema.String,
   type: Schema.Literal("event_callback"),
+});
+
+const SlackBlockActionPayload = Schema.Struct({
+  actions: Schema.Array(
+    Schema.Struct({
+      action_id: Schema.String,
+      value: Schema.String,
+    })
+  ),
+  channel: Schema.Struct({ id: Schema.String }),
+  container: Schema.Struct({
+    channel_id: Schema.optional(Schema.String),
+    message_ts: Schema.String,
+    thread_ts: Schema.optional(Schema.String),
+  }),
+  message: Schema.Struct({
+    thread_ts: Schema.optional(Schema.String),
+    ts: Schema.String,
+  }),
+  team: Schema.Struct({ id: Schema.String }),
+  type: Schema.Literal("block_actions"),
+  user: Schema.Struct({ id: Schema.String }),
 });
 
 const adapterFailure = (operation: string): SocketModeAdapterError =>
@@ -664,6 +704,89 @@ const processEnvelope = (
     )
   );
 
+const decodePermissionInteraction = (
+  envelope: SlackEventEnvelope
+): AcpPermissionInteraction | null => {
+  if (
+    envelope.type !== "interactive" ||
+    typeof envelope.envelope_id !== "string" ||
+    envelope.envelope_id.length === 0
+  ) {
+    return null;
+  }
+  const decoded = Schema.decodeUnknownOption(SlackBlockActionPayload)(
+    envelope.body
+  );
+  if (Option.isNone(decoded)) {
+    return null;
+  }
+  const action = decoded.value.actions[0];
+  const rootTs =
+    decoded.value.container.thread_ts ?? decoded.value.message.thread_ts;
+  const containerChannel = decoded.value.container.channel_id;
+  if (
+    action === undefined ||
+    decoded.value.actions.length !== 1 ||
+    rootTs === undefined ||
+    decoded.value.message.ts !== decoded.value.container.message_ts ||
+    (containerChannel !== undefined &&
+      containerChannel !== decoded.value.channel.id)
+  ) {
+    return null;
+  }
+  return {
+    actionId: action.action_id,
+    capability: action.value,
+    channelId: decoded.value.channel.id,
+    messageTs: decoded.value.message.ts,
+    rootTs,
+    slackUserId: decoded.value.user.id,
+    workspaceId: decoded.value.team.id,
+  };
+};
+
+const processInteractiveEnvelope = (
+  envelope: SlackEventEnvelope,
+  resolve: SlackWorkspaceRouteDirectory["resolve"]
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const interaction = decodePermissionInteraction(envelope);
+    if (interaction === null) {
+      yield* acknowledge(envelope.ack).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+    const route = yield* resolve(interaction.workspaceId);
+    if (
+      route._tag === "Ready" &&
+      route.installation.runner?.handleInteraction !== undefined
+    ) {
+      const claim = yield* Effect.raceFirst(
+        Effect.exit(
+          route.installation.runner.handleInteraction(interaction)
+        ).pipe(Effect.map((exit) => ({ _tag: "Finished" as const, exit }))),
+        Effect.sleep(`${INTERACTION_DURABLE_CLAIM_TIMEOUT_MILLIS} millis`).pipe(
+          Effect.as({ _tag: "TimedOut" as const })
+        )
+      );
+      if (claim._tag === "Finished" && claim.exit._tag === "Failure") {
+        yield* Effect.logWarning("Slack interaction claim stopped safely");
+        return;
+      }
+      if (
+        claim._tag === "TimedOut" ||
+        (claim._tag === "Finished" &&
+          Exit.isSuccess(claim.exit) &&
+          claim.exit.value === "retry")
+      ) {
+        yield* Effect.logWarning(
+          "Slack interaction claim could not be durably reconciled; leaving it unacknowledged for retry"
+        );
+        return;
+      }
+    }
+    yield* acknowledge(envelope.ack).pipe(Effect.catch(() => Effect.void));
+  });
+
 type SocketModeAdapterOptions =
   | {
       readonly client: SocketModeClientBoundary;
@@ -728,6 +851,10 @@ export const startSocketModeAdapter = (
     const coalescer = yield* makeInFlightEnvelopeCoalescer(workspaceIds);
     const runEnvelope = yield* FiberSet.runtime(fibers)();
     const listener: SlackEventListener = (envelope) => {
+      if (envelope.type === "interactive") {
+        runEnvelope(processInteractiveEnvelope(envelope, resolve));
+        return;
+      }
       const identity = classifyEnvelopeIdentity(envelope.body);
       runEnvelope(
         coalescer.submit(identity, envelope.ack).pipe(

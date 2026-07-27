@@ -1,5 +1,5 @@
 import { Array as EffectArray, pipe, Record } from "effect";
-import { isSlackTokenEnvironmentName } from "./secret-environment.ts";
+import { isSensitiveCredentialEnvironmentName } from "./secret-environment.ts";
 
 const REQUIRED_RUNTIME_VARIABLES = [
   "HOME",
@@ -19,8 +19,8 @@ const REQUIRED_RUNTIME_VARIABLES = [
 ] as const;
 
 /**
- * Slack credentials belong to the adapter and must never cross the generic
- * configured-handler process boundary.
+ * Adapter and control-plane credentials must never cross a configured child
+ * process boundary. Provider credentials remain explicit operator opt-ins.
  */
 export const environmentForConfiguredHandler = (
   inherited: NodeJS.ProcessEnv,
@@ -31,7 +31,7 @@ export const environmentForConfiguredHandler = (
   const allowedNames = pipe(
     REQUIRED_RUNTIME_VARIABLES,
     EffectArray.appendAll(optedInNames),
-    EffectArray.filter((name) => !isSlackTokenEnvironmentName(name))
+    EffectArray.filter((name) => !isSensitiveCredentialEnvironmentName(name))
   );
   return Record.filter(
     inheritedRecord,
@@ -39,3 +39,14 @@ export const environmentForConfiguredHandler = (
       value !== undefined && EffectArray.contains(allowedNames, name)
   );
 };
+
+/**
+ * The production ACP child receives only runtime variables and names the
+ * operator explicitly opted into for the reference application. Laborer-owned
+ * authority material stays out even if a stale configuration names it.
+ */
+export const environmentForAcpConversation = (
+  inherited: NodeJS.ProcessEnv,
+  optedInNames: readonly string[] = []
+): NodeJS.ProcessEnv =>
+  environmentForConfiguredHandler(inherited, optedInNames);

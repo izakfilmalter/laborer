@@ -2,19 +2,13 @@
  * THROWAWAY ISSUE #204 PROTOTYPE.
  * Fresh-process, versioned JSON stdin / protocol-only NDJSON stdout adapter.
  */
-import {
-  type ChildProcessWithoutNullStreams,
-  execFile,
-  spawn,
-} from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { finished } from "node:stream/promises";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import {
   Effect,
   Array as EffectArray,
@@ -40,6 +34,10 @@ import {
   verifyRetainedDirectory,
 } from "./path-safety.ts";
 import {
+  processSupervisorProxyPath,
+  terminateSupervisedProcess,
+} from "./process-supervisor.ts";
+import {
   ThreadInitializer,
   type ThreadInitializerShape,
   WorkHandler,
@@ -53,15 +51,8 @@ export const MAX_HANDLER_STDOUT_RECORDS = 4096;
 export const MAX_HANDLER_STDERR_BYTES = 8 * 1024 * 1024;
 const STDERR_RETAIN_BYTES = 64 * 1024;
 const PROCESS_GROUP_GRACE_MILLIS = 10_000;
-const PROCESS_GROUP_POLL_MILLIS = 25;
 const SUPERVISOR_RESULT_MAX_BYTES = 4096;
-const supervisorProxyPath = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "process-supervisor-proxy.ts"
-);
-const execFilePromise = promisify(execFile);
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
-const PROCESS_COLUMNS_SEPARATOR = /\s+/;
 
 export interface ProcessInvocationEvidence {
   readonly attemptNumber: number;
@@ -231,96 +222,12 @@ const appendBoundedStderr = (
 const spawnFailure = (): HandlerFailure =>
   HandlerFailure.make({ category: "spawn", safeDetail: null });
 
-const signalProcessGroup = (
-  processGroupId: number,
-  signal: NodeJS.Signals
-): boolean => {
-  try {
-    process.kill(-processGroupId, signal);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const leaderIsAlive = (child: ChildProcessWithoutNullStreams): boolean =>
-  child.exitCode === null && child.signalCode === null;
-
-const processGroupMembers = async (
-  processGroupId: number
-): Promise<readonly number[]> => {
-  const { stdout } = await execFilePromise("/bin/ps", ["-axo", "pid=,pgid="], {
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout
-    .trim()
-    .split("\n")
-    .flatMap((line) => {
-      const [pidSource, groupSource] = line
-        .trim()
-        .split(PROCESS_COLUMNS_SEPARATOR, 2);
-      const pid = Number(pidSource);
-      const group = Number(groupSource);
-      return group === processGroupId && Number.isSafeInteger(pid) ? [pid] : [];
-    });
-};
-
-const waitForLeaderExit = async (
-  child: ChildProcessWithoutNullStreams
-): Promise<void> => {
-  if (!leaderIsAlive(child)) {
-    return;
-  }
-  await new Promise<void>((resolveExit) => {
-    const onExit = () => resolveExit();
-    child.once("exit", onExit);
-    if (!leaderIsAlive(child)) {
-      child.off("exit", onExit);
-      resolveExit();
-    }
-  });
-};
-
 const terminateProcess = (
   child: ChildProcessWithoutNullStreams
 ): Effect.Effect<void> =>
-  Effect.promise(async () => {
-    const processGroupId = child.pid;
-    if (processGroupId === undefined) {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGTERM");
-      }
-      return;
-    }
-
-    // The proxy is a stable leader/sentinel. Every group-directed signal occurs
-    // only while that owned leader is alive, so a reused numeric PGID can never
-    // be targeted after the handler and its descendants have exited.
-    if (!leaderIsAlive(child)) {
-      return;
-    }
-    signalProcessGroup(processGroupId, "SIGTERM");
-    const deadline = Date.now() + PROCESS_GROUP_GRACE_MILLIS;
-    while (leaderIsAlive(child) && Date.now() < deadline) {
-      try {
-        const members = await processGroupMembers(processGroupId);
-        if (members.every((pid) => pid === processGroupId)) {
-          child.kill("SIGKILL");
-          await waitForLeaderExit(child);
-          return;
-        }
-      } catch {
-        // Keep the sentinel alive and fail over to a bounded group KILL below.
-      }
-      await new Promise<void>((resolveDelay) => {
-        setTimeout(resolveDelay, PROCESS_GROUP_POLL_MILLIS);
-      });
-    }
-    if (leaderIsAlive(child)) {
-      signalProcessGroup(processGroupId, "SIGKILL");
-      await waitForLeaderExit(child);
-    }
-  });
+  Effect.promise(() =>
+    terminateSupervisedProcess(child, PROCESS_GROUP_GRACE_MILLIS)
+  );
 
 const stateDirectoryFor = (stateRoot: string, threadId: string): string =>
   resolve(stateRoot, encodeURIComponent(threadId));
@@ -717,7 +624,7 @@ const invokeProcess = Effect.fnUntraced(function* (
       try: () =>
         spawn(
           process.execPath,
-          [supervisorProxyPath, command, ...options.args],
+          [processSupervisorProxyPath, command, ...options.args],
           {
             cwd: invocationCwd,
             detached: true,

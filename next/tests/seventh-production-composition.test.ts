@@ -4,7 +4,6 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import {
   launchOpenCodeServer,
-  type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
 import { ExternalInputEvent } from "../src/application.ts";
@@ -13,73 +12,69 @@ import { makeFileStoreLayer } from "../src/prototype/store.ts";
 import { makeInMemoryApplicationRepository } from "../src/reference-coding-application.ts";
 import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
-import { makeReferenceCodingWorkspaceApplication } from "../src/slack/workspace-runner.ts";
+import { makeReferenceCodingWorkspaceApplicationWithConversationAgent } from "../src/slack/workspace-runner.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 describe("Tracer 7 production composition", () => {
-  it.effect("loads custom and omitted Conversation configuration", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const root = yield* makeTempDirectoryScoped(
-          "laborer-reference-config-"
-        );
-        yield* Effect.promise(() =>
-          writeFile(
-            join(root, "laborer.json"),
-            JSON.stringify({
-              application: {
-                agent: "build",
-                conversation: {
-                  instructions: ["  Route this conversation.  "],
-                  operationResultInstructions: [
-                    "  Report this operation result.  ",
-                  ],
+  it.effect(
+    "loads reference-coding and implementation-only configuration",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-reference-config-"
+          );
+          yield* Effect.promise(() =>
+            writeFile(
+              join(root, "laborer.json"),
+              JSON.stringify({
+                application: {
+                  environment: ["OPENAI_API_KEY"],
+                  implementation: {
+                    agent: "build",
+                    model: "opencode/big-pickle",
+                  },
+                  type: "reference-coding",
                 },
-                environment: ["OPENAI_API_KEY"],
-                model: "opencode/big-pickle",
-                type: "reference-coding",
-              },
-              retained: true,
-            })
-          )
-        );
+                retained: true,
+              })
+            )
+          );
 
-        const loaded = yield* loadLaborerConfig({
-          defaultRoot: root,
-          environment: { PATH: process.env.PATH },
-        });
+          const loaded = yield* loadLaborerConfig({
+            defaultRoot: root,
+            environment: { PATH: process.env.PATH },
+          });
 
-        assert.deepStrictEqual(loaded.config.application, {
-          agent: "build",
-          conversation: {
-            instructions: ["Route this conversation."],
-            operationResultInstructions: ["Report this operation result."],
-          },
-          environment: ["OPENAI_API_KEY"],
-          model: "opencode/big-pickle",
-          type: "reference-coding",
-        });
-        assert.ok(!("workHandler" in loaded.config));
-        assert.strictEqual(loaded.config.retained, true);
+          assert.deepStrictEqual(loaded.config.application, {
+            environment: ["OPENAI_API_KEY"],
+            implementation: {
+              agent: "build",
+              model: "opencode/big-pickle",
+            },
+            type: "reference-coding",
+          });
+          assert.ok(!("workHandler" in loaded.config));
+          assert.strictEqual(loaded.config.retained, true);
 
-        yield* Effect.promise(() =>
-          writeFile(
-            join(root, "laborer.json"),
-            JSON.stringify({
-              application: { type: "reference-coding" },
-            })
-          )
-        );
-        const backwardCompatible = yield* loadLaborerConfig({
-          defaultRoot: root,
-          environment: { PATH: process.env.PATH },
-        });
-        assert.deepStrictEqual(backwardCompatible.config.application, {
-          environment: [],
-          type: "reference-coding",
-        });
-      })
-    )
+          yield* Effect.promise(() =>
+            writeFile(
+              join(root, "laborer.json"),
+              JSON.stringify({
+                application: { type: "reference-coding" },
+              })
+            )
+          );
+          const backwardCompatible = yield* loadLaborerConfig({
+            defaultRoot: root,
+            environment: { PATH: process.env.PATH },
+          });
+          assert.deepStrictEqual(backwardCompatible.config.application, {
+            environment: [],
+            type: "reference-coding",
+          });
+        })
+      )
   );
 
   it.effect("rejects both, neither, and Slack-secret application opt-ins", () =>
@@ -100,6 +95,23 @@ describe("Tracer 7 production composition", () => {
               type: "reference-coding",
             },
           },
+          ...[
+            "SLACK_SIGNING_SECRET",
+            "SLACK_CLIENT_SECRET",
+            "SLACK_USER_TOKEN",
+            "SLACK_API_TOKEN",
+            "SLACK_API_KEY",
+            "Slack_Incoming_Webhook_Url",
+            "LABORER_CANARY_SOCKET",
+            "LABORER_CANARY_SOURCE_EVENT_ID",
+            "LABORER_CANARY_THREAD_ID",
+            "LABORER_ACTION_BRIDGE_AUTHORITY",
+          ].map((credentialName) => ({
+            application: {
+              environment: [credentialName],
+              type: "reference-coding",
+            },
+          })),
           {
             application: {
               model: "missing-provider-separator",
@@ -108,45 +120,7 @@ describe("Tracer 7 production composition", () => {
           },
           {
             application: {
-              conversation: {
-                instructions: [],
-                operationResultInstructions: ["Report the result."],
-              },
-              type: "reference-coding",
-            },
-          },
-          {
-            application: {
-              conversation: {
-                instructions: ["Route the turn."],
-              },
-              type: "reference-coding",
-            },
-          },
-          {
-            application: {
-              conversation: {
-                instructions: ["  \n  "],
-                operationResultInstructions: ["Report the result."],
-              },
-              type: "reference-coding",
-            },
-          },
-          {
-            application: {
-              conversation: {
-                instructions: ["Route the turn."],
-                operationResultInstructions: [],
-              },
-              type: "reference-coding",
-            },
-          },
-          {
-            application: {
-              conversation: {
-                instructions: ["Route the turn."],
-                operationResultInstructions: ["  "],
-              },
+              conversation: { instructions: ["removed"] },
               type: "reference-coding",
             },
           },
@@ -249,7 +223,7 @@ describe("Tracer 7 production composition", () => {
   );
 
   it.effect(
-    "composes one scoped OpenCode client with file state, Git, and a secret-free environment",
+    "composes injected Conversation behavior with lazy implementation, file state, and Git",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -257,92 +231,75 @@ describe("Tracer 7 production composition", () => {
             "laborer-reference-composition-"
           );
           const paths = yield* prepareSlackRuntimePaths(root, "T-COMPOSE");
-          const prompts: OpenCodePromptInput[] = [];
           const client: OpenCodeSessionClient = {
             createSession: () => Effect.void,
             interrupt: () => Effect.void,
-            readMessages: () =>
-              Effect.succeed([
-                {
-                  id: prompts[0]?.promptId ?? "missing-prompt",
-                  role: "user",
-                  text: prompts[0]?.text ?? "",
-                },
-                {
-                  id: "composition-reply",
-                  role: "assistant",
-                  text: JSON.stringify({
-                    text: "Composition configured.",
-                    type: "reply",
-                  }),
-                },
-              ]),
+            prepareSessionForReuse: () => Effect.void,
+            readMessages: () => Effect.succeed([]),
             sessionExists: () => Effect.succeed(false),
-            submitPrompt: (input) =>
-              Effect.sync(() => {
-                prompts.push(input);
-              }),
+            submitPrompt: () => Effect.void,
             wait: () => Effect.void,
           };
           let clientCalls = 0;
           let repositoryPath = "";
           let repositoryRoot = "";
           let worktreeRoot = "";
-          let serverEnvironment: NodeJS.ProcessEnv = {};
 
-          const application = yield* makeReferenceCodingWorkspaceApplication(
-            {
-              config: {
-                agent: "build",
-                conversation: {
-                  instructions: ["Production routing instruction."],
-                  operationResultInstructions: [
-                    "Production operation-result instruction.",
-                  ],
+          const application =
+            yield* makeReferenceCodingWorkspaceApplicationWithConversationAgent(
+              {
+                config: {
+                  environment: ["OPENAI_API_KEY"],
+                  implementation: {
+                    agent: "build",
+                    model: "opencode/big-pickle",
+                  },
+                  type: "reference-coding",
                 },
-                environment: ["OPENAI_API_KEY"],
-                model: "opencode/big-pickle",
-                type: "reference-coding",
+                environment: {
+                  OPENAI_API_KEY: "provider-secret",
+                  PATH: process.env.PATH,
+                  SLACK_BOT_TOKEN: "must-not-cross-boundary",
+                },
+                paths,
+                root,
               },
-              environment: {
-                OPENAI_API_KEY: "provider-secret",
-                PATH: process.env.PATH,
-                SLACK_BOT_TOKEN: "must-not-cross-boundary",
+              {
+                handle: () =>
+                  Effect.succeed([
+                    { replyId: "composition-reply", text: "configured" },
+                  ]),
               },
-              paths,
-              root,
-            },
-            {
-              makeApplicationRepository: (path, trustedRoot) => {
-                repositoryPath = path;
-                repositoryRoot = trustedRoot;
-                return makeInMemoryApplicationRepository();
-              },
-              makeOpenCodeClient: (options) => {
-                clientCalls += 1;
-                serverEnvironment = options.environment;
-                assert.strictEqual(options.agent, "build");
-                assert.deepStrictEqual(options.model, {
-                  modelID: "big-pickle",
-                  providerID: "opencode",
-                });
-                assert.strictEqual(options.promptIsolation, false);
-                assert.strictEqual(options.workspaceDirectory, root);
-                return Effect.succeed(client);
-              },
-              makeWorktreeManager: (options) => {
-                worktreeRoot = options.repository;
-                return {
-                  create: () =>
-                    Effect.die(
-                      new Error(
-                        "ordinary Conversation must not create worktree"
-                      )
-                    ),
-                };
-              },
-            }
-          );
+              {
+                makeApplicationRepository: (path, trustedRoot) => {
+                  repositoryPath = path;
+                  repositoryRoot = trustedRoot;
+                  return makeInMemoryApplicationRepository();
+                },
+                makeOpenCodeClient: (options) => {
+                  clientCalls += 1;
+                  assert.strictEqual(options.agent, "build");
+                  assert.deepStrictEqual(options.model, {
+                    modelID: "big-pickle",
+                    providerID: "opencode",
+                  });
+                  assert.strictEqual(options.promptIsolation, false);
+                  assert.strictEqual(options.workspaceDirectory, root);
+                  return Effect.succeed(client);
+                },
+                makeWorktreeManager: (options) => {
+                  worktreeRoot = options.repository;
+                  return {
+                    create: () =>
+                      Effect.die(
+                        new Error(
+                          "ordinary Conversation must not create worktree"
+                        )
+                      ),
+                  };
+                },
+              }
+            );
           yield* application.handle(
             ExternalInputEvent.make({
               conversationId: ThreadId.make("production-composition-thread"),
@@ -361,21 +318,10 @@ describe("Tracer 7 production composition", () => {
               })
           );
 
-          assert.strictEqual(clientCalls, 1);
+          assert.strictEqual(clientCalls, 0);
           assert.strictEqual(repositoryPath, paths.applicationState);
           assert.strictEqual(repositoryRoot, paths.root);
           assert.strictEqual(worktreeRoot, root);
-          assert.strictEqual(
-            serverEnvironment.OPENAI_API_KEY,
-            "provider-secret"
-          );
-          assert.ok(!("SLACK_BOT_TOKEN" in serverEnvironment));
-          const prompt = JSON.parse(prompts[0]?.text ?? "{}") as {
-            readonly instructions?: unknown;
-          };
-          assert.deepStrictEqual(prompt.instructions, [
-            "Production routing instruction.",
-          ]);
         })
       )
   );
@@ -387,34 +333,7 @@ describe("Tracer 7 production composition", () => {
       );
       const config = JSON.parse(source) as Record<string, unknown>;
       assert.deepStrictEqual(config.application, {
-        conversation: {
-          instructions: [
-            "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
-            "You have unrestricted access to all tools and MCP servers configured by the user. Use any of them as needed to fulfill the user's request.",
-            "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
-            "When a request requires substantive work, code changes, or a long-running task, do not perform that work directly in the Conversation session. Immediately invoke the appropriate available Action so Slack can be acknowledged promptly and the work can continue asynchronously. Use Conversation-session tools only for quick investigation needed to answer or route the request.",
-            "For simple questions or requests that can be answered immediately without substantive work, reply directly without an acknowledgement preamble.",
-            "Return exactly one JSON object and no markdown.",
-            'Action: {"type":"action","action":"<available name>","input":<JSON>}.',
-            'Execution control: {"type":"execution_control","control":"<available name>","input":<JSON>}.',
-            'Reply: {"type":"reply","text":"<Slack reply>"}.',
-            "Only a reply record is shown to Slack. Coding Actions and generic Execution controls are separate interfaces.",
-          ],
-          operationResultInstructions: [
-            "You are the Conversation agent continuing the current Slack thread after an operation result.",
-            "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
-            "When an Action was accepted and will continue asynchronously, respond with a brief, natural acknowledgement such as 'Okay, I'll work on that.' Do not imply that the work is already complete.",
-            "Return exactly one JSON object and no markdown.",
-            'Reply: {"type":"reply","text":"<concise Slack reply describing success or failure>"}.',
-            "Do not request another Action or Execution control.",
-          ],
-        },
-        environment: [
-          "ANTHROPIC_API_KEY",
-          "LABORER_OPENCODE_MODEL",
-          "OPENCODE_CONFIG_CONTENT",
-          "OPENAI_API_KEY",
-        ],
+        environment: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
         type: "reference-coding",
       });
       assert.ok(!("prototype" in config));

@@ -1,31 +1,7 @@
 {
   "application": {
-    "conversation": {
-      "instructions": [
-        "You are the Conversation agent. Decide autonomously whether to invoke an available Action or reply to Slack.",
-        "You have unrestricted access to all tools and MCP servers configured by the user. Use any of them as needed to fulfill the user's request.",
-        "The current OpenCode session is the durable conversation for this Slack thread. Use its prior messages, tool activity, and operation results as continuing context.",
-        "When a request requires substantive work, code changes, or a long-running task, do not perform that work directly in the Conversation session. Immediately invoke the appropriate available Action so Slack can be acknowledged promptly and the work can continue asynchronously. Use Conversation-session tools only for quick investigation needed to answer or route the request.",
-        "For simple questions or requests that can be answered immediately without substantive work, reply directly without an acknowledgement preamble.",
-        "Return exactly one JSON object and no markdown.",
-        "Action: {\"type\":\"action\",\"action\":\"<available name>\",\"input\":<JSON>}.",
-        "Execution control: {\"type\":\"execution_control\",\"control\":\"<available name>\",\"input\":<JSON>}.",
-        "Reply: {\"type\":\"reply\",\"text\":\"<Slack reply>\"}.",
-        "Only a reply record is shown to Slack. Coding Actions and generic Execution controls are separate interfaces."
-      ],
-      "operationResultInstructions": [
-        "You are the Conversation agent continuing the current Slack thread after an operation result.",
-        "Use the supplied conversation and operation result to describe whether the requested operation succeeded or failed.",
-        "When an Action was accepted and will continue asynchronously, respond with a brief, natural acknowledgement such as 'Okay, I'll work on that.' Do not imply that the work is already complete.",
-        "Return exactly one JSON object and no markdown.",
-        "Reply: {\"type\":\"reply\",\"text\":\"<concise Slack reply describing success or failure>\"}.",
-        "Do not request another Action or Execution control."
-      ]
-    },
     "environment": [
       "ANTHROPIC_API_KEY",
-      "LABORER_OPENCODE_MODEL",
-      "OPENCODE_CONFIG_CONTENT",
       "OPENAI_API_KEY"
     ],
     "type": "reference-coding"

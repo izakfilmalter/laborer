@@ -17,7 +17,7 @@ const acceptEvent = (event: ExternalInputEvent) =>
   });
 
 it.effect(
-  "keeps a running Execution monitored when the remote interrupt fails",
+  "retains cancelling and fences late completion when remote interrupt fails",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -124,7 +124,9 @@ it.effect(
         );
 
         assert.strictEqual(yield* Ref.get(cancellationFailures), 1);
-        assert.deepStrictEqual(yield* Ref.get(observedStatuses), ["completed"]);
+        assert.deepStrictEqual(yield* Ref.get(observedStatuses), [
+          "cancelling",
+        ]);
       })
     )
 );

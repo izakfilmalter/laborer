@@ -2,7 +2,7 @@
  * THROWAWAY ISSUE #204 PROTOTYPE.
  * All queue, claim, outcome, and outbox invariants live behind this service.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type FileHandle, open, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
 import {
@@ -20,10 +20,26 @@ import {
   Struct,
 } from "effect";
 import {
+  SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT,
+  slackCodePointLength,
+} from "../slack/message-bounds.ts";
+import {
   AcknowledgementState,
   ApplicationEventState,
   type ClaimedTurn,
   CompletionReactionState,
+  ConversationBlockedState,
+  ConversationStreamChunkEvidence,
+  ConversationStreamChunkHashEvidence,
+  type ConversationStreamMode,
+  ConversationStreamOperation,
+  ConversationStreamOperationEvidence,
+  type ConversationStreamOperationKind,
+  type ConversationStreamOperationOutcomeCertainty,
+  type ConversationStreamOwnerKind,
+  ConversationStreamRateBudget,
+  ConversationStreamState,
+  ConversationStreamTombstone,
   canonicalThreadId,
   ExternalApplicationInput,
   HandlerAttempt,
@@ -85,6 +101,7 @@ export type OutboxClaim =
       readonly text: string;
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
+      readonly workspaceId: string;
     };
 
 export interface PrototypeStoreShape {
@@ -110,6 +127,19 @@ export interface PrototypeStoreShape {
     replyId: ReplyId,
     text: string
   ) => Effect.Effect<void, StoreError | ReplyProtocolError>;
+  readonly acceptConversationStreamChunk: (request: {
+    readonly messageId: string;
+    readonly nowMillis: number;
+    readonly ownerId: string;
+    readonly ownerKind: ConversationStreamOwnerKind;
+    readonly sequence: number | null;
+    readonly text: string;
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<
+    | { readonly _tag: "Accepted"; readonly streamId: string }
+    | { readonly _tag: "Duplicate"; readonly streamId: string },
+    StoreError
+  >;
   readonly acceptPublicReply: (
     threadId: ThreadId,
     turnId: TurnId,
@@ -120,6 +150,9 @@ export interface PrototypeStoreShape {
     readonly AcknowledgementState[],
     StoreError
   >;
+  readonly blockConversationOwner: (
+    blocked: ConversationBlockedState
+  ) => Effect.Effect<void, StoreError>;
   readonly claimNextApplicationEvent: (
     threadId: ThreadId
   ) => Effect.Effect<ApplicationEventState | null, StoreError>;
@@ -151,6 +184,16 @@ export interface PrototypeStoreShape {
     context: readonly NormalizedMessage[],
     isPartial: boolean
   ) => Effect.Effect<void, StoreError>;
+  readonly completeConversationStreamLocally: (
+    streamId: string,
+    terminalReason: string,
+    nowMillis: number
+  ) => Effect.Effect<void, StoreError>;
+  readonly completeFallbackConversationStream: (
+    streamId: string,
+    terminalReason: string,
+    nowMillis: number
+  ) => Effect.Effect<void, StoreError>;
   readonly completeHandler: (
     threadId: ThreadId,
     turnId: TurnId,
@@ -171,9 +214,27 @@ export interface PrototypeStoreShape {
     readonly CompletionReactionState[],
     StoreError
   >;
+  readonly configureConversationStream: (request: {
+    readonly flushDeadlineMillis: number | null;
+    readonly mode: ConversationStreamMode;
+    readonly streamId: string;
+  }) => Effect.Effect<void, StoreError>;
   readonly contextRequest: (
     threadId: ThreadId
   ) => Effect.Effect<ActivationContextRequest | null, StoreError>;
+  readonly conversationStreams: Effect.Effect<
+    readonly ConversationStreamState[],
+    StoreError
+  >;
+  readonly conversationStreamTombstones: Effect.Effect<
+    readonly ConversationStreamTombstone[],
+    StoreError
+  >;
+  readonly deferSlackRateBudget: (request: {
+    readonly method: string;
+    readonly retryAtMillis: number;
+    readonly workspaceId: string;
+  }) => Effect.Effect<void, StoreError>;
   readonly markAcknowledgementActive: (
     id: string
   ) => Effect.Effect<void, StoreError>;
@@ -196,6 +257,15 @@ export interface PrototypeStoreShape {
     threadId: ThreadId,
     retryAtMillis: number
   ) => Effect.Effect<void, StoreError>;
+  readonly markConversationStreamOperationInFlight: (
+    operationId: string,
+    nowMillis: number
+  ) => Effect.Effect<void, StoreError>;
+  readonly markConversationStreamUnresolved: (
+    streamId: string,
+    terminalReason: string,
+    nowMillis: number
+  ) => Effect.Effect<void, StoreError>;
   readonly markDelivered: (
     threadId: ThreadId,
     itemId: string,
@@ -209,12 +279,73 @@ export interface PrototypeStoreShape {
     retryAtMillis: number | null
   ) => Effect.Effect<void, StoreError>;
   readonly persistenceHealth: Effect.Effect<StorePersistenceHealth>;
+  readonly prepareConversationStreamOperation: (request: {
+    readonly kind: ConversationStreamOperationKind;
+    readonly nowMillis: number;
+    readonly payloadEndOffset: number;
+    readonly payloadStartOffset: number;
+    readonly payloadText: string;
+    readonly streamId: string;
+  }) => Effect.Effect<
+    | {
+        readonly _tag: "Prepared";
+        readonly operation: ConversationStreamOperation;
+      }
+    | { readonly _tag: "Unresolved" },
+    StoreError
+  >;
+  readonly reconcileConversationStreamsOnRestart: (
+    nowMillis: number
+  ) => Effect.Effect<readonly string[], StoreError>;
   readonly requestAcknowledgementCleanup: (
     id: string
   ) => Effect.Effect<void, StoreError>;
+  readonly requestConversationStreamFinalization: (request: {
+    readonly ownerId: string;
+    readonly ownerKind: ConversationStreamOwnerKind;
+    readonly terminalReason: string;
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<readonly string[], StoreError>;
+  readonly reserveConversationStreamRateSlot: (request: {
+    readonly nowMillis: number;
+    readonly operationId: string;
+    readonly spacingMillis: number;
+  }) => Effect.Effect<number, StoreError>;
+  readonly reserveSlackRateSlot: (request: {
+    readonly channelId: string;
+    readonly channelSpacingMillis: number;
+    readonly method: string;
+    readonly methodSpacingMillis: number;
+    readonly nowMillis: number;
+    readonly workspaceId: string;
+  }) => Effect.Effect<number, StoreError>;
+  readonly resolveConversationBlocked: (request: {
+    readonly attemptId: string;
+    readonly conversationId: ThreadId;
+    readonly decisionId: string;
+    readonly kind: "abandon" | "retry";
+    readonly ownerId: string;
+    readonly ownerKind: ConversationStreamOwnerKind;
+    readonly replacementAttemptId: string | null;
+    readonly workspaceId: string;
+  }) => Effect.Effect<"AlreadyResolved" | "Resolved", StoreError>;
   readonly retryBlocked: (
     threadId: ThreadId
   ) => Effect.Effect<void, StoreError>;
+  readonly settleConversationStreamOperation: (request: {
+    readonly category: string | null;
+    readonly certainty: ConversationStreamOperationOutcomeCertainty | null;
+    readonly nowMillis: number;
+    readonly operationId: string;
+    readonly outcome:
+      | "acknowledged"
+      | "rejected"
+      | "retry"
+      | "stopped_by_user"
+      | "unresolved";
+    readonly retryAtMillis: number | null;
+    readonly slackTs: string | null;
+  }) => Effect.Effect<void, StoreError>;
   readonly snapshot: Effect.Effect<PrototypeState, StoreError>;
   readonly threadIds: Effect.Effect<readonly ThreadId[], StoreError>;
 }
@@ -245,6 +376,1300 @@ const healthyPersistence: StorePersistenceHealth = { _tag: "Healthy" };
 
 const storeFailure = (operation: string, reason: string): StoreError =>
   StoreError.make({ operation, reason });
+
+const MAX_CONVERSATION_STREAMS = 256;
+const MAX_CONVERSATION_STREAM_CHUNKS = 1024;
+const MAX_CONVERSATION_STREAM_OPERATIONS = 64;
+const MAX_CONVERSATION_STREAM_OPERATION_ATTEMPTS = 5;
+const MAX_CONVERSATION_STREAM_RATE_BUDGETS = 128;
+const MAX_RUNNER_STATE_BYTES = 4 * 1024 * 1024;
+const MAX_RETAINED_STOPPED_STREAMS = 32;
+const MAX_CONVERSATION_STREAM_TOMBSTONES = 256;
+const MAX_CONVERSATION_STREAM_TOMBSTONE_BYTES = 512 * 1024;
+const CONVERSATION_STREAM_TOMBSTONE_RETENTION_MILLIS = 7 * 24 * 60 * 60 * 1000;
+
+const sha256 = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
+
+export const stableConversationStreamId = (request: {
+  readonly messageId: string;
+  readonly ownerId: string;
+  readonly ownerKind: ConversationStreamOwnerKind;
+  readonly threadId: ThreadId;
+  readonly workspaceId: string;
+}): string =>
+  `stream:${sha256(
+    JSON.stringify([
+      request.workspaceId,
+      request.threadId,
+      request.ownerKind,
+      request.ownerId,
+      request.messageId,
+    ])
+  )}`;
+
+type ConversationStreamChunkDecision =
+  | { readonly _tag: "Accepted"; readonly streamId: string }
+  | { readonly _tag: "Duplicate"; readonly streamId: string };
+
+const latestHumanRecipient = (thread: WorkThreadState): string | null => {
+  let recipient: string | null = null;
+  for (const turn of thread.turns) {
+    for (const message of turn.messages) {
+      if (message.authorKind === "human") {
+        recipient = message.authorSlackId;
+      }
+    }
+  }
+  for (const message of thread.unassigned) {
+    if (message.authorKind === "human") {
+      recipient = message.authorSlackId;
+    }
+  }
+  return recipient;
+};
+
+const conversationStreamRecipient = (
+  thread: WorkThreadState,
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string
+): string | null => {
+  if (ownerKind === "application-event") {
+    return latestHumanRecipient(thread);
+  }
+  const turn = thread.turns.find((candidate) => candidate.id === ownerId);
+  let recipient: string | null = null;
+  for (const message of turn?.messages ?? []) {
+    if (message.authorKind === "human") {
+      recipient = message.authorSlackId;
+    }
+  }
+  return recipient;
+};
+
+const conversationStreamOwnerExists = (
+  thread: WorkThreadState,
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string
+): boolean =>
+  ownerKind === "participant-turn"
+    ? thread.turns.some((turn) => turn.id === ownerId)
+    : thread.applicationEvents.some((event) => event.eventId === ownerId);
+
+const conversationStreamOwnerIsRunning = (
+  thread: WorkThreadState,
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string
+): boolean =>
+  ownerKind === "participant-turn"
+    ? thread.turns.some(
+        (turn) => turn.id === ownerId && turn.status === "running"
+      )
+    : thread.applicationEvents.some(
+        (event) => event.eventId === ownerId && event.status === "running"
+      );
+
+const recipientBelongsToConversationStreamOwner = (
+  thread: WorkThreadState,
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string,
+  recipientUserId: string | null
+): boolean => {
+  if (recipientUserId === null) {
+    return true;
+  }
+  if (ownerKind === "participant-turn") {
+    const turn = thread.turns.find((candidate) => candidate.id === ownerId);
+    return (
+      turn?.messages.some(
+        (message) =>
+          message.authorKind === "human" &&
+          message.authorSlackId === recipientUserId
+      ) ?? false
+    );
+  }
+  return [...thread.turns, { messages: thread.unassigned }].some(
+    ({ messages }) =>
+      messages.some(
+        (message) =>
+          message.authorKind === "human" &&
+          message.authorSlackId === recipientUserId
+      )
+  );
+};
+
+const tombstoneEncodedBytes = (
+  tombstones: readonly ConversationStreamTombstone[]
+): number => new TextEncoder().encode(JSON.stringify(tombstones)).byteLength;
+
+const boundConversationStreamTombstones = (
+  tombstones: readonly ConversationStreamTombstone[],
+  nowMillis: number
+): readonly ConversationStreamTombstone[] => {
+  const cutoff = nowMillis - CONVERSATION_STREAM_TOMBSTONE_RETENTION_MILLIS;
+  const retained = tombstones
+    .filter((tombstone) => tombstone.stoppedAtMillis >= cutoff)
+    .sort((left, right) => left.stoppedAtMillis - right.stoppedAtMillis);
+  while (
+    retained.length > MAX_CONVERSATION_STREAM_TOMBSTONES ||
+    tombstoneEncodedBytes(retained) > MAX_CONVERSATION_STREAM_TOMBSTONE_BYTES
+  ) {
+    retained.shift();
+  }
+  return retained;
+};
+
+const tombstoneForConversationStream = (
+  stream: ConversationStreamState,
+  nowMillis: number
+): ConversationStreamTombstone =>
+  ConversationStreamTombstone.make({
+    acceptedSequence: stream.acceptedSequence,
+    channelId: stream.channelId,
+    chunkHashes: stream.chunks.map(({ sequence, textHash }) =>
+      ConversationStreamChunkHashEvidence.make({ sequence, textHash })
+    ),
+    cumulativeHash: stream.cumulativeHash,
+    confirmedHash: stream.confirmedHash,
+    confirmedOffset: stream.confirmedOffset,
+    id: stream.id,
+    lifecycle: stream.lifecycle === "unresolved" ? "unresolved" : "stopped",
+    messageId: stream.messageId,
+    mode: stream.mode,
+    operations: stream.operations.flatMap((operation) =>
+      operation.status === "acknowledged" ||
+      operation.status === "rejected" ||
+      operation.status === "stopped_by_user" ||
+      operation.status === "unresolved"
+        ? [
+            ConversationStreamOperationEvidence.make({
+              attempt: operation.attempt,
+              errorCategory: operation.errorCategory,
+              errorCertainty: operation.errorCertainty,
+              inFlightAtMillis: operation.inFlightAtMillis,
+              kind: operation.kind,
+              payloadEndOffset: operation.payloadEndOffset,
+              payloadHash: operation.payloadHash,
+              payloadStartOffset: operation.payloadStartOffset,
+              preparedAtMillis: operation.preparedAtMillis,
+              settledAtMillis: operation.settledAtMillis,
+              status: operation.status,
+            }),
+          ]
+        : []
+    ),
+    ownerId: stream.ownerId,
+    ownerKind: stream.ownerKind,
+    recipientUserId: stream.recipientUserId,
+    rootTs: stream.rootTs,
+    slackTs: stream.slackTs,
+    stoppedAtMillis: stream.stoppedAtMillis ?? nowMillis,
+    terminalReason: stream.terminalReason ?? "completed",
+    threadId: stream.threadId,
+    workspaceId: stream.workspaceId,
+  });
+
+const compactTerminalConversationStream = (
+  state: PrototypeState,
+  streamIndex: number,
+  stream: ConversationStreamState,
+  nowMillis: number
+): PrototypeState =>
+  PrototypeStateSchema.make({
+    ...state,
+    conversationStreams: state.conversationStreams.filter(
+      (_candidate, index) => index !== streamIndex
+    ),
+    conversationStreamTombstones: boundConversationStreamTombstones(
+      [
+        ...state.conversationStreamTombstones,
+        tombstoneForConversationStream(stream, nowMillis),
+      ],
+      nowMillis
+    ),
+  });
+
+const compactStoppedConversationStreams = (
+  state: PrototypeState,
+  nowMillis: number,
+  reserveLiveCapacity: boolean
+): PrototypeState => {
+  const stopped = state.conversationStreams
+    .filter((stream) => stream.lifecycle === "stopped")
+    .sort(
+      (left, right) =>
+        (left.stoppedAtMillis ?? left.createdAtMillis) -
+        (right.stoppedAtMillis ?? right.createdAtMillis)
+    );
+  const cutoff = nowMillis - CONVERSATION_STREAM_TOMBSTONE_RETENTION_MILLIS;
+  const compactIds = new Set<string>();
+  let retainedStopped = stopped.length;
+  let retainedStreams = state.conversationStreams.length;
+  for (const stream of stopped) {
+    const stoppedAt = stream.stoppedAtMillis ?? stream.createdAtMillis;
+    const shouldCompact =
+      stoppedAt <= cutoff ||
+      retainedStopped > MAX_RETAINED_STOPPED_STREAMS ||
+      (reserveLiveCapacity && retainedStreams >= MAX_CONVERSATION_STREAMS);
+    if (!shouldCompact) {
+      continue;
+    }
+    compactIds.add(stream.id);
+    retainedStopped -= 1;
+    retainedStreams -= 1;
+  }
+  const compacted = stopped
+    .filter((stream) => compactIds.has(stream.id))
+    .map((stream) => tombstoneForConversationStream(stream, nowMillis));
+  return PrototypeStateSchema.make({
+    ...state,
+    conversationStreams: state.conversationStreams.filter(
+      (stream) => !compactIds.has(stream.id)
+    ),
+    conversationStreamTombstones: boundConversationStreamTombstones(
+      [...state.conversationStreamTombstones, ...compacted],
+      nowMillis
+    ),
+  });
+};
+
+const compactSettledConversationStreamOperations = (
+  stream: ConversationStreamState
+): ConversationStreamState => {
+  const compacted = stream.operations.filter(
+    (operation) =>
+      operation.status === "acknowledged" || operation.status === "rejected"
+  );
+  if (compacted.length === 0) {
+    return stream;
+  }
+  return ConversationStreamState.make({
+    ...stream,
+    compactedConfirmedHash: stream.confirmedHash,
+    compactedConfirmedOffset: stream.confirmedOffset,
+    compactedOperationCount: stream.compactedOperationCount + compacted.length,
+    operations: stream.operations.filter(
+      (operation) =>
+        operation.status !== "acknowledged" && operation.status !== "rejected"
+    ),
+  });
+};
+
+const findConversationStreamIndex = (
+  state: PrototypeState,
+  streamId: string
+): number =>
+  state.conversationStreams.findIndex((stream) => stream.id === streamId);
+
+const findConversationStreamOperation = (
+  state: PrototypeState,
+  operationId: string
+): {
+  readonly operation: ConversationStreamOperation;
+  readonly operationIndex: number;
+  readonly stream: ConversationStreamState;
+  readonly streamIndex: number;
+} | null => {
+  for (const [streamIndex, stream] of state.conversationStreams.entries()) {
+    const operationIndex = stream.operations.findIndex(
+      (operation) => operation.id === operationId
+    );
+    const operation = stream.operations[operationIndex];
+    if (operation !== undefined) {
+      return { operation, operationIndex, stream, streamIndex };
+    }
+  }
+  return null;
+};
+
+const replaceConversationStream = (
+  state: PrototypeState,
+  index: number,
+  stream: ConversationStreamState
+): PrototypeState =>
+  PrototypeStateSchema.make({
+    ...state,
+    conversationStreams: replaceAt(state.conversationStreams, index, stream),
+  });
+
+const configureConversationStreamTransition = (
+  state: PrototypeState,
+  request: {
+    readonly flushDeadlineMillis: number | null;
+    readonly mode: ConversationStreamMode;
+    readonly streamId: string;
+  }
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = findConversationStreamIndex(state, request.streamId);
+  const stream = state.conversationStreams[index];
+  if (stream === undefined) {
+    return storeFailure("configureConversationStream", "stream-not-found");
+  }
+  if (stream.mode !== null && stream.mode !== request.mode) {
+    return storeFailure("configureConversationStream", "stream-mode-conflict");
+  }
+  if (
+    request.flushDeadlineMillis !== null &&
+    (!Number.isSafeInteger(request.flushDeadlineMillis) ||
+      request.flushDeadlineMillis < 0)
+  ) {
+    return storeFailure("configureConversationStream", "invalid-deadline");
+  }
+  const deadline =
+    stream.flushDeadlineMillis ?? request.flushDeadlineMillis ?? null;
+  return [
+    undefined,
+    replaceConversationStream(
+      state,
+      index,
+      ConversationStreamState.make({
+        ...stream,
+        flushDeadlineMillis: deadline,
+        mode: request.mode,
+      })
+    ),
+  ];
+};
+
+const prepareConversationStreamOperationTransition = (
+  state: PrototypeState,
+  request: {
+    readonly kind: ConversationStreamOperationKind;
+    readonly nowMillis: number;
+    readonly payloadEndOffset: number;
+    readonly payloadStartOffset: number;
+    readonly payloadText: string;
+    readonly streamId: string;
+  }
+):
+  | readonly [
+      (
+        | {
+            readonly _tag: "Prepared";
+            readonly operation: ConversationStreamOperation;
+          }
+        | { readonly _tag: "Unresolved" }
+      ),
+      PrototypeState,
+    ]
+  | StoreError => {
+  const index = findConversationStreamIndex(state, request.streamId);
+  const current = state.conversationStreams[index];
+  if (current === undefined) {
+    return storeFailure(
+      "prepareConversationStreamOperation",
+      "stream-not-found"
+    );
+  }
+  if (
+    current.lifecycle === "stopped" ||
+    current.lifecycle === "unresolved" ||
+    !operationKindMatchesMode(current.mode, request.kind) ||
+    ((request.kind === "native-start" || request.kind === "fallback-post") &&
+      current.slackTs !== null) ||
+    ((request.kind === "native-append" ||
+      request.kind === "native-stop" ||
+      request.kind === "fallback-update") &&
+      current.slackTs === null) ||
+    !Number.isSafeInteger(request.nowMillis) ||
+    !Number.isSafeInteger(request.payloadStartOffset) ||
+    !Number.isSafeInteger(request.payloadEndOffset) ||
+    request.payloadStartOffset < 0 ||
+    request.payloadEndOffset < request.payloadStartOffset ||
+    request.payloadEndOffset > [...current.cumulativeText].length
+  ) {
+    return storeFailure(
+      "prepareConversationStreamOperation",
+      "invalid-operation"
+    );
+  }
+  const stream = compactSettledConversationStreamOperations(current);
+  if (
+    stream.operations.some(
+      (operation) =>
+        operation.status === "prepared" ||
+        operation.status === "in_flight" ||
+        operation.status === "retry"
+    )
+  ) {
+    return storeFailure(
+      "prepareConversationStreamOperation",
+      "operation-already-active"
+    );
+  }
+  if (stream.operations.length >= MAX_CONVERSATION_STREAM_OPERATIONS) {
+    const unresolved = ConversationStreamState.make({
+      ...stream,
+      flushDeadlineMillis: null,
+      lifecycle: "unresolved",
+      terminalReason: "stream-operation-capacity-exhausted",
+    });
+    return [
+      { _tag: "Unresolved" },
+      replaceConversationStream(state, index, unresolved),
+    ];
+  }
+  const operation = ConversationStreamOperation.make({
+    attempt: 0,
+    errorCategory: null,
+    errorCertainty: null,
+    id: `${stream.id}:operation:${request.kind}:${request.payloadStartOffset}:${request.payloadEndOffset}`,
+    inFlightAtMillis: null,
+    kind: request.kind,
+    payloadEndOffset: request.payloadEndOffset,
+    payloadHash: sha256(request.payloadText),
+    payloadStartOffset: request.payloadStartOffset,
+    payloadText: request.payloadText,
+    preparedAtMillis: request.nowMillis,
+    retryAtMillis: null,
+    settledAtMillis: null,
+    status: "prepared",
+  });
+  const updated = ConversationStreamState.make({
+    ...stream,
+    operations: EffectArray.append(stream.operations, operation),
+  });
+  return [
+    { _tag: "Prepared", operation },
+    replaceConversationStream(state, index, updated),
+  ];
+};
+
+const slackMethodForOperationKind = (
+  kind: ConversationStreamOperationKind
+): string => {
+  switch (kind) {
+    case "fallback-post":
+      return "chat.postMessage";
+    case "fallback-update":
+      return "chat.update";
+    case "native-append":
+      return "chat.appendStream";
+    case "native-start":
+      return "chat.startStream";
+    case "native-stop":
+      return "chat.stopStream";
+    default:
+      return kind;
+  }
+};
+
+interface SlackRateSlotRequest {
+  readonly channelId: string;
+  readonly channelSpacingMillis: number;
+  readonly method: string;
+  readonly methodSpacingMillis: number;
+  readonly nowMillis: number;
+  readonly workspaceId: string;
+}
+
+const reserveSlackRateSlotTransition = (
+  state: PrototypeState,
+  request: SlackRateSlotRequest
+): readonly [number, PrototypeState] | StoreError => {
+  if (
+    request.workspaceId.trim().length === 0 ||
+    request.channelId.trim().length === 0 ||
+    request.method.trim().length === 0 ||
+    !Number.isSafeInteger(request.nowMillis) ||
+    !Number.isSafeInteger(request.methodSpacingMillis) ||
+    !Number.isSafeInteger(request.channelSpacingMillis) ||
+    request.methodSpacingMillis < 0 ||
+    request.channelSpacingMillis < 0
+  ) {
+    return storeFailure("reserveSlackRateSlot", "invalid-reservation");
+  }
+  const requestedScopes = [
+    {
+      channelId: null,
+      scope: "method" as const,
+      spacingMillis: request.methodSpacingMillis,
+    },
+    ...(request.method === "chat.postMessage"
+      ? [
+          {
+            channelId: request.channelId,
+            scope: "channel" as const,
+            spacingMillis: request.channelSpacingMillis,
+          },
+        ]
+      : []),
+  ];
+  const isRequestedBudget = (budget: ConversationStreamRateBudget): boolean =>
+    budget.workspaceId === request.workspaceId &&
+    budget.method === request.method &&
+    requestedScopes.some(
+      (scope) =>
+        budget.scope === scope.scope && budget.channelId === scope.channelId
+    );
+  const requestedBudgets =
+    state.conversationStreamRateBudgets.filter(isRequestedBudget);
+  const slot = requestedBudgets.reduce(
+    (candidate, budget) => Math.max(candidate, budget.nextAvailableAtMillis),
+    request.nowMillis
+  );
+  const retainedBudgets = state.conversationStreamRateBudgets.filter(
+    (budget) =>
+      !isRequestedBudget(budget) &&
+      budget.nextAvailableAtMillis > request.nowMillis
+  );
+  if (
+    retainedBudgets.length + requestedScopes.length >
+    MAX_CONVERSATION_STREAM_RATE_BUDGETS
+  ) {
+    return storeFailure(
+      "reserveConversationStreamRateSlot",
+      "rate-budget-bound-exceeded"
+    );
+  }
+  const updated = requestedScopes.map(({ channelId, scope, spacingMillis }) =>
+    ConversationStreamRateBudget.make({
+      channelId,
+      method: request.method,
+      nextAvailableAtMillis: slot + spacingMillis,
+      scope,
+      workspaceId: request.workspaceId,
+    })
+  );
+  return [
+    slot,
+    PrototypeStateSchema.make({
+      ...state,
+      conversationStreamRateBudgets: [...retainedBudgets, ...updated],
+    }),
+  ];
+};
+
+const reserveConversationStreamRateSlotTransition = (
+  state: PrototypeState,
+  request: {
+    readonly nowMillis: number;
+    readonly operationId: string;
+    readonly spacingMillis: number;
+  }
+): readonly [number, PrototypeState] | StoreError => {
+  const found = findConversationStreamOperation(state, request.operationId);
+  if (
+    found === null ||
+    (found.operation.status !== "prepared" &&
+      found.operation.status !== "retry")
+  ) {
+    return storeFailure(
+      "reserveConversationStreamRateSlot",
+      "invalid-reservation"
+    );
+  }
+  return reserveSlackRateSlotTransition(state, {
+    channelId: found.stream.channelId,
+    channelSpacingMillis: request.spacingMillis,
+    method: slackMethodForOperationKind(found.operation.kind),
+    methodSpacingMillis: request.spacingMillis,
+    nowMillis: request.nowMillis,
+    workspaceId: found.stream.workspaceId,
+  });
+};
+
+const deferSlackRateBudgetTransition = (
+  state: PrototypeState,
+  request: {
+    readonly method: string;
+    readonly retryAtMillis: number;
+    readonly workspaceId: string;
+  }
+): readonly [undefined, PrototypeState] | StoreError => {
+  if (
+    request.method.trim().length === 0 ||
+    request.workspaceId.trim().length === 0 ||
+    !Number.isSafeInteger(request.retryAtMillis) ||
+    request.retryAtMillis < 0
+  ) {
+    return storeFailure("deferSlackRateBudget", "invalid-deferral");
+  }
+  return [
+    undefined,
+    PrototypeStateSchema.make({
+      ...state,
+      conversationStreamRateBudgets: state.conversationStreamRateBudgets.map(
+        (budget) =>
+          budget.scope === "method" &&
+          budget.workspaceId === request.workspaceId &&
+          budget.method === request.method
+            ? ConversationStreamRateBudget.make({
+                ...budget,
+                nextAvailableAtMillis: Math.max(
+                  budget.nextAvailableAtMillis,
+                  request.retryAtMillis
+                ),
+              })
+            : budget
+      ),
+    }),
+  ];
+};
+
+const markConversationStreamOperationInFlightTransition = (
+  state: PrototypeState,
+  operationId: string,
+  nowMillis: number
+): readonly [undefined, PrototypeState] | StoreError => {
+  const found = findConversationStreamOperation(state, operationId);
+  if (
+    found === null ||
+    (found.operation.status !== "prepared" &&
+      found.operation.status !== "retry") ||
+    !Number.isSafeInteger(nowMillis)
+  ) {
+    return storeFailure(
+      "markConversationStreamOperationInFlight",
+      "operation-not-requestable"
+    );
+  }
+  const operation = ConversationStreamOperation.make({
+    ...found.operation,
+    attempt: found.operation.attempt + 1,
+    errorCategory: null,
+    errorCertainty: null,
+    inFlightAtMillis: nowMillis,
+    retryAtMillis: null,
+    status: "in_flight",
+  });
+  const stream = ConversationStreamState.make({
+    ...found.stream,
+    operations: replaceAt(
+      found.stream.operations,
+      found.operationIndex,
+      operation
+    ),
+  });
+  return [
+    undefined,
+    replaceConversationStream(state, found.streamIndex, stream),
+  ];
+};
+
+interface ConversationStreamSettlementRequest {
+  readonly category: string | null;
+  readonly certainty: ConversationStreamOperationOutcomeCertainty | null;
+  readonly nowMillis: number;
+  readonly operationId: string;
+  readonly outcome:
+    | "acknowledged"
+    | "rejected"
+    | "retry"
+    | "stopped_by_user"
+    | "unresolved";
+  readonly retryAtMillis: number | null;
+  readonly slackTs: string | null;
+}
+
+const operationStatusFor = (
+  outcome: ConversationStreamSettlementRequest["outcome"]
+): ConversationStreamOperation["status"] => {
+  if (outcome === "acknowledged" || outcome === "retry") {
+    return outcome;
+  }
+  if (outcome === "stopped_by_user" || outcome === "unresolved") {
+    return outcome;
+  }
+  return "rejected";
+};
+
+const projectConversationStreamSettlement = (
+  stream: ConversationStreamState,
+  operation: ConversationStreamOperation,
+  request: ConversationStreamSettlementRequest
+): ConversationStreamState | StoreError => {
+  let lifecycle = stream.lifecycle;
+  let terminalReason = stream.terminalReason;
+  let slackTs = stream.slackTs;
+  let confirmedOffset = stream.confirmedOffset;
+  let confirmedHash = stream.confirmedHash;
+  let flushDeadlineMillis = stream.flushDeadlineMillis;
+  let stoppedAtMillis = stream.stoppedAtMillis;
+  if (request.outcome === "acknowledged") {
+    const operationCreatesMessage =
+      operation.kind === "native-start" || operation.kind === "fallback-post";
+    if (operationCreatesMessage) {
+      if (request.slackTs === null || request.slackTs.length === 0) {
+        return storeFailure(
+          "settleConversationStreamOperation",
+          "start-ack-omitted-ts"
+        );
+      }
+      slackTs = request.slackTs;
+    }
+    if (operation.kind === "native-stop") {
+      lifecycle = "stopped";
+      stoppedAtMillis = request.nowMillis;
+      terminalReason ??= "completed";
+    } else {
+      confirmedOffset = operation.payloadEndOffset;
+      confirmedHash = sha256(
+        [...stream.cumulativeText].slice(0, confirmedOffset).join("")
+      );
+      flushDeadlineMillis = null;
+    }
+  }
+  if (request.outcome === "stopped_by_user") {
+    lifecycle = "stopped";
+    stoppedAtMillis = request.nowMillis;
+    terminalReason = "stopped_by_user";
+  }
+  if (request.outcome === "rejected" || request.outcome === "unresolved") {
+    lifecycle = "unresolved";
+    stoppedAtMillis = request.nowMillis;
+    terminalReason = request.category ?? request.outcome;
+  }
+  const settledOperation = ConversationStreamOperation.make({
+    ...operation,
+    errorCategory: request.category,
+    errorCertainty: request.certainty,
+    retryAtMillis: request.outcome === "retry" ? request.retryAtMillis : null,
+    settledAtMillis: request.outcome === "retry" ? null : request.nowMillis,
+    status: operationStatusFor(request.outcome),
+  });
+  const operationIndex = stream.operations.findIndex(
+    (candidate) => candidate.id === operation.id
+  );
+  return ConversationStreamState.make({
+    ...stream,
+    confirmedHash,
+    confirmedOffset,
+    flushDeadlineMillis,
+    lifecycle,
+    operations: replaceAt(stream.operations, operationIndex, settledOperation),
+    slackTs,
+    stoppedAtMillis,
+    terminalReason,
+  });
+};
+
+const settleConversationStreamOperationTransition = (
+  state: PrototypeState,
+  request: ConversationStreamSettlementRequest
+): readonly [undefined, PrototypeState] | StoreError => {
+  const found = findConversationStreamOperation(state, request.operationId);
+  if (
+    found === null ||
+    found.operation.status !== "in_flight" ||
+    !Number.isSafeInteger(request.nowMillis)
+  ) {
+    return storeFailure(
+      "settleConversationStreamOperation",
+      "operation-not-in-flight"
+    );
+  }
+  const projected = projectConversationStreamSettlement(
+    found.stream,
+    found.operation,
+    request
+  );
+  if (projected instanceof StoreError) {
+    return projected;
+  }
+  const stream = projected;
+  const isTerminal =
+    stream.lifecycle === "stopped" || stream.lifecycle === "unresolved";
+  let next = isTerminal
+    ? compactTerminalConversationStream(
+        state,
+        found.streamIndex,
+        stream,
+        request.nowMillis
+      )
+    : replaceConversationStream(state, found.streamIndex, stream);
+  if (request.outcome === "retry" && request.retryAtMillis !== null) {
+    next = PrototypeStateSchema.make({
+      ...next,
+      conversationStreamRateBudgets: next.conversationStreamRateBudgets.map(
+        (budget) =>
+          budget.scope === "method" &&
+          budget.workspaceId === found.stream.workspaceId &&
+          budget.method === slackMethodForOperationKind(found.operation.kind)
+            ? ConversationStreamRateBudget.make({
+                ...budget,
+                nextAvailableAtMillis: Math.max(
+                  budget.nextAvailableAtMillis,
+                  request.retryAtMillis ?? budget.nextAvailableAtMillis
+                ),
+              })
+            : budget
+      ),
+    });
+  }
+  if (
+    stream.ownerKind === "participant-turn" &&
+    stream.lifecycle === "stopped"
+  ) {
+    next = enqueueEligibleCompletionReaction(
+      next,
+      stream.threadId,
+      TurnId.make(stream.ownerId)
+    );
+  }
+  return [undefined, next];
+};
+
+const requestConversationStreamFinalizationTransition = (
+  state: PrototypeState,
+  request: {
+    readonly ownerId: string;
+    readonly ownerKind: ConversationStreamOwnerKind;
+    readonly terminalReason: string;
+    readonly threadId: ThreadId;
+  }
+): readonly [readonly string[], PrototypeState] => {
+  const streamIds: string[] = [];
+  const streams = state.conversationStreams.map((stream) => {
+    if (
+      stream.threadId !== request.threadId ||
+      stream.ownerId !== request.ownerId ||
+      stream.ownerKind !== request.ownerKind ||
+      (stream.lifecycle !== "open" && stream.lifecycle !== "finalizing")
+    ) {
+      return stream;
+    }
+    streamIds.push(stream.id);
+    return ConversationStreamState.make({
+      ...stream,
+      lifecycle: "finalizing",
+      replayBoundaryOffset: null,
+      replayCursorOffset: null,
+      terminalReason: stream.terminalReason ?? request.terminalReason,
+    });
+  });
+  return [
+    streamIds,
+    PrototypeStateSchema.make({ ...state, conversationStreams: streams }),
+  ];
+};
+
+const reconcileConversationStreamsOnRestartTransition = (
+  state: PrototypeState,
+  nowMillis: number
+): readonly [readonly string[], PrototypeState] | StoreError => {
+  if (!Number.isSafeInteger(nowMillis) || nowMillis < 0) {
+    return storeFailure(
+      "reconcileConversationStreamsOnRestart",
+      "invalid-restart-time"
+    );
+  }
+  const terminal = state.conversationStreams.filter(
+    (stream) =>
+      stream.lifecycle === "stopped" || stream.lifecycle === "unresolved"
+  );
+  const live = state.conversationStreams.filter(
+    (stream) =>
+      stream.lifecycle !== "stopped" && stream.lifecycle !== "unresolved"
+  );
+  const reconciled = live.map((stream) => {
+    if (stream.lifecycle === "finalizing") {
+      return stream;
+    }
+    const boundary =
+      stream.replayBoundaryOffset ?? [...stream.cumulativeText].length;
+    return ConversationStreamState.make({
+      ...stream,
+      flushDeadlineMillis: null,
+      replayBoundaryOffset: boundary,
+      replayCursorOffset: stream.replayCursorOffset ?? 0,
+    });
+  });
+  const tombstones = terminal.map((stream) =>
+    tombstoneForConversationStream(stream, nowMillis)
+  );
+  return [
+    reconciled.map((stream) => stream.id),
+    PrototypeStateSchema.make({
+      ...state,
+      conversationStreams: reconciled,
+      conversationStreamTombstones: boundConversationStreamTombstones(
+        [...state.conversationStreamTombstones, ...tombstones],
+        nowMillis
+      ),
+    }),
+  ];
+};
+
+const completeFallbackConversationStreamTransition = (
+  state: PrototypeState,
+  streamId: string,
+  terminalReason: string,
+  nowMillis: number
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = findConversationStreamIndex(state, streamId);
+  const stream = state.conversationStreams[index];
+  if (
+    stream === undefined ||
+    stream.mode !== "fallback" ||
+    stream.confirmedOffset !== [...stream.cumulativeText].length ||
+    stream.operations.some(
+      (operation) =>
+        operation.status === "prepared" ||
+        operation.status === "in_flight" ||
+        operation.status === "retry"
+    )
+  ) {
+    return storeFailure(
+      "completeFallbackConversationStream",
+      "fallback-stream-not-complete"
+    );
+  }
+  const stopped = ConversationStreamState.make({
+    ...stream,
+    flushDeadlineMillis: null,
+    lifecycle: "stopped",
+    stoppedAtMillis: nowMillis,
+    terminalReason,
+  });
+  let next = compactTerminalConversationStream(
+    state,
+    index,
+    stopped,
+    nowMillis
+  );
+  if (stopped.ownerKind === "participant-turn") {
+    next = enqueueEligibleCompletionReaction(
+      next,
+      stopped.threadId,
+      TurnId.make(stopped.ownerId)
+    );
+  }
+  return [undefined, next];
+};
+
+const streamChunkRequestFailure = (request: {
+  readonly messageId: string;
+  readonly nowMillis: number;
+  readonly ownerId: string;
+  readonly sequence: number | null;
+}): StoreError | null =>
+  request.messageId.trim().length === 0 ||
+  request.ownerId.trim().length === 0 ||
+  !Number.isSafeInteger(request.nowMillis) ||
+  request.nowMillis < 0 ||
+  (request.sequence !== null &&
+    (!Number.isSafeInteger(request.sequence) || request.sequence < 0))
+    ? storeFailure("acceptConversationStreamChunk", "invalid-stream-chunk")
+    : null;
+
+const existingStreamChunkDecision = (
+  current: ConversationStreamState | undefined,
+  request: { readonly sequence: number; readonly text: string },
+  streamId: string
+): ConversationStreamChunkDecision | StoreError | null => {
+  if (current !== undefined && request.sequence <= current.acceptedSequence) {
+    const evidence = current.chunks.find(
+      (chunk) => chunk.sequence === request.sequence
+    );
+    return evidence?.text === request.text
+      ? { _tag: "Duplicate", streamId }
+      : storeFailure(
+          "acceptConversationStreamChunk",
+          "conflicting-stream-sequence"
+        );
+  }
+  if (request.sequence !== (current?.acceptedSequence ?? -1) + 1) {
+    return storeFailure("acceptConversationStreamChunk", "stream-sequence-gap");
+  }
+  if (current?.lifecycle === "stopped" || current?.lifecycle === "unresolved") {
+    return storeFailure("acceptConversationStreamChunk", "stream-is-terminal");
+  }
+  const exceedsChunkBound =
+    (current?.chunks.length ?? 0) >= MAX_CONVERSATION_STREAM_CHUNKS;
+  return exceedsChunkBound
+    ? storeFailure("acceptConversationStreamChunk", "stream-bound-exceeded")
+    : null;
+};
+
+const completeConversationStreamLocallyTransition = (
+  state: PrototypeState,
+  streamId: string,
+  terminalReason: string,
+  nowMillis: number
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = findConversationStreamIndex(state, streamId);
+  const stream = state.conversationStreams[index];
+  if (
+    stream === undefined ||
+    stream.slackTs !== null ||
+    stream.cumulativeText.trim().length > 0 ||
+    stream.operations.length > 0
+  ) {
+    return storeFailure(
+      "completeConversationStreamLocally",
+      "stream-has-slack-delivery"
+    );
+  }
+  const stopped = replaceConversationStream(
+    state,
+    index,
+    ConversationStreamState.make({
+      ...stream,
+      flushDeadlineMillis: null,
+      lifecycle: "stopped",
+      stoppedAtMillis: nowMillis,
+      terminalReason,
+    })
+  );
+  const terminal = stopped.conversationStreams[index];
+  if (terminal === undefined) {
+    return storeFailure(
+      "completeConversationStreamLocally",
+      "stream-not-found-after-stop"
+    );
+  }
+  return [
+    undefined,
+    compactTerminalConversationStream(stopped, index, terminal, nowMillis),
+  ];
+};
+
+const markConversationStreamUnresolvedTransition = (
+  state: PrototypeState,
+  streamId: string,
+  terminalReason: string,
+  nowMillis: number
+): readonly [undefined, PrototypeState] | StoreError => {
+  const index = findConversationStreamIndex(state, streamId);
+  const stream = state.conversationStreams[index];
+  if (stream === undefined || stream.lifecycle === "stopped") {
+    return storeFailure(
+      "markConversationStreamUnresolved",
+      "stream-not-unresolved-capable"
+    );
+  }
+  const unresolved = ConversationStreamState.make({
+    ...stream,
+    flushDeadlineMillis: null,
+    lifecycle: "unresolved",
+    stoppedAtMillis: nowMillis,
+    terminalReason,
+  });
+  return [
+    undefined,
+    compactTerminalConversationStream(state, index, unresolved, nowMillis),
+  ];
+};
+
+interface ConversationStreamChunkRequest {
+  readonly messageId: string;
+  readonly nowMillis: number;
+  readonly ownerId: string;
+  readonly ownerKind: ConversationStreamOwnerKind;
+  readonly sequence: number | null;
+  readonly text: string;
+  readonly threadId: ThreadId;
+}
+
+const tombstoneStreamChunkDecision = (
+  state: PrototypeState,
+  tombstone: ConversationStreamTombstone,
+  request: ConversationStreamChunkRequest,
+  streamId: string
+): readonly [ConversationStreamChunkDecision, PrototypeState] | StoreError => {
+  if (
+    request.sequence === null ||
+    request.sequence > tombstone.acceptedSequence
+  ) {
+    return storeFailure("acceptConversationStreamChunk", "stream-is-terminal");
+  }
+  const evidence = tombstone.chunkHashes.find(
+    (chunk) => chunk.sequence === request.sequence
+  );
+  return evidence?.textHash === sha256(request.text)
+    ? [{ _tag: "Duplicate", streamId }, state]
+    : storeFailure(
+        "acceptConversationStreamChunk",
+        "conflicting-stream-sequence"
+      );
+};
+
+const conversationStreamAppendFailure = (
+  state: PrototypeState,
+  thread: WorkThreadState,
+  current: ConversationStreamState | undefined,
+  request: ConversationStreamChunkRequest,
+  cumulativeText: string
+): StoreError | null => {
+  if (
+    !conversationStreamOwnerIsRunning(
+      thread,
+      request.ownerKind,
+      request.ownerId
+    )
+  ) {
+    return storeFailure(
+      "acceptConversationStreamChunk",
+      "stream-owner-not-running"
+    );
+  }
+  if (
+    current === undefined &&
+    state.conversationStreams.length >= MAX_CONVERSATION_STREAMS
+  ) {
+    return storeFailure(
+      "acceptConversationStreamChunk",
+      "stream-bound-exceeded"
+    );
+  }
+  return slackCodePointLength(cumulativeText) >
+    SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT
+    ? storeFailure(
+        "acceptConversationStreamChunk",
+        "conversation-message-too-long"
+      )
+    : null;
+};
+
+const appendConversationStreamChunk = (
+  state: PrototypeState,
+  thread: WorkThreadState,
+  current: ConversationStreamState | undefined,
+  streamIndex: number,
+  request: ConversationStreamChunkRequest,
+  sequence: number,
+  streamId: string,
+  workspaceId: string
+): readonly [ConversationStreamChunkDecision, PrototypeState] | StoreError => {
+  const cumulativeText = `${current?.cumulativeText ?? ""}${request.text}`;
+  const appendFailure = conversationStreamAppendFailure(
+    state,
+    thread,
+    current,
+    request,
+    cumulativeText
+  );
+  if (appendFailure !== null) {
+    return appendFailure;
+  }
+  const chunk = ConversationStreamChunkEvidence.make({
+    sequence,
+    text: request.text,
+    textHash: sha256(request.text),
+  });
+  const stream = ConversationStreamState.make({
+    acceptedSequence: sequence,
+    channelId: thread.channelId,
+    chunks: EffectArray.append(current?.chunks ?? [], chunk),
+    compactedConfirmedHash: current?.compactedConfirmedHash ?? sha256(""),
+    compactedConfirmedOffset: current?.compactedConfirmedOffset ?? 0,
+    compactedOperationCount: current?.compactedOperationCount ?? 0,
+    confirmedHash: current?.confirmedHash ?? sha256(""),
+    confirmedOffset: current?.confirmedOffset ?? 0,
+    createdAtMillis: current?.createdAtMillis ?? request.nowMillis,
+    cumulativeHash: sha256(cumulativeText),
+    cumulativeText,
+    flushDeadlineMillis: current?.flushDeadlineMillis ?? null,
+    id: streamId,
+    lifecycle: current?.lifecycle ?? "open",
+    messageId: request.messageId,
+    mode: current?.mode ?? null,
+    operations: current?.operations ?? [],
+    ownerId: request.ownerId,
+    ownerKind: request.ownerKind,
+    recipientUserId:
+      current?.recipientUserId ??
+      conversationStreamRecipient(thread, request.ownerKind, request.ownerId),
+    replayBoundaryOffset: current?.replayBoundaryOffset ?? null,
+    replayCursorOffset: current?.replayCursorOffset ?? null,
+    rootTs: thread.rootTs,
+    slackTs: current?.slackTs ?? null,
+    stoppedAtMillis: current?.stoppedAtMillis ?? null,
+    terminalReason: current?.terminalReason ?? null,
+    threadId: request.threadId,
+    workspaceId,
+  });
+  const conversationStreams =
+    current === undefined
+      ? EffectArray.append(state.conversationStreams, stream)
+      : replaceAt(state.conversationStreams, streamIndex, stream);
+  return [
+    { _tag: "Accepted", streamId },
+    PrototypeStateSchema.make({ ...state, conversationStreams }),
+  ];
+};
+
+const acceptConversationStreamChunkTransition = (
+  state: PrototypeState,
+  request: ConversationStreamChunkRequest
+): readonly [ConversationStreamChunkDecision, PrototypeState] | StoreError => {
+  const requestFailure = streamChunkRequestFailure(request);
+  if (requestFailure !== null) {
+    return requestFailure;
+  }
+  const compactedState = compactStoppedConversationStreams(
+    state,
+    request.nowMillis,
+    true
+  );
+  const thread =
+    compactedState.threads[findThreadIndex(compactedState, request.threadId)];
+  if (thread === undefined) {
+    return storeFailure("acceptConversationStreamChunk", "thread-not-found");
+  }
+  const workspaceId = thread.workspaceId ?? `legacy:${thread.id}`;
+  const streamId = stableConversationStreamId({ ...request, workspaceId });
+  const streamIndex = compactedState.conversationStreams.findIndex(
+    (stream) => stream.id === streamId
+  );
+  const current = compactedState.conversationStreams[streamIndex];
+  const tombstone = compactedState.conversationStreamTombstones.find(
+    (candidate) => candidate.id === streamId
+  );
+  if (tombstone !== undefined) {
+    return tombstoneStreamChunkDecision(
+      compactedState,
+      tombstone,
+      request,
+      streamId
+    );
+  }
+  let acceptedState = compactedState;
+  let acceptedCurrent = current;
+  let acceptedRequest = request;
+  if (request.sequence === null && current !== undefined) {
+    const reconciliation = reconcileUnsequencedConversationStreamChunk(
+      compactedState,
+      current,
+      streamIndex,
+      request,
+      streamId
+    );
+    if (reconciliation instanceof StoreError) {
+      return reconciliation;
+    }
+    if (reconciliation._tag === "Duplicate") {
+      return [{ _tag: "Duplicate", streamId }, reconciliation.state];
+    }
+    acceptedState = reconciliation.value.state;
+    acceptedCurrent = reconciliation.value.current;
+    acceptedRequest = reconciliation.value.request;
+  }
+  const sequence =
+    acceptedRequest.sequence ?? (acceptedCurrent?.acceptedSequence ?? -1) + 1;
+  const existingDecision = existingStreamChunkDecision(
+    acceptedCurrent,
+    { sequence, text: acceptedRequest.text },
+    streamId
+  );
+  if (existingDecision instanceof StoreError) {
+    return existingDecision;
+  }
+  if (existingDecision !== null) {
+    return [existingDecision, acceptedState];
+  }
+  return appendConversationStreamChunk(
+    acceptedState,
+    thread,
+    acceptedCurrent,
+    streamIndex,
+    acceptedRequest,
+    sequence,
+    streamId,
+    workspaceId
+  );
+};
 
 const failTransition = <E>(error: E): Effect.Effect<never, E> =>
   Effect.fail(error);
@@ -299,6 +1724,69 @@ const applicationEventFailureNoticeId = (eventId: string): string =>
 
 const GENERIC_TURN_FAILURE_NOTICE =
   "This conversation turn could not be completed. Please try again.";
+
+const BLOCKED_NOTICE =
+  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
+const ABANDONED_NOTICE =
+  "The uncertain agent turn was abandoned by an operator. Later conversation work can now continue.";
+const RETRY_NOTICE =
+  "An operator acknowledged possible duplicate side effects and retried the uncertain agent turn in a replacement session.";
+
+const recoveryNoticeId = (
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string,
+  kind: "abandon" | "blocked" | "retry",
+  correlationId: string
+): string => {
+  const correlationDigest = createHash("sha256")
+    .update("laborer-recovery-notice-v1\0", "utf8")
+    .update(correlationId, "utf8")
+    .digest("base64url");
+  return `notice:${ownerTurnId(ownerKind, ownerId)}:recovery:${kind}:${correlationDigest}`;
+};
+
+const recoveryNoticeText = (kind: "abandon" | "blocked" | "retry"): string => {
+  if (kind === "blocked") {
+    return BLOCKED_NOTICE;
+  }
+  return kind === "abandon" ? ABANDONED_NOTICE : RETRY_NOTICE;
+};
+
+const ownerTurnId = (
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string
+): TurnId =>
+  ownerKind === "participant-turn"
+    ? TurnId.make(ownerId)
+    : applicationEventTurnId(ownerId);
+
+const appendRecoveryNotice = (
+  thread: WorkThreadState,
+  ownerKind: ConversationStreamOwnerKind,
+  ownerId: string,
+  kind: "abandon" | "blocked" | "retry",
+  correlationId: string
+): readonly OutboundItem[] => {
+  const id = recoveryNoticeId(ownerKind, ownerId, kind, correlationId);
+  if (thread.outbox.some((item) => item.id === id)) {
+    return thread.outbox;
+  }
+  return [
+    ...thread.outbox,
+    OutboundItem.make({
+      deliveryAttempts: 0,
+      id,
+      kind: "operational_notice",
+      lastErrorCategory: null,
+      replyId: null,
+      retryAtMillis: null,
+      slackTs: null,
+      status: "pending",
+      text: recoveryNoticeText(kind),
+      turnId: ownerTurnId(ownerKind, ownerId),
+    }),
+  ];
+};
 
 const turnFailureNotice = (
   turnId: TurnId,
@@ -736,33 +2224,37 @@ const acceptApplicationEventTransition = (
     readonly payload: JsonValue;
     readonly source: string;
   }
-): readonly [ApplicationEventDecision, PrototypeState] | StoreError =>
-  modifyThread<ApplicationEventDecision>(
+): readonly [ApplicationEventDecision, PrototypeState] | StoreError => {
+  const existingOwner = pipe(
+    state.threads,
+    EffectArray.findFirst((thread) =>
+      thread.applicationEvents.some(
+        (candidate) => candidate.eventId === event.eventId
+      )
+    ),
+    Option.getOrNull
+  );
+  if (existingOwner !== null) {
+    const existing = existingOwner.applicationEvents.find(
+      (candidate) => candidate.eventId === event.eventId
+    );
+    if (
+      existingOwner.id === event.conversationId &&
+      existing !== undefined &&
+      sameApplicationEvent(existing, event)
+    ) {
+      return [{ _tag: "Duplicate", eventId: event.eventId }, state];
+    }
+    return storeFailure(
+      "acceptApplicationEvent",
+      "conflicting-application-event-id"
+    );
+  }
+  return modifyThread<ApplicationEventDecision>(
     state,
     event.conversationId,
     "acceptApplicationEvent",
     (thread) => {
-      const duplicate = pipe(
-        thread.applicationEvents,
-        EffectArray.findFirst(
-          (candidate) => candidate.eventId === event.eventId
-        ),
-        Option.getOrNull
-      );
-      if (duplicate !== null) {
-        return sameApplicationEvent(duplicate, event)
-          ? [
-              {
-                _tag: "Duplicate" as const,
-                eventId: event.eventId,
-              },
-              thread,
-            ]
-          : storeFailure(
-              "acceptApplicationEvent",
-              "conflicting-application-event-id"
-            );
-      }
       return [
         { _tag: "Accepted" as const, eventId: event.eventId },
         WorkThreadState.make({
@@ -770,6 +2262,7 @@ const acceptApplicationEventTransition = (
           applicationEvents: EffectArray.append(
             thread.applicationEvents,
             ApplicationEventState.make({
+              blocked: null,
               eventId: event.eventId,
               outcome: null,
               payload: event.payload,
@@ -785,6 +2278,7 @@ const acceptApplicationEventTransition = (
       ];
     }
   );
+};
 
 const claimApplicationEventInThread = (
   thread: WorkThreadState
@@ -792,7 +2286,10 @@ const claimApplicationEventInThread = (
   const activeTurn = pipe(
     thread.turns,
     EffectArray.some(
-      (turn) => turn.status === "running" || turn.status === "awaiting_delivery"
+      (turn) =>
+        turn.status === "running" ||
+        turn.status === "awaiting_delivery" ||
+        turn.status === "blocked"
     )
   );
   if (activeTurn) {
@@ -802,7 +2299,9 @@ const claimApplicationEventInThread = (
     thread.applicationEvents,
     EffectArray.findFirst(
       (event) =>
-        event.status === "running" || event.status === "awaiting_delivery"
+        event.status === "running" ||
+        event.status === "awaiting_delivery" ||
+        event.status === "blocked"
     ),
     Option.getOrNull
   );
@@ -842,6 +2341,15 @@ const enqueueEligibleCompletionReaction = (
   const thread = state.threads[findThreadIndex(state, threadId)];
   const turn = thread?.turns[findTurnIndex(thread, turnId)];
   if (thread === undefined || turn?.outcome?.kind !== "success") {
+    return state;
+  }
+  const conversationStreams = state.conversationStreams.filter(
+    (stream) =>
+      stream.threadId === threadId &&
+      stream.ownerKind === "participant-turn" &&
+      stream.ownerId === turnId
+  );
+  if (conversationStreams.some((stream) => stream.lifecycle !== "stopped")) {
     return state;
   }
   const publicReplies = pipe(
@@ -914,7 +2422,9 @@ const claimTurnInThread = (
     EffectArray.some(
       thread.applicationEvents,
       (event) =>
-        event.status === "running" || event.status === "awaiting_delivery"
+        event.status === "running" ||
+        event.status === "awaiting_delivery" ||
+        event.status === "blocked"
     )
   ) {
     return [null, thread];
@@ -922,11 +2432,17 @@ const claimTurnInThread = (
   const activeTurn = pipe(
     thread.turns,
     EffectArray.findFirst(
-      (turn) => turn.status === "running" || turn.status === "awaiting_delivery"
+      (turn) =>
+        turn.status === "running" ||
+        turn.status === "awaiting_delivery" ||
+        turn.status === "blocked"
     ),
     Option.getOrNull
   );
-  if (activeTurn?.status === "awaiting_delivery") {
+  if (
+    activeTurn?.status === "awaiting_delivery" ||
+    activeTurn?.status === "blocked"
+  ) {
     return [null, thread];
   }
   if (activeTurn?.status === "running") {
@@ -1007,6 +2523,7 @@ const claimTurnInThread = (
   const context = thread.turns.length === 0 ? thread.context : [];
   const turn = TurnState.make({
     attempts: [HandlerAttempt.make({ number: 1, status: "running" })],
+    blocked: null,
     context,
     id: turnId,
     messages,
@@ -1041,6 +2558,260 @@ const claimTurnInThread = (
     }),
   ];
 };
+
+const blockConversationOwnerTransition = (
+  state: PrototypeState,
+  blocked: ConversationBlockedState
+): readonly [undefined, PrototypeState] | StoreError => {
+  const persistedBlocked = ConversationBlockedState.make({ ...blocked });
+  return modifyThread(
+    state,
+    blocked.conversationId,
+    "blockConversationOwner",
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Both owner variants must validate and publish the same atomic durable block transition.
+    (thread) => {
+      const workspaceId = thread.workspaceId ?? `legacy:${thread.id}`;
+      const workspaceMatches =
+        workspaceId === blocked.workspaceId ||
+        (thread.workspaceId === undefined && blocked.workspaceId === "legacy");
+      if (!workspaceMatches) {
+        return storeFailure("blockConversationOwner", "wrong-scope");
+      }
+      if (blocked.ownerKind === "participant-turn") {
+        const index = findTurnIndex(thread, TurnId.make(blocked.ownerId));
+        const turn = thread.turns[index];
+        if (turn?.status === "blocked") {
+          return turn.blocked?.attemptId === blocked.attemptId
+            ? [undefined, thread]
+            : storeFailure("blockConversationOwner", "blocked-owner-conflict");
+        }
+        if (turn?.status !== "running") {
+          return storeFailure("blockConversationOwner", "owner-not-running");
+        }
+        const attempts = turn.attempts.map((attempt, attemptIndex) =>
+          attemptIndex === turn.attempts.length - 1 &&
+          attempt.status === "running"
+            ? HandlerAttempt.make({ ...attempt, status: "interrupted" })
+            : attempt
+        );
+        return [
+          undefined,
+          WorkThreadState.make({
+            ...thread,
+            outbox: appendRecoveryNotice(
+              thread,
+              blocked.ownerKind,
+              blocked.ownerId,
+              "blocked",
+              blocked.attemptId
+            ),
+            turns: replaceAt(
+              thread.turns,
+              index,
+              TurnState.make({
+                ...turn,
+                attempts,
+                blocked: persistedBlocked,
+                status: "blocked",
+              })
+            ),
+          }),
+        ];
+      }
+      const index = findApplicationEventIndex(thread, blocked.ownerId);
+      const event = thread.applicationEvents[index];
+      if (event?.status === "blocked") {
+        return event.blocked?.attemptId === blocked.attemptId
+          ? [undefined, thread]
+          : storeFailure("blockConversationOwner", "blocked-owner-conflict");
+      }
+      if (event?.status !== "running") {
+        return storeFailure("blockConversationOwner", "owner-not-running");
+      }
+      return [
+        undefined,
+        WorkThreadState.make({
+          ...thread,
+          applicationEvents: replaceAt(
+            thread.applicationEvents,
+            index,
+            ApplicationEventState.make({
+              ...event,
+              blocked: persistedBlocked,
+              status: "blocked",
+            })
+          ),
+          outbox: appendRecoveryNotice(
+            thread,
+            blocked.ownerKind,
+            blocked.ownerId,
+            "blocked",
+            blocked.attemptId
+          ),
+        }),
+      ];
+    }
+  );
+};
+
+interface ResolveConversationBlockedRequest {
+  readonly attemptId: string;
+  readonly conversationId: ThreadId;
+  readonly decisionId: string;
+  readonly kind: "abandon" | "retry";
+  readonly ownerId: string;
+  readonly ownerKind: ConversationStreamOwnerKind;
+  readonly replacementAttemptId: string | null;
+  readonly workspaceId: string;
+}
+
+const resolveBlockedTurn = (
+  thread: WorkThreadState,
+  request: ResolveConversationBlockedRequest
+): readonly ["AlreadyResolved" | "Resolved", WorkThreadState] | StoreError => {
+  const index = findTurnIndex(thread, TurnId.make(request.ownerId));
+  const turn = thread.turns[index];
+  if (turn === undefined) {
+    return storeFailure("resolveConversationBlocked", "owner-not-found");
+  }
+  if (turn.status !== "blocked") {
+    return turn.status === "running" ||
+      turn.status === "awaiting_delivery" ||
+      turn.status === "completed"
+      ? ["AlreadyResolved", thread]
+      : storeFailure("resolveConversationBlocked", "owner-not-blocked");
+  }
+  if (
+    turn.blocked?.attemptId !== request.attemptId ||
+    turn.blocked.ownerId !== request.ownerId
+  ) {
+    return storeFailure("resolveConversationBlocked", "blocked-owner-conflict");
+  }
+  const nextTurn =
+    request.kind === "retry"
+      ? TurnState.make({
+          ...turn,
+          attempts: [
+            ...turn.attempts,
+            HandlerAttempt.make({
+              number: turn.attempts.length + 1,
+              status: "running",
+            }),
+          ],
+          blocked: null,
+          status: "running",
+        })
+      : TurnState.make({
+          ...turn,
+          attempts: turn.attempts.map((attempt, attemptIndex) =>
+            attemptIndex === turn.attempts.length - 1
+              ? HandlerAttempt.make({ ...attempt, status: "succeeded" })
+              : attempt
+          ),
+          blocked: null,
+          outcome: HandlerOutcomeState.make({
+            category: null,
+            kind: "success",
+            safeDetail: null,
+          }),
+          status: "awaiting_delivery",
+        });
+  return [
+    "Resolved",
+    settleEligibleTurns(
+      WorkThreadState.make({
+        ...thread,
+        outbox: appendRecoveryNotice(
+          thread,
+          request.ownerKind,
+          request.ownerId,
+          request.kind,
+          request.decisionId
+        ),
+        turns: replaceAt(thread.turns, index, nextTurn),
+      })
+    ),
+  ];
+};
+
+const resolveBlockedApplicationEvent = (
+  thread: WorkThreadState,
+  request: ResolveConversationBlockedRequest
+): readonly ["AlreadyResolved" | "Resolved", WorkThreadState] | StoreError => {
+  const index = findApplicationEventIndex(thread, request.ownerId);
+  const event = thread.applicationEvents[index];
+  if (event === undefined) {
+    return storeFailure("resolveConversationBlocked", "owner-not-found");
+  }
+  if (event.status !== "blocked") {
+    return event.status === "running" ||
+      event.status === "awaiting_delivery" ||
+      event.status === "completed"
+      ? ["AlreadyResolved", thread]
+      : storeFailure("resolveConversationBlocked", "owner-not-blocked");
+  }
+  if (
+    event.blocked?.attemptId !== request.attemptId ||
+    event.blocked.ownerId !== request.ownerId
+  ) {
+    return storeFailure("resolveConversationBlocked", "blocked-owner-conflict");
+  }
+  const nextEvent = ApplicationEventState.make({
+    ...event,
+    blocked: null,
+    outcome:
+      request.kind === "abandon"
+        ? HandlerOutcomeState.make({
+            category: null,
+            kind: "success",
+            safeDetail: null,
+          })
+        : null,
+    status: request.kind === "retry" ? "running" : "awaiting_delivery",
+  });
+  return [
+    "Resolved",
+    settleEligibleApplicationEvents(
+      WorkThreadState.make({
+        ...thread,
+        applicationEvents: replaceAt(
+          thread.applicationEvents,
+          index,
+          nextEvent
+        ),
+        outbox: appendRecoveryNotice(
+          thread,
+          request.ownerKind,
+          request.ownerId,
+          request.kind,
+          request.decisionId
+        ),
+      })
+    ),
+  ];
+};
+
+const resolveConversationBlockedTransition = (
+  state: PrototypeState,
+  request: ResolveConversationBlockedRequest
+): readonly ["AlreadyResolved" | "Resolved", PrototypeState] | StoreError =>
+  modifyThread(
+    state,
+    request.conversationId,
+    "resolveConversationBlocked",
+    (thread) => {
+      const workspaceId = thread.workspaceId ?? `legacy:${thread.id}`;
+      const workspaceMatches =
+        workspaceId === request.workspaceId ||
+        (thread.workspaceId === undefined && request.workspaceId === "legacy");
+      if (!workspaceMatches) {
+        return storeFailure("resolveConversationBlocked", "wrong-scope");
+      }
+      return request.ownerKind === "participant-turn"
+        ? resolveBlockedTurn(thread, request)
+        : resolveBlockedApplicationEvent(thread, request);
+    }
+  );
 
 const acceptReplyTransition = (
   state: PrototypeState,
@@ -1161,6 +2932,10 @@ const makeStore = Effect.fnUntraced(function* (
     );
 
   const service: PrototypeStoreShape = {
+    blockConversationOwner: (blocked) =>
+      transition("blockConversationOwner", (state) =>
+        blockConversationOwnerTransition(state, blocked)
+      ),
     acknowledgements: Ref.get(ref).pipe(
       Effect.map((state) => state.acknowledgements),
       Effect.mapError(() => storeFailure("acknowledgements", "read-failed"))
@@ -1169,6 +2944,16 @@ const makeStore = Effect.fnUntraced(function* (
       Effect.map((state) => state.completionReactions),
       Effect.mapError(() => storeFailure("completionReactions", "read-failed"))
     ),
+    conversationStreams: Ref.get(ref).pipe(
+      Effect.map((state) => state.conversationStreams),
+      Effect.mapError(() => storeFailure("conversationStreams", "read-failed"))
+    ),
+    conversationStreamTombstones: Ref.get(ref).pipe(
+      Effect.map((state) => state.conversationStreamTombstones),
+      Effect.mapError(() =>
+        storeFailure("conversationStreamTombstones", "read-failed")
+      )
+    ),
     accept: (event) =>
       transition("accept", (state) =>
         acceptTransition(state, event, laborerSlackId, initializeNewThreads)
@@ -1176,6 +2961,81 @@ const makeStore = Effect.fnUntraced(function* (
     acceptApplicationEvent: (event) =>
       transition("acceptApplicationEvent", (state) =>
         acceptApplicationEventTransition(state, event)
+      ),
+    acceptConversationStreamChunk: (request) =>
+      transition("acceptConversationStreamChunk", (state) =>
+        acceptConversationStreamChunkTransition(state, request)
+      ),
+    configureConversationStream: (request) =>
+      transition("configureConversationStream", (state) =>
+        configureConversationStreamTransition(state, request)
+      ),
+    prepareConversationStreamOperation: (request) =>
+      transition("prepareConversationStreamOperation", (state) =>
+        prepareConversationStreamOperationTransition(state, request)
+      ),
+    reserveConversationStreamRateSlot: (request) =>
+      transition("reserveConversationStreamRateSlot", (state) =>
+        reserveConversationStreamRateSlotTransition(state, request)
+      ),
+    reserveSlackRateSlot: (request) =>
+      transition("reserveSlackRateSlot", (state) =>
+        reserveSlackRateSlotTransition(state, request)
+      ),
+    deferSlackRateBudget: (request) =>
+      transition("deferSlackRateBudget", (state) =>
+        deferSlackRateBudgetTransition(state, request)
+      ),
+    markConversationStreamOperationInFlight: (operationId, nowMillis) =>
+      transition("markConversationStreamOperationInFlight", (state) =>
+        markConversationStreamOperationInFlightTransition(
+          state,
+          operationId,
+          nowMillis
+        )
+      ),
+    settleConversationStreamOperation: (request) =>
+      transition("settleConversationStreamOperation", (state) =>
+        settleConversationStreamOperationTransition(state, request)
+      ),
+    requestConversationStreamFinalization: (request) =>
+      transition<readonly string[], StoreError>(
+        "requestConversationStreamFinalization",
+        (state) =>
+          requestConversationStreamFinalizationTransition(state, request)
+      ),
+    reconcileConversationStreamsOnRestart: (nowMillis) =>
+      transition<readonly string[], StoreError>(
+        "reconcileConversationStreamsOnRestart",
+        (state) =>
+          reconcileConversationStreamsOnRestartTransition(state, nowMillis)
+      ),
+    completeFallbackConversationStream: (streamId, terminalReason, nowMillis) =>
+      transition("completeFallbackConversationStream", (state) =>
+        completeFallbackConversationStreamTransition(
+          state,
+          streamId,
+          terminalReason,
+          nowMillis
+        )
+      ),
+    completeConversationStreamLocally: (streamId, terminalReason, nowMillis) =>
+      transition("completeConversationStreamLocally", (state) =>
+        completeConversationStreamLocallyTransition(
+          state,
+          streamId,
+          terminalReason,
+          nowMillis
+        )
+      ),
+    markConversationStreamUnresolved: (streamId, terminalReason, nowMillis) =>
+      transition("markConversationStreamUnresolved", (state) =>
+        markConversationStreamUnresolvedTransition(
+          state,
+          streamId,
+          terminalReason,
+          nowMillis
+        )
       ),
     markAcknowledgementActive: (id) =>
       transition("markAcknowledgementActive", (state) =>
@@ -1609,6 +3469,7 @@ const makeStore = Effect.fnUntraced(function* (
                 text: item.text,
                 threadId,
                 turnId: item.turnId,
+                workspaceId: thread.workspaceId ?? `legacy:${thread.id}`,
               } as const,
               WorkThreadState.make({
                 ...thread,
@@ -1755,6 +3616,10 @@ const makeStore = Effect.fnUntraced(function* (
           ];
         })
       ),
+    resolveConversationBlocked: (request) =>
+      transition("resolveConversationBlocked", (state) =>
+        resolveConversationBlockedTransition(state, request)
+      ),
     abandonBlocked: (threadId) =>
       transition("abandonBlocked", (state) =>
         modifyThread(state, threadId, "abandonBlocked", (thread) => {
@@ -1811,6 +3676,135 @@ const duplicateValue = (values: readonly string[]): string | null => {
   return null;
 };
 
+interface ReconciledConversationStreamChunk {
+  readonly current: ConversationStreamState;
+  readonly request: ConversationStreamChunkRequest;
+  readonly state: PrototypeState;
+}
+
+const commonCodePointPrefixLength = (
+  left: readonly string[],
+  right: readonly string[]
+): number => {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < length && left[index] === right[index]) {
+    index += 1;
+  }
+  return index;
+};
+
+const withReplayCursor = (
+  state: PrototypeState,
+  streamIndex: number,
+  stream: ConversationStreamState,
+  replayCursorOffset: number | null
+): PrototypeState =>
+  replaceConversationStream(
+    state,
+    streamIndex,
+    ConversationStreamState.make({
+      ...stream,
+      replayBoundaryOffset:
+        replayCursorOffset === null ? null : stream.replayBoundaryOffset,
+      replayCursorOffset,
+    })
+  );
+
+const reconcileUnsequencedConversationStreamChunk = (
+  state: PrototypeState,
+  current: ConversationStreamState,
+  streamIndex: number,
+  request: ConversationStreamChunkRequest,
+  streamId: string
+):
+  | {
+      readonly _tag: "Append";
+      readonly value: ReconciledConversationStreamChunk;
+    }
+  | { readonly _tag: "Duplicate"; readonly state: PrototypeState }
+  | StoreError => {
+  const boundary = current.replayBoundaryOffset;
+  const cursor = current.replayCursorOffset;
+  if (boundary === null || cursor === null) {
+    return {
+      _tag: "Append",
+      value: { current, request, state },
+    };
+  }
+  if (cursor < 0 || cursor > boundary) {
+    return storeFailure(
+      "acceptConversationStreamChunk",
+      "invalid-stream-replay-cursor"
+    );
+  }
+  if (cursor === boundary) {
+    const nextState = withReplayCursor(state, streamIndex, current, null);
+    const nextCurrent = nextState.conversationStreams[streamIndex];
+    if (nextCurrent === undefined) {
+      return storeFailure(
+        "acceptConversationStreamChunk",
+        "stream-not-found-after-replay"
+      );
+    }
+    return {
+      _tag: "Append",
+      value: { current: nextCurrent, request, state: nextState },
+    };
+  }
+  const durableRemainder = [...current.cumulativeText].slice(cursor, boundary);
+  const incoming = [...request.text];
+  const commonLength = commonCodePointPrefixLength(durableRemainder, incoming);
+  if (commonLength === incoming.length) {
+    return {
+      _tag: "Duplicate",
+      state: withReplayCursor(
+        state,
+        streamIndex,
+        current,
+        cursor + incoming.length
+      ),
+    };
+  }
+  if (commonLength === durableRemainder.length) {
+    const continuation = incoming.slice(commonLength).join("");
+    const nextState = withReplayCursor(state, streamIndex, current, null);
+    const nextCurrent = nextState.conversationStreams[streamIndex];
+    if (nextCurrent === undefined) {
+      return storeFailure(
+        "acceptConversationStreamChunk",
+        "stream-not-found-after-replay"
+      );
+    }
+    return {
+      _tag: "Append",
+      value: {
+        current: nextCurrent,
+        request: { ...request, text: continuation },
+        state: nextState,
+      },
+    };
+  }
+  if (cursor === 0 && commonLength === 0) {
+    const nextState = withReplayCursor(state, streamIndex, current, null);
+    const nextCurrent = nextState.conversationStreams[streamIndex];
+    if (nextCurrent === undefined) {
+      return storeFailure(
+        "acceptConversationStreamChunk",
+        "stream-not-found-after-replay"
+      );
+    }
+    return {
+      _tag: "Append",
+      value: { current: nextCurrent, request, state: nextState },
+    };
+  }
+  return storeFailure(
+    "acceptConversationStreamChunk",
+    `conflicting-stream-replay:${streamId}`
+  );
+};
+
 const expectedAttemptStatus = (
   turn: TurnState,
   index: number
@@ -1820,6 +3814,9 @@ const expectedAttemptStatus = (
   }
   if (turn.status === "running") {
     return "running";
+  }
+  if (turn.status === "blocked") {
+    return "interrupted";
   }
   return turn.outcome?.kind === "success" ? "succeeded" : "failed";
 };
@@ -1890,6 +3887,15 @@ const validateTurn = (turn: TurnState): StoreError | null => {
     return outcomeFailure;
   }
   const latest = turn.attempts.at(-1);
+  const blockIsCoherent =
+    turn.status === "blocked"
+      ? turn.blocked != null &&
+        turn.outcome === null &&
+        latest?.status === "interrupted"
+      : turn.blocked == null;
+  if (!blockIsCoherent) {
+    return storeFailure("validate", "invalid-blocked-turn");
+  }
   if (
     turn.status === "running" &&
     (latest?.status !== "running" || turn.outcome !== null)
@@ -1898,6 +3904,7 @@ const validateTurn = (turn: TurnState): StoreError | null => {
   }
   if (
     turn.status !== "running" &&
+    turn.status !== "blocked" &&
     (latest?.status === "running" || turn.outcome === null)
   ) {
     return storeFailure("validate", "invalid-terminal-turn");
@@ -2127,14 +4134,19 @@ const validateThreadTurns = (
     return storeFailure("validate", "duplicate-turn-id");
   }
   const activeTurns = thread.turns.filter(
-    (turn) => turn.status === "running" || turn.status === "awaiting_delivery"
+    (turn) =>
+      turn.status === "running" ||
+      turn.status === "awaiting_delivery" ||
+      turn.status === "blocked"
   );
   if (activeTurns.length > 1) {
     return storeFailure("validate", "multiple-active-turns");
   }
   for (const [turnIndex, turn] of thread.turns.entries()) {
     const isActive =
-      turn.status === "running" || turn.status === "awaiting_delivery";
+      turn.status === "running" ||
+      turn.status === "awaiting_delivery" ||
+      turn.status === "blocked";
     if (isActive && turnIndex !== thread.turns.length - 1) {
       return storeFailure("validate", "active-turn-not-last");
     }
@@ -2171,14 +4183,32 @@ const isUnsettledOutbound = (item: OutboundItem): boolean =>
   item.status === "delivering" ||
   item.status === "blocked";
 
+const runningOwnerHasOnlyPendingNewOutbound = (
+  ownerId: TurnId,
+  outbox: readonly OutboundItem[]
+): boolean => {
+  const retryNoticePrefix = `notice:${ownerId}:recovery:retry`;
+  let latestRetryNoticeIndex = -1;
+  for (const [index, item] of outbox.entries()) {
+    if (item.id.startsWith(retryNoticePrefix)) {
+      latestRetryNoticeIndex = index;
+    }
+  }
+  const newOutbound = outbox.slice(latestRetryNoticeIndex + 1);
+  return EffectArray.every(newOutbound, (item) => item.status === "pending");
+};
+
 const validateTurnSettlement = (
   turn: TurnState,
   outbox: readonly OutboundItem[]
 ): StoreError | null => {
   if (turn.status === "running") {
-    return EffectArray.some(outbox, (item) => item.status !== "pending")
-      ? storeFailure("validate", "running-turn-with-nonpending-outbound")
-      : null;
+    return runningOwnerHasOnlyPendingNewOutbound(turn.id, outbox)
+      ? null
+      : storeFailure("validate", "running-turn-with-nonpending-outbound");
+  }
+  if (turn.status === "blocked") {
+    return null;
   }
   if (turn.status === "awaiting_delivery") {
     return EffectArray.some(outbox, isUnsettledOutbound)
@@ -2218,6 +4248,9 @@ const validateOperationalNotice = (
       ? `notice:${turn.id}:${turn.outcome.category}`
       : null;
   if (notice.id === handlerNoticeId) {
+    return null;
+  }
+  if (notice.id.startsWith(`notice:${turn.id}:recovery:`)) {
     return null;
   }
   const deliveryTarget = pipe(
@@ -2264,7 +4297,16 @@ const validateTurnOutbox = (
 const validateApplicationEventOutcome = (
   event: ApplicationEventState
 ): StoreError | null => {
-  const isActive = event.status === "pending" || event.status === "running";
+  const isActive =
+    event.status === "pending" ||
+    event.status === "running" ||
+    event.status === "blocked";
+  if (
+    (event.status === "blocked") !== (event.blocked != null) ||
+    (event.blocked != null && event.blocked.ownerId !== event.eventId)
+  ) {
+    return storeFailure("validate", "invalid-blocked-application-event");
+  }
   if (
     (isActive && event.outcome !== null) ||
     (!isActive && event.outcome === null)
@@ -2299,9 +4341,15 @@ const validateApplicationEventSettlement = (
   if (event.status === "pending" && outbox.length > 0) {
     return storeFailure("validate", "pending-application-event-with-outbound");
   }
+  if (event.status === "blocked") {
+    return null;
+  }
   if (
     event.status === "running" &&
-    EffectArray.some(outbox, (item) => item.status !== "pending")
+    !runningOwnerHasOnlyPendingNewOutbound(
+      applicationEventTurnId(event.eventId),
+      outbox
+    )
   ) {
     return storeFailure(
       "validate",
@@ -2524,10 +4572,14 @@ const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
   }
   if (
     duplicateValue(
-      state.acknowledgements.map(
-        (acknowledgement) =>
-          `${acknowledgement.channelId}:${acknowledgement.messageTs}`
-      )
+      state.acknowledgements.map((acknowledgement) => {
+        const activationThread = state.threads.find(
+          (thread) =>
+            thread.channelId === acknowledgement.channelId &&
+            thread.activationEventId === acknowledgement.eventId
+        );
+        return `${activationThread?.workspaceId ?? ""}\u0000${acknowledgement.channelId}\u0000${acknowledgement.messageTs}`;
+      })
     ) !== null
   ) {
     return storeFailure("validate", "duplicate-activation-acknowledgement");
@@ -2598,6 +4650,451 @@ const validateCompletionReactions = (
   return null;
 };
 
+const operationKindMatchesMode = (
+  mode: ConversationStreamMode | null,
+  kind: ConversationStreamOperationKind
+): boolean => {
+  if (mode === "native") {
+    return (
+      kind === "native-start" ||
+      kind === "native-append" ||
+      kind === "native-stop"
+    );
+  }
+  return mode === "fallback"
+    ? kind === "fallback-post" || kind === "fallback-update"
+    : false;
+};
+
+const invalidOperationTimestamps = (
+  operation: ConversationStreamOperation
+): boolean => {
+  const hasInFlight = operation.inFlightAtMillis !== null;
+  const hasRetry = operation.retryAtMillis !== null;
+  const hasSettlement = operation.settledAtMillis !== null;
+  if (
+    !Number.isSafeInteger(operation.preparedAtMillis) ||
+    operation.preparedAtMillis < 0 ||
+    (hasInFlight &&
+      (!Number.isSafeInteger(operation.inFlightAtMillis) ||
+        (operation.inFlightAtMillis ?? -1) < operation.preparedAtMillis)) ||
+    (hasRetry &&
+      (!Number.isSafeInteger(operation.retryAtMillis) ||
+        (operation.retryAtMillis ?? -1) < (operation.inFlightAtMillis ?? 0))) ||
+    (hasSettlement &&
+      (!Number.isSafeInteger(operation.settledAtMillis) ||
+        (operation.settledAtMillis ?? -1) < (operation.inFlightAtMillis ?? 0)))
+  ) {
+    return true;
+  }
+  switch (operation.status) {
+    case "prepared":
+      return (
+        hasInFlight || hasRetry || hasSettlement || operation.attempt !== 0
+      );
+    case "in_flight":
+      return !hasInFlight || hasRetry || hasSettlement || operation.attempt < 1;
+    case "retry":
+      return (
+        !(hasInFlight && hasRetry) || hasSettlement || operation.attempt < 1
+      );
+    case "acknowledged":
+    case "rejected":
+    case "stopped_by_user":
+    case "unresolved":
+      return (
+        !hasInFlight || hasRetry || !hasSettlement || operation.attempt < 1
+      );
+    default:
+      return true;
+  }
+};
+
+const invalidConversationStreamOperation = (
+  operation: ConversationStreamOperation,
+  stream: ConversationStreamState
+): boolean => {
+  const operationIsActive =
+    operation.status === "prepared" ||
+    operation.status === "in_flight" ||
+    operation.status === "retry";
+  const invalidActiveNativeAppend =
+    operation.kind === "native-append" &&
+    operationIsActive &&
+    ((stream.lifecycle !== "open" && stream.lifecycle !== "finalizing") ||
+      operation.payloadStartOffset !== stream.confirmedOffset ||
+      operation.payloadEndOffset <= stream.confirmedOffset);
+  return (
+    !operationKindMatchesMode(stream.mode, operation.kind) ||
+    operation.payloadHash !== sha256(operation.payloadText) ||
+    !Number.isSafeInteger(operation.payloadStartOffset) ||
+    !Number.isSafeInteger(operation.payloadEndOffset) ||
+    operation.payloadStartOffset < 0 ||
+    operation.payloadEndOffset < operation.payloadStartOffset ||
+    operation.payloadEndOffset > [...stream.cumulativeText].length ||
+    (operation.kind === "native-stop"
+      ? operation.payloadText.length > 0 ||
+        operation.payloadStartOffset !== operation.payloadEndOffset
+      : operation.payloadText !==
+        [...stream.cumulativeText]
+          .slice(operation.payloadStartOffset, operation.payloadEndOffset)
+          .join("")) ||
+    !Number.isSafeInteger(operation.attempt) ||
+    operation.attempt < 0 ||
+    operation.attempt > MAX_CONVERSATION_STREAM_OPERATION_ATTEMPTS ||
+    invalidOperationTimestamps(operation) ||
+    ((operation.kind === "native-append" ||
+      operation.kind === "native-stop" ||
+      operation.kind === "fallback-update") &&
+      stream.slackTs === null) ||
+    ((operation.status === "rejected" || operation.status === "unresolved") &&
+      operation.errorCategory === null) ||
+    (operation.status === "rejected" &&
+      operation.errorCertainty !== "definitely-rejected") ||
+    (operation.status === "stopped_by_user" &&
+      (operation.errorCategory !== "stopped_by_user" ||
+        operation.errorCertainty !== "definitely-rejected")) ||
+    (operation.status === "unresolved" &&
+      operation.errorCertainty !== "unknown") ||
+    invalidActiveNativeAppend
+  );
+};
+
+const conversationStreamOwnerStatusIsCompatible = (
+  state: PrototypeState,
+  stream: ConversationStreamState
+): boolean => {
+  const thread = state.threads.find(
+    (candidate) => candidate.id === stream.threadId
+  );
+  if (thread === undefined) {
+    return false;
+  }
+  if (stream.lifecycle === "stopped" || stream.lifecycle === "unresolved") {
+    return true;
+  }
+  if (
+    stream.lifecycle === "finalizing" &&
+    stream.terminalReason === "restart"
+  ) {
+    return true;
+  }
+  if (stream.ownerKind === "participant-turn") {
+    return (
+      thread.turns.find((turn) => turn.id === stream.ownerId)?.status ===
+      "running"
+    );
+  }
+  return (
+    thread.applicationEvents.find((event) => event.eventId === stream.ownerId)
+      ?.status === "running"
+  );
+};
+
+const invalidConversationStreamReplayCursor = (
+  stream: ConversationStreamState,
+  totalOffset: number
+): boolean => {
+  const hasReplayCursor =
+    stream.replayBoundaryOffset !== null || stream.replayCursorOffset !== null;
+  if (!hasReplayCursor) {
+    return false;
+  }
+  const lifecycleIsValid =
+    (stream.lifecycle === "open" && stream.terminalReason === null) ||
+    (stream.lifecycle === "finalizing" && stream.terminalReason === "restart");
+  return (
+    stream.replayBoundaryOffset === null ||
+    stream.replayCursorOffset === null ||
+    !lifecycleIsValid ||
+    stream.replayCursorOffset < 0 ||
+    stream.replayBoundaryOffset < stream.replayCursorOffset ||
+    stream.replayBoundaryOffset > totalOffset
+  );
+};
+
+const conversationStreamFailure = (
+  state: PrototypeState,
+  stream: ConversationStreamState,
+  operationIds: string[]
+): StoreError | null => {
+  const totalOffset = slackCodePointLength(stream.cumulativeText);
+  const expectedId = stableConversationStreamId({
+    messageId: stream.messageId,
+    ownerId: stream.ownerId,
+    ownerKind: stream.ownerKind,
+    threadId: stream.threadId,
+    workspaceId: stream.workspaceId,
+  });
+  const reconstructed = stream.chunks.map((chunk) => chunk.text).join("");
+  const activeCount = stream.operations.filter(
+    (operation) =>
+      operation.status === "prepared" ||
+      operation.status === "in_flight" ||
+      operation.status === "retry"
+  ).length;
+  const hasInvalidChunks =
+    stream.chunks.length === 0 ||
+    stream.chunks.length > MAX_CONVERSATION_STREAM_CHUNKS ||
+    stream.acceptedSequence !== stream.chunks.length - 1 ||
+    stream.chunks.some(
+      (chunk, index) =>
+        chunk.sequence !== index || chunk.textHash !== sha256(chunk.text)
+    );
+  const hasInvalidText =
+    reconstructed !== stream.cumulativeText ||
+    stream.cumulativeHash !== sha256(stream.cumulativeText) ||
+    totalOffset > SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT;
+  const hasInvalidConfirmation =
+    stream.confirmedOffset < 0 ||
+    stream.confirmedOffset > totalOffset ||
+    stream.confirmedHash !==
+      sha256(
+        [...stream.cumulativeText].slice(0, stream.confirmedOffset).join("")
+      );
+  const hasInvalidCompaction =
+    !Number.isSafeInteger(stream.compactedOperationCount) ||
+    stream.compactedOperationCount < 0 ||
+    !Number.isSafeInteger(stream.compactedConfirmedOffset) ||
+    stream.compactedConfirmedOffset < 0 ||
+    stream.compactedConfirmedOffset > stream.confirmedOffset ||
+    (stream.compactedConfirmedHash !== "" &&
+      stream.compactedConfirmedHash !==
+        sha256(
+          [...stream.cumulativeText]
+            .slice(0, stream.compactedConfirmedOffset)
+            .join("")
+        ));
+  const hasInvalidTimes =
+    !Number.isSafeInteger(stream.createdAtMillis) ||
+    stream.createdAtMillis < 0 ||
+    (stream.stoppedAtMillis !== null &&
+      (!Number.isSafeInteger(stream.stoppedAtMillis) ||
+        stream.stoppedAtMillis < stream.createdAtMillis)) ||
+    (stream.lifecycle === "stopped" || stream.lifecycle === "unresolved") !==
+      (stream.stoppedAtMillis !== null);
+  const terminalWithActiveOperation =
+    (stream.lifecycle === "stopped" || stream.lifecycle === "unresolved") &&
+    activeCount > 0;
+  const terminalOutcomeMismatch = stream.operations.some(
+    (operation) =>
+      ((operation.status === "unresolved" || operation.status === "rejected") &&
+        stream.lifecycle !== "unresolved") ||
+      (operation.status === "stopped_by_user" && stream.lifecycle !== "stopped")
+  );
+  const invalidReplayCursor = invalidConversationStreamReplayCursor(
+    stream,
+    totalOffset
+  );
+  if (
+    stream.id !== expectedId ||
+    hasInvalidChunks ||
+    hasInvalidText ||
+    hasInvalidConfirmation ||
+    hasInvalidCompaction ||
+    hasInvalidTimes ||
+    activeCount > 1 ||
+    terminalWithActiveOperation ||
+    terminalOutcomeMismatch ||
+    invalidReplayCursor ||
+    !conversationStreamOwnerStatusIsCompatible(state, stream) ||
+    stream.operations.length > MAX_CONVERSATION_STREAM_OPERATIONS
+  ) {
+    return storeFailure("validate", "invalid-conversation-stream-state");
+  }
+  for (const operation of stream.operations) {
+    operationIds.push(operation.id);
+    if (invalidConversationStreamOperation(operation, stream)) {
+      return storeFailure("validate", "invalid-conversation-stream-operation");
+    }
+  }
+  return null;
+};
+
+const conversationStreamRecordIdentityFailure = (
+  state: PrototypeState,
+  record: {
+    readonly channelId: string;
+    readonly id: string;
+    readonly messageId: string;
+    readonly ownerId: string;
+    readonly ownerKind: ConversationStreamOwnerKind;
+    readonly recipientUserId: string | null;
+    readonly rootTs: string;
+    readonly threadId: ThreadId;
+    readonly workspaceId: string;
+  }
+): StoreError | null => {
+  const thread = state.threads.find(
+    (candidate) => candidate.id === record.threadId
+  );
+  const expectedWorkspaceId =
+    thread?.workspaceId ?? (thread === undefined ? "" : `legacy:${thread.id}`);
+  if (
+    thread === undefined ||
+    record.workspaceId !== expectedWorkspaceId ||
+    record.channelId !== thread.channelId ||
+    record.rootTs !== thread.rootTs ||
+    record.threadId !==
+      canonicalThreadId(thread.channelId, thread.rootTs, thread.workspaceId) ||
+    !conversationStreamOwnerExists(thread, record.ownerKind, record.ownerId) ||
+    !recipientBelongsToConversationStreamOwner(
+      thread,
+      record.ownerKind,
+      record.ownerId,
+      record.recipientUserId
+    ) ||
+    record.id !== stableConversationStreamId(record)
+  ) {
+    return storeFailure("validate", "invalid-conversation-stream-identity");
+  }
+  return null;
+};
+
+const conversationStreamTombstoneFailure = (
+  state: PrototypeState,
+  tombstone: ConversationStreamTombstone
+): StoreError | null => {
+  const identityFailure = conversationStreamRecordIdentityFailure(
+    state,
+    tombstone
+  );
+  if (identityFailure !== null) {
+    return identityFailure;
+  }
+  const invalidOperationEvidence = tombstone.operations.some((operation) => {
+    const hasInFlight = operation.inFlightAtMillis !== null;
+    const hasSettlement = operation.settledAtMillis !== null;
+    return (
+      !(
+        operationKindMatchesMode(tombstone.mode, operation.kind) &&
+        Number.isSafeInteger(operation.attempt)
+      ) ||
+      operation.attempt < 1 ||
+      operation.attempt > MAX_CONVERSATION_STREAM_OPERATION_ATTEMPTS ||
+      !Number.isSafeInteger(operation.preparedAtMillis) ||
+      operation.preparedAtMillis < 0 ||
+      !hasInFlight ||
+      !Number.isSafeInteger(operation.inFlightAtMillis) ||
+      (operation.inFlightAtMillis ?? -1) < operation.preparedAtMillis ||
+      !hasSettlement ||
+      !Number.isSafeInteger(operation.settledAtMillis) ||
+      (operation.settledAtMillis ?? -1) < (operation.inFlightAtMillis ?? 0) ||
+      operation.payloadStartOffset < 0 ||
+      operation.payloadEndOffset < operation.payloadStartOffset ||
+      operation.payloadHash.trim().length === 0 ||
+      ((operation.status === "rejected" || operation.status === "unresolved") &&
+        operation.errorCategory === null) ||
+      (operation.status === "rejected" &&
+        operation.errorCertainty !== "definitely-rejected") ||
+      (operation.status === "stopped_by_user" &&
+        (operation.errorCategory !== "stopped_by_user" ||
+          operation.errorCertainty !== "definitely-rejected")) ||
+      (operation.status === "unresolved" &&
+        operation.errorCertainty !== "unknown") ||
+      ((operation.status === "rejected" || operation.status === "unresolved") &&
+        tombstone.lifecycle !== "unresolved") ||
+      (operation.status === "stopped_by_user" &&
+        tombstone.lifecycle !== "stopped")
+    );
+  });
+  if (
+    !Number.isSafeInteger(tombstone.stoppedAtMillis) ||
+    tombstone.stoppedAtMillis < 0 ||
+    tombstone.acceptedSequence !== tombstone.chunkHashes.length - 1 ||
+    tombstone.chunkHashes.some(
+      (chunk, index) =>
+        chunk.sequence !== index || chunk.textHash.trim().length === 0
+    ) ||
+    tombstone.cumulativeHash.trim().length === 0 ||
+    tombstone.confirmedHash.trim().length === 0 ||
+    !Number.isSafeInteger(tombstone.confirmedOffset) ||
+    tombstone.confirmedOffset < 0 ||
+    tombstone.terminalReason.trim().length === 0 ||
+    invalidOperationEvidence
+  ) {
+    return storeFailure("validate", "invalid-conversation-stream-tombstone");
+  }
+  return null;
+};
+
+const validateConversationStreams = (
+  state: PrototypeState
+): StoreError | null => {
+  const duplicateStreamId = duplicateValue(
+    state.conversationStreams.map((stream) => stream.id)
+  );
+  const duplicateBudget = duplicateValue(
+    state.conversationStreamRateBudgets.map(
+      (budget) =>
+        `${budget.workspaceId}\u0000${budget.method}\u0000${budget.scope}\u0000${budget.channelId ?? ""}`
+    )
+  );
+  const recordIdentities = [
+    ...state.conversationStreams,
+    ...state.conversationStreamTombstones,
+  ];
+  const duplicateOwnerMessage = duplicateValue(
+    recordIdentities.map(
+      (record) =>
+        `${record.threadId}\u0000${record.ownerKind}\u0000${record.ownerId}\u0000${record.messageId}`
+    )
+  );
+  const duplicateRecordId = duplicateValue(
+    recordIdentities.map((record) => record.id)
+  );
+  if (
+    state.conversationStreams.length > MAX_CONVERSATION_STREAMS ||
+    state.conversationStreamTombstones.length >
+      MAX_CONVERSATION_STREAM_TOMBSTONES ||
+    tombstoneEncodedBytes(state.conversationStreamTombstones) >
+      MAX_CONVERSATION_STREAM_TOMBSTONE_BYTES ||
+    state.conversationStreamRateBudgets.length >
+      MAX_CONVERSATION_STREAM_RATE_BUDGETS ||
+    duplicateStreamId !== null ||
+    duplicateBudget !== null ||
+    duplicateOwnerMessage !== null ||
+    duplicateRecordId !== null
+  ) {
+    return storeFailure("validate", "invalid-conversation-stream-collection");
+  }
+  const operationIds: string[] = [];
+  for (const stream of state.conversationStreams) {
+    const identityFailure = conversationStreamRecordIdentityFailure(
+      state,
+      stream
+    );
+    if (identityFailure !== null) {
+      return identityFailure;
+    }
+    const failure = conversationStreamFailure(state, stream, operationIds);
+    if (failure !== null) {
+      return failure;
+    }
+  }
+  for (const tombstone of state.conversationStreamTombstones) {
+    const failure = conversationStreamTombstoneFailure(state, tombstone);
+    if (failure !== null) {
+      return failure;
+    }
+  }
+  if (duplicateValue(operationIds) !== null) {
+    return storeFailure("validate", "duplicate-conversation-stream-operation");
+  }
+  const invalidBudget = state.conversationStreamRateBudgets.some(
+    (budget) =>
+      !Number.isSafeInteger(budget.nextAvailableAtMillis) ||
+      budget.nextAvailableAtMillis < 0 ||
+      budget.method.trim().length === 0 ||
+      (budget.scope === "method" && budget.channelId !== null) ||
+      (budget.scope === "channel" &&
+        (budget.method !== "chat.postMessage" || budget.channelId === null))
+  );
+  return invalidBudget
+    ? storeFailure("validate", "invalid-conversation-stream-rate-budget")
+    : null;
+};
+
 const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   const acknowledgementFailure = validateAcknowledgements(state);
   if (acknowledgementFailure !== null) {
@@ -2621,6 +5118,10 @@ const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   }
   if (duplicateValue(state.threads.map((thread) => thread.id)) !== null) {
     return storeFailure("validate", "duplicate-thread-id");
+  }
+  const streamFailure = validateConversationStreams(state);
+  if (streamFailure !== null) {
+    return streamFailure;
   }
   if (
     EffectArray.some(
@@ -2652,6 +5153,14 @@ const validateState = (state: PrototypeState) =>
   })(state).pipe(
     Effect.mapError(() => storeFailure("validate", "invalid-state")),
     Effect.flatMap((decoded) => {
+      if (
+        new TextEncoder().encode(JSON.stringify(decoded)).byteLength >
+        MAX_RUNNER_STATE_BYTES
+      ) {
+        return Effect.fail(
+          storeFailure("validate", "state-byte-bound-exceeded")
+        );
+      }
       const failure = semanticStateFailure(decoded);
       return failure === null ? Effect.void : Effect.fail(failure);
     })
@@ -2755,7 +5264,13 @@ const persistSnapshotPromise = async (
     const file = await open(temporaryPath, "wx", 0o600);
     try {
       stage = "write-temporary-file";
-      await file.writeFile(JSON.stringify(state), { encoding: "utf8", signal });
+      const encoded = JSON.stringify(state);
+      if (
+        new TextEncoder().encode(encoded).byteLength > MAX_RUNNER_STATE_BYTES
+      ) {
+        throw new Error("Runner state exceeds its byte bound");
+      }
+      await file.writeFile(encoded, { encoding: "utf8", signal });
       stage = "sync-temporary-file";
       await file.sync();
     } finally {
@@ -2852,6 +5367,10 @@ const readSnapshotPromise = async (
     });
     const file = await openRegularFileNoFollow(path, "load-snapshot");
     try {
+      const metadata = await file.stat();
+      if (metadata.size > MAX_RUNNER_STATE_BYTES) {
+        throw new Error("Runner state exceeds its byte bound");
+      }
       const source = fatalUtf8Decoder.decode(await file.readFile());
       await verifyRetainedDirectory(directory, "load-snapshot");
       return JSON.parse(source) as unknown;
@@ -2916,6 +5435,187 @@ const participantInputQueueFromUnassigned = (
   );
 };
 
+const numericOperationTimes = (
+  operations: readonly Record<string, unknown>[],
+  key: "preparedAtMillis" | "settledAtMillis"
+): number[] =>
+  operations
+    .map((operation) => operation[key])
+    .filter((time): time is number => typeof time === "number");
+
+const inferredStoppedAtMillis = (
+  candidate: Record<string, unknown>,
+  settledTimes: readonly number[],
+  createdAtMillis: number
+): number | null => {
+  if (candidate.lifecycle !== "stopped") {
+    return null;
+  }
+  return settledTimes.length === 0
+    ? createdAtMillis
+    : Math.max(...settledTimes);
+};
+
+const missingMigrationField = (
+  candidate: Record<string, unknown>,
+  key: string,
+  value: unknown
+): Record<string, unknown> =>
+  Object.hasOwn(candidate, key) ? {} : { [key]: value };
+
+const migrateConversationStream = (
+  candidate: unknown
+): { readonly changed: boolean; readonly value: unknown } => {
+  if (!isUnknownRecord(candidate)) {
+    return { changed: false, value: candidate };
+  }
+  const operations = Array.isArray(candidate.operations)
+    ? candidate.operations.filter(isUnknownRecord)
+    : [];
+  const migratedOperations = operations.map((operation) => ({
+    ...operation,
+    ...missingMigrationField(operation, "errorCertainty", null),
+  }));
+  const preparedTimes = numericOperationTimes(operations, "preparedAtMillis");
+  const settledTimes = numericOperationTimes(operations, "settledAtMillis");
+  const createdAtMillis =
+    preparedTimes.length === 0 ? 0 : Math.min(...preparedTimes);
+  const stoppedAtMillis = inferredStoppedAtMillis(
+    candidate,
+    settledTimes,
+    createdAtMillis
+  );
+  const additions = {
+    ...missingMigrationField(candidate, "compactedConfirmedHash", sha256("")),
+    ...missingMigrationField(candidate, "compactedConfirmedOffset", 0),
+    ...missingMigrationField(candidate, "compactedOperationCount", 0),
+    ...missingMigrationField(candidate, "createdAtMillis", createdAtMillis),
+    ...(migratedOperations.some(
+      (operation, index) => operation !== operations[index]
+    )
+      ? { operations: migratedOperations }
+      : {}),
+    ...missingMigrationField(candidate, "replayBoundaryOffset", null),
+    ...missingMigrationField(candidate, "replayCursorOffset", null),
+    ...missingMigrationField(candidate, "stoppedAtMillis", stoppedAtMillis),
+  };
+  return Object.keys(additions).length === 0
+    ? { changed: false, value: candidate }
+    : { changed: true, value: { ...candidate, ...additions } };
+};
+
+const migrateConversationStreamTombstones = (
+  value: unknown
+): { readonly changed: boolean; readonly value: unknown } => {
+  if (!Array.isArray(value)) {
+    return { changed: false, value };
+  }
+  const migrated = value.map((candidate) => {
+    if (!isUnknownRecord(candidate)) {
+      return candidate;
+    }
+    return {
+      ...candidate,
+      ...missingMigrationField(candidate, "confirmedHash", sha256("")),
+      ...missingMigrationField(candidate, "confirmedOffset", 0),
+      ...missingMigrationField(candidate, "lifecycle", "stopped"),
+      ...missingMigrationField(candidate, "mode", null),
+      ...missingMigrationField(candidate, "operations", []),
+      ...missingMigrationField(candidate, "terminalReason", "completed"),
+    };
+  });
+  const changed = migrated.some(
+    (candidate, index) => candidate !== value[index]
+  );
+  return { changed, value: migrated };
+};
+
+const migrateConversationStreams = (
+  value: unknown
+): { readonly changed: boolean; readonly value: unknown } => {
+  if (!Array.isArray(value)) {
+    return { changed: false, value };
+  }
+  const migrations = value.map(migrateConversationStream);
+  return {
+    changed: migrations.some(({ changed }) => changed),
+    value: migrations.map((migration) => migration.value),
+  };
+};
+
+const migrateConversationStreamRateBudgets = (
+  value: unknown
+): { readonly changed: boolean; readonly value: unknown } => {
+  if (!Array.isArray(value)) {
+    return { changed: false, value };
+  }
+  let changed = false;
+  const methodBudgets = new Map<string, Record<string, unknown>>();
+  const channelBudgets = new Map<string, Record<string, unknown>>();
+  for (const candidate of value) {
+    if (
+      !isUnknownRecord(candidate) ||
+      typeof candidate.workspaceId !== "string" ||
+      typeof candidate.method !== "string" ||
+      typeof candidate.nextAvailableAtMillis !== "number"
+    ) {
+      continue;
+    }
+    const legacyKinds: readonly ConversationStreamOperationKind[] = [
+      "fallback-post",
+      "fallback-update",
+      "native-append",
+      "native-start",
+      "native-stop",
+    ];
+    const method = legacyKinds.includes(
+      candidate.method as ConversationStreamOperationKind
+    )
+      ? slackMethodForOperationKind(
+          candidate.method as ConversationStreamOperationKind
+        )
+      : candidate.method;
+    changed = changed || method !== candidate.method || !("scope" in candidate);
+    const methodKey = `${candidate.workspaceId}\u0000${method}`;
+    const existingMethod = methodBudgets.get(methodKey);
+    methodBudgets.set(methodKey, {
+      channelId: null,
+      method,
+      nextAvailableAtMillis: Math.max(
+        candidate.nextAvailableAtMillis,
+        typeof existingMethod?.nextAvailableAtMillis === "number"
+          ? existingMethod.nextAvailableAtMillis
+          : 0
+      ),
+      scope: "method",
+      workspaceId: candidate.workspaceId,
+    });
+    if (
+      method === "chat.postMessage" &&
+      typeof candidate.channelId === "string"
+    ) {
+      const channelKey = `${methodKey}\u0000${candidate.channelId}`;
+      const existingChannel = channelBudgets.get(channelKey);
+      channelBudgets.set(channelKey, {
+        channelId: candidate.channelId,
+        method,
+        nextAvailableAtMillis: Math.max(
+          candidate.nextAvailableAtMillis,
+          typeof existingChannel?.nextAvailableAtMillis === "number"
+            ? existingChannel.nextAvailableAtMillis
+            : 0
+        ),
+        scope: "channel",
+        workspaceId: candidate.workspaceId,
+      });
+    }
+  }
+  return {
+    changed,
+    value: [...methodBudgets.values(), ...channelBudgets.values()],
+  };
+};
+
 const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
   if (
     !isUnknownRecord(value) ||
@@ -2929,7 +5629,18 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
   let changed = false;
   let seenEventIds: readonly unknown[] = value.seenEventIds;
   const needsCompletionReactions = !Object.hasOwn(value, "completionReactions");
-  changed = needsCompletionReactions;
+  const streamMigration = migrateConversationStreams(value.conversationStreams);
+  const tombstoneMigration = migrateConversationStreamTombstones(
+    value.conversationStreamTombstones
+  );
+  const budgetMigration = migrateConversationStreamRateBudgets(
+    value.conversationStreamRateBudgets
+  );
+  changed =
+    needsCompletionReactions ||
+    streamMigration.changed ||
+    tombstoneMigration.changed ||
+    budgetMigration.changed;
   const threads = pipe(
     value.threads,
     EffectArray.map((candidate, index) => {
@@ -2996,6 +5707,15 @@ const migrateSchemaVersionOneSnapshot = (value: unknown): unknown => {
     ? {
         ...value,
         ...(needsCompletionReactions ? { completionReactions: [] } : {}),
+        ...(budgetMigration.changed
+          ? { conversationStreamRateBudgets: budgetMigration.value }
+          : {}),
+        ...(streamMigration.changed
+          ? { conversationStreams: streamMigration.value }
+          : {}),
+        ...(tombstoneMigration.changed
+          ? { conversationStreamTombstones: tombstoneMigration.value }
+          : {}),
         seenEventIds,
         threads,
       }

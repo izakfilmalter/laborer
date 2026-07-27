@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
+import { type FetchFunction, WebClient } from "@slack/web-api";
 import { Cause, Deferred, Effect, Fiber, Ref } from "effect";
 import {
   ApplicationConversationMessageChunk,
   type ApplicationShape,
 } from "../src/application.ts";
+import { makeSlackGateway } from "../src/prototype/emulated-slack.ts";
 import { DeliveryError, HandlerFailure } from "../src/prototype/errors.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
@@ -16,10 +18,19 @@ import {
   type SlackNativeStreamWebApiClient,
   splitSlackMarkdown,
 } from "../src/slack/native-stream.ts";
+import { slackWebApiRequestPolicy } from "../src/slack/web-api-request-policy.ts";
 
 describe("native Slack stream gateway", () => {
+  it("bounds production HTTP attempts and exposes rate limits without SDK retries", () => {
+    assert.deepStrictEqual(slackWebApiRequestPolicy, {
+      rejectRateLimitedCalls: true,
+      retryConfig: { retries: 0 },
+      timeout: 10_000,
+    });
+  });
+
   it.effect(
-    "splits initial and appended Unicode into exact bounded Web API requests",
+    "performs exactly one bounded Web API request for each native operation",
     () =>
       Effect.gen(function* () {
         const requests: Array<{
@@ -53,12 +64,12 @@ describe("native Slack stream gateway", () => {
           channelId: "CWORK",
           recipientUserId: "UASKER",
           rootTs: "1700000000.000001",
-          text: "ab😀cdef",
+          text: "ab😀c",
         });
         yield* stream.append({
           channelId: "CWORK",
           streamTs: started.ts,
-          text: "gh😀ijkl",
+          text: "gh😀i",
         });
         yield* stream.stop({
           channelId: "CWORK",
@@ -80,23 +91,7 @@ describe("native Slack stream gateway", () => {
             method: "chat.appendStream",
             body: {
               channel: "CWORK",
-              markdown_text: "def",
-              ts: "stream-1",
-            },
-          },
-          {
-            method: "chat.appendStream",
-            body: {
-              channel: "CWORK",
               markdown_text: "gh😀i",
-              ts: "stream-1",
-            },
-          },
-          {
-            method: "chat.appendStream",
-            body: {
-              channel: "CWORK",
-              markdown_text: "jkl",
               ts: "stream-1",
             },
           },
@@ -122,6 +117,73 @@ describe("native Slack stream gateway", () => {
       assert.ok([...segment].length <= 4);
     }
   });
+
+  it.live(
+    "projects fallback Markdown through the actual WebClient gateway as markdown_text only",
+    () =>
+      Effect.gen(function* () {
+        const requests: Array<{
+          readonly method: string;
+          readonly parameters: URLSearchParams;
+        }> = [];
+        const fetch: FetchFunction = (input, init) => {
+          const method =
+            new URL(String(input)).pathname.split("/").at(-1) ?? "";
+          const body = typeof init?.body === "string" ? init.body : "";
+          requests.push({ method, parameters: new URLSearchParams(body) });
+          return Promise.resolve(
+            Response.json({
+              channel: "CWORK",
+              ok: true,
+              ts: method === "chat.postMessage" ? "message-1" : undefined,
+            })
+          );
+        };
+        const gateway = makeSlackGateway({
+          botClient: new WebClient("test-token", {
+            fetch,
+            retryConfig: { retries: 0 },
+            slackApiUrl: "https://slack.invalid/api/",
+          }),
+          pageSize: 2,
+        });
+        const markdown = `**heading**\n${"😀".repeat(5000)}`;
+
+        const posted = yield* gateway.postThreadMessage({
+          channelId: "CWORK",
+          rootTs: "1.0",
+          text: markdown,
+        });
+        const updateThreadMessage = gateway.updateThreadMessage;
+        assert.ok(updateThreadMessage !== undefined);
+        yield* updateThreadMessage({
+          channelId: "CWORK",
+          messageTs: posted.ts,
+          text: markdown,
+        });
+
+        assert.strictEqual(requests.length, 2);
+        assert.deepStrictEqual(
+          requests.map(({ method, parameters }) => ({
+            hasText: parameters.has("text"),
+            markdownText: parameters.get("markdown_text"),
+            method,
+          })),
+          [
+            {
+              hasText: false,
+              markdownText: markdown,
+              method: "chat.postMessage",
+            },
+            {
+              hasText: false,
+              markdownText: markdown,
+              method: "chat.update",
+            },
+          ]
+        );
+      })
+  );
 
   it.effect("rejects ok:false responses for every native stream method", () =>
     Effect.gen(function* () {
@@ -205,7 +267,7 @@ describe("native Slack stream gateway", () => {
   );
 
   it.effect(
-    "best-effort stops a stream when a remaining initial segment cannot append",
+    "rejects an oversized operation before making any hidden requests",
     () =>
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -239,11 +301,7 @@ describe("native Slack stream gateway", () => {
         );
 
         assert.strictEqual(result._tag, "Failure");
-        assert.deepStrictEqual(calls, [
-          "start:abc",
-          "append:def",
-          "stop:stream-1",
-        ]);
+        assert.deepStrictEqual(calls, []);
       })
   );
 
@@ -890,12 +948,13 @@ describe("native Slack stream gateway", () => {
   );
 
   it.effect(
-    "finalizes a started native stream without replacing an application defect",
+    "finalizes partial native text before one sanitized application-defect notice",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const defect = new Error("application defect fixture");
           const stopCalls = yield* Ref.make(0);
+          const notices = yield* Ref.make<readonly string[]>([]);
           const gateway: SlackGatewayShape = {
             nativeStreaming: {
               append: () => Effect.void,
@@ -911,7 +970,10 @@ describe("native Slack stream gateway", () => {
                   )
                 ),
             },
-            postThreadMessage: () => Effect.succeed({ ts: "unused" }),
+            postThreadMessage: ({ text }) =>
+              Ref.update(notices, (current) => [...current, text]).pipe(
+                Effect.as({ ts: "notice" })
+              ),
             readActivationContext: () => Effect.succeed([]),
           };
           const application: ApplicationShape = {
@@ -941,12 +1003,11 @@ describe("native Slack stream gateway", () => {
             )
           );
 
-          assert.strictEqual(exit._tag, "Failure");
-          if (exit._tag === "Failure") {
-            assert.ok(Cause.hasDies(exit.cause));
-            assert.strictEqual(Cause.squash(exit.cause), defect);
-          }
+          assert.strictEqual(exit._tag, "Success");
           assert.strictEqual(yield* Ref.get(stopCalls), 1);
+          assert.deepStrictEqual(yield* Ref.get(notices), [
+            "This conversation turn could not be completed. Please try again.",
+          ]);
         })
       )
   );

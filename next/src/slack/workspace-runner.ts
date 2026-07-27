@@ -1,11 +1,10 @@
 import type { WebClient } from "@slack/web-api";
-import { Effect, type Scope } from "effect";
+import { Deferred, Effect, Exit, Ref, Scope } from "effect";
 import {
   type GitWorktreeManagerOptions,
   makeGitWorktreeManager,
 } from "../adapters/git-worktree-manager.ts";
 import {
-  makeOpenCodeConversationAgent,
   makeOpenCodeImplementationAgent,
   makeOpenCodeWorkspaceSessionClient,
   type OpenCodeSessionClient,
@@ -16,7 +15,7 @@ import {
   makeSlackActivationAcknowledger,
   makeSlackCompletionReactor,
 } from "../prototype/emulated-slack.ts";
-import type { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../prototype/errors.ts";
 import {
   makeProcessHandler,
   makeProcessInitializer,
@@ -25,12 +24,14 @@ import type { SlackGatewayShape } from "../prototype/runtime.ts";
 import { makePrototypeHarness } from "../prototype/runtime.ts";
 import { makeFileStoreLayer } from "../prototype/store.ts";
 import {
+  type ConversationAgentShape,
+  type ImplementationAgentShape,
   makeFileApplicationRepository,
   makeReferenceCodingApplication,
   type ReferenceCodingApplicationRepository,
   type WorktreeManagerShape,
 } from "../reference-coding-application.ts";
-import { makeHotReloadingConversationPromptConfig } from "./conversation-prompt-config.ts";
+import type { ConversationAdoptionHistoryGateway } from "./conversation-adoption-history.ts";
 import { environmentForConfiguredHandler } from "./handler-environment.ts";
 import type {
   ReferenceCodingApplicationConfig,
@@ -47,6 +48,9 @@ export interface ReferenceCodingWorkspaceApplicationOptions {
 }
 
 export interface ReferenceCodingWorkspaceApplicationDependencies {
+  readonly afterImplementationClientAcquired?: () => Effect.Effect<void>;
+  readonly afterImplementationFinalizerRegistered?: () => Effect.Effect<void>;
+  readonly conversationAdoptionHistory?: ConversationAdoptionHistoryGateway;
   readonly makeApplicationRepository?: (
     path: string,
     trustedRoot: string
@@ -57,22 +61,46 @@ export interface ReferenceCodingWorkspaceApplicationDependencies {
   readonly makeWorktreeManager?: (
     options: GitWorktreeManagerOptions
   ) => WorktreeManagerShape;
+  readonly observeImplementationAgent?: (
+    implementationAgent: ImplementationAgentShape
+  ) => void;
 }
 
-export const makeReferenceCodingWorkspaceApplication = Effect.fn(
-  "makeReferenceCodingWorkspaceApplication"
-)(function* (
-  options: ReferenceCodingWorkspaceApplicationOptions,
-  dependencies: ReferenceCodingWorkspaceApplicationDependencies = {}
-): Effect.fn.Return<ApplicationShape, HandlerFailure, Scope.Scope> {
-  const makeOpenCodeClient =
-    dependencies.makeOpenCodeClient ?? makeOpenCodeWorkspaceSessionClient;
-  const configuredModel = options.config.model;
+interface ReferenceCodingWorkspaceInfrastructure {
+  readonly repository: ReferenceCodingApplicationRepository;
+  readonly worktreeManager: WorktreeManagerShape;
+}
+
+type LazyImplementationState =
+  | {
+      readonly _tag: "Acquiring";
+      readonly gate: Deferred.Deferred<
+        ImplementationAgentShape,
+        HandlerFailure
+      >;
+    }
+  | { readonly _tag: "Idle" }
+  | { readonly _tag: "Ready"; readonly agent: ImplementationAgentShape };
+
+type LazyImplementationDecision =
+  | {
+      readonly _tag: "Await" | "Start";
+      readonly gate: Deferred.Deferred<
+        ImplementationAgentShape,
+        HandlerFailure
+      >;
+    }
+  | { readonly _tag: "Ready"; readonly agent: ImplementationAgentShape };
+
+const openCodeClientOptions = (
+  options: ReferenceCodingWorkspaceApplicationOptions
+): OpenCodeWorkspaceSessionClientOptions => {
+  const configuredModel = options.config.implementation?.model;
   const modelSeparatorIndex = configuredModel?.indexOf("/") ?? -1;
-  const sessionClient = yield* makeOpenCodeClient({
-    ...(options.config.agent === undefined
+  return {
+    ...(options.config.implementation?.agent === undefined
       ? {}
-      : { agent: options.config.agent }),
+      : { agent: options.config.implementation.agent }),
     environment: environmentForConfiguredHandler(
       options.environment,
       options.config.environment
@@ -87,31 +115,188 @@ export const makeReferenceCodingWorkspaceApplication = Effect.fn(
         }),
     promptIsolation: false,
     workspaceDirectory: options.root,
-  });
+  };
+};
+
+const makeReferenceCodingWorkspaceInfrastructure = Effect.fn(
+  "makeReferenceCodingWorkspaceInfrastructure"
+)(function* (
+  options: ReferenceCodingWorkspaceApplicationOptions,
+  dependencies: ReferenceCodingWorkspaceApplicationDependencies = {}
+): Effect.fn.Return<
+  ReferenceCodingWorkspaceInfrastructure,
+  HandlerFailure,
+  Scope.Scope
+> {
   const repository = yield* (
     dependencies.makeApplicationRepository ?? makeFileApplicationRepository
   )(options.paths.applicationState, options.paths.root);
   const worktreeManager = (
     dependencies.makeWorktreeManager ?? makeGitWorktreeManager
   )({ repository: options.root });
-  const loadPromptConfig = yield* makeHotReloadingConversationPromptConfig({
-    environment: options.environment,
-    initialConfig: options.config,
-    root: options.root,
-  });
-  return yield* makeReferenceCodingApplication({
-    conversationAgent: makeOpenCodeConversationAgent({
-      client: sessionClient,
-      loadPromptConfig,
-      repositoryDirectory: options.root,
-    }),
-    implementationAgent: makeOpenCodeImplementationAgent({
-      client: sessionClient,
-    }),
-    repository,
-    worktreeManager,
-  });
+  return { repository, worktreeManager };
 });
+
+export const makeLazyOpenCodeImplementationAgent = Effect.fn(
+  "makeLazyOpenCodeImplementationAgent"
+)(function* (
+  options: ReferenceCodingWorkspaceApplicationOptions,
+  dependencies: ReferenceCodingWorkspaceApplicationDependencies = {}
+): Effect.fn.Return<ImplementationAgentShape, never, Scope.Scope> {
+  const ownerScope = yield* Effect.scope;
+  const state = yield* Ref.make<LazyImplementationState>({ _tag: "Idle" });
+  const runAcquisition = (
+    gate: Deferred.Deferred<ImplementationAgentShape, HandlerFailure>
+  ): Effect.Effect<void> =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const resourceScope = yield* Scope.make();
+        const makeOpenCodeClient =
+          dependencies.makeOpenCodeClient ?? makeOpenCodeWorkspaceSessionClient;
+        const acquisitionExit = yield* Effect.exit(
+          restore(
+            makeOpenCodeClient(openCodeClientOptions(options)).pipe(
+              Effect.provideService(Scope.Scope, resourceScope)
+            )
+          )
+        );
+        if (Exit.isFailure(acquisitionExit)) {
+          yield* Scope.close(resourceScope, acquisitionExit);
+          yield* Ref.update(
+            state,
+            (current): LazyImplementationState =>
+              current._tag === "Acquiring" && current.gate === gate
+                ? { _tag: "Idle" }
+                : current
+          );
+          yield* Deferred.failCause(gate, acquisitionExit.cause);
+          return;
+        }
+        if (dependencies.afterImplementationClientAcquired !== undefined) {
+          yield* dependencies.afterImplementationClientAcquired();
+        }
+        const implementationAgent = makeOpenCodeImplementationAgent({
+          client: acquisitionExit.value,
+        });
+        yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
+          Scope.close(resourceScope, ownerExit)
+        );
+        if (dependencies.afterImplementationFinalizerRegistered !== undefined) {
+          yield* dependencies.afterImplementationFinalizerRegistered();
+        }
+        yield* Ref.set(state, {
+          _tag: "Ready",
+          agent: implementationAgent,
+        });
+        yield* Deferred.succeed(gate, implementationAgent);
+      })
+    );
+  const acquire = Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const candidate = yield* Deferred.make<
+        ImplementationAgentShape,
+        HandlerFailure
+      >();
+      const decision = yield* Ref.modify(
+        state,
+        (
+          current
+        ): readonly [LazyImplementationDecision, LazyImplementationState] => {
+          if (current._tag === "Ready") {
+            return [{ _tag: "Ready", agent: current.agent }, current];
+          }
+          if (current._tag === "Acquiring") {
+            return [{ _tag: "Await", gate: current.gate }, current];
+          }
+          const acquiring: LazyImplementationState = {
+            _tag: "Acquiring",
+            gate: candidate,
+          };
+          return [{ _tag: "Start", gate: candidate }, acquiring];
+        }
+      );
+      if (decision._tag === "Ready") {
+        return decision.agent;
+      }
+      if (decision._tag === "Start") {
+        yield* runAcquisition(decision.gate).pipe(
+          Effect.forkIn(ownerScope, { startImmediately: true })
+        );
+      }
+      return yield* restore(Deferred.await(decision.gate));
+    })
+  );
+  return {
+    inspect: (request) =>
+      acquire.pipe(
+        Effect.flatMap(
+          (implementationAgent) =>
+            implementationAgent.inspect?.(request) ??
+            Effect.succeed({
+              certainty: "unknown" as const,
+              evidence: "inspection-unavailable" as const,
+              status: "ambiguous" as const,
+            })
+        ),
+        Effect.catch(() =>
+          Effect.succeed({
+            certainty: "unknown" as const,
+            evidence: "provider-inspection-failed" as const,
+            status: "ambiguous" as const,
+          })
+        )
+      ),
+    recover: (request, acceptResponse) =>
+      acquire.pipe(
+        Effect.flatMap((implementationAgent) => {
+          if (implementationAgent.recover === undefined) {
+            return HandlerFailure.make({
+              category: "protocol",
+              safeDetail: "implementation recovery is unavailable",
+            });
+          }
+          return implementationAgent.recover(request, acceptResponse);
+        })
+      ),
+    start: (request, acceptResponse) =>
+      acquire.pipe(
+        Effect.flatMap((implementationAgent) =>
+          implementationAgent.start(request, acceptResponse)
+        )
+      ),
+  };
+});
+
+export const makeReferenceCodingWorkspaceApplicationWithConversationAgent =
+  Effect.fn("makeReferenceCodingWorkspaceApplicationWithConversationAgent")(
+    function* (
+      options: ReferenceCodingWorkspaceApplicationOptions,
+      conversationAgent: ConversationAgentShape,
+      dependencies: ReferenceCodingWorkspaceApplicationDependencies = {}
+    ): Effect.fn.Return<ApplicationShape, HandlerFailure, Scope.Scope> {
+      const infrastructure = yield* makeReferenceCodingWorkspaceInfrastructure(
+        options,
+        dependencies
+      );
+      const implementationAgent = yield* makeLazyOpenCodeImplementationAgent(
+        options,
+        dependencies
+      );
+      dependencies.observeImplementationAgent?.(implementationAgent);
+      return yield* makeReferenceCodingApplication({
+        ...(dependencies.conversationAdoptionHistory === undefined
+          ? {}
+          : {
+              conversationAdoptionHistory:
+                dependencies.conversationAdoptionHistory,
+            }),
+        conversationAgent,
+        implementationAgent,
+        repository: infrastructure.repository,
+        worktreeManager: infrastructure.worktreeManager,
+      });
+    }
+  );
 
 const makeConfiguredProcessRunner = Effect.fn(
   "makeConfiguredProcessWorkspaceRunner"
@@ -175,32 +360,10 @@ export const makeSlackWorkspaceRunner = Effect.fn("makeSlackWorkspaceRunner")(
     if (workHandler !== undefined) {
       return yield* makeConfiguredProcessRunner(options, workHandler);
     }
-    const applicationConfig = options.laborer.config.application;
-    if (applicationConfig === undefined) {
-      return yield* Effect.die(
-        new Error("validated Laborer configuration has no adapter")
-      );
-    }
-    const application = yield* makeReferenceCodingWorkspaceApplication({
-      config: applicationConfig,
-      environment: process.env,
-      paths: options.paths,
-      root: options.laborer.root,
-    });
-    const harness = yield* makePrototypeHarness({
-      activationAcknowledger: makeSlackActivationAcknowledger(options.client),
-      application,
-      completionReactor: makeSlackCompletionReactor(options.client),
-      laborerSlackId: options.identity.botUserId,
-      slack: options.gateway,
-      storeLayer: makeFileStoreLayer(
-        options.identity.botUserId,
-        options.paths.runnerState,
-        options.paths.root,
-        undefined,
-        { initializeNewThreads: false }
-      ),
-    });
-    return harness.runner;
+    return yield* Effect.die(
+      new Error(
+        "reference-coding startup requires the production ACP workspace runner"
+      )
+    );
   }
 );

@@ -10,7 +10,10 @@ import {
   makePrototypeHarness,
   type PrototypeHarness,
 } from "../prototype/runtime.ts";
-import { makeReferenceCodingApplication } from "../reference-coding-application.ts";
+import {
+  makeReferenceCodingApplication,
+  type ReferenceCodingApplicationRepository,
+} from "../reference-coding-application.ts";
 import {
   type AcpConversationAgentOptions,
   makeAcpConversationAgent,
@@ -19,32 +22,13 @@ import { prepareAcpAgentContextSources } from "./agent-context.ts";
 import { makeLaborerMemoryMcpServerConfiguration } from "./memory-mcp.ts";
 import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
 
-export const OPEN_CODE_ACP_COMMAND = "opencode";
-export const OPEN_CODE_ACP_ARGS = ["acp"] as const;
-
-interface OpenCodeAcpProcessOptions {
-  readonly command?: string;
-  readonly cwd: string;
-  readonly environment?: NodeJS.ProcessEnv;
-}
-
-export const openCodeAcpProcessOptions = (
-  options: OpenCodeAcpProcessOptions
-): AcpConversationAgentOptions => ({
-  args: OPEN_CODE_ACP_ARGS,
-  command: options.command ?? OPEN_CODE_ACP_COMMAND,
-  cwd: options.cwd,
-  ...(options.environment === undefined
-    ? {}
-    : { environment: options.environment }),
-});
-
 export interface AcpConversationCanaryOptions {
   readonly activationAcknowledger: ActivationAcknowledgerShape;
   readonly completionReactor: CompletionReactorShape;
   readonly laborerSlackId: string;
   readonly participantLookup?: SlackParticipantLookupShape;
   readonly process: AcpConversationAgentOptions;
+  readonly repository?: ReferenceCodingApplicationRepository;
   readonly slack: SlackGatewayShape;
   readonly workspaceId?: string;
 }
@@ -77,6 +61,7 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
           });
     const conversationAgent = yield* makeAcpConversationAgent({
       ...options.process,
+      ...(options.repository === undefined ? {} : { durableSessionMode: true }),
       ...(agentContext === undefined ? {} : { agentContext }),
       laborerSlackId: options.laborerSlackId,
       ...(options.participantLookup === undefined
@@ -94,6 +79,9 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
       implementationAgent: {
         start: () => outsideCanary("Implementation agents"),
       },
+      ...(options.repository === undefined
+        ? {}
+        : { repository: options.repository }),
       worktreeManager: {
         create: () => outsideCanary("Actions"),
       },

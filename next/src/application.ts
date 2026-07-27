@@ -77,6 +77,7 @@ export class ApplicationConversationMessageChunk extends Schema.TaggedClass<Appl
   "ConversationMessageChunk",
   {
     messageId: NonBlankString,
+    sequence: Schema.optional(Schema.Number),
     text: Schema.String,
   }
 ) {}
@@ -84,6 +85,77 @@ export class ApplicationConversationMessageChunk extends Schema.TaggedClass<Appl
 export type ApplicationPublicOutput =
   | ApplicationConversationMessageChunk
   | ApplicationPublicReply;
+
+/**
+ * A prompt crossed the ACP admission boundary but no terminal result can be
+ * proved. This is a domain outcome, not a HandlerFailure: the Runner must keep
+ * the owner and every later input durable until an operator decides what to do.
+ */
+export class ConversationBlocked extends Schema.TaggedErrorClass<ConversationBlocked>()(
+  "ConversationBlocked",
+  {
+    attemptId: NonBlankString,
+    bindingGeneration: Schema.NullOr(Schema.Int),
+    blockedAt: Schema.Int,
+    conversationId: ThreadId,
+    decisionId: Schema.NullOr(NonBlankString),
+    decisionKind: Schema.NullOr(Schema.Literals(["abandon", "retry"])),
+    ownerId: NonBlankString,
+    ownerKind: Schema.Literals(["application-event", "participant-turn"]),
+    processGeneration: Schema.Int,
+    promptId: NonBlankString,
+    replacementAttemptId: Schema.NullOr(NonBlankString),
+    sessionDisposition: Schema.NullOr(
+      Schema.Literals(["replaced", "resumed-quiescent"])
+    ),
+    workspaceId: NonBlankString,
+  }
+) {}
+
+export interface ConversationRecoveryDecisionRequest {
+  readonly acknowledgeDuplicateSideEffects: boolean;
+  readonly actorUid: number;
+  readonly attemptId: string;
+  readonly bindingGeneration: number | null;
+  readonly conversationId: ThreadId;
+  readonly decisionId: string;
+  readonly kind: "abandon" | "retry";
+  readonly ownerId: string;
+  readonly ownerKind: "application-event" | "participant-turn";
+  readonly processGeneration: number;
+  readonly promptId: string;
+  readonly timestamp: number;
+  readonly workspaceId: string;
+}
+
+export interface ConversationRecoveryDecisionResult {
+  readonly acknowledgeDuplicateSideEffects: boolean;
+  readonly attemptId: string;
+  readonly conversationId: ThreadId;
+  readonly decisionId: string;
+  readonly duplicate: boolean;
+  readonly kind: "abandon" | "retry";
+  readonly ownerId: string;
+  readonly ownerKind: "application-event" | "participant-turn";
+  readonly promptId: string;
+  readonly replacementAttemptId: string | null;
+  readonly sessionDisposition: "replaced" | "resumed-quiescent";
+  readonly workspaceId: string;
+}
+
+export class ConversationRecoveryDecisionRejected extends Schema.TaggedErrorClass<ConversationRecoveryDecisionRejected>()(
+  "ConversationRecoveryDecisionRejected",
+  {
+    reason: Schema.Literals([
+      "conflict",
+      "duplicate-risk-not-acknowledged",
+      "invalid-identity",
+      "not-unresolved",
+      "stale-generation",
+      "wrong-scope",
+    ]),
+  }
+) {}
 
 export type PublishApplicationReply = (
   reply: ApplicationPublicReply
@@ -94,14 +166,30 @@ export type PublishApplicationOutput = (
 ) => Effect.Effect<void, HandlerFailure | StoreError>;
 
 export interface ApplicationShape {
+  readonly decideConversationRecovery?: (
+    request: ConversationRecoveryDecisionRequest
+  ) => Effect.Effect<
+    ConversationRecoveryDecisionResult,
+    ConversationRecoveryDecisionRejected | HandlerFailure
+  >;
   readonly handle: (
     event: ApplicationEvent,
     publish: PublishApplicationOutput,
     acceptEvent: AcceptApplicationEvent
-  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  ) => Effect.Effect<void, ConversationBlocked | HandlerFailure | StoreError>;
   readonly recover?: (
     acceptEvent: AcceptApplicationEvent
   ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  readonly unresolvedConversationForOwner?: (owner: {
+    readonly conversationId: ThreadId;
+    readonly ownerId: string;
+    readonly ownerKind: "application-event" | "participant-turn";
+    readonly workspaceId: string;
+  }) => Effect.Effect<ConversationBlocked | null, HandlerFailure>;
+  readonly unresolvedConversations?: Effect.Effect<
+    readonly ConversationBlocked[],
+    HandlerFailure
+  >;
 }
 
 export class Application extends Context.Service<

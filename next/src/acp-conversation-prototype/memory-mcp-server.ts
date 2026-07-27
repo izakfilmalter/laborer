@@ -34,13 +34,15 @@ if (root === undefined || workspaceId === undefined) {
     });
     if (
       serverName !== undefined &&
+      authorityGuard !== undefined &&
       readinessNonce !== undefined &&
       readinessPath !== undefined
     ) {
       server.server.oninitialized = () => {
         runReadiness(
           publishLaborerMemoryMcpReadiness({
-            ...(authorityGuard === undefined ? {} : { authorityGuard }),
+            authorityGuard,
+            environmentNames: Object.keys(process.env).sort(),
             nonce: readinessNonce,
             path: readinessPath,
             root,

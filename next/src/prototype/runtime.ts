@@ -3,7 +3,6 @@
  * Store-driven per-thread FIFO worker and narrow Effect service contracts.
  */
 import {
-  type Cause,
   Clock,
   Context,
   Effect,
@@ -23,10 +22,18 @@ import {
   type ApplicationPublicOutput,
   type ApplicationShape,
   applicationFromConfiguredProcessHandler,
+  ConversationBlocked,
+  type ConversationRecoveryDecisionRejected,
+  type ConversationRecoveryDecisionRequest,
+  type ConversationRecoveryDecisionResult,
   type ExternalInputEvent,
   ParticipantInputEvent,
   toPublicReplyProtocolRecord,
 } from "../application.ts";
+import {
+  type ConversationStreamDeliveryPolicy,
+  makeConversationStreamDelivery,
+} from "./conversation-stream-delivery.ts";
 import {
   type AcknowledgementState,
   type ClaimedTurn,
@@ -74,6 +81,7 @@ export interface SlackNativeStreamCapability {
 }
 
 export interface SlackGatewayShape {
+  readonly conversationStreamDeliveryPolicy?: ConversationStreamDeliveryPolicy;
   readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly postThreadMessage: (request: {
     readonly channelId: string;
@@ -194,10 +202,20 @@ export interface Runner {
   readonly acceptApplicationEvent: (
     event: ExternalInputEvent
   ) => Effect.Effect<ApplicationEventAcceptance, RunnerError>;
+  readonly decideConversationRecovery?: (
+    request: ConversationRecoveryDecisionRequest
+  ) => Effect.Effect<
+    ConversationRecoveryDecisionResult,
+    ConversationRecoveryDecisionRejected | RunnerError
+  >;
   readonly drain: (threadId: ThreadId) => Effect.Effect<void, RunnerError>;
   readonly inject: (
     event: unknown
   ) => Effect.Effect<InboundDecision, RunnerError | BoundaryDecodeError>;
+  readonly listConversationBlocks?: Effect.Effect<
+    readonly ConversationBlocked[],
+    RunnerError
+  >;
   readonly lockCounts: Effect.Effect<{
     readonly acknowledgements: number;
     readonly drivers: number;
@@ -281,15 +299,64 @@ const runnerLayer = Layer.effect(
     const application = yield* Application;
     const activationAcknowledger = yield* ActivationAcknowledger;
     const completionReactor = yield* CompletionReactor;
+    const postThreadMessage = Effect.fnUntraced(function* (
+      request: {
+        readonly channelId: string;
+        readonly rootTs: string;
+        readonly text: string;
+      },
+      workspaceId: string
+    ) {
+      const spacingMillis =
+        slack.conversationStreamDeliveryPolicy?.spacingMillis[
+          "fallback-post"
+        ] ?? 0;
+      const now = yield* Clock.currentTimeMillis;
+      const slot = yield* store.reserveSlackRateSlot({
+        channelId: request.channelId,
+        channelSpacingMillis: spacingMillis,
+        method: "chat.postMessage",
+        methodSpacingMillis: spacingMillis,
+        nowMillis: now,
+        workspaceId,
+      });
+      const beforeRequest = yield* Clock.currentTimeMillis;
+      if (slot > beforeRequest) {
+        yield* Effect.sleep(`${slot - beforeRequest} millis`);
+      }
+      const result = yield* Effect.result(slack.postThreadMessage(request));
+      if (result._tag === "Success") {
+        return result.success;
+      }
+      const error = result.failure;
+      if (error.disposition === "transient" && error.retryAfterMillis > 0) {
+        const failedAt = yield* Clock.currentTimeMillis;
+        yield* store.deferSlackRateBudget({
+          method: "chat.postMessage",
+          retryAtMillis: failedAt + error.retryAfterMillis,
+          workspaceId,
+        });
+      }
+      return yield* error;
+    });
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
     const threadDrivers = yield* Ref.make<ThreadDriverRegistry>({
       active: [],
       nextDriverId: 0,
     });
+    const startupRecoveryBarrierOpen = yield* Ref.make(false);
     const acknowledgementSemaphores = yield* Ref.make<
       readonly AcknowledgementSemaphore[]
     >([]);
     const reactionDriverScope = yield* Effect.scope;
+    const conversationStreamDelivery = yield* makeConversationStreamDelivery({
+      ...(slack.conversationStreamDeliveryPolicy === undefined
+        ? {}
+        : { policy: slack.conversationStreamDeliveryPolicy }),
+      slack,
+      store,
+    });
+    yield* conversationStreamDelivery.recover;
 
     const retainAcknowledgementSemaphore = (acknowledgementId: string) =>
       Ref.modify(acknowledgementSemaphores, (entries) =>
@@ -684,11 +751,14 @@ const runnerLayer = Layer.effect(
           continue;
         }
         const result = yield* Effect.result(
-          slack.postThreadMessage({
-            channelId: claim.channelId,
-            rootTs: claim.rootTs,
-            text: claim.text,
-          })
+          postThreadMessage(
+            {
+              channelId: claim.channelId,
+              rootTs: claim.rootTs,
+              text: claim.text,
+            },
+            claim.workspaceId
+          )
         );
         if (result._tag === "Success") {
           yield* store.markDelivered(threadId, claim.itemId, result.success.ts);
@@ -697,6 +767,9 @@ const runnerLayer = Layer.effect(
           continue;
         }
         const error = result.failure;
+        if (error instanceof StoreError) {
+          return yield* error;
+        }
         const next = yield* recordDeliveryFailure(
           threadId,
           claim.itemId,
@@ -728,179 +801,91 @@ const runnerLayer = Layer.effect(
             )
           );
 
-    const streamedDeliveryFailure = (): HandlerFailure =>
-      HandlerFailure.make({
-        category: "protocol",
-        noticeStyle: "generic",
-        safeDetail: "Conversation message delivery failed",
-      });
-
     const publisherForTurn = (turn: ClaimedTurn) => {
-      const accumulated = new Map<
-        string,
-        { readonly slackTs: string | null; readonly text: string }
-      >();
-      const publicationSemaphore = Semaphore.makeUnsafe(1);
       const persistReply = persistReplyFor(turn);
-      const recipientUserId = pipe(
-        turn.messages,
-        EffectArray.filter((message) => message.authorKind === "human"),
-        EffectArray.last,
-        Option.map((message) => message.authorSlackId)
-      );
-      const startConversationMessage = Effect.fnUntraced(function* (
-        messageId: string,
-        text: string
-      ) {
-        if (slack.nativeStreaming !== undefined) {
-          if (Option.isNone(recipientUserId)) {
-            return yield* streamedDeliveryFailure();
-          }
-          const started = yield* slack.nativeStreaming
-            .start({
-              channelId: turn.channelId,
-              recipientUserId: recipientUserId.value,
-              rootTs: turn.rootTs,
-              text,
-            })
-            .pipe(Effect.mapError(streamedDeliveryFailure));
-          accumulated.set(messageId, { slackTs: started.ts, text });
-          return;
-        }
-        const posted = yield* slack
-          .postThreadMessage({
-            channelId: turn.channelId,
-            rootTs: turn.rootTs,
-            text,
-          })
-          .pipe(Effect.mapError(streamedDeliveryFailure));
-        accumulated.set(messageId, { slackTs: posted.ts, text });
+      const streamPublisher = conversationStreamDelivery.publisherFor({
+        ownerId: turn.id,
+        ownerKind: "participant-turn",
+        threadId: turn.threadId,
       });
-      const appendConversationMessage = Effect.fnUntraced(function* (
-        streamTs: string,
-        delta: string,
-        text: string
-      ) {
-        if (slack.nativeStreaming !== undefined) {
-          yield* slack.nativeStreaming
-            .append({
-              channelId: turn.channelId,
-              streamTs,
-              text: delta,
-            })
-            .pipe(Effect.mapError(streamedDeliveryFailure));
-          return;
-        }
-        if (slack.updateThreadMessage === undefined) {
-          return yield* streamedDeliveryFailure();
-        }
-        yield* slack
-          .updateThreadMessage({
-            channelId: turn.channelId,
-            messageTs: streamTs,
-            text,
-          })
-          .pipe(Effect.mapError(streamedDeliveryFailure));
-      });
-      const publishUnserialized = Effect.fnUntraced(function* (
+      const publish = Effect.fnUntraced(function* (
         output: ApplicationPublicOutput
       ) {
         if (output._tag === "PublicReply") {
           return yield* persistReply(toPublicReplyProtocolRecord(output));
         }
-
-        const previous = accumulated.get(output.messageId);
-        const text = `${previous?.text ?? ""}${output.text}`;
-        accumulated.set(output.messageId, {
-          slackTs: previous?.slackTs ?? null,
-          text,
-        });
-        if (output.text.length === 0 || text.trim().length === 0) {
-          return;
-        }
-        if (previous?.slackTs === undefined || previous.slackTs === null) {
-          return yield* startConversationMessage(output.messageId, text);
-        }
-        return yield* appendConversationMessage(
-          previous.slackTs,
-          output.text,
-          text
-        );
+        return yield* streamPublisher.publish(output);
       });
-      const publish = (output: ApplicationPublicOutput) =>
-        publicationSemaphore.withPermit(
-          Effect.uninterruptible(publishUnserialized(output))
-        );
-      const finalize = Effect.fnUntraced(function* () {
-        const nativeStreaming = slack.nativeStreaming;
-        if (nativeStreaming === undefined) {
-          return;
-        }
-        let firstFailure: Cause.Cause<HandlerFailure> | undefined;
-        const streams = pipe(
-          accumulated.values(),
-          EffectArray.fromIterable,
-          EffectArray.filter(
-            (
-              state
-            ): state is { readonly slackTs: string; readonly text: string } =>
-              state.slackTs !== null
-          )
-        );
-        yield* Effect.forEach(
-          streams,
-          (state) =>
-            Effect.exit(
-              nativeStreaming
-                .stop({
-                  channelId: turn.channelId,
-                  streamTs: state.slackTs,
-                })
-                .pipe(Effect.mapError(streamedDeliveryFailure))
-            ).pipe(
-              Effect.tap((exit) =>
-                Effect.sync(() => {
-                  if (Exit.isFailure(exit)) {
-                    firstFailure ??= exit.cause;
-                  }
-                })
-              )
-            ),
-          { discard: true }
-        );
-        if (firstFailure !== undefined) {
-          return yield* Effect.failCause(firstFailure);
-        }
-      });
-      return { finalize, publish };
+      return { finalize: streamPublisher.finalize, publish };
     };
 
+    const ownerHasConversationStreams = Effect.fnUntraced(function* (owner: {
+      readonly ownerId: string;
+      readonly ownerKind: "application-event" | "participant-turn";
+      readonly threadId: ThreadId;
+    }) {
+      const belongsToOwner = (stream: {
+        readonly ownerId: string;
+        readonly ownerKind: "application-event" | "participant-turn";
+        readonly threadId: ThreadId;
+      }): boolean =>
+        stream.threadId === owner.threadId &&
+        stream.ownerKind === owner.ownerKind &&
+        stream.ownerId === owner.ownerId;
+      return (
+        (yield* store.conversationStreams).some(belongsToOwner) ||
+        (yield* store.conversationStreamTombstones).some(belongsToOwner)
+      );
+    });
+
+    const applicationDefectFailure = (): HandlerFailure =>
+      HandlerFailure.make({
+        category: "protocol",
+        noticeStyle: "generic",
+        safeDetail: "Application failed unexpectedly",
+      });
+
     const executeClaimedTurn = Effect.fnUntraced(function* (turn: ClaimedTurn) {
+      const recoveryOwner = {
+        ownerId: turn.id,
+        ownerKind: "participant-turn" as const,
+        threadId: turn.threadId,
+      };
       const publisher = publisherForTurn(turn);
+      yield* conversationStreamDelivery.signalOwnerRecovery(
+        recoveryOwner,
+        "resumed"
+      );
       const result = yield* Effect.result(
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const applicationExit = yield* Effect.exit(
               restore(
-                application.handle(
-                  ParticipantInputEvent.make({
-                    attemptNumber: turn.attemptNumber,
-                    channelId: turn.channelId,
-                    context: turn.context,
-                    conversationId: turn.threadId,
-                    initializationStatus: turn.initializationStatus,
-                    messages: turn.messages,
-                    rootTs: turn.rootTs,
-                    source: "slack",
-                    turnId: turn.id,
-                    workingDirectory: turn.workingDirectory,
-                  }),
-                  publisher.publish,
-                  acceptApplicationEvent
-                )
+                application
+                  .handle(
+                    ParticipantInputEvent.make({
+                      attemptNumber: turn.attemptNumber,
+                      channelId: turn.channelId,
+                      context: turn.context,
+                      conversationId: turn.threadId,
+                      initializationStatus: turn.initializationStatus,
+                      messages: turn.messages,
+                      rootTs: turn.rootTs,
+                      source: "slack",
+                      turnId: turn.id,
+                      workingDirectory: turn.workingDirectory,
+                    }),
+                    publisher.publish,
+                    acceptApplicationEvent
+                  )
+                  .pipe(Effect.catchDefect(applicationDefectFailure))
               )
             );
-            const finalizationExit = yield* Effect.exit(publisher.finalize());
+            const finalizationExit = yield* Effect.exit(
+              publisher.finalize(
+                Exit.isSuccess(applicationExit) ? "completed" : "failed"
+              )
+            );
             if (Exit.isFailure(applicationExit)) {
               return yield* Effect.failCause(applicationExit.cause);
             }
@@ -914,16 +899,50 @@ const runnerLayer = Layer.effect(
         yield* store.completeHandler(turn.threadId, turn.id, {
           _tag: "Success",
         });
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "completed"
+        );
         yield* startCompletionReactionForTurn(turn.id);
         return "Completed" as const;
       }
+      if (result.failure instanceof ConversationBlocked) {
+        yield* store.blockConversationOwner(result.failure);
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "non-replayable"
+        );
+        return "Blocked" as const;
+      }
       if (result.failure instanceof StoreError) {
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "failed"
+        );
         return yield* result.failure;
       }
       if (
         result.failure.category === "signal" ||
         result.failure.category === "timeout"
       ) {
+        const hasPartialStream = yield* ownerHasConversationStreams({
+          ownerId: turn.id,
+          ownerKind: "participant-turn",
+          threadId: turn.threadId,
+        });
+        if (hasPartialStream) {
+          yield* store.completeHandler(turn.threadId, turn.id, {
+            _tag: "Failure",
+            category: result.failure.category,
+            noticeStyle: result.failure.noticeStyle ?? "generic",
+            safeDetail: result.failure.safeDetail,
+          });
+          yield* conversationStreamDelivery.signalOwnerRecovery(
+            recoveryOwner,
+            "non-replayable"
+          );
+          return "Completed" as const;
+        }
         // The durable running attempt is intentionally left open. A later
         // Runner retry marks it interrupted and re-enters the same handler turn.
         return "Replayable" as const;
@@ -934,6 +953,10 @@ const runnerLayer = Layer.effect(
         noticeStyle: result.failure.noticeStyle ?? "diagnostic",
         safeDetail: result.failure.safeDetail,
       });
+      yield* conversationStreamDelivery.signalOwnerRecovery(
+        recoveryOwner,
+        "failed"
+      );
       return "Completed" as const;
     });
 
@@ -941,61 +964,126 @@ const runnerLayer = Layer.effect(
       threadId: ThreadId,
       event: import("./domain.ts").ApplicationEventState
     ) {
-      const result = yield* Effect.result(
-        application.handle(
-          {
-            _tag: "ExternalInput",
-            conversationId: threadId,
-            eventId: event.eventId,
-            payload: event.payload,
-            source: event.source,
-          },
-          (output) => {
-            if (output._tag === "ConversationMessageChunk") {
-              return HandlerFailure.make({
+      const recoveryOwner = {
+        ownerId: event.eventId,
+        ownerKind: "application-event" as const,
+        threadId,
+      };
+      const streamPublisher =
+        conversationStreamDelivery.publisherFor(recoveryOwner);
+      yield* conversationStreamDelivery.signalOwnerRecovery(
+        recoveryOwner,
+        "resumed"
+      );
+      const publish = (output: ApplicationPublicOutput) => {
+        if (output._tag === "ConversationMessageChunk") {
+          return streamPublisher.publish(output);
+        }
+        return store
+          .acceptApplicationReply(
+            threadId,
+            event.eventId,
+            toPublicReplyProtocolRecord(output).replyId,
+            output.text
+          )
+          .pipe(
+            Effect.catchTag("ReplyProtocolError", () =>
+              HandlerFailure.make({
                 category: "protocol",
-                safeDetail:
-                  "Streamed conversation output is unavailable for external events",
-              });
-            }
-            return store
-              .acceptApplicationReply(
-                threadId,
-                event.eventId,
-                toPublicReplyProtocolRecord(output).replyId,
-                output.text
+                safeDetail: "conflicting or invalid public reply",
+              })
+            )
+          );
+      };
+      const result = yield* Effect.result(
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const applicationExit = yield* Effect.exit(
+              restore(
+                application
+                  .handle(
+                    {
+                      _tag: "ExternalInput",
+                      conversationId: threadId,
+                      eventId: event.eventId,
+                      payload: event.payload,
+                      source: event.source,
+                    },
+                    publish,
+                    acceptApplicationEvent
+                  )
+                  .pipe(Effect.catchDefect(applicationDefectFailure))
               )
-              .pipe(
-                Effect.catchTag("ReplyProtocolError", () =>
-                  HandlerFailure.make({
-                    category: "protocol",
-                    safeDetail: "conflicting or invalid public reply",
-                  })
-                )
-              );
-          },
-          acceptApplicationEvent
+            );
+            const finalizationExit = yield* Effect.exit(
+              streamPublisher.finalize(
+                Exit.isSuccess(applicationExit) ? "completed" : "failed"
+              )
+            );
+            if (Exit.isFailure(applicationExit)) {
+              return yield* Effect.failCause(applicationExit.cause);
+            }
+            if (Exit.isFailure(finalizationExit)) {
+              return yield* Effect.failCause(finalizationExit.cause);
+            }
+          })
         )
       );
       if (result._tag === "Success") {
         yield* store.completeApplicationEvent(threadId, event.eventId, {
           _tag: "Success",
         });
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "completed"
+        );
         return "Completed" as const;
       }
+      if (result.failure instanceof ConversationBlocked) {
+        yield* store.blockConversationOwner(result.failure);
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "non-replayable"
+        );
+        return "Blocked" as const;
+      }
       if (result.failure instanceof StoreError) {
+        yield* conversationStreamDelivery.signalOwnerRecovery(
+          recoveryOwner,
+          "failed"
+        );
         return yield* result.failure;
       }
       if (
         result.failure.category === "signal" ||
         result.failure.category === "timeout"
       ) {
+        const hasPartialStream = yield* ownerHasConversationStreams({
+          ownerId: event.eventId,
+          ownerKind: "application-event",
+          threadId,
+        });
+        if (hasPartialStream) {
+          yield* store.completeApplicationEvent(threadId, event.eventId, {
+            _tag: "Failure",
+            category: result.failure.category,
+          });
+          yield* conversationStreamDelivery.signalOwnerRecovery(
+            recoveryOwner,
+            "non-replayable"
+          );
+          return "Completed" as const;
+        }
         return "Replayable" as const;
       }
       yield* store.completeApplicationEvent(threadId, event.eventId, {
         _tag: "Failure",
         category: result.failure.category,
       });
+      yield* conversationStreamDelivery.signalOwnerRecovery(
+        recoveryOwner,
+        "failed"
+      );
       return "Completed" as const;
     });
 
@@ -1025,6 +1113,10 @@ const runnerLayer = Layer.effect(
       while (true) {
         const inputCompletion = yield* executeNextThreadInput(threadId);
         if (inputCompletion === "Replayable") {
+          return;
+        }
+        if (inputCompletion === "Blocked") {
+          yield* deliverHead(threadId);
           return;
         }
         if (inputCompletion === "Completed") {
@@ -1132,10 +1224,21 @@ const runnerLayer = Layer.effect(
           return;
         }
         const driveExit = yield* Effect.exit(serializedDrive(threadId));
+        const ownerRecoveryExit = yield* Effect.exit(
+          conversationStreamDelivery.declareOwnerRecoveryUnavailableForThread(
+            threadId
+          )
+        );
         if (driveExit._tag === "Failure") {
           yield* Effect.logError(
             "Background Runner drive stopped",
             driveExit.cause
+          );
+        }
+        if (ownerRecoveryExit._tag === "Failure") {
+          yield* Effect.logError(
+            "Conversation stream owner recovery coordination stopped",
+            ownerRecoveryExit.cause
           );
         }
         const completion = yield* completeThreadDriverCycle(
@@ -1243,6 +1346,9 @@ const runnerLayer = Layer.effect(
         payload,
         source: event.source,
       });
+      if (!(yield* Ref.get(startupRecoveryBarrierOpen))) {
+        return { decision, scheduling: "AlreadyDurable" as const };
+      }
       const scheduling = yield* signalThreadDriver(event.conversationId, null);
       return { decision, scheduling };
     });
@@ -1252,12 +1358,102 @@ const runnerLayer = Layer.effect(
         application.recover(acceptApplicationEvent)
       );
       if (recovery._tag === "Failure") {
-        yield* Effect.logError(
-          "Application recovery stopped",
-          recovery.failure
-        );
+        return yield* StoreError.make({
+          operation: "startupApplicationRecovery",
+          reason: "application-recovery-barrier-unresolved",
+        });
       }
     }
+
+    if (
+      application.unresolvedConversations !== undefined ||
+      application.unresolvedConversationForOwner !== undefined
+    ) {
+      const unresolvedResult = yield* Effect.result(
+        application.unresolvedConversations ?? Effect.succeed([])
+      );
+      if (unresolvedResult._tag === "Failure") {
+        yield* Effect.logError(
+          "Application unresolved conversation recovery stopped",
+          unresolvedResult.failure
+        );
+      }
+      const snapshot = yield* store.snapshot;
+      const runningOwners = snapshot.threads.flatMap((thread) => [
+        ...thread.turns.flatMap((turn) =>
+          turn.status === "running"
+            ? [
+                {
+                  conversationId: thread.id,
+                  ownerId: turn.id,
+                  ownerKind: "participant-turn" as const,
+                  workspaceId: thread.workspaceId ?? "legacy",
+                },
+              ]
+            : []
+        ),
+        ...thread.applicationEvents.flatMap((event) =>
+          event.status === "running"
+            ? [
+                {
+                  conversationId: thread.id,
+                  ownerId: event.eventId,
+                  ownerKind: "application-event" as const,
+                  workspaceId: thread.workspaceId ?? "legacy",
+                },
+              ]
+            : []
+        ),
+      ]);
+      const inferred =
+        application.unresolvedConversationForOwner === undefined
+          ? []
+          : yield* Effect.forEach(
+              runningOwners,
+              (owner) =>
+                application
+                  .unresolvedConversationForOwner?.(owner)
+                  .pipe(Effect.catch(() => Effect.succeed(null))) ??
+                Effect.succeed(null),
+              { concurrency: 1 }
+            );
+      const unresolvedByAttempt = new Map<string, ConversationBlocked>();
+      const explicit =
+        unresolvedResult._tag === "Success" ? unresolvedResult.success : [];
+      for (const blocked of [...explicit, ...inferred]) {
+        if (blocked !== null) {
+          unresolvedByAttempt.set(blocked.attemptId, blocked);
+        }
+      }
+      yield* Effect.forEach(
+        [...unresolvedByAttempt.values()],
+        (blocked) => {
+          if (blocked.decisionKind !== null && blocked.decisionId !== null) {
+            return store
+              .resolveConversationBlocked({
+                attemptId: blocked.attemptId,
+                conversationId: blocked.conversationId,
+                decisionId: blocked.decisionId,
+                kind: blocked.decisionKind,
+                ownerId: blocked.ownerId,
+                ownerKind: blocked.ownerKind,
+                replacementAttemptId: blocked.replacementAttemptId,
+                workspaceId: blocked.workspaceId,
+              })
+              .pipe(Effect.asVoid);
+          }
+          return store.blockConversationOwner(blocked);
+        },
+        { discard: true }
+      );
+    }
+
+    yield* Ref.set(startupRecoveryBarrierOpen, true);
+    yield* Effect.forEach(
+      yield* store.threadIds,
+      (threadId) => signalThreadDriver(threadId, null),
+      { concurrency: 1, discard: true }
+    );
 
     const staleAcknowledgements = yield* store.acknowledgements;
     yield* Effect.forEach(
@@ -1375,6 +1571,33 @@ const runnerLayer = Layer.effect(
     const runner = PrototypeRunner.of({
       accept,
       acceptApplicationEvent,
+      decideConversationRecovery: (request) => {
+        if (application.decideConversationRecovery === undefined) {
+          return StoreError.make({
+            operation: "decideConversationRecovery",
+            reason: "application-recovery-unavailable",
+          });
+        }
+        return application.decideConversationRecovery(request).pipe(
+          Effect.flatMap((decision) =>
+            store
+              .resolveConversationBlocked({
+                attemptId: decision.attemptId,
+                conversationId: decision.conversationId,
+                decisionId: decision.decisionId,
+                kind: decision.kind,
+                ownerId: decision.ownerId,
+                ownerKind: decision.ownerKind,
+                replacementAttemptId: decision.replacementAttemptId,
+                workspaceId: decision.workspaceId,
+              })
+              .pipe(
+                Effect.andThen(serializedDrive(decision.conversationId)),
+                Effect.as(decision)
+              )
+          )
+        );
+      },
       inject,
       lockCounts: Effect.all({
         acknowledgements: Ref.get(acknowledgementSemaphores).pipe(
@@ -1387,6 +1610,37 @@ const runnerLayer = Layer.effect(
           Effect.map((entries) => entries.length)
         ),
       }),
+      listConversationBlocks: Effect.all({
+        application:
+          application.unresolvedConversations === undefined
+            ? Effect.succeed<readonly ConversationBlocked[]>([])
+            : application.unresolvedConversations.pipe(
+                Effect.catch(() =>
+                  Effect.succeed<readonly ConversationBlocked[]>([])
+                )
+              ),
+        runner: store.snapshot,
+      }).pipe(
+        Effect.map(({ application: applicationEvidence, runner: state }) => {
+          const runnerEvidence = state.threads.flatMap((thread) => [
+            ...thread.turns.flatMap((turn) =>
+              turn.status === "blocked" && turn.blocked != null
+                ? [ConversationBlocked.make(turn.blocked)]
+                : []
+            ),
+            ...thread.applicationEvents.flatMap((event) =>
+              event.status === "blocked" && event.blocked != null
+                ? [ConversationBlocked.make(event.blocked)]
+                : []
+            ),
+          ]);
+          const byAttempt = new Map<string, ConversationBlocked>();
+          for (const blocked of [...applicationEvidence, ...runnerEvidence]) {
+            byAttempt.set(blocked.attemptId, blocked);
+          }
+          return [...byAttempt.values()];
+        })
+      ),
       persistenceHealth: store.persistenceHealth,
       drain: serializedDrive,
       retryBlocked: (threadId) =>

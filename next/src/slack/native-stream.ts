@@ -10,8 +10,10 @@ import { Effect } from "effect";
 import { classifySlackError } from "../prototype/emulated-slack.ts";
 import { DeliveryError } from "../prototype/errors.ts";
 import type { SlackNativeStreamCapability } from "../prototype/runtime.ts";
-
-const SLACK_MARKDOWN_TEXT_LIMIT = 12_000;
+import {
+  SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT,
+  slackCodePointLength,
+} from "./message-bounds.ts";
 
 export interface SlackNativeStreamWebApiClient {
   readonly appendStream: (
@@ -27,7 +29,7 @@ export interface SlackNativeStreamWebApiClient {
 
 export const splitSlackMarkdown = (
   text: string,
-  characterLimit = SLACK_MARKDOWN_TEXT_LIMIT
+  characterLimit = SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT
 ): readonly string[] => {
   if (!Number.isSafeInteger(characterLimit) || characterLimit <= 0) {
     throw new RangeError("Slack Markdown character limit must be positive");
@@ -55,6 +57,7 @@ const deliveryError = (cause: unknown): DeliveryError => {
   return DeliveryError.make({
     category: failure.category,
     disposition: failure.disposition,
+    outcomeCertainty: failure.outcomeCertainty,
     retryAfterMillis: failure.retryAfterMillis,
   });
 };
@@ -78,68 +81,39 @@ export const makeSlackNativeStreamCapability = (options: {
   readonly recipientTeamId: string;
 }): SlackNativeStreamCapability => {
   const markdownTextLimit =
-    options.markdownTextLimit ?? SLACK_MARKDOWN_TEXT_LIMIT;
-  const bestEffortStop = async (
-    channelId: string,
-    streamTs: string
-  ): Promise<void> => {
-    try {
-      const response = await options.client.stopStream({
-        channel: channelId,
-        ts: streamTs,
-      });
-      validatedStreamTs("chat.stopStream", response);
-    } catch {
-      // Preserve the append failure that triggered this cleanup attempt.
+    options.markdownTextLimit ?? SLACK_MARKDOWN_TEXT_CODE_POINT_LIMIT;
+  const validateOneRequestText = (text: string): void => {
+    const textLength = slackCodePointLength(text);
+    if (textLength === 0 || textLength > markdownTextLimit) {
+      throw new Error("Slack native stream request text is outside its bound");
     }
   };
   return {
     append: ({ channelId, streamTs, text }) =>
       Effect.tryPromise({
         try: async () => {
-          const segments = splitSlackMarkdown(text, markdownTextLimit);
-          for (const segment of segments) {
-            const response = await options.client.appendStream({
-              channel: channelId,
-              markdown_text: segment,
-              ts: streamTs,
-            });
-            validatedStreamTs("chat.appendStream", response);
-          }
+          validateOneRequestText(text);
+          const response = await options.client.appendStream({
+            channel: channelId,
+            markdown_text: text,
+            ts: streamTs,
+          });
+          validatedStreamTs("chat.appendStream", response);
         },
         catch: deliveryError,
       }),
     start: ({ channelId, recipientUserId, rootTs, text }) =>
       Effect.tryPromise({
         try: async () => {
-          const [initialSegment, ...remainingSegments] = splitSlackMarkdown(
-            text,
-            markdownTextLimit
-          );
-          if (initialSegment === undefined) {
-            throw new Error("Slack native stream cannot start with empty text");
-          }
+          validateOneRequestText(text);
           const response = await options.client.startStream({
             channel: channelId,
-            markdown_text: initialSegment,
+            markdown_text: text,
             recipient_team_id: options.recipientTeamId,
             recipient_user_id: recipientUserId,
             thread_ts: rootTs,
           });
           const streamTs = validatedStreamTs("chat.startStream", response);
-          try {
-            for (const segment of remainingSegments) {
-              const appendResponse = await options.client.appendStream({
-                channel: channelId,
-                markdown_text: segment,
-                ts: streamTs,
-              });
-              validatedStreamTs("chat.appendStream", appendResponse);
-            }
-          } catch (cause) {
-            await bestEffortStop(channelId, streamTs);
-            throw cause;
-          }
           return { ts: streamTs };
         },
         catch: deliveryError,

@@ -1,4 +1,4 @@
-import { Deferred, Effect, Redacted, Ref, Result, type Scope } from "effect";
+import { Deferred, Effect, Exit, Redacted, Ref, Result, Scope } from "effect";
 import type {
   SlackDaemonConfig,
   SlackInstallationConfig,
@@ -56,6 +56,71 @@ export interface SlackWorkspaceStartupAdapter<Client, Gateway> {
     gateway: Gateway
   ) => NonNullable<SlackWorkspaceInstallation["postSetupIncomplete"]>;
 }
+
+export interface SlackWorkspacePreflightReport {
+  readonly bindingIndex: number;
+  readonly reasonCode: string;
+  readonly status:
+    | "ready"
+    | "setup-incomplete"
+    | "config-incompatible"
+    | "quarantined"
+    | "circuit-open";
+}
+
+type ObserveSlackWorkspacePreflight = (
+  report: SlackWorkspacePreflightReport
+) => void;
+
+const reportPreflight = (
+  observe: ObserveSlackWorkspacePreflight | undefined,
+  report: SlackWorkspacePreflightReport
+): Effect.Effect<void> =>
+  Effect.logInfo("Slack workspace startup preflight", report).pipe(
+    Effect.andThen(Effect.sync(() => observe?.(report)))
+  );
+
+const preparedFailureIsConfigIncompatible = (
+  prepared: PreparedRootResult
+): boolean => {
+  if (prepared === null || prepared._tag !== "Failure") {
+    return false;
+  }
+  const failure = prepared.failure;
+  return (
+    typeof failure === "object" &&
+    failure !== null &&
+    "_tag" in failure &&
+    failure._tag === "LaborerConfigError"
+  );
+};
+
+const unavailablePreparedReport = (
+  bindingIndex: number,
+  prepared: PreparedRootResult
+): SlackWorkspacePreflightReport => {
+  const incompatible = preparedFailureIsConfigIncompatible(prepared);
+  return {
+    bindingIndex,
+    reasonCode: incompatible
+      ? "laborer-config-incompatible"
+      : "workspace-root-unavailable",
+    status: incompatible ? "config-incompatible" : "setup-incomplete",
+  };
+};
+
+const preflightStatusForReadiness = (
+  readiness: string
+): SlackWorkspacePreflightReport["status"] => {
+  const known = [
+    "ready",
+    "setup-incomplete",
+    "config-incompatible",
+    "quarantined",
+    "circuit-open",
+  ] as const;
+  return known.find((status) => status === readiness) ?? "ready";
+};
 
 export const prepareSlackWorkspaceRoot = Effect.fn("prepareSlackWorkspaceRoot")(
   function* (config: SlackInstallationConfig, environment: NodeJS.ProcessEnv) {
@@ -185,9 +250,11 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
   readonly config: SlackInstallationConfig;
   readonly locks: RootLockDirectory;
   readonly prepared: PreparedRootResult;
+  readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly rootLockAcquired?: boolean;
   readonly routes: SlackWorkspaceRouteDirectory;
 }): Effect.Effect<void, never, Scope.Scope> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: linear startup state machine keeps every binding failure isolated and reported
   Effect.gen(function* () {
     const { config, prepared } = options;
     const [client, identity] = options.authenticated;
@@ -204,6 +271,11 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         }
       );
       yield* settleConfiguredUnavailable(config, options.routes);
+      yield* reportPreflight(options.observePreflight, {
+        bindingIndex: config.bindingIndex,
+        reasonCode: "workspace-identity-mismatch",
+        status: "setup-incomplete",
+      });
       return;
     }
     if (config.expectedTeamId === undefined) {
@@ -233,6 +305,11 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         identity.teamId,
         unavailableInstallation
       );
+      yield* reportPreflight(options.observePreflight, {
+        bindingIndex: config.bindingIndex,
+        reasonCode: "workspace-root-missing",
+        status: "setup-incomplete",
+      });
       return;
     }
     if (prepared === null || prepared._tag === "Failure") {
@@ -244,6 +321,10 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         config.bindingIndex,
         identity.teamId,
         unavailableInstallation
+      );
+      yield* reportPreflight(
+        options.observePreflight,
+        unavailablePreparedReport(config.bindingIndex, prepared)
       );
       return;
     }
@@ -261,18 +342,41 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         identity.teamId,
         unavailableInstallation
       );
+      yield* reportPreflight(options.observePreflight, {
+        bindingIndex: config.bindingIndex,
+        reasonCode: "workspace-root-lock-unavailable",
+        status: "setup-incomplete",
+      });
       return;
     }
-    const runner = yield* Effect.result(
-      options.adapter.makeRunner({
-        client,
-        gateway,
-        identity,
-        laborer: prepared.success.laborer,
-        paths: prepared.success.paths,
+    const ownerScope = yield* Effect.scope;
+    const runner = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const bindingScope = yield* Scope.make();
+        const constructionExit = yield* Effect.exit(
+          restore(
+            options.adapter
+              .makeRunner({
+                client,
+                gateway,
+                identity,
+                laborer: prepared.success.laborer,
+                paths: prepared.success.paths,
+              })
+              .pipe(Effect.provideService(Scope.Scope, bindingScope))
+          )
+        );
+        if (Exit.isFailure(constructionExit)) {
+          yield* Scope.close(bindingScope, constructionExit);
+          return constructionExit;
+        }
+        yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
+          Scope.close(bindingScope, ownerExit)
+        );
+        return constructionExit;
       })
     );
-    if (runner._tag === "Failure") {
+    if (Exit.isFailure(runner)) {
       yield* Effect.logError("Slack workspace Runner failed to start", {
         bindingIndex: config.bindingIndex,
         teamId: identity.teamId,
@@ -282,11 +386,33 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         identity.teamId,
         unavailableInstallation
       );
+      yield* reportPreflight(options.observePreflight, {
+        bindingIndex: config.bindingIndex,
+        reasonCode: "acp-runner-quarantined",
+        status: "quarantined",
+      });
       return;
     }
+    const runtimeHealth =
+      runner.value.health === undefined
+        ? null
+        : yield* Effect.result(runner.value.health);
+    const readiness =
+      runtimeHealth?._tag === "Success"
+        ? runtimeHealth.success.readiness
+        : "ready";
+    const preflightStatus = preflightStatusForReadiness(readiness);
+    yield* reportPreflight(options.observePreflight, {
+      bindingIndex: config.bindingIndex,
+      reasonCode:
+        preflightStatus === "ready"
+          ? "acp-workspace-ready"
+          : `acp-workspace-${preflightStatus}`,
+      status: preflightStatus,
+    });
     yield* options.routes.settleReady(config.bindingIndex, {
       ...unavailableInstallation,
-      runner: runner.success,
+      runner: runner.value,
     });
   });
 
@@ -295,6 +421,7 @@ const initializeBinding = <Client, Gateway>(options: {
   readonly config: SlackInstallationConfig;
   readonly environment: NodeJS.ProcessEnv;
   readonly locks: RootLockDirectory;
+  readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly prepareRoot: PrepareSlackWorkspaceRoot;
   readonly routes: SlackWorkspaceRouteDirectory;
 }): Effect.Effect<void, never, Scope.Scope> => {
@@ -311,6 +438,11 @@ const initializeBinding = <Client, Gateway>(options: {
     );
     if (authenticated === null) {
       yield* settleConfiguredUnavailable(config, options.routes);
+      yield* reportPreflight(options.observePreflight, {
+        bindingIndex: config.bindingIndex,
+        reasonCode: "workspace-authentication-unavailable",
+        status: "setup-incomplete",
+      });
       return;
     }
     yield* initializeAuthenticatedBinding({
@@ -318,6 +450,9 @@ const initializeBinding = <Client, Gateway>(options: {
       authenticated,
       config,
       locks: options.locks,
+      ...(options.observePreflight === undefined
+        ? {}
+        : { observePreflight: options.observePreflight }),
       prepared,
       routes: options.routes,
     });
@@ -326,6 +461,11 @@ const initializeBinding = <Client, Gateway>(options: {
     Effect.catchCause((cause) =>
       Effect.gen(function* () {
         yield* settleConfiguredUnavailable(options.config, options.routes);
+        yield* reportPreflight(options.observePreflight, {
+          bindingIndex: options.config.bindingIndex,
+          reasonCode: "workspace-initialization-stopped",
+          status: "setup-incomplete",
+        });
         yield* Effect.logError(
           "Slack workspace binding initialization stopped",
           {
@@ -396,6 +536,7 @@ export const startSlackWorkspaceDirectory = <Client, Gateway>(options: {
   readonly adapter: SlackWorkspaceStartupAdapter<Client, Gateway>;
   readonly config: SlackDaemonConfig;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly prepareRoot?: PrepareSlackWorkspaceRoot;
 }): Effect.Effect<SlackWorkspaceRouteDirectory, unknown, Scope.Scope> =>
   Effect.gen(function* () {
@@ -439,6 +580,9 @@ export const startSlackWorkspaceDirectory = <Client, Gateway>(options: {
           config,
           environment,
           locks,
+          ...(options.observePreflight === undefined
+            ? {}
+            : { observePreflight: options.observePreflight }),
           prepareRoot,
           routes,
         }).pipe(Effect.forkScoped),

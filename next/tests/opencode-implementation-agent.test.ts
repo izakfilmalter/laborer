@@ -10,6 +10,9 @@ import { HandlerFailure } from "../src/prototype/errors.ts";
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
 const INITIAL_REQUEST_PATTERN = /Build the requested capability/;
 const BUG_WORKFLOW_PATTERN = /bug workflow/i;
+const FEATURE_TO_PR_SKILL_PATTERN = /\/laborer-feature-to-pr/;
+const BUG_TO_PR_SKILL_PATTERN = /\/laborer-bug-to-pr/;
+const NATIVE_SKILL_MECHANISM_PATTERN = /native skill mechanism/i;
 const PRIOR_SESSION_HISTORY_PATTERN = /prior messages, tool activity/i;
 const INSPECT_CURRENT_WORKTREE_PATTERN = /Inspect the current worktree/i;
 const FOLLOW_UP_REQUEST_PATTERN = /Now add coverage/;
@@ -137,7 +140,7 @@ describe("OpenCode ImplementationAgent", () => {
   );
 
   it.effect(
-    "uses supplied identities and accepts each durable assistant response",
+    "delegates a feature Action to its PR skill and accepts each response",
     () =>
       Effect.gen(function* () {
         const created: Array<{
@@ -215,6 +218,8 @@ describe("OpenCode ImplementationAgent", () => {
         assert.strictEqual(prompted[0]?.promptId, "implementation-prompt-1");
         assert.ok(!(prompted[0] && "tools" in prompted[0]));
         assert.match(prompted[0]?.text ?? "", FEATURE_WORKFLOW_PATTERN);
+        assert.match(prompted[0]?.text ?? "", FEATURE_TO_PR_SKILL_PATTERN);
+        assert.match(prompted[0]?.text ?? "", NATIVE_SKILL_MECHANISM_PATTERN);
         assert.match(prompted[0]?.text ?? "", INITIAL_REQUEST_PATTERN);
         assert.deepStrictEqual(waitedPromptIds, ["implementation-prompt-1"]);
         assert.deepStrictEqual(accepted, [
@@ -230,7 +235,7 @@ describe("OpenCode ImplementationAgent", () => {
       })
   );
 
-  it.effect("runs follow-up prompts serially in the same session", () =>
+  it.effect("delegates a bug Action to its PR skill and resumes it", () =>
     Effect.gen(function* () {
       const prompted: Array<{
         readonly promptId: string;
@@ -328,6 +333,8 @@ describe("OpenCode ImplementationAgent", () => {
         ]
       );
       assert.match(prompted[0]?.text ?? "", BUG_WORKFLOW_PATTERN);
+      assert.match(prompted[0]?.text ?? "", BUG_TO_PR_SKILL_PATTERN);
+      assert.match(prompted[0]?.text ?? "", NATIVE_SKILL_MECHANISM_PATTERN);
       assert.match(prompted[1]?.text ?? "", PRIOR_SESSION_HISTORY_PATTERN);
       assert.match(prompted[1]?.text ?? "", INSPECT_CURRENT_WORKTREE_PATTERN);
       assert.match(prompted[1]?.text ?? "", FOLLOW_UP_REQUEST_PATTERN);

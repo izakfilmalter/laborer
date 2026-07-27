@@ -1078,11 +1078,11 @@ const ensureSession = (
 const implementationWorkflow = (
   request: ImplementationAgentRequest
 ): string => {
-  const guidance =
+  const workflow =
     request.actionName === "deal-with-bug"
-      ? "Bug workflow: reproduce the reported behavior, add a failing regression test, diagnose the root cause, implement the smallest fix, and run focused validation."
-      : "Feature workflow: implement a vertical slice, add focused behavioral tests, preserve repository conventions, and run focused validation.";
-  return `${guidance}\n\nUser request:\n${request.prompt}`;
+      ? { label: "Bug workflow", skill: "/laborer-bug-to-pr" }
+      : { label: "Feature workflow", skill: "/laborer-feature-to-pr" };
+  return `${workflow.label}: Invoke the installed \`${workflow.skill}\` skill through the harness's native skill mechanism with the user request below. Follow the skill through its completion criterion.\n\nUser request:\n${request.prompt}`;
 };
 
 const implementationFollowUpWorkflow = (

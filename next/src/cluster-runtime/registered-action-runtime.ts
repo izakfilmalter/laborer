@@ -1,0 +1,601 @@
+import { createHash } from "node:crypto";
+import {
+  Context,
+  Effect,
+  Array as EffectArray,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
+import { ClusterWorkflowEngine, SingleRunner } from "effect/unstable/cluster";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { Activity, Workflow, WorkflowEngine } from "effect/unstable/workflow";
+import {
+  RegisteredActionBoundaryError,
+  type RegisteredActionCatalog,
+  type RegisteredActionProgress,
+  validateDurableActionValue,
+} from "./registered-action.ts";
+
+const MAX_RUNTIME_ID_LENGTH = 256;
+const MAX_PROGRESS_MESSAGE_LENGTH = 4096;
+
+const BoundedRuntimeId = Schema.NonEmptyString.check(
+  Schema.isMaxLength(MAX_RUNTIME_ID_LENGTH)
+);
+const ExecutionStatus = Schema.Literals([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+]);
+export type RegisteredExecutionStatus = typeof ExecutionStatus.Type;
+
+const StartRequest = Schema.Struct({
+  actionName: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  conversationId: BoundedRuntimeId,
+  input: Schema.Unknown,
+  invocationId: BoundedRuntimeId,
+});
+export type StartRegisteredActionRequest = typeof StartRequest.Type;
+
+const Progress = Schema.Struct({
+  details: Schema.optional(Schema.Unknown),
+  message: Schema.NonEmptyString.check(
+    Schema.isMaxLength(MAX_PROGRESS_MESSAGE_LENGTH)
+  ),
+});
+
+const ExecutionRow = Schema.Struct({
+  actionName: Schema.String,
+  actionRevision: Schema.String,
+  catalogFingerprint: Schema.String,
+  conversationId: Schema.String,
+  executionId: Schema.String,
+  failureCode: Schema.NullOr(Schema.String),
+  inputJson: Schema.String,
+  inputHash: Schema.String,
+  invocationId: Schema.String,
+  progressJson: Schema.NullOr(Schema.String),
+  resultJson: Schema.NullOr(Schema.String),
+  status: ExecutionStatus,
+});
+type ExecutionRow = typeof ExecutionRow.Type;
+
+export interface RegisteredExecutionSnapshot {
+  readonly actionName: string;
+  readonly actionRevision: string;
+  readonly catalogFingerprint: string;
+  readonly conversationId: string;
+  readonly executionId: string;
+  readonly failureCode: string | null;
+  readonly progress: RegisteredActionProgress | null;
+  readonly result: unknown | null;
+  readonly status: RegisteredExecutionStatus;
+}
+
+export interface ConversationTerminalEvent {
+  readonly actionName: string;
+  readonly conversationId: string;
+  readonly eventId: string;
+  readonly executionId: string;
+  readonly result: unknown | null;
+  readonly status: "failed" | "succeeded";
+  readonly version: 1;
+}
+
+export class RegisteredActionRuntimeError extends Schema.TaggedErrorClass<RegisteredActionRuntimeError>()(
+  "RegisteredActionRuntimeError",
+  {
+    reason: Schema.Literals([
+      "conflict",
+      "invalid-input",
+      "invalid-request",
+      "not-found",
+      "registration-unavailable",
+      "storage",
+      "unknown-action",
+    ]),
+  }
+) {}
+
+const runtimeError = (
+  reason: RegisteredActionRuntimeError["reason"]
+): RegisteredActionRuntimeError =>
+  RegisteredActionRuntimeError.make({ reason });
+
+const RegisteredActionWorkflow = Workflow.make(
+  "Laborer/RegisteredActionExecution",
+  {
+    payload: {
+      actionName: Schema.String,
+      actionRevision: Schema.String,
+      catalogFingerprint: Schema.String,
+      conversationId: Schema.String,
+      encodedInput: Schema.Unknown,
+      executionId: Schema.String,
+    },
+    idempotencyKey: ({ executionId }) => executionId,
+  }
+);
+
+const executionIdFor = (scope: {
+  readonly conversationId: string;
+  readonly invocationId: string;
+}): string =>
+  `execution:${createHash("sha256")
+    .update("laborer-registered-action-execution-v1\0", "utf8")
+    .update(scope.conversationId, "utf8")
+    .update("\0", "utf8")
+    .update(scope.invocationId, "utf8")
+    .digest("base64url")}`;
+
+const inputHashFor = (canonicalInput: string): string =>
+  createHash("sha256")
+    .update("laborer-registered-action-input-v1\0", "utf8")
+    .update(canonicalInput, "utf8")
+    .digest("base64url");
+
+const terminalEventId = (executionId: string): string =>
+  `${executionId}:terminal`;
+
+const parseStoredJson = (value: string | null): unknown | null => {
+  if (value === null) {
+    return null;
+  }
+  return JSON.parse(value) as unknown;
+};
+
+const snapshotFromRow = (
+  row: ExecutionRow
+): Effect.Effect<RegisteredExecutionSnapshot, RegisteredActionRuntimeError> =>
+  Effect.try({
+    try: () => ({
+      actionName: row.actionName,
+      actionRevision: row.actionRevision,
+      catalogFingerprint: row.catalogFingerprint,
+      conversationId: row.conversationId,
+      executionId: row.executionId,
+      failureCode: row.failureCode,
+      progress: parseStoredJson(
+        row.progressJson
+      ) as RegisteredActionProgress | null,
+      result: parseStoredJson(row.resultJson),
+      status: row.status,
+    }),
+    catch: () => runtimeError("storage"),
+  });
+
+const decodeExecutionRow = (
+  value: unknown
+): Effect.Effect<ExecutionRow, RegisteredActionRuntimeError> =>
+  Schema.decodeUnknownEffect(ExecutionRow)(value).pipe(
+    Effect.mapError(() => runtimeError("storage"))
+  );
+
+const firstExecutionRow = (
+  rows: readonly unknown[],
+  missingReason: "not-found" | "storage"
+): Effect.Effect<ExecutionRow, RegisteredActionRuntimeError> =>
+  EffectArray.head(rows).pipe(
+    Option.match({
+      onNone: () => Effect.fail(runtimeError(missingReason)),
+      onSome: decodeExecutionRow,
+    })
+  );
+
+export interface RegisteredActionRuntimeShape {
+  readonly get: (
+    executionId: string
+  ) => Effect.Effect<RegisteredExecutionSnapshot, RegisteredActionRuntimeError>;
+  readonly privateTools: RegisteredActionCatalog["privateTools"];
+  readonly start: (request: unknown) => Effect.Effect<
+    {
+      readonly deduplicated: boolean;
+      readonly executionId: string;
+      readonly status: "queued";
+    },
+    RegisteredActionRuntimeError
+  >;
+}
+
+export class RegisteredActionRuntime extends Context.Service<
+  RegisteredActionRuntime,
+  RegisteredActionRuntimeShape
+>()("@laborer/cluster-runtime/RegisteredActionRuntime") {}
+
+interface RegisteredActionRuntimeOptions {
+  readonly catalog: RegisteredActionCatalog;
+  readonly deliverTerminal: (
+    event: ConversationTerminalEvent
+  ) => Effect.Effect<void>;
+}
+
+const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
+  RegisteredActionWorkflow.toLayer((payload) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const action = yield* options.catalog
+        .require(payload.actionName, payload.actionRevision)
+        .pipe(Effect.orDie);
+
+      const outcome = yield* Activity.make({
+        name: "RunRegisteredAction",
+        success: Schema.Struct({
+          failureCode: Schema.NullOr(Schema.String),
+          result: Schema.Unknown,
+          status: Schema.Literals(["failed", "succeeded"]),
+        }),
+        execute: Effect.gen(function* () {
+          yield* sql`
+            UPDATE laborer_action_executions
+            SET status = 'running'
+            WHERE execution_id = ${payload.executionId} AND status = 'queued'
+          `;
+          const reportProgress = (candidate: RegisteredActionProgress) =>
+            Schema.decodeUnknownEffect(Progress, {
+              onExcessProperty: "error",
+            })(candidate).pipe(
+              Effect.mapError(() =>
+                RegisteredActionBoundaryError.make({ boundary: "progress" })
+              ),
+              Effect.flatMap((progress) =>
+                validateDurableActionValue(progress, "progress").pipe(
+                  Effect.flatMap(
+                    (progressJson) => sql`
+                    UPDATE laborer_action_executions
+                    SET progress_json = ${progressJson}
+                    WHERE execution_id = ${payload.executionId}
+                  `
+                  )
+                )
+              ),
+              Effect.asVoid,
+              Effect.mapError(() =>
+                RegisteredActionBoundaryError.make({ boundary: "progress" })
+              )
+            );
+          const exit = yield* Effect.exit(
+            action.execute(payload.encodedInput, {
+              actionName: payload.actionName,
+              actionRevision: payload.actionRevision,
+              catalogFingerprint: payload.catalogFingerprint,
+              conversationId: payload.conversationId,
+              executionId: payload.executionId,
+              reportProgress,
+            })
+          );
+          if (Exit.isFailure(exit)) {
+            return {
+              failureCode: "action-failed-or-invalid-output",
+              result: null,
+              status: "failed" as const,
+            };
+          }
+          const resultJson = yield* validateDurableActionValue(
+            exit.value,
+            "result"
+          );
+          return {
+            failureCode: null,
+            result: JSON.parse(resultJson) as unknown,
+            status: "succeeded" as const,
+          };
+        }).pipe(Effect.orDie),
+      });
+
+      const event: ConversationTerminalEvent = {
+        actionName: payload.actionName,
+        conversationId: payload.conversationId,
+        eventId: terminalEventId(payload.executionId),
+        executionId: payload.executionId,
+        result: outcome.status === "succeeded" ? outcome.result : null,
+        status: outcome.status,
+        version: 1,
+      };
+      const eventJson = yield* validateDurableActionValue(event, "result").pipe(
+        Effect.orDie
+      );
+      const resultJson =
+        outcome.status === "succeeded"
+          ? yield* validateDurableActionValue(outcome.result, "result").pipe(
+              Effect.orDie
+            )
+          : null;
+
+      yield* Activity.make({
+        name: "PersistRegisteredActionTerminal",
+        execute: sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+              UPDATE laborer_action_executions
+              SET
+                status = ${outcome.status},
+                result_json = ${resultJson},
+                failure_code = ${outcome.failureCode}
+              WHERE execution_id = ${payload.executionId}
+            `;
+              yield* sql`
+              INSERT OR IGNORE INTO laborer_execution_terminal_outbox (
+                event_id, execution_id, conversation_id, event_json, delivered
+              ) VALUES (
+                ${event.eventId}, ${event.executionId}, ${event.conversationId},
+                ${eventJson}, 0
+              )
+            `;
+            })
+          )
+          .pipe(Effect.orDie),
+      });
+
+      yield* Activity.make({
+        name: "DeliverRegisteredActionTerminal",
+        execute: Effect.gen(function* () {
+          const pending = yield* sql<{ readonly delivered: number }>`
+            SELECT delivered
+            FROM laborer_execution_terminal_outbox
+            WHERE event_id = ${event.eventId}
+          `;
+          if (pending[0]?.delivered === 1) {
+            return;
+          }
+          yield* options.deliverTerminal(event);
+          yield* sql`
+            UPDATE laborer_execution_terminal_outbox
+            SET delivered = 1
+            WHERE event_id = ${event.eventId}
+          `;
+        }).pipe(Effect.orDie),
+      });
+    }).pipe(Effect.orDie)
+  );
+
+const clusterLayer = ClusterWorkflowEngine.layer.pipe(
+  Layer.provideMerge(
+    SingleRunner.layer({
+      runnerStorage: "sql",
+      shardingConfig: {
+        entityMessagePollInterval: 10,
+        entityReplyPollInterval: 10,
+        entityTerminationTimeout: 100,
+        refreshAssignmentsInterval: 10,
+        sendRetryInterval: 10,
+      },
+    })
+  )
+);
+
+const initializeApplicationTables = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS laborer_action_executions (
+      execution_id TEXT PRIMARY KEY,
+      invocation_id TEXT NOT NULL UNIQUE,
+      conversation_id TEXT NOT NULL,
+      action_name TEXT NOT NULL,
+      action_revision TEXT NOT NULL,
+      catalog_fingerprint TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('queued', 'running', 'succeeded', 'failed')
+      ),
+      progress_json TEXT,
+      result_json TEXT,
+      failure_code TEXT
+    ) STRICT
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS laborer_execution_terminal_outbox (
+      event_id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      conversation_id TEXT NOT NULL,
+      event_json TEXT NOT NULL,
+      delivered INTEGER NOT NULL CHECK (delivered IN (0, 1)),
+      FOREIGN KEY (execution_id) REFERENCES laborer_action_executions(execution_id)
+    ) STRICT
+  `;
+});
+
+const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const engine = yield* WorkflowEngine.WorkflowEngine;
+    yield* initializeApplicationTables;
+
+    const nonterminal = yield* sql<{
+      readonly actionName: string;
+      readonly actionRevision: string;
+      readonly catalogFingerprint: string;
+      readonly conversationId: string;
+      readonly executionId: string;
+      readonly inputJson: string;
+    }>`
+      SELECT
+        action_name AS actionName,
+        action_revision AS actionRevision,
+        catalog_fingerprint AS catalogFingerprint,
+        conversation_id AS conversationId,
+        execution_id AS executionId,
+        input_json AS inputJson
+      FROM laborer_action_executions
+      WHERE status IN ('queued', 'running')
+    `;
+    yield* Effect.forEach(
+      nonterminal,
+      (record) =>
+        Effect.gen(function* () {
+          const action = yield* options.catalog
+            .require(record.actionName, record.actionRevision)
+            .pipe(
+              Effect.mapError(() => runtimeError("registration-unavailable"))
+            );
+          const encodedInput = yield* Effect.try({
+            try: () => JSON.parse(record.inputJson) as unknown,
+            catch: () => runtimeError("storage"),
+          });
+          yield* action
+            .decodeInput(encodedInput)
+            .pipe(Effect.mapError(() => runtimeError("storage")));
+          yield* RegisteredActionWorkflow.execute(
+            {
+              actionName: record.actionName,
+              actionRevision: record.actionRevision,
+              catalogFingerprint: record.catalogFingerprint,
+              conversationId: record.conversationId,
+              encodedInput,
+              executionId: record.executionId,
+            },
+            { discard: true }
+          ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, engine));
+        }),
+      { discard: true }
+    );
+
+    const get = Effect.fn("RegisteredActionRuntime.get")(function* (
+      executionId: string
+    ) {
+      if (
+        executionId.length === 0 ||
+        executionId.length > MAX_RUNTIME_ID_LENGTH
+      ) {
+        return yield* runtimeError("not-found");
+      }
+      const rows = yield* sql`
+        SELECT
+          action_name AS actionName,
+          action_revision AS actionRevision,
+          catalog_fingerprint AS catalogFingerprint,
+          conversation_id AS conversationId,
+          execution_id AS executionId,
+          failure_code AS failureCode,
+          input_json AS inputJson,
+          input_hash AS inputHash,
+          invocation_id AS invocationId,
+          progress_json AS progressJson,
+          result_json AS resultJson,
+          status
+        FROM laborer_action_executions
+        WHERE execution_id = ${executionId}
+      `;
+      const row = yield* firstExecutionRow(rows, "not-found");
+      return yield* snapshotFromRow(row);
+    });
+
+    const start = Effect.fn("RegisteredActionRuntime.start")(function* (
+      untrustedRequest: unknown
+    ) {
+      const request = yield* Schema.decodeUnknownEffect(StartRequest, {
+        onExcessProperty: "error",
+      })(untrustedRequest).pipe(
+        Effect.mapError(() => runtimeError("invalid-request"))
+      );
+      const action = yield* options.catalog
+        .require(request.actionName)
+        .pipe(Effect.mapError(() => runtimeError("unknown-action")));
+      const input = yield* action
+        .decodeInput(request.input)
+        .pipe(Effect.mapError(() => runtimeError("invalid-input")));
+      const inputJson = yield* validateDurableActionValue(input, "input").pipe(
+        Effect.mapError(() => runtimeError("invalid-input"))
+      );
+      const inputHash = inputHashFor(inputJson);
+      const executionId = executionIdFor(request);
+
+      const existing = yield* sql`
+        SELECT
+          action_name AS actionName,
+          action_revision AS actionRevision,
+          catalog_fingerprint AS catalogFingerprint,
+          conversation_id AS conversationId,
+          execution_id AS executionId,
+          failure_code AS failureCode,
+          input_json AS inputJson,
+          input_hash AS inputHash,
+          invocation_id AS invocationId,
+          progress_json AS progressJson,
+          result_json AS resultJson,
+          status
+        FROM laborer_action_executions
+        WHERE invocation_id = ${request.invocationId}
+      `;
+      const existingOption = EffectArray.head(existing);
+      if (Option.isSome(existingOption)) {
+        const row = yield* decodeExecutionRow(existingOption.value);
+        if (
+          row.actionName !== request.actionName ||
+          row.actionRevision !== action.revision ||
+          row.catalogFingerprint !== options.catalog.fingerprint ||
+          row.conversationId !== request.conversationId ||
+          row.executionId !== executionId ||
+          row.inputHash !== inputHash
+        ) {
+          return yield* runtimeError("conflict");
+        }
+        return {
+          deduplicated: true,
+          executionId: row.executionId,
+          status: "queued" as const,
+        };
+      }
+
+      yield* sql`
+        INSERT INTO laborer_action_executions (
+          execution_id, invocation_id, conversation_id, action_name,
+          action_revision, catalog_fingerprint, input_json, input_hash, status,
+          progress_json, result_json, failure_code
+        ) VALUES (
+          ${executionId}, ${request.invocationId}, ${request.conversationId},
+          ${request.actionName}, ${action.revision}, ${options.catalog.fingerprint},
+          ${inputJson}, ${inputHash}, 'queued', NULL, NULL, NULL
+        )
+      `;
+      yield* RegisteredActionWorkflow.execute(
+        {
+          actionName: request.actionName,
+          actionRevision: action.revision,
+          catalogFingerprint: options.catalog.fingerprint,
+          conversationId: request.conversationId,
+          encodedInput: input,
+          executionId,
+        },
+        { discard: true }
+      ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, engine));
+      return { deduplicated: false, executionId, status: "queued" as const };
+    });
+
+    return RegisteredActionRuntime.of({
+      get: (executionId) =>
+        get(executionId).pipe(
+          Effect.mapError((error) =>
+            error instanceof RegisteredActionRuntimeError
+              ? error
+              : runtimeError("storage")
+          )
+        ),
+      privateTools: options.catalog.privateTools,
+      start: (request) =>
+        start(request).pipe(
+          Effect.mapError((error) =>
+            error instanceof RegisteredActionRuntimeError
+              ? error
+              : runtimeError("storage")
+          )
+        ),
+    });
+  });
+
+export const makeRegisteredActionRuntimeLayer = (
+  options: RegisteredActionRuntimeOptions
+) => {
+  const workflows = workflowLayer(options).pipe(
+    Layer.provideMerge(clusterLayer),
+    Layer.orDie
+  );
+  return Layer.effect(
+    RegisteredActionRuntime,
+    makeRuntime(options).pipe(Effect.orDie)
+  ).pipe(Layer.provideMerge(workflows));
+};

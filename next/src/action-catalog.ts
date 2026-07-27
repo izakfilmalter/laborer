@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 import { Effect, Schema } from "effect";
 import type { JsonSchema } from "effect/JsonSchema";
+import {
+  canonicalBoundedActionValue,
+  ACTION_CANONICAL_MAX_BYTES as SHARED_ACTION_CANONICAL_MAX_BYTES,
+  ACTION_CANONICAL_MAX_DEPTH as SHARED_ACTION_CANONICAL_MAX_DEPTH,
+  ACTION_CANONICAL_MAX_ITEMS as SHARED_ACTION_CANONICAL_MAX_ITEMS,
+  canonicalCatalogJson as sharedCanonicalCatalogJson,
+} from "./bounded-action-value.ts";
+
+export const ACTION_CANONICAL_MAX_BYTES = SHARED_ACTION_CANONICAL_MAX_BYTES;
+export const ACTION_CANONICAL_MAX_DEPTH = SHARED_ACTION_CANONICAL_MAX_DEPTH;
+export const ACTION_CANONICAL_MAX_ITEMS = SHARED_ACTION_CANONICAL_MAX_ITEMS;
+export const canonicalCatalogJson = sharedCanonicalCatalogJson;
 
 export const ACTION_PROMPT_MAX_LENGTH = 32_768;
 export const ACTION_CATALOG_CONTRACT_VERSION = 1;
@@ -186,21 +198,6 @@ export const dealWithBugAction = defineProductionAction({
   result: DealWithBugActionResult,
 });
 
-export const canonicalCatalogJson = (value: unknown): string => {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalCatalogJson).join(",")}]`;
-  }
-  return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(
-      ([key, item]) => `${JSON.stringify(key)}:${canonicalCatalogJson(item)}`
-    )
-    .join(",")}}`;
-};
-
 export interface ProductionActionCatalog<
   Actions extends
     readonly ProductionActionDefinition[] = readonly ProductionActionDefinition[],
@@ -271,76 +268,11 @@ export const actionDefinition = (
 ): ProductionActionDefinition | undefined =>
   productionActionCatalog.actions.find((action) => action.name === name);
 
-const INVALID_CANONICAL_VALUE = Symbol("invalid-canonical-value");
-export const ACTION_CANONICAL_MAX_DEPTH = 8;
-export const ACTION_CANONICAL_MAX_ITEMS = 256;
-export const ACTION_CANONICAL_MAX_BYTES = 64 * 1024;
-
-const normalizeCanonicalValue = (
-  value: unknown,
-  depth: number
-): unknown | typeof INVALID_CANONICAL_VALUE => {
-  if (value === null || typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "string") {
-    return value.normalize("NFC");
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : INVALID_CANONICAL_VALUE;
-  }
-  if (depth >= ACTION_CANONICAL_MAX_DEPTH) {
-    return INVALID_CANONICAL_VALUE;
-  }
-  if (Array.isArray(value)) {
-    if (value.length > ACTION_CANONICAL_MAX_ITEMS) {
-      return INVALID_CANONICAL_VALUE;
-    }
-    const normalized: unknown[] = [];
-    for (const item of value) {
-      const candidate = normalizeCanonicalValue(item, depth + 1);
-      if (candidate === INVALID_CANONICAL_VALUE) {
-        return INVALID_CANONICAL_VALUE;
-      }
-      normalized.push(candidate);
-    }
-    return normalized;
-  }
-  if (typeof value !== "object") {
-    return INVALID_CANONICAL_VALUE;
-  }
-  const entries = Object.entries(value).sort(([left], [right]) =>
-    left.localeCompare(right)
-  );
-  if (entries.length > ACTION_CANONICAL_MAX_ITEMS) {
-    return INVALID_CANONICAL_VALUE;
-  }
-  const normalized = Object.create(null) as Record<string, unknown>;
-  for (const [key, item] of entries) {
-    const candidate = normalizeCanonicalValue(item, depth + 1);
-    if (candidate === INVALID_CANONICAL_VALUE) {
-      return INVALID_CANONICAL_VALUE;
-    }
-    normalized[key.normalize("NFC")] = candidate;
-  }
-  return normalized;
-};
-
 export const canonicalActionInput = (
   input: unknown
 ): Effect.Effect<string, ActionCatalogValidationError> =>
   Effect.try({
-    try: () => {
-      const normalized = normalizeCanonicalValue(input, 0);
-      if (normalized === INVALID_CANONICAL_VALUE) {
-        throw new Error("invalid canonical input");
-      }
-      const json = canonicalCatalogJson(normalized);
-      if (Buffer.byteLength(json, "utf8") > ACTION_CANONICAL_MAX_BYTES) {
-        throw new Error("canonical input is oversized");
-      }
-      return json;
-    },
+    try: () => canonicalBoundedActionValue(input),
     catch: () => validationError("input"),
   });
 

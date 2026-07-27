@@ -1,0 +1,155 @@
+import { join } from "node:path";
+import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect, Schema } from "effect";
+import {
+  defineAction,
+  defineApplication,
+} from "../src/durable-runtime/action.ts";
+import {
+  makeRootDurableRuntimeLayer,
+  RootDurableRuntime,
+} from "../src/durable-runtime/root-runtime.ts";
+import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
+
+const waitForTerminal = Effect.fn("waitForTerminal")(function* (
+  executionId: string
+) {
+  const runtime = yield* RootDurableRuntime;
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const snapshot = yield* runtime.getExecution(executionId);
+    if (snapshot.status === "completed" || snapshot.status === "failed") {
+      return snapshot;
+    }
+    yield* Effect.sleep("10 millis");
+  }
+  return yield* Effect.die(new Error("Execution did not settle"));
+});
+
+describe("root durable runtime", () => {
+  it.effect(
+    "runs arbitrary registered Actions through Cluster and a SQLite outbox",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-durable-root-runtime-"
+          );
+          const action = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Render a fixture greeting",
+            input: Schema.Struct({ name: Schema.String }),
+            name: "fixture/render-greeting",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ greeting: Schema.String }),
+            revision: "fixture-v1",
+            run: (input, context) =>
+              Effect.gen(function* () {
+                yield* context.reportProgress({ phase: "rendering" });
+                yield* Effect.yieldNow;
+                return { greeting: `hello ${input.name}` };
+              }),
+          });
+          const application = defineApplication({ actions: [action] });
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            "root-fixture"
+          );
+          const scene = Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const request = {
+              actionName: "fixture/render-greeting",
+              conversationId: "workspace:T1:thread:C1:1.0",
+              input: { name: "Ada" },
+              invocationId: "invocation-1",
+              rootIdentity: "root-fixture",
+            } as const;
+            const accepted = yield* runtime.startExecution(request);
+            const duplicate = yield* runtime.startExecution(request);
+            assert.strictEqual(duplicate.executionId, accepted.executionId);
+
+            const conflict = yield* Effect.result(
+              runtime.startExecution({
+                ...request,
+                input: { name: "Grace" },
+              })
+            );
+            assert.strictEqual(conflict._tag, "Failure");
+
+            const terminal = yield* waitForTerminal(accepted.executionId);
+            assert.strictEqual(terminal.status, "completed");
+            assert.deepStrictEqual(terminal.result, { greeting: "hello Ada" });
+
+            const events = yield* runtime.pendingEvents(request.conversationId);
+            assert.deepStrictEqual(
+              events.map(({ kind, sequence }) => ({ kind, sequence })),
+              [
+                { kind: "progress", sequence: 1 },
+                { kind: "completed", sequence: 2 },
+              ]
+            );
+            const firstEvent = events[0];
+            assert.ok(firstEvent);
+            yield* runtime.acknowledgeEvent(firstEvent.eventId);
+            const remaining = yield* runtime.pendingEvents(
+              request.conversationId
+            );
+            assert.deepStrictEqual(
+              remaining.map(({ sequence }) => sequence),
+              [2]
+            );
+            return {
+              conversationId: request.conversationId,
+              executionId: accepted.executionId,
+            };
+          });
+          const evidence = yield* scene.pipe(Effect.provide(layer));
+          const restartedLayer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            "root-fixture"
+          );
+          yield* Effect.gen(function* () {
+            const restarted = yield* RootDurableRuntime;
+            const snapshot = yield* restarted.getExecution(
+              evidence.executionId
+            );
+            assert.strictEqual(snapshot.status, "completed");
+            const pending = yield* restarted.pendingEvents(
+              evidence.conversationId
+            );
+            assert.deepStrictEqual(
+              pending.map(({ kind, sequence }) => ({ kind, sequence })),
+              [{ kind: "completed", sequence: 2 }]
+            );
+          }).pipe(Effect.provide(restartedLayer));
+        })
+      ),
+    20_000
+  );
+
+  it("rejects conflicting registrations before publishing a catalog", () => {
+    const action = defineAction({
+      description: "One fixture Action",
+      input: Schema.Struct({ value: Schema.String }),
+      name: "fixture/action",
+      result: Schema.Struct({ value: Schema.String }),
+      revision: "v1",
+      run: (input) => Effect.succeed(input),
+    });
+    assert.throws(() => defineApplication({ actions: [action, action] }));
+    assert.throws(() =>
+      defineAction({
+        annotations: { idempotentHint: false },
+        description: "Unsafe retry declaration",
+        input: Schema.String,
+        name: "fixture/unsafe-retry",
+        recoveryPolicy: "idempotent-retry",
+        result: Schema.String,
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      })
+    );
+  });
+});

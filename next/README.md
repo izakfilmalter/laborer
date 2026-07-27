@@ -66,6 +66,20 @@ To run the production lifecycle, use:
 bun run start:slack
 ```
 
+The daemon also owns a bounded, authenticated local status stream under its
+owner-only `.laborer-runtime` directory. To open the macOS menu-bar companion
+against that separately running daemon, use one development command in another
+terminal:
+
+```sh
+bun run companion:dev
+```
+
+The companion has no Dock icon; click its menu-bar item to toggle the status
+popover. Quitting it does not signal or stop the daemon. Both commands default
+to this package's `.laborer-runtime`; set `LABORER_RUNTIME_ROOT` for the
+companion when the daemon endpoint is rooted elsewhere.
+
 The ACP child receives only required runtime variables and application
 environment names explicitly opted into by `laborer.json`; Slack, workspace
 registry, and Laborer bridge or memory authority variables are removed. Project

@@ -12,15 +12,43 @@ import { ClusterWorkflowEngine, SingleRunner } from "effect/unstable/cluster";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { Workflow, WorkflowEngine } from "effect/unstable/workflow";
 import { canonicalActionInput } from "../action-catalog.ts";
-import type {
-  RegisteredActionCatalog,
-  RegisteredActionContext,
+import {
+  ACTION_NAME_MAX_LENGTH,
+  ACTION_REVISION_MAX_LENGTH,
+  type RegisteredActionCatalog,
+  type RegisteredActionContext,
 } from "./action.ts";
 
 const RUNTIME_SCHEMA_VERSION = 1;
-const EVENT_PAYLOAD_MAX_BYTES = 64 * 1024;
+export const RUNTIME_PAYLOAD_MAX_BYTES = 64 * 1024;
+export const RUNTIME_CONVERSATION_ID_MAX_LENGTH = 512;
+export const RUNTIME_INVOCATION_ID_MAX_LENGTH = 512;
+export const RUNTIME_ROOT_IDENTITY_MAX_LENGTH = 4096;
+export const RUNTIME_EXECUTION_ID_MAX_LENGTH = 160;
+export const RUNTIME_EVENT_ID_MAX_LENGTH = 256;
+const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
+const NONBLANK_PATTERN = /\S/;
 
-const NonBlankString = Schema.String.check(Schema.isPattern(/\S/));
+const boundedNonBlankString = (maximumLength: number) =>
+  Schema.String.check(
+    Schema.isPattern(NONBLANK_PATTERN),
+    Schema.isMaxLength(maximumLength)
+  );
+export const RuntimeConversationId = boundedNonBlankString(
+  RUNTIME_CONVERSATION_ID_MAX_LENGTH
+);
+export const RuntimeInvocationId = boundedNonBlankString(
+  RUNTIME_INVOCATION_ID_MAX_LENGTH
+);
+export const RuntimeRootIdentity = boundedNonBlankString(
+  RUNTIME_ROOT_IDENTITY_MAX_LENGTH
+);
+export const RuntimeExecutionId = boundedNonBlankString(
+  RUNTIME_EXECUTION_ID_MAX_LENGTH
+);
+export const RuntimeEventId = boundedNonBlankString(
+  RUNTIME_EVENT_ID_MAX_LENGTH
+);
 export const ExecutionStatus = Schema.Literals([
   "queued",
   "running",
@@ -32,34 +60,38 @@ export const ExecutionStatus = Schema.Literals([
 export type ExecutionStatus = typeof ExecutionStatus.Type;
 
 export const StartExecutionRequest = Schema.Struct({
-  actionName: NonBlankString,
-  conversationId: NonBlankString,
+  actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
+  conversationId: RuntimeConversationId,
   input: Schema.Unknown,
-  invocationId: NonBlankString,
-  rootIdentity: NonBlankString,
+  invocationId: RuntimeInvocationId,
+  rootIdentity: RuntimeRootIdentity,
 });
 export type StartExecutionRequest = typeof StartExecutionRequest.Type;
 
 export const ExecutionSnapshot = Schema.Struct({
-  actionName: Schema.String,
-  actionRevision: Schema.String,
-  catalogFingerprint: Schema.String,
-  conversationId: Schema.String,
-  executionId: Schema.String,
-  failureCategory: Schema.NullOr(Schema.String),
-  invocationId: Schema.String,
+  actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
+  actionRevision: boundedNonBlankString(ACTION_REVISION_MAX_LENGTH),
+  catalogFingerprint: boundedNonBlankString(
+    RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH
+  ),
+  conversationId: RuntimeConversationId,
+  executionId: RuntimeExecutionId,
+  failureCategory: Schema.NullOr(
+    Schema.Literals(["action-failed", "invalid-result", "needs-attention"])
+  ),
+  invocationId: RuntimeInvocationId,
   result: Schema.NullOr(Schema.Unknown),
   status: ExecutionStatus,
 });
 export type ExecutionSnapshot = typeof ExecutionSnapshot.Type;
 
 export const ExecutionEvent = Schema.Struct({
-  conversationId: Schema.String,
-  eventId: Schema.String,
-  executionId: Schema.String,
+  conversationId: RuntimeConversationId,
+  eventId: RuntimeEventId,
+  executionId: RuntimeExecutionId,
   kind: Schema.Literals(["progress", "completed", "failed"]),
   payload: Schema.Unknown,
-  sequence: Schema.Number,
+  sequence: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type ExecutionEvent = typeof ExecutionEvent.Type;
 
@@ -89,13 +121,17 @@ const RegisteredActionWorkflowFailure = Schema.Struct({
 });
 
 const RegisteredActionWorkflowPayload = Schema.Struct({
-  actionName: Schema.String,
-  actionRevision: Schema.String,
-  catalogFingerprint: Schema.String,
-  conversationId: Schema.String,
-  encodedInput: Schema.String,
-  invocationId: Schema.String,
-  rootIdentity: Schema.String,
+  actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
+  actionRevision: boundedNonBlankString(ACTION_REVISION_MAX_LENGTH),
+  catalogFingerprint: boundedNonBlankString(
+    RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH
+  ),
+  conversationId: RuntimeConversationId,
+  encodedInput: Schema.String.check(
+    Schema.isMaxLength(RUNTIME_PAYLOAD_MAX_BYTES)
+  ),
+  invocationId: RuntimeInvocationId,
+  rootIdentity: RuntimeRootIdentity,
 });
 type RegisteredActionWorkflowPayload =
   typeof RegisteredActionWorkflowPayload.Type;
@@ -125,7 +161,13 @@ class RootIdentity extends Context.Service<RootIdentity, string>()(
   "@laborer/durable-runtime/RootIdentity"
 ) {}
 
-const decodeJson = (encoded: string): unknown => JSON.parse(encoded) as unknown;
+const decodeStoredJson = (
+  encoded: string
+): Effect.Effect<unknown, DurableRuntimeError> =>
+  Effect.try({
+    catch: () => runtimeError("storage-failure"),
+    try: () => JSON.parse(encoded) as unknown,
+  });
 
 const boundedPayloadJson = (
   payload: unknown
@@ -134,7 +176,7 @@ const boundedPayloadJson = (
     Effect.mapError(() => runtimeError("invalid-payload")),
     Effect.filterOrFail(
       (encoded) =>
-        Buffer.byteLength(encoded, "utf8") <= EVENT_PAYLOAD_MAX_BYTES,
+        Buffer.byteLength(encoded, "utf8") <= RUNTIME_PAYLOAD_MAX_BYTES,
       () => runtimeError("invalid-payload")
     )
   );
@@ -197,22 +239,60 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
             category: "action-failed" as const,
           }))
         );
-      const statuses = yield* sql<{ readonly status: string }>`
-        SELECT status
+      const statuses = yield* sql<{
+        readonly failureCategory: string | null;
+        readonly status: string;
+      }>`
+        SELECT status, failure_category AS failureCategory
         FROM laborer_executions
         WHERE execution_id = ${executionId}
       `.pipe(Effect.orDie);
-      const durableStatus = pipe(
+      const durableExecution = pipe(
         statuses,
         EffectArray.head,
-        Option.map((row) => row.status),
-        Option.getOrElse(() => "missing")
+        Option.getOrElse(() => ({ failureCategory: null, status: "missing" }))
       );
       if (
-        durableStatus === "running" &&
+        durableExecution.status === "completed" ||
+        durableExecution.status === "cancelled"
+      ) {
+        return;
+      }
+      if (durableExecution.status === "failed") {
+        if (
+          durableExecution.failureCategory !== "action-failed" &&
+          durableExecution.failureCategory !== "invalid-result"
+        ) {
+          return yield* Effect.die(
+            new Error("failed Execution has an invalid failure category")
+          );
+        }
+        const category = durableExecution.failureCategory;
+        return yield* Effect.fail({ category } as const);
+      }
+      if (durableExecution.status === "needs-attention") {
+        if (durableExecution.failureCategory !== "needs-attention") {
+          return yield* Effect.die(
+            new Error(
+              "needs-attention Execution has an invalid failure category"
+            )
+          );
+        }
+        return yield* Effect.fail({ category: "needs-attention" as const });
+      }
+      if (
+        durableExecution.status === "running" &&
         action.recoveryPolicy === "fail-closed"
       ) {
         return yield* Effect.fail({ category: "needs-attention" as const });
+      }
+      if (
+        durableExecution.status !== "queued" &&
+        durableExecution.status !== "running"
+      ) {
+        return yield* Effect.die(
+          new Error("Execution has an invalid durable status")
+        );
       }
       yield* sql`
         UPDATE laborer_executions
@@ -235,12 +315,13 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
           ),
         rootIdentity: payload.rootIdentity,
       };
-      const result = yield* action
-        .execute(decodeJson(payload.encodedInput), context)
-        .pipe(
-          Effect.flatMap(action.decodeResult),
-          Effect.mapError(() => ({ category: "action-failed" as const }))
-        );
+      const decodedInput = yield* decodeStoredJson(payload.encodedInput).pipe(
+        Effect.orDie
+      );
+      const result = yield* action.execute(decodedInput, context).pipe(
+        Effect.flatMap(action.decodeResult),
+        Effect.mapError(() => ({ category: "action-failed" as const }))
+      );
       const encodedResult = yield* boundedPayloadJson(result).pipe(
         Effect.mapError(() => ({ category: "invalid-result" as const }))
       );
@@ -278,6 +359,29 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
             yield* sql
               .withTransaction(
                 Effect.gen(function* () {
+                  const statuses = yield* sql<{ readonly status: string }>`
+                    SELECT status
+                    FROM laborer_executions
+                    WHERE execution_id = ${executionId}
+                  `;
+                  const status = pipe(
+                    statuses,
+                    EffectArray.head,
+                    Option.map((row) => row.status),
+                    Option.getOrElse(() => "missing")
+                  );
+                  if (
+                    status === "failed" ||
+                    status === "needs-attention" ||
+                    status === "cancelled"
+                  ) {
+                    return;
+                  }
+                  if (status === "completed") {
+                    return yield* Effect.die(
+                      new Error("completed Execution cannot become failed")
+                    );
+                  }
                   yield* sql`
                 UPDATE laborer_executions
                 SET status = ${terminalStatus}, failure_category = ${failure.category}
@@ -374,6 +478,9 @@ const validateRootRegistration = Effect.gen(function* () {
   const sql = yield* SqlClient;
   const catalog = yield* ActionRegistry;
   const rootIdentity = yield* RootIdentity;
+  yield* Schema.decodeUnknownEffect(RuntimeRootIdentity)(rootIdentity).pipe(
+    Effect.orDie
+  );
   const roots = yield* sql<{
     readonly catalogFingerprint: string;
     readonly rootIdentity: string;
@@ -385,8 +492,9 @@ const validateRootRegistration = Effect.gen(function* () {
   `;
   const existingRoot = pipe(roots, EffectArray.head);
   if (
-    Option.isSome(existingRoot) &&
-    existingRoot.value.rootIdentity !== rootIdentity
+    roots.length > 1 ||
+    (Option.isSome(existingRoot) &&
+      existingRoot.value.rootIdentity !== rootIdentity)
   ) {
     return yield* Effect.die(
       new Error("runtime database belongs to a different Laborer root")
@@ -459,17 +567,21 @@ const executionSelect = `
 const snapshotFromRow = (
   row: StoredExecutionRow
 ): Effect.Effect<ExecutionSnapshot, DurableRuntimeError> =>
-  Schema.decodeUnknownEffect(ExecutionSnapshot)({
-    actionName: row.actionName,
-    actionRevision: row.actionRevision,
-    catalogFingerprint: row.catalogFingerprint,
-    conversationId: row.conversationId,
-    executionId: row.executionId,
-    failureCategory: row.failureCategory,
-    invocationId: row.invocationId,
-    result: row.resultJson === null ? null : decodeJson(row.resultJson),
-    status: row.status,
-  }).pipe(Effect.mapError(() => runtimeError("storage-failure")));
+  Effect.gen(function* () {
+    const result =
+      row.resultJson === null ? null : yield* decodeStoredJson(row.resultJson);
+    return yield* Schema.decodeUnknownEffect(ExecutionSnapshot)({
+      actionName: row.actionName,
+      actionRevision: row.actionRevision,
+      catalogFingerprint: row.catalogFingerprint,
+      conversationId: row.conversationId,
+      executionId: row.executionId,
+      failureCategory: row.failureCategory,
+      invocationId: row.invocationId,
+      result,
+      status: row.status,
+    }).pipe(Effect.mapError(() => runtimeError("storage-failure")));
+  });
 
 export interface RootDurableRuntimeShape {
   readonly acknowledgeEvent: (
@@ -501,9 +613,12 @@ const makeRuntimeService = Effect.gen(function* () {
   const getExecution = Effect.fn("RootDurableRuntime.getExecution")(function* (
     executionId: string
   ) {
+    const validatedExecutionId = yield* Schema.decodeUnknownEffect(
+      RuntimeExecutionId
+    )(executionId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
     const rows = yield* sql
       .unsafe<StoredExecutionRow>(`${executionSelect} WHERE execution_id = ?`, [
-        executionId,
+        validatedExecutionId,
       ])
       .pipe(Effect.mapError(() => runtimeError("storage-failure")));
     const row = yield* pipe(
@@ -519,18 +634,20 @@ const makeRuntimeService = Effect.gen(function* () {
 
   const startExecution = Effect.fn("RootDurableRuntime.startExecution")(
     function* (request: StartExecutionRequest) {
-      if (request.rootIdentity !== rootIdentity) {
+      const validatedRequest = yield* Schema.decodeUnknownEffect(
+        StartExecutionRequest,
+        { onExcessProperty: "error" }
+      )(request).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
+      if (validatedRequest.rootIdentity !== rootIdentity) {
         return yield* runtimeError("conflicting-invocation");
       }
       const action = yield* catalog
-        .get(request.actionName)
+        .get(validatedRequest.actionName)
         .pipe(Effect.mapError(() => runtimeError("unavailable-action")));
       const input = yield* action
-        .decodeInput(request.input)
+        .decodeInput(validatedRequest.input)
         .pipe(Effect.mapError(() => runtimeError("invalid-payload")));
-      const encodedInput = yield* canonicalActionInput(input).pipe(
-        Effect.mapError(() => runtimeError("invalid-payload"))
-      );
+      const encodedInput = yield* boundedPayloadJson(input);
       const inputHash = createHash("sha256")
         .update(encodedInput, "utf8")
         .digest("base64url");
@@ -538,10 +655,10 @@ const makeRuntimeService = Effect.gen(function* () {
         actionName: action.name,
         actionRevision: action.revision,
         catalogFingerprint: catalog.fingerprint,
-        conversationId: request.conversationId,
+        conversationId: validatedRequest.conversationId,
         encodedInput,
-        invocationId: request.invocationId,
-        rootIdentity: request.rootIdentity,
+        invocationId: validatedRequest.invocationId,
+        rootIdentity: validatedRequest.rootIdentity,
       };
       const executionId =
         yield* RegisteredActionExecutionWorkflow.executionId(payload);
@@ -554,14 +671,14 @@ const makeRuntimeService = Effect.gen(function* () {
                 action_revision, catalog_fingerprint, input_hash, input_json,
                 status
               ) VALUES (
-                ${executionId}, ${request.invocationId},
-                ${request.conversationId}, ${action.name}, ${action.revision},
+                ${executionId}, ${validatedRequest.invocationId},
+                ${validatedRequest.conversationId}, ${action.name}, ${action.revision},
                 ${catalog.fingerprint}, ${inputHash}, ${encodedInput}, 'queued'
               )
             `;
             const rows = yield* sql.unsafe<StoredExecutionRow>(
               `${executionSelect} WHERE invocation_id = ?`,
-              [request.invocationId]
+              [validatedRequest.invocationId]
             );
             return yield* pipe(
               rows,
@@ -579,7 +696,7 @@ const makeRuntimeService = Effect.gen(function* () {
         acceptedRow.inputHash !== inputHash ||
         acceptedRow.actionName !== action.name ||
         acceptedRow.actionRevision !== action.revision ||
-        acceptedRow.conversationId !== request.conversationId ||
+        acceptedRow.conversationId !== validatedRequest.conversationId ||
         acceptedRow.executionId !== executionId
       ) {
         return yield* runtimeError("conflicting-invocation");
@@ -595,6 +712,14 @@ const makeRuntimeService = Effect.gen(function* () {
 
   const pendingEvents = Effect.fn("RootDurableRuntime.pendingEvents")(
     function* (conversationId: string, requestedLimit = 32) {
+      const validatedConversationId = yield* Schema.decodeUnknownEffect(
+        RuntimeConversationId
+      )(conversationId).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload"))
+      );
+      if (!Number.isFinite(requestedLimit)) {
+        return yield* runtimeError("invalid-payload");
+      }
       const limit = Math.max(1, Math.min(128, Math.floor(requestedLimit)));
       const rows = yield* sql<{
         readonly conversationId: string;
@@ -615,29 +740,35 @@ const makeRuntimeService = Effect.gen(function* () {
         INNER JOIN laborer_execution_events AS events
           ON events.event_id = outbox.event_id
         WHERE outbox.acknowledged = 0
-          AND events.conversation_id = ${conversationId}
+          AND events.conversation_id = ${validatedConversationId}
         ORDER BY outbox.outbox_sequence
         LIMIT ${limit}
       `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
       return yield* Effect.forEach(rows, (row) =>
-        Schema.decodeUnknownEffect(ExecutionEvent)({
-          conversationId: row.conversationId,
-          eventId: row.eventId,
-          executionId: row.executionId,
-          kind: row.kind,
-          payload: decodeJson(row.payloadJson),
-          sequence: row.sequence,
-        }).pipe(Effect.mapError(() => runtimeError("storage-failure")))
+        Effect.gen(function* () {
+          const payload = yield* decodeStoredJson(row.payloadJson);
+          return yield* Schema.decodeUnknownEffect(ExecutionEvent)({
+            conversationId: row.conversationId,
+            eventId: row.eventId,
+            executionId: row.executionId,
+            kind: row.kind,
+            payload,
+            sequence: row.sequence,
+          }).pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        })
       );
     }
   );
 
   const acknowledgeEvent = Effect.fn("RootDurableRuntime.acknowledgeEvent")(
     function* (eventId: string) {
+      const validatedEventId = yield* Schema.decodeUnknownEffect(
+        RuntimeEventId
+      )(eventId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
       yield* sql`
         UPDATE laborer_execution_outbox
         SET acknowledged = 1
-        WHERE event_id = ${eventId}
+        WHERE event_id = ${validatedEventId}
       `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
     }
   );

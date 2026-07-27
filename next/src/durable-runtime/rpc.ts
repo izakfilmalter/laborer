@@ -5,6 +5,10 @@ import {
   ExecutionEvent,
   ExecutionSnapshot,
   RootDurableRuntime,
+  RuntimeConversationId,
+  RuntimeEventId,
+  RuntimeExecutionId,
+  StartExecutionRequest,
 } from "./root-runtime.ts";
 
 export const ROOT_RUNTIME_PROTOCOL_VERSION = 1;
@@ -13,21 +17,17 @@ const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
 
 export const StartExecutionRpc = Rpc.make("RootRuntime.StartExecution", {
   error: DurableRuntimeError,
-  payload: {
-    actionName: Schema.String,
-    conversationId: Schema.String,
-    input: Schema.Unknown,
-    invocationId: Schema.String,
+  payload: Schema.Struct({
+    ...StartExecutionRequest.fields,
     protocolVersion: ProtocolVersion,
-    rootIdentity: Schema.String,
-  },
+  }),
   success: ExecutionSnapshot,
 });
 
 export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
   error: DurableRuntimeError,
   payload: {
-    executionId: Schema.String,
+    executionId: RuntimeExecutionId,
     protocolVersion: ProtocolVersion,
   },
   success: ExecutionSnapshot,
@@ -38,8 +38,11 @@ export const PendingExecutionEventsRpc = Rpc.make(
   {
     error: DurableRuntimeError,
     payload: {
-      conversationId: Schema.String,
-      limit: Schema.Number,
+      conversationId: RuntimeConversationId,
+      limit: Schema.Int.check(
+        Schema.isGreaterThanOrEqualTo(1),
+        Schema.isLessThanOrEqualTo(128)
+      ),
       protocolVersion: ProtocolVersion,
     },
     success: Schema.Array(ExecutionEvent),
@@ -51,7 +54,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
   {
     error: DurableRuntimeError,
     payload: {
-      eventId: Schema.String,
+      eventId: RuntimeEventId,
       protocolVersion: ProtocolVersion,
     },
     success: Schema.Void,

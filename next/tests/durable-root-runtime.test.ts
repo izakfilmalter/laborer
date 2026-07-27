@@ -18,7 +18,11 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
   const runtime = yield* RootDurableRuntime;
   for (let attempt = 0; attempt < 500; attempt += 1) {
     const snapshot = yield* runtime.getExecution(executionId);
-    if (snapshot.status === "completed" || snapshot.status === "failed") {
+    if (
+      snapshot.status === "completed" ||
+      snapshot.status === "failed" ||
+      snapshot.status === "needs-attention"
+    ) {
       return snapshot;
     }
     yield* Effect.sleep("10 millis");
@@ -76,6 +80,26 @@ describe("root durable runtime", () => {
               })
             );
             assert.strictEqual(conflict._tag, "Failure");
+            if (conflict._tag === "Failure") {
+              assert.strictEqual(
+                conflict.failure.reason,
+                "conflicting-invocation"
+              );
+            }
+
+            const oversized = yield* Effect.flip(
+              runtime.startExecution({
+                ...request,
+                input: { name: "x".repeat(64 * 1024) },
+                invocationId: "invocation-oversized",
+              })
+            );
+            assert.strictEqual(oversized.reason, "invalid-payload");
+
+            const invalidLimit = yield* Effect.flip(
+              runtime.pendingEvents(request.conversationId, Number.NaN)
+            );
+            assert.strictEqual(invalidLimit.reason, "invalid-payload");
 
             const terminal = yield* waitForTerminal(accepted.executionId);
             assert.strictEqual(terminal.status, "completed");
@@ -99,6 +123,7 @@ describe("root durable runtime", () => {
               remaining.map(({ sequence }) => sequence),
               [2]
             );
+
             return {
               conversationId: request.conversationId,
               executionId: accepted.executionId,

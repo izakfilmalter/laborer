@@ -13,6 +13,10 @@ Laborer's conversational identity in Slack. People mention it in a conversation 
 **Laborer daemon**:
 The local Laborer service that connects the Laborer Slack app to one or more Slack workspaces and supervises their configured local runtimes. One daemon may serve several workspace bindings without merging their conversations or state.
 
+**Daemon generation**:
+One loaded instance of Laborer daemon code participating in development-time replacement. A replacement prepares a new Daemon generation before retiring the currently owning generation.
+_Avoid_: ACP generation, hot-reloaded daemon
+
 **Laborer companion**:
 The local macOS menu-bar application through which an operator observes the Laborer daemon and its current work. It is a client of the daemon and does not own work-thread, Runner, or Execution state.
 _Avoid_: Laborer app
@@ -108,11 +112,20 @@ _Avoid_: Routing-only agent, restricted conversation agent, read-only conversati
 **Conversation-agent message**:
 Markdown authored by a conversation agent for the people in a work thread. Laborer streams each message directly to Slack as it is produced and does not require the agent to wrap it in a structured reply record. Content already delivered remains visible if the agent later fails.
 
+**Implementation agent**:
+An agent that performs the work of an Execution on behalf of a conversation agent. It may exchange Execution updates and Execution follow-ups with the conversation agent, but it does not author public Slack messages directly.
+
 **Action**:
 A user-defined, named operation made available to a conversation agent. The same Action definition may support both direct human invocation and agent invocation. Actions remain user-owned and never publish directly to Slack.
 
 **Execution**:
 One invocation of an Action for a work thread. An Execution has its own lifecycle and remains nonterminal while Laborer is waiting for that invocation to finish.
+
+**Execution update**:
+Nonterminal information from an ongoing Execution that helps a conversation agent reassure people that work continues and explain how it is developing. An implementation agent may volunteer an update at a time and with content of its choosing, or provide one when the conversation agent asks. An update belongs to one Execution, including when several Executions share a work thread. It becomes new input for the conversation agent without requiring another participant message. The conversation agent decides whether and how to respond, including whether to express it publicly while preserving its factual meaning.
+
+**Execution follow-up**:
+A question or interpreted instruction that a conversation agent directs to an ongoing Execution. It may request status, answer an implementation agent's question, or steer the work. The conversation agent derives a follow-up from the work-thread conversation rather than forwarding a participant's raw message, and ordinary conversation may continue while the Execution runs.
 
 **Intake pass**:
 A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.

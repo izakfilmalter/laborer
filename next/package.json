@@ -11,6 +11,8 @@
   "type": "module",
   "scripts": {
     "prepare": "effect-language-service patch",
+    "sandcastle": "tsx .sandcastle/main.ts",
+    "sandcastle:build-image": "sandcastle docker build-image --image-name sandcastle:laborer-next --dockerfile .sandcastle/Dockerfile",
     "prototype": "bun run src/prototype/demo.ts",
     "prototype:actions": "bun run src/action-toolkit-prototype/cli.ts",
     "prototype:blue-green-reload": "bun run src/blue-green-reload-prototype/demo.ts",
@@ -48,11 +50,14 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "^0.87.0",
     "@effect/vitest": "4.0.0-beta.99",
     "@types/bun": "^1.3.5",
+    "dotenv": "^17.4.2",
     "opencode-ai": "1.18.4",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "ultracite": "7.2.4",
     "vitest": "^4.0.17"

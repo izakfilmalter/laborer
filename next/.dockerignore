@@ -1,0 +1,4 @@
+**
+!.sandcastle/
+.sandcastle/**
+!.sandcastle/Dockerfile

@@ -8,6 +8,9 @@ This prototype asks one question:
 > Does a warm blue/green drain-and-swap let a prepared daemon generation take
 > over queued work without allowing two generations to own durable state?
 
+The production target is specified in
+[Development daemon live reload](../../../docs/development-daemon-live-reload-spec.md).
+
 It models the deliberately small version:
 
 - one generation is active;

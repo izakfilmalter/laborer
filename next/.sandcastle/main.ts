@@ -1,0 +1,1568 @@
+// Laborer adaptation of the parallel planner/reviewer setup from church-work.
+// Run from next/ with `bun run sandcastle` after building the Docker image.
+
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { resolve } from "node:path";
+import { createSandbox, Output, opencode, run } from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { config as loadEnv } from "dotenv";
+import { z } from "zod";
+import {
+  assertAcceptedHeadIsCurrent,
+  assertAgentCompleted,
+  assertNewWorkAfterAcceptedHead,
+} from "./agent-completion/index.ts";
+import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
+import {
+  type ExistingPullRequest,
+  type FinalizeIssueSpec,
+  type RunnableIssue,
+  scheduleIssueGraph,
+} from "./issue-graph-scheduler/index.ts";
+import {
+  appendSpecProgress,
+  assertPullRequestTargets,
+  createSpecPullRequestBody,
+  implementationMarker,
+  PRE_PUBLISH_REVIEW_MARKER,
+  recordReviewedHead,
+  reviewedHeadFromBody,
+  reviewedHeadMarker,
+  specClosureOrder,
+} from "./spec-pr-progress/index.ts";
+
+loadEnv({ path: ".sandcastle/.env", quiet: true });
+
+const plannedIssueSchema = z
+  .object({
+    id: z.string().regex(/^\d+$/),
+    title: z.string().min(1),
+    branch: z.string().regex(/^sandcastle\/(?:issue|spec)-\d+$/),
+    needsUi: z.boolean(),
+    uiBrief: z.string().min(1).optional(),
+  })
+  .superRefine((issue, context) => {
+    if (issue.needsUi && issue.uiBrief === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "UI issues require a UI brief.",
+        path: ["uiBrief"],
+      });
+    }
+  });
+
+const planSchema = z.object({ issues: z.array(plannedIssueSchema) });
+const prCheckSchema = z.object({
+  bucket: z.enum(["cancel", "fail", "pass", "pending", "skipping"]),
+  link: z.string().url().optional(),
+  name: z.string().min(1).optional(),
+  workflow: z.string().min(1).optional(),
+});
+const gitHubCheckSchema = z.object({
+  conclusion: z
+    .enum([
+      "ACTION_REQUIRED",
+      "CANCELLED",
+      "FAILURE",
+      "NEUTRAL",
+      "SKIPPED",
+      "STALE",
+      "STARTUP_FAILURE",
+      "SUCCESS",
+      "TIMED_OUT",
+    ])
+    .nullable()
+    .optional(),
+  detailsUrl: z.string().url().nullable().optional(),
+  name: z.string().min(1).optional(),
+  status: z.enum([
+    "COMPLETED",
+    "IN_PROGRESS",
+    "PENDING",
+    "QUEUED",
+    "REQUESTED",
+    "WAITING",
+  ]),
+  workflowName: z.string().min(1).optional(),
+});
+const prStatusSchema = z.object({
+  headRefOid: z.string().regex(/^[0-9a-f]{40,64}$/),
+  isDraft: z.boolean(),
+  mergeable: z.enum(["CONFLICTING", "MERGEABLE", "UNKNOWN"]),
+  mergedAt: z.string().datetime().nullable(),
+  mergeStateStatus: z.enum([
+    "BEHIND",
+    "BLOCKED",
+    "CLEAN",
+    "DIRTY",
+    "DRAFT",
+    "HAS_HOOKS",
+    "UNKNOWN",
+    "UNSTABLE",
+  ]),
+  state: z.enum(["CLOSED", "MERGED", "OPEN"]),
+});
+interface PlannedIssue extends z.infer<typeof plannedIssueSchema> {
+  readonly ancestorPath: RunnableIssue["ancestorPath"];
+  readonly descendantLeafNumbers: RunnableIssue["descendantLeafNumbers"];
+  readonly kind: RunnableIssue["kind"];
+  readonly latestImplementedHead?: string;
+  readonly parent: RunnableIssue["parent"];
+  readonly pullRequest?: ExistingPullRequest;
+  readonly root: RunnableIssue["root"];
+}
+type Sandbox = Awaited<ReturnType<typeof createSandbox>>;
+
+const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
+const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 4);
+const MAX_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
+  "SANDCASTLE_MAX_REPAIR_ATTEMPTS",
+  3
+);
+const MAX_LOCAL_GATE_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
+  "SANDCASTLE_MAX_LOCAL_GATE_REPAIR_ATTEMPTS",
+  2
+);
+const CHECK_POLL_INTERVAL_MS = positiveIntegerEnv(
+  "SANDCASTLE_CHECK_POLL_INTERVAL_MS",
+  30_000
+);
+const CHECK_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_CHECK_TIMEOUT_MS",
+  20 * 60_000
+);
+const HOST_COMMAND_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_HOST_COMMAND_TIMEOUT_MS",
+  2 * 60_000
+);
+const SANDBOX_COMMAND_TIMEOUT_SECONDS = positiveIntegerEnv(
+  "SANDCASTLE_SANDBOX_COMMAND_TIMEOUT_SECONDS",
+  20 * 60
+);
+const AGENT_RUN_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_AGENT_RUN_TIMEOUT_MS",
+  4 * 60 * 60_000
+);
+const MERGE_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_MERGE_TIMEOUT_MS",
+  20 * 60_000
+);
+const AUTO_MERGE_PRS = process.env.SANDCASTLE_AUTO_MERGE !== "false";
+const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
+const REPAIR_FAILED_CHECKS =
+  process.env.SANDCASTLE_REPAIR_FAILED_CHECKS !== "false";
+const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
+const SANDBOX_IMAGE_NAME =
+  process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
+const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
+const RUNTIME_CREDENTIALS_DIR = resolve(".sandcastle/runtime-credentials");
+const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
+const FULL_GATE = "bun run --cwd next check";
+const REPO_ROOT = "..";
+const SANDBOX_OPENCODE_CONFIG = resolve(".sandcastle/opencode.json");
+const SANDBOX_OPENCODE_AUTH = resolve(
+  requiredEnv("SANDCASTLE_OPENCODE_AUTH_FILE")
+);
+const SANDBOX_OPENCODE_ACCOUNT = resolve(
+  requiredEnv("SANDCASTLE_OPENCODE_ACCOUNT_FILE")
+);
+const VERIFICATION_POLICY = [
+  "Run deterministic offline checks only.",
+  "Use targeted commands while iterating and `bun run --cwd next check` for the comprehensive gate.",
+  "Never run live Slack or ACP canaries unless an issue explicitly requires a manual credentialed smoke test.",
+].join(" ");
+
+mkdirSync(BUN_CACHE_DIR, { recursive: true });
+mkdirSync(RUNTIME_CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+const runtimeCredentialDirectories = new Set<string>();
+
+const cleanupRuntimeCredentials = () => {
+  for (const directory of runtimeCredentialDirectories) {
+    rmSync(directory, { force: true, recursive: true });
+  }
+  runtimeCredentialDirectories.clear();
+};
+
+process.once("exit", cleanupRuntimeCredentials);
+
+const allAroundAgent = () =>
+  opencode("openai/gpt-5.6-sol", { variant: "medium" });
+const uiAgent = () =>
+  opencode("anthropic/claude-opus-5", { variant: "medium" });
+
+const sandboxProvider = () => {
+  const credentialDirectory = mkdtempSync(
+    `${RUNTIME_CREDENTIALS_DIR}/session-`
+  );
+  chmodSync(credentialDirectory, 0o700);
+  copyFileSync(SANDBOX_OPENCODE_AUTH, `${credentialDirectory}/auth.json`);
+  copyFileSync(SANDBOX_OPENCODE_ACCOUNT, `${credentialDirectory}/account.json`);
+  chmodSync(`${credentialDirectory}/auth.json`, 0o600);
+  chmodSync(`${credentialDirectory}/account.json`, 0o600);
+  runtimeCredentialDirectories.add(credentialDirectory);
+  return docker({
+    env: { GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN") },
+    imageName: SANDBOX_IMAGE_NAME,
+    mounts: [
+      {
+        hostPath: SANDBOX_OPENCODE_CONFIG,
+        sandboxPath: "/home/agent/.config/opencode/opencode.json",
+        readonly: true,
+      },
+      {
+        hostPath: credentialDirectory,
+        sandboxPath: "/home/agent/.local/share/opencode",
+      },
+      {
+        hostPath: BUN_CACHE_DIR,
+        sandboxPath: "/home/agent/.bun/install/cache",
+      },
+    ],
+  });
+};
+
+const acquireSlot = createSlotLimiter(MAX_PARALLEL);
+const issueGraphSource = new GitHubCliIssueGraphSource(
+  (args) => runFile("gh", [...args]),
+  undefined,
+  BASE_BRANCH
+);
+
+assertHostReady();
+
+for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+  console.log(
+    `\n=== Sandcastle iteration ${iteration}/${MAX_ITERATIONS} ===\n`
+  );
+  refreshBaseBranch();
+  syncPlannerBranchToBase();
+  const readyIssueNumbers =
+    issueGraphSource.listOpenIssueNumbers("ready-for-agent");
+  const schedule = scheduleIssueGraph(issueGraphSource, readyIssueNumbers);
+  logWaitingIssueRoots(schedule.waiting);
+
+  let madeProgress = false;
+  for (const spec of schedule.finalize) {
+    try {
+      await finalizeSpec(spec);
+      madeProgress = true;
+    } catch (error) {
+      process.exitCode = 1;
+      console.error(
+        `  Spec #${spec.root.number} finalization failed: ${String(error)}`
+      );
+    }
+  }
+  if (process.exitCode) {
+    break;
+  }
+
+  const existingStandalonePullRequests = schedule.runnable.filter(
+    (issue) => issue.kind === "standalone" && issue.pullRequest !== undefined
+  );
+  for (const scheduled of existingStandalonePullRequests) {
+    const issue = plannedIssueFromRunnable(scheduled, {
+      branch: scheduled.branch,
+      id: String(scheduled.issue.number),
+      needsUi: false,
+      title: scheduled.issue.title,
+    });
+    try {
+      await publishAndMaybeMergeStandalone(issue, scheduled.pullRequest?.url);
+      madeProgress = true;
+    } catch (error) {
+      process.exitCode = 1;
+      console.error(`  Existing PR for #${issue.id} failed: ${String(error)}`);
+    }
+  }
+  if (process.exitCode) {
+    break;
+  }
+
+  const buildCandidates = schedule.runnable.filter(
+    (issue) => !(issue.kind === "standalone" && issue.pullRequest !== undefined)
+  );
+  if (buildCandidates.length > 0) {
+    const plannedIssues = await classifyRunnableIssues(buildCandidates);
+    console.log(
+      `Planner classified ${plannedIssues.length} runnable issue(s):`
+    );
+    for (const issue of plannedIssues) {
+      console.log(`  #${issue.id}: ${issue.title} -> ${issue.branch}`);
+    }
+
+    const buildResults = await Promise.allSettled(
+      plannedIssues.map(async (issue) => {
+        const releaseSlot = await acquireSlot();
+        try {
+          return { commits: await buildIssue(issue), issue };
+        } finally {
+          releaseSlot();
+        }
+      })
+    );
+
+    for (const [index, result] of buildResults.entries()) {
+      const issue = plannedIssues[index];
+      if (!issue) {
+        continue;
+      }
+      if (result.status === "rejected") {
+        process.exitCode = 1;
+        console.error(`  Issue #${issue.id} failed: ${String(result.reason)}`);
+        continue;
+      }
+      try {
+        if (issue.kind === "spec-leaf") {
+          publishSpecProgress(issue);
+        } else {
+          await publishAndMaybeMergeStandalone(issue);
+        }
+        madeProgress = true;
+      } catch (error) {
+        process.exitCode = 1;
+        console.error(`  Publishing #${issue.id} failed: ${String(error)}`);
+      }
+    }
+  }
+
+  if (process.exitCode) {
+    break;
+  }
+  if (!madeProgress) {
+    console.log(
+      schedule.waiting.length > 0
+        ? "All remaining ready work is blocked. Exiting without selecting a fallback."
+        : "No runnable ready-for-agent issues. Exiting."
+    );
+    break;
+  }
+  if (!(WAIT_FOR_MERGES && AUTO_MERGE_PRS)) {
+    console.log("Stopping after one batch by configuration.");
+    break;
+  }
+}
+
+console.log(
+  process.exitCode
+    ? "\nSandcastle stopped with errors."
+    : "\nSandcastle finished."
+);
+
+async function classifyRunnableIssues(
+  runnable: readonly RunnableIssue[]
+): Promise<PlannedIssue[]> {
+  const candidates = runnable.map((issue) => ({
+    ancestorPath: issue.ancestorPath,
+    branch: issue.branch,
+    id: String(issue.issue.number),
+    kind: issue.kind,
+    ...(issue.latestImplementedHead === undefined
+      ? undefined
+      : { latestImplementedHead: issue.latestImplementedHead }),
+    parent: issue.parent,
+    root: issue.root,
+    title: issue.issue.title,
+  }));
+  const plan = await run({
+    agent: allAroundAgent(),
+    branchStrategy: { type: "branch", branch: "sandcastle/planner" },
+    cwd: REPO_ROOT,
+    maxIterations: 1,
+    name: "planner",
+    output: Output.object({ tag: "plan", schema: planSchema }),
+    promptArgs: { CANDIDATES_JSON: JSON.stringify(candidates, null, 2) },
+    promptFile: ".sandcastle/plan-prompt.md",
+    sandbox: sandboxProvider(),
+    signal: agentRunSignal(),
+  });
+
+  if (plan.output.issues.length !== runnable.length) {
+    throw new Error(
+      `Planner returned ${plan.output.issues.length} classifications for ${runnable.length} runnable issues.`
+    );
+  }
+  const byId = new Map(plan.output.issues.map((issue) => [issue.id, issue]));
+  if (byId.size !== plan.output.issues.length) {
+    throw new Error("Planner returned duplicate issue classifications.");
+  }
+
+  return runnable.map((issue) => {
+    const classification = byId.get(String(issue.issue.number));
+    if (classification === undefined) {
+      throw new Error(`Planner omitted runnable issue #${issue.issue.number}.`);
+    }
+    if (
+      classification.branch !== issue.branch ||
+      classification.title !== issue.issue.title
+    ) {
+      throw new Error(
+        `Planner changed the native identity or branch for issue #${issue.issue.number}.`
+      );
+    }
+    return plannedIssueFromRunnable(issue, classification);
+  });
+}
+
+function plannedIssueFromRunnable(
+  issue: RunnableIssue,
+  classification: z.infer<typeof plannedIssueSchema>
+): PlannedIssue {
+  const planned = {
+    ancestorPath: issue.ancestorPath,
+    branch: issue.branch,
+    descendantLeafNumbers: issue.descendantLeafNumbers,
+    id: String(issue.issue.number),
+    kind: issue.kind,
+    needsUi: classification.needsUi,
+    parent: issue.parent,
+    root: issue.root,
+    title: issue.issue.title,
+  };
+  return {
+    ...planned,
+    ...(classification.uiBrief === undefined
+      ? undefined
+      : { uiBrief: classification.uiBrief }),
+    ...(issue.pullRequest === undefined
+      ? undefined
+      : { pullRequest: issue.pullRequest }),
+    ...(issue.latestImplementedHead === undefined
+      ? undefined
+      : { latestImplementedHead: issue.latestImplementedHead }),
+  };
+}
+
+function logWaitingIssueRoots(
+  waiting: ReturnType<typeof scheduleIssueGraph>["waiting"]
+) {
+  for (const root of waiting) {
+    console.log(`Spec/root #${root.root.number} is waiting:`);
+    for (const blocked of root.blockedLeaves) {
+      const blockers = blocked.openBlockers
+        .map((blocker) => `#${blocker.number}`)
+        .join(", ");
+      console.log(`  #${blocked.leaf.number} blocked by ${blockers}`);
+    }
+  }
+}
+
+function publishSpecProgress(issue: PlannedIssue) {
+  const beforePush = issueGraphSource.pullRequest(issue.branch);
+  if (beforePush !== undefined) {
+    assertOpenDraftSpecPullRequest(beforePush, issue);
+  }
+  if (
+    issue.pullRequest !== undefined &&
+    issue.pullRequest.url !== beforePush?.url
+  ) {
+    throw new Error(
+      `Shared PR identity changed while implementing #${issue.id}.`
+    );
+  }
+
+  pushIssueBranch(issue.branch);
+  const acceptedHead = localBranchHead(issue.branch);
+  let current = issueGraphSource.pullRequest(issue.branch);
+  if (current === undefined) {
+    const body = createSpecPullRequestBody(
+      issue.root.number,
+      Number(issue.id),
+      acceptedHead
+    );
+    runFile("gh", [
+      "pr",
+      "create",
+      "--base",
+      BASE_BRANCH,
+      "--head",
+      issue.branch,
+      "--draft",
+      "--title",
+      `Sandcastle: ${issue.root.title}`,
+      "--body",
+      body,
+    ]);
+    current = issueGraphSource.pullRequest(issue.branch);
+  }
+  if (current === undefined) {
+    throw new Error(
+      `Shared PR was not observable after publishing #${issue.id}.`
+    );
+  }
+  assertOpenDraftSpecPullRequest(current, issue);
+  assertPrHead(current.url, acceptedHead);
+  const body = appendSpecProgress(
+    current.body,
+    issue.root.number,
+    Number(issue.id),
+    acceptedHead
+  );
+  if (body !== current.body) {
+    runFile("gh", ["pr", "edit", current.url, "--body", body]);
+  }
+
+  const confirmed = issueGraphSource.pullRequest(issue.branch);
+  if (confirmed === undefined) {
+    throw new Error(`Shared PR disappeared while recording #${issue.id}.`);
+  }
+  assertOpenDraftSpecPullRequest(confirmed, issue);
+  assertPrHead(confirmed.url, acceptedHead);
+  if (
+    !confirmed.body.includes(
+      implementationMarker(Number(issue.id), acceptedHead)
+    )
+  ) {
+    throw new Error(`Shared PR did not retain the marker for #${issue.id}.`);
+  }
+  deleteRecordedCompletion(issue);
+  console.log(`  Recorded #${issue.id} on shared draft PR ${confirmed.url}`);
+}
+
+function assertOpenDraftSpecPullRequest(
+  pullRequest: ExistingPullRequest,
+  issue: PlannedIssue
+) {
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, issue.branch);
+  if (pullRequest.state !== "OPEN" || !pullRequest.isDraft) {
+    throw new Error(
+      `Shared PR is no longer an open draft; refusing to record #${issue.id}.`
+    );
+  }
+}
+
+async function publishAndMaybeMergeStandalone(
+  issue: PlannedIssue,
+  existingPrUrl?: string
+) {
+  const prUrl = existingPrUrl ?? publishIssuePr(issue);
+  const pullRequest = issueGraphSource.pullRequest(issue.branch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${issue.branch}.`);
+  }
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, issue.branch);
+  if (pullRequest.state === "MERGED") {
+    const reviewedHead = reviewedHeadFromBody(pullRequest.body);
+    if (reviewedHead === undefined) {
+      throw new Error(`Merged PR has no durable reviewed head: ${prUrl}`);
+    }
+    assertMergedPullRequestMatches(prUrl, issue.branch, reviewedHead);
+    closeIssueIfOpen(Number(issue.id), prUrl);
+    deleteRecordedCompletion(issue);
+    return;
+  }
+  const reviewedHead = await preparePrForMerge(issue, prUrl);
+  if (reviewedHead === undefined) {
+    throw new Error(`PR is not ready to merge: ${prUrl}`);
+  }
+  markPullRequestReady(prUrl, issue.branch);
+  if (!AUTO_MERGE_PRS) {
+    console.log(`  Ready for manual merge: ${prUrl}`);
+    return;
+  }
+  await mergePreparedPullRequest(prUrl, reviewedHead, issue.branch);
+  closeIssueIfOpen(Number(issue.id), prUrl);
+  deleteRecordedCompletion(issue);
+}
+
+async function finalizeSpec(spec: FinalizeIssueSpec) {
+  const issue = plannedIssueForFinalize(spec);
+  assertCurrentPullRequestTargets(spec.pullRequest.url, spec.branch);
+  const status = getPrStatus(spec.pullRequest.url);
+  if (status.state === "MERGED" || status.mergedAt) {
+    assertMergedPullRequestMatches(
+      spec.pullRequest.url,
+      spec.branch,
+      spec.expectedHeadSha
+    );
+    closeSpecIssues(spec);
+    return;
+  }
+  const reviewedHead = await preparePrForMerge(issue, spec.pullRequest.url);
+  if (reviewedHead === undefined) {
+    throw new Error(`PR is not ready to merge: ${spec.pullRequest.url}`);
+  }
+  markPullRequestReady(spec.pullRequest.url, spec.branch);
+  if (!AUTO_MERGE_PRS) {
+    console.log(`  Spec PR ready for manual merge: ${spec.pullRequest.url}`);
+    return;
+  }
+  await mergePreparedPullRequest(
+    spec.pullRequest.url,
+    reviewedHead,
+    spec.branch
+  );
+  closeSpecIssues(spec);
+}
+
+function plannedIssueForFinalize(spec: FinalizeIssueSpec): PlannedIssue {
+  return {
+    ancestorPath: [spec.root],
+    branch: spec.branch,
+    descendantLeafNumbers: spec.descendantLeafNumbers,
+    id: String(spec.root.number),
+    kind: "spec-leaf",
+    needsUi: false,
+    parent: null,
+    pullRequest: spec.pullRequest,
+    root: spec.root,
+    title: spec.root.title,
+  };
+}
+
+async function mergePreparedPullRequest(
+  prUrl: string,
+  reviewedHead: string,
+  expectedBranch: string
+) {
+  assertCurrentPullRequestTargets(prUrl, expectedBranch);
+  const initialStatus = getPrStatus(prUrl);
+  if (initialStatus.state === "MERGED" || initialStatus.mergedAt) {
+    assertMergedPullRequestMatches(prUrl, expectedBranch, reviewedHead);
+    return;
+  }
+  const currentHead = getPrStatus(prUrl).headRefOid;
+  if (currentHead !== reviewedHead) {
+    throw new Error(
+      `PR head moved after review: expected ${reviewedHead}, received ${currentHead ?? "none"}.`
+    );
+  }
+  mergePr(prUrl, reviewedHead);
+  const deadline = Date.now() + MERGE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const status = getPrStatus(prUrl);
+    if (status.state === "MERGED" || status.mergedAt) {
+      assertMergedPullRequestMatches(prUrl, expectedBranch, reviewedHead);
+      return;
+    }
+    if (status.state === "CLOSED") {
+      throw new Error(`${prUrl} closed without merge.`);
+    }
+    await sleep(CHECK_POLL_INTERVAL_MS);
+  }
+  throw new Error(`Timed out waiting for ${prUrl} to merge.`);
+}
+
+function assertMergedPullRequestMatches(
+  prUrl: string,
+  expectedBranch: string,
+  reviewedHead: string
+) {
+  const status = getPrStatus(prUrl);
+  if (!(status.state === "MERGED" || status.mergedAt)) {
+    throw new Error(`${prUrl} was no longer confirmed merged.`);
+  }
+  if (status.headRefOid !== reviewedHead) {
+    throw new Error(
+      `Merged PR head differs from reviewed head ${reviewedHead}.`
+    );
+  }
+  assertCurrentPullRequestTargets(prUrl, expectedBranch);
+}
+
+function assertCurrentPullRequestTargets(
+  prUrl: string,
+  expectedBranch: string
+) {
+  const pullRequest = issueGraphSource.pullRequest(expectedBranch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${expectedBranch}.`);
+  }
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, expectedBranch);
+}
+
+function markPullRequestReady(prUrl: string, expectedBranch: string) {
+  const pullRequest = issueGraphSource.pullRequest(expectedBranch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${expectedBranch}.`);
+  }
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, expectedBranch);
+  if (pullRequest.state !== "OPEN") {
+    throw new Error(`Cannot mark non-open PR ready: ${prUrl}.`);
+  }
+  if (pullRequest.isDraft) {
+    runFile("gh", ["pr", "ready", prUrl]);
+  }
+}
+
+function closeSpecIssues(spec: FinalizeIssueSpec) {
+  for (const issueNumber of specClosureOrder(
+    spec.descendantIssueNumbers,
+    spec.root.number
+  )) {
+    closeIssueIfOpen(issueNumber, spec.pullRequest.url);
+  }
+}
+
+function closeIssueIfOpen(issueNumber: number, prUrl: string) {
+  const state = z
+    .enum(["CLOSED", "OPEN"])
+    .parse(
+      runFile("gh", [
+        "issue",
+        "view",
+        String(issueNumber),
+        "--json",
+        "state",
+        "--jq",
+        ".state",
+      ]).trim()
+    );
+  if (state === "OPEN") {
+    runFile("gh", [
+      "issue",
+      "close",
+      String(issueNumber),
+      "--comment",
+      `Delivered through ${prUrl}.`,
+    ]);
+  }
+}
+
+async function buildIssue(issue: PlannedIssue) {
+  const sandbox = await createIssueSandbox(issue);
+  try {
+    const acceptedHead =
+      issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
+    const startingHead = worktreeHead(sandbox.worktreePath);
+    if (startingHead !== acceptedHead) {
+      if (recordedCompletion(issue) !== startingHead) {
+        assertAcceptedHeadIsCurrent(acceptedHead, startingHead);
+      }
+      assertCommitIsDescendant(
+        sandbox.worktreePath,
+        acceptedHead,
+        startingHead
+      );
+      return [];
+    }
+    const commits: Array<{ sha: string }> = [];
+    const implementation = await sandbox.run({
+      agent: allAroundAgent(),
+      maxIterations: 100,
+      name: `all-around-builder-${issue.id}`,
+      promptArgs: issuePromptArgs(issue),
+      promptFile: ".sandcastle/implement-prompt.md",
+      signal: agentRunSignal(),
+    });
+    assertAgentCompleted(implementation, `implementation for #${issue.id}`);
+    commits.push(...implementation.commits);
+
+    if (issue.needsUi) {
+      const ui = await sandbox.run({
+        agent: uiAgent(),
+        maxIterations: 20,
+        name: `ui-builder-${issue.id}`,
+        promptArgs: issuePromptArgs(issue),
+        promptFile: ".sandcastle/ui-prompt.md",
+        signal: agentRunSignal(),
+      });
+      assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
+      commits.push(...ui.commits);
+    }
+
+    commits.push(...(await runReviewAndVerification(issue, sandbox)));
+    const completedHead = worktreeHead(sandbox.worktreePath);
+    assertNewWorkAfterAcceptedHead(
+      acceptedHead,
+      completedHead,
+      `Issue #${issue.id}`
+    );
+    recordCompletion(issue, completedHead);
+    return commits;
+  } finally {
+    await sandbox.close();
+  }
+}
+
+function completionRef(issue: PlannedIssue) {
+  return `refs/sandcastle/completed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function recordedCompletion(issue: PlannedIssue) {
+  const output = tryFile("git", [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    completionRef(issue),
+  ]).trim();
+  return output || undefined;
+}
+
+function recordCompletion(issue: PlannedIssue, completedHead: string) {
+  runFile("git", ["update-ref", completionRef(issue), completedHead]);
+}
+
+function deleteRecordedCompletion(issue: PlannedIssue) {
+  if (recordedCompletion(issue) !== undefined) {
+    runFile("git", ["update-ref", "-d", completionRef(issue)]);
+  }
+}
+
+function assertCommitIsDescendant(
+  worktreePath: string,
+  acceptedHead: string,
+  completedHead: string
+) {
+  runFile("git", [
+    "-C",
+    worktreePath,
+    "merge-base",
+    "--is-ancestor",
+    acceptedHead,
+    completedHead,
+  ]);
+}
+
+async function createIssueSandbox(issue: PlannedIssue) {
+  prepareLocalIssueBranch(issue.branch);
+  const sandbox = await createSandbox({
+    branch: issue.branch,
+    cwd: REPO_ROOT,
+    sandbox: sandboxProvider(),
+  });
+  try {
+    syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
+    const setup = await sandbox.exec(
+      boundedSandboxCommand(
+        "gh auth setup-git && bun install --cwd next --frozen-lockfile"
+      ),
+      { onLine: (line) => console.log(`  ${line}`) }
+    );
+    if (setup.exitCode !== 0) {
+      throw new Error(
+        `Sandbox setup failed for #${issue.id} with exit code ${setup.exitCode}.`
+      );
+    }
+    return sandbox;
+  } catch (error) {
+    await sandbox.close();
+    throw error;
+  }
+}
+
+function prepareLocalIssueBranch(branch: string) {
+  const remote = tryFile("git", [
+    "ls-remote",
+    "--exit-code",
+    "--heads",
+    "origin",
+    branch,
+  ]);
+  if (!remote.trim()) {
+    return;
+  }
+  runFile("git", [
+    "fetch",
+    "--no-tags",
+    "origin",
+    `refs/heads/${branch}:refs/remotes/origin/${branch}`,
+  ]);
+  const local = tryFile("git", [
+    "show-ref",
+    "--verify",
+    `refs/heads/${branch}`,
+  ]);
+  if (!local.trim()) {
+    runFile("git", ["branch", branch, `origin/${branch}`]);
+  }
+}
+
+function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
+  const remote = tryFile("git", [
+    "ls-remote",
+    "--exit-code",
+    "--heads",
+    "origin",
+    branch,
+  ]);
+  if (!remote.trim()) {
+    return;
+  }
+  runFile("git", [
+    "-C",
+    worktreePath,
+    "fetch",
+    "--no-tags",
+    "origin",
+    `refs/heads/${branch}:refs/remotes/origin/${branch}`,
+  ]);
+  runFile("git", [
+    "-C",
+    worktreePath,
+    "merge",
+    "--ff-only",
+    `origin/${branch}`,
+  ]);
+}
+
+async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
+  const commits: Array<{ sha: string }> = [];
+  if (issue.needsUi) {
+    const uiReview = await sandbox.run({
+      agent: uiAgent(),
+      maxIterations: 3,
+      name: `pre-publish-ui-review-${issue.id}`,
+      promptArgs: issuePromptArgs(issue),
+      promptFile: ".sandcastle/ui-review-prompt.md",
+      signal: agentRunSignal(),
+    });
+    assertAgentCompleted(uiReview, `UI review for #${issue.id}`);
+    commits.push(...uiReview.commits);
+  }
+
+  const review = await sandbox.run({
+    agent: allAroundAgent(),
+    maxIterations: 3,
+    name: `pre-publish-code-review-${issue.id}`,
+    promptArgs: issuePromptArgs(issue),
+    promptFile: ".sandcastle/review-prompt.md",
+    signal: agentRunSignal(),
+  });
+  assertAgentCompleted(review, `code review for #${issue.id}`);
+  commits.push(...review.commits);
+
+  const verify = await sandbox.run({
+    agent: allAroundAgent(),
+    maxIterations: 30,
+    name: `verify-fixer-${issue.id}`,
+    promptArgs: {
+      ...issuePromptArgs(issue),
+      GATE_CONTEXT: "No prior runner-enforced gate failure.",
+    },
+    promptFile: ".sandcastle/verify-fix-prompt.md",
+    signal: agentRunSignal(),
+  });
+  assertAgentCompleted(verify, `verification for #${issue.id}`);
+  commits.push(...verify.commits);
+  commits.push(...(await enforceLocalGate(issue, sandbox)));
+  return commits;
+}
+
+async function enforceLocalGate(issue: PlannedIssue, sandbox: Sandbox) {
+  const commits: Array<{ sha: string }> = [];
+  for (let attempt = 0; ; attempt++) {
+    assertWorktreeClean(
+      sandbox.worktreePath,
+      `before the gate for #${issue.id}`
+    );
+    const result = await sandbox.exec(boundedSandboxCommand(FULL_GATE), {
+      onLine: (line) => console.log(`  ${line}`),
+    });
+    if (result.exitCode === 0) {
+      assertWorktreeClean(
+        sandbox.worktreePath,
+        `after the gate for #${issue.id}`
+      );
+      return commits;
+    }
+    if (attempt >= MAX_LOCAL_GATE_REPAIR_ATTEMPTS) {
+      throw new Error(
+        `Local gate failed for #${issue.id} with exit code ${result.exitCode}.`
+      );
+    }
+    const repair = await sandbox.run({
+      agent: allAroundAgent(),
+      maxIterations: 30,
+      name: `local-gate-repair-${issue.id}-${attempt + 1}`,
+      promptArgs: {
+        ...issuePromptArgs(issue),
+        GATE_CONTEXT: `The runner-enforced ${FULL_GATE} command failed with exit code ${result.exitCode}.`,
+      },
+      promptFile: ".sandcastle/verify-fix-prompt.md",
+      signal: agentRunSignal(),
+    });
+    assertAgentCompleted(repair, `local gate repair for #${issue.id}`);
+    commits.push(...repair.commits);
+  }
+}
+
+async function reviewPublishedBranch(issue: PlannedIssue, prUrl: string) {
+  console.log(`  Reviewing current PR head: ${prUrl}`);
+  const sandbox = await createIssueSandbox(issue);
+  let commits: Array<{ sha: string }> = [];
+  let reviewedLocalHead: string;
+  try {
+    commits = await runReviewAndVerification(issue, sandbox);
+    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
+  } finally {
+    await sandbox.close();
+  }
+  if (commits.length > 0) {
+    pushIssueBranch(issue.branch);
+  }
+  if (!reviewIsComplete(prUrl)) {
+    runFile("gh", ["pr", "comment", prUrl, "--body", REVIEW_MARKER]);
+  }
+  assertPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  return reviewedLocalHead;
+}
+
+async function preparePrForMerge(
+  issue: PlannedIssue,
+  prUrl: string
+): Promise<string | undefined> {
+  if (!(await ensureBranchUpToDate(issue, prUrl))) {
+    return undefined;
+  }
+  const status = getPrStatus(prUrl);
+  if (status.state === "MERGED" || status.mergedAt) {
+    throw new Error(`Cannot prepare an already merged PR: ${prUrl}`);
+  }
+  let reviewedHead = await reviewPublishedBranch(issue, prUrl);
+  if (!REPAIR_FAILED_CHECKS) {
+    const result = await waitForChecks(prUrl);
+    return result.status === "completed" && checksArePassing(result.checks)
+      ? assertReviewedHead(prUrl, reviewedHead)
+      : undefined;
+  }
+
+  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS + 1; attempt++) {
+    const result = await waitForChecks(prUrl);
+    if (result.status === "merged") {
+      return assertReviewedHead(prUrl, reviewedHead);
+    }
+    if (result.status !== "completed") {
+      return undefined;
+    }
+    const failed = result.checks.filter(isFailingCheck);
+    if (failed.length === 0) {
+      return checksArePassing(result.checks)
+        ? assertReviewedHead(prUrl, reviewedHead)
+        : undefined;
+    }
+    if (attempt > MAX_REPAIR_ATTEMPTS) {
+      return undefined;
+    }
+    reviewedHead = await repairFailedChecks(issue, prUrl, failed, attempt);
+  }
+  return undefined;
+}
+
+async function repairFailedChecks(
+  issue: PlannedIssue,
+  prUrl: string,
+  checks: PrCheck[],
+  attempt: number
+) {
+  const sandbox = await createIssueSandbox(issue);
+  let reviewedLocalHead: string;
+  try {
+    const repair = await sandbox.run({
+      agent: allAroundAgent(),
+      maxIterations: 30,
+      name: `pr-check-repair-${issue.id}-${attempt}`,
+      promptArgs: {
+        ...issuePromptArgs(issue),
+        FAILED_CHECKS_JSON: JSON.stringify(checks, null, 2),
+        PR_URL: prUrl,
+      },
+      promptFile: ".sandcastle/pr-check-repair-prompt.md",
+      signal: agentRunSignal(),
+    });
+    assertAgentCompleted(repair, `PR check repair for #${issue.id}`);
+    await runReviewAndVerification(issue, sandbox);
+    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
+  } finally {
+    await sandbox.close();
+  }
+  pushIssueBranch(issue.branch);
+  assertPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  return reviewedLocalHead;
+}
+
+function recordPullRequestReviewedHead(
+  issue: PlannedIssue,
+  prUrl: string,
+  reviewedHead: string
+) {
+  const pullRequest = issueGraphSource.pullRequest(issue.branch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${issue.branch}.`);
+  }
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, issue.branch);
+  if (pullRequest.state !== "OPEN") {
+    throw new Error(`Cannot record review for non-open PR: ${prUrl}.`);
+  }
+  assertPrHead(prUrl, reviewedHead);
+  const body = recordReviewedHead(pullRequest.body, reviewedHead);
+  if (body !== pullRequest.body) {
+    runFile("gh", ["pr", "edit", prUrl, "--body", body]);
+  }
+  const confirmed = issueGraphSource.pullRequest(issue.branch);
+  if (
+    confirmed === undefined ||
+    confirmed.url !== prUrl ||
+    confirmed.state !== "OPEN" ||
+    !confirmed.body.includes(reviewedHeadMarker(reviewedHead))
+  ) {
+    throw new Error(`PR did not retain reviewed head ${reviewedHead}.`);
+  }
+  assertPullRequestTargets(confirmed, BASE_BRANCH, issue.branch);
+  assertPrHead(prUrl, reviewedHead);
+}
+
+async function ensureBranchUpToDate(issue: PlannedIssue, prUrl: string) {
+  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS + 1; attempt++) {
+    const status = getPrStatus(prUrl);
+    if (status.state === "MERGED" || status.mergedAt) {
+      return true;
+    }
+    if (
+      status.mergeStateStatus === "DIRTY" ||
+      status.mergeable === "CONFLICTING"
+    ) {
+      if (attempt > MAX_REPAIR_ATTEMPTS) {
+        return false;
+      }
+      await repairConflict(issue, prUrl, attempt);
+      continue;
+    }
+    if (status.mergeStateStatus === "BEHIND") {
+      if (attempt > MAX_REPAIR_ATTEMPTS) {
+        return false;
+      }
+      runFile("gh", ["pr", "update-branch", prUrl]);
+      await sleep(CHECK_POLL_INTERVAL_MS);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+async function repairConflict(
+  issue: PlannedIssue,
+  prUrl: string,
+  attempt: number
+) {
+  const sandbox = await createIssueSandbox(issue);
+  let reviewedLocalHead: string;
+  try {
+    const repair = await sandbox.run({
+      agent: allAroundAgent(),
+      maxIterations: 30,
+      name: `pr-conflict-repair-${issue.id}-${attempt}`,
+      promptArgs: {
+        ...issuePromptArgs(issue),
+        BASE_BRANCH,
+        PR_URL: prUrl,
+      },
+      promptFile: ".sandcastle/pr-conflict-repair-prompt.md",
+      signal: agentRunSignal(),
+    });
+    assertAgentCompleted(repair, `conflict repair for #${issue.id}`);
+    await runReviewAndVerification(issue, sandbox);
+    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
+  } finally {
+    await sandbox.close();
+  }
+  pushIssueBranch(issue.branch);
+  assertPrHead(prUrl, reviewedLocalHead);
+  return reviewedLocalHead;
+}
+
+function publishIssuePr(issue: PlannedIssue) {
+  pushIssueBranch(issue.branch);
+  const existing = findIssuePr(issue);
+  if (existing) {
+    return existing;
+  }
+  return runFile("gh", [
+    "pr",
+    "create",
+    "--base",
+    BASE_BRANCH,
+    "--head",
+    issue.branch,
+    "--draft",
+    "--title",
+    `Sandcastle: ${issue.title}`,
+    "--body",
+    [
+      `Closes #${issue.id}`,
+      "",
+      "Implemented and reviewed by the local Sandcastle workflow.",
+      "",
+      REVIEW_MARKER,
+    ].join("\n"),
+  ]).trim();
+}
+
+function pushIssueBranch(branch: string) {
+  runFile("git", ["push", "--set-upstream", "origin", branch]);
+}
+
+function findIssuePr(issue: PlannedIssue) {
+  return (
+    tryFile("gh", [
+      "pr",
+      "view",
+      issue.branch,
+      "--json",
+      "url",
+      "--jq",
+      ".url",
+    ]).trim() || undefined
+  );
+}
+
+function reviewIsComplete(prUrl: string) {
+  const text = tryFile("gh", [
+    "pr",
+    "view",
+    prUrl,
+    "--json",
+    "body,comments",
+    "--jq",
+    '[.body, .comments[].body] | join("\\n")',
+  ]);
+  return text.includes(REVIEW_MARKER);
+}
+
+function mergePr(prUrl: string, headSha: string) {
+  runFile("gh", [
+    "pr",
+    "merge",
+    prUrl,
+    "--squash",
+    "--delete-branch",
+    "--match-head-commit",
+    headSha,
+  ]);
+  console.log(`  Merged ${prUrl}`);
+}
+
+async function waitForChecks(prUrl: string): Promise<CheckResult> {
+  const deadline = Date.now() + CHECK_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (prIsMerged(prUrl)) {
+      return { checks: [], status: "merged" };
+    }
+    const checks = getPrChecks(prUrl);
+    if (checks.length > 0 && !checks.some(isPendingCheck)) {
+      return { checks, status: "completed" };
+    }
+    console.log(`  Waiting for checks on ${prUrl}...`);
+    await sleep(CHECK_POLL_INTERVAL_MS);
+  }
+  return { checks: [], status: "timed-out" };
+}
+
+function getPrChecks(prUrl: string): PrCheck[] {
+  const json = tryFile("gh", [
+    "pr",
+    "checks",
+    prUrl,
+    "--json",
+    "bucket,link,name,workflow",
+  ]);
+  if (json.trim()) {
+    return z.array(prCheckSchema).parse(JSON.parse(json));
+  }
+
+  const fallback = tryFile("gh", [
+    "pr",
+    "view",
+    prUrl,
+    "--json",
+    "statusCheckRollup",
+  ]);
+  if (!fallback.trim()) {
+    return [];
+  }
+  const value = z
+    .object({ statusCheckRollup: z.array(gitHubCheckSchema).optional() })
+    .parse(JSON.parse(fallback));
+  return (value.statusCheckRollup ?? []).map((check) => ({
+    bucket: checkBucket(check),
+    ...(check.detailsUrl ? { link: check.detailsUrl } : undefined),
+    ...(check.name ? { name: check.name } : undefined),
+    ...(check.workflowName ? { workflow: check.workflowName } : undefined),
+  }));
+}
+
+function getPrStatus(prUrl: string) {
+  const json = runFile("gh", [
+    "pr",
+    "view",
+    prUrl,
+    "--json",
+    "state,mergedAt,mergeStateStatus,mergeable,headRefOid,isDraft",
+  ]);
+  return prStatusSchema.parse(JSON.parse(json));
+}
+
+function requiredPrHead(prUrl: string) {
+  const head = getPrStatus(prUrl).headRefOid;
+  if (!head) {
+    throw new Error(`Could not resolve the PR head for ${prUrl}.`);
+  }
+  return head;
+}
+
+function assertPrHead(prUrl: string, expectedHead: string) {
+  const currentHead = requiredPrHead(prUrl);
+  if (currentHead !== expectedHead) {
+    throw new Error(
+      `PR head mismatch: expected ${expectedHead}, received ${currentHead}.`
+    );
+  }
+}
+
+function localBranchHead(branch: string) {
+  return runFile("git", ["rev-parse", branch]).trim();
+}
+
+function assertReviewedHead(prUrl: string, reviewedHead: string) {
+  const currentHead = requiredPrHead(prUrl);
+  if (currentHead !== reviewedHead) {
+    throw new Error(
+      `PR head moved after review: expected ${reviewedHead}, received ${currentHead}.`
+    );
+  }
+  return reviewedHead;
+}
+
+function checkBucket(check: GitHubCheck) {
+  if (check.conclusion === "SUCCESS") {
+    return "pass";
+  }
+  if (check.conclusion === "NEUTRAL" || check.conclusion === "SKIPPED") {
+    return "skipping";
+  }
+  if (check.conclusion === "CANCELLED") {
+    return "cancel";
+  }
+  if (check.status === "COMPLETED") {
+    return "fail";
+  }
+  return "pending";
+}
+
+function prIsMerged(prUrl: string) {
+  const status = getPrStatus(prUrl);
+  return status.state === "MERGED" || Boolean(status.mergedAt);
+}
+
+function checksArePassing(checks: PrCheck[]) {
+  return (
+    checks.length > 0 &&
+    checks.every((check) => !(isFailingCheck(check) || isPendingCheck(check)))
+  );
+}
+
+function isFailingCheck(check: PrCheck) {
+  return check.bucket === "fail" || check.bucket === "cancel";
+}
+
+function isPendingCheck(check: PrCheck) {
+  return check.bucket === "pending";
+}
+
+function issuePromptArgs(issue: PlannedIssue) {
+  return {
+    ANCESTOR_PATH: issue.ancestorPath
+      .map((ancestor) => `#${ancestor.number} ${ancestor.title}`)
+      .join(" -> "),
+    BRANCH: issue.branch,
+    ISSUE_TITLE: issue.title,
+    NEEDS_UI: String(issue.needsUi),
+    ROOT_ID: String(issue.root.number),
+    ROOT_TITLE: issue.root.title,
+    TASK_ID: issue.id,
+    UI_BRIEF: issue.uiBrief ?? "No dedicated UI phase requested.",
+    VERIFICATION_POLICY,
+  };
+}
+
+function assertHostReady() {
+  if (currentBranch() !== BASE_BRANCH) {
+    throw new Error(
+      `Run Sandcastle from ${BASE_BRANCH}; current branch is ${currentBranch()}.`
+    );
+  }
+  if (runFile("git", ["status", "--porcelain"]).trim()) {
+    throw new Error("Commit or stash host changes before running Sandcastle.");
+  }
+  runFile("docker", ["image", "inspect", SANDBOX_IMAGE_NAME]);
+  runFile("gh", ["auth", "status"]);
+  requiredEnv("SANDCASTLE_AGENT_GH_TOKEN");
+  assertFileExists(SANDBOX_OPENCODE_AUTH);
+  assertFileExists(SANDBOX_OPENCODE_ACCOUNT);
+}
+
+function refreshBaseBranch() {
+  runFile("git", ["fetch", "origin", BASE_BRANCH]);
+  runFile("git", ["pull", "--ff-only", "origin", BASE_BRANCH]);
+}
+
+function syncPlannerBranchToBase() {
+  const branch = "sandcastle/planner";
+  const worktreePath = resolve(
+    REPO_ROOT,
+    ".sandcastle/worktrees/sandcastle-planner"
+  );
+  if (existsSync(worktreePath)) {
+    assertWorktreeClean(worktreePath, "before planner synchronization");
+    runFile("git", ["-C", worktreePath, "merge", "--ff-only", BASE_BRANCH]);
+    return;
+  }
+
+  const local = tryFile("git", [
+    "show-ref",
+    "--verify",
+    `refs/heads/${branch}`,
+  ]);
+  if (!local.trim()) {
+    return;
+  }
+  runFile("git", ["merge-base", "--is-ancestor", branch, BASE_BRANCH]);
+  runFile("git", ["branch", "-f", branch, BASE_BRANCH]);
+}
+
+function assertWorktreeClean(worktreePath: string, context: string) {
+  const status = runFile("git", [
+    "-C",
+    worktreePath,
+    "status",
+    "--porcelain",
+  ]).trim();
+  if (status) {
+    throw new Error(`Sandcastle worktree is dirty ${context}:\n${status}`);
+  }
+}
+
+function worktreeHead(worktreePath: string) {
+  return runFile("git", ["-C", worktreePath, "rev-parse", "HEAD"]).trim();
+}
+
+function baseBranchHead(worktreePath: string) {
+  return runFile("git", ["-C", worktreePath, "rev-parse", BASE_BRANCH]).trim();
+}
+
+function currentBranch() {
+  return runFile("git", ["branch", "--show-current"]).trim();
+}
+
+function defaultBranch() {
+  const branch = tryFile("gh", [
+    "repo",
+    "view",
+    "--json",
+    "defaultBranchRef",
+    "--jq",
+    ".defaultBranchRef.name",
+  ]).trim();
+  if (!branch) {
+    throw new Error("Could not determine the repository default branch.");
+  }
+  return branch;
+}
+
+function runFile(command: string, args: string[]) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: HOST_COMMAND_TIMEOUT_MS,
+  });
+}
+
+function tryFile(command: string, args: string[]) {
+  try {
+    return runFile(command, args);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "stdout" in error) {
+      const { stdout } = error;
+      if (typeof stdout === "string") {
+        return stdout;
+      }
+    }
+    return "";
+  }
+}
+
+function requiredEnv(name: string) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} must be set in .sandcastle/.env.`);
+  }
+  return value;
+}
+
+function boundedSandboxCommand(command: string) {
+  return [
+    "timeout",
+    "--signal=TERM",
+    "--kill-after=10s",
+    `${SANDBOX_COMMAND_TIMEOUT_SECONDS}s`,
+    "sh",
+    "-c",
+    JSON.stringify(command),
+  ].join(" ");
+}
+
+function agentRunSignal() {
+  return AbortSignal.timeout(AGENT_RUN_TIMEOUT_MS);
+}
+
+function assertFileExists(path: string) {
+  if (!(existsSync(path) && statSync(path).isFile())) {
+    throw new Error(`Required Sandcastle credential file is missing: ${path}`);
+  }
+}
+
+function createSlotLimiter(limit: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return async () => {
+    if (active >= limit) {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    active++;
+    return () => {
+      active--;
+      queue.shift()?.();
+    };
+  };
+}
+
+function positiveIntegerEnv(name: string, fallback: number) {
+  const value =
+    process.env[name] === undefined ? fallback : Number(process.env[name]);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function nonNegativeIntegerEnv(name: string, fallback: number) {
+  const value =
+    process.env[name] === undefined ? fallback : Number(process.env[name]);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
+  return value;
+}
+
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+type CheckResult =
+  | { checks: PrCheck[]; status: "completed" | "merged" }
+  | { checks: []; status: "timed-out" };
+
+type PrCheck = z.infer<typeof prCheckSchema>;
+type GitHubCheck = z.infer<typeof gitHubCheckSchema>;

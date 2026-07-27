@@ -25,7 +25,7 @@
     "slack:funnel:on": "bun run src/slack-funnel.ts on",
     "slack:funnel:status": "bun run src/slack-funnel.ts status",
     "check:secrets": "vitest run tests/secret-safety.test.ts",
-    "test": "vitest run --maxWorkers=1 --exclude tests/opencode-permission-policy.test.ts --exclude tests/opencode-acp-compatibility.test.ts",
+    "test": "vitest run --exclude tests/opencode-permission-policy.test.ts --exclude tests/opencode-acp-compatibility.test.ts",
     "test:acp-compatibility": "vitest run tests/opencode-acp-compatibility.test.ts tests/opencode-permission-policy.test.ts --maxWorkers=1",
     "test:opencode-permissions": "vitest run tests/opencode-permission-policy.test.ts --maxWorkers=1",
     "typecheck": "tsc --noEmit",

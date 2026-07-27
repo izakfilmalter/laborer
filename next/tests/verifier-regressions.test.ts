@@ -158,7 +158,7 @@ describe("identity and semantic invariants", () => {
           );
         })
       ),
-    120_000
+    60_000
   );
 
   it.effect(

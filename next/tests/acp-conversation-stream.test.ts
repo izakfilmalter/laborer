@@ -21,7 +21,6 @@ import type {
   PublishConversationAgentMessage,
 } from "../src/reference-coding-application.ts";
 import { makeReferenceCodingApplication } from "../src/reference-coding-application.ts";
-import { isProcessRunning } from "./support/process-status.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const projectRoot = process.cwd();
@@ -99,7 +98,14 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
   assert.ok(Number.isSafeInteger(pid) && pid > 0);
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
   while (Date.now() < deadline) {
-    const isRunning = yield* Effect.sync(() => isProcessRunning(pid));
+    const isRunning = yield* Effect.sync(() => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
     if (!isRunning) {
       return;
     }

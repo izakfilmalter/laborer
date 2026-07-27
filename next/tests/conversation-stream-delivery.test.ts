@@ -644,7 +644,9 @@ describe("durable Conversation stream delivery", () => {
             slack,
             store: restartedStore,
           });
+          const recoveryStartedAt = Date.now();
           yield* restartedDelivery.recover;
+          assert.ok(Date.now() - recoveryStartedAt < 25);
           yield* Effect.sleep("50 millis");
           assert.strictEqual(starts, 1);
           for (let attempt = 0; attempt < 200 && starts < 2; attempt += 1) {

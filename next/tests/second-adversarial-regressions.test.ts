@@ -15,7 +15,6 @@ import {
   type ProcessHandlerOptions,
 } from "../src/prototype/process-handler.ts";
 import { environmentForConfiguredHandler } from "../src/slack/handler-environment.ts";
-import { isProcessRunning } from "./support/process-status.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const projectRoot = process.cwd();
@@ -50,6 +49,15 @@ const makeTurn = (text: string): ClaimedTurn => {
     threadId,
     workingDirectory: null,
   };
+};
+
+const processExists = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const waitForFile = Effect.fnUntraced(function* (path: string, mode: string) {
@@ -136,11 +144,7 @@ describe("second adversarial process regressions", () => {
               yield* Effect.promise(() => readFile(pidFile, "utf8"))
             );
             assert.ok(Number.isSafeInteger(pid));
-            assert.strictEqual(
-              isProcessRunning(pid),
-              false,
-              `${mode} survivor`
-            );
+            assert.strictEqual(processExists(pid), false, `${mode} survivor`);
           }
         })
       ),

@@ -113,7 +113,8 @@ interface DefineActionOptions<Name extends string, Input, Result, Error> {
   ) => Effect.Effect<Result, Error>;
 }
 
-const validIdentifier = (value: string, maximumLength: number): boolean =>
+const validIdentifier = (value: unknown, maximumLength: number): boolean =>
+  typeof value === "string" &&
   value.length > 0 &&
   value.length <= maximumLength &&
   ACTION_IDENTIFIER_PATTERN.test(value);
@@ -126,8 +127,19 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
       validIdentifier(options.name, ACTION_NAME_MAX_LENGTH) &&
       validIdentifier(options.revision, ACTION_REVISION_MAX_LENGTH)
     ) ||
+    typeof options.description !== "string" ||
     options.description.trim().length === 0 ||
     options.description.length > ACTION_DESCRIPTION_MAX_LENGTH
+  ) {
+    throw registrationError("invalid-metadata");
+  }
+  const suppliedAnnotations = options.annotations;
+  if (
+    suppliedAnnotations !== undefined &&
+    Object.values(suppliedAnnotations).some(
+      (annotation) =>
+        annotation !== undefined && typeof annotation !== "boolean"
+    )
   ) {
     throw registrationError("invalid-metadata");
   }
@@ -138,6 +150,12 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
     readOnlyHint: options.annotations?.readOnlyHint ?? false,
   };
   const recoveryPolicy = options.recoveryPolicy ?? "fail-closed";
+  if (
+    recoveryPolicy !== "fail-closed" &&
+    recoveryPolicy !== "idempotent-retry"
+  ) {
+    throw registrationError("invalid-metadata");
+  }
   if (recoveryPolicy === "idempotent-retry" && !annotations.idempotentHint) {
     throw registrationError("invalid-metadata");
   }

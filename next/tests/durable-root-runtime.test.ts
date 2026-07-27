@@ -176,5 +176,29 @@ describe("root durable runtime", () => {
         run: (input) => Effect.succeed(input),
       })
     );
+    assert.throws(() =>
+      defineAction({
+        annotations: {
+          readOnlyHint: "yes" as unknown as boolean,
+        },
+        description: "Malformed annotations",
+        input: Schema.String,
+        name: "fixture/malformed-annotations",
+        result: Schema.String,
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      })
+    );
+    assert.throws(() =>
+      defineAction({
+        description: "Malformed recovery policy",
+        input: Schema.String,
+        name: "fixture/malformed-recovery",
+        recoveryPolicy: "retry-eventually" as "fail-closed",
+        result: Schema.String,
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      })
+    );
   });
 });

@@ -107,6 +107,12 @@ describe("root durable runtime", () => {
               runtime.pendingEvents(request.conversationId, Number.NaN)
             );
             assert.strictEqual(invalidLimit.reason, "invalid-payload");
+            for (const limit of [0, 1.5, 129]) {
+              const outOfRangeLimit = yield* Effect.flip(
+                runtime.pendingEvents(request.conversationId, limit)
+              );
+              assert.strictEqual(outOfRangeLimit.reason, "invalid-payload");
+            }
 
             const inaccessible = yield* Effect.flip(
               runtime.getExecution(

@@ -312,7 +312,6 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
   (payload, executionId) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const action = yield* actionForWorkflowPayload(payload);
       const statuses = yield* sql<{
         readonly failureCategory: string | null;
         readonly status: string;
@@ -355,18 +354,19 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
         return yield* Effect.fail({ category: "needs-attention" as const });
       }
       if (
-        durableExecution.status === "running" &&
-        action.recoveryPolicy === "fail-closed"
-      ) {
-        return yield* Effect.fail({ category: "needs-attention" as const });
-      }
-      if (
         durableExecution.status !== "queued" &&
         durableExecution.status !== "running"
       ) {
         return yield* Effect.die(
           new Error("Execution has an invalid durable status")
         );
+      }
+      const action = yield* actionForWorkflowPayload(payload);
+      if (
+        durableExecution.status === "running" &&
+        action.recoveryPolicy === "fail-closed"
+      ) {
+        return yield* Effect.fail({ category: "needs-attention" as const });
       }
       yield* sql`
         UPDATE laborer_executions
@@ -829,10 +829,14 @@ const makeRuntimeService = Effect.gen(function* () {
       )(conversationId).pipe(
         Effect.mapError(() => runtimeError("invalid-payload"))
       );
-      if (!Number.isFinite(requestedLimit)) {
+      if (
+        !Number.isSafeInteger(requestedLimit) ||
+        requestedLimit < 1 ||
+        requestedLimit > 128
+      ) {
         return yield* runtimeError("invalid-payload");
       }
-      const limit = Math.max(1, Math.min(128, Math.floor(requestedLimit)));
+      const limit = requestedLimit;
       const rows = yield* sql<{
         readonly conversationId: string;
         readonly eventId: string;

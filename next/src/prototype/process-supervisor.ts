@@ -49,7 +49,7 @@ const processGroupMembers = async (
       const group = Number(groupSource);
       return group === processGroupId &&
         Number.isSafeInteger(pid) &&
-        state !== "Z"
+        !state?.startsWith("Z")
         ? [pid]
         : [];
     });

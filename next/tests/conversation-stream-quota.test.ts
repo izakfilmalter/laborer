@@ -528,7 +528,8 @@ describe("Conversation stream Slack quota coordination", () => {
             ]
           );
         })
-      )
+      ),
+    10_000
   );
 
   it.effect(

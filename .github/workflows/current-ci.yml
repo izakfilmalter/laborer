@@ -1,28 +1,22 @@
-name: CI
+name: Current CI
 
 on:
-  merge_group:
   pull_request:
     branches: ["*"]
     paths:
-      - ".github/workflows/ci.yml"
-      - "next/**"
-  push:
-    branches: ["master"]
-    paths:
-      - ".github/workflows/ci.yml"
-      - "next/**"
+      - ".github/workflows/current-ci.yml"
+      - "current/**"
 
 permissions:
   contents: read
 
 jobs:
-  next:
-    name: Next / CI
+  ci:
+    name: CI
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: next
+        working-directory: current
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,18 +26,15 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version-file: next/package.json
+          bun-version: "1.3.5"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: next/.node-version
+          node-version: lts/*
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Verify runtime versions
-        run: bun run verify:runtimes
 
       - name: Format check
         run: bun run format
@@ -51,8 +42,5 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Deterministic and Emulate tests
+      - name: Test
         run: bun run test
-
-      - name: OpenCode ACP compatibility and policy
-        run: bun run test:acp-compatibility

@@ -17,6 +17,10 @@ const CHECKOUT_PATTERN = /uses: actions\/checkout@v4/g;
 const COMPATIBILITY_FAILURE_PATTERN = /OpenCode ACP compatibility check failed/;
 const LOAD_SESSION_PATTERN = /agentCapabilities\.loadSession/;
 const FROZEN_INSTALL_PATTERN = /bun install --frozen-lockfile/;
+const NEXT_PATH_PATTERN = /- "next\/\*\*"/;
+const CURRENT_PATH_PATTERN = /- "current\/\*\*"/;
+const NEXT_WORKING_DIRECTORY_PATTERN = /working-directory: next/;
+const CURRENT_WORKING_DIRECTORY_PATTERN = /working-directory: current/;
 
 const supportedInitialization = {
   agentCapabilities: {
@@ -93,15 +97,27 @@ describe("issue #243 ACP runtime matrix", () => {
   });
 
   it("keeps CI credentials and OpenCode tools least-privileged", async () => {
-    const workflow = await readFile(
-      new URL("../../.github/workflows/ci.yml", import.meta.url),
-      "utf8"
-    );
-    assert.match(workflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN);
-    assert.strictEqual(
-      workflow.match(PERSISTED_CREDENTIALS_PATTERN)?.length,
-      workflow.match(CHECKOUT_PATTERN)?.length
-    );
+    const [nextWorkflow, currentWorkflow] = await Promise.all([
+      readFile(
+        new URL("../../.github/workflows/ci.yml", import.meta.url),
+        "utf8"
+      ),
+      readFile(
+        new URL("../../.github/workflows/current-ci.yml", import.meta.url),
+        "utf8"
+      ),
+    ]);
+    for (const workflow of [nextWorkflow, currentWorkflow]) {
+      assert.match(workflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN);
+      assert.strictEqual(
+        workflow.match(PERSISTED_CREDENTIALS_PATTERN)?.length,
+        workflow.match(CHECKOUT_PATTERN)?.length
+      );
+    }
+    assert.match(nextWorkflow, NEXT_PATH_PATTERN);
+    assert.ok(!CURRENT_WORKING_DIRECTORY_PATTERN.test(nextWorkflow));
+    assert.match(currentWorkflow, CURRENT_PATH_PATTERN);
+    assert.ok(!NEXT_WORKING_DIRECTORY_PATTERN.test(currentWorkflow));
     assert.deepStrictEqual(OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY, {
       "*": "deny",
       compat_record: "ask",

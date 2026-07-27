@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import {
   makeOpenCodeLegacySessionTransport,
   makeOpenCodeSessionClientFromV2Api,
@@ -810,6 +811,69 @@ describe("OpenCode v2 session client", () => {
 
       assert.strictEqual(result._tag, "Failure");
       assert.strictEqual(messageReads, 2);
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.safeDetail,
+          "OpenCode prompt response timed out"
+        );
+      }
+    })
+  );
+
+  it.effect("uses the default five-minute polling cadence for four hours", () =>
+    Effect.gen(function* () {
+      let messageReads = 0;
+      const api: OpenCodeV2SessionApi = {
+        create: (input) => Promise.resolve({ id: input.id }),
+        get: (input) =>
+          Promise.resolve({
+            id: input.sessionId,
+            workingDirectory: "/repo/worktree",
+          }),
+        interrupt: () => Promise.resolve(),
+        messages: () => {
+          messageReads += 1;
+          return Promise.resolve([
+            {
+              id: "pending-assistant",
+              role: "assistant" as const,
+              status: "in-progress" as const,
+              text: "partial",
+            },
+            { id: "prompt-1", role: "user" as const, text: "input" },
+          ]);
+        },
+        prompt: (input) => Promise.resolve({ id: input.promptId }),
+        wait: () =>
+          Promise.reject({
+            _tag: "ServiceUnavailableError",
+            message: "Session wait is not available yet",
+            service: "session.wait",
+          }),
+      };
+      const client = makeOpenCodeSessionClientFromV2Api(api);
+      const waitFiber = yield* client
+        .wait({
+          promptId: "prompt-1",
+          sessionId: "session-1",
+          workingDirectory: "/repo/worktree",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+
+      yield* TestClock.adjust("0 millis");
+      assert.strictEqual(messageReads, 1);
+      for (let interval = 1; interval < 48; interval += 1) {
+        yield* TestClock.adjust("5 minutes");
+      }
+
+      assert.strictEqual(messageReads, 48);
+      assert.strictEqual(waitFiber.pollUnsafe(), undefined);
+
+      yield* TestClock.adjust("5 minutes");
+      const result = yield* Fiber.join(waitFiber);
+
+      assert.strictEqual(messageReads, 49);
+      assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(
           result.failure.safeDetail,

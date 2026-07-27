@@ -92,6 +92,15 @@ operations from the same workspace-scoped state. A native request that was in
 flight when the daemon stopped remains unresolved because Slack provides no
 exactly-once key for these methods.
 
+A Conversation response whose complete text is the exact case-sensitive token
+`NO_REPLY` with only surrounding ECMAScript whitespace completes without
+publishing a Slack message. The ACP adapter incrementally holds only chunks that
+could still form that exact token, flushes them in order as soon as they diverge,
+and does not record suppressed text as observed public output. The token still
+counts as semantic output for bounded `max_tokens` and `max_turn_requests`
+completion. Text that merely contains or ends with the token remains visible;
+transport output and message bounds still include held text.
+
 Existing pre-ACP Conversations are adopted through the v15 migration ledger on
 their first ACP-handled participant turn, provided they have no ACP binding or
 live Execution. Laborer durably fixes the triggering-message cutoff before a

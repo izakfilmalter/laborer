@@ -25,10 +25,7 @@ import {
   ThreadId,
   type TurnState,
 } from "../src/prototype/domain.ts";
-import {
-  classifySlackError,
-  makeSlackGateway,
-} from "../src/prototype/emulated-slack.ts";
+import { makeSlackGateway } from "../src/prototype/emulated-slack.ts";
 import {
   ContextReadError,
   DeliveryError,
@@ -54,6 +51,7 @@ import {
   makeFileStoreLayer,
   PrototypeStore,
 } from "../src/prototype/store.ts";
+import { classifySlackError } from "../src/slack/error-classification.ts";
 
 const noContextGateway = (): SlackGatewayShape => ({
   readActivationContext: () => Effect.succeed([]),

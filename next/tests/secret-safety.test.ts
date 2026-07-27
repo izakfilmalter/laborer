@@ -29,7 +29,11 @@ describe("repository secret safety", () => {
   it("contains no unredacted Slack token prefixes in trackable files", () => {
     const violations: string[] = [];
     for (const relativePath of trackableFiles()) {
-      const content = readFileSync(resolve(repositoryRoot, relativePath));
+      const path = resolve(repositoryRoot, relativePath);
+      if (!existsSync(path)) {
+        continue;
+      }
+      const content = readFileSync(path);
       if (content.includes(0)) {
         continue;
       }

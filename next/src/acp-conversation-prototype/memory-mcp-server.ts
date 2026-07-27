@@ -7,13 +7,20 @@ import {
 } from "./memory-mcp.ts";
 
 const root = process.env.LABORER_MEMORY_ROOT;
+const configRoot = process.env.LABORER_MEMORY_CONFIG_ROOT;
+const stateRoot = process.env.LABORER_MEMORY_STATE_ROOT;
 const workspaceId = process.env.LABORER_MEMORY_WORKSPACE_ID;
 const serverName = process.env.LABORER_MEMORY_SERVER_NAME;
 const authorityGuard = process.env.LABORER_MEMORY_AUTHORITY_GUARD;
 const readinessNonce = process.env.LABORER_MEMORY_REGISTRATION_NONCE;
 const readinessPath = process.env.LABORER_MEMORY_READY_PATH;
 
-if (root === undefined || workspaceId === undefined) {
+if (
+  root === undefined ||
+  configRoot === undefined ||
+  stateRoot === undefined ||
+  workspaceId === undefined
+) {
   process.stderr.write(
     "[laborer-memory] fixed workspace configuration missing\n"
   );
@@ -28,9 +35,11 @@ if (root === undefined || workspaceId === undefined) {
     }
     const server = yield* makeLaborerMemoryMcpServer({
       ...(authorityGuard === undefined ? {} : { authorityGuard }),
+      configRoot,
       root,
       ...(serverName === undefined ? {} : { serverName }),
       workspaceId,
+      stateRoot,
     });
     if (
       serverName !== undefined &&
@@ -42,11 +51,13 @@ if (root === undefined || workspaceId === undefined) {
         runReadiness(
           publishLaborerMemoryMcpReadiness({
             authorityGuard,
+            configRoot,
             environmentNames: Object.keys(process.env).sort(),
             nonce: readinessNonce,
             path: readinessPath,
             root,
             serverName,
+            stateRoot,
             workspaceId,
           })
         ).catch(() => {
@@ -64,7 +75,9 @@ if (root === undefined || workspaceId === undefined) {
       recordLaborerMemoryDiagnostic({
         ...(authorityGuard === undefined ? {} : { authorityGuard }),
         code: "startup-failed",
+        configRoot,
         root,
+        stateRoot,
         workspaceId,
       })
     );

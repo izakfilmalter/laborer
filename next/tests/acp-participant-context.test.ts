@@ -730,13 +730,11 @@ describe("issue #239 ACP Slack participant context", () => {
             slack: fixture.gateway,
             workspaceId,
           });
-          const profilesDirectory = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent(workspaceId),
-            "user-profiles"
-          );
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const profilesDirectory = sources.userProfilesDirectory;
           yield* Effect.promise(() => mkdir(profilesDirectory));
           yield* Effect.promise(() =>
             writeFile(
@@ -756,13 +754,12 @@ describe("issue #239 ACP Slack participant context", () => {
               "Current profile & private"
             )
           );
-          const otherWorkspaceProfiles = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent("T239-OTHER"),
-            "user-profiles"
-          );
+          const otherWorkspaceSources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId: "T239-OTHER",
+          });
+          const otherWorkspaceProfiles =
+            otherWorkspaceSources.userProfilesDirectory;
           yield* Effect.promise(() =>
             mkdir(otherWorkspaceProfiles, { recursive: true })
           );
@@ -868,13 +865,11 @@ describe("issue #239 ACP Slack participant context", () => {
             slack: fixture.gateway,
             workspaceId,
           });
-          const profilesDirectory = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent(workspaceId),
-            "user-profiles"
-          );
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const profilesDirectory = sources.userProfilesDirectory;
 
           const activationText = `<@${LABORER_SLACK_ID}> start profiles`;
           const activation = yield* postHumanMessage(fixture, activationText);
@@ -1160,13 +1155,11 @@ describe("issue #239 ACP Slack participant context", () => {
             slack: fixture.gateway,
             workspaceId,
           });
-          const profilesDirectory = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent(workspaceId),
-            "user-profiles"
-          );
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const profilesDirectory = sources.userProfilesDirectory;
           yield* Effect.promise(() => mkdir(profilesDirectory));
           yield* Effect.promise(() =>
             writeFile(

@@ -52,6 +52,15 @@ const WORKSPACE_MEMORY_CONTENT_PATTERN =
 const PARTIAL_AMP_ENTITY_PATTERN = /&(?:a(?:m(?:p)?)?)?$/;
 const execFilePromise = promisify(execFile);
 
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const PromptRecord = Schema.Struct({
   prompt: Schema.String,
   sessionId: Schema.String,
@@ -153,27 +162,25 @@ describe("issue #238 ACP Agent context", () => {
             slack: fixture.gateway,
             workspaceId,
           });
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
 
           assert.strictEqual(
-            yield* Effect.promise(() =>
-              readFile(join(laborerRoot, SOUL_FILE_NAME), "utf8")
-            ),
+            yield* Effect.promise(() => readFile(sources.soulPath, "utf8")),
             DEFAULT_SOUL
           );
           assert.strictEqual(
             yield* Effect.promise(() =>
-              readFile(
-                join(
-                  laborerRoot,
-                  ".laborer-runtime",
-                  "slack-workspaces",
-                  encodeURIComponent(workspaceId),
-                  WORKSPACE_MEMORY_FILE_NAME
-                ),
-                "utf8"
-              )
+              readFile(sources.workspaceMemoryPath, "utf8")
             ),
             ""
+          );
+          assert.isFalse(
+            yield* Effect.promise(() =>
+              fileExists(join(laborerRoot, SOUL_FILE_NAME))
+            )
           );
         })
       )
@@ -230,21 +237,30 @@ describe("issue #238 ACP Agent context", () => {
             slack: fixture.gateway,
             workspaceId,
           });
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
 
           assert.strictEqual(
-            yield* Effect.promise(() =>
-              readFile(join(laborerRoot, SOUL_FILE_NAME), "utf8")
-            ),
+            yield* Effect.promise(() => readFile(sources.soulPath, "utf8")),
             ""
           );
           assert.strictEqual(
             yield* Effect.promise(() =>
-              readFile(
-                join(workspaceDirectory, WORKSPACE_MEMORY_FILE_NAME),
-                "utf8"
-              )
+              readFile(sources.workspaceMemoryPath, "utf8")
             ),
             "Existing workspace knowledge"
+          );
+          assert.isFalse(
+            yield* Effect.promise(() =>
+              fileExists(join(laborerRoot, SOUL_FILE_NAME))
+            )
+          );
+          assert.isFalse(
+            yield* Effect.promise(() =>
+              fileExists(join(workspaceDirectory, WORKSPACE_MEMORY_FILE_NAME))
+            )
           );
         })
       )
@@ -690,14 +706,12 @@ describe("issue #238 ACP Agent context", () => {
           const readyPath = join(controls, "ready");
           const releasePath = join(controls, "release");
           const workspaceId = "T238-SNAPSHOT";
-          const soulPath = join(laborerRoot, SOUL_FILE_NAME);
-          const memoryPath = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent(workspaceId),
-            WORKSPACE_MEMORY_FILE_NAME
-          );
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const soulPath = sources.soulPath;
+          const memoryPath = sources.workspaceMemoryPath;
           const harness = yield* makeAcpConversationCanary({
             activationAcknowledger: makeSlackActivationAcknowledger(
               fixture.botClient
@@ -864,14 +878,12 @@ describe("issue #238 ACP Agent context", () => {
           const promptJsonlPath = join(controls, "prompts.jsonl");
           const releasePath = join(controls, "release");
           const workspaceId = "T238-DEGRADED";
-          const soulPath = join(laborerRoot, SOUL_FILE_NAME);
-          const memoryPath = join(
-            laborerRoot,
-            ".laborer-runtime",
-            "slack-workspaces",
-            encodeURIComponent(workspaceId),
-            WORKSPACE_MEMORY_FILE_NAME
-          );
+          const sources = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const soulPath = sources.soulPath;
+          const memoryPath = sources.workspaceMemoryPath;
           yield* Effect.promise(() => writeFile(releasePath, "release"));
           const harness = yield* makeAcpConversationCanary({
             activationAcknowledger: makeSlackActivationAcknowledger(

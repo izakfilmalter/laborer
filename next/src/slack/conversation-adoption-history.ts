@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
-import { classifySlackError } from "../prototype/emulated-slack.ts";
+import { classifySlackError } from "./error-classification.ts";
 
 export const CONVERSATION_ADOPTION_HISTORY_MAX_AGE_DAYS = 90;
 export const CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES = 200;

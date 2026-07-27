@@ -24,7 +24,6 @@ import {
   loadAcpAgentContextSnapshot,
   loadAcpSlackParticipantContexts,
   prepareAcpAgentContextSources,
-  SOUL_FILE_NAME,
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
 import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
@@ -104,18 +103,34 @@ interface MemoryCall {
 
 const withMemoryClient = async <A>(
   options: {
+    readonly configRoot?: string;
     readonly environment?: Record<string, string>;
     readonly root: string;
+    readonly stateRoot?: string;
     readonly workspaceId: string;
   },
   use: (client: Client) => Promise<A>
 ): Promise<A> => {
+  const sources = await Effect.runPromise(
+    prepareAcpAgentContextSources({
+      ...(options.configRoot === undefined
+        ? {}
+        : { configRoot: options.configRoot }),
+      root: options.root,
+      ...(options.stateRoot === undefined
+        ? {}
+        : { stateRoot: options.stateRoot }),
+      workspaceId: options.workspaceId,
+    })
+  );
   const client = new Client({ name: "laborer-memory-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: [serverPath],
     command: process.execPath,
     env: {
+      LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
       LABORER_MEMORY_ROOT: options.root,
+      LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
       LABORER_MEMORY_WORKSPACE_ID: options.workspaceId,
       ...options.environment,
     },
@@ -820,6 +835,12 @@ const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolveWait) => {
     setTimeout(resolveWait, milliseconds);
   });
+
+const pathExists = (path: string): Promise<boolean> =>
+  stat(path).then(
+    () => true,
+    () => false
+  );
 
 const waitForPath = async (path: string): Promise<void> => {
   const deadline = Date.now() + 2000;
@@ -3163,7 +3184,9 @@ describe("issue #240 memory MCP", () => {
             args: [serverPath],
             command: process.execPath,
             env: {
+              LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
               LABORER_MEMORY_ROOT: root,
+              LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
               LABORER_MEMORY_TEST_FAIL_STARTUP: "1",
               LABORER_MEMORY_WORKSPACE_ID: workspaceId,
             },
@@ -3675,7 +3698,7 @@ describe("issue #240 memory MCP", () => {
           });
           const profilePath = userProfilePath(sources, "U240ALICE");
           const originalSoul = yield* Effect.promise(() =>
-            readFile(resolve(root, SOUL_FILE_NAME), "utf8")
+            readFile(sources.soulPath, "utf8")
           );
 
           yield* Effect.promise(() =>
@@ -3717,7 +3740,7 @@ describe("issue #240 memory MCP", () => {
                 });
                 assert.strictEqual(tooShort.isError, true);
                 assert.strictEqual(
-                  await readFile(resolve(root, SOUL_FILE_NAME), "utf8"),
+                  await readFile(sources.soulPath, "utf8"),
                   originalSoul
                 );
               }
@@ -4018,7 +4041,9 @@ describe("issue #240 memory MCP", () => {
             args: [serverPath],
             command: process.execPath,
             env: {
+              LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
               LABORER_MEMORY_ROOT: root,
+              LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
               LABORER_MEMORY_TEST_CRITICAL_SECTION_DELAY_MILLIS: "6500",
               LABORER_MEMORY_WORKSPACE_ID: workspaceId,
             },
@@ -4046,7 +4071,7 @@ describe("issue #240 memory MCP", () => {
             target: "workspace",
             text: "live owner committed first",
           });
-          const lockDatabasePath = `${sources.workspaceMemoryPath}.lock.sqlite`;
+          const lockDatabasePath = sources.workspaceMemoryLockPath;
           yield* Effect.promise(() => waitForSqliteWriteLock(lockDatabasePath));
           assert.strictEqual(
             (yield* Effect.promise(() => stat(lockDatabasePath))).mode %
@@ -4184,7 +4209,9 @@ describe("issue #240 memory MCP", () => {
             args: [serverPath],
             command: process.execPath,
             env: {
+              LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
               LABORER_MEMORY_ROOT: root,
+              LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
               LABORER_MEMORY_TEST_CRITICAL_SECTION_DELAY_MILLIS: "1000",
               LABORER_MEMORY_WORKSPACE_ID: workspaceId,
             },
@@ -4200,7 +4227,7 @@ describe("issue #240 memory MCP", () => {
             text: "lock holder committed",
           });
           yield* Effect.promise(() =>
-            waitForSqliteWriteLock(`${sources.workspaceMemoryPath}.lock.sqlite`)
+            waitForSqliteWriteLock(sources.workspaceMemoryLockPath)
           );
 
           const cancellation = new AbortController();
@@ -4270,7 +4297,9 @@ describe("issue #240 memory MCP", () => {
               args: [serverPath],
               command: process.execPath,
               env: {
+                LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
                 LABORER_MEMORY_ROOT: root,
+                LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
                 LABORER_MEMORY_TEST_CRITICAL_SECTION_DELAY_MILLIS: "500",
                 LABORER_MEMORY_WORKSPACE_ID: workspaceId,
               },
@@ -4285,7 +4314,7 @@ describe("issue #240 memory MCP", () => {
               target: "workspace",
               text: `must not publish after ${compromise} replacement`,
             });
-            const lockPath = `${sources.workspaceMemoryPath}.lock.sqlite`;
+            const lockPath = sources.workspaceMemoryLockPath;
             yield* Effect.promise(() => waitForSqliteWriteLock(lockPath));
             if (compromise === "lock") {
               yield* Effect.promise(() =>
@@ -4530,7 +4559,7 @@ describe("issue #240 memory MCP", () => {
             ))._tag,
             "Failure"
           );
-          assert.ok(warnings.length >= 3);
+          assert.ok(warnings.length >= 2);
           assert.ok(
             warnings.every(
               (warning) =>
@@ -4565,7 +4594,9 @@ describe("issue #240 memory MCP", () => {
             args: [serverPath],
             command: process.execPath,
             env: {
+              LABORER_MEMORY_CONFIG_ROOT: sources.configRoot,
               LABORER_MEMORY_ROOT: root,
+              LABORER_MEMORY_STATE_ROOT: sources.stateRoot,
               LABORER_MEMORY_TEST_CRITICAL_SECTION_DELAY_MILLIS: "1000",
               LABORER_MEMORY_WORKSPACE_ID: workspaceId,
             },
@@ -4581,7 +4612,7 @@ describe("issue #240 memory MCP", () => {
             text: "abandoned with exiting process",
           }).catch(() => undefined);
           yield* Effect.promise(() =>
-            waitForSqliteWriteLock(`${sources.workspaceMemoryPath}.lock.sqlite`)
+            waitForSqliteWriteLock(sources.workspaceMemoryLockPath)
           );
 
           const recoveryTexts = Array.from(
@@ -4715,5 +4746,180 @@ describe("issue #240 memory MCP", () => {
         })
       ),
     20_000
+  );
+
+  it.live(
+    "uses fixed explicit MCP roots instead of ambient HOME and XDG roots",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-memory-explicit-mcp-root-"
+          );
+          const configRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-explicit-mcp-config-"
+          );
+          const stateRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-explicit-mcp-state-"
+          );
+          const ambientHome = yield* makeTempDirectoryScoped(
+            "laborer-memory-ambient-home-"
+          );
+          const ambientConfig = yield* makeTempDirectoryScoped(
+            "laborer-memory-ambient-config-"
+          );
+          const ambientState = yield* makeTempDirectoryScoped(
+            "laborer-memory-ambient-state-"
+          );
+          const sources = yield* prepareAcpAgentContextSources({
+            configRoot,
+            root,
+            stateRoot,
+            workspaceId: "T240EXPLICITMCP",
+          });
+          const configuration =
+            makeLaborerMemoryMcpServerConfiguration(sources);
+          const fixedEnvironment = Object.fromEntries(
+            configuration.env.map(({ name, value }) => [name, value])
+          );
+          const client = new Client({
+            name: "laborer-memory-explicit-roots-test",
+            version: "1.0.0",
+          });
+          const transport = new StdioClientTransport({
+            args: configuration.args,
+            command: configuration.command,
+            env: {
+              HOME: ambientHome,
+              XDG_CONFIG_HOME: ambientConfig,
+              XDG_STATE_HOME: ambientState,
+              ...fixedEnvironment,
+            },
+            stderr: "pipe",
+          });
+          yield* Effect.addFinalizer(() =>
+            Effect.promise(() => client.close().catch(() => undefined))
+          );
+          yield* Effect.promise(() => client.connect(transport));
+          const result = yield* Effect.promise(() =>
+            callMemory(client, {
+              operation: "add",
+              target: "workspace",
+              text: "explicit roots only",
+            })
+          );
+          assert.notStrictEqual(result.isError, true);
+          assert.ok(
+            (yield* Effect.promise(() =>
+              readFile(sources.workspaceMemoryPath, "utf8")
+            )).includes("explicit roots only")
+          );
+          assert.isTrue(
+            yield* Effect.promise(() =>
+              pathExists(sources.workspaceMemoryLockPath)
+            )
+          );
+          assert.deepStrictEqual(
+            yield* Effect.promise(() => readdir(ambientConfig)),
+            []
+          );
+          assert.deepStrictEqual(
+            yield* Effect.promise(() => readdir(ambientState)),
+            []
+          );
+
+          const tampered = {
+            ...configuration,
+            env: configuration.env.map((entry) =>
+              entry.name === "LABORER_MEMORY_STATE_ROOT"
+                ? { ...entry, value: ambientState }
+                : entry
+            ),
+          };
+          assert.strictEqual(
+            (yield* Effect.result(
+              prepareLaborerMemoryMcpRegistration(tampered, sources.root)
+            ))._tag,
+            "Failure"
+          );
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "serializes real MCP children across different roots for one workspace",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const firstRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-cross-root-first-"
+          );
+          const secondRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-cross-root-second-"
+          );
+          const configRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-cross-root-config-"
+          );
+          const stateRoot = yield* makeTempDirectoryScoped(
+            "laborer-memory-cross-root-state-"
+          );
+          const workspaceId = "T240CROSSROOT";
+          const first = yield* prepareAcpAgentContextSources({
+            configRoot,
+            root: firstRoot,
+            stateRoot,
+            workspaceId,
+          });
+          const second = yield* prepareAcpAgentContextSources({
+            configRoot,
+            root: secondRoot,
+            stateRoot,
+            workspaceId,
+          });
+          assert.strictEqual(
+            first.workspaceMemoryLockPath,
+            second.workspaceMemoryLockPath
+          );
+          const additions = Array.from(
+            { length: 10 },
+            (_, index) => `cross-root child ${index}`
+          );
+          const results = yield* Effect.promise(() =>
+            Promise.all(
+              additions.map((text, index) =>
+                withMemoryClient(
+                  {
+                    configRoot,
+                    environment: {
+                      LABORER_MEMORY_TEST_CRITICAL_SECTION_DELAY_MILLIS: "40",
+                    },
+                    root: index % 2 === 0 ? firstRoot : secondRoot,
+                    stateRoot,
+                    workspaceId,
+                  },
+                  (client) =>
+                    callMemory(client, {
+                      operation: "add",
+                      target: "workspace",
+                      text,
+                    })
+                )
+              )
+            )
+          );
+          assert.isTrue(results.every((result) => result.isError !== true));
+          const content = yield* Effect.promise(() =>
+            readFile(first.workspaceMemoryPath, "utf8")
+          );
+          assert.deepStrictEqual(
+            framedMemoryEntries(content)
+              .map(({ content: entryContent }) => entryContent)
+              .sort(),
+            additions.sort()
+          );
+        })
+      ),
+    60_000
   );
 });

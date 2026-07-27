@@ -14,6 +14,10 @@ import {
 } from "effect";
 import type { AcpPermissionBroker } from "../src/acp-conversation-prototype/acp-permission-broker.ts";
 import { laborerActionMcpServerName } from "../src/acp-conversation-prototype/action-mcp.ts";
+import {
+  prepareAcpAgentContextSources,
+  userProfilePath,
+} from "../src/acp-conversation-prototype/agent-context.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
@@ -3337,55 +3341,39 @@ describe("issue #244 opt-in production ACP composition", () => {
             root,
             second.identity.teamId
           );
+          const firstContext = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId: first.identity.teamId,
+          });
+          const secondContext = yield* prepareAcpAgentContextSources({
+            root,
+            workspaceId: second.identity.teamId,
+          });
           yield* Effect.promise(() =>
             Promise.all([
-              mkdir(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244FIRST/user-profiles"
-                ),
-                { mode: 0o700 }
-              ),
-              mkdir(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244SECOND/user-profiles"
-                ),
-                { mode: 0o700 }
-              ),
+              mkdir(firstContext.userProfilesDirectory, { mode: 0o700 }),
+              mkdir(secondContext.userProfilesDirectory, { mode: 0o700 }),
             ])
           );
           yield* Effect.promise(() =>
             Promise.all([
               writeFile(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244FIRST/workspace-memory.md"
-                ),
+                firstContext.workspaceMemoryPath,
                 "first workspace memory",
                 { mode: 0o600 }
               ),
               writeFile(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244SECOND/workspace-memory.md"
-                ),
+                secondContext.workspaceMemoryPath,
                 "second workspace memory",
                 { mode: 0o600 }
               ),
               writeFile(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244FIRST/user-profiles/U244HUMAN.md"
-                ),
+                userProfilePath(firstContext, "U244HUMAN"),
                 "first user profile",
                 { mode: 0o600 }
               ),
               writeFile(
-                join(
-                  root,
-                  ".laborer-runtime/slack-workspaces/T244SECOND/user-profiles/U244HUMAN.md"
-                ),
+                userProfilePath(secondContext, "U244HUMAN"),
                 "second user profile",
                 { mode: 0o600 }
               ),

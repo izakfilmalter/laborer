@@ -25,11 +25,13 @@ import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts"
 export interface AcpConversationCanaryOptions {
   readonly activationAcknowledger: ActivationAcknowledgerShape;
   readonly completionReactor: CompletionReactorShape;
+  readonly configRoot?: string;
   readonly laborerSlackId: string;
   readonly participantLookup?: SlackParticipantLookupShape;
   readonly process: AcpConversationAgentOptions;
   readonly repository?: ReferenceCodingApplicationRepository;
   readonly slack: SlackGatewayShape;
+  readonly stateRoot?: string;
   readonly workspaceId?: string;
 }
 
@@ -56,7 +58,13 @@ export const makeAcpConversationCanary = Effect.fn("makeAcpConversationCanary")(
       options.workspaceId === undefined
         ? undefined
         : yield* prepareAcpAgentContextSources({
+            ...(options.configRoot === undefined
+              ? {}
+              : { configRoot: options.configRoot }),
             root: options.process.cwd,
+            ...(options.stateRoot === undefined
+              ? {}
+              : { stateRoot: options.stateRoot }),
             workspaceId: options.workspaceId,
           });
     const conversationAgent = yield* makeAcpConversationAgent({

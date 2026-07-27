@@ -13,6 +13,10 @@ Laborer's conversational identity in Slack. People mention it in a conversation 
 **Laborer daemon**:
 The local Laborer service that connects the Laborer Slack app to one or more Slack workspaces and supervises their configured local runtimes. One daemon may serve several workspace bindings without merging their conversations or state.
 
+**Laborer companion**:
+The local macOS menu-bar application through which an operator observes the Laborer daemon and its current work. It is a client of the daemon and does not own work-thread, Runner, or Execution state.
+_Avoid_: Laborer app
+
 **Slack workspace binding**:
 The daemon-owned association from one authenticated Slack workspace installation to one Laborer root. Each Slack workspace has one binding, while several workspaces may deliberately share a root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
 
@@ -22,8 +26,24 @@ The root-bound runtime that receives work-thread events and invokes the configur
 **Laborer root**:
 The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
 
+**Laborer global config root**:
+The user-owned directory containing only durable Markdown Agent context and its directory partitions. It is `~/.config/laborer` by default or `$XDG_CONFIG_HOME/laborer` when `XDG_CONFIG_HOME` is absolute and nonblank. It is outside every Laborer root: Souls are partitioned there by canonical Laborer-root identity, while Workspace memory and User profiles are partitioned by authenticated Slack workspace identity.
+
+**Laborer global state root**:
+The user-owned coordination directory for cross-process Agent-context mutation locks. It is `~/.local/state/laborer` by default or `$XDG_STATE_HOME/laborer` when `XDG_STATE_HOME` is absolute and nonblank. Workspace and User-profile locks are keyed by authenticated Slack workspace and target so different Laborer roots coordinate the same memory. Runtime JSON, logs, diagnostics, readiness files, and Runner state remain under each Laborer root's `.laborer-runtime` directory; they are not global state.
+
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
+
+**In-progress work thread**:
+A work thread with accepted work for which Laborer still owes progress, including any nonterminal Execution. This transient activity state does not affect whether the work thread remains activated.
+_Avoid_: Active conversation
+
+**Needs-attention work thread**:
+A work thread whose current work cannot progress or settle without explicit intervention. It remains visible separately from both in-progress and dormant work threads.
+
+**Dormant work thread**:
+A work thread that has responded to all accepted participant input and has no nonterminal Executions. Dormancy is transient: later participant input moves the still-activated work thread back into progress.
 
 **Activation**:
 The first newly created, nonblank text message that explicitly mentions Laborer and asks it to accept a public or private channel thread as a work thread. Any human or external bot may activate Laborer from a channel root or existing thread reply; Laborer's own messages, edits, and direct messages cannot. After activation, authored text replies under the canonical root become handler input without another mention, while unrelated channel roots remain outside the work thread.
@@ -70,16 +90,16 @@ The following terms belong to the first intended coding-workflow use case, not t
 A user-configured, general-purpose agent supervised by Laborer for one work thread. One work thread continues one durable agent session, retaining prior messages, tool activity, and operation results; within the authority granted by the user, the agent may answer, investigate, execute, modify, delegate, orchestrate, or invoke Actions as it chooses.
 
 **Soul**:
-The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when a work thread begins so later edits affect only new work threads.
+The manually authored, Laborer-root-scoped character that guides a conversation agent's personality, voice, values, and behavioral boundaries. It is stored under the Laborer global config root using a stable identity derived from the canonical Laborer root, so path aliases share one Soul and distinct roots do not. A Soul is trusted guidance, is not changed by the conversation agent, and is snapshotted when an agent session begins so later edits affect only subsequently created agent sessions.
 
 **Workspace memory**:
-Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when a work thread begins so later changes affect only new work threads.
+Durable, agent-curated knowledge shared across the conversation agent's work threads in one Slack workspace. It is stored under that Slack workspace's partition in the Laborer global config root, independently of the bound Laborer root. The conversation agent decides when information is worth retaining, while explicit requests to remember something make that information eligible for retention. Workspace memory provides context rather than instructions, does not cross Slack workspace boundaries even when workspace bindings share a Laborer root, and is snapshotted when an agent session begins so later changes affect only subsequently created agent sessions.
 
 **User profile**:
-Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
+Durable, agent-curated knowledge about a Slack participant that helps a conversation agent understand and respond to that person over time within one Slack workspace. Profiles are stored in the workspace's partition in the Laborer global config root and never cross Slack workspace boundaries. The conversation agent decides whom to profile and what relevant information to retain, including inferred information, and resolves contradictions using its own judgment. User profiles are silently maintained, provide context rather than instructions, and are snapshotted for a work thread when their participant first appears in it.
 
 **Agent context snapshot**:
-The durable context fixed for one work thread from the Soul and Workspace memory present at activation, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to new work threads or participants not yet introduced into the thread.
+The context fixed for one agent session from the Soul and Workspace memory present when that session begins, together with each human participant's Slack display name and User profile when that participant first appears. Later changes apply only to subsequently created agent sessions or participants not yet introduced into the current session. If a work thread's agent session cannot be resumed and must be replaced, the replacement receives a new snapshot.
 
 **Conversation-agent authority**:
 The user alone determines what a conversation agent may do and which capabilities it can access, including shell execution, filesystem and network access, tools, skills, MCP servers, Actions, and orchestration. Laborer must never narrow, disable, hide, replace, or reinterpret those user-granted capabilities; Actions are additional capabilities, not the boundary of the agent's authority.
@@ -91,6 +111,9 @@ Markdown authored by a conversation agent for the people in a work thread. Labor
 **Action**:
 A user-defined, named operation made available to a conversation agent. The same Action definition may support both direct human invocation and agent invocation. Actions remain user-owned and never publish directly to Slack.
 
+**Execution**:
+One invocation of an Action for a work thread. An Execution has its own lifecycle and remains nonterminal while Laborer is waiting for that invocation to finish.
+
 **Intake pass**:
 A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.
 
@@ -101,7 +124,7 @@ Existing or promised behavior producing the wrong result.
 Net-new or intentionally changed behavior.
 
 **Agent session**:
-An optional durable conversational identity managed by a work handler. Laborer treats agent choice and session continuation as handler concerns.
+An optional durable conversational identity managed by a work handler. The current conversation agent binds one agent session to each work thread and minimally resumes it across daemon restarts; Laborer otherwise treats agent choice and session continuation as handler concerns.
 
 **Legacy Laborer app**:
 The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by coding work handlers.

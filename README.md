@@ -3,7 +3,7 @@
 This repository contains two independent application roots:
 
 - [`current/`](./current/) — the existing Laborer Bun/Turborepo application.
-- [`next/`](./next/) — the Slack Laborer runtime.
+- [`next/`](./next/) — the primary Slack-native Laborer runtime.
 
 Each application owns its package manifest, lockfile, dependencies, and build
 configuration. Run package-manager commands from the relevant application
@@ -21,6 +21,13 @@ Laborer removes only exact wildcard-allow entries installed by the old adapter;
 all other session rules remain ordered and unchanged. See the
 [`next` runtime documentation](./next/README.md) for configuration, permission,
 and recovery details.
+
+The Slack-native application stores runtime state beneath each Laborer root's
+`.laborer-runtime` directory. Its Soul, Workspace-memory, and User-profile
+Markdown live outside repositories in `~/.config/laborer` (or
+`$XDG_CONFIG_HOME/laborer` for an absolute, nonblank `XDG_CONFIG_HOME`). Shared
+mutation locks live separately in `~/.local/state/laborer` (or
+`$XDG_STATE_HOME/laborer`).
 
 ## Existing application
 

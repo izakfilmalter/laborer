@@ -28,6 +28,7 @@ export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
   error: DurableRuntimeError,
   payload: {
     executionId: RuntimeExecutionId,
+    conversationId: RuntimeConversationId,
     protocolVersion: ProtocolVersion,
   },
   success: ExecutionSnapshot,
@@ -75,8 +76,8 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
     return {
       "RootRuntime.AcknowledgeExecutionEvent": ({ conversationId, eventId }) =>
         runtime.acknowledgeEvent(eventId, conversationId),
-      "RootRuntime.GetExecution": ({ executionId }) =>
-        runtime.getExecution(executionId),
+      "RootRuntime.GetExecution": ({ conversationId, executionId }) =>
+        runtime.getExecution(executionId, conversationId),
       "RootRuntime.PendingExecutionEvents": ({ conversationId, limit }) =>
         runtime.pendingEvents(conversationId, limit),
       "RootRuntime.StartExecution": (request) =>

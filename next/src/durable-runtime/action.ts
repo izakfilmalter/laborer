@@ -73,6 +73,7 @@ export interface RegisteredAction<Name extends string = string> {
     input: unknown,
     context: RegisteredActionContext
   ) => Effect.Effect<unknown, unknown>;
+  readonly fingerprint: string;
   readonly inputJsonSchema: JsonSchema;
   readonly inputSchema: Schema.Top;
   readonly name: Name;
@@ -190,6 +191,22 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
   if (recoveryPolicy === "idempotent-retry" && !annotations.idempotentHint) {
     throw registrationError("invalid-metadata");
   }
+  const inputJsonSchema = jsonSchemaFor(options.input);
+  const resultJsonSchema = jsonSchemaFor(options.result);
+  const fingerprint = createHash("sha256")
+    .update("laborer-registered-action-v1\0", "utf8")
+    .update(
+      canonicalCatalogJson({
+        annotations,
+        inputSchema: inputJsonSchema,
+        name: options.name,
+        outputSchema: resultJsonSchema,
+        recoveryPolicy,
+        revision: options.revision,
+      }),
+      "utf8"
+    )
+    .digest("base64url");
   return {
     annotations,
     decodeInput: (input) =>
@@ -218,15 +235,16 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
           )
         )
       ),
+    fingerprint,
     encodeResult: (result) =>
       Schema.encodeUnknownEffect(options.result)(result).pipe(
         Effect.mapError(() => registrationError("invalid-result"))
       ),
-    inputJsonSchema: jsonSchemaFor(options.input),
+    inputJsonSchema,
     inputSchema: options.input,
     name: options.name,
     recoveryPolicy,
-    resultJsonSchema: jsonSchemaFor(options.result),
+    resultJsonSchema,
     resultSchema: options.result,
     revision: options.revision,
   };
@@ -284,12 +302,8 @@ export const makeActionCatalog = (
         pipe(
           ordered,
           EffectArray.map((action) => ({
-            annotations: action.annotations,
-            inputSchema: action.inputJsonSchema,
+            fingerprint: action.fingerprint,
             name: action.name,
-            outputSchema: action.resultJsonSchema,
-            recoveryPolicy: action.recoveryPolicy,
-            revision: action.revision,
           }))
         )
       ),

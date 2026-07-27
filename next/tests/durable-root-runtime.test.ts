@@ -13,12 +13,13 @@ import {
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const waitForTerminal = Effect.fn("waitForTerminal")(function* (
-  executionId: string
+  executionId: string,
+  conversationId: string
 ) {
   const runtime = yield* RootDurableRuntime;
   let lastStatus = "missing";
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    const snapshot = yield* runtime.getExecution(executionId);
+    const snapshot = yield* runtime.getExecution(executionId, conversationId);
     lastStatus = snapshot.status;
     if (
       snapshot.status === "completed" ||
@@ -107,7 +108,18 @@ describe("root durable runtime", () => {
             );
             assert.strictEqual(invalidLimit.reason, "invalid-payload");
 
-            const terminal = yield* waitForTerminal(accepted.executionId);
+            const inaccessible = yield* Effect.flip(
+              runtime.getExecution(
+                accepted.executionId,
+                "workspace:T2:thread:C2:2.0"
+              )
+            );
+            assert.strictEqual(inaccessible.reason, "execution-not-found");
+
+            const terminal = yield* waitForTerminal(
+              accepted.executionId,
+              request.conversationId
+            );
             assert.strictEqual(terminal.status, "completed");
             assert.deepStrictEqual(terminal.result, { greeting: "hello Ada" });
 
@@ -158,7 +170,8 @@ describe("root durable runtime", () => {
           yield* Effect.gen(function* () {
             const restarted = yield* RootDurableRuntime;
             const snapshot = yield* restarted.getExecution(
-              evidence.executionId
+              evidence.executionId,
+              evidence.conversationId
             );
             assert.strictEqual(snapshot.status, "completed");
             const pending = yield* restarted.pendingEvents(
@@ -290,6 +303,30 @@ describe("root durable runtime", () => {
       actions: [makeAction("Updated model-facing description")],
     });
     assert.strictEqual(first.actions.fingerprint, second.actions.fingerprint);
+    assert.strictEqual(
+      first.actions.actions[0]?.fingerprint,
+      second.actions.actions[0]?.fingerprint
+    );
+  });
+
+  it("changes registration identity when a schema changes under one revision", () => {
+    const stringAction = defineAction({
+      description: "String-shaped registration",
+      input: Schema.Struct({ value: Schema.String }),
+      name: "fixture/revision-integrity",
+      result: Schema.String,
+      revision: "v1",
+      run: ({ value }) => Effect.succeed(value),
+    });
+    const numberAction = defineAction({
+      description: "Number-shaped registration",
+      input: Schema.Struct({ value: Schema.Number }),
+      name: "fixture/revision-integrity",
+      result: Schema.String,
+      revision: "v1",
+      run: ({ value }) => Effect.succeed(String(value)),
+    });
+    assert.notStrictEqual(stringAction.fingerprint, numberAction.fingerprint);
   });
 
   it.effect("distinguishes malformed results from Action failures", () =>

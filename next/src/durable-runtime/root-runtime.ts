@@ -31,6 +31,7 @@ export const RUNTIME_ROOT_IDENTITY_MAX_LENGTH = 4096;
 export const RUNTIME_EXECUTION_ID_MAX_LENGTH = 160;
 export const RUNTIME_EVENT_ID_MAX_LENGTH = 256;
 const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
+const RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH = 64;
 const NONBLANK_PATTERN = /\S/;
 
 const boundedNonBlankString = (maximumLength: number) =>
@@ -73,6 +74,9 @@ export const StartExecutionRequest = Schema.Struct({
 export type StartExecutionRequest = typeof StartExecutionRequest.Type;
 
 export const ExecutionSnapshot = Schema.Struct({
+  actionFingerprint: boundedNonBlankString(
+    RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH
+  ),
   actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
   actionRevision: boundedNonBlankString(ACTION_REVISION_MAX_LENGTH),
   catalogFingerprint: boundedNonBlankString(
@@ -136,6 +140,9 @@ const RegisteredActionActivityOutcome = Schema.Union([
 ]);
 
 const RegisteredActionWorkflowPayload = Schema.Struct({
+  actionFingerprint: boundedNonBlankString(
+    RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH
+  ),
   actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
   actionRevision: boundedNonBlankString(ACTION_REVISION_MAX_LENGTH),
   catalogFingerprint: boundedNonBlankString(
@@ -288,18 +295,24 @@ const executeRegisteredActionActivity = (
     return activityOutcome.encodedResult;
   });
 
+const actionForWorkflowPayload = Effect.fn("actionForWorkflowPayload")(
+  function* (payload: RegisteredActionWorkflowPayload) {
+    const catalog = yield* ActionRegistry;
+    const action = yield* catalog
+      .get(payload.actionName, payload.actionRevision)
+      .pipe(Effect.mapError(() => ({ category: "needs-attention" as const })));
+    if (action.fingerprint !== payload.actionFingerprint) {
+      return yield* Effect.fail({ category: "needs-attention" as const });
+    }
+    return action;
+  }
+);
+
 const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
   (payload, executionId) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const catalog = yield* ActionRegistry;
-      const action = yield* catalog
-        .get(payload.actionName, payload.actionRevision)
-        .pipe(
-          Effect.mapError(() => ({
-            category: "action-failed" as const,
-          }))
-        );
+      const action = yield* actionForWorkflowPayload(payload);
       const statuses = yield* sql<{
         readonly failureCategory: string | null;
         readonly status: string;
@@ -472,6 +485,21 @@ const initializeLaborerTables = Effect.gen(function* () {
           version INTEGER NOT NULL
         )
       `;
+      const versions = yield* sql<{ readonly version: number }>`
+        SELECT version
+        FROM laborer_schema_versions
+        WHERE component = 'runtime'
+      `;
+      const version = pipe(
+        versions,
+        EffectArray.head,
+        Option.map((row) => row.version)
+      );
+      if (Option.isSome(version) && version.value !== RUNTIME_SCHEMA_VERSION) {
+        return yield* Effect.die(
+          new Error("incompatible Laborer runtime schema version")
+        );
+      }
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_runtime_metadata (
           root_identity TEXT PRIMARY KEY,
@@ -485,6 +513,7 @@ const initializeLaborerTables = Effect.gen(function* () {
           conversation_id TEXT NOT NULL,
           action_name TEXT NOT NULL,
           action_revision TEXT NOT NULL,
+          action_fingerprint TEXT NOT NULL,
           catalog_fingerprint TEXT NOT NULL,
           input_hash TEXT NOT NULL,
           input_json TEXT NOT NULL,
@@ -526,20 +555,6 @@ const initializeLaborerTables = Effect.gen(function* () {
       `;
     })
   );
-  const versions = yield* sql<{ readonly version: number }>`
-    SELECT version FROM laborer_schema_versions WHERE component = 'runtime'
-  `;
-  const version = pipe(
-    versions,
-    EffectArray.head,
-    Option.map((row) => row.version),
-    Option.getOrElse(() => -1)
-  );
-  if (version !== RUNTIME_SCHEMA_VERSION) {
-    return yield* Effect.die(
-      new Error("incompatible Laborer runtime schema version")
-    );
-  }
 });
 
 const validateRootRegistration = Effect.gen(function* () {
@@ -569,29 +584,33 @@ const validateRootRegistration = Effect.gen(function* () {
     );
   }
   const nonterminal = yield* sql<{
+    readonly actionFingerprint: string;
     readonly actionName: string;
     readonly actionRevision: string;
   }>`
     SELECT DISTINCT
       action_name AS actionName,
-      action_revision AS actionRevision
+      action_revision AS actionRevision,
+      action_fingerprint AS actionFingerprint
     FROM laborer_executions
     WHERE status IN ('queued', 'running', 'needs-attention')
   `;
   yield* Effect.forEach(
     nonterminal,
     (execution) =>
-      catalog
-        .get(execution.actionName, execution.actionRevision)
-        .pipe(
-          Effect.catch(() =>
-            Effect.die(
-              new Error(
-                "nonterminal Execution requires an unavailable Action revision"
-              )
+      catalog.get(execution.actionName, execution.actionRevision).pipe(
+        Effect.filterOrFail(
+          (action) => action.fingerprint === execution.actionFingerprint,
+          () => ActionRegistrationError.make({ reason: "unavailable-revision" })
+        ),
+        Effect.catch(() =>
+          Effect.die(
+            new Error(
+              "nonterminal Execution requires an unavailable Action revision"
             )
           )
-        ),
+        )
+      ),
     { discard: true }
   );
   yield* sql`
@@ -603,6 +622,7 @@ const validateRootRegistration = Effect.gen(function* () {
 });
 
 interface StoredExecutionRow {
+  readonly actionFingerprint: string;
   readonly actionName: string;
   readonly actionRevision: string;
   readonly catalogFingerprint: string;
@@ -623,6 +643,7 @@ const executionSelect = `
     conversation_id AS conversationId,
     action_name AS actionName,
     action_revision AS actionRevision,
+    action_fingerprint AS actionFingerprint,
     catalog_fingerprint AS catalogFingerprint,
     input_hash AS inputHash,
     input_json AS inputJson,
@@ -639,6 +660,7 @@ const snapshotFromRow = (
     const result =
       row.resultJson === null ? null : yield* decodeStoredJson(row.resultJson);
     return yield* Schema.decodeUnknownEffect(ExecutionSnapshot)({
+      actionFingerprint: row.actionFingerprint,
       actionName: row.actionName,
       actionRevision: row.actionRevision,
       catalogFingerprint: row.catalogFingerprint,
@@ -657,7 +679,8 @@ export interface RootDurableRuntimeShape {
     conversationId: string
   ) => Effect.Effect<void, DurableRuntimeError>;
   readonly getExecution: (
-    executionId: string
+    executionId: string,
+    conversationId: string
   ) => Effect.Effect<ExecutionSnapshot, DurableRuntimeError>;
   readonly pendingEvents: (
     conversationId: string,
@@ -680,15 +703,22 @@ const makeRuntimeService = Effect.gen(function* () {
   const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
 
   const getExecution = Effect.fn("RootDurableRuntime.getExecution")(function* (
-    executionId: string
+    executionId: string,
+    conversationId: string
   ) {
     const validatedExecutionId = yield* Schema.decodeUnknownEffect(
       RuntimeExecutionId
     )(executionId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
+    const validatedConversationId = yield* Schema.decodeUnknownEffect(
+      RuntimeConversationId
+    )(conversationId).pipe(
+      Effect.mapError(() => runtimeError("invalid-payload"))
+    );
     const rows = yield* sql
-      .unsafe<StoredExecutionRow>(`${executionSelect} WHERE execution_id = ?`, [
-        validatedExecutionId,
-      ])
+      .unsafe<StoredExecutionRow>(
+        `${executionSelect} WHERE execution_id = ? AND conversation_id = ?`,
+        [validatedExecutionId, validatedConversationId]
+      )
       .pipe(Effect.mapError(() => runtimeError("storage-failure")));
     const row = yield* pipe(
       rows,
@@ -721,6 +751,7 @@ const makeRuntimeService = Effect.gen(function* () {
         .update(encodedInput, "utf8")
         .digest("base64url");
       const payload: RegisteredActionWorkflowPayload = {
+        actionFingerprint: action.fingerprint,
         actionName: action.name,
         actionRevision: action.revision,
         catalogFingerprint: catalog.fingerprint,
@@ -731,51 +762,63 @@ const makeRuntimeService = Effect.gen(function* () {
       };
       const executionId =
         yield* RegisteredActionExecutionWorkflow.executionId(payload);
-      const acceptedRow = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* sql`
-              INSERT OR IGNORE INTO laborer_executions (
-                execution_id, invocation_id, conversation_id, action_name,
-                action_revision, catalog_fingerprint, input_hash, input_json,
-                status
-              ) VALUES (
-                ${executionId}, ${validatedRequest.invocationId},
-                ${validatedRequest.conversationId}, ${action.name}, ${action.revision},
-                ${catalog.fingerprint}, ${inputHash}, ${encodedInput}, 'queued'
-              )
-            `;
-            const rows = yield* sql.unsafe<StoredExecutionRow>(
-              `${executionSelect} WHERE invocation_id = ?`,
-              [validatedRequest.invocationId]
-            );
-            return yield* pipe(
-              rows,
-              EffectArray.head,
-              Option.match({
-                onNone: () =>
-                  Effect.die(new Error("accepted Execution was not durable")),
-                onSome: Effect.succeed,
+      const acceptedRow = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const row = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`
+                INSERT OR IGNORE INTO laborer_executions (
+                  execution_id, invocation_id, conversation_id, action_name,
+                  action_revision, action_fingerprint, catalog_fingerprint,
+                  input_hash, input_json, status
+                ) VALUES (
+                  ${executionId}, ${validatedRequest.invocationId},
+                  ${validatedRequest.conversationId}, ${action.name}, ${action.revision},
+                  ${action.fingerprint}, ${catalog.fingerprint}, ${inputHash},
+                  ${encodedInput}, 'queued'
+                )
+              `;
+                const rows = yield* sql.unsafe<StoredExecutionRow>(
+                  `${executionSelect} WHERE invocation_id = ?`,
+                  [validatedRequest.invocationId]
+                );
+                return yield* pipe(
+                  rows,
+                  EffectArray.head,
+                  Option.match({
+                    onNone: () =>
+                      Effect.die(
+                        new Error("accepted Execution was not durable")
+                      ),
+                    onSome: Effect.succeed,
+                  })
+                );
               })
-            );
-          })
-        )
-        .pipe(Effect.mapError(() => runtimeError("storage-failure")));
-      if (
-        acceptedRow.inputHash !== inputHash ||
-        acceptedRow.actionName !== action.name ||
-        acceptedRow.actionRevision !== action.revision ||
-        acceptedRow.conversationId !== validatedRequest.conversationId ||
-        acceptedRow.executionId !== executionId
-      ) {
-        return yield* runtimeError("conflicting-invocation");
-      }
-      yield* RegisteredActionExecutionWorkflow.execute(payload, {
-        discard: true,
-      }).pipe(
-        Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+            )
+            .pipe(Effect.mapError(() => runtimeError("storage-failure")));
+          if (
+            row.inputHash !== inputHash ||
+            row.actionName !== action.name ||
+            row.actionRevision !== action.revision ||
+            row.actionFingerprint !== action.fingerprint ||
+            row.conversationId !== validatedRequest.conversationId ||
+            row.executionId !== executionId
+          ) {
+            return yield* runtimeError("conflicting-invocation");
+          }
+          yield* RegisteredActionExecutionWorkflow.execute(payload, {
+            discard: true,
+          }).pipe(
+            Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+          );
+          return row;
+        })
       );
-      return yield* getExecution(executionId);
+      return yield* getExecution(
+        acceptedRow.executionId,
+        validatedRequest.conversationId
+      );
     }
   );
 
@@ -863,6 +906,7 @@ const makeRuntimeService = Effect.gen(function* () {
         {
           actionName: row.actionName,
           actionRevision: row.actionRevision,
+          actionFingerprint: row.actionFingerprint,
           catalogFingerprint: row.catalogFingerprint,
           conversationId: row.conversationId,
           encodedInput: row.inputJson,

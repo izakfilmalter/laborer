@@ -466,6 +466,11 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_COMPLETE
               );
               assert.strictEqual(completedReplies[0]?.thread_ts, rootTs);
+              assert.strictEqual(
+                completedReplies[0]?.ts,
+                partialReplies[0]?.ts,
+                "later ACP chunks must update the original Slack reply"
+              );
               const allPublicText = pipe(
                 completedReplies,
                 EffectArray.map((message) => String(message.text ?? "")),

@@ -1,12 +1,14 @@
 import {
-  AlertCircle,
-  CheckCircle2,
+  CircleCheck,
   LoaderCircle,
   type LucideIcon,
-  Radio,
+  PlugZap,
+  TriangleAlert,
 } from "lucide-react";
 import type { OperatorStatusView } from "../../operator-status/client.ts";
 import { Button } from "./components/ui/button.tsx";
+
+type StatusTone = "danger" | "neutral" | "success" | "warning";
 
 const formatUptime = (seconds: number): string => {
   const days = Math.floor(seconds / 86_400);
@@ -18,49 +20,89 @@ const formatUptime = (seconds: number): string => {
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }
-  return `${minutes}m`;
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return "under a minute";
 };
 
 const statusPresentation: Record<
   OperatorStatusView["state"],
   {
+    readonly action: string | null;
     readonly description: string;
+    readonly guidance: string | null;
     readonly icon: LucideIcon;
+    readonly indicator: string;
     readonly pending: boolean;
     readonly title: string;
+    readonly tone: StatusTone;
   }
 > = {
   connecting: {
+    action: null,
     description: "Looking for the local Laborer daemon.",
+    guidance: null,
     icon: LoaderCircle,
+    indicator: "Connecting",
     pending: true,
     title: "Connecting…",
+    tone: "neutral",
   },
   incompatible: {
+    action: "Check again",
     description: "The companion and daemon use incompatible protocol versions.",
-    icon: AlertCircle,
+    guidance: "Update either Laborer component, then check the connection.",
+    icon: TriangleAlert,
+    indicator: "Update",
     pending: false,
     title: "Update required",
+    tone: "danger",
   },
   reconnecting: {
-    description: "Looking for the local Laborer daemon.",
+    action: null,
+    description: "Lost contact with the daemon and retrying automatically.",
+    guidance: null,
     icon: LoaderCircle,
+    indicator: "Reconnecting",
     pending: true,
     title: "Reconnecting…",
+    tone: "warning",
   },
   running: {
+    action: null,
     description: "Laborer is connected and ready for Slack work.",
-    icon: CheckCircle2,
+    guidance: null,
+    icon: CircleCheck,
+    indicator: "Running",
     pending: false,
     title: "Daemon running",
+    tone: "success",
   },
   unavailable: {
-    description:
-      "Laborer cannot reach the local daemon. Existing work is not stopped.",
-    icon: Radio,
+    action: "Try again",
+    description: "Laborer cannot reach the local daemon.",
+    guidance: "Start the daemon separately, then retry.",
+    icon: PlugZap,
+    indicator: "Offline",
     pending: false,
     title: "Daemon unavailable",
+    tone: "warning",
   },
+};
+
+const badgeTone: Record<StatusTone, string> = {
+  danger: "bg-danger/10 text-danger",
+  neutral: "bg-muted text-muted-foreground",
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/10 text-warning",
+};
+
+const dotTone: Record<StatusTone, string> = {
+  danger: "bg-danger",
+  neutral: "bg-muted-foreground/50",
+  success: "bg-success",
+  warning: "bg-warning",
 };
 
 export const StatusPopover = ({
@@ -71,81 +113,96 @@ export const StatusPopover = ({
   readonly status: OperatorStatusView;
 }) => {
   const presentation = statusPresentation[status.state];
-  const unavailable = status.state === "unavailable";
-  const incompatible = status.state === "incompatible";
   const Icon = presentation.icon;
 
   return (
     <main className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between border-border border-b px-5 py-4">
-        <div>
+      <header className="flex items-center justify-between gap-3 border-border border-b px-5 py-4">
+        <div className="min-w-0">
           <h1 className="font-semibold text-base tracking-tight">Laborer</h1>
           <p className="text-muted-foreground text-xs">Local companion</p>
         </div>
-        <span className="rounded-full border border-border bg-surface px-2 py-1 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
-          Daemon
+        <span
+          aria-hidden="true"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 font-medium text-[10px] text-muted-foreground uppercase tracking-wider"
+        >
+          <span
+            className={`size-1.5 rounded-full transition-colors ${dotTone[presentation.tone]} ${presentation.pending ? "animate-pulse motion-reduce:animate-none" : ""}`}
+          />
+          {presentation.indicator}
         </span>
       </header>
 
       <section
-        aria-labelledby="daemon-status-title"
+        aria-labelledby="daemon-status-heading"
         className="flex flex-1 flex-col p-5"
       >
+        <h2 className="sr-only" id="daemon-status-heading">
+          Daemon status
+        </h2>
+
         <div className="flex items-start gap-3">
           <span
-            className={`mt-0.5 rounded-full p-2 ${status.state === "running" ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}
+            className={`mt-0.5 shrink-0 rounded-full p-2 transition-colors ${badgeTone[presentation.tone]}`}
           >
             <Icon
               aria-hidden="true"
               className={
-                presentation.pending ? "size-5 animate-spin" : "size-5"
+                presentation.pending
+                  ? "size-5 animate-spin motion-reduce:animate-none"
+                  : "size-5"
               }
             />
           </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="font-semibold text-sm" id="daemon-status-title">
+          <output className="min-w-0 flex-1">
+            <span className="block font-semibold text-sm leading-5">
               {presentation.title}
-            </h2>
-            <output className="mt-1 text-muted-foreground text-xs leading-5">
+            </span>
+            <span className="mt-1 block text-muted-foreground text-xs leading-5">
               {presentation.description}
-            </output>
-          </div>
+            </span>
+          </output>
         </div>
 
         {status.state === "running" ? (
-          <dl className="mt-6 grid grid-cols-2 gap-2">
+          <dl className="mt-5 grid grid-cols-2 gap-2">
             <div className="rounded-xl border border-border bg-surface p-3">
               <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Version
               </dt>
-              <dd className="mt-1 font-mono text-sm">{status.version}</dd>
+              <dd className="mt-1 truncate font-mono text-sm">
+                {status.version}
+              </dd>
             </div>
             <div className="rounded-xl border border-border bg-surface p-3">
               <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Uptime
               </dt>
-              <dd className="mt-1 font-medium text-sm">
+              <dd className="mt-1 truncate font-medium text-sm">
                 {formatUptime(status.uptimeSeconds)}
               </dd>
             </div>
           </dl>
         ) : null}
 
-        {unavailable || incompatible ? (
-          <div className="mt-6 rounded-xl border border-border bg-surface p-4">
+        {presentation.action !== null && presentation.guidance !== null ? (
+          <div className="mt-5 rounded-xl border border-border bg-surface p-4">
             <p className="text-muted-foreground text-xs leading-5">
-              {incompatible
-                ? "Update either Laborer component, then check the connection again."
-                : "Start the daemon separately, then retry. Closing this companion never ends daemon work."}
+              {presentation.guidance}
             </p>
-            <Button className="mt-3 w-full" onClick={reconnect}>
-              {incompatible ? "Check again" : "Try again"}
+            <Button
+              className="mt-3 w-full"
+              onClick={reconnect}
+              variant="primary"
+            >
+              {presentation.action}
             </Button>
           </div>
         ) : null}
 
-        <p className="mt-auto pt-6 text-center text-[10px] text-muted-foreground">
-          The companion observes Laborer; it does not own daemon work.
+        <p className="mt-auto pt-6 text-center text-[10px] text-muted-foreground leading-4">
+          The companion only observes Laborer. Closing it never stops daemon
+          work.
         </p>
       </section>
     </main>

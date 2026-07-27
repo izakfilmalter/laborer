@@ -9,6 +9,10 @@
   --color-border: oklch(0.87 0.009 85);
   --color-ring: oklch(0.57 0.11 155);
   --color-success: oklch(0.5 0.13 152);
+  --color-warning: oklch(0.58 0.12 68);
+  --color-danger: oklch(0.53 0.17 27);
+  --color-primary: oklch(0.5 0.13 152);
+  --color-primary-foreground: oklch(0.99 0.003 95);
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif;
 }
@@ -23,6 +27,10 @@
     --color-border: oklch(0.34 0.014 75);
     --color-ring: oklch(0.72 0.11 155);
     --color-success: oklch(0.72 0.14 152);
+    --color-warning: oklch(0.78 0.12 72);
+    --color-danger: oklch(0.7 0.16 25);
+    --color-primary: oklch(0.68 0.13 152);
+    --color-primary-foreground: oklch(0.19 0.02 150);
   }
 }
 

@@ -84,6 +84,11 @@ const createPopover = (): BrowserWindow => {
     width: POPOVER_WIDTH,
   });
   window.on("blur", () => window.hide());
+  window.webContents.on("before-input-event", (_event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape") {
+      window.hide();
+    }
+  });
   window.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();

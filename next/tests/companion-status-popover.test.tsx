@@ -57,6 +57,44 @@ describe("companion status popover", () => {
 
     expect(screen.getByText("Reconnecting…")).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain(
+      "retrying automatically"
+    );
     expect(document.body.textContent).not.toContain("socket");
+  });
+
+  it("labels the status section and announces title changes in one live region", () => {
+    const { rerender } = render(
+      <StatusPopover
+        reconnect={() => undefined}
+        status={{ state: "connecting", uptimeSeconds: null, version: null }}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Daemon status" })
+    ).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Connecting…");
+
+    rerender(
+      <StatusPopover
+        reconnect={() => undefined}
+        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+      />
+    );
+    expect(screen.getByRole("status").textContent).toContain("Daemon running");
+    expect(screen.getByText("under a minute")).toBeTruthy();
+  });
+
+  it("keeps version and uptime detail out of non-running states", () => {
+    render(
+      <StatusPopover
+        reconnect={() => undefined}
+        status={{ state: "unavailable", uptimeSeconds: null, version: null }}
+      />
+    );
+
+    expect(screen.queryByText("Version")).toBeNull();
+    expect(screen.queryByText("Uptime")).toBeNull();
   });
 });

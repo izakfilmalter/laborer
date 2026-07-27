@@ -4,8 +4,8 @@ Issue #243 establishes one exact release-safety contract for `next`.
 
 | Component | Supported version | Enforced by |
 | --- | --- | --- |
-| Node.js | `24.11.1` | `.node-version`, package engines, Next CI |
-| Bun | `1.3.5` | package manager pin, Next CI |
+| Node.js | `24.11.1` | `.node-version`, package engines, Sandcastle image and local tests |
+| Bun | `1.3.5` | package manager pin, Sandcastle image and local tests |
 | ACP wire protocol | stable v1 (`1`) | initialization validator and compatibility suite |
 | `@agentclientprotocol/sdk` | `1.3.0` | exact dependency and lockfile |
 | `opencode-ai` CLI | `1.18.4` | exact dev dependency, CLI assertion |
@@ -14,11 +14,13 @@ Issue #243 establishes one exact release-safety contract for `next`.
 | `@slack/socket-mode` | `3.0.0` | exact dependency and lockfile |
 | Emulate | `0.9.0` | exact dependency and lockfile |
 
-The complete GitHub Actions **Next / CI** job is the sole green production
-cutover signal. It performs a frozen install, exact runtime verification,
-formatting, typechecking, all credential-free deterministic/Emulate tests, and
-the pinned real OpenCode compatibility and policy tests. The existing `current`
-pull-request job remains independent.
+The Sandcastle runner-enforced `bun run --cwd next check` local gate is the sole
+green automated production cutover signal. It performs formatting, typechecking,
+all credential-free deterministic/Emulate tests, and the pinned real OpenCode
+compatibility and policy tests against the exact reviewed PR head. The
+Sandcastle image pins the supported Node and Bun releases. GitHub Actions
+intentionally does not verify `next`; the existing `current` pull-request job
+remains independent.
 
 The real suite invokes only the pinned local OpenCode executable. It uses an
 isolated owner-only home and workspace, a loopback fake model provider with a

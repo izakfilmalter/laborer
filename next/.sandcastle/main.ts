@@ -55,39 +55,6 @@ const plannedIssueSchema = z
   });
 
 const planSchema = z.object({ issues: z.array(plannedIssueSchema) });
-const prCheckSchema = z.object({
-  bucket: z.enum(["cancel", "fail", "pass", "pending", "skipping"]),
-  link: z.string().url().optional(),
-  name: z.string().min(1).optional(),
-  workflow: z.string().min(1).optional(),
-});
-const gitHubCheckSchema = z.object({
-  conclusion: z
-    .enum([
-      "ACTION_REQUIRED",
-      "CANCELLED",
-      "FAILURE",
-      "NEUTRAL",
-      "SKIPPED",
-      "STALE",
-      "STARTUP_FAILURE",
-      "SUCCESS",
-      "TIMED_OUT",
-    ])
-    .nullable()
-    .optional(),
-  detailsUrl: z.string().url().nullable().optional(),
-  name: z.string().min(1).optional(),
-  status: z.enum([
-    "COMPLETED",
-    "IN_PROGRESS",
-    "PENDING",
-    "QUEUED",
-    "REQUESTED",
-    "WAITING",
-  ]),
-  workflowName: z.string().min(1).optional(),
-});
 const prStatusSchema = z.object({
   headRefOid: z.string().regex(/^[0-9a-f]{40,64}$/),
   isDraft: z.boolean(),
@@ -126,13 +93,9 @@ const MAX_LOCAL_GATE_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
   "SANDCASTLE_MAX_LOCAL_GATE_REPAIR_ATTEMPTS",
   2
 );
-const CHECK_POLL_INTERVAL_MS = positiveIntegerEnv(
-  "SANDCASTLE_CHECK_POLL_INTERVAL_MS",
+const GITHUB_POLL_INTERVAL_MS = positiveIntegerEnv(
+  "SANDCASTLE_GITHUB_POLL_INTERVAL_MS",
   30_000
-);
-const CHECK_TIMEOUT_MS = positiveIntegerEnv(
-  "SANDCASTLE_CHECK_TIMEOUT_MS",
-  20 * 60_000
 );
 const HOST_COMMAND_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_HOST_COMMAND_TIMEOUT_MS",
@@ -160,8 +123,6 @@ const MERGE_TIMEOUT_MS = positiveIntegerEnv(
 );
 const AUTO_MERGE_PRS = process.env.SANDCASTLE_AUTO_MERGE !== "false";
 const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
-const REPAIR_FAILED_CHECKS =
-  process.env.SANDCASTLE_REPAIR_FAILED_CHECKS !== "false";
 const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
 const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
@@ -636,7 +597,7 @@ async function mergePreparedPullRequest(
     if (status.state === "CLOSED") {
       throw new Error(`${prUrl} closed without merge.`);
     }
-    await sleep(CHECK_POLL_INTERVAL_MS);
+    await sleep(GITHUB_POLL_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for ${prUrl} to merge.`);
 }
@@ -1075,68 +1036,8 @@ async function preparePrForMerge(
   if (status.state === "MERGED" || status.mergedAt) {
     throw new Error(`Cannot prepare an already merged PR: ${prUrl}`);
   }
-  let reviewedHead = await reviewPublishedBranch(issue, prUrl);
-  if (!REPAIR_FAILED_CHECKS) {
-    const result = await waitForChecks(prUrl);
-    return result.status === "completed" && checksArePassing(result.checks)
-      ? assertReviewedHead(prUrl, reviewedHead)
-      : undefined;
-  }
-
-  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS + 1; attempt++) {
-    const result = await waitForChecks(prUrl);
-    if (result.status === "merged") {
-      return assertReviewedHead(prUrl, reviewedHead);
-    }
-    if (result.status !== "completed") {
-      return undefined;
-    }
-    const failed = result.checks.filter(isFailingCheck);
-    if (failed.length === 0) {
-      return checksArePassing(result.checks)
-        ? assertReviewedHead(prUrl, reviewedHead)
-        : undefined;
-    }
-    if (attempt > MAX_REPAIR_ATTEMPTS) {
-      return undefined;
-    }
-    reviewedHead = await repairFailedChecks(issue, prUrl, failed, attempt);
-  }
-  return undefined;
-}
-
-async function repairFailedChecks(
-  issue: PlannedIssue,
-  prUrl: string,
-  checks: PrCheck[],
-  attempt: number
-) {
-  const sandbox = await createIssueSandbox(issue);
-  let reviewedLocalHead: string;
-  try {
-    const repair = await sandbox.run({
-      agent: allAroundAgent(),
-      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-      maxIterations: 30,
-      name: `pr-check-repair-${issue.id}-${attempt}`,
-      promptArgs: {
-        ...issuePromptArgs(issue),
-        FAILED_CHECKS_JSON: JSON.stringify(checks, null, 2),
-        PR_URL: prUrl,
-      },
-      promptFile: ".sandcastle/pr-check-repair-prompt.md",
-      signal: agentRunSignal(),
-    });
-    assertAgentCompleted(repair, `PR check repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox, false);
-    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
-  } finally {
-    await sandbox.close();
-  }
-  pushIssueBranch(issue.branch);
-  await waitForPrHead(prUrl, reviewedLocalHead);
-  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
-  return reviewedLocalHead;
+  const reviewedHead = await reviewPublishedBranch(issue, prUrl);
+  return assertReviewedHead(prUrl, reviewedHead);
 }
 
 function recordPullRequestReviewedHead(
@@ -1191,7 +1092,7 @@ async function ensureBranchUpToDate(issue: PlannedIssue, prUrl: string) {
         return false;
       }
       runFile("gh", ["pr", "update-branch", prUrl]);
-      await sleep(CHECK_POLL_INTERVAL_MS);
+      await sleep(GITHUB_POLL_INTERVAL_MS);
       continue;
     }
     return true;
@@ -1302,55 +1203,6 @@ function mergePr(prUrl: string, headSha: string) {
   console.log(`  Merged ${prUrl}`);
 }
 
-async function waitForChecks(prUrl: string): Promise<CheckResult> {
-  const deadline = Date.now() + CHECK_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (prIsMerged(prUrl)) {
-      return { checks: [], status: "merged" };
-    }
-    const checks = getPrChecks(prUrl);
-    if (checks.length > 0 && !checks.some(isPendingCheck)) {
-      return { checks, status: "completed" };
-    }
-    console.log(`  Waiting for checks on ${prUrl}...`);
-    await sleep(CHECK_POLL_INTERVAL_MS);
-  }
-  return { checks: [], status: "timed-out" };
-}
-
-function getPrChecks(prUrl: string): PrCheck[] {
-  const json = tryFile("gh", [
-    "pr",
-    "checks",
-    prUrl,
-    "--json",
-    "bucket,link,name,workflow",
-  ]);
-  if (json.trim()) {
-    return z.array(prCheckSchema).parse(JSON.parse(json));
-  }
-
-  const fallback = tryFile("gh", [
-    "pr",
-    "view",
-    prUrl,
-    "--json",
-    "statusCheckRollup",
-  ]);
-  if (!fallback.trim()) {
-    return [];
-  }
-  const value = z
-    .object({ statusCheckRollup: z.array(gitHubCheckSchema).optional() })
-    .parse(JSON.parse(fallback));
-  return (value.statusCheckRollup ?? []).map((check) => ({
-    bucket: checkBucket(check),
-    ...(check.detailsUrl ? { link: check.detailsUrl } : undefined),
-    ...(check.name ? { name: check.name } : undefined),
-    ...(check.workflowName ? { workflow: check.workflowName } : undefined),
-  }));
-}
-
 function getPrStatus(prUrl: string) {
   const json = runFile("gh", [
     "pr",
@@ -1403,42 +1255,6 @@ function assertReviewedHead(prUrl: string, reviewedHead: string) {
     );
   }
   return reviewedHead;
-}
-
-function checkBucket(check: GitHubCheck) {
-  if (check.conclusion === "SUCCESS") {
-    return "pass";
-  }
-  if (check.conclusion === "NEUTRAL" || check.conclusion === "SKIPPED") {
-    return "skipping";
-  }
-  if (check.conclusion === "CANCELLED") {
-    return "cancel";
-  }
-  if (check.status === "COMPLETED") {
-    return "fail";
-  }
-  return "pending";
-}
-
-function prIsMerged(prUrl: string) {
-  const status = getPrStatus(prUrl);
-  return status.state === "MERGED" || Boolean(status.mergedAt);
-}
-
-function checksArePassing(checks: PrCheck[]) {
-  return (
-    checks.length > 0 &&
-    checks.every((check) => !(isFailingCheck(check) || isPendingCheck(check)))
-  );
-}
-
-function isFailingCheck(check: PrCheck) {
-  return check.bucket === "fail" || check.bucket === "cancel";
-}
-
-function isPendingCheck(check: PrCheck) {
-  return check.bucket === "pending";
 }
 
 function issuePromptArgs(issue: PlannedIssue) {
@@ -1636,10 +1452,3 @@ function nonNegativeIntegerEnv(name: string, fallback: number) {
 function sleep(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
-type CheckResult =
-  | { checks: PrCheck[]; status: "completed" | "merged" }
-  | { checks: []; status: "timed-out" };
-
-type PrCheck = z.infer<typeof prCheckSchema>;
-type GitHubCheck = z.infer<typeof gitHubCheckSchema>;

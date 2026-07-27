@@ -7,7 +7,8 @@ recovery. There is no alternate production receiver or runtime selector.
 
 ## Automated gate
 
-- Require the complete **Next / CI** job to be green.
+- Require Sandcastle's runner-enforced `bun run --cwd next check` gate to pass
+  for the exact reviewed PR head.
 - Confirm `recovery health` reports every binding as `ready`; investigate bounded
   reason codes for setup/config incompatibility, quarantine, circuit opening,
   blocked prompts, uncertain Action/Execution outcomes, stream uncertainty, or
@@ -17,8 +18,8 @@ recovery. There is no alternate production receiver or runtime selector.
 
 ## Manual credentialed gate
 
-This gate cannot run in credential-free CI and must not be reported as
-automated.
+This gate cannot run in Sandcastle's credential-free automated verification and
+must not be reported as automated.
 
 1. Install the manifest as a dedicated canary Slack app with Socket Mode and
    interactivity enabled; use isolated canary app/bot credentials.

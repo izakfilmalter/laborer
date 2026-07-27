@@ -27,9 +27,6 @@ slack-config-access-token*
 # Sandcastle runtime state (configuration lives in next/.sandcastle)
 /.sandcastle/
 /next/.sandcastle/bun-cache/
-/next/.sandcastle/runtime-credentials/
-/next/.sandcastle/opencode-account.json
-/next/.sandcastle/opencode-auth.json
 
 # IDEs and editors
 .vscode/*

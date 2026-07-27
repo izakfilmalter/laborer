@@ -2,15 +2,8 @@
 // Run from next/ with `bun run sandcastle` after building the Docker image.
 
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { createSandbox, Output, opencode, run } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -164,16 +157,17 @@ const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
 const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
 const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
-const RUNTIME_CREDENTIALS_DIR = resolve(".sandcastle/runtime-credentials");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
 const FULL_GATE = "bun run --cwd next check";
 const REPO_ROOT = "..";
-const SANDBOX_OPENCODE_CONFIG = resolve(".sandcastle/opencode.json");
-const SANDBOX_OPENCODE_AUTH = resolve(
-  requiredEnv("SANDCASTLE_OPENCODE_AUTH_FILE")
+const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
+const HOST_OPENCODE_AUTH = resolve(
+  homedir(),
+  ".local/share/opencode/auth.json"
 );
-const SANDBOX_OPENCODE_ACCOUNT = resolve(
-  requiredEnv("SANDCASTLE_OPENCODE_ACCOUNT_FILE")
+const HOST_OPENCODE_ACCOUNT = resolve(
+  homedir(),
+  ".local/share/opencode/account.json"
 );
 const VERIFICATION_POLICY = [
   "Run deterministic offline checks only.",
@@ -182,45 +176,31 @@ const VERIFICATION_POLICY = [
 ].join(" ");
 
 mkdirSync(BUN_CACHE_DIR, { recursive: true });
-mkdirSync(RUNTIME_CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
-const runtimeCredentialDirectories = new Set<string>();
-
-const cleanupRuntimeCredentials = () => {
-  for (const directory of runtimeCredentialDirectories) {
-    rmSync(directory, { force: true, recursive: true });
-  }
-  runtimeCredentialDirectories.clear();
-};
-
-process.once("exit", cleanupRuntimeCredentials);
 
 const allAroundAgent = () =>
   opencode("openai/gpt-5.6-sol", { variant: "medium" });
 const uiAgent = () =>
   opencode("anthropic/claude-opus-5", { variant: "medium" });
 
-const sandboxProvider = () => {
-  const credentialDirectory = mkdtempSync(
-    `${RUNTIME_CREDENTIALS_DIR}/session-`
-  );
-  chmodSync(credentialDirectory, 0o700);
-  copyFileSync(SANDBOX_OPENCODE_AUTH, `${credentialDirectory}/auth.json`);
-  copyFileSync(SANDBOX_OPENCODE_ACCOUNT, `${credentialDirectory}/account.json`);
-  chmodSync(`${credentialDirectory}/auth.json`, 0o600);
-  chmodSync(`${credentialDirectory}/account.json`, 0o600);
-  runtimeCredentialDirectories.add(credentialDirectory);
-  return docker({
+const sandboxProvider = () =>
+  docker({
     env: { GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN") },
     imageName: SANDBOX_IMAGE_NAME,
     mounts: [
       {
-        hostPath: SANDBOX_OPENCODE_CONFIG,
-        sandboxPath: "/home/agent/.config/opencode/opencode.json",
+        hostPath: HOST_OPENCODE_CONFIG,
+        sandboxPath: "/home/agent/.config/opencode",
         readonly: true,
       },
       {
-        hostPath: credentialDirectory,
-        sandboxPath: "/home/agent/.local/share/opencode",
+        hostPath: HOST_OPENCODE_AUTH,
+        sandboxPath: "/home/agent/.local/share/opencode/auth.json",
+        readonly: true,
+      },
+      {
+        hostPath: HOST_OPENCODE_ACCOUNT,
+        sandboxPath: "/home/agent/.local/share/opencode/account.json",
+        readonly: true,
       },
       {
         hostPath: BUN_CACHE_DIR,
@@ -228,7 +208,6 @@ const sandboxProvider = () => {
       },
     ],
   });
-};
 
 const acquireSlot = createSlotLimiter(MAX_PARALLEL);
 const issueGraphSource = new GitHubCliIssueGraphSource(
@@ -1399,8 +1378,9 @@ function assertHostReady() {
   runFile("docker", ["image", "inspect", SANDBOX_IMAGE_NAME]);
   runFile("gh", ["auth", "status"]);
   requiredEnv("SANDCASTLE_AGENT_GH_TOKEN");
-  assertFileExists(SANDBOX_OPENCODE_AUTH);
-  assertFileExists(SANDBOX_OPENCODE_ACCOUNT);
+  assertDirectoryExists(HOST_OPENCODE_CONFIG);
+  assertFileExists(HOST_OPENCODE_AUTH);
+  assertFileExists(HOST_OPENCODE_ACCOUNT);
 }
 
 function refreshBaseBranch() {
@@ -1520,6 +1500,12 @@ function agentRunSignal() {
 function assertFileExists(path: string) {
   if (!(existsSync(path) && statSync(path).isFile())) {
     throw new Error(`Required Sandcastle credential file is missing: ${path}`);
+  }
+}
+
+function assertDirectoryExists(path: string) {
+  if (!(existsSync(path) && statSync(path).isDirectory())) {
+    throw new Error(`Required Sandcastle directory is missing: ${path}`);
   }
 }
 

@@ -454,6 +454,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_PARTIAL
               );
               assert.strictEqual(partialReplies[0]?.thread_ts, rootTs);
+              const partialReplyTs = partialReplies[0]?.ts;
+              if (typeof partialReplyTs !== "string" || partialReplyTs === "") {
+                assert.fail("partial Slack reply must have a timestamp");
+              }
 
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
@@ -468,7 +472,7 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
               assert.strictEqual(completedReplies[0]?.thread_ts, rootTs);
               assert.strictEqual(
                 completedReplies[0]?.ts,
-                partialReplies[0]?.ts,
+                partialReplyTs,
                 "later ACP chunks must update the original Slack reply"
               );
               const allPublicText = pipe(

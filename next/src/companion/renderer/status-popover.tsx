@@ -170,7 +170,7 @@ export const StatusPopover = ({
               <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Version
               </dt>
-              <dd className="mt-1 truncate font-mono text-sm">
+              <dd className="mt-1 select-text truncate font-mono text-sm">
                 {status.version}
               </dd>
             </div>
@@ -178,7 +178,7 @@ export const StatusPopover = ({
               <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Uptime
               </dt>
-              <dd className="mt-1 truncate font-medium text-sm">
+              <dd className="mt-1 select-text truncate font-medium text-sm">
                 {formatUptime(status.uptimeSeconds)}
               </dd>
             </div>
@@ -200,8 +200,8 @@ export const StatusPopover = ({
           </div>
         ) : null}
 
-        <p className="mt-auto pt-6 text-center text-[10px] text-muted-foreground leading-4">
-          The companion only observes Laborer. Closing it never stops daemon
+        <p className="mt-auto pt-6 text-center text-[11px] text-muted-foreground leading-4">
+          This companion only observes Laborer. Quitting it never stops daemon
           work.
         </p>
       </section>

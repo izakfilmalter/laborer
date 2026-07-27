@@ -15,6 +15,7 @@ import { canonicalActionInput } from "../action-catalog.ts";
 import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
+  ActionRegistrationError,
   type RegisteredActionCatalog,
   type RegisteredActionContext,
 } from "./action.ts";
@@ -320,7 +321,13 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
       );
       const result = yield* action.execute(decodedInput, context).pipe(
         Effect.flatMap(action.decodeResult),
-        Effect.mapError(() => ({ category: "action-failed" as const }))
+        Effect.mapError((error) => ({
+          category:
+            error instanceof ActionRegistrationError &&
+            error.reason === "invalid-result"
+              ? ("invalid-result" as const)
+              : ("action-failed" as const),
+        }))
       );
       const encodedResult = yield* boundedPayloadJson(result).pipe(
         Effect.mapError(() => ({ category: "invalid-result" as const }))

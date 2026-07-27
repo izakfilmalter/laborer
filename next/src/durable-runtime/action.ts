@@ -13,6 +13,7 @@ export const ACTION_NAME_MAX_LENGTH = 96;
 export const ACTION_REVISION_MAX_LENGTH = 128;
 export const ACTION_DESCRIPTION_MAX_LENGTH = 4096;
 export const ACTION_CATALOG_MAX_SIZE = 128;
+export const ACTION_SCHEMA_MAX_BYTES = 64 * 1024;
 const ACTION_IDENTIFIER_PATTERN =
   /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
 
@@ -93,10 +94,25 @@ const registrationError = (
 ): ActionRegistrationError => ActionRegistrationError.make({ reason });
 
 const jsonSchemaFor = (schema: Schema.Top): JsonSchema => {
-  const document = Schema.toJsonSchemaDocument(schema);
-  return Object.keys(document.definitions).length === 0
-    ? document.schema
-    : { ...document.schema, $defs: document.definitions };
+  try {
+    const document = Schema.toJsonSchemaDocument(schema);
+    const jsonSchema =
+      Object.keys(document.definitions).length === 0
+        ? document.schema
+        : { ...document.schema, $defs: document.definitions };
+    if (
+      Buffer.byteLength(canonicalCatalogJson(jsonSchema), "utf8") >
+      ACTION_SCHEMA_MAX_BYTES
+    ) {
+      throw registrationError("invalid-metadata");
+    }
+    return jsonSchema;
+  } catch (error) {
+    if (error instanceof ActionRegistrationError) {
+      throw error;
+    }
+    throw registrationError("invalid-metadata");
+  }
 };
 
 interface DefineActionOptions<Name extends string, Input, Result, Error> {
@@ -136,10 +152,17 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
   const suppliedAnnotations = options.annotations;
   if (
     suppliedAnnotations !== undefined &&
-    Object.values(suppliedAnnotations).some(
-      (annotation) =>
-        annotation !== undefined && typeof annotation !== "boolean"
-    )
+    (Object.keys(suppliedAnnotations).some(
+      (key) =>
+        key !== "destructiveHint" &&
+        key !== "idempotentHint" &&
+        key !== "openWorldHint" &&
+        key !== "readOnlyHint"
+    ) ||
+      Object.values(suppliedAnnotations).some(
+        (annotation) =>
+          annotation !== undefined && typeof annotation !== "boolean"
+      ))
   ) {
     throw registrationError("invalid-metadata");
   }
@@ -177,14 +200,15 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
         Effect.mapError(() => registrationError("invalid-input")),
         Effect.flatMap((decoded) => options.run(decoded, context)),
         Effect.flatMap((result) =>
-          Schema.encodeUnknownEffect(options.result)(result)
-        ),
-        Effect.flatMap((encoded) =>
-          Schema.decodeUnknownEffect(options.result, {
-            onExcessProperty: "error",
-          })(encoded)
-        ),
-        Effect.mapError(() => registrationError("invalid-result"))
+          Schema.encodeUnknownEffect(options.result)(result).pipe(
+            Effect.flatMap((encoded) =>
+              Schema.decodeUnknownEffect(options.result, {
+                onExcessProperty: "error",
+              })(encoded)
+            ),
+            Effect.mapError(() => registrationError("invalid-result"))
+          )
+        )
       ),
     inputJsonSchema: jsonSchemaFor(options.input),
     inputSchema: options.input,
@@ -249,7 +273,6 @@ export const makeActionCatalog = (
           ordered,
           EffectArray.map((action) => ({
             annotations: action.annotations,
-            description: action.description,
             inputSchema: action.inputJsonSchema,
             name: action.name,
             outputSchema: action.resultJsonSchema,

@@ -16,8 +16,10 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
   executionId: string
 ) {
   const runtime = yield* RootDurableRuntime;
+  let lastStatus = "missing";
   for (let attempt = 0; attempt < 500; attempt += 1) {
     const snapshot = yield* runtime.getExecution(executionId);
+    lastStatus = snapshot.status;
     if (
       snapshot.status === "completed" ||
       snapshot.status === "failed" ||
@@ -27,7 +29,9 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
     }
     yield* Effect.sleep("10 millis");
   }
-  return yield* Effect.die(new Error("Execution did not settle"));
+  return yield* Effect.die(
+    new Error(`Execution did not settle from ${lastStatus}`)
+  );
 });
 
 describe("root durable runtime", () => {
@@ -54,7 +58,9 @@ describe("root durable runtime", () => {
                 return { greeting: `hello ${input.name}` };
               }),
           });
-          const application = defineApplication({ actions: [action] });
+          const application = defineApplication({
+            actions: [action],
+          });
           const layer = makeRootDurableRuntimeLayer(
             makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
             application.actions,
@@ -200,5 +206,97 @@ describe("root durable runtime", () => {
         run: (input) => Effect.succeed(input),
       })
     );
+    assert.throws(() =>
+      defineAction({
+        annotations: {
+          unsupportedHint: true,
+        } as unknown as { readOnlyHint: boolean },
+        description: "Unknown annotation key",
+        input: Schema.String,
+        name: "fixture/unknown-annotation",
+        result: Schema.String,
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      })
+    );
+    assert.throws(() =>
+      defineAction({
+        description: "Oversized generated schema metadata",
+        input: Schema.String.annotate({
+          description: "x".repeat(64 * 1024),
+        }),
+        name: "fixture/oversized-schema",
+        result: Schema.String,
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      })
+    );
   });
+
+  it("keeps the compatibility fingerprint independent of prose", () => {
+    const makeAction = (description: string) =>
+      defineAction({
+        annotations: { readOnlyHint: true },
+        description,
+        input: Schema.Struct({ value: Schema.String }),
+        name: "fixture/fingerprint",
+        result: Schema.Struct({ value: Schema.String }),
+        revision: "v1",
+        run: (input) => Effect.succeed(input),
+      });
+    const first = defineApplication({
+      actions: [makeAction("First model-facing description")],
+    });
+    const second = defineApplication({
+      actions: [makeAction("Updated model-facing description")],
+    });
+    assert.strictEqual(first.actions.fingerprint, second.actions.fingerprint);
+  });
+
+  it.effect("distinguishes malformed results from Action failures", () =>
+    Effect.gen(function* () {
+      const context = {
+        conversationId: "conversation-fixture",
+        executionId: "execution-fixture",
+        reportProgress: () => Effect.void,
+        rootIdentity: "root-fixture",
+      };
+      const malformed = defineAction({
+        description: "Return a malformed fixture result",
+        input: Schema.Null,
+        name: "fixture/malformed-result",
+        result: Schema.Struct({ value: Schema.String }),
+        revision: "v1",
+        run: () =>
+          Effect.succeed({ value: 42 } as unknown as { value: string }),
+      });
+      const malformedFailure = yield* Effect.flip(
+        malformed.execute(null, context)
+      );
+      assert.ok(
+        typeof malformedFailure === "object" &&
+          malformedFailure !== null &&
+          "reason" in malformedFailure
+      );
+      if (
+        typeof malformedFailure === "object" &&
+        malformedFailure !== null &&
+        "reason" in malformedFailure
+      ) {
+        assert.strictEqual(malformedFailure.reason, "invalid-result");
+      }
+
+      const expectedFailure = new Error("fixture Action failure");
+      const failing = defineAction({
+        description: "Fail in user-controlled Action code",
+        input: Schema.Null,
+        name: "fixture/failing",
+        result: Schema.String,
+        revision: "v1",
+        run: () => Effect.fail(expectedFailure),
+      });
+      const actionFailure = yield* Effect.flip(failing.execute(null, context));
+      assert.strictEqual(actionFailure, expectedFailure);
+    })
+  );
 });

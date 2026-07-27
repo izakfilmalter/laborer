@@ -21,6 +21,7 @@ import {
   type RunnableIssue,
   scheduleIssueGraph,
 } from "./issue-graph-scheduler/index.ts";
+import { waitForExpectedPrHead } from "./pr-head-observation/index.ts";
 import {
   appendSpecProgress,
   assertPullRequestTargets,
@@ -144,6 +145,14 @@ const SANDBOX_COMMAND_TIMEOUT_SECONDS = positiveIntegerEnv(
 const AGENT_RUN_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_AGENT_RUN_TIMEOUT_MS",
   4 * 60 * 60_000
+);
+const AGENT_IDLE_TIMEOUT_SECONDS = positiveIntegerEnv(
+  "SANDCASTLE_AGENT_IDLE_TIMEOUT_SECONDS",
+  30 * 60
+);
+const PR_HEAD_OBSERVATION_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_PR_HEAD_OBSERVATION_TIMEOUT_MS",
+  2 * 60_000
 );
 const MERGE_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_MERGE_TIMEOUT_MS",
@@ -302,7 +311,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       }
       try {
         if (issue.kind === "spec-leaf") {
-          publishSpecProgress(issue);
+          await publishSpecProgress(issue);
         } else {
           await publishAndMaybeMergeStandalone(issue);
         }
@@ -356,6 +365,7 @@ async function classifyRunnableIssues(
     agent: allAroundAgent(),
     branchStrategy: { type: "branch", branch: "sandcastle/planner" },
     cwd: REPO_ROOT,
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
     maxIterations: 1,
     name: "planner",
     output: Output.object({ tag: "plan", schema: planSchema }),
@@ -435,7 +445,7 @@ function logWaitingIssueRoots(
   }
 }
 
-function publishSpecProgress(issue: PlannedIssue) {
+async function publishSpecProgress(issue: PlannedIssue) {
   const beforePush = issueGraphSource.pullRequest(issue.branch);
   if (beforePush !== undefined) {
     assertOpenDraftSpecPullRequest(beforePush, issue);
@@ -479,7 +489,7 @@ function publishSpecProgress(issue: PlannedIssue) {
     );
   }
   assertOpenDraftSpecPullRequest(current, issue);
-  assertPrHead(current.url, acceptedHead);
+  await waitForPrHead(current.url, acceptedHead);
   const body = appendSpecProgress(
     current.body,
     issue.root.number,
@@ -495,7 +505,7 @@ function publishSpecProgress(issue: PlannedIssue) {
     throw new Error(`Shared PR disappeared while recording #${issue.id}.`);
   }
   assertOpenDraftSpecPullRequest(confirmed, issue);
-  assertPrHead(confirmed.url, acceptedHead);
+  await waitForPrHead(confirmed.url, acceptedHead);
   if (
     !confirmed.body.includes(
       implementationMarker(Number(issue.id), acceptedHead)
@@ -742,6 +752,7 @@ async function buildIssue(issue: PlannedIssue) {
     const commits: Array<{ sha: string }> = [];
     const implementation = await sandbox.run({
       agent: allAroundAgent(),
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
       maxIterations: 100,
       name: `all-around-builder-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
@@ -755,6 +766,7 @@ async function buildIssue(issue: PlannedIssue) {
     if (issue.needsUi) {
       const ui = await sandbox.run({
         agent: uiAgent(),
+        idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
         maxIterations: 20,
         name: `ui-builder-${issue.id}`,
         promptArgs: issuePromptArgs(issue),
@@ -940,6 +952,7 @@ async function runReviewAndVerification(
   if (issue.needsUi) {
     const uiReview = await sandbox.run({
       agent: uiAgent(),
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
       maxIterations: 3,
       name: `pre-publish-ui-review-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
@@ -953,6 +966,7 @@ async function runReviewAndVerification(
 
   const review = await sandbox.run({
     agent: allAroundAgent(),
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
     maxIterations: 3,
     name: `pre-publish-code-review-${issue.id}`,
     promptArgs: issuePromptArgs(issue),
@@ -965,6 +979,7 @@ async function runReviewAndVerification(
 
   const verify = await sandbox.run({
     agent: allAroundAgent(),
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
     maxIterations: 30,
     name: `verify-fixer-${issue.id}`,
     promptArgs: {
@@ -1009,6 +1024,7 @@ async function enforceLocalGate(
     }
     const repair = await sandbox.run({
       agent: allAroundAgent(),
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
       maxIterations: 30,
       name: `local-gate-repair-${issue.id}-${attempt + 1}`,
       promptArgs: {
@@ -1043,7 +1059,7 @@ async function reviewPublishedBranch(issue: PlannedIssue, prUrl: string) {
   if (!reviewIsComplete(prUrl)) {
     runFile("gh", ["pr", "comment", prUrl, "--body", REVIEW_MARKER]);
   }
-  assertPrHead(prUrl, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
   recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
   return reviewedLocalHead;
 }
@@ -1100,6 +1116,7 @@ async function repairFailedChecks(
   try {
     const repair = await sandbox.run({
       agent: allAroundAgent(),
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
       maxIterations: 30,
       name: `pr-check-repair-${issue.id}-${attempt}`,
       promptArgs: {
@@ -1117,7 +1134,7 @@ async function repairFailedChecks(
     await sandbox.close();
   }
   pushIssueBranch(issue.branch);
-  assertPrHead(prUrl, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
   recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
   return reviewedLocalHead;
 }
@@ -1192,6 +1209,7 @@ async function repairConflict(
   try {
     const repair = await sandbox.run({
       agent: allAroundAgent(),
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
       maxIterations: 30,
       name: `pr-conflict-repair-${issue.id}-${attempt}`,
       promptArgs: {
@@ -1209,7 +1227,7 @@ async function repairConflict(
     await sandbox.close();
   }
   pushIssueBranch(issue.branch);
-  assertPrHead(prUrl, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
   return reviewedLocalHead;
 }
 
@@ -1359,6 +1377,18 @@ function assertPrHead(prUrl: string, expectedHead: string) {
       `PR head mismatch: expected ${expectedHead}, received ${currentHead}.`
     );
   }
+}
+
+async function waitForPrHead(prUrl: string, expectedHead: string) {
+  await waitForExpectedPrHead({
+    expectedHead,
+    now: Date.now,
+    pause: async () => {
+      await sleep(1000);
+    },
+    readHead: () => requiredPrHead(prUrl),
+    timeoutMs: PR_HEAD_OBSERVATION_TIMEOUT_MS,
+  });
 }
 
 function localBranchHead(branch: string) {

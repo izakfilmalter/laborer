@@ -54,7 +54,13 @@ describe("root durable runtime", () => {
             revision: "fixture-v1",
             run: (input, context) =>
               Effect.gen(function* () {
-                yield* context.reportProgress({ phase: "rendering" });
+                yield* context.reportProgress("rendering", {
+                  phase: "rendering",
+                });
+                // Exact repeated reports must not enqueue a durable update twice.
+                yield* context.reportProgress("rendering", {
+                  phase: "rendering",
+                });
                 yield* Effect.yieldNow;
                 return { greeting: `hello ${input.name}` };
               }),

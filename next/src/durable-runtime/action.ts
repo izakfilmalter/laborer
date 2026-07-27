@@ -53,7 +53,10 @@ export interface RegisteredActionAnnotations {
 export interface RegisteredActionContext {
   readonly conversationId: string;
   readonly executionId: string;
-  readonly reportProgress: (payload: unknown) => Effect.Effect<void, unknown>;
+  readonly reportProgress: (
+    progressId: string,
+    payload: unknown
+  ) => Effect.Effect<void, unknown>;
   readonly rootIdentity: string;
 }
 

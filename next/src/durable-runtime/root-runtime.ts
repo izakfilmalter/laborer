@@ -30,6 +30,7 @@ export const RUNTIME_INVOCATION_ID_MAX_LENGTH = 512;
 export const RUNTIME_ROOT_IDENTITY_MAX_LENGTH = 4096;
 export const RUNTIME_EXECUTION_ID_MAX_LENGTH = 160;
 export const RUNTIME_EVENT_ID_MAX_LENGTH = 256;
+export const RUNTIME_PROGRESS_ID_MAX_LENGTH = 256;
 const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
 const RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH = 64;
 const NONBLANK_PATTERN = /\S/;
@@ -53,6 +54,9 @@ export const RuntimeExecutionId = boundedNonBlankString(
 );
 export const RuntimeEventId = boundedNonBlankString(
   RUNTIME_EVENT_ID_MAX_LENGTH
+);
+export const RuntimeProgressId = boundedNonBlankString(
+  RUNTIME_PROGRESS_ID_MAX_LENGTH
 );
 export const ExecutionStatus = Schema.Literals([
   "queued",
@@ -225,13 +229,57 @@ const persistEvent = Effect.fn("persistExecutionEvent")(function* (options: {
   readonly executionId: string;
   readonly kind: "progress" | "completed" | "failed";
   readonly payload: unknown;
+  readonly progressId?: string;
 }) {
   const sql = yield* SqlClient;
   const encodedPayload = yield* boundedPayloadJson(options.payload);
   return yield* sql.withTransaction(
     Effect.gen(function* () {
+      // Acquire SQLite's write lock before inspecting event identity or sequence.
+      // This keeps concurrent reporters from allocating the same next sequence.
+      yield* sql`
+        UPDATE laborer_executions
+        SET execution_id = execution_id
+        WHERE execution_id = ${options.executionId}
+      `;
+      const stableEventId =
+        options.progressId === undefined
+          ? undefined
+          : `execution:${options.executionId}:progress:${createHash("sha256")
+              .update("laborer-execution-progress-v1\0", "utf8")
+              .update(options.progressId, "utf8")
+              .digest("base64url")}`;
+      if (stableEventId !== undefined) {
+        const existing = yield* sql<{
+          readonly conversationId: string;
+          readonly executionId: string;
+          readonly kind: string;
+          readonly payloadJson: string;
+        }>`
+          SELECT
+            conversation_id AS conversationId,
+            execution_id AS executionId,
+            kind,
+            payload_json AS payloadJson
+          FROM laborer_execution_events
+          WHERE event_id = ${stableEventId}
+        `;
+        const event = pipe(existing, EffectArray.head);
+        if (Option.isSome(event)) {
+          if (
+            event.value.conversationId !== options.conversationId ||
+            event.value.executionId !== options.executionId ||
+            event.value.kind !== options.kind ||
+            event.value.payloadJson !== encodedPayload
+          ) {
+            return yield* runtimeError("invalid-payload");
+          }
+          return stableEventId;
+        }
+      }
       const sequence = yield* nextEventSequence(options.executionId);
-      const eventId = `execution:${options.executionId}:event:${sequence}`;
+      const eventId =
+        stableEventId ?? `execution:${options.executionId}:event:${sequence}`;
       yield* sql`
         INSERT INTO laborer_execution_events (
           event_id, execution_id, conversation_id, sequence, kind, payload_json
@@ -376,15 +424,18 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
       const context: RegisteredActionContext = {
         conversationId: payload.conversationId,
         executionId,
-        reportProgress: (progress) =>
-          persistEvent({
-            conversationId: payload.conversationId,
-            executionId,
-            kind: "progress",
-            payload: progress,
-          }).pipe(
-            Effect.provideService(SqlClient, sql),
-            Effect.orDie,
+        reportProgress: (progressId, progress) =>
+          Schema.decodeUnknownEffect(RuntimeProgressId)(progressId).pipe(
+            Effect.mapError(() => runtimeError("invalid-payload")),
+            Effect.flatMap((validatedProgressId) =>
+              persistEvent({
+                conversationId: payload.conversationId,
+                executionId,
+                kind: "progress",
+                payload: progress,
+                progressId: validatedProgressId,
+              }).pipe(Effect.provideService(SqlClient, sql))
+            ),
             Effect.asVoid
           ),
         rootIdentity: payload.rootIdentity,

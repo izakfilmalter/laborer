@@ -44,6 +44,7 @@ const action = defineRegisteredAction({
       Schema.isGreaterThan(0),
       Schema.isLessThanOrEqualTo(10)
     ),
+    requestedAt: Schema.DateFromString,
     widget: Schema.NonEmptyString.check(Schema.isMaxLength(32)),
   }),
   name: "forge-fixture-widget",
@@ -60,7 +61,9 @@ const action = defineRegisteredAction({
       if (input.widget === "invalid-result") {
         return { artifact: 42 } as unknown as { readonly artifact: string };
       }
-      return { artifact: `${input.widget}:${input.quantity}` };
+      return {
+        artifact: `${input.widget}:${input.quantity}:${input.requestedAt.getUTCFullYear()}`,
+      };
     }),
 });
 const catalog = makeRegisteredActionCatalog([action]);
@@ -84,22 +87,43 @@ const program = Effect.gen(function* () {
       runtime.start({
         actionName: action.name,
         conversationId: "workspace:T270:channel:C270:thread:270.1",
-        input: { quantity: 0, widget: "anvil" },
+        input: {
+          quantity: 0,
+          requestedAt: "2026-07-27T00:00:00.000Z",
+          widget: "anvil",
+        },
         invocationId: "invocation-invalid",
       })
     );
     const request = {
       actionName: action.name,
       conversationId: "workspace:T270:channel:C270:thread:270.1",
-      input: { quantity: 3, widget: "anvil" },
+      input: {
+        quantity: 3,
+        requestedAt: "2026-07-27T00:00:00.000Z",
+        widget: "anvil",
+      },
       invocationId: "invocation-270",
     } as const;
-    const accepted = yield* runtime.start(request);
-    const replay = yield* runtime.start(request);
+    const starts = yield* Effect.all(
+      [runtime.start(request), runtime.start(request)],
+      { concurrency: "unbounded" }
+    );
+    const accepted = starts.find(({ deduplicated }) => !deduplicated);
+    const replay = starts.find(({ deduplicated }) => deduplicated);
+    if (accepted === undefined || replay === undefined) {
+      return yield* Effect.die(
+        "concurrent exact replay did not produce one durable acceptance"
+      );
+    }
     const conflict = yield* Effect.result(
       runtime.start({
         ...request,
-        input: { quantity: 4, widget: "anvil" },
+        input: {
+          quantity: 4,
+          requestedAt: "2026-07-27T00:00:00.000Z",
+          widget: "anvil",
+        },
       })
     );
     const completed = yield* eventually(
@@ -112,7 +136,11 @@ const program = Effect.gen(function* () {
     );
     const malformedAccepted = yield* runtime.start({
       ...request,
-      input: { quantity: 1, widget: "invalid-result" },
+      input: {
+        quantity: 1,
+        requestedAt: "2026-07-27T00:00:00.000Z",
+        widget: "invalid-result",
+      },
       invocationId: "invocation-invalid-result",
     });
     const malformed = yield* eventually(

@@ -168,7 +168,7 @@ describe("registered Action Cluster runtime", () => {
             catalogFingerprintPattern
           );
           assert.deepStrictEqual(evidence.completed.result, {
-            artifact: "anvil:3",
+            artifact: "anvil:3:2026",
           });
           assert.deepStrictEqual(evidence.completed.progress, {
             details: { quantity: 3 },
@@ -192,7 +192,7 @@ describe("registered Action Cluster runtime", () => {
             evidence.accepted.executionId
           );
           assert.deepStrictEqual(evidence.delivered[0]?.result, {
-            artifact: "anvil:3",
+            artifact: "anvil:3:2026",
           });
           assert.strictEqual(evidence.malformed.status, "failed");
           assert.strictEqual(

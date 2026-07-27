@@ -14,6 +14,12 @@ export const MAX_ACTION_SCHEMA_BYTES = 64 * 1024;
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const MAX_ACTION_NAME_LENGTH = 64;
 const MAX_ACTION_REVISION_LENGTH = 128;
+const ANNOTATION_KEYS = [
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+  "readOnlyHint",
+] as const;
 
 export interface RegisteredActionAnnotations {
   readonly destructiveHint: boolean;
@@ -86,6 +92,7 @@ const assertBoundedMetadata = (options: {
   readonly name: string;
   readonly revision: string;
 }): void => {
+  const annotationKeys = Object.keys(options.annotations).sort();
   if (
     !ACTION_NAME_PATTERN.test(options.name) ||
     options.name.length > MAX_ACTION_NAME_LENGTH ||
@@ -94,6 +101,8 @@ const assertBoundedMetadata = (options: {
       MAX_ACTION_DESCRIPTION_BYTES ||
     options.revision.trim().length === 0 ||
     Buffer.byteLength(options.revision, "utf8") > MAX_ACTION_REVISION_LENGTH ||
+    annotationKeys.length !== ANNOTATION_KEYS.length ||
+    annotationKeys.some((key, index) => key !== ANNOTATION_KEYS[index]) ||
     Object.values(options.annotations).some(
       (value) => typeof value !== "boolean"
     )
@@ -115,6 +124,9 @@ export interface RegisteredActionDefinition<Name extends string = string> {
   readonly inputJsonSchema: JsonSchema;
   readonly inputSchema: Schema.Top;
   readonly name: Name;
+  readonly prepareInput: (
+    input: unknown
+  ) => Effect.Effect<unknown, RegisteredActionBoundaryError>;
   readonly resultJsonSchema: JsonSchema;
   readonly resultSchema: Schema.Top;
   readonly revision: string;
@@ -144,9 +156,16 @@ export const defineRegisteredAction = <
     Schema.decodeUnknownEffect(options.input, {
       onExcessProperty: "error",
     })(input).pipe(Effect.mapError(() => boundaryError("input")));
+  const prepareInput = (input: unknown) =>
+    decodeInput(input).pipe(
+      Effect.flatMap((decoded) =>
+        Schema.encodeUnknownEffect(options.input)(decoded)
+      ),
+      Effect.mapError(() => boundaryError("input"))
+    );
 
   return {
-    annotations: options.annotations,
+    annotations: { ...options.annotations },
     decodeInput,
     description: options.description,
     execute: (input, context) =>
@@ -163,6 +182,7 @@ export const defineRegisteredAction = <
     inputJsonSchema,
     inputSchema: options.input,
     name: options.name,
+    prepareInput,
     resultJsonSchema,
     resultSchema: options.result,
     revision: options.revision,
@@ -193,27 +213,57 @@ export const makeRegisteredActionCatalog = (
     throw catalogError("invalid");
   }
   const byName = new Map<string, RegisteredActionDefinition>();
+  const schemasByName = new Map<
+    string,
+    { readonly input: JsonSchema; readonly result: JsonSchema }
+  >();
   for (const action of actions) {
+    assertBoundedMetadata(action);
+    if (
+      typeof action.decodeInput !== "function" ||
+      typeof action.execute !== "function" ||
+      typeof action.prepareInput !== "function"
+    ) {
+      throw catalogError("invalid");
+    }
     if (byName.has(action.name)) {
       throw catalogError("duplicate");
     }
     byName.set(action.name, action);
+    schemasByName.set(action.name, {
+      input: schemaProjection(action.inputSchema),
+      result: schemaProjection(action.resultSchema),
+    });
   }
   const registrations = [...actions]
-    .map((action) => ({
-      annotations: action.annotations,
-      description: action.description,
-      inputSchema: action.inputJsonSchema,
-      name: action.name,
-      outputSchema: action.resultJsonSchema,
-      revision: action.revision,
-    }))
+    .map((action) => {
+      const schemas = schemasByName.get(action.name);
+      if (schemas === undefined) {
+        throw catalogError("schema");
+      }
+      return {
+        annotations: action.annotations,
+        description: action.description,
+        inputSchema: schemas.input,
+        name: action.name,
+        outputSchema: schemas.result,
+        revision: action.revision,
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name));
   const fingerprint = createHash("sha256")
     .update("laborer-registered-action-catalog-v1\0", "utf8")
     .update(
       canonicalCatalogJson({
-        registrations,
+        registrations: registrations.map(
+          ({ annotations, inputSchema, name, outputSchema, revision }) => ({
+            annotations,
+            inputSchema,
+            name,
+            outputSchema,
+            revision,
+          })
+        ),
         version: REGISTERED_ACTION_CATALOG_VERSION,
       }),
       "utf8"

@@ -19,10 +19,70 @@ export const canonicalCatalogJson = (value: unknown): string => {
 
 const INVALID_CANONICAL_VALUE = Symbol("invalid-canonical-value");
 
-const normalizeCanonicalValue = (
+interface CanonicalValueBudget {
+  remainingItems: number;
+}
+
+function normalizeCanonicalArray(
+  value: readonly unknown[],
+  depth: number,
+  budget: CanonicalValueBudget
+): unknown | typeof INVALID_CANONICAL_VALUE {
+  if (
+    value.length > ACTION_CANONICAL_MAX_ITEMS ||
+    value.length > budget.remainingItems
+  ) {
+    return INVALID_CANONICAL_VALUE;
+  }
+  budget.remainingItems -= value.length;
+  const normalized: unknown[] = [];
+  for (const item of value) {
+    const candidate = normalizeCanonicalValue(item, depth + 1, budget);
+    if (candidate === INVALID_CANONICAL_VALUE) {
+      return INVALID_CANONICAL_VALUE;
+    }
+    normalized.push(candidate);
+  }
+  return normalized;
+}
+
+function normalizeCanonicalObject(
+  value: object,
+  depth: number,
+  budget: CanonicalValueBudget
+): unknown | typeof INVALID_CANONICAL_VALUE {
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  if (
+    entries.length > ACTION_CANONICAL_MAX_ITEMS ||
+    entries.length > budget.remainingItems
+  ) {
+    return INVALID_CANONICAL_VALUE;
+  }
+  budget.remainingItems -= entries.length;
+  const normalized = Object.create(null) as Record<string, unknown>;
+  const normalizedKeys = new Set<string>();
+  for (const [key, item] of entries) {
+    const normalizedKey = key.normalize("NFC");
+    if (normalizedKeys.has(normalizedKey)) {
+      return INVALID_CANONICAL_VALUE;
+    }
+    normalizedKeys.add(normalizedKey);
+    const candidate = normalizeCanonicalValue(item, depth + 1, budget);
+    if (candidate === INVALID_CANONICAL_VALUE) {
+      return INVALID_CANONICAL_VALUE;
+    }
+    normalized[normalizedKey] = candidate;
+  }
+  return normalized;
+}
+
+function normalizeCanonicalValue(
   value: unknown,
-  depth: number
-): unknown | typeof INVALID_CANONICAL_VALUE => {
+  depth: number,
+  budget: CanonicalValueBudget
+): unknown | typeof INVALID_CANONICAL_VALUE {
   if (value === null || typeof value === "boolean") {
     return value;
   }
@@ -36,41 +96,18 @@ const normalizeCanonicalValue = (
     return INVALID_CANONICAL_VALUE;
   }
   if (Array.isArray(value)) {
-    if (value.length > ACTION_CANONICAL_MAX_ITEMS) {
-      return INVALID_CANONICAL_VALUE;
-    }
-    const normalized: unknown[] = [];
-    for (const item of value) {
-      const candidate = normalizeCanonicalValue(item, depth + 1);
-      if (candidate === INVALID_CANONICAL_VALUE) {
-        return INVALID_CANONICAL_VALUE;
-      }
-      normalized.push(candidate);
-    }
-    return normalized;
+    return normalizeCanonicalArray(value, depth, budget);
   }
   if (typeof value !== "object") {
     return INVALID_CANONICAL_VALUE;
   }
-  const entries = Object.entries(value).sort(([left], [right]) =>
-    left.localeCompare(right)
-  );
-  if (entries.length > ACTION_CANONICAL_MAX_ITEMS) {
-    return INVALID_CANONICAL_VALUE;
-  }
-  const normalized = Object.create(null) as Record<string, unknown>;
-  for (const [key, item] of entries) {
-    const candidate = normalizeCanonicalValue(item, depth + 1);
-    if (candidate === INVALID_CANONICAL_VALUE) {
-      return INVALID_CANONICAL_VALUE;
-    }
-    normalized[key.normalize("NFC")] = candidate;
-  }
-  return normalized;
-};
+  return normalizeCanonicalObject(value, depth, budget);
+}
 
 export const canonicalBoundedActionValue = (value: unknown): string => {
-  const normalized = normalizeCanonicalValue(value, 0);
+  const normalized = normalizeCanonicalValue(value, 0, {
+    remainingItems: ACTION_CANONICAL_MAX_ITEMS,
+  });
   if (normalized === INVALID_CANONICAL_VALUE) {
     throw new Error("invalid canonical Action value");
   }

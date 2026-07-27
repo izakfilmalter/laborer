@@ -181,6 +181,48 @@ export interface OperatorStatusServer {
   readonly paths: OperatorStatusPaths;
 }
 
+interface SocketIdentity {
+  readonly device: number;
+  readonly inode: number;
+}
+
+const closeListeningServer = async (server: Server): Promise<void> => {
+  if (!server.listening) {
+    return;
+  }
+  await new Promise<void>((resolveClose, reject) => {
+    server.close((error) => (error ? reject(error) : resolveClose()));
+  });
+};
+
+const removeOwnedSocket = async (
+  path: string,
+  identity: SocketIdentity | null
+): Promise<void> => {
+  if (identity === null) {
+    return;
+  }
+  try {
+    const currentSocket = await lstat(path);
+    if (
+      currentSocket.isSocket() &&
+      currentSocket.dev === identity.device &&
+      currentSocket.ino === identity.inode
+    ) {
+      await unlink(path);
+    }
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
+};
+
 export const startOperatorStatusServer = async (options: {
   readonly now?: () => number;
   readonly paths: OperatorStatusPaths;
@@ -268,20 +310,27 @@ export const startOperatorStatusServer = async (options: {
     socket.once("error", () => socket.destroy());
   });
 
-  await listen(server, options.paths.socket);
-  await chmod(options.paths.socket, 0o600);
-  const socketMetadata = await lstat(options.paths.socket);
-  assertOwner(socketMetadata.uid);
-  if (!socketMetadata.isSocket()) {
-    await new Promise<void>((resolveClose) =>
-      server.close(() => resolveClose())
-    );
-    throw new Error("operator status endpoint did not create a socket");
+  let socketIdentity: SocketIdentity | null = null;
+  try {
+    await listen(server, options.paths.socket);
+    await chmod(options.paths.socket, 0o600);
+    const socketMetadata = await lstat(options.paths.socket);
+    assertOwner(socketMetadata.uid);
+    if (!socketMetadata.isSocket()) {
+      throw new Error("operator status endpoint did not create a socket");
+    }
+    socketIdentity = {
+      device: socketMetadata.dev,
+      inode: socketMetadata.ino,
+    };
+  } catch (error) {
+    for (const client of clients) {
+      client.destroy();
+    }
+    await closeListeningServer(server);
+    await removeOwnedSocket(options.paths.socket, socketIdentity);
+    throw error;
   }
-  const socketIdentity = {
-    device: socketMetadata.dev,
-    inode: socketMetadata.ino,
-  };
   const interval = setInterval(() => {
     for (const client of clients) {
       publish(client);
@@ -299,28 +348,8 @@ export const startOperatorStatusServer = async (options: {
       for (const client of clients) {
         client.destroy();
       }
-      await new Promise<void>((resolveClose, reject) => {
-        server.close((error) => (error ? reject(error) : resolveClose()));
-      });
-      try {
-        const currentSocket = await lstat(options.paths.socket);
-        if (
-          currentSocket.isSocket() &&
-          currentSocket.dev === socketIdentity.device &&
-          currentSocket.ino === socketIdentity.inode
-        ) {
-          await unlink(options.paths.socket);
-        }
-      } catch (error) {
-        if (
-          typeof error !== "object" ||
-          error === null ||
-          !("code" in error) ||
-          error.code !== "ENOENT"
-        ) {
-          throw error;
-        }
-      }
+      await closeListeningServer(server);
+      await removeOwnedSocket(options.paths.socket, socketIdentity);
     },
     paths: options.paths,
   };

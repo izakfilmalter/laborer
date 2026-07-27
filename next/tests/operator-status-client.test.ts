@@ -1,4 +1,5 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import {
   OperatorStatusClient,
   type OperatorStatusView,
 } from "../src/operator-status/client.ts";
+import { OPERATOR_PROTOCOL_VERSION } from "../src/operator-status/protocol.ts";
 import {
   type OperatorStatusServer,
   operatorStatusPaths,
@@ -105,5 +107,44 @@ describe("operator status client", () => {
     expect(await waitForState(second, "running")).toMatchObject({
       version: "1.0.0",
     });
+  });
+
+  it("accepts multiple bounded snapshots delivered in one network chunk", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-batch-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await chmod(paths.directory, 0o700);
+    const token = "a".repeat(64);
+    await writeFile(paths.token, token, { mode: 0o600 });
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      JSON.stringify({
+        daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+        kind: "snapshot",
+        observedAtUnixMs: 2000 + index,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION,
+        sequence: index + 1,
+      })
+    ).join("\n");
+    expect(Buffer.byteLength(snapshots, "utf8")).toBeGreaterThan(4096);
+
+    const server = createServer((socket) => {
+      socket.once("data", () => socket.end(`${snapshots}\n`));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(paths.socket, resolve);
+    });
+    try {
+      const client = new OperatorStatusClient({ paths });
+      clients.push(client);
+      client.start();
+      expect(await waitForState(client, "running")).toMatchObject({
+        version: "1.0.0",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 });

@@ -70,6 +70,7 @@ export class OperatorStatusClient {
   readonly #reconnectDelayMs: number;
   #closed = false;
   #connectedOnce = false;
+  #connectGeneration = 0;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #socket: Socket | null = null;
   #view: OperatorStatusView = initialView;
@@ -112,6 +113,7 @@ export class OperatorStatusClient {
 
   close(): void {
     this.#closed = true;
+    this.#connectGeneration += 1;
     if (this.#reconnectTimer !== null) {
       clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = null;
@@ -151,8 +153,9 @@ export class OperatorStatusClient {
   }
 
   #launchConnect(): void {
-    this.#connect().catch(() => {
-      if (!this.#closed) {
+    const generation = ++this.#connectGeneration;
+    this.#connect(generation).catch(() => {
+      if (!this.#closed && generation === this.#connectGeneration) {
         this.#setView({
           state: "unavailable",
           uptimeSeconds: null,
@@ -163,14 +166,21 @@ export class OperatorStatusClient {
     });
   }
 
-  async #connect(): Promise<void> {
-    if (this.#closed || this.#socket !== null) {
+  async #connect(generation: number): Promise<void> {
+    if (
+      this.#closed ||
+      generation !== this.#connectGeneration ||
+      this.#socket !== null
+    ) {
       return;
     }
     let token: string;
     try {
       token = await readOwnerToken(this.#paths.token);
     } catch {
+      if (this.#closed || generation !== this.#connectGeneration) {
+        return;
+      }
       this.#setView({
         state: "unavailable",
         uptimeSeconds: null,
@@ -179,7 +189,7 @@ export class OperatorStatusClient {
       this.#scheduleReconnect();
       return;
     }
-    if (this.#closed) {
+    if (this.#closed || generation !== this.#connectGeneration) {
       return;
     }
 
@@ -188,8 +198,13 @@ export class OperatorStatusClient {
     let settled = false;
     let source = Buffer.alloc(0);
     let lastSequence = 0;
+    const isCurrentConnection = (): boolean =>
+      !this.#closed &&
+      generation === this.#connectGeneration &&
+      this.#socket === socket;
     const fail = (state: "incompatible" | "unavailable"): void => {
-      if (settled) {
+      if (settled || !isCurrentConnection()) {
+        socket.destroy();
         return;
       }
       settled = true;
@@ -214,15 +229,23 @@ export class OperatorStatusClient {
       );
     });
     socket.on("data", (chunk: Buffer) => {
-      if (source.byteLength + chunk.byteLength > MAX_OPERATOR_RECORD_BYTES) {
-        fail("unavailable");
+      if (!isCurrentConnection()) {
+        socket.destroy();
         return;
       }
-      source = Buffer.concat([source, chunk]);
-      let newline = source.indexOf(0x0a);
+      let remaining = chunk;
+      let newline = remaining.indexOf(0x0a);
       while (newline >= 0) {
-        const record = source.subarray(0, newline).toString("utf8");
-        source = source.subarray(newline + 1);
+        if (source.byteLength + newline > MAX_OPERATOR_RECORD_BYTES) {
+          fail("unavailable");
+          return;
+        }
+        const record = Buffer.concat([
+          source,
+          remaining.subarray(0, newline),
+        ]).toString("utf8");
+        source = Buffer.alloc(0);
+        remaining = remaining.subarray(newline + 1);
         try {
           const snapshot = decodeOperatorSnapshot(record);
           if (snapshot.sequence <= lastSequence) {
@@ -250,8 +273,16 @@ export class OperatorStatusClient {
           );
           return;
         }
-        newline = source.indexOf(0x0a);
+        newline = remaining.indexOf(0x0a);
       }
+      if (
+        source.byteLength + remaining.byteLength >
+        MAX_OPERATOR_RECORD_BYTES
+      ) {
+        fail("unavailable");
+        return;
+      }
+      source = Buffer.concat([source, remaining]);
     });
     socket.once("error", () => fail("unavailable"));
     socket.once("close", () => {

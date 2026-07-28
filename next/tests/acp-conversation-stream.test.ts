@@ -183,6 +183,17 @@ const botReplies = Effect.fnUntraced(function* (
   );
 });
 
+const replyTimestamp = (
+  reply: Record<string, unknown> | undefined,
+  description: string
+): string => {
+  const timestamp = reply?.ts;
+  if (typeof timestamp !== "string" || timestamp === "") {
+    assert.fail(`${description} must have a timestamp`);
+  }
+  return timestamp;
+};
+
 const waitForBotReplyText = Effect.fnUntraced(function* (
   fixture: EmulatedSlackFixture,
   rootTs: string,
@@ -454,10 +465,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_PARTIAL
               );
               assert.strictEqual(partialReplies[0]?.thread_ts, rootTs);
-              const partialReplyTs = partialReplies[0]?.ts;
-              if (typeof partialReplyTs !== "string" || partialReplyTs === "") {
-                assert.fail("partial Slack reply must have a timestamp");
-              }
+              const partialReplyTs = replyTimestamp(
+                partialReplies[0],
+                "partial Slack reply"
+              );
 
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
@@ -713,13 +724,9 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_SEMANTIC_MESSAGES
               );
               assertSafeBotReplies(fixture, rootTs, initialReplies);
-              const initialReplyTimestamps = initialReplies.map((reply) =>
-                String(reply.ts ?? "")
-              );
-              assert.ok(
-                initialReplyTimestamps.every(
-                  (timestamp) => timestamp.length > 0
-                )
+              const initialReplyTimestamps = initialReplies.map(
+                (reply, index) =>
+                  replyTimestamp(reply, `ACP message ${index + 1} Slack reply`)
               );
               assert.strictEqual(
                 new Set(initialReplyTimestamps).size,
@@ -757,12 +764,19 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
               assert.deepStrictEqual(
                 completedReplies
                   .slice(0, EXPECTED_SEMANTIC_MESSAGES.length)
-                  .map((reply) => String(reply.ts ?? "")),
+                  .map((reply, index) =>
+                    replyTimestamp(
+                      reply,
+                      `completed ACP message ${index + 1} Slack reply`
+                    )
+                  ),
                 initialReplyTimestamps,
                 "prompt completion and the queued turn must not duplicate prior replies"
               );
-              const followUpReplyTs = String(completedReplies.at(-1)?.ts ?? "");
-              assert.ok(followUpReplyTs.length > 0);
+              const followUpReplyTs = replyTimestamp(
+                completedReplies.at(-1),
+                "follow-up Slack reply"
+              );
               assert.ok(!initialReplyTimestamps.includes(followUpReplyTs));
               const promptLines = yield* waitForFileLineCount(promptLogPath, 2);
               assert.deepStrictEqual(promptLines, [
@@ -821,8 +835,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 ["Partial answer stays."]
               );
               assertSafeBotReplies(fixture, rootTs, partialReplies);
-              const partialReplyTs = String(partialReplies[0]?.ts ?? "");
-              assert.ok(partialReplyTs.length > 0);
+              const partialReplyTs = replyTimestamp(
+                partialReplies[0],
+                "partial Slack reply"
+              );
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
               );
@@ -838,8 +854,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 partialReplyTs,
                 "a failed ACP prompt must not retract or replace partial output"
               );
-              const noticeTs = String(failedReplies[1]?.ts ?? "");
-              assert.ok(noticeTs.length > 0);
+              const noticeTs = replyTimestamp(
+                failedReplies[1],
+                "sanitized failure notice"
+              );
               assert.notStrictEqual(
                 noticeTs,
                 partialReplyTs,

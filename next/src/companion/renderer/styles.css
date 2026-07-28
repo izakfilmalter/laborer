@@ -47,6 +47,7 @@
   }
 
   body {
+    overscroll-behavior: none;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     user-select: none;

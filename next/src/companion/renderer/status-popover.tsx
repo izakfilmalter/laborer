@@ -118,15 +118,15 @@ export const StatusPopover = ({
   const Icon = presentation.icon;
 
   return (
-    <main className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between gap-3 border-border border-b px-5 py-4">
+    <main className="flex h-screen flex-col bg-background text-foreground">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-border border-b px-5 py-4">
         <div className="min-w-0">
           <h1 className="font-semibold text-base tracking-tight">Laborer</h1>
           <p className="text-muted-foreground text-xs">Local companion</p>
         </div>
         <span
           aria-hidden="true"
-          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 font-medium text-[10px] text-muted-foreground uppercase tracking-wider"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 font-medium text-[11px] text-muted-foreground uppercase tracking-wide"
         >
           <span
             className={`size-1.5 rounded-full transition-colors ${dotTone[presentation.tone]} ${presentation.pending ? "animate-pulse motion-reduce:animate-none" : ""}`}
@@ -137,7 +137,7 @@ export const StatusPopover = ({
 
       <section
         aria-labelledby="daemon-status-heading"
-        className="flex flex-1 flex-col p-5"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-5"
       >
         <h2 className="sr-only" id="daemon-status-heading">
           Daemon status
@@ -169,7 +169,7 @@ export const StatusPopover = ({
         {status.state === "running" ? (
           <dl className="mt-5 grid grid-cols-2 gap-2">
             <div className="rounded-xl border border-border bg-surface p-3">
-              <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
                 Version
               </dt>
               <dd
@@ -180,7 +180,7 @@ export const StatusPopover = ({
               </dd>
             </div>
             <div className="rounded-xl border border-border bg-surface p-3">
-              <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
                 Uptime
               </dt>
               <dd className="mt-1 select-text truncate font-medium text-sm">
@@ -206,10 +206,9 @@ export const StatusPopover = ({
         ) : null}
       </section>
 
-      <footer className="flex items-center justify-between gap-3 border-border border-t px-5 py-3">
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-border border-t px-5 py-3">
         <p className="min-w-0 text-[11px] text-muted-foreground leading-4">
-          This companion only observes Laborer. Quitting it never stops daemon
-          work.
+          Quitting the companion never stops daemon work.
         </p>
         <Button className="shrink-0" onClick={quit} variant="outline">
           Quit

@@ -22,7 +22,9 @@ import {
 
 const dirname = fileURLToPath(new URL(".", import.meta.url));
 const POPOVER_WIDTH = 380;
-const POPOVER_HEIGHT = 430;
+// Sized to the tallest state (recovery guidance plus its action) so the panel
+// stays compact; the renderer scrolls if a longer state ever appears.
+const POPOVER_HEIGHT = 400;
 const createTrayIcon = (path: string): Electron.NativeImage => {
   const icon = nativeImage.createFromDataURL(
     "data:image/svg+xml;charset=utf-8," +

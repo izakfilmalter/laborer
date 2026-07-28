@@ -333,6 +333,7 @@ const PROCESS_ENVIRONMENT_NAMES = [
   "SCRIPTED_ACP_AGENT_VERSION",
   "SCRIPTED_ACP_ACTION_NAME",
   "SCRIPTED_ACP_ACTION_OPERATION_JSON",
+  "SCRIPTED_ACP_ACTION_RESULT_PATH",
   "SCRIPTED_ACP_ACTION_EXPECT_FAILURE",
   "SCRIPTED_ACP_DURABLE_SESSIONS_PATH",
   "SCRIPTED_ACP_EFFECTIVE_CONFIG_JSON",
@@ -1508,11 +1509,13 @@ describe("issue #244 opt-in production ACP composition", () => {
             prompt: "PRIVATE BUG PROMPT MUST NOT REACH SLACK 248",
             worktreeName: "full-bug-action-248",
           };
+          const actionResultPath = join(controls, "bug-action-results.json");
           const spec: StartedWorkspaceSpec = {
             artifactCalls,
             environment: scriptedEnvironment(processPaths, {
               SCRIPTED_ACP_ACTION_NAME: "deal-with-bug",
               SCRIPTED_ACP_ACTION_OPERATION_JSON: JSON.stringify(actionInput),
+              SCRIPTED_ACP_ACTION_RESULT_PATH: actionResultPath,
               SCRIPTED_ACP_SCENARIO: "action",
             }),
             health: [],
@@ -1591,6 +1594,40 @@ describe("issue #244 opt-in production ACP composition", () => {
           );
           assert.strictEqual(state.executions.length, 1);
           assert.strictEqual(state.executions[0]?.actionName, "deal-with-bug");
+          const actionResults = JSON.parse(
+            yield* Effect.promise(() => readFile(actionResultPath, "utf8"))
+          ) as {
+            readonly actionName: string;
+            readonly duplicate: {
+              readonly actionName: string;
+              readonly deduplicated: boolean;
+              readonly executionId: string;
+              readonly status: string;
+            };
+            readonly first: {
+              readonly actionName: string;
+              readonly deduplicated: boolean;
+              readonly executionId: string;
+              readonly status: string;
+            };
+          };
+          assert.strictEqual(actionResults.actionName, "deal-with-bug");
+          assert.strictEqual(actionResults.first.actionName, "deal-with-bug");
+          assert.strictEqual(actionResults.first.deduplicated, false);
+          assert.strictEqual(actionResults.first.status, "running");
+          assert.strictEqual(
+            actionResults.duplicate.actionName,
+            "deal-with-bug"
+          );
+          assert.strictEqual(actionResults.duplicate.deduplicated, true);
+          assert.ok(
+            actionResults.duplicate.status === "running" ||
+              actionResults.duplicate.status === "completed"
+          );
+          assert.strictEqual(
+            actionResults.duplicate.executionId,
+            actionResults.first.executionId
+          );
           assert.strictEqual(
             state.executions[0]?.events.filter(
               ({ source, status }) =>

@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
-import { connect } from "node:net";
+import { chmod, mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -131,5 +131,60 @@ describe("operator status protocol", () => {
       "x".repeat(MAX_OPERATOR_RECORD_BYTES + 1)
     );
     expect(response).toBe("");
+  });
+
+  it("fails closed when the status directory is not owner-only", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-scope-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await chmod(paths.directory, 0o755);
+
+    await expect(
+      startOperatorStatusServer({
+        paths,
+        tickIntervalMs: 60_000,
+        version: "0.1.0-test",
+      })
+    ).rejects.toThrow("operator status directory is not owner-only");
+  });
+
+  it("bounds connections before they authenticate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-clients-"));
+    const paths = operatorStatusPaths(root);
+    const server = await startOperatorStatusServer({
+      paths,
+      tickIntervalMs: 60_000,
+      version: "0.1.0-test",
+    });
+    servers.push(server);
+
+    const pending: Socket[] = [];
+    try {
+      for (let index = 0; index < 16; index += 1) {
+        const socket = connect(paths.socket);
+        socket.on("error", () => undefined);
+        await new Promise<void>((resolveConnection) =>
+          socket.once("connect", resolveConnection)
+        );
+        pending.push(socket);
+      }
+
+      const excess = connect(paths.socket);
+      await new Promise<void>((resolveClosed, reject) => {
+        excess.once("close", () => resolveClosed());
+        excess.once("error", (error: NodeJS.ErrnoException) => {
+          if (error.code === "ECONNRESET") {
+            resolveClosed();
+          } else {
+            reject(error);
+          }
+        });
+      });
+      expect(excess.destroyed).toBe(true);
+    } finally {
+      for (const socket of pending) {
+        socket.destroy();
+      }
+    }
   });
 });

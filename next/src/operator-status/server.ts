@@ -13,6 +13,7 @@ import {
 
 const MAX_OPERATOR_CLIENTS = 16;
 const AUTHENTICATION_TIMEOUT_MS = 3000;
+const STALE_SOCKET_PROBE_TIMEOUT_MS = 1000;
 const AUTHENTICATION_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface OperatorStatusPaths {
@@ -74,7 +75,10 @@ const prepareDirectory = async (
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     throw new Error("operator status directory is unsafe");
   }
-  await chmod(path, 0o700);
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+  if ((metadata.mode & 0o077) !== 0) {
+    throw new Error("operator status directory is not owner-only");
+  }
 };
 
 const readOrCreateToken = async (path: string): Promise<string> => {
@@ -154,11 +158,18 @@ const removeStaleSocket = async (path: string): Promise<void> => {
 
   const isOccupied = await new Promise<boolean>((resolveOccupied) => {
     const probe = connect(path);
-    probe.once("connect", () => {
+    let settled = false;
+    const finish = (occupied: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       probe.destroy();
-      resolveOccupied(true);
-    });
-    probe.once("error", () => resolveOccupied(false));
+      resolveOccupied(occupied);
+    };
+    probe.setTimeout(STALE_SOCKET_PROBE_TIMEOUT_MS, () => finish(true));
+    probe.once("connect", () => finish(true));
+    probe.once("error", () => finish(false));
   });
   if (isOccupied) {
     throw new Error("another Laborer daemon owns the operator status endpoint");
@@ -233,6 +244,7 @@ export const startOperatorStatusServer = async (options: {
   const startedAtUnixMs = now();
   let sequence = 0;
   let closed = false;
+  const connections = new Set<Socket>();
   const clients = new Set<Socket>();
 
   if (Buffer.byteLength(options.paths.socket, "utf8") > 96) {
@@ -266,10 +278,15 @@ export const startOperatorStatusServer = async (options: {
   };
 
   const server = createServer((socket) => {
-    if (clients.size >= MAX_OPERATOR_CLIENTS) {
+    if (connections.size >= MAX_OPERATOR_CLIENTS) {
       socket.destroy();
       return;
     }
+    connections.add(socket);
+    socket.once("close", () => {
+      connections.delete(socket);
+      clients.delete(socket);
+    });
     let source = Buffer.alloc(0);
     socket.setTimeout(AUTHENTICATION_TIMEOUT_MS, () => socket.destroy());
     socket.on("data", (chunk: Buffer) => {
@@ -304,7 +321,6 @@ export const startOperatorStatusServer = async (options: {
       socket.setTimeout(0);
       socket.pause();
       clients.add(socket);
-      socket.once("close", () => clients.delete(socket));
       publish(socket);
     });
     socket.once("error", () => socket.destroy());
@@ -313,7 +329,6 @@ export const startOperatorStatusServer = async (options: {
   let socketIdentity: SocketIdentity | null = null;
   try {
     await listen(server, options.paths.socket);
-    await chmod(options.paths.socket, 0o600);
     const socketMetadata = await lstat(options.paths.socket);
     assertOwner(socketMetadata.uid);
     if (!socketMetadata.isSocket()) {
@@ -323,9 +338,10 @@ export const startOperatorStatusServer = async (options: {
       device: socketMetadata.dev,
       inode: socketMetadata.ino,
     };
+    await chmod(options.paths.socket, 0o600);
   } catch (error) {
-    for (const client of clients) {
-      client.destroy();
+    for (const connection of connections) {
+      connection.destroy();
     }
     await closeListeningServer(server);
     await removeOwnedSocket(options.paths.socket, socketIdentity);
@@ -345,8 +361,8 @@ export const startOperatorStatusServer = async (options: {
       }
       closed = true;
       clearInterval(interval);
-      for (const client of clients) {
-        client.destroy();
+      for (const connection of connections) {
+        connection.destroy();
       }
       await closeListeningServer(server);
       await removeOwnedSocket(options.paths.socket, socketIdentity);

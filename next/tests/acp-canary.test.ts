@@ -394,7 +394,13 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
               const partialReplies = yield* waitForBotTexts(fixture, rootTs, [
                 "**Streaming** from ACP",
               ]);
-              const streamedMessageTs = String(partialReplies[0]?.ts);
+              const streamedMessageTs = partialReplies[0]?.ts;
+              if (
+                typeof streamedMessageTs !== "string" ||
+                streamedMessageTs === ""
+              ) {
+                assert.fail("streamed Slack reply must have a timestamp");
+              }
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
               );
@@ -406,7 +412,8 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
               );
               assert.strictEqual(
                 completedFirstReplies[0]?.ts,
-                streamedMessageTs
+                streamedMessageTs,
+                "later ACP chunks must update the original Slack reply"
               );
               assert.ok(
                 !String(completedFirstReplies[0]?.text).includes(

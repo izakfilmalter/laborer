@@ -36,7 +36,7 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
 });
 
 describe("root durable runtime", () => {
-  it.effect(
+  it.live(
     "runs arbitrary registered Actions through Cluster and a SQLite outbox",
     () =>
       Effect.scoped(
@@ -199,7 +199,7 @@ describe("root durable runtime", () => {
     20_000
   );
 
-  it.effect("encodes transformed Action results for durable storage", () =>
+  it.live("encodes transformed Action results for durable storage", () =>
     Effect.gen(function* () {
       const action = defineAction({
         description: "Exercise transformed durable values",
@@ -341,7 +341,7 @@ describe("root durable runtime", () => {
     assert.notStrictEqual(stringAction.fingerprint, numberAction.fingerprint);
   });
 
-  it.effect("distinguishes malformed results from Action failures", () =>
+  it.live("distinguishes malformed results from Action failures", () =>
     Effect.gen(function* () {
       const context = {
         conversationId: "conversation-fixture",

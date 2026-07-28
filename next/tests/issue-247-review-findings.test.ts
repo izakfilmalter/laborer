@@ -104,17 +104,23 @@ describe("issue #247 review findings", () => {
             implementationAgent: ImplementationAgent.of({
               start: (request, acceptResponse) =>
                 Effect.succeed({
-                  completion: acceptResponse({
-                    responseId: "empty-response",
-                    text: "  \n ",
-                  }).pipe(
-                    Effect.andThen(
+                  completion: Effect.gen(function* () {
+                    const oversizedEmpty = yield* Effect.result(
                       acceptResponse({
-                        responseId: "meaningful-response",
-                        text: "Durable implementation output.",
+                        responseId: "oversized-empty-response",
+                        text: " ".repeat(16_385),
                       })
-                    )
-                  ),
+                    );
+                    assert.strictEqual(oversizedEmpty._tag, "Failure");
+                    yield* acceptResponse({
+                      responseId: "empty-response",
+                      text: "  \n ",
+                    });
+                    yield* acceptResponse({
+                      responseId: "meaningful-response",
+                      text: "Durable implementation output.",
+                    });
+                  }),
                   resume: () => Effect.void,
                   sessionId: request.implementationSessionId,
                 }),

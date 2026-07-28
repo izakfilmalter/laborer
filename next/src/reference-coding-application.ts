@@ -6090,6 +6090,8 @@ export const makeReferenceCodingApplication = Effect.fn(
       // Implementation adapters may observe protocol message boundaries that
       // contain no user-visible content. They are not Conversation events and
       // must not prevent a later meaningful response from being accepted.
+      // Check the bound before trimming so even ignored input stays bounded.
+      response.text.length <= MAX_IMPLEMENTATION_RESPONSE_LENGTH &&
       response.text.trim().length === 0
         ? Effect.void
         : acceptNonemptyResponse(response);

@@ -14,13 +14,14 @@ Issue #243 establishes one exact release-safety contract for `next`.
 | `@slack/socket-mode` | `3.0.0` | exact dependency and lockfile |
 | Emulate | `0.9.0` | exact dependency and lockfile |
 
-The Sandcastle runner-enforced `bun run --cwd next check` local gate is the sole
-green automated production cutover signal. It performs formatting, typechecking,
-all credential-free deterministic/Emulate tests, and the pinned real OpenCode
-compatibility and policy tests against the exact reviewed PR head. The
-Sandcastle image pins the supported Node and Bun releases. GitHub Actions
-intentionally does not verify `next`; the existing `current` pull-request job
-remains independent.
+The final Sandcastle code-review agent owns `bun run --cwd next check` and its
+evidence. It performs formatting, typechecking, all credential-free
+deterministic/Emulate tests, and the pinned real OpenCode compatibility and
+policy tests against its final reviewed PR head. The runner requires a clean,
+committed review result but trusts the agent's verification instead of rerunning
+the suite. The Sandcastle image pins the supported Node and Bun releases. GitHub
+Actions intentionally does not verify `next`; the existing `current`
+pull-request job remains independent.
 
 The real suite invokes only the pinned local OpenCode executable. It uses an
 isolated owner-only home and workspace, a loopback fake model provider with a

@@ -10,6 +10,6 @@ Start with `git diff --stat {{TARGET_BRANCH}}...{{BRANCH}}`, `git diff --name-on
 
 Focus on product design, accessibility, hierarchy, states, affordances, interaction quality, and fit with nearby Laborer surfaces. The all-around reviewer handles architecture, durability, and broad code quality after you.
 
-Make scoped improvements directly, run the narrowest relevant check, and commit with a concise `SANDCASTLE:` message. If the interface is already strong, make no commit. Do not run `bun run --cwd next check`; the runner executes that comprehensive gate once after review. Do not invoke review workflows or subagents, push, merge, poll CI, or install unchanged dependencies.
+Make scoped improvements directly, run the narrowest relevant check, and commit with a concise `SANDCASTLE:` message. If the interface is already strong, make no commit. The dedicated code-review phase owns the final comprehensive check. Do not invoke review workflows or subagents, push, merge, poll CI, or install unchanged dependencies.
 
 When complete, output `<promise>COMPLETE</promise>`.

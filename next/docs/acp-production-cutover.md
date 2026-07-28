@@ -5,10 +5,12 @@ durable ACP Conversations, the process supervisor, native Slack stream
 projection, Action/Execution MCP, interactive permissions, adoption, and
 recovery. There is no alternate production receiver or runtime selector.
 
-## Automated gate
+## Automated verification
 
-- Require Sandcastle's runner-enforced `bun run --cwd next check` gate to pass
-  for the exact reviewed PR head.
+- Require the final Sandcastle code-review agent to run
+  `bun run --cwd next check` on its final reviewed PR head and report any
+  demonstrably unrelated flaky or infrastructure failure. The runner trusts
+  that agent-owned evidence and does not rerun the suite.
 - Confirm `recovery health` reports every binding as `ready`; investigate bounded
   reason codes for setup/config incompatibility, quarantine, circuit opening,
   blocked prompts, uncertain Action/Execution outcomes, stream uncertainty, or

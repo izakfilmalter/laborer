@@ -9,12 +9,6 @@ export const assertAgentCompleted = (
   }
 };
 
-export const canRetryGateAfterIncompleteRepair = (
-  result: { readonly completionSignal?: string },
-  gatedHead: string,
-  currentHead: string
-) => result.completionSignal === undefined && currentHead === gatedHead;
-
 export const assertNewWorkAfterAcceptedHead = (
   acceptedHead: string,
   completedHead: string,
@@ -47,6 +41,7 @@ export const classifyBranchRecovery = ({
   gatePendingHead,
   implementationHead,
   progressHead,
+  reviewedHead,
   uiReviewedHead,
 }: {
   readonly acceptedHead: string;
@@ -56,16 +51,17 @@ export const classifyBranchRecovery = ({
   readonly gatePendingHead: string | undefined;
   readonly implementationHead: string | undefined;
   readonly progressHead: string | undefined;
+  readonly reviewedHead: string | undefined;
   readonly uiReviewedHead: string | undefined;
 }) => {
   if (currentHead === completedHead) {
     return "publish" as const;
   }
-  if (currentHead === gatePassedHead) {
+  if (currentHead === reviewedHead || currentHead === gatePassedHead) {
     return "complete" as const;
   }
   if (currentHead === gatePendingHead) {
-    return "gate" as const;
+    return "review" as const;
   }
   if (currentHead === uiReviewedHead) {
     return "code-review" as const;

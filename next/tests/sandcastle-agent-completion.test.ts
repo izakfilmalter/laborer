@@ -3,7 +3,6 @@ import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
   assertRecordedRecoveryLineage,
-  canRetryGateAfterIncompleteRepair,
   classifyBranchRecovery,
 } from "../.sandcastle/agent-completion/index.ts";
 
@@ -12,7 +11,7 @@ const missingNewWorkPattern = /without work after its accepted head/;
 const unrelatedRecoveryPattern = /does not descend from accepted head/;
 const unrecordedCommitsPattern = /unrecorded commits/;
 
-describe("Sandcastle agent completion gates", () => {
+describe("Sandcastle agent completion", () => {
   it("rejects an agent run without the explicit completion signal", () => {
     assert.throws(
       () => assertAgentCompleted({}, "implementation for #42"),
@@ -26,22 +25,6 @@ describe("Sandcastle agent completion gates", () => {
         { completionSignal: "<promise>COMPLETE</promise>" },
         "implementation for #42"
       )
-    );
-  });
-
-  it("retries the gate when an infrastructure-blocked repair leaves its clean head unchanged", () => {
-    assert.isTrue(
-      canRetryGateAfterIncompleteRepair({}, "reviewed", "reviewed")
-    );
-    assert.isFalse(
-      canRetryGateAfterIncompleteRepair(
-        { completionSignal: "<promise>COMPLETE</promise>" },
-        "reviewed",
-        "reviewed"
-      )
-    );
-    assert.isFalse(
-      canRetryGateAfterIncompleteRepair({}, "reviewed", "unconfirmed-change")
     );
   });
 
@@ -65,6 +48,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: undefined,
         progressHead: undefined,
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "build"
@@ -78,6 +62,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: undefined,
         progressHead: undefined,
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "publish"
@@ -91,9 +76,24 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: "reviewed",
         implementationHead: undefined,
         progressHead: "reviewed",
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
-      "gate"
+      "review"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "agent-reviewed",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: "agent-reviewed",
+        reviewedHead: "agent-reviewed",
+        uiReviewedHead: undefined,
+      }),
+      "complete"
     );
     assert.strictEqual(
       classifyBranchRecovery({
@@ -104,6 +104,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: undefined,
         progressHead: "progress",
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "review"
@@ -117,6 +118,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: "implementation",
         progressHead: undefined,
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "ui"
@@ -130,6 +132,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: undefined,
         progressHead: "progress",
+        reviewedHead: undefined,
         uiReviewedHead: "ui-reviewed",
       }),
       "code-review"
@@ -143,6 +146,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: "passed",
         implementationHead: undefined,
         progressHead: "passed",
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "complete"
@@ -156,6 +160,7 @@ describe("Sandcastle agent completion gates", () => {
         gatePendingHead: undefined,
         implementationHead: "base",
         progressHead: undefined,
+        reviewedHead: undefined,
         uiReviewedHead: undefined,
       }),
       "ui"
@@ -170,6 +175,7 @@ describe("Sandcastle agent completion gates", () => {
           gatePendingHead: "reviewed",
           implementationHead: "implementation",
           progressHead: "progress",
+          reviewedHead: "agent-reviewed",
           uiReviewedHead: "ui-reviewed",
         }),
       unrecordedCommitsPattern

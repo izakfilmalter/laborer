@@ -1,11 +1,9 @@
 import { readFileSync } from "node:fs";
 import { assert, describe, it } from "@effect/vitest";
 import {
-  boundedGateFailureContext,
   canReuseCompletedHead,
   mergePullRequestArgs,
   reviewedHeadNeedsPush,
-  sandcastleFullGateCommand,
   shellQuote,
 } from "../.sandcastle/fast-flow/index.ts";
 
@@ -37,34 +35,30 @@ describe("Sandcastle fast flow", () => {
     assert.isFalse(reviewedHeadNeedsPush("reviewed", "reviewed"));
   });
 
-  it("keeps the comprehensive gate runner-owned and single-path", () => {
-    assert.strictEqual(
-      sandcastleFullGateCommand,
-      "VITEST_MAX_WORKERS=2 bun run --cwd next check"
-    );
+  it("delegates verification to the final code-review agent", () => {
     const main = readFileSync(".sandcastle/main.ts", "utf8");
-    const gateExecutions = main.match(
-      /\.exec\(boundedSandboxCommand\(FULL_GATE\)/g
-    );
+    const reviewPrompt = readFileSync(".sandcastle/review-prompt.md", "utf8");
 
-    assert.lengthOf(gateExecutions ?? [], 1);
-    assert.notInclude(main, "verify-fixer");
-    assert.include(main, "const acquireGateSlot = createSlotLimiter(1)");
-    assert.include(main, "shellQuote(command)");
-    assert.notInclude(main, "JSON.stringify(command)");
+    assert.notInclude(main, "enforceLocalGate");
+    assert.notInclude(main, "FULL_GATE");
+    assert.notInclude(main, "local-gate-repair");
+    assert.include(main, "after implementation for #");
+    assert.include(main, "after code review for #");
+    assert.include(reviewPrompt, "bun run --cwd next check");
+    assert.include(reviewPrompt, "runner will trust your verification");
+    assert.include(reviewPrompt, "final checked HEAD");
   });
 
-  it("tells every modifying agent to leave the comprehensive gate to the runner", () => {
+  it("tells modifying agents that verification is agent-owned", () => {
     for (const prompt of [
       "implement-prompt.md",
       "pr-conflict-repair-prompt.md",
       "review-prompt.md",
       "ui-prompt.md",
       "ui-review-prompt.md",
-      "verify-fix-prompt.md",
     ]) {
       const content = readFileSync(`.sandcastle/${prompt}`, "utf8");
-      assert.include(content, "Do not run `bun run --cwd next check`");
+      assert.notInclude(content, "runner executes that comprehensive gate");
     }
   });
 
@@ -72,30 +66,5 @@ describe("Sandcastle fast flow", () => {
     assert.isTrue(canReuseCompletedHead("abc", "abc"));
     assert.isFalse(canReuseCompletedHead(undefined, "abc"));
     assert.isFalse(canReuseCompletedHead("abc", "def"));
-  });
-
-  it("bounds untrusted gate diagnostics while preserving the useful tail", () => {
-    const context = boundedGateFailureContext(
-      {
-        exitCode: 1,
-        stderr: `old-error-${"x".repeat(100)}`,
-        stdout: `old-output-${"y".repeat(100)}\nfinal failure`,
-      },
-      240
-    );
-
-    assert.isAtMost(context.length, 700);
-    assert.include(context, "untrusted diagnostic data");
-    assert.include(context, "final failure");
-    assert.notInclude(context, "old-error");
-  });
-
-  it("bounds diagnostics after control-character escaping", () => {
-    const context = boundedGateFailureContext(
-      { exitCode: 1, stderr: "\u0000".repeat(1000), stdout: "" },
-      120
-    );
-
-    assert.isAtMost(context.length, 500);
   });
 });

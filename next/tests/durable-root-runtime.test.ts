@@ -5,15 +5,18 @@ import { Effect, Schema } from "effect";
 import {
   ApplicationConversationMessageChunk,
   ApplicationPublicReply,
+  type ApplicationShape,
   ParticipantInputEvent,
 } from "../src/application.ts";
 import {
   defineAction,
   defineApplication,
 } from "../src/durable-runtime/action.ts";
+import { applicationThroughRootConversationRuntime } from "../src/durable-runtime/conversation-application.ts";
 import {
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,
+  RUNTIME_PAYLOAD_MAX_BYTES,
 } from "../src/durable-runtime/root-runtime.ts";
 import { runConversationRpcLocally } from "../src/durable-runtime/rpc.ts";
 import {
@@ -185,6 +188,41 @@ describe("root durable runtime", () => {
               "turn-3",
               "turn-4",
             ]);
+
+            const accidentallyPublished: string[] = [];
+            const oversizedApplication: ApplicationShape = {
+              handle: (_event, publish) =>
+                publish(
+                  ApplicationConversationMessageChunk.make({
+                    messageId: "oversized-output",
+                    text: "x".repeat(RUNTIME_PAYLOAD_MAX_BYTES),
+                  })
+                ),
+            };
+            const boundedApplication =
+              yield* applicationThroughRootConversationRuntime({
+                application: oversizedApplication,
+                rootIdentity: "root-conversation-fixture",
+                runtime,
+                workspaceId: "T-BOUNDED",
+              });
+            const oversizedFailure = yield* Effect.flip(
+              boundedApplication.handle(
+                turn(5, "produce oversized output"),
+                (output) =>
+                  Effect.sync(() => {
+                    accidentallyPublished.push(output.text);
+                  }),
+                () => Effect.die("unexpected external event")
+              )
+            );
+            assert.strictEqual(
+              "safeDetail" in oversizedFailure
+                ? oversizedFailure.safeDetail
+                : undefined,
+              "durable Conversation output invalid"
+            );
+            assert.deepStrictEqual(accidentallyPublished, []);
           }).pipe(Effect.provide(layer));
         })
       ),

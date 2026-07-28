@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { canonicalActionInput } from "../action-catalog.ts";
 import type {
   AcceptApplicationEvent,
   ApplicationPublicOutput,
@@ -8,9 +9,11 @@ import type {
 } from "../application.ts";
 import type { StoreError } from "../prototype/errors.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
-import type {
-  DurableRuntimeError,
-  RootDurableRuntimeShape,
+import {
+  ConversationOutput,
+  type DurableRuntimeError,
+  type RootDurableRuntimeShape,
+  RUNTIME_PAYLOAD_MAX_BYTES,
 } from "./root-runtime.ts";
 import {
   ROOT_RUNTIME_PROTOCOL_VERSION,
@@ -22,6 +25,13 @@ const runtimeFailure = (_error: DurableRuntimeError): HandlerFailure =>
     category: "protocol",
     noticeStyle: "generic",
     safeDetail: "durable Conversation runtime unavailable",
+  });
+
+const invalidRuntimeOutput = (): HandlerFailure =>
+  HandlerFailure.make({
+    category: "protocol",
+    noticeStyle: "generic",
+    safeDetail: "durable Conversation output invalid",
   });
 
 const unavailableEventAcceptance: AcceptApplicationEvent = () =>
@@ -57,15 +67,33 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
         Effect.gen(function* () {
           handledEvents.add(event.turnId);
           const outputs: ApplicationPublicOutput[] = [];
+          // Account for the surrounding JSON array. Validate and bound every
+          // item before it can cross the Runner's public-output callback.
+          let encodedOutputsBytes = 2;
           yield* options.application
             .handle(
               event,
               (output) =>
                 Effect.gen(function* () {
-                  outputs.push(output);
+                  const validatedOutput = yield* Schema.decodeUnknownEffect(
+                    ConversationOutput,
+                    { onExcessProperty: "error" }
+                  )(output).pipe(Effect.mapError(invalidRuntimeOutput));
+                  const encodedOutput = yield* canonicalActionInput(
+                    validatedOutput
+                  ).pipe(Effect.mapError(invalidRuntimeOutput));
+                  const nextEncodedOutputsBytes =
+                    encodedOutputsBytes +
+                    (outputs.length === 0 ? 0 : 1) +
+                    Buffer.byteLength(encodedOutput, "utf8");
+                  if (nextEncodedOutputsBytes > RUNTIME_PAYLOAD_MAX_BYTES) {
+                    return yield* invalidRuntimeOutput();
+                  }
+                  encodedOutputsBytes = nextEncodedOutputsBytes;
+                  outputs.push(validatedOutput);
                   const publish = publishers.get(event.turnId);
                   if (publish !== undefined) {
-                    yield* publish(output);
+                    yield* publish(validatedOutput);
                   }
                 }),
               eventAcceptors.get(event.turnId) ?? unavailableEventAcceptance

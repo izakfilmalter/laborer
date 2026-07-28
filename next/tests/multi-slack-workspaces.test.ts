@@ -328,6 +328,10 @@ const snapshotFor = (
     return yield* store.snapshot;
   });
 
+// Most scenes here restart daemons and route real work across workspace
+// bindings; the heaviest take over two seconds nominally and have exceeded
+// the 5s default under a fully loaded parallel gate. The suite timeout
+// replaces that default; explicit per-test timeouts still take precedence.
 describe("multi-workspace Slack daemon", () => {
   it.effect("retains the one-workspace environment and identity behavior", () =>
     Effect.gen(function* () {
@@ -2035,4 +2039,4 @@ describe("multi-workspace Slack daemon", () => {
         })
       )
   );
-});
+}, 30_000);

@@ -70,7 +70,11 @@ const EXPECTED_MARKDOWN = "**Streaming** from ACP\n\n- complete\n- unchanged";
 const EXPECTED_BLOCKED_NOTICE =
   "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
 // Process-backed integration tests share the host with concurrent Sandcastle gates.
-const OBSERVATION_TIMEOUT_MILLIS = 15_000;
+// Observation polls bound how long a scene waits for durable side effects
+// to appear. Scenes now run concurrently within the file, so a single
+// scene's observations can stretch while sibling scenes hold the worker;
+// the bound stays well under the 60s suite timeout.
+const OBSERVATION_TIMEOUT_MILLIS = 30_000;
 
 const SessionMethod = Schema.Struct({
   method: Schema.Literals(["session/new", "session/resume"]),
@@ -967,7 +971,13 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
   return { harness: workspace.harness, workspace };
 });
 
-describe("issue #244 opt-in production ACP composition", () => {
+// Every scene provisions its own temp directories, Slack spec, and child
+// process chain, so scenes are isolated and spend most wall-clock time
+// waiting on serialized child boots. Running them concurrently overlaps
+// those waits. The suite timeout replaces the 5s default, which these
+// multi-child scenes exceed under concurrent scheduling; explicit
+// per-scene timeouts still take precedence.
+describe.concurrent("issue #244 opt-in production ACP composition", () => {
   it.live(
     "runs the credential-free Socket Mode to generated Action MCP to terminal ACP scene once",
     () =>
@@ -2051,303 +2061,316 @@ describe("issue #244 opt-in production ACP composition", () => {
     20_000
   );
 
-  it.live(
-    "expires an unanswered production permission initiated through Socket Mode",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-timeout-"
-          );
-          const controls = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-timeout-controls-"
-          );
-          yield* writeAcpLaborerConfig(root);
-          const processPaths = scriptedProcessPaths(
-            controls,
-            "permission-timeout"
-          );
-          const permissionResultPath = join(
-            controls,
-            "permission-timeout-result.json"
-          );
-          const implementationAcquisitions = { count: 0 };
-          const spec: StartedWorkspaceSpec = {
-            environment: scriptedEnvironment(processPaths, {
-              SCRIPTED_ACP_PERMISSION_RAW_INPUT_JSON: JSON.stringify({
-                command: "timeout-private-command-245",
+  // These Socket Mode permission scenes are load-sensitive: the expiry
+  // scene's short permission window sits behind a full workspace boot whose
+  // supervisor retries amplify contention delay, and the shutdown scene
+  // asserts a 2s wall-clock bound that discriminates against waiting on a
+  // hung child. Both opt back out of suite-level concurrency so they
+  // measure the runtime instead of worker load.
+  describe.sequential("Socket Mode permission scenes", () => {
+    it.live(
+      "expires an unanswered production permission initiated through Socket Mode",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-timeout-"
+            );
+            const controls = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-timeout-controls-"
+            );
+            yield* writeAcpLaborerConfig(root);
+            const processPaths = scriptedProcessPaths(
+              controls,
+              "permission-timeout"
+            );
+            const permissionResultPath = join(
+              controls,
+              "permission-timeout-result.json"
+            );
+            const implementationAcquisitions = { count: 0 };
+            const spec: StartedWorkspaceSpec = {
+              environment: scriptedEnvironment(processPaths, {
+                SCRIPTED_ACP_PERMISSION_RAW_INPUT_JSON: JSON.stringify({
+                  command: "timeout-private-command-245",
+                }),
+                SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
+                SCRIPTED_ACP_PERMISSION_TITLE: "timeout private title 245",
+                SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
               }),
-              SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
-              SCRIPTED_ACP_PERMISSION_TITLE: "timeout private title 245",
-              SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
-            }),
-            health: [],
-            identity: {
-              botId: "B245TIMEOUT",
-              botUserId: "U245LABORER",
-              teamId: "T245TIMEOUT",
-            },
-            messages: [],
-            permissionTimeoutMillis: 100,
-            reactions: [],
-            token: ["x", "oxb", "-245-timeout"].join(""),
-          };
-          const routes = yield* startSlackWorkspaceDirectory({
-            adapter: makeStartedDirectoryAdapter(
-              [spec],
-              implementationAcquisitions
-            ),
-            config: {
-              appToken: Redacted.make(["x", "app", "-245-timeout"].join("")),
-              installations: [installationFor(spec, 0, root)],
-              startupMode: "multi-workspace",
-            },
-            environment: {},
-          });
-          yield* routes.awaitReady(spec.identity.teamId);
-          const socket = new PermissionSocketClient();
-          yield* startSocketModeAdapter({
-            client: socket,
-            routeDirectory: routes,
-          });
-          let activationAcknowledged = false;
-          socket.emit(
-            socketActivationEnvelope({
-              ack: () => {
-                activationAcknowledged = true;
-                return Promise.resolve();
+              health: [],
+              identity: {
+                botId: "B245TIMEOUT",
+                botUserId: "U245LABORER",
+                teamId: "T245TIMEOUT",
               },
-              channelId: "C245TIMEOUT",
-              eventId: "event:245:permission-timeout",
-              messageTs: "245.675",
-              teamId: spec.identity.teamId,
-              text: "<@U245LABORER> guarded timeout operation",
-              userId: "U245AUTHORIZED",
-            })
-          );
-          yield* waitForFile(permissionResultPath);
-          yield* waitForReactionMethod(spec.reactions, "chat.update");
-          assert.ok(activationAcknowledged);
-          assert.deepStrictEqual(
-            JSON.parse(
-              yield* Effect.promise(() =>
-                readFile(permissionResultPath, "utf8")
-              )
-            ),
-            { outcome: { outcome: "cancelled" } }
-          );
-          const publicTranscript = JSON.stringify(spec.reactions);
-          assert.ok(publicTranscript.includes("expired"));
-          assert.ok(!publicTranscript.includes("timeout-private-command-245"));
-          assert.ok(!publicTranscript.includes("timeout private title 245"));
-          assert.strictEqual(implementationAcquisitions.count, 0);
-        })
-      ),
-    20_000
-  );
+              messages: [],
+              permissionTimeoutMillis: 100,
+              reactions: [],
+              token: ["x", "oxb", "-245-timeout"].join(""),
+            };
+            const routes = yield* startSlackWorkspaceDirectory({
+              adapter: makeStartedDirectoryAdapter(
+                [spec],
+                implementationAcquisitions
+              ),
+              config: {
+                appToken: Redacted.make(["x", "app", "-245-timeout"].join("")),
+                installations: [installationFor(spec, 0, root)],
+                startupMode: "multi-workspace",
+              },
+              environment: {},
+            });
+            yield* routes.awaitReady(spec.identity.teamId);
+            const socket = new PermissionSocketClient();
+            yield* startSocketModeAdapter({
+              client: socket,
+              routeDirectory: routes,
+            });
+            let activationAcknowledged = false;
+            socket.emit(
+              socketActivationEnvelope({
+                ack: () => {
+                  activationAcknowledged = true;
+                  return Promise.resolve();
+                },
+                channelId: "C245TIMEOUT",
+                eventId: "event:245:permission-timeout",
+                messageTs: "245.675",
+                teamId: spec.identity.teamId,
+                text: "<@U245LABORER> guarded timeout operation",
+                userId: "U245AUTHORIZED",
+              })
+            );
+            yield* waitForFile(permissionResultPath);
+            yield* waitForReactionMethod(spec.reactions, "chat.update");
+            assert.ok(activationAcknowledged);
+            assert.deepStrictEqual(
+              JSON.parse(
+                yield* Effect.promise(() =>
+                  readFile(permissionResultPath, "utf8")
+                )
+              ),
+              { outcome: { outcome: "cancelled" } }
+            );
+            const publicTranscript = JSON.stringify(spec.reactions);
+            assert.ok(publicTranscript.includes("expired"));
+            assert.ok(
+              !publicTranscript.includes("timeout-private-command-245")
+            );
+            assert.ok(!publicTranscript.includes("timeout private title 245"));
+            assert.strictEqual(implementationAcquisitions.count, 0);
+          })
+        ),
+      20_000
+    );
 
-  it.live(
-    "cancels an actual Socket Mode permission promptly while its Slack post remains unresolved",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-cancel-"
-          );
-          const controls = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-cancel-controls-"
-          );
-          yield* writeAcpLaborerConfig(root);
-          const processPaths = scriptedProcessPaths(controls, "cancel-post");
-          const permissionResultPath = join(
-            controls,
-            "cancel-post-result.json"
-          );
-          let releasePost: (() => void) | undefined;
-          const postGate = new Promise<void>((resolvePost) => {
-            releasePost = resolvePost;
-          });
-          let permissionBroker: AcpPermissionBroker | undefined;
-          const implementationAcquisitions = { count: 0 };
-          const spec: StartedWorkspaceSpec = {
-            beforePermissionPost: () => postGate,
-            environment: scriptedEnvironment(processPaths, {
-              SCRIPTED_ACP_PERMISSION_RAW_INPUT_JSON: JSON.stringify({
-                command: "cancel-private-command-245",
+    it.live(
+      "cancels an actual Socket Mode permission promptly while its Slack post remains unresolved",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-cancel-"
+            );
+            const controls = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-cancel-controls-"
+            );
+            yield* writeAcpLaborerConfig(root);
+            const processPaths = scriptedProcessPaths(controls, "cancel-post");
+            const permissionResultPath = join(
+              controls,
+              "cancel-post-result.json"
+            );
+            let releasePost: (() => void) | undefined;
+            const postGate = new Promise<void>((resolvePost) => {
+              releasePost = resolvePost;
+            });
+            let permissionBroker: AcpPermissionBroker | undefined;
+            const implementationAcquisitions = { count: 0 };
+            const spec: StartedWorkspaceSpec = {
+              beforePermissionPost: () => postGate,
+              environment: scriptedEnvironment(processPaths, {
+                SCRIPTED_ACP_PERMISSION_RAW_INPUT_JSON: JSON.stringify({
+                  command: "cancel-private-command-245",
+                }),
+                SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
+                SCRIPTED_ACP_PERMISSION_TITLE: "cancel private title 245",
+                SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
               }),
-              SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
-              SCRIPTED_ACP_PERMISSION_TITLE: "cancel private title 245",
-              SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
-            }),
-            health: [],
-            identity: {
-              botId: "B245CANCELPOST",
-              botUserId: "U245LABORER",
-              teamId: "T245CANCELPOST",
-            },
-            messages: [],
-            observePermissionBroker: (broker) => {
-              permissionBroker = broker;
-            },
-            reactions: [],
-            token: ["x", "oxb", "-245-cancel-post"].join(""),
-          };
-          const routes = yield* startSlackWorkspaceDirectory({
-            adapter: makeStartedDirectoryAdapter(
-              [spec],
-              implementationAcquisitions
-            ),
-            config: {
-              appToken: Redacted.make(
-                ["x", "app", "-245-cancel-post"].join("")
+              health: [],
+              identity: {
+                botId: "B245CANCELPOST",
+                botUserId: "U245LABORER",
+                teamId: "T245CANCELPOST",
+              },
+              messages: [],
+              observePermissionBroker: (broker) => {
+                permissionBroker = broker;
+              },
+              reactions: [],
+              token: ["x", "oxb", "-245-cancel-post"].join(""),
+            };
+            const routes = yield* startSlackWorkspaceDirectory({
+              adapter: makeStartedDirectoryAdapter(
+                [spec],
+                implementationAcquisitions
               ),
-              installations: [installationFor(spec, 0, root)],
-              startupMode: "multi-workspace",
-            },
-            environment: {},
-          });
-          yield* routes.awaitReady(spec.identity.teamId);
-          const socket = new PermissionSocketClient();
-          yield* startSocketModeAdapter({
-            client: socket,
-            routeDirectory: routes,
-          });
-          socket.emit(
-            socketActivationEnvelope({
-              ack: () => Promise.resolve(),
-              channelId: "C245CANCELPOST",
-              eventId: "event:245:cancel-post",
-              messageTs: "245.680",
-              teamId: spec.identity.teamId,
-              text: "<@U245LABORER> guarded cancellation operation",
-              userId: "U245AUTHORIZED",
-            })
-          );
-          yield* waitForReactionMethod(spec.reactions, "chat.postMessage");
-          assert.ok(permissionBroker !== undefined);
-          yield* permissionBroker.cancelAll;
-          yield* waitForFile(permissionResultPath);
-          assert.deepStrictEqual(
-            JSON.parse(
-              yield* Effect.promise(() =>
-                readFile(permissionResultPath, "utf8")
-              )
-            ),
-            { outcome: { outcome: "cancelled" } }
-          );
-          const runtimePaths = yield* prepareSlackRuntimePaths(
-            root,
-            spec.identity.teamId
-          );
-          yield* waitForAuthoritySettlement(runtimePaths.acpAuthorityState);
-          releasePost?.();
-          yield* waitForReactionMethod(spec.reactions, "chat.update");
-          const transcript = JSON.stringify(spec.reactions);
-          assert.ok(transcript.includes("cancelled"));
-          assert.ok(!transcript.includes("cancel-private-command-245"));
-          assert.ok(!transcript.includes("cancel private title 245"));
-          assert.strictEqual(implementationAcquisitions.count, 0);
-        })
-      ),
-    20_000
-  );
+              config: {
+                appToken: Redacted.make(
+                  ["x", "app", "-245-cancel-post"].join("")
+                ),
+                installations: [installationFor(spec, 0, root)],
+                startupMode: "multi-workspace",
+              },
+              environment: {},
+            });
+            yield* routes.awaitReady(spec.identity.teamId);
+            const socket = new PermissionSocketClient();
+            yield* startSocketModeAdapter({
+              client: socket,
+              routeDirectory: routes,
+            });
+            socket.emit(
+              socketActivationEnvelope({
+                ack: () => Promise.resolve(),
+                channelId: "C245CANCELPOST",
+                eventId: "event:245:cancel-post",
+                messageTs: "245.680",
+                teamId: spec.identity.teamId,
+                text: "<@U245LABORER> guarded cancellation operation",
+                userId: "U245AUTHORIZED",
+              })
+            );
+            yield* waitForReactionMethod(spec.reactions, "chat.postMessage");
+            assert.ok(permissionBroker !== undefined);
+            yield* permissionBroker.cancelAll;
+            yield* waitForFile(permissionResultPath);
+            assert.deepStrictEqual(
+              JSON.parse(
+                yield* Effect.promise(() =>
+                  readFile(permissionResultPath, "utf8")
+                )
+              ),
+              { outcome: { outcome: "cancelled" } }
+            );
+            const runtimePaths = yield* prepareSlackRuntimePaths(
+              root,
+              spec.identity.teamId
+            );
+            yield* waitForAuthoritySettlement(runtimePaths.acpAuthorityState);
+            releasePost?.();
+            yield* waitForReactionMethod(spec.reactions, "chat.update");
+            const transcript = JSON.stringify(spec.reactions);
+            assert.ok(transcript.includes("cancelled"));
+            assert.ok(!transcript.includes("cancel-private-command-245"));
+            assert.ok(!transcript.includes("cancel private title 245"));
+            assert.strictEqual(implementationAcquisitions.count, 0);
+          })
+        ),
+      20_000
+    );
 
-  it.live(
-    "settles an unresolved Socket Mode permission when the production workspace scope closes",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-shutdown-"
-          );
-          const controls = yield* makeTempDirectoryScoped(
-            "laborer-245-permission-shutdown-controls-"
-          );
-          yield* writeAcpLaborerConfig(root);
-          const processPaths = scriptedProcessPaths(controls, "shutdown-post");
-          const permissionResultPath = join(
-            controls,
-            "shutdown-post-result.json"
-          );
-          let releasePost: (() => void) | undefined;
-          const postGate = new Promise<void>((resolvePost) => {
-            releasePost = resolvePost;
-          });
-          const implementationAcquisitions = { count: 0 };
-          const spec: StartedWorkspaceSpec = {
-            beforePermissionPost: () => postGate,
-            environment: scriptedEnvironment(processPaths, {
-              SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
-              SCRIPTED_ACP_PERMISSION_TITLE: "shutdown private title 245",
-              SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
-            }),
-            health: [],
-            identity: {
-              botId: "B245SHUTDOWNPOST",
-              botUserId: "U245LABORER",
-              teamId: "T245SHUTDOWNPOST",
-            },
-            messages: [],
-            reactions: [],
-            token: ["x", "oxb", "-245-shutdown-post"].join(""),
-          };
-          const workspaceScope = yield* Scope.make();
-          const routes = yield* startSlackWorkspaceDirectory({
-            adapter: makeStartedDirectoryAdapter(
-              [spec],
-              implementationAcquisitions
-            ),
-            config: {
-              appToken: Redacted.make(
-                ["x", "app", "-245-shutdown-post"].join("")
+    it.live(
+      "settles an unresolved Socket Mode permission when the production workspace scope closes",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-shutdown-"
+            );
+            const controls = yield* makeTempDirectoryScoped(
+              "laborer-245-permission-shutdown-controls-"
+            );
+            yield* writeAcpLaborerConfig(root);
+            const processPaths = scriptedProcessPaths(
+              controls,
+              "shutdown-post"
+            );
+            const permissionResultPath = join(
+              controls,
+              "shutdown-post-result.json"
+            );
+            let releasePost: (() => void) | undefined;
+            const postGate = new Promise<void>((resolvePost) => {
+              releasePost = resolvePost;
+            });
+            const implementationAcquisitions = { count: 0 };
+            const spec: StartedWorkspaceSpec = {
+              beforePermissionPost: () => postGate,
+              environment: scriptedEnvironment(processPaths, {
+                SCRIPTED_ACP_PERMISSION_RESULT_PATH: permissionResultPath,
+                SCRIPTED_ACP_PERMISSION_TITLE: "shutdown private title 245",
+                SCRIPTED_ACP_PERMISSION_TOOL_KIND: "execute",
+              }),
+              health: [],
+              identity: {
+                botId: "B245SHUTDOWNPOST",
+                botUserId: "U245LABORER",
+                teamId: "T245SHUTDOWNPOST",
+              },
+              messages: [],
+              reactions: [],
+              token: ["x", "oxb", "-245-shutdown-post"].join(""),
+            };
+            const workspaceScope = yield* Scope.make();
+            const routes = yield* startSlackWorkspaceDirectory({
+              adapter: makeStartedDirectoryAdapter(
+                [spec],
+                implementationAcquisitions
               ),
-              installations: [installationFor(spec, 0, root)],
-              startupMode: "multi-workspace",
-            },
-            environment: {},
-          }).pipe(Effect.provideService(Scope.Scope, workspaceScope));
-          yield* routes.awaitReady(spec.identity.teamId);
-          const socket = new PermissionSocketClient();
-          yield* startSocketModeAdapter({
-            client: socket,
-            routeDirectory: routes,
-          }).pipe(Effect.provideService(Scope.Scope, workspaceScope));
-          socket.emit(
-            socketActivationEnvelope({
-              ack: () => Promise.resolve(),
-              channelId: "C245SHUTDOWNPOST",
-              eventId: "event:245:shutdown-post",
-              messageTs: "245.685",
-              teamId: spec.identity.teamId,
-              text: "<@U245LABORER> guarded shutdown operation",
-              userId: "U245AUTHORIZED",
-            })
-          );
-          yield* waitForReactionMethod(spec.reactions, "chat.postMessage");
-          const shutdownStartedAt = Date.now();
-          yield* Scope.close(workspaceScope, Exit.void);
-          assert.ok(Date.now() - shutdownStartedAt < 2000);
-          yield* waitForFile(permissionResultPath);
-          assert.deepStrictEqual(
-            JSON.parse(
-              yield* Effect.promise(() =>
-                readFile(permissionResultPath, "utf8")
-              )
-            ),
-            { outcome: { outcome: "cancelled" } }
-          );
-          releasePost?.();
-          yield* waitForReactionMethod(spec.reactions, "chat.update");
-          assert.ok(JSON.stringify(spec.reactions).includes("cancelled"));
-          const runtimePaths = yield* prepareSlackRuntimePaths(
-            root,
-            spec.identity.teamId
-          );
-          yield* waitForAuthoritySettlement(runtimePaths.acpAuthorityState);
-        })
-      ),
-    20_000
-  );
+              config: {
+                appToken: Redacted.make(
+                  ["x", "app", "-245-shutdown-post"].join("")
+                ),
+                installations: [installationFor(spec, 0, root)],
+                startupMode: "multi-workspace",
+              },
+              environment: {},
+            }).pipe(Effect.provideService(Scope.Scope, workspaceScope));
+            yield* routes.awaitReady(spec.identity.teamId);
+            const socket = new PermissionSocketClient();
+            yield* startSocketModeAdapter({
+              client: socket,
+              routeDirectory: routes,
+            }).pipe(Effect.provideService(Scope.Scope, workspaceScope));
+            socket.emit(
+              socketActivationEnvelope({
+                ack: () => Promise.resolve(),
+                channelId: "C245SHUTDOWNPOST",
+                eventId: "event:245:shutdown-post",
+                messageTs: "245.685",
+                teamId: spec.identity.teamId,
+                text: "<@U245LABORER> guarded shutdown operation",
+                userId: "U245AUTHORIZED",
+              })
+            );
+            yield* waitForReactionMethod(spec.reactions, "chat.postMessage");
+            const shutdownStartedAt = Date.now();
+            yield* Scope.close(workspaceScope, Exit.void);
+            assert.ok(Date.now() - shutdownStartedAt < 2000);
+            yield* waitForFile(permissionResultPath);
+            assert.deepStrictEqual(
+              JSON.parse(
+                yield* Effect.promise(() =>
+                  readFile(permissionResultPath, "utf8")
+                )
+              ),
+              { outcome: { outcome: "cancelled" } }
+            );
+            releasePost?.();
+            yield* waitForReactionMethod(spec.reactions, "chat.update");
+            assert.ok(JSON.stringify(spec.reactions).includes("cancelled"));
+            const runtimePaths = yield* prepareSlackRuntimePaths(
+              root,
+              spec.identity.teamId
+            );
+            yield* waitForAuthoritySettlement(runtimePaths.acpAuthorityState);
+          })
+        ),
+      20_000
+    );
+  });
 
   it.live(
     "routes a real interactive envelope to the active ACP request and completes allow and reject turns",
@@ -4948,4 +4971,4 @@ describe("issue #244 opt-in production ACP composition", () => {
       );
     })
   );
-});
+}, 60_000);

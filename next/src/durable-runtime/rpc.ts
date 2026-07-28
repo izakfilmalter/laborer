@@ -1,10 +1,13 @@
 import { Effect, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import {
+  ConversationReceipt,
   DurableRuntimeError,
   ExecutionEvent,
   ExecutionSnapshot,
   RootDurableRuntime,
+  type RootDurableRuntimeShape,
+  RunConversationRequest,
   RuntimeConversationId,
   RuntimeEventId,
   RuntimeExecutionId,
@@ -23,6 +26,42 @@ export const StartExecutionRpc = Rpc.make("RootRuntime.StartExecution", {
   }),
   success: ExecutionSnapshot,
 });
+
+export const RunConversationRpcRequest = Schema.Struct({
+  ...RunConversationRequest.fields,
+  protocolVersion: ProtocolVersion,
+});
+
+export const RunConversationRpc = Rpc.make("RootRuntime.RunConversation", {
+  error: DurableRuntimeError,
+  payload: RunConversationRpcRequest,
+  success: ConversationReceipt,
+});
+
+export const runConversationRpcLocally = Effect.fn("runConversationRpcLocally")(
+  function* (runtime: RootDurableRuntimeShape, untrustedRequest: unknown) {
+    const request = yield* Schema.decodeUnknownEffect(
+      RunConversationRpcRequest,
+      { onExcessProperty: "error" }
+    )(untrustedRequest).pipe(
+      Effect.mapError(() =>
+        DurableRuntimeError.make({ reason: "invalid-payload" })
+      )
+    );
+    const receipt = yield* runtime.runConversation({
+      event: request.event,
+      rootIdentity: request.rootIdentity,
+      workspaceId: request.workspaceId,
+    });
+    return yield* Schema.decodeUnknownEffect(ConversationReceipt, {
+      onExcessProperty: "error",
+    })(receipt).pipe(
+      Effect.mapError(() =>
+        DurableRuntimeError.make({ reason: "storage-failure" })
+      )
+    );
+  }
+);
 
 export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
   error: DurableRuntimeError,
@@ -64,6 +103,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
 );
 
 export const RootRuntimeRpcs = RpcGroup.make(
+  RunConversationRpc,
   StartExecutionRpc,
   GetExecutionRpc,
   PendingExecutionEventsRpc,
@@ -80,6 +120,12 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
         runtime.getExecution(executionId, conversationId),
       "RootRuntime.PendingExecutionEvents": ({ conversationId, limit }) =>
         runtime.pendingEvents(conversationId, limit),
+      "RootRuntime.RunConversation": (request) =>
+        runtime.runConversation({
+          event: request.event,
+          rootIdentity: request.rootIdentity,
+          workspaceId: request.workspaceId,
+        }),
       "RootRuntime.StartExecution": (request) =>
         runtime.startExecution({
           actionName: request.actionName,

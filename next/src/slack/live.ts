@@ -6,6 +6,7 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
+import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
 import {
   operatorStatusPaths,
   startOperatorStatusServer,
@@ -77,6 +78,11 @@ const program = Effect.gen(function* () {
           }),
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
+        }),
+      makeRootRuntime: ({ laborer, paths }) =>
+        makeNodeRootDurableRuntime({
+          databasePath: paths.runtimeDatabase,
+          rootIdentity: laborer.root,
         }),
       makeRunner: makeAcpSlackWorkspaceRunner,
       makeSetupIncompleteResponder: (gateway) => (request) =>

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   Cause,
   Context,
+  Deferred,
   Effect,
   Array as EffectArray,
   Layer,
@@ -9,11 +10,18 @@ import {
   pipe,
   Schedule,
   Schema,
+  Semaphore,
 } from "effect";
 import { ClusterWorkflowEngine, SingleRunner } from "effect/unstable/cluster";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { Activity, Workflow, WorkflowEngine } from "effect/unstable/workflow";
 import { canonicalActionInput } from "../action-catalog.ts";
+import {
+  ApplicationConversationMessageChunk,
+  type ApplicationPublicOutput,
+  ApplicationPublicReply,
+  ParticipantInputEvent,
+} from "../application.ts";
 import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
@@ -23,7 +31,7 @@ import {
   type RegisteredActionContext,
 } from "./action.ts";
 
-const RUNTIME_SCHEMA_VERSION = 1;
+const RUNTIME_SCHEMA_VERSION = 2;
 export const RUNTIME_PAYLOAD_MAX_BYTES = 64 * 1024;
 export const RUNTIME_CONVERSATION_ID_MAX_LENGTH = 512;
 export const RUNTIME_INVOCATION_ID_MAX_LENGTH = 512;
@@ -31,6 +39,7 @@ export const RUNTIME_ROOT_IDENTITY_MAX_LENGTH = 4096;
 export const RUNTIME_EXECUTION_ID_MAX_LENGTH = 160;
 export const RUNTIME_EVENT_ID_MAX_LENGTH = 256;
 export const RUNTIME_PROGRESS_ID_MAX_LENGTH = 256;
+export const RUNTIME_WORKSPACE_ID_MAX_LENGTH = 256;
 const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
 const RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH = 64;
 const NONBLANK_PATTERN = /\S/;
@@ -57,6 +66,9 @@ export const RuntimeEventId = boundedNonBlankString(
 );
 export const RuntimeProgressId = boundedNonBlankString(
   RUNTIME_PROGRESS_ID_MAX_LENGTH
+);
+export const RuntimeWorkspaceId = boundedNonBlankString(
+  RUNTIME_WORKSPACE_ID_MAX_LENGTH
 );
 export const ExecutionStatus = Schema.Literals([
   "queued",
@@ -107,6 +119,29 @@ export const ExecutionEvent = Schema.Struct({
 });
 export type ExecutionEvent = typeof ExecutionEvent.Type;
 
+export const ConversationOutput = Schema.Union([
+  ApplicationConversationMessageChunk,
+  ApplicationPublicReply,
+]);
+export type ConversationOutput = typeof ConversationOutput.Type;
+
+export const RunConversationRequest = Schema.Struct({
+  event: ParticipantInputEvent,
+  rootIdentity: RuntimeRootIdentity,
+  workspaceId: RuntimeWorkspaceId,
+});
+export type RunConversationRequest = typeof RunConversationRequest.Type;
+
+export const ConversationReceipt = Schema.Struct({
+  conversationId: RuntimeConversationId,
+  eventId: RuntimeInvocationId,
+  outputs: Schema.Array(ConversationOutput),
+  sequence: Schema.Int.check(Schema.isGreaterThan(0)),
+  sessionId: boundedNonBlankString(RUNTIME_EXECUTION_ID_MAX_LENGTH),
+  workspaceId: RuntimeWorkspaceId,
+});
+export type ConversationReceipt = typeof ConversationReceipt.Type;
+
 export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeError>()(
   "DurableRuntimeError",
   {
@@ -114,6 +149,7 @@ export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeE
       "conflicting-invocation",
       "execution-not-found",
       "invalid-payload",
+      "conversation-handler-unavailable",
       "storage-failure",
       "unavailable-action",
     ]),
@@ -178,6 +214,42 @@ export const RegisteredActionExecutionWorkflow = Workflow.make(
   }
 );
 
+const ConversationWorkflowPayload = Schema.Struct({
+  conversationId: RuntimeConversationId,
+  encodedEvent: Schema.String.check(
+    Schema.isMaxLength(RUNTIME_PAYLOAD_MAX_BYTES)
+  ),
+  eventId: RuntimeInvocationId,
+  requestHash: boundedNonBlankString(64),
+  rootIdentity: RuntimeRootIdentity,
+  sequence: Schema.Int.check(Schema.isGreaterThan(0)),
+  sessionId: boundedNonBlankString(RUNTIME_EXECUTION_ID_MAX_LENGTH),
+  workspaceId: RuntimeWorkspaceId,
+});
+type ConversationWorkflowPayload = typeof ConversationWorkflowPayload.Type;
+
+const ConversationActivityOutcome = Schema.Union([
+  Schema.TaggedStruct("Success", {
+    outputs: Schema.Array(ConversationOutput),
+  }),
+  Schema.TaggedStruct("Failure", {}),
+]);
+
+export const ConversationWorkflow = Workflow.make("Laborer/Conversation/v1", {
+  error: DurableRuntimeError,
+  idempotencyKey: (payload) =>
+    createHash("sha256")
+      .update("laborer-conversation-event-v1\0", "utf8")
+      .update(payload.rootIdentity, "utf8")
+      .update("\0", "utf8")
+      .update(payload.workspaceId, "utf8")
+      .update("\0", "utf8")
+      .update(payload.eventId, "utf8")
+      .digest("base64url"),
+  payload: ConversationWorkflowPayload,
+  success: ConversationReceipt,
+});
+
 class ActionRegistry extends Context.Service<
   ActionRegistry,
   RegisteredActionCatalog
@@ -186,6 +258,89 @@ class ActionRegistry extends Context.Service<
 class RootIdentity extends Context.Service<RootIdentity, string>()(
   "@laborer/durable-runtime/RootIdentity"
 ) {}
+
+export interface ConversationHandler {
+  readonly handle: (
+    event: ParticipantInputEvent
+  ) => Effect.Effect<readonly ApplicationPublicOutput[], unknown>;
+}
+
+interface ConversationHandlerRegistryShape {
+  readonly get: (
+    workspaceId: string
+  ) => Effect.Effect<ConversationHandler, DurableRuntimeError>;
+  readonly register: (
+    workspaceId: string,
+    handler: ConversationHandler
+  ) => Effect.Effect<void, DurableRuntimeError, import("effect").Scope.Scope>;
+  readonly withPermit: <A, E, R>(
+    conversationId: string,
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E, R>;
+}
+
+class ConversationHandlerRegistry extends Context.Service<
+  ConversationHandlerRegistry,
+  ConversationHandlerRegistryShape
+>()("@laborer/durable-runtime/ConversationHandlerRegistry") {}
+
+const makeConversationHandlerRegistry = Effect.gen(function* () {
+  const handlers = new Map<string, ConversationHandler>();
+  const handlerWaiters = new Map<
+    string,
+    Deferred.Deferred<ConversationHandler>
+  >();
+  const conversationPermits = new Map<string, Semaphore.Semaphore>();
+  return ConversationHandlerRegistry.of({
+    get: (workspaceId) => {
+      const handler = handlers.get(workspaceId);
+      if (handler !== undefined) {
+        return Effect.succeed(handler);
+      }
+      let waiter = handlerWaiters.get(workspaceId);
+      if (waiter === undefined) {
+        waiter = Deferred.makeUnsafe<ConversationHandler>();
+        handlerWaiters.set(workspaceId, waiter);
+      }
+      // Cluster restoration can begin before the workspace Runner has built
+      // its ACP application. Waiting here keeps the durable workflow pending
+      // instead of permanently failing it during that startup window.
+      return Deferred.await(waiter);
+    },
+    register: (workspaceId, handler) =>
+      Effect.acquireRelease(
+        Effect.suspend(() => {
+          if (handlers.has(workspaceId)) {
+            return Effect.fail(
+              runtimeError("conversation-handler-unavailable")
+            );
+          }
+          handlers.set(workspaceId, handler);
+          let waiter = handlerWaiters.get(workspaceId);
+          if (waiter === undefined) {
+            waiter = Deferred.makeUnsafe<ConversationHandler>();
+            handlerWaiters.set(workspaceId, waiter);
+          }
+          return Deferred.succeed(waiter, handler).pipe(Effect.asVoid);
+        }),
+        () =>
+          Effect.sync(() => {
+            if (handlers.get(workspaceId) === handler) {
+              handlers.delete(workspaceId);
+              handlerWaiters.delete(workspaceId);
+            }
+          })
+      ),
+    withPermit: (conversationId, effect) => {
+      let permit = conversationPermits.get(conversationId);
+      if (permit === undefined) {
+        permit = Semaphore.makeUnsafe(1);
+        conversationPermits.set(conversationId, permit);
+      }
+      return permit.withPermit(effect);
+    },
+  });
+});
 
 const decodeStoredJson = (
   encoded: string
@@ -354,6 +509,165 @@ const actionForWorkflowPayload = Effect.fn("actionForWorkflowPayload")(
     }
     return action;
   }
+);
+
+const conversationWorkflowLayer = ConversationWorkflow.toLayer((payload) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const registry = yield* ConversationHandlerRegistry;
+    const event = yield* decodeStoredJson(payload.encodedEvent).pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(ParticipantInputEvent, {
+          onExcessProperty: "error",
+        })
+      ),
+      Effect.mapError(() => runtimeError("storage-failure"))
+    );
+
+    // Cluster may schedule accepted events concurrently. Do not let a later
+    // sequence race ahead merely because its workflow fiber obtained a permit
+    // first; durable Conversation order is defined by the SQL sequence.
+    let precedingEventIsRunning = true;
+    while (precedingEventIsRunning) {
+      const preceding = yield* sql<{ readonly present: number }>`
+        SELECT 1 AS present
+        FROM laborer_conversation_events
+        WHERE conversation_id = ${payload.conversationId}
+          AND workspace_id = ${payload.workspaceId}
+          AND sequence < ${payload.sequence}
+          AND status IN ('accepted', 'running')
+        LIMIT 1
+      `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+      precedingEventIsRunning = preceding.length > 0;
+      if (precedingEventIsRunning) {
+        yield* Effect.sleep("25 millis");
+      }
+    }
+
+    return yield* registry.withPermit(
+      `${payload.workspaceId}\0${payload.conversationId}`,
+      Effect.gen(function* () {
+        // Re-read after taking the permit. Concurrent replay of one event must
+        // observe the first completion instead of invoking ACP a second time.
+        const rows = yield* sql<{
+          readonly conversationId: string;
+          readonly eventJson: string;
+          readonly outputsJson: string | null;
+          readonly requestHash: string;
+          readonly sequence: number;
+          readonly status: string;
+        }>`
+          SELECT
+            conversation_id AS conversationId,
+            event_json AS eventJson,
+            outputs_json AS outputsJson,
+            request_hash AS requestHash,
+            sequence,
+            status
+          FROM laborer_conversation_events
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        const stored = pipe(rows, EffectArray.head);
+        if (
+          Option.isNone(stored) ||
+          stored.value.conversationId !== payload.conversationId ||
+          stored.value.eventJson !== payload.encodedEvent ||
+          stored.value.requestHash !== payload.requestHash ||
+          stored.value.sequence !== payload.sequence
+        ) {
+          return yield* runtimeError("storage-failure");
+        }
+        if (
+          stored.value.status === "completed" &&
+          stored.value.outputsJson !== null
+        ) {
+          const outputs = yield* decodeStoredJson(
+            stored.value.outputsJson
+          ).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.mapError(() => runtimeError("storage-failure"))
+          );
+          return ConversationReceipt.make({
+            conversationId: payload.conversationId,
+            eventId: payload.eventId,
+            outputs,
+            sequence: payload.sequence,
+            sessionId: payload.sessionId,
+            workspaceId: payload.workspaceId,
+          });
+        }
+        if (
+          stored.value.status !== "accepted" &&
+          stored.value.status !== "running"
+        ) {
+          return yield* runtimeError(
+            stored.value.status === "failed"
+              ? "conversation-handler-unavailable"
+              : "storage-failure"
+          );
+        }
+        yield* sql`
+          UPDATE laborer_conversation_events
+          SET status = 'running'
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+            AND status = 'accepted'
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        const handler = yield* registry.get(payload.workspaceId);
+        const outcome = yield* Activity.make({
+          execute: handler.handle(event).pipe(
+            Effect.flatMap((candidate) =>
+              Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
+                onExcessProperty: "error",
+              })(candidate)
+            ),
+            Effect.flatMap((outputs) =>
+              boundedPayloadJson(outputs).pipe(Effect.as(outputs))
+            ),
+            Effect.map((outputs) => ({ _tag: "Success" as const, outputs })),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : Effect.succeed({ _tag: "Failure" as const })
+            )
+          ),
+          name: "Laborer/Conversation/respond/v1",
+          success: ConversationActivityOutcome,
+        });
+        if (outcome._tag === "Failure") {
+          yield* sql`
+            UPDATE laborer_conversation_events
+            SET status = 'failed'
+            WHERE event_id = ${payload.eventId}
+              AND workspace_id = ${payload.workspaceId}
+              AND request_hash = ${payload.requestHash}
+          `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+          return yield* runtimeError("conversation-handler-unavailable");
+        }
+        const outputsJson = yield* boundedPayloadJson(outcome.outputs);
+        yield* sql`
+          UPDATE laborer_conversation_events
+          SET status = 'completed', outputs_json = ${outputsJson}
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+            AND request_hash = ${payload.requestHash}
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        return ConversationReceipt.make({
+          conversationId: payload.conversationId,
+          eventId: payload.eventId,
+          outputs: outcome.outputs,
+          sequence: payload.sequence,
+          sessionId: payload.sessionId,
+          workspaceId: payload.workspaceId,
+        });
+      })
+    );
+  })
 );
 
 const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
@@ -546,7 +860,10 @@ const initializeLaborerTables = Effect.gen(function* () {
         EffectArray.head,
         Option.map((row) => row.version)
       );
-      if (Option.isSome(version) && version.value !== RUNTIME_SCHEMA_VERSION) {
+      if (
+        Option.isSome(version) &&
+        (version.value < 1 || version.value > RUNTIME_SCHEMA_VERSION)
+      ) {
         return yield* Effect.die(
           new Error("incompatible Laborer runtime schema version")
         );
@@ -556,6 +873,34 @@ const initializeLaborerTables = Effect.gen(function* () {
           root_identity TEXT PRIMARY KEY,
           catalog_fingerprint TEXT NOT NULL
         )
+      `;
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS laborer_conversations (
+          conversation_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL UNIQUE,
+          PRIMARY KEY (workspace_id, conversation_id)
+        )
+      `;
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS laborer_conversation_events (
+          event_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          request_hash TEXT NOT NULL,
+          event_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          outputs_json TEXT,
+          PRIMARY KEY (workspace_id, event_id),
+          UNIQUE (workspace_id, conversation_id, sequence),
+          FOREIGN KEY (workspace_id, conversation_id)
+            REFERENCES laborer_conversations(workspace_id, conversation_id)
+        )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS laborer_conversation_events_order
+        ON laborer_conversation_events (workspace_id, conversation_id, sequence)
       `;
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_executions (
@@ -602,7 +947,7 @@ const initializeLaborerTables = Effect.gen(function* () {
       yield* sql`
         INSERT INTO laborer_schema_versions (component, version)
         VALUES ('runtime', ${RUNTIME_SCHEMA_VERSION})
-        ON CONFLICT(component) DO NOTHING
+        ON CONFLICT(component) DO UPDATE SET version = excluded.version
       `;
     })
   );
@@ -634,6 +979,118 @@ const validateRootRegistration = Effect.gen(function* () {
       new Error("runtime database belongs to a different Laborer root")
     );
   }
+  const conversations = yield* sql<{
+    readonly conversationId: string;
+    readonly sessionId: string;
+    readonly workspaceId: string;
+  }>`
+    SELECT
+      conversation_id AS conversationId,
+      session_id AS sessionId,
+      workspace_id AS workspaceId
+    FROM laborer_conversations
+  `;
+  yield* Effect.forEach(
+    conversations,
+    (conversation) =>
+      Effect.all([
+        Schema.decodeUnknownEffect(RuntimeConversationId)(
+          conversation.conversationId
+        ),
+        Schema.decodeUnknownEffect(RuntimeWorkspaceId)(
+          conversation.workspaceId
+        ),
+        Schema.decodeUnknownEffect(
+          boundedNonBlankString(RUNTIME_EXECUTION_ID_MAX_LENGTH)
+        )(conversation.sessionId),
+      ]).pipe(Effect.orDie),
+    { discard: true }
+  );
+  const conversationEvents = yield* sql<{
+    readonly conversationId: string;
+    readonly eventId: string;
+    readonly eventJson: string;
+    readonly outputsJson: string | null;
+    readonly ownerWorkspaceId: string;
+    readonly requestHash: string;
+    readonly sequence: number;
+    readonly status: string;
+    readonly workspaceId: string;
+  }>`
+    SELECT
+      events.event_id AS eventId,
+      events.conversation_id AS conversationId,
+      events.workspace_id AS workspaceId,
+      conversations.workspace_id AS ownerWorkspaceId,
+      events.sequence,
+      events.request_hash AS requestHash,
+      events.event_json AS eventJson,
+      events.status,
+      events.outputs_json AS outputsJson
+    FROM laborer_conversation_events AS events
+    LEFT JOIN laborer_conversations AS conversations
+      ON conversations.workspace_id = events.workspace_id
+      AND conversations.conversation_id = events.conversation_id
+    ORDER BY events.conversation_id, events.sequence
+  `;
+  yield* Effect.forEach(
+    conversationEvents,
+    (stored) =>
+      Effect.gen(function* () {
+        const event = yield* decodeStoredJson(stored.eventJson).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(ParticipantInputEvent, {
+              onExcessProperty: "error",
+            })
+          ),
+          Effect.orDie
+        );
+        const canonicalEvent = yield* boundedPayloadJson(event).pipe(
+          Effect.orDie
+        );
+        const expectedHash = createHash("sha256")
+          .update("laborer-conversation-request-v1\0", "utf8")
+          .update(canonicalEvent, "utf8")
+          .digest("base64url");
+        if (
+          event.turnId !== stored.eventId ||
+          event.conversationId !== stored.conversationId ||
+          stored.workspaceId !== stored.ownerWorkspaceId ||
+          stored.requestHash !== expectedHash ||
+          stored.eventJson !== canonicalEvent ||
+          !Number.isSafeInteger(stored.sequence) ||
+          stored.sequence < 1 ||
+          (stored.status !== "accepted" &&
+            stored.status !== "running" &&
+            stored.status !== "failed" &&
+            stored.status !== "completed") ||
+          (stored.status === "completed") !== (stored.outputsJson !== null)
+        ) {
+          return yield* Effect.die(
+            new Error("invalid durable Conversation event")
+          );
+        }
+        if (stored.outputsJson !== null) {
+          const outputs = yield* decodeStoredJson(stored.outputsJson).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.orDie
+          );
+          const canonicalOutputs = yield* boundedPayloadJson(outputs).pipe(
+            Effect.orDie
+          );
+          if (canonicalOutputs !== stored.outputsJson) {
+            return yield* Effect.die(
+              new Error("invalid durable Conversation output")
+            );
+          }
+        }
+      }),
+    { discard: true }
+  );
   const nonterminal = yield* sql<{
     readonly actionFingerprint: string;
     readonly actionName: string;
@@ -737,6 +1194,13 @@ export interface RootDurableRuntimeShape {
     conversationId: string,
     limit?: number
   ) => Effect.Effect<readonly ExecutionEvent[], DurableRuntimeError>;
+  readonly registerConversationHandler: (
+    workspaceId: string,
+    handler: ConversationHandler
+  ) => Effect.Effect<void, DurableRuntimeError, import("effect").Scope.Scope>;
+  readonly runConversation: (
+    request: RunConversationRequest
+  ) => Effect.Effect<ConversationReceipt, DurableRuntimeError>;
   readonly startExecution: (
     request: StartExecutionRequest
   ) => Effect.Effect<ExecutionSnapshot, DurableRuntimeError>;
@@ -751,7 +1215,162 @@ const makeRuntimeService = Effect.gen(function* () {
   const sql = yield* SqlClient;
   const catalog = yield* ActionRegistry;
   const rootIdentity = yield* RootIdentity;
+  const conversationHandlers = yield* ConversationHandlerRegistry;
   const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
+
+  const runConversation = Effect.fn("RootDurableRuntime.runConversation")(
+    function* (request: RunConversationRequest) {
+      const validatedRequest = yield* Schema.decodeUnknownEffect(
+        RunConversationRequest,
+        { onExcessProperty: "error" }
+      )(request).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
+      if (validatedRequest.rootIdentity !== rootIdentity) {
+        return yield* runtimeError("invalid-payload");
+      }
+      const eventJson = yield* boundedPayloadJson(validatedRequest.event);
+      const requestHash = createHash("sha256")
+        .update("laborer-conversation-request-v1\0", "utf8")
+        .update(eventJson, "utf8")
+        .digest("base64url");
+      const sessionId = `conversation:${createHash("sha256")
+        .update("laborer-conversation-session-v1\0", "utf8")
+        .update(rootIdentity, "utf8")
+        .update("\0", "utf8")
+        .update(validatedRequest.workspaceId, "utf8")
+        .update("\0", "utf8")
+        .update(validatedRequest.event.conversationId, "utf8")
+        .digest("base64url")}`;
+      const accepted = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT OR IGNORE INTO laborer_conversations (
+                conversation_id, workspace_id, session_id
+              ) VALUES (
+                ${validatedRequest.event.conversationId},
+                ${validatedRequest.workspaceId}, ${sessionId}
+              )
+            `;
+            // Acquire the Conversation's SQLite write lock before allocating
+            // its next durable event sequence.
+            yield* sql`
+              UPDATE laborer_conversations
+              SET conversation_id = conversation_id
+              WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
+            `;
+            const conversations = yield* sql<{
+              readonly sessionId: string;
+              readonly workspaceId: string;
+            }>`
+              SELECT session_id AS sessionId, workspace_id AS workspaceId
+              FROM laborer_conversations
+              WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
+            `;
+            const conversation = pipe(
+              conversations,
+              EffectArray.head,
+              Option.getOrElse(() => ({ sessionId: "", workspaceId: "" }))
+            );
+            if (
+              conversation.workspaceId !== validatedRequest.workspaceId ||
+              conversation.sessionId !== sessionId
+            ) {
+              return yield* runtimeError("invalid-payload");
+            }
+            const existing = yield* sql<{
+              readonly conversationId: string;
+              readonly eventJson: string;
+              readonly requestHash: string;
+              readonly sequence: number;
+              readonly sessionId: string;
+              readonly workspaceId: string;
+            }>`
+              SELECT
+                events.conversation_id AS conversationId,
+                events.event_json AS eventJson,
+                events.request_hash AS requestHash,
+                events.sequence,
+                conversations.session_id AS sessionId,
+                events.workspace_id AS workspaceId
+              FROM laborer_conversation_events AS events
+              INNER JOIN laborer_conversations AS conversations
+                ON conversations.workspace_id = events.workspace_id
+                AND conversations.conversation_id = events.conversation_id
+              WHERE events.event_id = ${validatedRequest.event.turnId}
+                AND events.workspace_id = ${validatedRequest.workspaceId}
+            `;
+            const existingEvent = pipe(existing, EffectArray.head);
+            if (Option.isSome(existingEvent)) {
+              if (
+                existingEvent.value.conversationId !==
+                  validatedRequest.event.conversationId ||
+                existingEvent.value.workspaceId !==
+                  validatedRequest.workspaceId ||
+                existingEvent.value.requestHash !== requestHash ||
+                existingEvent.value.eventJson !== eventJson
+              ) {
+                return yield* runtimeError("invalid-payload");
+              }
+              return existingEvent.value;
+            }
+            const sequences = yield* sql<{ readonly sequence: number }>`
+              SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+              FROM laborer_conversation_events
+              WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
+            `;
+            const sequence = pipe(
+              sequences,
+              EffectArray.head,
+              Option.map((row) => row.sequence),
+              Option.getOrElse(() => 1)
+            );
+            yield* sql`
+              INSERT INTO laborer_conversation_events (
+                event_id, conversation_id, workspace_id, sequence,
+                request_hash, event_json, status
+              ) VALUES (
+                ${validatedRequest.event.turnId},
+                ${validatedRequest.event.conversationId},
+                ${validatedRequest.workspaceId}, ${sequence}, ${requestHash},
+                ${eventJson}, 'accepted'
+              )
+            `;
+            return {
+              conversationId: validatedRequest.event.conversationId,
+              eventJson,
+              requestHash,
+              sequence,
+              sessionId,
+              workspaceId: validatedRequest.workspaceId,
+            };
+          })
+        )
+        .pipe(Effect.mapError(() => runtimeError("storage-failure")));
+      const payload: ConversationWorkflowPayload = {
+        conversationId: accepted.conversationId,
+        encodedEvent: accepted.eventJson,
+        eventId: validatedRequest.event.turnId,
+        requestHash: accepted.requestHash,
+        rootIdentity,
+        sequence: accepted.sequence,
+        sessionId: accepted.sessionId,
+        workspaceId: accepted.workspaceId,
+      };
+      yield* Effect.uninterruptible(
+        ConversationWorkflow.execute(payload, { discard: true }).pipe(
+          Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+        )
+      );
+      return yield* ConversationWorkflow.execute(payload, {
+        discard: false,
+      }).pipe(
+        Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+      );
+    }
+  );
 
   const getExecution = Effect.fn("RootDurableRuntime.getExecution")(function* (
     executionId: string,
@@ -979,6 +1598,14 @@ const makeRuntimeService = Effect.gen(function* () {
     acknowledgeEvent,
     getExecution,
     pendingEvents,
+    registerConversationHandler: (workspaceId, handler) =>
+      Schema.decodeUnknownEffect(RuntimeWorkspaceId)(workspaceId).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload")),
+        Effect.flatMap((validatedWorkspaceId) =>
+          conversationHandlers.register(validatedWorkspaceId, handler)
+        )
+      ),
+    runConversation,
     startExecution,
   } satisfies RootDurableRuntimeShape;
 });
@@ -1004,6 +1631,10 @@ export const makeRootDurableRuntimeLayer = (
   rootIdentity: string
 ) => {
   const registryLayer = Layer.succeed(ActionRegistry, catalog);
+  const conversationRegistryLayer = Layer.effect(
+    ConversationHandlerRegistry,
+    makeConversationHandlerRegistry
+  );
   const rootIdentityLayer = Layer.succeed(RootIdentity, rootIdentity);
   const migrationsLayer = Layer.effectDiscard(initializeLaborerTables).pipe(
     Layer.provide(sqliteLayer)
@@ -1014,9 +1645,13 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer)
   );
-  const workflowLayer = workflowHandlerLayer.pipe(
+  const workflowLayer = Layer.merge(
+    workflowHandlerLayer,
+    conversationWorkflowLayer
+  ).pipe(
     Layer.provideMerge(clusterLayer),
     Layer.provideMerge(registryLayer),
+    Layer.provideMerge(conversationRegistryLayer),
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
@@ -1025,6 +1660,7 @@ export const makeRootDurableRuntimeLayer = (
   return Layer.effect(RootDurableRuntime, makeRuntimeService).pipe(
     Layer.provideMerge(workflowLayer),
     Layer.provideMerge(registryLayer),
+    Layer.provideMerge(conversationRegistryLayer),
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),

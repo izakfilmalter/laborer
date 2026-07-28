@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { assert, describe, it } from "@effect/vitest";
 import { WebClient } from "@slack/web-api";
 import {
@@ -19,6 +20,8 @@ import {
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
+import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
+import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
@@ -911,6 +914,7 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
   readonly messages: CapturedSlackMessage[];
   readonly paths: SlackRuntimePaths;
   readonly root: string;
+  readonly rootRuntime?: RootDurableRuntimeShape;
   readonly workspaceId: string;
   readonly worktreeCalls: { count: number };
   readonly implementationCounters: {
@@ -932,6 +936,9 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
         root: options.root,
       },
       paths: options.paths,
+      ...(options.rootRuntime === undefined
+        ? {}
+        : { rootRuntime: options.rootRuntime }),
     },
     {
       environment: options.environment,
@@ -3557,6 +3564,10 @@ describe("issue #244 opt-in production ACP composition", () => {
           "laborer-244-production-controls-"
         );
         const paths = yield* prepareSlackRuntimePaths(root, "T244PRODUCTION");
+        const rootRuntime = yield* makeNodeRootDurableRuntime({
+          databasePath: paths.runtimeDatabase,
+          rootIdentity: root,
+        });
         const firstProcess = scriptedProcessPaths(controls, "first");
         const secondProcess = {
           ...scriptedProcessPaths(controls, "second"),
@@ -3595,6 +3606,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages,
               paths,
               root,
+              rootRuntime,
               workspaceId: "T244PRODUCTION",
               worktreeCalls,
             });
@@ -3635,6 +3647,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages,
               paths,
               root,
+              rootRuntime,
               workspaceId: "T244PRODUCTION",
               worktreeCalls,
             });
@@ -3707,6 +3720,42 @@ describe("issue #244 opt-in production ACP composition", () => {
         };
         assert.strictEqual(applicationState.conversations.length, 1);
         assert.strictEqual(applicationState.executions.length, 0);
+        const runtimeDatabase = new DatabaseSync(paths.runtimeDatabase, {
+          readOnly: true,
+        });
+        try {
+          const durableConversations = runtimeDatabase
+            .prepare(
+              `SELECT conversation_id AS conversationId, workspace_id AS workspaceId
+               FROM laborer_conversations`
+            )
+            .all() as unknown as readonly {
+            readonly conversationId: string;
+            readonly workspaceId: string;
+          }[];
+          const durableEvents = runtimeDatabase
+            .prepare(
+              `SELECT sequence, status
+               FROM laborer_conversation_events
+               ORDER BY sequence`
+            )
+            .all() as unknown as readonly {
+            readonly sequence: number;
+            readonly status: string;
+          }[];
+          assert.strictEqual(durableConversations.length, 1);
+          assert.strictEqual(
+            durableConversations[0]?.workspaceId,
+            "T244PRODUCTION"
+          );
+          assert.deepStrictEqual(durableEvents, [
+            { sequence: 1, status: "completed" },
+            { sequence: 2, status: "completed" },
+            { sequence: 3, status: "completed" },
+          ]);
+        } finally {
+          runtimeDatabase.close();
+        }
         assert.strictEqual(worktreeCalls.count, 0);
         assert.strictEqual(
           implementationCounters.implementationAcquisitions,
@@ -4010,6 +4059,10 @@ describe("issue #244 opt-in production ACP composition", () => {
 
         yield* Effect.scoped(
           Effect.gen(function* () {
+            const rootRuntime = yield* makeNodeRootDurableRuntime({
+              databasePath: firstPaths.runtimeDatabase,
+              rootIdentity: root,
+            });
             const first = yield* makeProductionHarness({
               environment: scriptedEnvironment(firstProcess),
               health: [],
@@ -4017,6 +4070,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages: firstMessages,
               paths: firstPaths,
               root,
+              rootRuntime,
               workspaceId: "T244FIRST",
               worktreeCalls,
             });
@@ -4027,6 +4081,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages: secondMessages,
               paths: secondPaths,
               root,
+              rootRuntime,
               workspaceId: "T244SECOND",
               worktreeCalls,
             });

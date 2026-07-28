@@ -3,13 +3,28 @@ import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import {
+  ApplicationConversationMessageChunk,
+  ApplicationPublicReply,
+  type ApplicationShape,
+  ParticipantInputEvent,
+} from "../src/application.ts";
+import {
   defineAction,
   defineApplication,
 } from "../src/durable-runtime/action.ts";
+import { applicationThroughRootConversationRuntime } from "../src/durable-runtime/conversation-application.ts";
 import {
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,
+  RUNTIME_PAYLOAD_MAX_BYTES,
 } from "../src/durable-runtime/root-runtime.ts";
+import { runConversationRpcLocally } from "../src/durable-runtime/rpc.ts";
+import {
+  MessageId,
+  NormalizedMessage,
+  ThreadId,
+  TurnId,
+} from "../src/prototype/domain.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const waitForTerminal = Effect.fn("waitForTerminal")(function* (
@@ -36,6 +51,184 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
 });
 
 describe("root durable runtime", () => {
+  it.live(
+    "runs ordered ordinary Conversation turns through Cluster and resumes one session",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-durable-conversation-runtime-"
+          );
+          const application = defineApplication({ actions: [] });
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            "root-conversation-fixture"
+          );
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const handled: string[] = [];
+            yield* runtime.registerConversationHandler("T-CONVERSATION", {
+              handle: (event) =>
+                Effect.gen(function* () {
+                  handled.push(event.turnId);
+                  if (event.turnId === "turn-3") {
+                    return yield* Effect.fail({
+                      _tag: "ScriptedConversationFailure",
+                    } as const);
+                  }
+                  const text = event.messages[0]?.text ?? "missing";
+                  return [
+                    ApplicationConversationMessageChunk.make({
+                      messageId: `message:${event.turnId}`,
+                      text: `ACP ${text}`,
+                    }),
+                    ApplicationPublicReply.make({
+                      replyId: `reply:${event.turnId}`,
+                      text: `completed ${text}`,
+                    }),
+                  ];
+                }),
+            });
+            const conversationId = ThreadId.make(
+              "workspace:T-CONVERSATION:thread:C1:1.0"
+            );
+            const turn = (number: number, text: string) =>
+              ParticipantInputEvent.make({
+                attemptNumber: 1,
+                channelId: "C1",
+                context: [],
+                conversationId,
+                initializationStatus: "not_applicable",
+                messages: [
+                  NormalizedMessage.make({
+                    authorKind: "human",
+                    authorSlackId: "U1",
+                    classification: "input",
+                    id: MessageId.make(`message-${number}`),
+                    isActivation: number === 1,
+                    slackTs: `${number}.0`,
+                    text,
+                  }),
+                ],
+                rootTs: "1.0",
+                source: "slack",
+                turnId: TurnId.make(`turn-${number}`),
+                workingDirectory: null,
+              });
+            const request = (event: ParticipantInputEvent) => ({
+              event,
+              rootIdentity: "root-conversation-fixture",
+              workspaceId: "T-CONVERSATION",
+            });
+
+            const first = yield* runtime.runConversation(
+              request(turn(1, "hello"))
+            );
+            const replay = yield* runtime.runConversation(
+              request(turn(1, "hello"))
+            );
+            const second = yield* runtime.runConversation(
+              request(turn(2, "again"))
+            );
+            const incompatible = yield* Effect.flip(
+              runConversationRpcLocally(runtime, {
+                ...request(turn(3, "incompatible")),
+                protocolVersion: 2,
+              })
+            );
+
+            assert.deepStrictEqual(handled, ["turn-1", "turn-2"]);
+            assert.strictEqual(incompatible.reason, "invalid-payload");
+            assert.strictEqual(first.sequence, 1);
+            assert.strictEqual(replay.sequence, 1);
+            assert.strictEqual(second.sequence, 2);
+            assert.strictEqual(first.sessionId, second.sessionId);
+            assert.deepStrictEqual(
+              first.outputs.map((output) => output.text),
+              ["ACP hello", "completed hello"]
+            );
+            assert.deepStrictEqual(
+              second.outputs.map((output) => output.text),
+              ["ACP again", "completed again"]
+            );
+            yield* runtime.registerConversationHandler("T-OTHER", {
+              handle: (event) =>
+                Effect.succeed([
+                  ApplicationConversationMessageChunk.make({
+                    messageId: `other:${event.turnId}`,
+                    text: "other workspace",
+                  }),
+                ]),
+            });
+            const otherWorkspace = yield* runtime.runConversation({
+              ...request(turn(1, "same canonical thread")),
+              workspaceId: "T-OTHER",
+            });
+            assert.strictEqual(otherWorkspace.sequence, 1);
+            assert.notStrictEqual(otherWorkspace.sessionId, first.sessionId);
+            assert.deepStrictEqual(
+              otherWorkspace.outputs.map((output) => output.text),
+              ["other workspace"]
+            );
+            const failed = yield* Effect.flip(
+              runtime.runConversation(request(turn(3, "fail")))
+            );
+            const fourth = yield* runtime.runConversation(
+              request(turn(4, "after failure"))
+            );
+            assert.strictEqual(
+              failed.reason,
+              "conversation-handler-unavailable"
+            );
+            assert.strictEqual(fourth.sequence, 4);
+            assert.deepStrictEqual(handled, [
+              "turn-1",
+              "turn-2",
+              "turn-3",
+              "turn-4",
+            ]);
+
+            const accidentallyPublished: string[] = [];
+            const oversizedApplication: ApplicationShape = {
+              handle: (_event, publish) =>
+                publish(
+                  ApplicationConversationMessageChunk.make({
+                    messageId: "oversized-output",
+                    text: "x".repeat(RUNTIME_PAYLOAD_MAX_BYTES),
+                  })
+                ),
+            };
+            const boundedApplication =
+              yield* applicationThroughRootConversationRuntime({
+                application: oversizedApplication,
+                rootIdentity: "root-conversation-fixture",
+                runtime,
+                workspaceId: "T-BOUNDED",
+              });
+            const oversizedFailure = yield* Effect.flip(
+              boundedApplication.handle(
+                turn(5, "produce oversized output"),
+                (output) =>
+                  Effect.sync(() => {
+                    accidentallyPublished.push(output.text);
+                  }),
+                () => Effect.die("unexpected external event")
+              )
+            );
+            assert.strictEqual(
+              "safeDetail" in oversizedFailure
+                ? oversizedFailure.safeDetail
+                : undefined,
+              "durable Conversation output invalid"
+            );
+            assert.deepStrictEqual(accidentallyPublished, []);
+          }).pipe(Effect.provide(layer));
+        })
+      ),
+    20_000
+  );
+
   it.live(
     "runs arbitrary registered Actions through Cluster and a SQLite outbox",
     () =>

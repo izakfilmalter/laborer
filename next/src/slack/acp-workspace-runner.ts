@@ -37,6 +37,8 @@ import {
   type SlackParticipantLookupShape,
 } from "../acp-conversation-prototype/slack-participant-lookup.ts";
 import type { ApplicationShape } from "../application.ts";
+import { applicationThroughRootConversationRuntime } from "../durable-runtime/conversation-application.ts";
+import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
 import {
   makeSlackActivationAcknowledger,
@@ -119,6 +121,7 @@ export interface ProductionAcpWorkspaceApplicationOptions {
   readonly laborerSlackId: string;
   readonly paths: SlackRuntimePaths;
   readonly root: string;
+  readonly rootRuntime?: RootDurableRuntimeShape;
   readonly workspaceId: string;
 }
 
@@ -389,11 +392,20 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
           }),
       }
     );
+  const durableApplication =
+    options.rootRuntime === undefined
+      ? application
+      : yield* applicationThroughRootConversationRuntime({
+          application,
+          rootIdentity: options.root,
+          runtime: options.rootRuntime,
+          workspaceId: options.workspaceId,
+        });
   // `applicationConfig.implementation` is consumed only if the separate lazy
   // implementation runtime is acquired. The ACP Conversation child receives
   // no Laborer agent, model, or protocol override.
   return {
-    application,
+    application: durableApplication,
     health: supervisor.health.pipe(
       Effect.map((health) => {
         const status = processStatusForSupervisorHealth(health.health);
@@ -435,6 +447,9 @@ export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
       laborerSlackId: options.identity.botUserId,
       paths: options.paths,
       root: options.laborer.root,
+      ...(options.rootRuntime === undefined
+        ? {}
+        : { rootRuntime: options.rootRuntime }),
       workspaceId: options.identity.teamId,
     },
     dependencies

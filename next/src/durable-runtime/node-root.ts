@@ -1,0 +1,30 @@
+import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import { Effect, Layer } from "effect";
+import { defineApplication } from "./action.ts";
+import {
+  makeRootDurableRuntimeLayer,
+  RootDurableRuntime,
+  type RootDurableRuntimeShape,
+} from "./root-runtime.ts";
+
+const conversationOnlyApplication = defineApplication({ actions: [] });
+
+export const makeNodeRootDurableRuntime = Effect.fn(
+  "makeNodeRootDurableRuntime"
+)(function* (options: {
+  readonly databasePath: string;
+  readonly rootIdentity: string;
+}): Effect.fn.Return<
+  RootDurableRuntimeShape,
+  unknown,
+  import("effect").Scope.Scope
+> {
+  const context = yield* Layer.build(
+    makeRootDurableRuntimeLayer(
+      makeSqliteLayer({ filename: options.databasePath }),
+      conversationOnlyApplication.actions,
+      options.rootIdentity
+    )
+  );
+  return yield* RootDurableRuntime.pipe(Effect.provide(context));
+});

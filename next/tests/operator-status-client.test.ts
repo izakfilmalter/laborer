@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,6 +41,26 @@ const waitForState = (
         resolve(view);
       }
     });
+  });
+
+const startRecordServer = async (
+  socketPath: string,
+  record: string
+): Promise<Server> => {
+  const server = createServer((socket) => {
+    socket.once("data", () => socket.end(`${record}\n`));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  await chmod(socketPath, 0o600);
+  return server;
+};
+
+const closeServer = (server: Server): Promise<void> =>
+  new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 
 describe("operator status client", () => {
@@ -134,6 +154,7 @@ describe("operator status client", () => {
       server.once("error", reject);
       server.listen(paths.socket, resolve);
     });
+    await chmod(paths.socket, 0o600);
     try {
       const client = new OperatorStatusClient({ paths });
       clients.push(client);
@@ -142,9 +163,71 @@ describe("operator status client", () => {
         version: "1.0.0",
       });
     } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
+      await closeServer(server);
+    }
+  });
+
+  it.each([
+    {
+      expectedState: "incompatible" as const,
+      record: JSON.stringify({
+        daemon: { startedAtUnixMs: 1000, version: "2.0.0" },
+        kind: "snapshot",
+        observedAtUnixMs: 2000,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION + 1,
+        sequence: 1,
+      }),
+    },
+    { expectedState: "unavailable" as const, record: "not-json" },
+  ])("fails closed as $expectedState for an invalid daemon record", async ({
+    expectedState,
+    record,
+  }) => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-invalid-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await writeFile(paths.token, "a".repeat(64), { mode: 0o600 });
+    const server = await startRecordServer(paths.socket, record);
+    try {
+      const client = new OperatorStatusClient({
+        paths,
+        reconnectDelayMs: 60_000,
       });
+      clients.push(client);
+      client.start();
+      await waitForState(client, expectedState);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("never sends authentication material through an unsafe status directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-unsafe-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await writeFile(paths.token, "a".repeat(64), { mode: 0o600 });
+    let connections = 0;
+    const server = createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(paths.socket, resolve);
+    });
+    await chmod(paths.socket, 0o600);
+    await chmod(paths.directory, 0o755);
+    try {
+      const client = new OperatorStatusClient({
+        paths,
+        reconnectDelayMs: 60_000,
+      });
+      clients.push(client);
+      client.start();
+      await waitForState(client, "unavailable");
+      expect(connections).toBe(0);
+    } finally {
+      await closeServer(server);
     }
   });
 });

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import {
   decodeOperatorSnapshot,
@@ -33,6 +33,33 @@ const initialView: OperatorStatusView = {
   state: "connecting",
   uptimeSeconds: null,
   version: null,
+};
+
+const assertOwnerOnlyDirectory = async (path: string): Promise<void> => {
+  const metadata = await lstat(path);
+  const userId = typeof process.getuid === "function" ? process.getuid() : null;
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (userId !== null && metadata.uid !== userId) ||
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+    (metadata.mode & 0o077) !== 0
+  ) {
+    throw new Error("unsafe operator status directory");
+  }
+};
+
+const assertOwnerSocket = async (path: string): Promise<void> => {
+  const metadata = await lstat(path);
+  const userId = typeof process.getuid === "function" ? process.getuid() : null;
+  if (
+    !metadata.isSocket() ||
+    (userId !== null && metadata.uid !== userId) ||
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+    (metadata.mode & 0o077) !== 0
+  ) {
+    throw new Error("unsafe operator status socket");
+  }
 };
 
 const readOwnerToken = async (path: string): Promise<string> => {
@@ -176,7 +203,10 @@ export class OperatorStatusClient {
     }
     let token: string;
     try {
+      await assertOwnerOnlyDirectory(this.#paths.runtimeRoot);
+      await assertOwnerOnlyDirectory(this.#paths.directory);
       token = await readOwnerToken(this.#paths.token);
+      await assertOwnerSocket(this.#paths.socket);
     } catch {
       if (this.#closed || generation !== this.#connectGeneration) {
         return;

@@ -231,16 +231,25 @@ export class OperatorStatusClient {
     let settled = false;
     let source = Buffer.alloc(0);
     let lastSequence = 0;
+    let snapshotDeadline: ReturnType<typeof setTimeout> | null = null;
     const isCurrentConnection = (): boolean =>
       !this.#closed &&
       generation === this.#connectGeneration &&
       this.#socket === socket;
+    const clearSnapshotDeadline = (): void => {
+      if (snapshotDeadline !== null) {
+        clearTimeout(snapshotDeadline);
+        snapshotDeadline = null;
+      }
+    };
     const fail = (state: "incompatible" | "unavailable"): void => {
       if (settled || !isCurrentConnection()) {
+        clearSnapshotDeadline();
         socket.destroy();
         return;
       }
       settled = true;
+      clearSnapshotDeadline();
       socket.destroy();
       if (this.#socket === socket) {
         this.#socket = null;
@@ -257,8 +266,16 @@ export class OperatorStatusClient {
         this.#scheduleReconnect();
       }
     };
+    const renewSnapshotDeadline = (): void => {
+      clearSnapshotDeadline();
+      snapshotDeadline = setTimeout(
+        () => fail("unavailable"),
+        this.#snapshotTimeoutMs
+      );
+      snapshotDeadline.unref?.();
+    };
 
-    socket.setTimeout(3000, () => fail("unavailable"));
+    renewSnapshotDeadline();
     socket.once("connect", () => {
       socket.write(
         `${JSON.stringify({
@@ -294,9 +311,9 @@ export class OperatorStatusClient {
           }
           lastSequence = snapshot.sequence;
           settled = false;
-          // A connected socket is not sufficient evidence that the daemon is
-          // still live. Every bounded snapshot renews this heartbeat deadline.
-          socket.setTimeout(this.#snapshotTimeoutMs);
+          // Socket activity is not sufficient evidence that the daemon is
+          // still live. Only a complete validated snapshot renews the deadline.
+          renewSnapshotDeadline();
           this.#connectedOnce = true;
           this.#setView({
             state: "running",
@@ -328,6 +345,7 @@ export class OperatorStatusClient {
     });
     socket.once("error", () => fail("unavailable"));
     socket.once("close", () => {
+      clearSnapshotDeadline();
       if (this.#closed || this.#socket !== socket) {
         return;
       }

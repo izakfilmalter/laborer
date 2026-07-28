@@ -235,15 +235,22 @@ describe("operator status client", () => {
     }
   });
 
-  it("stops reporting running when a connected daemon stops publishing", async () => {
+  it("stops reporting running when activity contains no complete snapshot", async () => {
     const root = await mkdtemp(join(tmpdir(), "laborer-operator-stalled-"));
     const paths = operatorStatusPaths(root);
     await mkdir(paths.directory, { mode: 0o700 });
     await writeFile(paths.token, "a".repeat(64), { mode: 0o600 });
     const connections = new Set<Socket>();
+    const activity = new Set<ReturnType<typeof setInterval>>();
     const server = createServer((socket) => {
       connections.add(socket);
-      socket.once("close", () => connections.delete(socket));
+      socket.once("close", () => {
+        connections.delete(socket);
+        for (const interval of activity) {
+          clearInterval(interval);
+        }
+        activity.clear();
+      });
       socket.once("data", () => {
         socket.write(
           `${JSON.stringify({
@@ -254,6 +261,7 @@ describe("operator status client", () => {
             sequence: 1,
           })}\n`
         );
+        activity.add(setInterval(() => socket.write(" "), 10));
       });
     });
     await new Promise<void>((resolve, reject) => {
@@ -273,6 +281,9 @@ describe("operator status client", () => {
       await waitForState(client, "running");
       await waitForState(client, "reconnecting");
     } finally {
+      for (const interval of activity) {
+        clearInterval(interval);
+      }
       for (const connection of connections) {
         connection.destroy();
       }

@@ -271,7 +271,13 @@ const stableMcpServers = (value: unknown) =>
     })
   );
 
-describe("issue #241 durable ACP session bindings", () => {
+// Every test provisions its own temp root, controls directory, and child
+// process chain, so tests are isolated and spend most wall-clock time
+// waiting on serialized child boots. Running them concurrently overlaps
+// those waits. The suite timeout replaces the 5s default, which a ~1s
+// stack boot can exceed under concurrent scheduling; explicit per-test
+// timeouts still take precedence.
+describe.concurrent("issue #241 durable ACP session bindings", () => {
   it.live(
     "blocks adoption when its persisted session is unavailable without creating a replacement",
     () =>
@@ -2107,84 +2113,91 @@ describe("issue #241 durable ACP session bindings", () => {
     30_000
   );
 
-  for (const stopReason of ["end_turn", "max_tokens", "refusal"] as const) {
-    it.live(
-      `records a pinned OpenCode textless ${stopReason} response without opening publication`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const root = yield* makeTempDirectoryScoped(
-              `laborer-241-opencode-textless-${stopReason}-`
-            );
-            const controls = yield* makeTempDirectoryScoped(
-              `laborer-241-opencode-textless-${stopReason}-controls-`
-            );
-            yield* Effect.promise(() =>
-              writeFile(join(controls, "release"), "ok")
-            );
-            const repository = yield* makeFileApplicationRepository(
-              join(controls, "application.json"),
-              controls
-            );
-            const published: ApplicationPublicOutput[] = [];
-            const stack = yield* makeStack({
-              controls,
-              environment: {
-                SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-                SCRIPTED_ACP_AGENT_VERSION: "1.18.4",
-                SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
-                SCRIPTED_ACP_TEXTLESS_STOP_REASON: stopReason,
-              },
-              repository,
-              root,
-              testHooks: { treatCommandAsOpenCode: true },
-              visibleNames: {},
-              workspaceId: `T241TEXTLESS${stopReason}`,
-            });
-            const startedAt = Date.now();
-            const result = yield* Effect.result(
-              runTurn({
-                application: stack.application,
-                event: participantEvent({
-                  conversationId: `C241:textless:${stopReason}`,
-                  participantIds: [],
-                  turn: 1,
-                }),
-                published,
-              })
-            );
-            assert.strictEqual(
-              result._tag,
-              stopReason === "end_turn" ? "Success" : "Failure"
-            );
-            assert.ok(Date.now() - startedAt < TEXTLESS_FAST_PATH_MAX_MILLIS);
-            assert.strictEqual(
-              published.some((output) => "text" in output),
-              false
-            );
-            const settled = yield* repository.load;
-            assert.strictEqual(
-              settled.conversations[0]?.prompts[0]?.status,
-              stopReason === "end_turn" ? "completed" : "running"
-            );
-            assert.strictEqual(
-              settled.conversations[0]?.agentSessionBinding
-                ?.initializationPhase,
-              "initialized"
-            );
-            assert.strictEqual(
-              settled.conversations[0]?.agentSessionBinding?.ambiguousPromptId,
-              null
-            );
-            assert.strictEqual(
-              settled.conversations[0]?.prompts[0]?.attempts[0]?.outcome,
-              stopReason
-            );
-          })
-        ),
-      30_000
-    );
-  }
+  // These scenes assert a wall-clock fast-path bound that discriminates
+  // against the 5s prompt-epoch marker timeout. Concurrent scheduling would
+  // make that measurement reflect worker load instead of the fast path, so
+  // they opt back out of suite-level concurrency.
+  describe.sequential("pinned OpenCode textless fast path", () => {
+    for (const stopReason of ["end_turn", "max_tokens", "refusal"] as const) {
+      it.live(
+        `records a pinned OpenCode textless ${stopReason} response without opening publication`,
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const root = yield* makeTempDirectoryScoped(
+                `laborer-241-opencode-textless-${stopReason}-`
+              );
+              const controls = yield* makeTempDirectoryScoped(
+                `laborer-241-opencode-textless-${stopReason}-controls-`
+              );
+              yield* Effect.promise(() =>
+                writeFile(join(controls, "release"), "ok")
+              );
+              const repository = yield* makeFileApplicationRepository(
+                join(controls, "application.json"),
+                controls
+              );
+              const published: ApplicationPublicOutput[] = [];
+              const stack = yield* makeStack({
+                controls,
+                environment: {
+                  SCRIPTED_ACP_AGENT_NAME: "OpenCode",
+                  SCRIPTED_ACP_AGENT_VERSION: "1.18.4",
+                  SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
+                  SCRIPTED_ACP_TEXTLESS_STOP_REASON: stopReason,
+                },
+                repository,
+                root,
+                testHooks: { treatCommandAsOpenCode: true },
+                visibleNames: {},
+                workspaceId: `T241TEXTLESS${stopReason}`,
+              });
+              const startedAt = Date.now();
+              const result = yield* Effect.result(
+                runTurn({
+                  application: stack.application,
+                  event: participantEvent({
+                    conversationId: `C241:textless:${stopReason}`,
+                    participantIds: [],
+                    turn: 1,
+                  }),
+                  published,
+                })
+              );
+              assert.strictEqual(
+                result._tag,
+                stopReason === "end_turn" ? "Success" : "Failure"
+              );
+              assert.ok(Date.now() - startedAt < TEXTLESS_FAST_PATH_MAX_MILLIS);
+              assert.strictEqual(
+                published.some((output) => "text" in output),
+                false
+              );
+              const settled = yield* repository.load;
+              assert.strictEqual(
+                settled.conversations[0]?.prompts[0]?.status,
+                stopReason === "end_turn" ? "completed" : "running"
+              );
+              assert.strictEqual(
+                settled.conversations[0]?.agentSessionBinding
+                  ?.initializationPhase,
+                "initialized"
+              );
+              assert.strictEqual(
+                settled.conversations[0]?.agentSessionBinding
+                  ?.ambiguousPromptId,
+                null
+              );
+              assert.strictEqual(
+                settled.conversations[0]?.prompts[0]?.attempts[0]?.outcome,
+                stopReason
+              );
+            })
+          ),
+        30_000
+      );
+    }
+  });
 
   it.live(
     "fails closed on textless max_turn_requests because pinned OpenCode does not emit it",
@@ -3689,4 +3702,4 @@ describe("issue #241 durable ACP session bindings", () => {
       30_000
     );
   }
-});
+}, 30_000);

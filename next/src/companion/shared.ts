@@ -2,6 +2,7 @@ import type { OperatorStatusView } from "../operator-status/client.ts";
 
 export const COMPANION_STATUS_CHANNEL = "companion:status";
 export const COMPANION_RECONNECT_CHANNEL = "companion:reconnect";
+export const COMPANION_QUIT_CHANNEL = "companion:quit";
 
 const exactKeys = (value: object, expected: readonly string[]): boolean => {
   const keys = Object.keys(value).sort();
@@ -42,6 +43,7 @@ export const isOperatorStatusView = (
 };
 
 export interface LaborerCompanionBridge {
+  readonly quit: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
   readonly subscribeStatus: (
     listener: (view: OperatorStatusView) => void

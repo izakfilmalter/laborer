@@ -10,6 +10,7 @@ describe("companion status popover", () => {
   it("presents live daemon identity and uptime with an accessible hierarchy", () => {
     render(
       <StatusPopover
+        quit={() => undefined}
         reconnect={() => undefined}
         status={{ state: "running", uptimeSeconds: 3723, version: "0.1.0" }}
       />
@@ -28,6 +29,7 @@ describe("companion status popover", () => {
     const reconnect = vi.fn();
     const { rerender } = render(
       <StatusPopover
+        quit={() => undefined}
         reconnect={reconnect}
         status={{ state: "unavailable", uptimeSeconds: null, version: null }}
       />
@@ -39,6 +41,7 @@ describe("companion status popover", () => {
 
     rerender(
       <StatusPopover
+        quit={() => undefined}
         reconnect={reconnect}
         status={{ state: "incompatible", uptimeSeconds: null, version: null }}
       />
@@ -50,13 +53,15 @@ describe("companion status popover", () => {
   it("makes reconnecting transitions clear without exposing diagnostics", () => {
     render(
       <StatusPopover
+        quit={() => undefined}
         reconnect={() => undefined}
         status={{ state: "reconnecting", uptimeSeconds: null, version: null }}
       />
     );
 
     expect(screen.getByText("Reconnecting…")).toBeTruthy();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     expect(screen.getByRole("status").textContent).toContain(
       "retrying automatically"
     );
@@ -66,6 +71,7 @@ describe("companion status popover", () => {
   it("labels the status section and announces title changes in one live region", () => {
     const { rerender } = render(
       <StatusPopover
+        quit={() => undefined}
         reconnect={() => undefined}
         status={{ state: "connecting", uptimeSeconds: null, version: null }}
       />
@@ -78,6 +84,7 @@ describe("companion status popover", () => {
 
     rerender(
       <StatusPopover
+        quit={() => undefined}
         reconnect={() => undefined}
         status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
       />
@@ -89,6 +96,7 @@ describe("companion status popover", () => {
   it("keeps version and uptime detail out of non-running states", () => {
     render(
       <StatusPopover
+        quit={() => undefined}
         reconnect={() => undefined}
         status={{ state: "unavailable", uptimeSeconds: null, version: null }}
       />
@@ -96,5 +104,28 @@ describe("companion status popover", () => {
 
     expect(screen.queryByText("Version")).toBeNull();
     expect(screen.queryByText("Uptime")).toBeNull();
+  });
+
+  it("keeps quitting the companion discoverable in every state", () => {
+    const quit = vi.fn();
+    const { rerender } = render(
+      <StatusPopover
+        quit={quit}
+        reconnect={() => undefined}
+        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quit" }));
+    expect(quit).toHaveBeenCalledOnce();
+
+    rerender(
+      <StatusPopover
+        quit={quit}
+        reconnect={() => undefined}
+        status={{ state: "reconnecting", uptimeSeconds: null, version: null }}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Quit" })).toBeTruthy();
   });
 });

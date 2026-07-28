@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
+  COMPANION_QUIT_CHANNEL,
   COMPANION_RECONNECT_CHANNEL,
   COMPANION_STATUS_CHANNEL,
   isOperatorStatusView,
@@ -7,6 +8,9 @@ import {
 } from "./shared.ts";
 
 const bridge: LaborerCompanionBridge = {
+  quit: async () => {
+    await ipcRenderer.invoke(COMPANION_QUIT_CHANNEL);
+  },
   reconnect: async () => {
     await ipcRenderer.invoke(COMPANION_RECONNECT_CHANNEL);
   },

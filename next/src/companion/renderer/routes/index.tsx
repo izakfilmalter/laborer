@@ -6,6 +6,7 @@ const StatusRoute = () => {
   const status = useOperatorStatus();
   return (
     <StatusPopover
+      quit={() => window.laborerCompanion.quit().catch(() => undefined)}
       reconnect={() =>
         window.laborerCompanion.reconnect().catch(() => undefined)
       }

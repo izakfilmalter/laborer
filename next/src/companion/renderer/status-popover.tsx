@@ -106,9 +106,11 @@ const dotTone: Record<StatusTone, string> = {
 };
 
 export const StatusPopover = ({
+  quit,
   reconnect,
   status,
 }: {
+  readonly quit: () => void;
   readonly reconnect: () => void;
   readonly status: OperatorStatusView;
 }) => {
@@ -170,7 +172,10 @@ export const StatusPopover = ({
               <dt className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Version
               </dt>
-              <dd className="mt-1 select-text truncate font-mono text-sm">
+              <dd
+                className="mt-1 select-text truncate font-mono text-sm"
+                title={status.version}
+              >
                 {status.version}
               </dd>
             </div>
@@ -199,12 +204,17 @@ export const StatusPopover = ({
             </Button>
           </div>
         ) : null}
+      </section>
 
-        <p className="mt-auto pt-6 text-center text-[11px] text-muted-foreground leading-4">
+      <footer className="flex items-center justify-between gap-3 border-border border-t px-5 py-3">
+        <p className="min-w-0 text-[11px] text-muted-foreground leading-4">
           This companion only observes Laborer. Quitting it never stops daemon
           work.
         </p>
-      </section>
+        <Button className="shrink-0" onClick={quit} variant="outline">
+          Quit
+        </Button>
+      </footer>
     </main>
   );
 };

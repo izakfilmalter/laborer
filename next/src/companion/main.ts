@@ -15,6 +15,7 @@ import {
 } from "../operator-status/client.ts";
 import { operatorStatusPaths } from "../operator-status/server.ts";
 import {
+  COMPANION_QUIT_CHANNEL,
   COMPANION_RECONNECT_CHANNEL,
   COMPANION_STATUS_CHANNEL,
 } from "./shared.ts";
@@ -193,6 +194,7 @@ if (app.requestSingleInstanceLock()) {
       ipcMain.handle(COMPANION_RECONNECT_CHANNEL, () =>
         statusClient.reconnect()
       );
+      ipcMain.handle(COMPANION_QUIT_CHANNEL, () => app.quit());
       statusClient.subscribe((status) => {
         if (status.state !== latestStatus.state && tray !== null) {
           tray.setImage(trayPresentation[status.state].icon);

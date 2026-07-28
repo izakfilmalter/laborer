@@ -16,9 +16,13 @@ import {
   classifyBranchRecovery,
 } from "./agent-completion/index.ts";
 import {
+  attemptHostStep,
   canReuseCompletedHead,
+  hostCheckoutProblem,
   mergePullRequestArgs,
+  refreshDetachedBase,
   reviewedHeadNeedsPush,
+  runnerBaseReuseProblem,
   shellQuote,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
@@ -132,6 +136,7 @@ const SANDBOX_IMAGE_NAME =
 const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
 const REPO_ROOT = "..";
+const RUNNER_BASE_WORKTREE = resolve(REPO_ROOT, ".sandcastle/base");
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
 const HOST_OPENCODE_AUTH = resolve(
   homedir(),
@@ -189,14 +194,15 @@ const issueGraphSource = new GitHubCliIssueGraphSource(
   BASE_BRANCH
 );
 
-assertHostReady();
+const hostReady = prepareHost();
 
-for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
   console.log(
     `\n=== Sandcastle iteration ${iteration}/${MAX_ITERATIONS} ===\n`
   );
-  refreshBaseBranch();
-  syncPlannerBranchToBase();
+  if (!prepareIteration(iteration)) {
+    break;
+  }
   const readyIssueNumbers =
     issueGraphSource.listOpenIssueNumbers("ready-for-agent");
   const schedule = scheduleIssueGraph(issueGraphSource, readyIssueNumbers);
@@ -349,7 +355,7 @@ async function classifyRunnableIssues(
     name: "planner",
     output: Output.object({ tag: "plan", schema: planSchema }),
     promptArgs: { CANDIDATES_JSON: JSON.stringify(candidates, null, 2) },
-    promptFile: ".sandcastle/plan-prompt.md",
+    promptFile: runnerPromptFile("plan-prompt.md"),
     sandbox: sandboxProvider(),
     signal: agentRunSignal(),
   });
@@ -765,7 +771,7 @@ async function buildIssue(issue: PlannedIssue) {
       maxIterations: 3,
       name: `all-around-builder-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
-      promptFile: ".sandcastle/implement-prompt.md",
+      promptFile: runnerPromptFile("implement-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(implementation, `implementation for #${issue.id}`);
@@ -1002,22 +1008,25 @@ function prepareLocalIssueBranch(branch: string) {
     "origin",
     branch,
   ]);
-  if (!remote.trim()) {
-    return;
+  if (remote.trim()) {
+    runFile("git", [
+      "fetch",
+      "--no-tags",
+      "origin",
+      `refs/heads/${branch}:refs/remotes/origin/${branch}`,
+    ]);
   }
-  runFile("git", [
-    "fetch",
-    "--no-tags",
-    "origin",
-    `refs/heads/${branch}:refs/remotes/origin/${branch}`,
-  ]);
   const local = tryFile("git", [
     "show-ref",
     "--verify",
     `refs/heads/${branch}`,
   ]);
   if (!local.trim()) {
-    runFile("git", ["branch", branch, `origin/${branch}`]);
+    runFile("git", [
+      "branch",
+      branch,
+      remote.trim() ? `origin/${branch}` : runnerBaseHead(),
+    ]);
   }
 }
 
@@ -1056,7 +1065,7 @@ async function runUiImplementation(issue: PlannedIssue, sandbox: Sandbox) {
     maxIterations: 2,
     name: `ui-builder-${issue.id}`,
     promptArgs: issuePromptArgs(issue),
-    promptFile: ".sandcastle/ui-prompt.md",
+    promptFile: runnerPromptFile("ui-prompt.md"),
     signal: agentRunSignal(),
   });
   assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
@@ -1119,7 +1128,7 @@ async function runModifyingReview(
       maxIterations: 1,
       name: `pre-publish-ui-review-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
-      promptFile: ".sandcastle/ui-review-prompt.md",
+      promptFile: runnerPromptFile("ui-review-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(uiReview, `UI review for #${issue.id}`);
@@ -1139,7 +1148,7 @@ async function runModifyingReview(
     maxIterations: 1,
     name: `pre-publish-code-review-${issue.id}`,
     promptArgs: issuePromptArgs(issue),
-    promptFile: ".sandcastle/review-prompt.md",
+    promptFile: runnerPromptFile("review-prompt.md"),
     signal: agentRunSignal(),
   });
   assertAgentCompleted(review, `code review for #${issue.id}`);
@@ -1315,7 +1324,7 @@ async function repairConflict(
         BASE_BRANCH,
         PR_URL: prUrl,
       },
-      promptFile: ".sandcastle/pr-conflict-repair-prompt.md",
+      promptFile: runnerPromptFile("pr-conflict-repair-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(repair, `conflict repair for #${issue.id}`);
@@ -1488,14 +1497,8 @@ function issuePromptArgs(issue: PlannedIssue) {
 }
 
 function assertHostReady() {
-  if (currentBranch() !== BASE_BRANCH) {
-    throw new Error(
-      `Run Sandcastle from ${BASE_BRANCH}; current branch is ${currentBranch()}.`
-    );
-  }
-  if (runFile("git", ["status", "--porcelain"]).trim()) {
-    throw new Error("Commit or stash host changes before running Sandcastle.");
-  }
+  assertHostCheckoutReady();
+  prepareRunnerBaseWorktree();
   runFile("docker", ["image", "inspect", SANDBOX_IMAGE_NAME]);
   runFile("gh", ["auth", "status"]);
   requiredEnv("SANDCASTLE_AGENT_GH_TOKEN");
@@ -1504,20 +1507,126 @@ function assertHostReady() {
   assertFileExists(HOST_OPENCODE_ACCOUNT);
 }
 
+function assertHostCheckoutReady() {
+  const problem = hostCheckoutProblem(
+    BASE_BRANCH,
+    currentBranch(),
+    runFile("git", ["status", "--porcelain"])
+  );
+  if (problem !== undefined) {
+    throw new Error(problem);
+  }
+}
+
+function prepareHost() {
+  return runExpectedHostStep("during startup", assertHostReady);
+}
+
+function prepareIteration(iteration: number) {
+  return runExpectedHostStep(`before iteration ${iteration}`, () => {
+    refreshBaseBranch();
+    syncPlannerBranchToBase();
+  });
+}
+
+function runExpectedHostStep(context: string, operation: () => void) {
+  const result = attemptHostStep(operation);
+  if (result.ok) {
+    return true;
+  }
+  process.exitCode = 1;
+  console.error(`Sandcastle stopped safely ${context}: ${result.message}`);
+  return false;
+}
+
 function refreshBaseBranch() {
-  runFile("git", ["fetch", "origin", BASE_BRANCH]);
-  runFile("git", ["pull", "--ff-only", "origin", BASE_BRANCH]);
+  assertWorktreeClean(RUNNER_BASE_WORKTREE, "before base refresh");
+  refreshDetachedBase(BASE_BRANCH, (args) => {
+    runFile("git", ["-C", RUNNER_BASE_WORKTREE, ...args]);
+  });
+}
+
+function prepareRunnerBaseWorktree() {
+  if (existsSync(RUNNER_BASE_WORKTREE)) {
+    const worktreeRoot = runFile("git", [
+      "-C",
+      RUNNER_BASE_WORKTREE,
+      "rev-parse",
+      "--show-toplevel",
+    ]).trim();
+    if (resolve(worktreeRoot) !== RUNNER_BASE_WORKTREE) {
+      throw new Error(
+        `Runner base path is not its own Git worktree: ${RUNNER_BASE_WORKTREE}`
+      );
+    }
+    const runnerHead = worktreeHead(RUNNER_BASE_WORKTREE);
+    const localBaseHead = localBranchHead(BASE_BRANCH);
+    const reuseProblem = runnerBaseReuseProblem(
+      gitCommonDirectory(),
+      gitCommonDirectory(RUNNER_BASE_WORKTREE),
+      tryFile("git", [
+        "-C",
+        RUNNER_BASE_WORKTREE,
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "HEAD",
+      ]).trim(),
+      commitIsAncestor(RUNNER_BASE_WORKTREE, runnerHead, localBaseHead) ||
+        commitIsAncestor(RUNNER_BASE_WORKTREE, localBaseHead, runnerHead)
+    );
+    if (reuseProblem !== undefined) {
+      throw new Error(reuseProblem);
+    }
+    assertWorktreeClean(RUNNER_BASE_WORKTREE, "before runner startup");
+    runFile("git", [
+      "-C",
+      RUNNER_BASE_WORKTREE,
+      "merge",
+      "--ff-only",
+      localBaseHead,
+    ]);
+    return;
+  }
+  mkdirSync(resolve(REPO_ROOT, ".sandcastle"), { recursive: true });
+  runFile("git", [
+    "worktree",
+    "add",
+    "--detach",
+    RUNNER_BASE_WORKTREE,
+    BASE_BRANCH,
+  ]);
+}
+
+function runnerBaseHead() {
+  return worktreeHead(RUNNER_BASE_WORKTREE);
+}
+
+function runnerPromptFile(name: string) {
+  return resolve(RUNNER_BASE_WORKTREE, "next/.sandcastle", name);
+}
+
+function gitCommonDirectory(worktreePath?: string) {
+  return resolve(
+    runFile("git", [
+      ...(worktreePath === undefined ? [] : ["-C", worktreePath]),
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]).trim()
+  );
 }
 
 function syncPlannerBranchToBase() {
   const branch = "sandcastle/planner";
+  const baseHead = runnerBaseHead();
   const worktreePath = resolve(
     REPO_ROOT,
     ".sandcastle/worktrees/sandcastle-planner"
   );
   if (existsSync(worktreePath)) {
     assertWorktreeClean(worktreePath, "before planner synchronization");
-    runFile("git", ["-C", worktreePath, "merge", "--ff-only", BASE_BRANCH]);
+    runFile("git", ["-C", worktreePath, "merge", "--ff-only", baseHead]);
     return;
   }
 
@@ -1527,10 +1636,11 @@ function syncPlannerBranchToBase() {
     `refs/heads/${branch}`,
   ]);
   if (!local.trim()) {
+    runFile("git", ["branch", branch, baseHead]);
     return;
   }
-  runFile("git", ["merge-base", "--is-ancestor", branch, BASE_BRANCH]);
-  runFile("git", ["branch", "-f", branch, BASE_BRANCH]);
+  runFile("git", ["merge-base", "--is-ancestor", branch, baseHead]);
+  runFile("git", ["branch", "-f", branch, baseHead]);
 }
 
 function assertWorktreeClean(worktreePath: string, context: string) {
@@ -1550,7 +1660,12 @@ function worktreeHead(worktreePath: string) {
 }
 
 function baseBranchHead(worktreePath: string) {
-  return runFile("git", ["-C", worktreePath, "rev-parse", BASE_BRANCH]).trim();
+  return runFile("git", [
+    "-C",
+    worktreePath,
+    "rev-parse",
+    runnerBaseHead(),
+  ]).trim();
 }
 
 function currentBranch() {

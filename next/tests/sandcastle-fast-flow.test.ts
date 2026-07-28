@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  attemptHostStep,
   canReuseCompletedHead,
+  hostCheckoutProblem,
   mergePullRequestArgs,
+  refreshDetachedBase,
   reviewedHeadNeedsPush,
+  runnerBaseReuseProblem,
   shellQuote,
 } from "../.sandcastle/fast-flow/index.ts";
 
@@ -35,6 +39,81 @@ describe("Sandcastle fast flow", () => {
     assert.isFalse(reviewedHeadNeedsPush("reviewed", "reviewed"));
   });
 
+  it("stops safely when another process changes the host checkout", () => {
+    assert.strictEqual(hostCheckoutProblem("master", "master", ""), undefined);
+    assert.strictEqual(
+      hostCheckoutProblem("master", "feature/speed-up", ""),
+      "Sandcastle must start from a clean master checkout, but the host is on feature/speed-up. Restore a clean master checkout before restarting Sandcastle; after startup, the runner uses its detached base worktree."
+    );
+    assert.strictEqual(
+      hostCheckoutProblem(
+        "master",
+        "feature/speed-up",
+        " M next/tests/example.test.ts"
+      ),
+      "Sandcastle must start from a clean master checkout, but the host is on feature/speed-up. The checkout also has uncommitted changes. Restore a clean master checkout before restarting Sandcastle; after startup, the runner uses its detached base worktree."
+    );
+    assert.strictEqual(
+      hostCheckoutProblem("master", "master", " M next/tests/example.test.ts"),
+      "Sandcastle must start from a clean master checkout. Commit or stash host changes before restarting Sandcastle."
+    );
+  });
+
+  it("rejects an attached, foreign, or divergent runner base", () => {
+    assert.strictEqual(
+      runnerBaseReuseProblem("/repo/.git", "/repo/.git", "", true),
+      undefined
+    );
+    assert.strictEqual(
+      runnerBaseReuseProblem("/repo/.git", "/other/.git", "", true),
+      "Runner base path belongs to a different Git repository."
+    );
+    assert.strictEqual(
+      runnerBaseReuseProblem(
+        "/repo/.git",
+        "/repo/.git",
+        "feature/unsafe",
+        true
+      ),
+      "Runner base worktree must remain detached, but it is attached to feature/unsafe."
+    );
+    assert.strictEqual(
+      runnerBaseReuseProblem("/repo/.git", "/repo/.git", "", false),
+      "Runner base HEAD has diverged from the configured local base branch."
+    );
+  });
+
+  it("refreshes a detached base without touching the shared checkout", () => {
+    const calls: string[][] = [];
+
+    refreshDetachedBase("master", (args) => {
+      calls.push(args);
+    });
+
+    assert.deepStrictEqual(calls, [
+      [
+        "fetch",
+        "--no-tags",
+        "origin",
+        "refs/heads/master:refs/remotes/origin/master",
+      ],
+      ["merge", "--ff-only", "origin/master"],
+    ]);
+  });
+
+  it("turns an expected host command failure into a reportable result", () => {
+    assert.deepStrictEqual(
+      attemptHostStep(() => {
+        throw new Error("Not possible to fast-forward");
+      }),
+      { message: "Not possible to fast-forward", ok: false }
+    );
+    assert.deepStrictEqual(
+      attemptHostStep(() => undefined),
+      { ok: true }
+    );
+  });
+
   it("delegates verification to the final code-review agent", () => {
     const main = readFileSync(".sandcastle/main.ts", "utf8");
     const reviewPrompt = readFileSync(".sandcastle/review-prompt.md", "utf8");
@@ -47,6 +126,15 @@ describe("Sandcastle fast flow", () => {
     assert.include(reviewPrompt, "bun run --cwd next check");
     assert.include(reviewPrompt, "runner will trust your verification");
     assert.include(reviewPrompt, "final checked HEAD");
+  });
+
+  it("isolates base refreshes and prompts from the shared checkout", () => {
+    const main = readFileSync(".sandcastle/main.ts", "utf8");
+
+    assert.include(main, "const RUNNER_BASE_WORKTREE");
+    assert.include(main, '["-C", RUNNER_BASE_WORKTREE, ...args]');
+    assert.include(main, "promptFile: runnerPromptFile(");
+    assert.include(main, "Sandcastle stopped safely ");
   });
 
   it("tells modifying agents that verification is agent-owned", () => {

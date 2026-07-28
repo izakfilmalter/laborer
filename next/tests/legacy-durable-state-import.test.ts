@@ -110,7 +110,7 @@ const writeLegacyFixture = async (runtimeRoot: string): Promise<void> => {
     join(workspaceRoot, "acp-authority.json"),
     JSON.stringify({
       records: [{ recordId: "permission-existing", state: "pending" }],
-      schemaVersion: 2,
+      schemaVersion: 1,
     }),
     { mode: 0o600 }
   );

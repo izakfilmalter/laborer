@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Dirent, Stats } from "node:fs";
+import { constants, type Dirent, type Stats } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import {
@@ -31,6 +31,17 @@ const sourceNames = [
   "acp-permission-ui-outbox.json",
 ] as const;
 type SourceName = (typeof sourceNames)[number];
+
+const compatibleSourceVersions: Readonly<
+  Record<SourceName, ReadonlySet<number>>
+> = {
+  "acp-action-capabilities.json": new Set([1]),
+  "acp-authority.json": new Set([1]),
+  "acp-permission-ui-outbox.json": new Set([2, 3]),
+  "acp-process-state.json": new Set([1]),
+  "application-state.json": new Set([16]),
+  "runner-state.json": new Set([1]),
+};
 
 interface LegacySource {
   readonly hash: string;
@@ -131,9 +142,10 @@ const validatePersistedPaths = (
 const validateSourceShape = (source: LegacySource): void => {
   const version = source.payload.schemaVersion;
   if (
-    !Number.isSafeInteger(version) ||
-    Number(version) < 1 ||
-    Number(version) > 16
+    !(
+      Number.isSafeInteger(version) &&
+      compatibleSourceVersions[source.name].has(Number(version))
+    )
   ) {
     throw importError("invalid-source");
   }
@@ -178,13 +190,14 @@ const validateSourceShape = (source: LegacySource): void => {
   }
 };
 
-const readSource = async (
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one auditable boundary owns path, file-identity, bounded-read, decode, and source-schema checks.
+async function readSource(
   runtimeRoot: string,
   workspaceId: string,
   path: string,
   name: SourceName,
   unnamespaced = false
-): Promise<LegacySource | null> => {
+): Promise<LegacySource | null> {
   const expected = unnamespaced
     ? resolve(runtimeRoot, name)
     : resolve(
@@ -217,7 +230,13 @@ const readSource = async (
       metadata.size > MAX_SOURCE_BYTES ? "source-limit" : "unsafe-path"
     );
   }
-  const file = await open(path, "r");
+  let file: Awaited<ReturnType<typeof open>>;
+  try {
+    // biome-ignore lint/suspicious/noBitwiseOperators: Node file flags are a bitmask; O_NOFOLLOW closes the lstat/open race.
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    throw importError("unsafe-path");
+  }
   try {
     const opened = await file.stat();
     if (
@@ -227,8 +246,37 @@ const readSource = async (
     ) {
       throw importError("unsafe-path");
     }
-    const bytes = await file.readFile();
-    const payloadJson = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const bytes = Buffer.alloc(metadata.size + 1);
+    let bytesRead = 0;
+    while (bytesRead < bytes.length) {
+      const read = await file.read(
+        bytes,
+        bytesRead,
+        bytes.length - bytesRead,
+        bytesRead
+      );
+      if (read.bytesRead === 0) {
+        break;
+      }
+      bytesRead += read.bytesRead;
+    }
+    const afterRead = await file.stat();
+    if (
+      bytesRead !== metadata.size ||
+      afterRead.dev !== metadata.dev ||
+      afterRead.ino !== metadata.ino ||
+      afterRead.size !== metadata.size
+    ) {
+      throw importError(
+        bytesRead > MAX_SOURCE_BYTES || afterRead.size > MAX_SOURCE_BYTES
+          ? "source-limit"
+          : "unsafe-path"
+      );
+    }
+    const sourceBytes = bytes.subarray(0, bytesRead);
+    const payloadJson = new TextDecoder("utf-8", { fatal: true }).decode(
+      sourceBytes
+    );
     const payload = JSON.parse(payloadJson) as unknown;
     if (!isRecord(payload)) {
       throw importError("invalid-source");
@@ -237,7 +285,7 @@ const readSource = async (
       hash: createHash("sha256")
         .update(name)
         .update("\0")
-        .update(bytes)
+        .update(sourceBytes)
         .digest("base64url"),
       name,
       payload,
@@ -254,7 +302,7 @@ const readSource = async (
   } finally {
     await file.close();
   }
-};
+}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: discovery keeps every bounded path and file identity check in one auditable boundary.
 async function discoverSources(
@@ -615,6 +663,10 @@ export const importExistingDurableState = Effect.fn(
         (SELECT COUNT(*) FROM laborer_conversation_events) +
         (SELECT COUNT(*) FROM laborer_executions) +
         (SELECT COUNT(*) FROM laborer_execution_events) +
+        (SELECT COUNT(*) FROM laborer_execution_controls) +
+        (SELECT COUNT(*) FROM laborer_execution_outbox) +
+        (SELECT COUNT(*) FROM laborer_runtime_metadata) +
+        (SELECT COUNT(*) FROM laborer_imported_sources) +
         (SELECT COUNT(*) FROM laborer_imported_durable_records) AS count
     `;
   if ((existing[0]?.count ?? 1) !== 0) {

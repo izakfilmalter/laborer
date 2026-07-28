@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import {
   ACTION_PROMPT_MAX_LENGTH,
   actionInputHash,
+  canonicalActionInput,
   createFeatureAction,
   dealWithBugAction,
   makeProductionActionCatalog,
@@ -150,6 +151,29 @@ describe("production Action catalog", () => {
       );
       assert.strictEqual(first, normalized);
       assert.notStrictEqual(first, trimmed);
+    })
+  );
+
+  it.effect("rejects ambiguous or collectively oversized canonical input", () =>
+    Effect.gen(function* () {
+      const normalizedKeyCollision = {
+        "e\u0301": 1,
+        é: 2,
+      };
+      assert.strictEqual(
+        (yield* Effect.result(canonicalActionInput(normalizedKeyCollision)))
+          ._tag,
+        "Failure"
+      );
+      assert.strictEqual(
+        (yield* Effect.result(
+          canonicalActionInput({
+            left: Array.from({ length: 128 }, (_, index) => index),
+            right: Array.from({ length: 128 }, (_, index) => index),
+          })
+        ))._tag,
+        "Failure"
+      );
     })
   );
 

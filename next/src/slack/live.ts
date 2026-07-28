@@ -79,10 +79,10 @@ const program = Effect.gen(function* () {
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
-      makeRootRuntime: ({ laborer, paths, workspaceId }) =>
+      makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>
         makeNodeRootDurableRuntime({
           databasePath: paths.runtimeDatabase,
-          legacyWorkspaceId: workspaceId,
+          ...(legacyWorkspaceId === undefined ? {} : { legacyWorkspaceId }),
           rootIdentity: laborer.root,
         }),
       makeRunner: makeAcpSlackWorkspaceRunner,

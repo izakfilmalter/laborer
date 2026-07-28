@@ -145,7 +145,7 @@ describe("root durable runtime", () => {
             const incompatible = yield* Effect.flip(
               runConversationRpcLocally(runtime, {
                 ...request(turn(3, "incompatible")),
-                protocolVersion: 3,
+                protocolVersion: 4,
               })
             );
 

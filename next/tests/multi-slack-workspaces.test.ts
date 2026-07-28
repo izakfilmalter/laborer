@@ -133,7 +133,10 @@ const noContextGateway: SlackGatewayShape = {
 
 const fakeRootRuntime = (): RootDurableRuntimeShape => ({
   acknowledgeEvent: () => Effect.void,
+  cancelExecution: () => Effect.die("unused fixture Execution cancellation"),
+  followUpExecution: () => Effect.die("unused fixture Execution follow-up"),
   getExecution: () => Effect.die("unused fixture Execution lookup"),
+  inspectExecution: () => Effect.die("unused fixture Execution inspection"),
   pendingEvents: () => Effect.succeed([]),
   registerConversationHandler: () =>
     Effect.acquireRelease(Effect.void, () => Effect.void),

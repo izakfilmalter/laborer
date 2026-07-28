@@ -52,7 +52,7 @@ export interface SlackWorkspaceStartupAdapter<Client, Gateway> {
     readonly namespaceWorkspace: boolean;
   }) => Gateway;
   readonly makeRootRuntime?: (
-    root: PreparedSlackWorkspaceRoot & { readonly workspaceId: string }
+    root: PreparedSlackWorkspaceRoot & { readonly legacyWorkspaceId?: string }
   ) => Effect.Effect<RootDurableRuntimeShape, unknown, Scope.Scope>;
   readonly makeRunner: (
     options: SlackWorkspaceRuntimeOptions<Client, Gateway>
@@ -158,7 +158,7 @@ interface RootLockDirectory {
 interface RootRuntimeDirectory {
   readonly acquire: (
     root: PreparedSlackWorkspaceRoot,
-    workspaceId: string
+    legacyWorkspaceId?: string
   ) => Effect.Effect<RootDurableRuntimeShape | null, unknown>;
 }
 
@@ -171,7 +171,7 @@ const makeRootRuntimeDirectory = Effect.fn("makeRootRuntimeDirectory")(
       ReadonlyMap<string, Deferred.Deferred<RootDurableRuntimeShape, unknown>>
     >(new Map());
     return {
-      acquire: (root, workspaceId) => {
+      acquire: (root, legacyWorkspaceId) => {
         const makeRootRuntime = adapter.makeRootRuntime;
         if (makeRootRuntime === undefined) {
           return Effect.succeed(null);
@@ -205,21 +205,30 @@ const makeRootRuntimeDirectory = Effect.fn("makeRootRuntimeDirectory")(
             }
           );
           if (isOwner) {
-            const runtimeScope = yield* Scope.make();
-            const exit = yield* Effect.exit(
-              makeRootRuntime({ ...root, workspaceId }).pipe(
-                Effect.provideService(Scope.Scope, runtimeScope)
-              )
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const runtimeScope = yield* Scope.make();
+                const exit = yield* Effect.exit(
+                  restore(
+                    makeRootRuntime({
+                      ...root,
+                      ...(legacyWorkspaceId === undefined
+                        ? {}
+                        : { legacyWorkspaceId }),
+                    }).pipe(Effect.provideService(Scope.Scope, runtimeScope))
+                  )
+                );
+                if (Exit.isFailure(exit)) {
+                  yield* Scope.close(runtimeScope, exit);
+                  yield* Deferred.failCause(runtime, exit.cause);
+                } else {
+                  yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
+                    Scope.close(runtimeScope, ownerExit)
+                  );
+                  yield* Deferred.succeed(runtime, exit.value);
+                }
+              })
             );
-            if (Exit.isFailure(exit)) {
-              yield* Scope.close(runtimeScope, exit);
-              yield* Deferred.failCause(runtime, exit.cause);
-            } else {
-              yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
-                Scope.close(runtimeScope, ownerExit)
-              );
-              yield* Deferred.succeed(runtime, exit.value);
-            }
           }
           return yield* Deferred.await(runtime);
         });
@@ -257,10 +266,16 @@ const makeRootLockDirectory = (
             }
           );
           if (isOwner) {
-            const exit = yield* Effect.exit(acquireRootLock(paths));
-            yield* Deferred.succeed(
-              lock,
-              exit._tag === "Success" && exit.value
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const exit = yield* Effect.exit(
+                  restore(acquireRootLock(paths))
+                );
+                yield* Deferred.succeed(
+                  lock,
+                  exit._tag === "Success" && exit.value
+                );
+              })
             );
           }
           return yield* Deferred.await(lock);
@@ -330,6 +345,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
   readonly prepared: PreparedRootResult;
   readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly rootLockAcquired?: boolean;
+  readonly legacyWorkspaceId?: string;
   readonly rootRuntimes: RootRuntimeDirectory;
   readonly routes: SlackWorkspaceRouteDirectory;
 }): Effect.Effect<void, never, Scope.Scope> =>
@@ -429,7 +445,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
       return;
     }
     const rootRuntime = yield* Effect.result(
-      options.rootRuntimes.acquire(prepared.success, identity.teamId)
+      options.rootRuntimes.acquire(prepared.success, options.legacyWorkspaceId)
     );
     if (rootRuntime._tag === "Failure") {
       yield* Effect.logError("Laborer root runtime failed to start", {
@@ -623,6 +639,7 @@ const startLegacyWorkspaceDirectory = <Client, Gateway>(options: {
       config: options.config,
       locks: options.locks,
       prepared: Result.succeed(prepared),
+      legacyWorkspaceId: authenticated[1].teamId,
       rootLockAcquired: true,
       rootRuntimes: options.rootRuntimes,
       routes: options.routes,

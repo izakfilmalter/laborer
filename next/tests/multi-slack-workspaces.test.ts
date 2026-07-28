@@ -1,8 +1,17 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { assert, describe, it } from "@effect/vitest";
-import { Deferred, Effect, Redacted } from "effect";
-import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
+import { Deferred, Effect, Layer, Redacted, Schema } from "effect";
+import {
+  defineAction,
+  defineApplication,
+} from "../src/durable-runtime/action.ts";
+import {
+  makeRootDurableRuntimeLayer,
+  RootDurableRuntime,
+  type RootDurableRuntimeShape,
+} from "../src/durable-runtime/root-runtime.ts";
 import {
   EventId,
   PublicReplyProtocolRecord,
@@ -179,6 +188,10 @@ const makeTestStartupAdapter = (options: {
   readonly runnerGates?: ReadonlyMap<string, Deferred.Deferred<void>>;
   readonly runners: Map<string, Runner>;
   readonly rootRuntimeCreations?: Map<string, number>;
+  readonly makeRootRuntime?: SlackWorkspaceStartupAdapter<
+    string,
+    TestWorkspaceGateway
+  >["makeRootRuntime"];
   readonly rootRuntimeObservations?: Map<string, RootDurableRuntimeShape>;
   readonly schedulingCounts?: Map<string, number>;
   readonly setupReplies: { readonly teamId: string; readonly text: string }[];
@@ -212,11 +225,12 @@ const makeTestStartupAdapter = (options: {
     };
   },
   ...(options.rootRuntimeCreations === undefined &&
-  options.rootRuntimeObservations === undefined
+  options.rootRuntimeObservations === undefined &&
+  options.makeRootRuntime === undefined
     ? {}
     : {
         makeRootRuntime: (root) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             const creations = options.rootRuntimeCreations;
             if (creations !== undefined) {
               creations.set(
@@ -224,7 +238,10 @@ const makeTestStartupAdapter = (options: {
                 (creations.get(root.paths.root) ?? 0) + 1
               );
             }
-            return fakeRootRuntime();
+            if (options.makeRootRuntime === undefined) {
+              return fakeRootRuntime();
+            }
+            return yield* options.makeRootRuntime(root);
           }),
       }),
   makeRunner: (runtime) =>
@@ -1276,6 +1293,431 @@ describe("multi-workspace Slack daemon", () => {
           assert.strictEqual(releasedLock._tag, "Success");
         })
       )
+  );
+
+  it.live(
+    "partitions real Cluster runtimes across canonical roots and workspace owners",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const anchor = yield* makeTempDirectoryScoped(
+            "laborer-cluster-root-partitions-"
+          );
+          const sharedRoot = join(anchor, "shared-root");
+          const distinctRoot = join(anchor, "distinct-root");
+          yield* createLaborerRoot(sharedRoot);
+          yield* createLaborerRoot(distinctRoot);
+          const thirdIdentity = SlackRuntimeIdentity.make({
+            botId: "BTHIRD",
+            botUserId: "UTHIRD",
+            teamId: "TTHIRD",
+          });
+          const firstToken = fixtureToken("cluster-first");
+          const secondToken = fixtureToken("cluster-second");
+          const thirdToken = fixtureToken("cluster-third");
+          const environment = {
+            LABORER_SLACK_WORKSPACES: JSON.stringify([
+              {
+                botTokenEnvironment: "SLACK_BOT_TOKEN_CLUSTER_FIRST",
+                root: sharedRoot,
+                teamId: firstIdentity.teamId,
+              },
+              {
+                botTokenEnvironment: "SLACK_BOT_TOKEN_CLUSTER_SECOND",
+                root: join(sharedRoot, "."),
+                teamId: secondIdentity.teamId,
+              },
+              {
+                botTokenEnvironment: "SLACK_BOT_TOKEN_CLUSTER_THIRD",
+                root: distinctRoot,
+                teamId: thirdIdentity.teamId,
+              },
+            ]),
+            SLACK_APP_TOKEN: ["x", "app", "-fixture"].join(""),
+            SLACK_BOT_TOKEN_CLUSTER_FIRST: firstToken,
+            SLACK_BOT_TOKEN_CLUSTER_SECOND: secondToken,
+            SLACK_BOT_TOKEN_CLUSTER_THIRD: thirdToken,
+          };
+          const config = yield* loadSlackDaemonConfig({
+            defaultRoot: "/unused",
+            environment,
+          });
+          const releaseShared = yield* Deferred.make<void>();
+          const releaseDistinct = yield* Deferred.make<void>();
+          const observedControls: string[] = [];
+          const sharedAction = defineAction({
+            annotations: { idempotentHint: true },
+            controls: {
+              cancel: (context) =>
+                Effect.sync(() => {
+                  observedControls.push(`cancel:${context.workspaceId}`);
+                }),
+              followUp: (content, context) =>
+                Effect.sync(() => {
+                  observedControls.push(
+                    `follow-up:${context.workspaceId}:${content}`
+                  );
+                }),
+            },
+            description: "Exercise a shared-root workspace partition",
+            input: Schema.Struct({ label: Schema.String }),
+            name: "fixture/shared-partition",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ label: Schema.String }),
+            revision: "v1",
+            run: (input, context) =>
+              context
+                .reportProgress("started", { label: input.label })
+                .pipe(
+                  Effect.andThen(Deferred.await(releaseShared)),
+                  Effect.as(input)
+                ),
+          });
+          const distinctAction = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Exercise an independent root partition",
+            input: Schema.Struct({ value: Schema.Number }),
+            name: "fixture/distinct-partition",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ value: Schema.Number }),
+            revision: "v1",
+            run: (input) =>
+              Deferred.await(releaseDistinct).pipe(Effect.as(input)),
+          });
+          const distinctFailure = defineAction({
+            description: "Fail without mutating another root",
+            input: Schema.Struct({ fail: Schema.Boolean }),
+            name: "fixture/distinct-failure",
+            result: Schema.Struct({ unreachable: Schema.Boolean }),
+            revision: "v1",
+            run: () => Effect.fail("private distinct-root failure"),
+          });
+          const sharedApplication = defineApplication({
+            actions: [sharedAction],
+          });
+          const distinctApplication = defineApplication({
+            actions: [distinctAction, distinctFailure],
+          });
+          const rootRuntimeCreations = new Map<string, number>();
+          const rootRuntimeFinalizations = new Map<string, number>();
+          const rootRuntimeObservations = new Map<
+            string,
+            RootDurableRuntimeShape
+          >();
+          const lockAcquisitions = new Map<string, number>();
+          const lockFinalizations = new Map<string, number>();
+          const databasePaths = new Map<string, string>();
+          const legacyWorkspaceIds = new Map<string, string | undefined>();
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const routeDirectory = yield* startSlackWorkspaceDirectory({
+                acquireRootLock: (paths) =>
+                  Effect.acquireRelease(
+                    Effect.sync(() => {
+                      lockAcquisitions.set(
+                        paths.root,
+                        (lockAcquisitions.get(paths.root) ?? 0) + 1
+                      );
+                      return true;
+                    }),
+                    () =>
+                      Effect.sync(() => {
+                        lockFinalizations.set(
+                          paths.root,
+                          (lockFinalizations.get(paths.root) ?? 0) + 1
+                        );
+                      })
+                  ),
+                adapter: makeTestStartupAdapter({
+                  gatewayTeams: [],
+                  handlerFor: () => ({ invoke: () => Effect.void }),
+                  identitiesByToken: new Map([
+                    [firstToken, firstIdentity],
+                    [secondToken, secondIdentity],
+                    [thirdToken, thirdIdentity],
+                  ]),
+                  makeRootRuntime: (root) => {
+                    const application =
+                      root.laborer.root === sharedRoot
+                        ? sharedApplication
+                        : distinctApplication;
+                    databasePaths.set(
+                      root.paths.root,
+                      root.paths.runtimeDatabase
+                    );
+                    legacyWorkspaceIds.set(
+                      root.paths.root,
+                      root.legacyWorkspaceId
+                    );
+                    return Effect.acquireRelease(
+                      Effect.gen(function* () {
+                        const context = yield* Layer.build(
+                          makeRootDurableRuntimeLayer(
+                            makeSqliteLayer({
+                              filename: root.paths.runtimeDatabase,
+                            }),
+                            application.actions,
+                            root.laborer.root
+                          )
+                        );
+                        return yield* RootDurableRuntime.pipe(
+                          Effect.provide(context)
+                        );
+                      }),
+                      () =>
+                        Effect.sync(() => {
+                          rootRuntimeFinalizations.set(
+                            root.paths.root,
+                            (rootRuntimeFinalizations.get(root.paths.root) ??
+                              0) + 1
+                          );
+                        })
+                    );
+                  },
+                  rootRuntimeCreations,
+                  rootRuntimeObservations,
+                  runners: new Map(),
+                  setupReplies: [],
+                  statePaths: new Map(),
+                  stores: new Map(),
+                }),
+                config,
+                environment,
+              });
+              yield* Effect.all([
+                routeDirectory.awaitReady(firstIdentity.teamId),
+                routeDirectory.awaitReady(secondIdentity.teamId),
+                routeDirectory.awaitReady(thirdIdentity.teamId),
+              ]);
+              const firstRuntime = rootRuntimeObservations.get(
+                firstIdentity.teamId
+              );
+              const secondRuntime = rootRuntimeObservations.get(
+                secondIdentity.teamId
+              );
+              const thirdRuntime = rootRuntimeObservations.get(
+                thirdIdentity.teamId
+              );
+              assert.ok(firstRuntime);
+              assert.ok(secondRuntime);
+              assert.ok(thirdRuntime);
+              assert.strictEqual(firstRuntime, secondRuntime);
+              assert.notStrictEqual(firstRuntime, thirdRuntime);
+
+              const sharedConversation = "conversation:same-local-id";
+              const sharedRequest = {
+                actionName: sharedAction.name,
+                conversationId: sharedConversation,
+                input: { label: "first" },
+                invocationId: "invocation:same-local-id",
+                rootIdentity: sharedRoot,
+                workspaceId: firstIdentity.teamId,
+              } as const;
+              const firstExecution =
+                yield* firstRuntime.startExecution(sharedRequest);
+              const secondExecution = yield* secondRuntime.startExecution({
+                ...sharedRequest,
+                input: { label: "second" },
+                workspaceId: secondIdentity.teamId,
+              });
+              const thirdExecution = yield* thirdRuntime.startExecution({
+                actionName: distinctAction.name,
+                conversationId: sharedConversation,
+                input: { value: 3 },
+                invocationId: "invocation:same-local-id",
+                rootIdentity: distinctRoot,
+                workspaceId: thirdIdentity.teamId,
+              });
+              const failedExecution = yield* thirdRuntime.startExecution({
+                actionName: distinctFailure.name,
+                conversationId: "conversation:distinct-failure",
+                input: { fail: true },
+                invocationId: "invocation:distinct-failure",
+                rootIdentity: distinctRoot,
+                workspaceId: thirdIdentity.teamId,
+              });
+              assert.notStrictEqual(
+                firstExecution.executionId,
+                secondExecution.executionId
+              );
+              const replayedFirst =
+                yield* firstRuntime.startExecution(sharedRequest);
+              assert.strictEqual(
+                replayedFirst.executionId,
+                firstExecution.executionId
+              );
+              for (const [runtime, execution, workspaceId] of [
+                [firstRuntime, firstExecution, firstIdentity.teamId],
+                [secondRuntime, secondExecution, secondIdentity.teamId],
+              ] as const) {
+                for (let attempt = 0; attempt < 500; attempt += 1) {
+                  const current = yield* runtime.getExecution(
+                    execution.executionId,
+                    sharedConversation,
+                    workspaceId
+                  );
+                  if (current.status === "running") {
+                    break;
+                  }
+                  yield* Effect.sleep("10 millis");
+                }
+              }
+              const foreignInspection = yield* Effect.flip(
+                secondRuntime.inspectExecution({
+                  controlId: "inspect:foreign",
+                  conversationId: sharedConversation,
+                  executionId: firstExecution.executionId,
+                  workspaceId: secondIdentity.teamId,
+                })
+              );
+              assert.strictEqual(
+                foreignInspection.reason,
+                "execution-not-found"
+              );
+              const firstInspection = yield* firstRuntime.inspectExecution({
+                controlId: "inspect:same-local-id",
+                conversationId: sharedConversation,
+                executionId: firstExecution.executionId,
+                workspaceId: firstIdentity.teamId,
+              });
+              const secondInspection = yield* secondRuntime.inspectExecution({
+                controlId: "inspect:same-local-id",
+                conversationId: sharedConversation,
+                executionId: secondExecution.executionId,
+                workspaceId: secondIdentity.teamId,
+              });
+              assert.strictEqual(firstInspection.deduplicated, false);
+              assert.strictEqual(secondInspection.deduplicated, false);
+              yield* firstRuntime.followUpExecution({
+                content: "keep the first workspace moving",
+                controlId: "follow-up:same-local-id",
+                conversationId: sharedConversation,
+                executionId: firstExecution.executionId,
+                workspaceId: firstIdentity.teamId,
+              });
+              yield* secondRuntime.cancelExecution({
+                controlId: "cancel:same-local-id",
+                conversationId: sharedConversation,
+                executionId: secondExecution.executionId,
+                workspaceId: secondIdentity.teamId,
+              });
+              const unavailableAcrossRoots = yield* Effect.flip(
+                thirdRuntime.startExecution({
+                  ...sharedRequest,
+                  rootIdentity: distinctRoot,
+                  workspaceId: thirdIdentity.teamId,
+                })
+              );
+              assert.strictEqual(
+                unavailableAcrossRoots.reason,
+                "unavailable-action"
+              );
+              yield* Deferred.succeed(releaseShared, undefined);
+              yield* Deferred.succeed(releaseDistinct, undefined);
+              for (const [
+                runtime,
+                execution,
+                conversationId,
+                workspaceId,
+                terminalStatus,
+              ] of [
+                [
+                  firstRuntime,
+                  firstExecution,
+                  sharedConversation,
+                  firstIdentity.teamId,
+                  "completed",
+                ],
+                [
+                  secondRuntime,
+                  secondExecution,
+                  sharedConversation,
+                  secondIdentity.teamId,
+                  "cancelled",
+                ],
+                [
+                  thirdRuntime,
+                  thirdExecution,
+                  sharedConversation,
+                  thirdIdentity.teamId,
+                  "completed",
+                ],
+                [
+                  thirdRuntime,
+                  failedExecution,
+                  "conversation:distinct-failure",
+                  thirdIdentity.teamId,
+                  "failed",
+                ],
+              ] as const) {
+                let status = "queued";
+                for (let attempt = 0; attempt < 500; attempt += 1) {
+                  status = (yield* runtime.getExecution(
+                    execution.executionId,
+                    conversationId,
+                    workspaceId
+                  )).status;
+                  if (status === terminalStatus) {
+                    break;
+                  }
+                  yield* Effect.sleep("10 millis");
+                }
+                assert.strictEqual(status, terminalStatus);
+              }
+              assert.deepStrictEqual(observedControls, [
+                `follow-up:${firstIdentity.teamId}:keep the first workspace moving`,
+                `cancel:${secondIdentity.teamId}`,
+              ]);
+              const firstEvents = yield* firstRuntime.pendingEvents(
+                sharedConversation,
+                firstIdentity.teamId
+              );
+              const secondEvents = yield* secondRuntime.pendingEvents(
+                sharedConversation,
+                secondIdentity.teamId
+              );
+              assert.ok(
+                firstEvents.every(
+                  (event) => event.executionId === firstExecution.executionId
+                )
+              );
+              assert.ok(
+                secondEvents.every(
+                  (event) => event.executionId === secondExecution.executionId
+                )
+              );
+            })
+          );
+
+          const sharedPaths = yield* prepareSlackRuntimePaths(sharedRoot);
+          const distinctPaths = yield* prepareSlackRuntimePaths(distinctRoot);
+          assert.strictEqual(rootRuntimeCreations.get(sharedPaths.root), 1);
+          assert.strictEqual(rootRuntimeCreations.get(distinctPaths.root), 1);
+          assert.strictEqual(lockAcquisitions.get(sharedPaths.root), 1);
+          assert.strictEqual(lockAcquisitions.get(distinctPaths.root), 1);
+          assert.strictEqual(lockFinalizations.get(sharedPaths.root), 1);
+          assert.strictEqual(lockFinalizations.get(distinctPaths.root), 1);
+          assert.strictEqual(rootRuntimeFinalizations.get(sharedPaths.root), 1);
+          assert.strictEqual(
+            rootRuntimeFinalizations.get(distinctPaths.root),
+            1
+          );
+          assert.strictEqual(
+            legacyWorkspaceIds.get(sharedPaths.root),
+            undefined
+          );
+          assert.strictEqual(
+            legacyWorkspaceIds.get(distinctPaths.root),
+            undefined
+          );
+          assert.notStrictEqual(
+            databasePaths.get(sharedPaths.root),
+            databasePaths.get(distinctPaths.root)
+          );
+        })
+      ),
+    30_000
   );
 
   it.live(

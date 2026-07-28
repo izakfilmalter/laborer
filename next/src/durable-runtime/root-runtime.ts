@@ -36,7 +36,7 @@ import {
 } from "./action.ts";
 import { importExistingDurableState } from "./legacy-import.ts";
 
-const RUNTIME_SCHEMA_VERSION = 4;
+const RUNTIME_SCHEMA_VERSION = 5;
 export const RUNTIME_MAX_CONCURRENT_EXECUTIONS = 8;
 export const RUNTIME_PAYLOAD_MAX_BYTES = 64 * 1024;
 const RUNTIME_EXECUTION_EVENT_PAYLOAD_MAX_BYTES = 48 * 1024;
@@ -281,6 +281,8 @@ export const RegisteredActionExecutionWorkflow = Workflow.make(
       createHash("sha256")
         .update("laborer-execution-v1\0", "utf8")
         .update(payload.rootIdentity, "utf8")
+        .update("\0", "utf8")
+        .update(payload.workspaceId, "utf8")
         .update("\0", "utf8")
         .update(payload.invocationId, "utf8")
         .digest("base64url"),
@@ -1265,7 +1267,7 @@ const initializeLaborerTables = Effect.gen(function* () {
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_executions (
           execution_id TEXT PRIMARY KEY,
-          invocation_id TEXT NOT NULL UNIQUE,
+          invocation_id TEXT NOT NULL,
           conversation_id TEXT NOT NULL,
           action_name TEXT NOT NULL,
           action_revision TEXT NOT NULL,
@@ -1276,7 +1278,8 @@ const initializeLaborerTables = Effect.gen(function* () {
           status TEXT NOT NULL,
           result_json TEXT,
           failure_category TEXT,
-          workspace_id TEXT NOT NULL
+          workspace_id TEXT NOT NULL,
+          UNIQUE (workspace_id, invocation_id)
         )
       `;
       yield* sql`
@@ -1293,7 +1296,7 @@ const initializeLaborerTables = Effect.gen(function* () {
       `;
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_execution_controls (
-          control_id TEXT PRIMARY KEY,
+          control_id TEXT NOT NULL,
           execution_id TEXT NOT NULL,
           conversation_id TEXT NOT NULL,
           workspace_id TEXT NOT NULL,
@@ -1302,6 +1305,7 @@ const initializeLaborerTables = Effect.gen(function* () {
           request_hash TEXT NOT NULL,
           result_json TEXT,
           status TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, control_id),
           UNIQUE (execution_id, sequence),
           FOREIGN KEY (execution_id) REFERENCES laborer_executions(execution_id)
         )
@@ -1346,6 +1350,70 @@ const initializeLaborerTables = Effect.gen(function* () {
             new Error("cannot infer workspace ownership for durable Execution")
           );
         }
+      }
+      if (Option.isSome(version) && version.value < 5) {
+        yield* sql`
+          CREATE TABLE laborer_executions_v5 (
+            execution_id TEXT PRIMARY KEY,
+            invocation_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            action_name TEXT NOT NULL,
+            action_revision TEXT NOT NULL,
+            action_fingerprint TEXT NOT NULL,
+            catalog_fingerprint TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            input_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            result_json TEXT,
+            failure_category TEXT,
+            workspace_id TEXT NOT NULL,
+            UNIQUE (workspace_id, invocation_id)
+          )
+        `;
+        yield* sql`
+          INSERT INTO laborer_executions_v5
+          SELECT execution_id, invocation_id, conversation_id, action_name,
+            action_revision, action_fingerprint, catalog_fingerprint,
+            input_hash, input_json, status, result_json, failure_category,
+            workspace_id
+          FROM laborer_executions
+        `;
+        yield* sql`
+          CREATE TABLE laborer_execution_controls_v5 (
+            control_id TEXT NOT NULL,
+            execution_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            result_json TEXT,
+            status TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, control_id),
+            UNIQUE (execution_id, sequence),
+            FOREIGN KEY (execution_id)
+              REFERENCES laborer_executions_v5(execution_id)
+          )
+        `;
+        yield* sql`
+          INSERT INTO laborer_execution_controls_v5
+          SELECT control_id, execution_id, conversation_id, workspace_id,
+            sequence, kind, request_hash, result_json, status
+          FROM laborer_execution_controls
+        `;
+        yield* sql`DROP TABLE laborer_execution_controls`;
+        yield* sql`DROP TABLE laborer_executions`;
+        yield* sql`
+          ALTER TABLE laborer_executions_v5 RENAME TO laborer_executions
+        `;
+        yield* sql`
+          ALTER TABLE laborer_execution_controls_v5
+          RENAME TO laborer_execution_controls
+        `;
+        yield* sql`
+          CREATE INDEX laborer_execution_controls_order
+          ON laborer_execution_controls (execution_id, sequence)
+        `;
       }
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_execution_outbox (
@@ -2114,13 +2182,13 @@ const makeRuntimeService = Effect.gen(function* () {
     readonly status: string;
     readonly workspaceId: string;
   }
-  const storedControl = (controlId: string) =>
+  const storedControl = (controlId: string, workspaceId: string) =>
     sql<StoredControlRow>`
       SELECT execution_id AS executionId, conversation_id AS conversationId,
         workspace_id AS workspaceId, kind, request_hash AS requestHash,
         result_json AS resultJson, status
       FROM laborer_execution_controls
-      WHERE control_id = ${controlId}
+      WHERE control_id = ${controlId} AND workspace_id = ${workspaceId}
     `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
   const decodeStoredControlReceipt = (encoded: string) =>
     decodeStoredJson(encoded).pipe(
@@ -2162,7 +2230,7 @@ const makeRuntimeService = Effect.gen(function* () {
               request.workspaceId
             );
             const existing = pipe(
-              yield* storedControl(request.controlId),
+              yield* storedControl(request.controlId, request.workspaceId),
               EffectArray.head
             );
             if (Option.isSome(existing)) {
@@ -2244,7 +2312,7 @@ const makeRuntimeService = Effect.gen(function* () {
               request.workspaceId
             );
             const existing = pipe(
-              yield* storedControl(request.controlId),
+              yield* storedControl(request.controlId, request.workspaceId),
               EffectArray.head
             );
             if (Option.isSome(existing)) {
@@ -2350,7 +2418,9 @@ const makeRuntimeService = Effect.gen(function* () {
                 Effect.gen(function* () {
                   yield* sql`
                     UPDATE laborer_execution_controls SET status = 'failed'
-                    WHERE control_id = ${request.controlId} AND status = 'accepted'
+                     WHERE control_id = ${request.controlId}
+                       AND workspace_id = ${request.workspaceId}
+                       AND status = 'accepted'
                   `;
                   if (kind === "cancel") {
                     yield* sql`
@@ -2400,7 +2470,9 @@ const makeRuntimeService = Effect.gen(function* () {
             yield* sql`
               UPDATE laborer_execution_controls
               SET status = 'completed', result_json = ${resultJson}
-              WHERE control_id = ${request.controlId} AND status = 'accepted'
+               WHERE control_id = ${request.controlId}
+                 AND workspace_id = ${request.workspaceId}
+                 AND status = 'accepted'
             `;
             if (cancelledEvent !== undefined) {
               yield* acceptExecutionEventIntoConversation(
@@ -2472,8 +2544,8 @@ const makeRuntimeService = Effect.gen(function* () {
                 )
               `;
                 const rows = yield* sql.unsafe<StoredExecutionRow>(
-                  `${executionSelect} WHERE invocation_id = ?`,
-                  [validatedRequest.invocationId]
+                  `${executionSelect} WHERE invocation_id = ? AND workspace_id = ?`,
+                  [validatedRequest.invocationId, validatedRequest.workspaceId]
                 );
                 return yield* pipe(
                   rows,

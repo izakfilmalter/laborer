@@ -43,8 +43,8 @@ const unavailableEventAcceptance: AcceptApplicationEvent = () =>
 
 /**
  * Routes participant turns through the root owner while retaining the existing
- * Runner as the only publisher. Execution events remain on their current seam
- * until their dedicated cutover slice.
+ * Runner as the only publisher. The same registered handler receives durable
+ * Execution events from the root runtime; Action workers never publish.
  */
 export const applicationThroughRootConversationRuntime = Effect.fn(
   "applicationThroughRootConversationRuntime"
@@ -65,7 +65,9 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
     .registerConversationHandler(options.workspaceId, {
       handle: (event) =>
         Effect.gen(function* () {
-          handledEvents.add(event.turnId);
+          const eventId =
+            event._tag === "ParticipantInput" ? event.turnId : event.eventId;
+          handledEvents.add(eventId);
           const outputs: ApplicationPublicOutput[] = [];
           // Account for the surrounding JSON array. Validate and bound every
           // item before it can cross the Runner's public-output callback.
@@ -91,17 +93,17 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
                   }
                   encodedOutputsBytes = nextEncodedOutputsBytes;
                   outputs.push(validatedOutput);
-                  const publish = publishers.get(event.turnId);
+                  const publish = publishers.get(eventId);
                   if (publish !== undefined) {
                     yield* publish(validatedOutput);
                   }
                 }),
-              eventAcceptors.get(event.turnId) ?? unavailableEventAcceptance
+              eventAcceptors.get(eventId) ?? unavailableEventAcceptance
             )
             .pipe(
               Effect.tapError((failure) =>
                 Effect.sync(() => {
-                  failures.set(event.turnId, failure);
+                  failures.set(eventId, failure);
                 })
               )
             );

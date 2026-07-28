@@ -5,6 +5,7 @@ import {
   type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
+import { ThreadId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
@@ -468,7 +469,7 @@ describe("OpenCode ImplementationAgent", () => {
       yield* session.completion;
       yield* session.resume(
         {
-          conversationId: "conversation-1" as never,
+          conversationId: "conversation-1",
           executionId: "execution-1",
           implementationSessionId: "implementation-session-1",
           prompt: "Now add coverage",
@@ -483,7 +484,7 @@ describe("OpenCode ImplementationAgent", () => {
       assert.ok(session.control);
       yield* session.control({
         control: "cancel",
-        conversationId: "conversation-1" as never,
+        conversationId: ThreadId.make("conversation-1"),
         executionId: "execution-1",
         implementationSessionId: "implementation-session-1",
         workingDirectory: "/repo/worktree",
@@ -520,6 +521,82 @@ describe("OpenCode ImplementationAgent", () => {
         "response:implementation-prompt-2",
       ]);
     })
+  );
+
+  it.effect(
+    "rejects follow-ups outside the owning Conversation or Execution",
+    () =>
+      Effect.gen(function* () {
+        let reusePreparations = 0;
+        let submissions = 0;
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () =>
+            Effect.sync(() => {
+              reusePreparations += 1;
+            }),
+          readMessages: () =>
+            Effect.succeed([
+              { id: "initial-prompt", role: "user", text: "Build" },
+            ]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () =>
+            Effect.sync(() => {
+              submissions += 1;
+            }),
+          wait: () => Effect.void,
+        };
+        const session = yield* makeOpenCodeImplementationAgent({
+          client,
+        }).start(
+          {
+            actionName: "create-feature",
+            conversationId: "conversation-1",
+            executionId: "execution-1",
+            implementationSessionId: "session-1",
+            prompt: "Build",
+            promptId: "initial-prompt",
+            workingDirectory: "/repo/worktree",
+          },
+          () => Effect.void
+        );
+        yield* session.completion;
+        const baselinePreparations = reusePreparations;
+        const baselineSubmissions = submissions;
+
+        const wrongConversation = yield* Effect.result(
+          session.resume(
+            {
+              conversationId: "conversation-2",
+              executionId: "execution-1",
+              implementationSessionId: "session-1",
+              prompt: "Cross the Conversation boundary",
+              promptId: "follow-up-1",
+              workingDirectory: "/repo/worktree",
+            },
+            () => Effect.void
+          )
+        );
+        const wrongExecution = yield* Effect.result(
+          session.resume(
+            {
+              conversationId: "conversation-1",
+              executionId: "execution-2",
+              implementationSessionId: "session-1",
+              prompt: "Cross the Execution boundary",
+              promptId: "follow-up-2",
+              workingDirectory: "/repo/worktree",
+            },
+            () => Effect.void
+          )
+        );
+
+        assert.strictEqual(wrongConversation._tag, "Failure");
+        assert.strictEqual(wrongExecution._tag, "Failure");
+        assert.strictEqual(reusePreparations, baselinePreparations);
+        assert.strictEqual(submissions, baselineSubmissions);
+      })
   );
 
   it.effect(
@@ -612,7 +689,7 @@ describe("OpenCode ImplementationAgent", () => {
       assert.ok(session.control);
       yield* session.control({
         control: "cancel",
-        conversationId: "conversation-1" as never,
+        conversationId: ThreadId.make("conversation-1"),
         executionId: "execution-1",
         implementationSessionId: "implementation-session-1",
         workingDirectory: "/repo/worktree",

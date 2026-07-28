@@ -1279,6 +1279,7 @@ const completeAdmittedImplementationPrompt = Effect.fn(
 const implementationSession = (
   options: OpenCodeImplementationAgentOptions,
   identity: OpenCodeSessionIdentity,
+  conversationId: string,
   executionId: string,
   initialPromptId: string,
   completion: Effect.Effect<void, HandlerFailure>
@@ -1292,6 +1293,7 @@ const implementationSession = (
     completion: serial.withPermit(completion),
     control: (controlRequest) => {
       if (
+        controlRequest.conversationId !== conversationId ||
         controlRequest.executionId !== executionId ||
         controlRequest.implementationSessionId !== identity.sessionId ||
         controlRequest.workingDirectory !== identity.workingDirectory
@@ -1307,6 +1309,8 @@ const implementationSession = (
     },
     resume: (resumeRequest, resumeAcceptResponse) => {
       if (
+        resumeRequest.conversationId !== conversationId ||
+        resumeRequest.executionId !== executionId ||
         resumeRequest.implementationSessionId !== identity.sessionId ||
         resumeRequest.workingDirectory !== identity.workingDirectory ||
         resumeRequest.promptId === undefined
@@ -1429,6 +1433,7 @@ export const makeOpenCodeImplementationAgent = (
         return implementationSession(
           options,
           identity,
+          request.conversationId,
           request.executionId,
           request.promptId,
           completeAdmittedImplementationPrompt(
@@ -1471,6 +1476,7 @@ export const makeOpenCodeImplementationAgent = (
         return implementationSession(
           options,
           identity,
+          request.conversationId,
           request.executionId,
           request.promptId,
           completeAdmittedImplementationPrompt(

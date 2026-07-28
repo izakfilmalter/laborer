@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Deferred, Effect, Ref, Schema } from "effect";
 import {
   ApplicationConversationMessageChunk,
   ApplicationPublicReply,
   type ApplicationShape,
+  type ExternalInputEvent,
   ParticipantInputEvent,
 } from "../src/application.ts";
 import {
@@ -14,8 +15,10 @@ import {
 } from "../src/durable-runtime/action.ts";
 import { applicationThroughRootConversationRuntime } from "../src/durable-runtime/conversation-application.ts";
 import {
+  ExecutionEvent,
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,
+  RUNTIME_MAX_CONCURRENT_EXECUTIONS,
   RUNTIME_PAYLOAD_MAX_BYTES,
 } from "../src/durable-runtime/root-runtime.ts";
 import { runConversationRpcLocally } from "../src/durable-runtime/rpc.ts";
@@ -29,12 +32,17 @@ import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const waitForTerminal = Effect.fn("waitForTerminal")(function* (
   executionId: string,
-  conversationId: string
+  conversationId: string,
+  workspaceId: string
 ) {
   const runtime = yield* RootDurableRuntime;
   let lastStatus = "missing";
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    const snapshot = yield* runtime.getExecution(executionId, conversationId);
+    const snapshot = yield* runtime.getExecution(
+      executionId,
+      conversationId,
+      workspaceId
+    );
     lastStatus = snapshot.status;
     if (
       snapshot.status === "completed" ||
@@ -71,6 +79,9 @@ describe("root durable runtime", () => {
             yield* runtime.registerConversationHandler("T-CONVERSATION", {
               handle: (event) =>
                 Effect.gen(function* () {
+                  if (event._tag !== "ParticipantInput") {
+                    return yield* Effect.die("unexpected external event");
+                  }
                   handled.push(event.turnId);
                   if (event.turnId === "turn-3") {
                     return yield* Effect.fail({
@@ -134,7 +145,7 @@ describe("root durable runtime", () => {
             const incompatible = yield* Effect.flip(
               runConversationRpcLocally(runtime, {
                 ...request(turn(3, "incompatible")),
-                protocolVersion: 2,
+                protocolVersion: 3,
               })
             );
 
@@ -154,12 +165,14 @@ describe("root durable runtime", () => {
             );
             yield* runtime.registerConversationHandler("T-OTHER", {
               handle: (event) =>
-                Effect.succeed([
-                  ApplicationConversationMessageChunk.make({
-                    messageId: `other:${event.turnId}`,
-                    text: "other workspace",
-                  }),
-                ]),
+                event._tag === "ParticipantInput"
+                  ? Effect.succeed([
+                      ApplicationConversationMessageChunk.make({
+                        messageId: `other:${event.turnId}`,
+                        text: "other workspace",
+                      }),
+                    ])
+                  : Effect.die("unexpected external event"),
             });
             const otherWorkspace = yield* runtime.runConversation({
               ...request(turn(1, "same canonical thread")),
@@ -230,6 +243,166 @@ describe("root durable runtime", () => {
   );
 
   it.live(
+    "hands durable Action events back to the Runner before publishing output",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-durable-action-delivery-"
+          );
+          const action = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Report one fixture update",
+            input: Schema.Struct({ value: Schema.String }),
+            name: "fixture/report-update",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ value: Schema.String }),
+            revision: "fixture-v1",
+            run: (input, context) =>
+              Effect.gen(function* () {
+                yield* context.reportProgress("reported", {
+                  phase: "reported",
+                });
+                return input;
+              }),
+          });
+          const catalog = defineApplication({ actions: [action] });
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            catalog.actions,
+            "root-delivery-fixture"
+          );
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const handledExternalEvents: string[] = [];
+            const acceptedExternalEvents: ExternalInputEvent[] = [];
+            const published: string[] = [];
+            const application: ApplicationShape = {
+              handle: (event, publish) => {
+                if (event._tag === "ParticipantInput") {
+                  return Effect.void;
+                }
+                return Effect.gen(function* () {
+                  handledExternalEvents.push(event.eventId);
+                  const executionEvent = yield* Schema.decodeUnknownEffect(
+                    ExecutionEvent
+                  )(event.payload).pipe(Effect.orDie);
+                  yield* publish(
+                    ApplicationConversationMessageChunk.make({
+                      messageId: `message:${event.eventId}`,
+                      text: `observed ${executionEvent.kind}`,
+                    })
+                  );
+                });
+              },
+            };
+            const durableApplication =
+              yield* applicationThroughRootConversationRuntime({
+                application,
+                rootIdentity: "root-delivery-fixture",
+                runtime,
+                workspaceId: "T-DELIVERY",
+              });
+            const conversationId = ThreadId.make(
+              "workspace:T-DELIVERY:thread:C1:1.0"
+            );
+            const acceptEvent = (event: ExternalInputEvent) =>
+              Effect.sync(() => {
+                acceptedExternalEvents.push(event);
+                return {
+                  decision: {
+                    _tag: "Accepted" as const,
+                    eventId: event.eventId,
+                  },
+                  scheduling: "Scheduled" as const,
+                };
+              });
+            yield* durableApplication.handle(
+              ParticipantInputEvent.make({
+                attemptNumber: 1,
+                channelId: "C1",
+                context: [],
+                conversationId,
+                initializationStatus: "not_applicable",
+                messages: [
+                  NormalizedMessage.make({
+                    authorKind: "human",
+                    authorSlackId: "U1",
+                    classification: "input",
+                    id: MessageId.make("message-delivery"),
+                    isActivation: true,
+                    slackTs: "1.0",
+                    text: "activate delivery",
+                  }),
+                ],
+                rootTs: "1.0",
+                source: "slack",
+                turnId: TurnId.make("turn-delivery"),
+                workingDirectory: null,
+              }),
+              (output) =>
+                Effect.sync(() => {
+                  published.push(output.text);
+                }),
+              acceptEvent
+            );
+            const execution = yield* runtime.startExecution({
+              actionName: action.name,
+              conversationId,
+              input: { value: "done" },
+              invocationId: "delivery-invocation",
+              rootIdentity: "root-delivery-fixture",
+              workspaceId: "T-DELIVERY",
+            });
+            yield* waitForTerminal(
+              execution.executionId,
+              conversationId,
+              "T-DELIVERY"
+            );
+            for (let attempt = 0; attempt < 500; attempt += 1) {
+              if (acceptedExternalEvents.length === 2) {
+                break;
+              }
+              yield* Effect.sleep("10 millis");
+            }
+
+            assert.deepStrictEqual(handledExternalEvents, []);
+            assert.deepStrictEqual(published, []);
+            const acceptedKinds = yield* Effect.forEach(
+              acceptedExternalEvents,
+              (event) =>
+                Schema.decodeUnknownEffect(ExecutionEvent)(event.payload).pipe(
+                  Effect.map((payload) => payload.kind),
+                  Effect.orDie
+                )
+            );
+            assert.deepStrictEqual(acceptedKinds, ["progress", "completed"]);
+
+            for (const event of acceptedExternalEvents) {
+              yield* durableApplication.handle(
+                event,
+                (output) =>
+                  Effect.sync(() => {
+                    published.push(output.text);
+                  }),
+                acceptEvent
+              );
+            }
+            assert.deepStrictEqual(handledExternalEvents, [
+              acceptedExternalEvents[0]?.eventId,
+              acceptedExternalEvents[1]?.eventId,
+            ]);
+            assert.deepStrictEqual(published, [
+              "observed progress",
+              "observed completed",
+            ]);
+          }).pipe(Effect.provide(layer));
+        })
+      ),
+    20_000
+  );
+
+  it.live(
     "runs arbitrary registered Actions through Cluster and a SQLite outbox",
     () =>
       Effect.scoped(
@@ -274,6 +447,7 @@ describe("root durable runtime", () => {
               input: { name: "Ada" },
               invocationId: "invocation-1",
               rootIdentity: "root-fixture",
+              workspaceId: "T1",
             } as const;
             const accepted = yield* runtime.startExecution(request);
             const duplicate = yield* runtime.startExecution(request);
@@ -303,12 +477,20 @@ describe("root durable runtime", () => {
             assert.strictEqual(oversized.reason, "invalid-payload");
 
             const invalidLimit = yield* Effect.flip(
-              runtime.pendingEvents(request.conversationId, Number.NaN)
+              runtime.pendingEvents(
+                request.conversationId,
+                request.workspaceId,
+                Number.NaN
+              )
             );
             assert.strictEqual(invalidLimit.reason, "invalid-payload");
             for (const limit of [0, 1.5, 129]) {
               const outOfRangeLimit = yield* Effect.flip(
-                runtime.pendingEvents(request.conversationId, limit)
+                runtime.pendingEvents(
+                  request.conversationId,
+                  request.workspaceId,
+                  limit
+                )
               );
               assert.strictEqual(outOfRangeLimit.reason, "invalid-payload");
             }
@@ -316,19 +498,24 @@ describe("root durable runtime", () => {
             const inaccessible = yield* Effect.flip(
               runtime.getExecution(
                 accepted.executionId,
-                "workspace:T2:thread:C2:2.0"
+                "workspace:T2:thread:C2:2.0",
+                "T2"
               )
             );
             assert.strictEqual(inaccessible.reason, "execution-not-found");
 
             const terminal = yield* waitForTerminal(
               accepted.executionId,
-              request.conversationId
+              request.conversationId,
+              request.workspaceId
             );
             assert.strictEqual(terminal.status, "completed");
             assert.deepStrictEqual(terminal.result, { greeting: "hello Ada" });
 
-            const events = yield* runtime.pendingEvents(request.conversationId);
+            const events = yield* runtime.pendingEvents(
+              request.conversationId,
+              request.workspaceId
+            );
             assert.deepStrictEqual(
               events.map(({ kind, sequence }) => ({ kind, sequence })),
               [
@@ -340,10 +527,12 @@ describe("root durable runtime", () => {
             assert.ok(firstEvent);
             yield* runtime.acknowledgeEvent(
               firstEvent.eventId,
-              "workspace:T2:thread:C2:2.0"
+              "workspace:T2:thread:C2:2.0",
+              "T2"
             );
             const stillPending = yield* runtime.pendingEvents(
-              request.conversationId
+              request.conversationId,
+              request.workspaceId
             );
             assert.deepStrictEqual(
               stillPending.map(({ sequence }) => sequence),
@@ -351,10 +540,12 @@ describe("root durable runtime", () => {
             );
             yield* runtime.acknowledgeEvent(
               firstEvent.eventId,
-              request.conversationId
+              request.conversationId,
+              request.workspaceId
             );
             const remaining = yield* runtime.pendingEvents(
-              request.conversationId
+              request.conversationId,
+              request.workspaceId
             );
             assert.deepStrictEqual(
               remaining.map(({ sequence }) => sequence),
@@ -376,17 +567,349 @@ describe("root durable runtime", () => {
             const restarted = yield* RootDurableRuntime;
             const snapshot = yield* restarted.getExecution(
               evidence.executionId,
-              evidence.conversationId
+              evidence.conversationId,
+              "T1"
             );
             assert.strictEqual(snapshot.status, "completed");
             const pending = yield* restarted.pendingEvents(
-              evidence.conversationId
+              evidence.conversationId,
+              "T1"
             );
             assert.deepStrictEqual(
               pending.map(({ kind, sequence }) => ({ kind, sequence })),
               [{ kind: "completed", sequence: 2 }]
             );
           }).pipe(Effect.provide(restartedLayer));
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "keeps concurrent Action progress and failures in their owning Conversation streams",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-concurrent-actions-"
+          );
+          const release = yield* Deferred.make<void>();
+          const active = yield* Ref.make(0);
+          const maximumActive = yield* Ref.make(0);
+          const enter = Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(active, (value) => value + 1);
+            yield* Ref.update(maximumActive, (value) => Math.max(value, count));
+          });
+          const leave = Ref.update(active, (value) => value - 1);
+          const waitForRelease = Effect.acquireUseRelease(
+            enter,
+            () => Deferred.await(release),
+            () => leave
+          );
+          const render = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Render an isolated fixture artifact",
+            input: Schema.Struct({ label: Schema.String }),
+            name: "fixture/render-artifact",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ artifact: Schema.String }),
+            revision: "render-v7",
+            run: ({ label }, context) =>
+              Effect.gen(function* () {
+                yield* context.reportProgress("started", {
+                  phase: "rendering",
+                });
+                yield* context.reportProgress("started", {
+                  phase: "rendering",
+                });
+                yield* waitForRelease;
+                return { artifact: `rendered:${label}` };
+              }),
+          });
+          const count = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Count an unrelated fixture quantity",
+            input: Schema.Struct({ quantity: Schema.Number }),
+            name: "fixture/count-artifacts",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ total: Schema.Number }),
+            revision: "count-v3",
+            run: ({ quantity }, context) =>
+              Effect.gen(function* () {
+                yield* context.reportProgress("counting", { quantity });
+                yield* waitForRelease;
+                return { total: quantity * 2 };
+              }),
+          });
+          const declaredFailure = defineAction({
+            description: "Fail through the declared Effect error channel",
+            input: Schema.Struct({ code: Schema.String }),
+            name: "fixture/declared-failure",
+            result: Schema.Struct({ unreachable: Schema.Boolean }),
+            revision: "declared-v1",
+            run: () => Effect.fail({ privateReason: "fixture declaration" }),
+          });
+          const unexpectedFailure = defineAction({
+            description: "Defect without exposing private diagnostics",
+            input: Schema.Struct({ trigger: Schema.Boolean }),
+            name: "fixture/unexpected-failure",
+            result: Schema.Struct({ unreachable: Schema.Boolean }),
+            revision: "unexpected-v1",
+            run: () => Effect.die(new Error("private fixture diagnostic")),
+          });
+          const application = defineApplication({
+            actions: [render, count, declaredFailure, unexpectedFailure],
+          });
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            "root-concurrency-fixture"
+          );
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const observed = new Map<
+              string,
+              { readonly kind: string; readonly sequence: number }[]
+            >();
+            const participantTurns: string[] = [];
+            const register = (workspaceId: string) =>
+              runtime.registerConversationHandler(workspaceId, {
+                handle: (event) =>
+                  Effect.gen(function* () {
+                    if (event._tag === "ParticipantInput") {
+                      participantTurns.push(event.turnId);
+                      return [
+                        ApplicationConversationMessageChunk.make({
+                          messageId: `ordinary:${event.turnId}`,
+                          text: "Conversation handled ordinary input.",
+                        }),
+                      ];
+                    }
+                    const executionEvent = yield* Schema.decodeUnknownEffect(
+                      ExecutionEvent,
+                      {
+                        onExcessProperty: "error",
+                      }
+                    )(event.payload);
+                    const prior =
+                      observed.get(executionEvent.executionId) ?? [];
+                    observed.set(executionEvent.executionId, [
+                      ...prior,
+                      {
+                        kind: executionEvent.kind,
+                        sequence: executionEvent.sequence,
+                      },
+                    ]);
+                    assert.strictEqual(executionEvent.workspaceId, workspaceId);
+                    return [
+                      ApplicationConversationMessageChunk.make({
+                        messageId: `execution-summary:${event.eventId}`,
+                        text: `Conversation observed ${executionEvent.kind}.`,
+                      }),
+                    ];
+                  }),
+              });
+            yield* register("T-CONCURRENT-A");
+            const conversationA = ThreadId.make(
+              "workspace:T-CONCURRENT-A:thread:C1:1.0"
+            );
+            const conversationB = ThreadId.make(
+              "workspace:T-CONCURRENT-B:thread:C1:1.0"
+            );
+            const turn = (
+              conversationId: ThreadId,
+              turnId: string,
+              text: string
+            ) =>
+              ParticipantInputEvent.make({
+                attemptNumber: 1,
+                channelId: "C1",
+                context: [],
+                conversationId,
+                initializationStatus: "not_applicable",
+                messages: [
+                  NormalizedMessage.make({
+                    authorKind: "human",
+                    authorSlackId: "U1",
+                    classification: "input",
+                    id: MessageId.make(`message:${turnId}`),
+                    isActivation: true,
+                    slackTs: "1.0",
+                    text,
+                  }),
+                ],
+                rootTs: "1.0",
+                source: "slack",
+                turnId: TurnId.make(turnId),
+                workingDirectory: null,
+              });
+            const runTurn = (
+              workspaceId: string,
+              conversationId: ThreadId,
+              turnId: string,
+              text: string
+            ) =>
+              runtime.runConversation({
+                event: turn(conversationId, turnId, text),
+                rootIdentity: "root-concurrency-fixture",
+                workspaceId,
+              });
+            yield* runTurn(
+              "T-CONCURRENT-A",
+              conversationA,
+              "turn-A-1",
+              "activate A"
+            );
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* register("T-CONCURRENT-B");
+                yield* runTurn(
+                  "T-CONCURRENT-B",
+                  conversationB,
+                  "turn-B-1",
+                  "activate B"
+                );
+              })
+            );
+
+            const successRequests = Array.from(
+              { length: RUNTIME_MAX_CONCURRENT_EXECUTIONS + 2 },
+              (_, index) => {
+                const even = index % 2 === 0;
+                return {
+                  actionName: even
+                    ? "fixture/render-artifact"
+                    : "fixture/count-artifacts",
+                  conversationId: even ? conversationA : conversationB,
+                  input: even
+                    ? { label: `artifact-${index}` }
+                    : { quantity: index },
+                  invocationId: `success-${index}`,
+                  rootIdentity: "root-concurrency-fixture",
+                  workspaceId: even ? "T-CONCURRENT-A" : "T-CONCURRENT-B",
+                } as const;
+              }
+            );
+            const successes = yield* Effect.forEach(
+              successRequests,
+              runtime.startExecution,
+              { concurrency: "unbounded" }
+            );
+            for (let attempt = 0; attempt < 500; attempt += 1) {
+              if (
+                (yield* Ref.get(active)) === RUNTIME_MAX_CONCURRENT_EXECUTIONS
+              ) {
+                break;
+              }
+              yield* Effect.sleep("10 millis");
+            }
+            assert.strictEqual(
+              yield* Ref.get(active),
+              RUNTIME_MAX_CONCURRENT_EXECUTIONS
+            );
+            const ordinary = yield* runTurn(
+              "T-CONCURRENT-A",
+              conversationA,
+              "turn-A-ordinary",
+              "continue while Actions run"
+            );
+            assert.strictEqual(ordinary.sequence > 1, true);
+            yield* Deferred.succeed(release, undefined);
+
+            const declared = yield* runtime.startExecution({
+              actionName: "fixture/declared-failure",
+              conversationId: conversationA,
+              input: { code: "DECLARED" },
+              invocationId: "declared-failure",
+              rootIdentity: "root-concurrency-fixture",
+              workspaceId: "T-CONCURRENT-A",
+            });
+            const unexpected = yield* runtime.startExecution({
+              actionName: "fixture/unexpected-failure",
+              conversationId: conversationB,
+              input: { trigger: true },
+              invocationId: "unexpected-failure",
+              rootIdentity: "root-concurrency-fixture",
+              workspaceId: "T-CONCURRENT-B",
+            });
+            const settledSuccesses = yield* Effect.forEach(
+              successes,
+              (execution) =>
+                waitForTerminal(
+                  execution.executionId,
+                  execution.conversationId,
+                  execution.workspaceId
+                ),
+              { concurrency: "unbounded" }
+            );
+            const settledDeclared = yield* waitForTerminal(
+              declared.executionId,
+              conversationA,
+              "T-CONCURRENT-A"
+            );
+            const settledUnexpected = yield* waitForTerminal(
+              unexpected.executionId,
+              conversationB,
+              "T-CONCURRENT-B"
+            );
+            assert.ok(
+              settledSuccesses.every(({ status }) => status === "completed")
+            );
+            assert.strictEqual(
+              settledDeclared.failureCategory,
+              "action-failed"
+            );
+            assert.strictEqual(
+              settledUnexpected.failureCategory,
+              "unexpected-failure"
+            );
+            assert.strictEqual(
+              (yield* Ref.get(maximumActive)) <=
+                RUNTIME_MAX_CONCURRENT_EXECUTIONS,
+              true
+            );
+
+            // B's Actions completed with no Conversation client attached.
+            // A replacement handler must receive their already-durable wakes.
+            yield* register("T-CONCURRENT-B");
+            const expectedEventCount = successes.length * 2 + 2;
+            for (let attempt = 0; attempt < 500; attempt += 1) {
+              const countObserved = [...observed.values()].reduce(
+                (total, events) => total + events.length,
+                0
+              );
+              if (countObserved === expectedEventCount) {
+                break;
+              }
+              yield* Effect.sleep("10 millis");
+            }
+            assert.strictEqual(observed.size, successes.length + 2);
+            for (const execution of successes) {
+              assert.deepStrictEqual(observed.get(execution.executionId), [
+                { kind: "progress", sequence: 1 },
+                { kind: "completed", sequence: 2 },
+              ]);
+            }
+            assert.deepStrictEqual(observed.get(declared.executionId), [
+              { kind: "failed", sequence: 1 },
+            ]);
+            assert.deepStrictEqual(observed.get(unexpected.executionId), [
+              { kind: "failed", sequence: 1 },
+            ]);
+            assert.deepStrictEqual(participantTurns, [
+              "turn-A-1",
+              "turn-B-1",
+              "turn-A-ordinary",
+            ]);
+            const wrongWorkspace = yield* Effect.flip(
+              runtime.getExecution(
+                successes[0]?.executionId ?? "missing",
+                conversationA,
+                "T-CONCURRENT-B"
+              )
+            );
+            assert.strictEqual(wrongWorkspace.reason, "execution-not-found");
+          }).pipe(Effect.provide(layer));
         })
       ),
     20_000

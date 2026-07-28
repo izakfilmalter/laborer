@@ -11,10 +11,11 @@ import {
   RuntimeConversationId,
   RuntimeEventId,
   RuntimeExecutionId,
+  RuntimeWorkspaceId,
   StartExecutionRequest,
 } from "./root-runtime.ts";
 
-export const ROOT_RUNTIME_PROTOCOL_VERSION = 1;
+export const ROOT_RUNTIME_PROTOCOL_VERSION = 2;
 
 const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
 
@@ -69,6 +70,7 @@ export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
     executionId: RuntimeExecutionId,
     conversationId: RuntimeConversationId,
     protocolVersion: ProtocolVersion,
+    workspaceId: RuntimeWorkspaceId,
   },
   success: ExecutionSnapshot,
 });
@@ -84,6 +86,7 @@ export const PendingExecutionEventsRpc = Rpc.make(
         Schema.isLessThanOrEqualTo(128)
       ),
       protocolVersion: ProtocolVersion,
+      workspaceId: RuntimeWorkspaceId,
     },
     success: Schema.Array(ExecutionEvent),
   }
@@ -97,6 +100,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
       conversationId: RuntimeConversationId,
       eventId: RuntimeEventId,
       protocolVersion: ProtocolVersion,
+      workspaceId: RuntimeWorkspaceId,
     },
     success: Schema.Void,
   }
@@ -114,12 +118,21 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
   Effect.gen(function* () {
     const runtime = yield* RootDurableRuntime;
     return {
-      "RootRuntime.AcknowledgeExecutionEvent": ({ conversationId, eventId }) =>
-        runtime.acknowledgeEvent(eventId, conversationId),
-      "RootRuntime.GetExecution": ({ conversationId, executionId }) =>
-        runtime.getExecution(executionId, conversationId),
-      "RootRuntime.PendingExecutionEvents": ({ conversationId, limit }) =>
-        runtime.pendingEvents(conversationId, limit),
+      "RootRuntime.AcknowledgeExecutionEvent": ({
+        conversationId,
+        eventId,
+        workspaceId,
+      }) => runtime.acknowledgeEvent(eventId, conversationId, workspaceId),
+      "RootRuntime.GetExecution": ({
+        conversationId,
+        executionId,
+        workspaceId,
+      }) => runtime.getExecution(executionId, conversationId, workspaceId),
+      "RootRuntime.PendingExecutionEvents": ({
+        conversationId,
+        limit,
+        workspaceId,
+      }) => runtime.pendingEvents(conversationId, workspaceId, limit),
       "RootRuntime.RunConversation": (request) =>
         runtime.runConversation({
           event: request.event,
@@ -133,6 +146,7 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           input: request.input,
           invocationId: request.invocationId,
           rootIdentity: request.rootIdentity,
+          workspaceId: request.workspaceId,
         }),
     };
   })

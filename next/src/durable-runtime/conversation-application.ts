@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Deferred, Effect, Schema } from "effect";
 import { canonicalActionInput } from "../action-catalog.ts";
 import type {
   AcceptApplicationEvent,
@@ -43,8 +43,8 @@ const unavailableEventAcceptance: AcceptApplicationEvent = () =>
 
 /**
  * Routes participant turns through the root owner while retaining the existing
- * Runner as the only publisher. Execution events remain on their current seam
- * until their dedicated cutover slice.
+ * Runner as the only publisher. The same registered handler receives durable
+ * Execution events from the root runtime; Action workers never publish.
  */
 export const applicationThroughRootConversationRuntime = Effect.fn(
   "applicationThroughRootConversationRuntime"
@@ -61,11 +61,23 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   >();
   const publishers = new Map<string, PublishApplicationOutput>();
   const handledEvents = new Set<string>();
+  const runnerEventAcceptance = yield* Deferred.make<AcceptApplicationEvent>();
+  const rememberRunnerEventAcceptance = (acceptEvent: AcceptApplicationEvent) =>
+    Deferred.succeed(runnerEventAcceptance, acceptEvent).pipe(Effect.asVoid);
   yield* options.runtime
     .registerConversationHandler(options.workspaceId, {
       handle: (event) =>
         Effect.gen(function* () {
-          handledEvents.add(event.turnId);
+          if (event._tag === "ExternalInput") {
+            // The root owner makes the Action event durable before handing it
+            // back to the Runner. The Runner remains responsible for ordering
+            // the Application invocation and publishing any resulting output.
+            const acceptEvent = yield* Deferred.await(runnerEventAcceptance);
+            yield* acceptEvent(event);
+            return [];
+          }
+          const eventId = event.turnId;
+          handledEvents.add(eventId);
           const outputs: ApplicationPublicOutput[] = [];
           // Account for the surrounding JSON array. Validate and bound every
           // item before it can cross the Runner's public-output callback.
@@ -91,17 +103,17 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
                   }
                   encodedOutputsBytes = nextEncodedOutputsBytes;
                   outputs.push(validatedOutput);
-                  const publish = publishers.get(event.turnId);
+                  const publish = publishers.get(eventId);
                   if (publish !== undefined) {
                     yield* publish(validatedOutput);
                   }
                 }),
-              eventAcceptors.get(event.turnId) ?? unavailableEventAcceptance
+              eventAcceptors.get(eventId) ?? unavailableEventAcceptance
             )
             .pipe(
               Effect.tapError((failure) =>
                 Effect.sync(() => {
-                  failures.set(event.turnId, failure);
+                  failures.set(eventId, failure);
                 })
               )
             );
@@ -119,14 +131,21 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
         }),
     handle: (event, publish, acceptEvent) => {
       if (event._tag !== "ParticipantInput") {
-        return options.application.handle(event, publish, acceptEvent);
+        return rememberRunnerEventAcceptance(acceptEvent).pipe(
+          Effect.andThen(
+            options.application.handle(event, publish, acceptEvent)
+          )
+        );
       }
       return Effect.acquireUseRelease(
-        Effect.sync(() => {
-          eventAcceptors.set(event.turnId, acceptEvent);
-          failures.delete(event.turnId);
-          handledEvents.delete(event.turnId);
-          publishers.set(event.turnId, publish);
+        Effect.gen(function* () {
+          yield* rememberRunnerEventAcceptance(acceptEvent);
+          yield* Effect.sync(() => {
+            eventAcceptors.set(event.turnId, acceptEvent);
+            failures.delete(event.turnId);
+            handledEvents.delete(event.turnId);
+            publishers.set(event.turnId, publish);
+          });
         }),
         () =>
           runConversationRpcLocally(options.runtime, {
@@ -158,7 +177,14 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
     },
     ...(options.application.recover === undefined
       ? {}
-      : { recover: options.application.recover }),
+      : {
+          recover: (acceptEvent: AcceptApplicationEvent) =>
+            rememberRunnerEventAcceptance(acceptEvent).pipe(
+              Effect.andThen(
+                options.application.recover?.(acceptEvent) ?? Effect.void
+              )
+            ),
+        }),
     ...(options.application.unresolvedConversationForOwner === undefined
       ? {}
       : {

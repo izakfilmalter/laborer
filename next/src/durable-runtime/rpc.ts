@@ -23,10 +23,16 @@ import {
 export const ROOT_RUNTIME_PROTOCOL_VERSION = 4;
 
 const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
+const NegotiatedProtocolVersion = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1)
+);
 
 export const AttachConversationClientRpcRequest = Schema.Struct({
   compatibility: ConversationClientCompatibility,
-  protocolVersion: ProtocolVersion,
+  // Decode well-formed future versions so negotiation can reject them with
+  // the declared, stable incompatible-client error instead of a transport
+  // schema failure before the RPC handler runs.
+  protocolVersion: NegotiatedProtocolVersion,
   workspaceId: RuntimeWorkspaceId,
 });
 
@@ -221,8 +227,15 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           executionId,
           workspaceId,
         }),
-      "RootRuntime.NegotiateConversationClient": ({ compatibility }) =>
-        runtime.checkConversationClientCompatibility(compatibility),
+      "RootRuntime.NegotiateConversationClient": ({
+        compatibility,
+        protocolVersion,
+      }) =>
+        protocolVersion === ROOT_RUNTIME_PROTOCOL_VERSION
+          ? runtime.checkConversationClientCompatibility(compatibility)
+          : Effect.fail(
+              DurableRuntimeError.make({ reason: "incompatible-client" })
+            ),
       "RootRuntime.FollowUpExecution": ({
         content,
         controlId,

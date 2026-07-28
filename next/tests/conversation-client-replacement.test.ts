@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { AttachConversationClientRpcRequest } from "../src/durable-runtime/rpc.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const execFilePromise = promisify(execFile);
@@ -92,7 +93,19 @@ describe("Conversation client replacement", () => {
             evidence.incompatibleCatalog,
             "incompatible-client"
           );
-          assert.ok(evidence.pendingWithoutClient.length >= 1);
+          assert.doesNotThrow(() =>
+            Schema.decodeUnknownSync(AttachConversationClientRpcRequest)({
+              compatibility: {
+                actionCatalogFingerprint: "x".repeat(43),
+              },
+              protocolVersion: 5,
+              workspaceId: "T-REPLACEMENT",
+            })
+          );
+          assert.ok(
+            evidence.pendingWithoutClient.length >= 1,
+            JSON.stringify(evidence)
+          );
           assert.strictEqual(evidence.pendingAfterReplacement, 0);
           assert.deepStrictEqual(
             evidence.firstObserved.map(({ kind, sequence }) => ({

@@ -81,6 +81,21 @@ const waitForTerminal = Effect.fn("clientReplacementWaitForTerminal")(
   }
 );
 
+const waitForPendingEvents = Effect.fn("clientReplacementWaitForPendingEvents")(
+  function* (runtime: RootDurableRuntimeShape) {
+    for (let attempt = 0; attempt < 1000; attempt += 1) {
+      const pending = yield* runtime.pendingEvents(conversationId, workspaceId);
+      if (pending.length > 0) {
+        return pending;
+      }
+      yield* Effect.sleep("10 millis");
+    }
+    return yield* Effect.die(
+      new Error("Execution became terminal without a durable pending event")
+    );
+  }
+);
+
 const runProcess = Effect.fn("runClientReplacementProcess")(function* (
   label: string,
   context: {
@@ -306,10 +321,10 @@ const program = Effect.scoped(
       runtime,
       first.executions[0]?.executionId ?? "missing"
     );
-    const pendingWithoutClient = yield* runtime.pendingEvents(
-      conversationId,
-      workspaceId
-    );
+    // The terminal snapshot and its outbox event settle in consecutive
+    // workflow steps. Wait for the durable event rather than racing that
+    // internal handoff after observing the terminal snapshot.
+    const pendingWithoutClient = yield* waitForPendingEvents(runtime);
     const secondPid = Number(actionPidsBefore[1]);
     process.kill(secondPid, 0);
 

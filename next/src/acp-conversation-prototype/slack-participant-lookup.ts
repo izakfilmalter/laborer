@@ -11,6 +11,14 @@ const SLACK_USERS_INFO_ABORT_BUFFER_MILLIS = 50;
 
 export interface SlackParticipantLookupShape {
   readonly lookupVisibleName: (slackUserId: string) => Effect.Effect<string>;
+  readonly lookupVisibleNameResult?: (
+    slackUserId: string
+  ) => Effect.Effect<SlackParticipantVisibleNameResult>;
+}
+
+export interface SlackParticipantVisibleNameResult {
+  readonly lookupFailed: boolean;
+  readonly visibleName: string;
 }
 
 export interface SlackUsersInfoClient {
@@ -116,27 +124,40 @@ const positiveSafeIntegerOr = (
 export const makeSlackParticipantLookup = (
   client: SlackUsersInfoClient,
   options?: SlackParticipantLookupOptions
-): SlackParticipantLookupShape => ({
-  lookupVisibleName: Effect.fn("SlackParticipantLookup.lookupVisibleName")(
-    function* (slackUserId: string) {
-      const response = yield* Effect.result(
-        Effect.tryPromise({
-          try: () => client.users.info({ user: slackUserId }),
-          catch: () => "users-info-failed" as const,
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: configuredTimeoutMillis(options),
-            orElse: () => Effect.fail("users-info-timeout" as const),
-          })
-        )
-      );
-      if (response._tag === "Failure") {
-        return safeSlackIdVisibleName(slackUserId);
-      }
-      return visibleNameFromResponse(response.success, slackUserId);
+): SlackParticipantLookupShape => {
+  const lookupVisibleNameResult = Effect.fn(
+    "SlackParticipantLookup.lookupVisibleNameResult"
+  )(function* (slackUserId: string) {
+    const response = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => client.users.info({ user: slackUserId }),
+        catch: () => "users-info-failed" as const,
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: configuredTimeoutMillis(options),
+          orElse: () => Effect.fail("users-info-timeout" as const),
+        })
+      )
+    );
+    if (response._tag === "Failure") {
+      return {
+        lookupFailed: true,
+        visibleName: safeSlackIdVisibleName(slackUserId),
+      };
     }
-  ),
-});
+    return {
+      lookupFailed: false,
+      visibleName: visibleNameFromResponse(response.success, slackUserId),
+    };
+  });
+  return {
+    lookupVisibleName: (slackUserId) =>
+      lookupVisibleNameResult(slackUserId).pipe(
+        Effect.map((result) => result.visibleName)
+      ),
+    lookupVisibleNameResult,
+  };
+};
 
 /**
  * One semaphore bounds every conversation using this workspace lookup. Each
@@ -166,58 +187,67 @@ export const makeBoundedSlackParticipantLookup = (
     SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
   );
 
+  const lookupVisibleNameResult = Effect.fn(
+    "BoundedSlackParticipantLookup.lookupVisibleNameResult"
+  )(function* (slackUserId: string) {
+    const deadline = Date.now() + effectTimeoutMillis;
+    const response = yield* Effect.result(
+      workspaceCapacity
+        .withPermit(
+          Effect.suspend(() => {
+            const remainingMillis = deadline - Date.now();
+            if (remainingMillis <= abortBufferMillis) {
+              return Effect.fail("users-info-timeout" as const);
+            }
+            const requestTimeoutMillis = Math.max(
+              1,
+              Math.min(
+                configuredRequestTimeoutMillis,
+                remainingMillis - abortBufferMillis
+              )
+            );
+            const client = new WebClient(options.token, {
+              ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+              ...(options.logger === undefined
+                ? {}
+                : { logger: options.logger }),
+              maxRequestConcurrency: 1,
+              rejectRateLimitedCalls: true,
+              retryConfig: { retries: 0 },
+              ...(options.slackApiUrl === undefined
+                ? {}
+                : { slackApiUrl: options.slackApiUrl }),
+              timeout: requestTimeoutMillis,
+            });
+            return Effect.tryPromise({
+              try: () => client.users.info({ user: slackUserId }),
+              catch: () => "users-info-failed" as const,
+            });
+          })
+        )
+        .pipe(
+          Effect.timeoutOrElse({
+            duration: effectTimeoutMillis,
+            orElse: () => Effect.fail("users-info-timeout" as const),
+          })
+        )
+    );
+    if (response._tag === "Failure") {
+      return {
+        lookupFailed: true,
+        visibleName: safeSlackIdVisibleName(slackUserId),
+      };
+    }
+    return {
+      lookupFailed: false,
+      visibleName: visibleNameFromResponse(response.success, slackUserId),
+    };
+  });
   return {
-    lookupVisibleName: Effect.fn(
-      "BoundedSlackParticipantLookup.lookupVisibleName"
-    )(function* (slackUserId: string) {
-      const deadline = Date.now() + effectTimeoutMillis;
-      const response = yield* Effect.result(
-        workspaceCapacity
-          .withPermit(
-            Effect.suspend(() => {
-              const remainingMillis = deadline - Date.now();
-              if (remainingMillis <= abortBufferMillis) {
-                return Effect.fail("users-info-timeout" as const);
-              }
-              const requestTimeoutMillis = Math.max(
-                1,
-                Math.min(
-                  configuredRequestTimeoutMillis,
-                  remainingMillis - abortBufferMillis
-                )
-              );
-              const client = new WebClient(options.token, {
-                ...(options.fetch === undefined
-                  ? {}
-                  : { fetch: options.fetch }),
-                ...(options.logger === undefined
-                  ? {}
-                  : { logger: options.logger }),
-                maxRequestConcurrency: 1,
-                rejectRateLimitedCalls: true,
-                retryConfig: { retries: 0 },
-                ...(options.slackApiUrl === undefined
-                  ? {}
-                  : { slackApiUrl: options.slackApiUrl }),
-                timeout: requestTimeoutMillis,
-              });
-              return Effect.tryPromise({
-                try: () => client.users.info({ user: slackUserId }),
-                catch: () => "users-info-failed" as const,
-              });
-            })
-          )
-          .pipe(
-            Effect.timeoutOrElse({
-              duration: effectTimeoutMillis,
-              orElse: () => Effect.fail("users-info-timeout" as const),
-            })
-          )
-      );
-      if (response._tag === "Failure") {
-        return safeSlackIdVisibleName(slackUserId);
-      }
-      return visibleNameFromResponse(response.success, slackUserId);
-    }),
+    lookupVisibleName: (slackUserId) =>
+      lookupVisibleNameResult(slackUserId).pipe(
+        Effect.map((result) => result.visibleName)
+      ),
+    lookupVisibleNameResult,
   };
 };

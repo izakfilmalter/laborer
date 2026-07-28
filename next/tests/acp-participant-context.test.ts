@@ -1190,19 +1190,18 @@ describe("issue #239 ACP Slack participant context", () => {
             const message = yield* postHumanMessage(fixture, text, {
               threadTs: rootTs,
             });
-            const injection = harness.runner.inject(
-              normalizedEvent({
-                authorSlackId,
-                channelId: fixture.channelId,
-                eventId: `event:239-fallback-${eventId}`,
-                messageTs: timestampOf(message),
-                text,
-                threadTs: rootTs,
-              })
-            );
-            yield* authorSlackId === failedUserId
-              ? injection.pipe(Effect.provide(Logger.layer([warningLogger])))
-              : injection;
+            yield* harness.runner
+              .inject(
+                normalizedEvent({
+                  authorSlackId,
+                  channelId: fixture.channelId,
+                  eventId: `event:239-fallback-${eventId}`,
+                  messageTs: timestampOf(message),
+                  text,
+                  threadTs: rootTs,
+                })
+              )
+              .pipe(Effect.provide(Logger.layer([warningLogger])));
           }
 
           const prompts = yield* waitForPromptCount(promptJsonlPath, 4);

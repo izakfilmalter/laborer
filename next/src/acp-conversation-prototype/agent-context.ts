@@ -753,20 +753,25 @@ export const loadAcpSlackParticipantContexts = Effect.fn(
     yield* Effect.logWarning("Agent context authority could not be verified");
     return [];
   }
-  const visibleNames =
+  const visibleNameResults =
     participantLookup === undefined
       ? []
       : yield* Effect.forEach(
           slackUserIds,
-          (slackUserId) => participantLookup.lookupVisibleName(slackUserId),
+          (slackUserId) =>
+            participantLookup.lookupVisibleNameResult?.(slackUserId) ??
+            participantLookup.lookupVisibleName(slackUserId).pipe(
+              Effect.map((visibleName) => ({
+                lookupFailed:
+                  visibleName === safeSlackIdVisibleName(slackUserId),
+                visibleName,
+              }))
+            ),
           { concurrency: "unbounded" }
         );
   const fallbackCount = pipe(
-    visibleNames,
-    EffectArray.filter(
-      (visibleName, index) =>
-        visibleName === safeSlackIdVisibleName(slackUserIds[index] ?? "")
-    )
+    visibleNameResults,
+    EffectArray.filter((result) => result.lookupFailed)
   ).length;
   if (participantLookup !== undefined && fallbackCount > 0) {
     yield* Effect.logWarning("Slack participant lookup fallback summary", {
@@ -777,8 +782,9 @@ export const loadAcpSlackParticipantContexts = Effect.fn(
   return yield* Effect.forEach(slackUserIds, (slackUserId, index) =>
     Effect.gen(function* () {
       const visibleName =
-        index < visibleNames.length
-          ? (visibleNames[index] ?? safeSlackIdVisibleName(slackUserId))
+        index < visibleNameResults.length
+          ? (visibleNameResults[index]?.visibleName ??
+            safeSlackIdVisibleName(slackUserId))
           : safeSlackIdVisibleName(slackUserId);
       const userProfile = yield* loadContextSource({
         anchor: sources.userProfilesDirectory,

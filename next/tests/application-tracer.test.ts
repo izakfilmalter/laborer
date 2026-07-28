@@ -15,8 +15,10 @@ import {
   normalizedEvent,
 } from "../src/prototype/scenario.ts";
 import {
+  type AcceptImplementationAgentResponse,
   type ConversationAgentRequest,
   ImplementationAgent,
+  type ImplementationAgentRequest,
   type ImplementationAgentResponse,
   type ImplementationAgentResumeRequest,
   makeInMemoryApplicationRepository,
@@ -506,6 +508,286 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
             "Implementation is making progress.",
             "Implementation completed.",
           ]);
+        })
+      )
+  );
+
+  it.effect(
+    "round-trips an interpreted follow-up through the active Execution",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const initialPromptTerminal = yield* Deferred.make<void>();
+          const followUpPromptTerminal = yield* Deferred.make<void>();
+          const initialResponseSink =
+            yield* Deferred.make<AcceptImplementationAgentResponse>();
+          const initialRequestSink =
+            yield* Deferred.make<ImplementationAgentRequest>();
+          const followUpResponseSink =
+            yield* Deferred.make<AcceptImplementationAgentResponse>();
+          const followUpStarted = yield* Deferred.make<void>();
+          const executionTerminalObserved = yield* Deferred.make<void>();
+          const resumeRequests = yield* Ref.make<
+            readonly ImplementationAgentResumeRequest[]
+          >([]);
+          const delivered = yield* Ref.make<readonly string[]>([]);
+          const conversationAgent = {
+            handle: Effect.fn("FollowUpRoundTripConversation.handle")(
+              function* (request: ConversationAgentRequest) {
+                if (
+                  request.source === "slack" &&
+                  request.input.includes("start the round trip")
+                ) {
+                  const action = request.actions.find(
+                    (candidate) => candidate.name === "create-feature"
+                  );
+                  assert.ok(action);
+                  const accepted = yield* action.invoke({
+                    prompt: "Implement the round-trip tracer.",
+                    worktreeName: "round-trip-tracer",
+                  });
+                  return [
+                    {
+                      replyId: `${request.turnId}:started`,
+                      text: `Started ${accepted.executionId}.`,
+                    },
+                  ];
+                }
+                if (request.source === "implementation-agent") {
+                  const execution = request.executions[0];
+                  assert.ok(execution);
+                  assert.strictEqual(
+                    execution.executionId,
+                    "CROUNDTRIP:1.0:execution:1"
+                  );
+                  assert.strictEqual(execution.status, "running");
+                  if (request.input.includes('response-id="update-before"')) {
+                    const promptExecution = request.executionControls.find(
+                      (candidate) => candidate.name === "prompt-execution"
+                    );
+                    assert.ok(promptExecution);
+                    const accepted = yield* promptExecution.invoke({
+                      executionId: execution.executionId,
+                      prompt:
+                        "Verify the durable ordering concern, then report what you find.",
+                    });
+                    assert.deepStrictEqual(accepted, {
+                      deduplicated: false,
+                      executionId: execution.executionId,
+                      status: "running",
+                    });
+                    return [
+                      {
+                        replyId: `${request.turnId}:first-update`,
+                        text: "I asked the active implementation to verify ordering.",
+                      },
+                    ];
+                  }
+                  assert.ok(
+                    request.input.includes('response-id="update-after"')
+                  );
+                  return [
+                    {
+                      replyId: `${request.turnId}:second-update`,
+                      text: "The active implementation confirmed durable ordering.",
+                    },
+                  ];
+                }
+                if (request.source === "action-terminal") {
+                  yield* Deferred.succeed(executionTerminalObserved, undefined);
+                  return [
+                    {
+                      replyId: `${request.turnId}:terminal`,
+                      text: "The implementation finished.",
+                    },
+                  ];
+                }
+                return [
+                  {
+                    replyId: `${request.turnId}:ordinary`,
+                    text: "Ordinary conversation remains responsive.",
+                  },
+                ];
+              }
+            ),
+          };
+          const implementationAgent = ImplementationAgent.of({
+            start: (request, acceptResponse) =>
+              Deferred.succeed(initialRequestSink, request).pipe(
+                Effect.andThen(
+                  Deferred.succeed(initialResponseSink, acceptResponse)
+                ),
+                Effect.as({
+                  completion: Deferred.await(initialPromptTerminal),
+                  resume: (resumeRequest, resumeAcceptResponse) =>
+                    Ref.update(resumeRequests, (requests) =>
+                      EffectArray.append(requests, resumeRequest)
+                    ).pipe(
+                      Effect.andThen(
+                        Deferred.succeed(
+                          followUpResponseSink,
+                          resumeAcceptResponse
+                        )
+                      ),
+                      Effect.andThen(
+                        Deferred.succeed(followUpStarted, undefined)
+                      ),
+                      Effect.andThen(Deferred.await(followUpPromptTerminal))
+                    ),
+                  sessionId: request.implementationSessionId,
+                })
+              ),
+          });
+          const repository = yield* makeInMemoryApplicationRepository();
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent,
+            implementationAgent,
+            repository,
+            worktreeManager: WorktreeManager.of({
+              create: () =>
+                Effect.succeed({ workingDirectory: "/tmp/round-trip-tracer" }),
+            }),
+          });
+          const harness = yield* makePrototypeHarness({
+            application,
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: {
+              postThreadMessage: (request) =>
+                Ref.update(delivered, (messages) =>
+                  EffectArray.append(messages, request.text)
+                ).pipe(Effect.as({ ts: `reply-${request.text}` })),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+          const threadId = ThreadId.make("CROUNDTRIP:1.0");
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CROUNDTRIP",
+              eventId: "event:round-trip:start",
+              messageTs: "1.0",
+              text: `<@${LABORER_SLACK_ID}> start the round trip`,
+            })
+          );
+          const acceptInitialResponse =
+            yield* Deferred.await(initialResponseSink);
+          yield* acceptInitialResponse({
+            responseId: "update-before",
+            text: "The participant said something raw; should I inspect ordering?",
+          });
+          yield* harness.runner.drain(threadId);
+
+          assert.strictEqual(
+            yield* Deferred.isDone(initialPromptTerminal),
+            false
+          );
+          assert.strictEqual(yield* Deferred.isDone(followUpStarted), false);
+          assert.strictEqual(
+            yield* Deferred.isDone(executionTerminalObserved),
+            false
+          );
+          assert.deepStrictEqual(
+            (yield* repository.load).executions[0]?.prompts.map((prompt) => ({
+              kind: prompt.kind,
+              status: prompt.status,
+              text: prompt.text,
+            })),
+            [
+              {
+                kind: "initial",
+                status: "running",
+                text: "Implement the round-trip tracer.",
+              },
+              {
+                kind: "resume",
+                status: "running",
+                text: "Verify the durable ordering concern, then report what you find.",
+              },
+            ]
+          );
+
+          yield* Deferred.succeed(initialPromptTerminal, undefined);
+          yield* Deferred.await(followUpStarted);
+          const initialRequest = yield* Deferred.await(initialRequestSink);
+          const resumeRequest = (yield* Ref.get(resumeRequests))[0];
+          assert.ok(resumeRequest);
+          assert.strictEqual(
+            resumeRequest.executionId,
+            "CROUNDTRIP:1.0:execution:1"
+          );
+          assert.strictEqual(
+            resumeRequest.prompt,
+            "Verify the durable ordering concern, then report what you find."
+          );
+          assert.strictEqual(
+            resumeRequest.implementationSessionId,
+            initialRequest.implementationSessionId
+          );
+          assert.strictEqual(
+            resumeRequest.workingDirectory,
+            initialRequest.workingDirectory
+          );
+          assert.strictEqual(
+            yield* Deferred.isDone(executionTerminalObserved),
+            false
+          );
+
+          const acceptFollowUpResponse =
+            yield* Deferred.await(followUpResponseSink);
+          yield* acceptFollowUpResponse({
+            responseId: "update-after",
+            text: "I verified that the accepted records retain execution order.",
+          });
+          yield* harness.runner.drain(threadId);
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CROUNDTRIP",
+              eventId: "event:round-trip:ordinary",
+              messageTs: "2.0",
+              text: "Meanwhile, answer this ordinary question.",
+              threadTs: "1.0",
+            })
+          );
+
+          assert.strictEqual(
+            yield* Deferred.isDone(executionTerminalObserved),
+            false
+          );
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "Started CROUNDTRIP:1.0:execution:1.",
+            "I asked the active implementation to verify ordering.",
+            "The active implementation confirmed durable ordering.",
+            "Ordinary conversation remains responsive.",
+          ]);
+          const beforeTerminal = (yield* repository.load).executions[0];
+          assert.deepStrictEqual(
+            beforeTerminal?.responses.map(({ responseId, status }) => ({
+              responseId,
+              status,
+            })),
+            [
+              { responseId: "update-before", status: "delivered" },
+              { responseId: "update-after", status: "delivered" },
+            ]
+          );
+          assert.strictEqual(beforeTerminal?.status, "running");
+
+          yield* Deferred.succeed(followUpPromptTerminal, undefined);
+          yield* Deferred.await(executionTerminalObserved);
+          yield* harness.runner.drain(threadId);
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "Started CROUNDTRIP:1.0:execution:1.",
+            "I asked the active implementation to verify ordering.",
+            "The active implementation confirmed durable ordering.",
+            "Ordinary conversation remains responsive.",
+            "The implementation finished.",
+          ]);
+          assert.strictEqual(
+            (yield* repository.load).executions[0]?.status,
+            "completed"
+          );
         })
       )
   );

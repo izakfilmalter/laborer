@@ -5,6 +5,7 @@ import {
   Deferred,
   Effect,
   Array as EffectArray,
+  Exit,
   Layer,
   Option,
   pipe,
@@ -34,7 +35,7 @@ import {
   type RegisteredActionContext,
 } from "./action.ts";
 
-const RUNTIME_SCHEMA_VERSION = 3;
+const RUNTIME_SCHEMA_VERSION = 4;
 export const RUNTIME_MAX_CONCURRENT_EXECUTIONS = 8;
 export const RUNTIME_PAYLOAD_MAX_BYTES = 64 * 1024;
 const RUNTIME_EXECUTION_EVENT_PAYLOAD_MAX_BYTES = 48 * 1024;
@@ -44,9 +45,12 @@ export const RUNTIME_ROOT_IDENTITY_MAX_LENGTH = 4096;
 export const RUNTIME_EXECUTION_ID_MAX_LENGTH = 160;
 export const RUNTIME_EVENT_ID_MAX_LENGTH = 256;
 export const RUNTIME_PROGRESS_ID_MAX_LENGTH = 256;
+export const RUNTIME_CONTROL_ID_MAX_LENGTH = 256;
+export const RUNTIME_FOLLOW_UP_MAX_LENGTH = 16 * 1024;
 export const RUNTIME_WORKSPACE_ID_MAX_LENGTH = 256;
 const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
 const RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH = 64;
+const SHA256_BASE64URL_PATTERN = /^[\w-]{43}$/u;
 const NONBLANK_PATTERN = /\S/;
 
 const boundedNonBlankString = (maximumLength: number) =>
@@ -72,12 +76,16 @@ export const RuntimeEventId = boundedNonBlankString(
 export const RuntimeProgressId = boundedNonBlankString(
   RUNTIME_PROGRESS_ID_MAX_LENGTH
 );
+export const RuntimeControlId = boundedNonBlankString(
+  RUNTIME_CONTROL_ID_MAX_LENGTH
+);
 export const RuntimeWorkspaceId = boundedNonBlankString(
   RUNTIME_WORKSPACE_ID_MAX_LENGTH
 );
 export const ExecutionStatus = Schema.Literals([
   "queued",
   "running",
+  "cancelling",
   "completed",
   "failed",
   "cancelled",
@@ -125,12 +133,50 @@ export const ExecutionEvent = Schema.Struct({
   conversationId: RuntimeConversationId,
   eventId: RuntimeEventId,
   executionId: RuntimeExecutionId,
-  kind: Schema.Literals(["progress", "completed", "failed"]),
+  kind: Schema.Literals(["progress", "completed", "failed", "cancelled"]),
   payload: Schema.Unknown,
   sequence: Schema.Int.check(Schema.isGreaterThan(0)),
   workspaceId: RuntimeWorkspaceId,
 });
 export type ExecutionEvent = typeof ExecutionEvent.Type;
+
+export const ExecutionControlSnapshot = Schema.Struct({
+  actionName: boundedNonBlankString(ACTION_NAME_MAX_LENGTH),
+  actionRevision: boundedNonBlankString(ACTION_REVISION_MAX_LENGTH),
+  canCancel: Schema.Boolean,
+  canFollowUp: Schema.Boolean,
+  conversationId: RuntimeConversationId,
+  executionId: RuntimeExecutionId,
+  status: ExecutionStatus,
+  workspaceId: RuntimeWorkspaceId,
+});
+export type ExecutionControlSnapshot = typeof ExecutionControlSnapshot.Type;
+
+const ExecutionControlRequestBase = {
+  controlId: RuntimeControlId,
+  conversationId: RuntimeConversationId,
+  executionId: RuntimeExecutionId,
+  workspaceId: RuntimeWorkspaceId,
+} as const;
+export const InspectExecutionRequest = Schema.Struct(
+  ExecutionControlRequestBase
+);
+export type InspectExecutionRequest = typeof InspectExecutionRequest.Type;
+export const FollowUpExecutionRequest = Schema.Struct({
+  ...ExecutionControlRequestBase,
+  content: boundedNonBlankString(RUNTIME_FOLLOW_UP_MAX_LENGTH),
+});
+export type FollowUpExecutionRequest = typeof FollowUpExecutionRequest.Type;
+export const CancelExecutionRequest = Schema.Struct(
+  ExecutionControlRequestBase
+);
+export type CancelExecutionRequest = typeof CancelExecutionRequest.Type;
+export const ExecutionControlReceipt = Schema.Struct({
+  controlId: RuntimeControlId,
+  deduplicated: Schema.Boolean,
+  execution: ExecutionControlSnapshot,
+});
+export type ExecutionControlReceipt = typeof ExecutionControlReceipt.Type;
 
 export const ConversationOutput = Schema.Union([
   ApplicationConversationMessageChunk,
@@ -160,10 +206,14 @@ export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeE
   {
     reason: Schema.Literals([
       "conflicting-invocation",
+      "conflicting-control",
+      "control-failed",
+      "execution-not-active",
       "execution-not-found",
       "invalid-payload",
       "conversation-handler-unavailable",
       "storage-failure",
+      "unsupported-control",
       "unavailable-action",
     ]),
   }
@@ -278,6 +328,49 @@ class ExecutionGate extends Context.Service<
   ExecutionGate,
   Semaphore.Semaphore
 >()("@laborer/durable-runtime/ExecutionGate") {}
+
+interface ExecutionControlGateShape {
+  readonly withPermit: <A, E, R>(
+    executionId: string,
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E, R>;
+}
+
+class ExecutionControlGate extends Context.Service<
+  ExecutionControlGate,
+  ExecutionControlGateShape
+>()("@laborer/durable-runtime/ExecutionControlGate") {}
+
+const makeExecutionControlGate = Effect.sync(() => {
+  const permits = new Map<
+    string,
+    { readonly permit: Semaphore.Semaphore; references: number }
+  >();
+  return ExecutionControlGate.of({
+    withPermit: (executionId, effect) => {
+      let entry = permits.get(executionId);
+      if (entry === undefined) {
+        entry = { permit: Semaphore.makeUnsafe(1), references: 0 };
+        permits.set(executionId, entry);
+      }
+      entry.references += 1;
+      const retained = entry;
+      return retained.permit.withPermit(effect).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            retained.references -= 1;
+            if (
+              retained.references === 0 &&
+              permits.get(executionId) === retained
+            ) {
+              permits.delete(executionId);
+            }
+          })
+        )
+      );
+    },
+  });
+});
 
 export interface ConversationHandler {
   readonly handle: (
@@ -438,7 +531,7 @@ const nextEventSequence = Effect.fn("nextExecutionEventSequence")(function* (
 const persistEvent = Effect.fn("persistExecutionEvent")(function* (options: {
   readonly conversationId: string;
   readonly executionId: string;
-  readonly kind: "progress" | "completed" | "failed";
+  readonly kind: "progress" | "completed" | "failed" | "cancelled";
   readonly payload: unknown;
   readonly progressId?: string;
   readonly workspaceId: string;
@@ -887,10 +980,12 @@ const acceptExecutionEventIntoConversation = Effect.fn(
 
 const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
   (payload, executionId) =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the workflow deliberately keeps all terminal fencing in one auditable state machine.
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
       const executionGate = yield* ExecutionGate;
+      const executionControlGate = yield* ExecutionControlGate;
       const statuses = yield* sql<{
         readonly failureCategory: string | null;
         readonly status: string;
@@ -987,29 +1082,40 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
         executeRegisteredActionActivity(action, decodedInput, context)
       );
       const result = yield* decodeStoredJson(encodedResult).pipe(Effect.orDie);
-      const completedEvent = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* sql`
-            UPDATE laborer_executions
-            SET status = 'completed', result_json = ${encodedResult}
-            WHERE execution_id = ${executionId}
-          `;
-            return yield* persistEvent({
-              conversationId: payload.conversationId,
-              executionId,
-              kind: "completed",
-              payload: result,
-              workspaceId: payload.workspaceId,
-            }).pipe(Effect.provideService(SqlClient, sql));
-          })
+      const completedEvent = yield* executionControlGate
+        .withPermit(
+          executionId,
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+              UPDATE laborer_executions
+              SET status = 'completed', result_json = ${encodedResult}
+              WHERE execution_id = ${executionId} AND status = 'running'
+            `;
+              const changes = yield* sql<{ readonly count: number }>`
+              SELECT changes() AS count
+            `;
+              if (changes[0]?.count !== 1) {
+                return;
+              }
+              return yield* persistEvent({
+                conversationId: payload.conversationId,
+                executionId,
+                kind: "completed",
+                payload: result,
+                workspaceId: payload.workspaceId,
+              }).pipe(Effect.provideService(SqlClient, sql));
+            })
+          )
         )
         .pipe(Effect.orDie);
-      yield* acceptExecutionEventIntoConversation(
-        completedEvent,
-        payload.rootIdentity,
-        workflowEngine
-      ).pipe(Effect.provideService(SqlClient, sql), Effect.orDie);
+      if (completedEvent !== undefined) {
+        yield* acceptExecutionEventIntoConversation(
+          completedEvent,
+          payload.rootIdentity,
+          workflowEngine
+        ).pipe(Effect.provideService(SqlClient, sql), Effect.orDie);
+      }
     }).pipe(
       Effect.catch(
         (failure: {
@@ -1022,49 +1128,53 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
           Effect.gen(function* () {
             const sql = yield* SqlClient;
             const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
+            const executionControlGate = yield* ExecutionControlGate;
             const terminalStatus =
               failure.category === "needs-attention"
                 ? "needs-attention"
                 : "failed";
-            const failedEvent = yield* sql
-              .withTransaction(
-                Effect.gen(function* () {
-                  const statuses = yield* sql<{ readonly status: string }>`
+            const failedEvent = yield* executionControlGate
+              .withPermit(
+                executionId,
+                sql.withTransaction(
+                  Effect.gen(function* () {
+                    const statuses = yield* sql<{ readonly status: string }>`
                     SELECT status
                     FROM laborer_executions
                     WHERE execution_id = ${executionId}
                   `;
-                  const status = pipe(
-                    statuses,
-                    EffectArray.head,
-                    Option.map((row) => row.status),
-                    Option.getOrElse(() => "missing")
-                  );
-                  if (
-                    status === "failed" ||
-                    status === "needs-attention" ||
-                    status === "cancelled"
-                  ) {
-                    return;
-                  }
-                  if (status === "completed") {
-                    return yield* Effect.die(
-                      new Error("completed Execution cannot become failed")
+                    const status = pipe(
+                      statuses,
+                      EffectArray.head,
+                      Option.map((row) => row.status),
+                      Option.getOrElse(() => "missing")
                     );
-                  }
-                  yield* sql`
+                    if (
+                      status === "failed" ||
+                      status === "needs-attention" ||
+                      status === "cancelled"
+                    ) {
+                      return;
+                    }
+                    if (status === "completed") {
+                      return yield* Effect.die(
+                        new Error("completed Execution cannot become failed")
+                      );
+                    }
+                    yield* sql`
                 UPDATE laborer_executions
                 SET status = ${terminalStatus}, failure_category = ${failure.category}
                 WHERE execution_id = ${executionId}
               `;
-                  return yield* persistEvent({
-                    conversationId: payload.conversationId,
-                    executionId,
-                    kind: "failed",
-                    payload: { category: failure.category },
-                    workspaceId: payload.workspaceId,
-                  }).pipe(Effect.provideService(SqlClient, sql));
-                })
+                    return yield* persistEvent({
+                      conversationId: payload.conversationId,
+                      executionId,
+                      kind: "failed",
+                      payload: { category: failure.category },
+                      workspaceId: payload.workspaceId,
+                    }).pipe(Effect.provideService(SqlClient, sql));
+                  })
+                )
               )
               .pipe(Effect.orDie);
             if (failedEvent !== undefined) {
@@ -1171,6 +1281,25 @@ const initializeLaborerTables = Effect.gen(function* () {
           UNIQUE (execution_id, sequence)
         )
       `;
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS laborer_execution_controls (
+          control_id TEXT PRIMARY KEY,
+          execution_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          kind TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          result_json TEXT,
+          status TEXT NOT NULL,
+          UNIQUE (execution_id, sequence),
+          FOREIGN KEY (execution_id) REFERENCES laborer_executions(execution_id)
+        )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS laborer_execution_controls_order
+        ON laborer_execution_controls (execution_id, sequence)
+      `;
       if (Option.isSome(version) && version.value < 3) {
         yield* sql`ALTER TABLE laborer_executions ADD COLUMN workspace_id TEXT`;
         yield* sql`ALTER TABLE laborer_execution_events ADD COLUMN workspace_id TEXT`;
@@ -1223,6 +1352,55 @@ const initializeLaborerTables = Effect.gen(function* () {
         CREATE INDEX IF NOT EXISTS laborer_execution_events_conversation
         ON laborer_execution_events (conversation_id, event_id)
       `;
+      // A process can stop after a control is durably accepted but before its
+      // user-owned capability reports an outcome. Replaying that capability
+      // could duplicate an external side effect, so recovery fails the control
+      // closed before Cluster resumes. An ambiguous cancellation terminally
+      // fences its Execution instead of leaving it stuck cancelling.
+      const interruptedCancellations = yield* sql<{
+        readonly conversationId: string;
+        readonly executionId: string;
+        readonly workspaceId: string;
+      }>`
+        SELECT controls.execution_id AS executionId,
+          controls.conversation_id AS conversationId,
+          controls.workspace_id AS workspaceId
+        FROM laborer_execution_controls AS controls
+        WHERE controls.status = 'accepted' AND controls.kind = 'cancel'
+        ORDER BY controls.execution_id, controls.sequence
+      `;
+      yield* sql`
+        UPDATE laborer_execution_controls
+        SET status = 'failed'
+        WHERE status = 'accepted'
+      `;
+      yield* Effect.forEach(
+        interruptedCancellations,
+        (control) =>
+          Effect.gen(function* () {
+            yield* sql`
+              UPDATE laborer_executions
+              SET status = 'needs-attention',
+                failure_category = 'needs-attention'
+              WHERE execution_id = ${control.executionId}
+                AND status = 'cancelling'
+            `;
+            const changes = yield* sql<{ readonly count: number }>`
+              SELECT changes() AS count
+            `;
+            if (changes[0]?.count !== 1) {
+              return;
+            }
+            yield* persistEvent({
+              conversationId: control.conversationId,
+              executionId: control.executionId,
+              kind: "failed",
+              payload: { category: "needs-attention" },
+              workspaceId: control.workspaceId,
+            }).pipe(Effect.provideService(SqlClient, sql));
+          }),
+        { concurrency: 1, discard: true }
+      );
       yield* sql`
         INSERT INTO laborer_schema_versions (component, version)
         VALUES ('runtime', ${RUNTIME_SCHEMA_VERSION})
@@ -1374,6 +1552,87 @@ const validateRootRegistration = Effect.gen(function* () {
       }),
     { discard: true }
   );
+  const controls = yield* sql<{
+    readonly controlId: string;
+    readonly conversationId: string;
+    readonly executionId: string;
+    readonly kind: string;
+    readonly ownerConversationId: string;
+    readonly ownerWorkspaceId: string;
+    readonly requestHash: string;
+    readonly resultJson: string | null;
+    readonly sequence: number;
+    readonly status: string;
+    readonly workspaceId: string;
+  }>`
+    SELECT controls.control_id AS controlId,
+      controls.execution_id AS executionId,
+      controls.conversation_id AS conversationId,
+      controls.workspace_id AS workspaceId, controls.sequence, controls.kind,
+      controls.request_hash AS requestHash, controls.result_json AS resultJson,
+      controls.status, executions.conversation_id AS ownerConversationId,
+      executions.workspace_id AS ownerWorkspaceId
+    FROM laborer_execution_controls AS controls
+    LEFT JOIN laborer_executions AS executions
+      ON executions.execution_id = controls.execution_id
+    ORDER BY controls.execution_id, controls.sequence
+  `;
+  yield* Effect.forEach(
+    controls,
+    (control) =>
+      Effect.gen(function* () {
+        yield* Effect.all([
+          Schema.decodeUnknownEffect(RuntimeControlId)(control.controlId),
+          Schema.decodeUnknownEffect(RuntimeExecutionId)(control.executionId),
+          Schema.decodeUnknownEffect(RuntimeConversationId)(
+            control.conversationId
+          ),
+          Schema.decodeUnknownEffect(RuntimeWorkspaceId)(control.workspaceId),
+        ]).pipe(Effect.orDie);
+        if (
+          control.ownerConversationId !== control.conversationId ||
+          control.ownerWorkspaceId !== control.workspaceId ||
+          !Number.isSafeInteger(control.sequence) ||
+          control.sequence < 1 ||
+          !SHA256_BASE64URL_PATTERN.test(control.requestHash) ||
+          (control.kind !== "inspect" &&
+            control.kind !== "follow-up" &&
+            control.kind !== "cancel") ||
+          (control.status !== "completed" && control.status !== "failed") ||
+          (control.status === "completed") !== (control.resultJson !== null)
+        ) {
+          return yield* Effect.die(
+            new Error("invalid durable Execution control")
+          );
+        }
+        if (control.resultJson !== null) {
+          const receipt = yield* decodeStoredJson(control.resultJson).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(ExecutionControlReceipt, {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.orDie
+          );
+          const canonicalReceipt = yield* boundedPayloadJson(receipt).pipe(
+            Effect.orDie
+          );
+          if (
+            canonicalReceipt !== control.resultJson ||
+            receipt.controlId !== control.controlId ||
+            receipt.deduplicated ||
+            receipt.execution.executionId !== control.executionId ||
+            receipt.execution.conversationId !== control.conversationId ||
+            receipt.execution.workspaceId !== control.workspaceId
+          ) {
+            return yield* Effect.die(
+              new Error("invalid durable Execution control receipt")
+            );
+          }
+        }
+      }),
+    { discard: true }
+  );
   const nonterminal = yield* sql<{
     readonly actionFingerprint: string;
     readonly actionName: string;
@@ -1473,11 +1732,20 @@ export interface RootDurableRuntimeShape {
     conversationId: string,
     workspaceId: string
   ) => Effect.Effect<void, DurableRuntimeError>;
+  readonly cancelExecution: (
+    request: CancelExecutionRequest
+  ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
+  readonly followUpExecution: (
+    request: FollowUpExecutionRequest
+  ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
   readonly getExecution: (
     executionId: string,
     conversationId: string,
     workspaceId: string
   ) => Effect.Effect<ExecutionSnapshot, DurableRuntimeError>;
+  readonly inspectExecution: (
+    request: InspectExecutionRequest
+  ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
   readonly pendingEvents: (
     conversationId: string,
     workspaceId: string,
@@ -1505,6 +1773,7 @@ const makeRuntimeService = Effect.gen(function* () {
   const catalog = yield* ActionRegistry;
   const rootIdentity = yield* RootIdentity;
   const conversationHandlers = yield* ConversationHandlerRegistry;
+  const executionControlGate = yield* ExecutionControlGate;
   const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
 
   const deliverPendingExecutionEvents = Effect.fn(
@@ -1767,6 +2036,368 @@ const makeRuntimeService = Effect.gen(function* () {
     return yield* snapshotFromRow(row);
   });
 
+  const ownedExecutionRow = Effect.fn("ownedExecutionRow")(function* (
+    executionId: string,
+    conversationId: string,
+    workspaceId: string
+  ) {
+    const rows = yield* sql
+      .unsafe<StoredExecutionRow>(
+        `${executionSelect} WHERE execution_id = ? AND conversation_id = ? AND workspace_id = ?`,
+        [executionId, conversationId, workspaceId]
+      )
+      .pipe(Effect.mapError(() => runtimeError("storage-failure")));
+    return yield* pipe(
+      rows,
+      EffectArray.head,
+      Option.match({
+        onNone: () => Effect.fail(runtimeError("execution-not-found")),
+        onSome: Effect.succeed,
+      })
+    );
+  });
+
+  const controlSnapshot = Effect.fn("executionControlSnapshot")(function* (
+    row: StoredExecutionRow
+  ) {
+    const durable = yield* snapshotFromRow(row);
+    const action = yield* catalog
+      .get(row.actionName, row.actionRevision)
+      .pipe(Effect.mapError(() => runtimeError("storage-failure")));
+    if (action.fingerprint !== row.actionFingerprint) {
+      return yield* runtimeError("storage-failure");
+    }
+    return ExecutionControlSnapshot.make({
+      actionName: row.actionName,
+      actionRevision: row.actionRevision,
+      canCancel:
+        action.controls.cancel !== undefined && durable.status === "running",
+      canFollowUp:
+        action.controls.followUp !== undefined && durable.status === "running",
+      conversationId: row.conversationId,
+      executionId: row.executionId,
+      status: durable.status,
+      workspaceId: row.workspaceId,
+    });
+  });
+
+  interface StoredControlRow {
+    readonly conversationId: string;
+    readonly executionId: string;
+    readonly kind: string;
+    readonly requestHash: string;
+    readonly resultJson: string | null;
+    readonly status: string;
+    readonly workspaceId: string;
+  }
+  const storedControl = (controlId: string) =>
+    sql<StoredControlRow>`
+      SELECT execution_id AS executionId, conversation_id AS conversationId,
+        workspace_id AS workspaceId, kind, request_hash AS requestHash,
+        result_json AS resultJson, status
+      FROM laborer_execution_controls
+      WHERE control_id = ${controlId}
+    `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+  const decodeStoredControlReceipt = (encoded: string) =>
+    decodeStoredJson(encoded).pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(ExecutionControlReceipt, {
+          onExcessProperty: "error",
+        })
+      ),
+      Effect.mapError(() => runtimeError("storage-failure"))
+    );
+  const controlRequestHash = (kind: string, request: unknown) =>
+    boundedPayloadJson({ kind, request }).pipe(
+      Effect.map((encoded) =>
+        createHash("sha256").update(encoded, "utf8").digest("base64url")
+      )
+    );
+
+  const inspectExecution = Effect.fn("RootDurableRuntime.inspectExecution")(
+    function* (untrustedRequest: InspectExecutionRequest) {
+      const request = yield* Schema.decodeUnknownEffect(
+        InspectExecutionRequest,
+        {
+          onExcessProperty: "error",
+        }
+      )(untrustedRequest).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload"))
+      );
+      const requestHash = yield* controlRequestHash("inspect", request);
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              UPDATE laborer_executions SET execution_id = execution_id
+              WHERE execution_id = ${request.executionId}
+            `;
+            const row = yield* ownedExecutionRow(
+              request.executionId,
+              request.conversationId,
+              request.workspaceId
+            );
+            const existing = pipe(
+              yield* storedControl(request.controlId),
+              EffectArray.head
+            );
+            if (Option.isSome(existing)) {
+              if (
+                existing.value.kind !== "inspect" ||
+                existing.value.requestHash !== requestHash ||
+                existing.value.executionId !== request.executionId ||
+                existing.value.conversationId !== request.conversationId ||
+                existing.value.workspaceId !== request.workspaceId
+              ) {
+                return yield* runtimeError("conflicting-control");
+              }
+              if (existing.value.resultJson === null) {
+                return yield* runtimeError("storage-failure");
+              }
+              const prior = yield* decodeStoredControlReceipt(
+                existing.value.resultJson
+              );
+              return { ...prior, deduplicated: true };
+            }
+            const execution = yield* controlSnapshot(row);
+            const receipt = ExecutionControlReceipt.make({
+              controlId: request.controlId,
+              deduplicated: false,
+              execution,
+            });
+            const resultJson = yield* boundedPayloadJson(receipt);
+            const sequences = yield* sql<{ readonly sequence: number }>`
+            SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+            FROM laborer_execution_controls
+            WHERE execution_id = ${request.executionId}
+          `;
+            yield* sql`
+            INSERT INTO laborer_execution_controls (
+              control_id, execution_id, conversation_id, workspace_id,
+              sequence, kind, request_hash, result_json, status
+            ) VALUES (
+              ${request.controlId}, ${request.executionId},
+              ${request.conversationId}, ${request.workspaceId},
+              ${sequences[0]?.sequence ?? 1}, 'inspect', ${requestHash},
+              ${resultJson}, 'completed'
+            )
+          `;
+            return receipt;
+          })
+        )
+        .pipe(
+          Effect.mapError((error) =>
+            error instanceof DurableRuntimeError
+              ? error
+              : runtimeError("storage-failure")
+          )
+        );
+    }
+  );
+
+  const mutateExecution = Effect.fn("RootDurableRuntime.mutateExecution")(
+    function* (
+      kind: "follow-up" | "cancel",
+      untrustedRequest: FollowUpExecutionRequest | CancelExecutionRequest
+    ) {
+      const request = yield* Schema.decodeUnknownEffect(
+        kind === "follow-up"
+          ? FollowUpExecutionRequest
+          : CancelExecutionRequest,
+        { onExcessProperty: "error" }
+      )(untrustedRequest).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload"))
+      );
+      const requestHash = yield* controlRequestHash(kind, request);
+      return yield* Effect.uninterruptible(
+        executionControlGate.withPermit(
+          request.executionId,
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: durable idempotency, ownership, and terminal fencing are intentionally co-located.
+          Effect.gen(function* () {
+            const row = yield* ownedExecutionRow(
+              request.executionId,
+              request.conversationId,
+              request.workspaceId
+            );
+            const existing = pipe(
+              yield* storedControl(request.controlId),
+              EffectArray.head
+            );
+            if (Option.isSome(existing)) {
+              if (
+                existing.value.kind !== kind ||
+                existing.value.requestHash !== requestHash ||
+                existing.value.executionId !== request.executionId ||
+                existing.value.conversationId !== request.conversationId ||
+                existing.value.workspaceId !== request.workspaceId
+              ) {
+                return yield* runtimeError("conflicting-control");
+              }
+              if (existing.value.resultJson === null) {
+                return yield* runtimeError("control-failed");
+              }
+              const prior = yield* decodeStoredControlReceipt(
+                existing.value.resultJson
+              );
+              return { ...prior, deduplicated: true };
+            }
+            const action = yield* catalog
+              .get(row.actionName, row.actionRevision)
+              .pipe(Effect.mapError(() => runtimeError("storage-failure")));
+            const capability =
+              kind === "cancel"
+                ? action.controls.cancel
+                : action.controls.followUp;
+            if (capability === undefined) {
+              return yield* runtimeError("unsupported-control");
+            }
+            if (
+              (kind === "follow-up" && row.status !== "running") ||
+              (kind === "cancel" && row.status !== "running")
+            ) {
+              return yield* runtimeError("execution-not-active");
+            }
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`
+                  UPDATE laborer_executions SET execution_id = execution_id
+                  WHERE execution_id = ${request.executionId}
+                `;
+                const current = yield* ownedExecutionRow(
+                  request.executionId,
+                  request.conversationId,
+                  request.workspaceId
+                );
+                if (
+                  (kind === "follow-up" && current.status !== "running") ||
+                  (kind === "cancel" && current.status !== "running")
+                ) {
+                  return yield* runtimeError("execution-not-active");
+                }
+                const sequences = yield* sql<{ readonly sequence: number }>`
+                  SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+                  FROM laborer_execution_controls
+                  WHERE execution_id = ${request.executionId}
+                `;
+                yield* sql`
+                  INSERT INTO laborer_execution_controls (
+                    control_id, execution_id, conversation_id, workspace_id,
+                    sequence, kind, request_hash, result_json, status
+                  ) VALUES (
+                    ${request.controlId}, ${request.executionId},
+                    ${request.conversationId}, ${request.workspaceId},
+                    ${sequences[0]?.sequence ?? 1}, ${kind}, ${requestHash},
+                    NULL, 'accepted'
+                  )
+                `;
+                if (kind === "cancel") {
+                  yield* sql`
+                    UPDATE laborer_executions SET status = 'cancelling'
+                    WHERE execution_id = ${request.executionId}
+                  `;
+                }
+              })
+            );
+            const controlContext = {
+              controlId: request.controlId,
+              conversationId: request.conversationId,
+              executionId: request.executionId,
+              rootIdentity,
+              workspaceId: request.workspaceId,
+            };
+            let controlEffect: Effect.Effect<void, unknown> | undefined;
+            if (kind === "cancel") {
+              controlEffect = action.controls.cancel?.(controlContext);
+            } else if (
+              "content" in request &&
+              typeof request.content === "string"
+            ) {
+              controlEffect = action.controls.followUp?.(
+                request.content,
+                controlContext
+              );
+            }
+            if (controlEffect === undefined) {
+              return yield* runtimeError("storage-failure");
+            }
+            const outcome = yield* Effect.exit(controlEffect);
+            if (Exit.isFailure(outcome)) {
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`
+                    UPDATE laborer_execution_controls SET status = 'failed'
+                    WHERE control_id = ${request.controlId} AND status = 'accepted'
+                  `;
+                  if (kind === "cancel") {
+                    yield* sql`
+                      UPDATE laborer_executions SET status = 'running'
+                      WHERE execution_id = ${request.executionId} AND status = 'cancelling'
+                    `;
+                  }
+                })
+              );
+              return yield* runtimeError("control-failed");
+            }
+            let cancelledEvent: ExecutionEvent | undefined;
+            if (kind === "cancel") {
+              cancelledEvent = yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`
+                    UPDATE laborer_executions SET status = 'cancelled'
+                    WHERE execution_id = ${request.executionId} AND status = 'cancelling'
+                  `;
+                  const changes = yield* sql<{ readonly count: number }>`
+                    SELECT changes() AS count
+                  `;
+                  if (changes[0]?.count !== 1) {
+                    return yield* runtimeError("storage-failure");
+                  }
+                  return yield* persistEvent({
+                    conversationId: request.conversationId,
+                    executionId: request.executionId,
+                    kind: "cancelled",
+                    payload: { category: "cancelled" },
+                    workspaceId: request.workspaceId,
+                  }).pipe(Effect.provideService(SqlClient, sql));
+                })
+              );
+            }
+            const finalRow = yield* ownedExecutionRow(
+              request.executionId,
+              request.conversationId,
+              request.workspaceId
+            );
+            const receipt = ExecutionControlReceipt.make({
+              controlId: request.controlId,
+              deduplicated: false,
+              execution: yield* controlSnapshot(finalRow),
+            });
+            const resultJson = yield* boundedPayloadJson(receipt);
+            yield* sql`
+              UPDATE laborer_execution_controls
+              SET status = 'completed', result_json = ${resultJson}
+              WHERE control_id = ${request.controlId} AND status = 'accepted'
+            `;
+            if (cancelledEvent !== undefined) {
+              yield* acceptExecutionEventIntoConversation(
+                cancelledEvent,
+                rootIdentity,
+                workflowEngine
+              ).pipe(Effect.provideService(SqlClient, sql));
+            }
+            return receipt;
+          })
+        )
+      ).pipe(
+        Effect.mapError((error) =>
+          error instanceof DurableRuntimeError
+            ? error
+            : runtimeError("storage-failure")
+        )
+      );
+    }
+  );
+
   const startExecution = Effect.fn("RootDurableRuntime.startExecution")(
     function* (request: StartExecutionRequest) {
       const validatedRequest = yield* Schema.decodeUnknownEffect(
@@ -1985,7 +2616,10 @@ const makeRuntimeService = Effect.gen(function* () {
 
   return {
     acknowledgeEvent,
+    cancelExecution: (request) => mutateExecution("cancel", request),
+    followUpExecution: (request) => mutateExecution("follow-up", request),
     getExecution,
+    inspectExecution,
     pendingEvents,
     registerConversationHandler: (workspaceId, handler) =>
       Schema.decodeUnknownEffect(RuntimeWorkspaceId)(workspaceId).pipe(
@@ -2034,6 +2668,10 @@ export const makeRootDurableRuntimeLayer = (
   const executionGateLayer = Layer.sync(ExecutionGate, () =>
     Semaphore.makeUnsafe(RUNTIME_MAX_CONCURRENT_EXECUTIONS)
   );
+  const executionControlGateLayer = Layer.effect(
+    ExecutionControlGate,
+    makeExecutionControlGate
+  );
   const rootIdentityLayer = Layer.succeed(RootIdentity, rootIdentity);
   const migrationsLayer = Layer.effectDiscard(initializeLaborerTables).pipe(
     Layer.provide(sqliteLayer)
@@ -2052,6 +2690,7 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(registryLayer),
     Layer.provideMerge(conversationRegistryLayer),
     Layer.provideMerge(executionGateLayer),
+    Layer.provideMerge(executionControlGateLayer),
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
@@ -2062,6 +2701,7 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(registryLayer),
     Layer.provideMerge(conversationRegistryLayer),
     Layer.provideMerge(executionGateLayer),
+    Layer.provideMerge(executionControlGateLayer),
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),

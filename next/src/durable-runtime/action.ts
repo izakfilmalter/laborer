@@ -60,8 +60,37 @@ export interface RegisteredActionContext {
   readonly rootIdentity: string;
 }
 
+export interface RegisteredActionControlContext {
+  readonly controlId: string;
+  readonly conversationId: string;
+  readonly executionId: string;
+  readonly rootIdentity: string;
+  readonly workspaceId: string;
+}
+
+export interface RegisteredActionControls {
+  readonly cancel?: (
+    context: RegisteredActionControlContext
+  ) => Effect.Effect<void, unknown>;
+  readonly followUp?: (
+    content: string,
+    context: RegisteredActionControlContext
+  ) => Effect.Effect<void, unknown>;
+}
+
+const catalogControlMetadata = (controls: RegisteredActionControls) =>
+  controls.cancel === undefined && controls.followUp === undefined
+    ? {}
+    : {
+        controls: {
+          cancel: controls.cancel !== undefined,
+          followUp: controls.followUp !== undefined,
+        },
+      };
+
 export interface RegisteredAction<Name extends string = string> {
   readonly annotations: RegisteredActionAnnotations;
+  readonly controls: RegisteredActionControls;
   readonly decodeInput: (
     input: unknown
   ) => Effect.Effect<unknown, ActionRegistrationError>;
@@ -129,6 +158,7 @@ const jsonSchemaFor = (schema: Schema.Top): JsonSchema => {
 
 interface DefineActionOptions<Name extends string, Input, Result, Error> {
   readonly annotations?: Partial<RegisteredActionAnnotations>;
+  readonly controls?: RegisteredActionControls;
   readonly description: string;
   readonly input: Schema.Codec<Input, unknown>;
   readonly name: Name;
@@ -184,6 +214,16 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
     openWorldHint: options.annotations?.openWorldHint ?? true,
     readOnlyHint: options.annotations?.readOnlyHint ?? false,
   };
+  const controls = options.controls ?? {};
+  if (
+    Object.keys(controls).some(
+      (key) => key !== "cancel" && key !== "followUp"
+    ) ||
+    (controls.cancel !== undefined && typeof controls.cancel !== "function") ||
+    (controls.followUp !== undefined && typeof controls.followUp !== "function")
+  ) {
+    throw registrationError("invalid-metadata");
+  }
   const recoveryPolicy = options.recoveryPolicy ?? "fail-closed";
   if (
     recoveryPolicy !== "fail-closed" &&
@@ -201,6 +241,7 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
     .update(
       canonicalCatalogJson({
         annotations,
+        ...catalogControlMetadata(controls),
         inputSchema: inputJsonSchema,
         name: options.name,
         outputSchema: resultJsonSchema,
@@ -212,6 +253,7 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
     .digest("base64url");
   return {
     annotations,
+    controls,
     decodeInput: (input) =>
       Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(
         input

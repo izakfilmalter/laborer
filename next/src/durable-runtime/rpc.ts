@@ -1,10 +1,14 @@
 import { Effect, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import {
+  CancelExecutionRequest,
   ConversationReceipt,
   DurableRuntimeError,
+  ExecutionControlReceipt,
   ExecutionEvent,
   ExecutionSnapshot,
+  FollowUpExecutionRequest,
+  InspectExecutionRequest,
   RootDurableRuntime,
   type RootDurableRuntimeShape,
   RunConversationRequest,
@@ -15,7 +19,7 @@ import {
   StartExecutionRequest,
 } from "./root-runtime.ts";
 
-export const ROOT_RUNTIME_PROTOCOL_VERSION = 2;
+export const ROOT_RUNTIME_PROTOCOL_VERSION = 3;
 
 const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
 
@@ -75,6 +79,33 @@ export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
   success: ExecutionSnapshot,
 });
 
+export const InspectExecutionRpc = Rpc.make("RootRuntime.InspectExecution", {
+  error: DurableRuntimeError,
+  payload: Schema.Struct({
+    ...InspectExecutionRequest.fields,
+    protocolVersion: ProtocolVersion,
+  }),
+  success: ExecutionControlReceipt,
+});
+
+export const FollowUpExecutionRpc = Rpc.make("RootRuntime.FollowUpExecution", {
+  error: DurableRuntimeError,
+  payload: Schema.Struct({
+    ...FollowUpExecutionRequest.fields,
+    protocolVersion: ProtocolVersion,
+  }),
+  success: ExecutionControlReceipt,
+});
+
+export const CancelExecutionRpc = Rpc.make("RootRuntime.CancelExecution", {
+  error: DurableRuntimeError,
+  payload: Schema.Struct({
+    ...CancelExecutionRequest.fields,
+    protocolVersion: ProtocolVersion,
+  }),
+  success: ExecutionControlReceipt,
+});
+
 export const PendingExecutionEventsRpc = Rpc.make(
   "RootRuntime.PendingExecutionEvents",
   {
@@ -110,6 +141,9 @@ export const RootRuntimeRpcs = RpcGroup.make(
   RunConversationRpc,
   StartExecutionRpc,
   GetExecutionRpc,
+  InspectExecutionRpc,
+  FollowUpExecutionRpc,
+  CancelExecutionRpc,
   PendingExecutionEventsRpc,
   AcknowledgeExecutionEventRpc
 );
@@ -128,6 +162,44 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
         executionId,
         workspaceId,
       }) => runtime.getExecution(executionId, conversationId, workspaceId),
+      "RootRuntime.InspectExecution": ({
+        controlId,
+        conversationId,
+        executionId,
+        workspaceId,
+      }) =>
+        runtime.inspectExecution({
+          controlId,
+          conversationId,
+          executionId,
+          workspaceId,
+        }),
+      "RootRuntime.FollowUpExecution": ({
+        content,
+        controlId,
+        conversationId,
+        executionId,
+        workspaceId,
+      }) =>
+        runtime.followUpExecution({
+          content,
+          controlId,
+          conversationId,
+          executionId,
+          workspaceId,
+        }),
+      "RootRuntime.CancelExecution": ({
+        controlId,
+        conversationId,
+        executionId,
+        workspaceId,
+      }) =>
+        runtime.cancelExecution({
+          controlId,
+          conversationId,
+          executionId,
+          workspaceId,
+        }),
       "RootRuntime.PendingExecutionEvents": ({
         conversationId,
         limit,

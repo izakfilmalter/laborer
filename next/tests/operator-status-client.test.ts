@@ -235,6 +235,51 @@ describe("operator status client", () => {
     }
   });
 
+  it("stops reporting running when a connected daemon stops publishing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-stalled-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await writeFile(paths.token, "a".repeat(64), { mode: 0o600 });
+    const connections = new Set<Socket>();
+    const server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("close", () => connections.delete(socket));
+      socket.once("data", () => {
+        socket.write(
+          `${JSON.stringify({
+            daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+            kind: "snapshot",
+            observedAtUnixMs: 2000,
+            protocolVersion: OPERATOR_PROTOCOL_VERSION,
+            sequence: 1,
+          })}\n`
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(paths.socket, resolve);
+    });
+    await chmod(paths.socket, 0o600);
+
+    try {
+      const client = new OperatorStatusClient({
+        paths,
+        reconnectDelayMs: 60_000,
+        snapshotTimeoutMs: 50,
+      });
+      clients.push(client);
+      client.start();
+      await waitForState(client, "running");
+      await waitForState(client, "reconnecting");
+    } finally {
+      for (const connection of connections) {
+        connection.destroy();
+      }
+      await closeServer(server);
+    }
+  });
+
   it.each([
     {
       expectedState: "incompatible" as const,

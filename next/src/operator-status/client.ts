@@ -95,6 +95,7 @@ export class OperatorStatusClient {
   readonly #listeners = new Set<OperatorStatusListener>();
   readonly #paths: OperatorStatusPaths;
   readonly #reconnectDelayMs: number;
+  readonly #snapshotTimeoutMs: number;
   #closed = false;
   #connectedOnce = false;
   #connectGeneration = 0;
@@ -105,9 +106,11 @@ export class OperatorStatusClient {
   constructor(options: {
     readonly paths: OperatorStatusPaths;
     readonly reconnectDelayMs?: number;
+    readonly snapshotTimeoutMs?: number;
   }) {
     this.#paths = options.paths;
     this.#reconnectDelayMs = options.reconnectDelayMs ?? 1000;
+    this.#snapshotTimeoutMs = options.snapshotTimeoutMs ?? 3000;
   }
 
   start(): void {
@@ -242,7 +245,14 @@ export class OperatorStatusClient {
       if (this.#socket === socket) {
         this.#socket = null;
       }
-      this.#setView({ state, uptimeSeconds: null, version: null });
+      this.#setView({
+        state:
+          state === "unavailable" && this.#connectedOnce
+            ? "reconnecting"
+            : state,
+        uptimeSeconds: null,
+        version: null,
+      });
       if (state !== "incompatible") {
         this.#scheduleReconnect();
       }
@@ -284,7 +294,9 @@ export class OperatorStatusClient {
           }
           lastSequence = snapshot.sequence;
           settled = false;
-          socket.setTimeout(0);
+          // A connected socket is not sufficient evidence that the daemon is
+          // still live. Every bounded snapshot renews this heartbeat deadline.
+          socket.setTimeout(this.#snapshotTimeoutMs);
           this.#connectedOnce = true;
           this.#setView({
             state: "running",

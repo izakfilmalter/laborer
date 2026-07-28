@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -163,6 +163,74 @@ describe("operator status client", () => {
         version: "1.0.0",
       });
     } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("applies later live snapshots without reconnecting", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-live-"));
+    const paths = operatorStatusPaths(root);
+    await mkdir(paths.directory, { mode: 0o700 });
+    await writeFile(paths.token, "a".repeat(64), { mode: 0o600 });
+
+    let publishNext = (): void => {
+      throw new Error("client has not subscribed");
+    };
+    let confirmSubscription = (): void => undefined;
+    const subscribed = new Promise<void>((resolveSubscription) => {
+      confirmSubscription = resolveSubscription;
+    });
+    const snapshot = (sequence: number, observedAtUnixMs: number): string =>
+      JSON.stringify({
+        daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+        kind: "snapshot",
+        observedAtUnixMs,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION,
+        sequence,
+      });
+    const connections = new Set<Socket>();
+    const server = createServer((socket) => {
+      connections.add(socket);
+      socket.once("close", () => connections.delete(socket));
+      socket.once("data", () => {
+        socket.write(`${snapshot(1, 2000)}\n`);
+        publishNext = () => socket.write(`${snapshot(2, 4000)}\n`);
+        confirmSubscription();
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(paths.socket, resolve);
+    });
+    await chmod(paths.socket, 0o600);
+
+    try {
+      const client = new OperatorStatusClient({ paths });
+      clients.push(client);
+      client.start();
+      expect(await waitForState(client, "running")).toMatchObject({
+        uptimeSeconds: 1,
+      });
+      await subscribed;
+
+      const updated = new Promise<OperatorStatusView>((resolveUpdated) => {
+        const unsubscribe = client.subscribe((view) => {
+          if (view.state === "running" && view.uptimeSeconds === 3) {
+            unsubscribe();
+            resolveUpdated(view);
+          }
+        });
+      });
+      publishNext();
+      expect(await updated).toEqual({
+        state: "running",
+        uptimeSeconds: 3,
+        version: "1.0.0",
+      });
+    } finally {
+      for (const connection of connections) {
+        connection.destroy();
+      }
       await closeServer(server);
     }
   });

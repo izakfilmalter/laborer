@@ -62,6 +62,19 @@ const PromptRecord = Schema.Struct({
   sessionId: Schema.String,
 });
 
+const McpServerRecord = Schema.Struct({
+  args: Schema.Array(Schema.String),
+  command: Schema.String,
+  env: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      value: Schema.String,
+    })
+  ),
+  name: Schema.String,
+  type: Schema.optional(Schema.String),
+});
+
 const readJsonLineValues = Effect.fnUntraced(function* (path: string) {
   const source = yield* Effect.promise(() => readFile(path, "utf8"));
   return source
@@ -244,28 +257,19 @@ const crashPhaseFor = (
 };
 
 const stableMcpServers = (value: unknown) =>
-  (
-    value as readonly {
-      readonly args: readonly string[];
-      readonly command: string;
-      readonly env: readonly {
-        readonly name: string;
-        readonly value: string;
-      }[];
-      readonly name: string;
-      readonly type?: string;
-    }[]
-  ).map((server) => ({
-    args: server.args,
-    command: server.command,
-    env: server.env.filter(
-      ({ name }) =>
-        name !== "LABORER_MEMORY_REGISTRATION_NONCE" &&
-        name !== "LABORER_MEMORY_READY_PATH"
-    ),
-    name: server.name,
-    type: server.type,
-  }));
+  Schema.decodeUnknownSync(Schema.Array(McpServerRecord))(value).map(
+    (server) => ({
+      args: server.args,
+      command: server.command,
+      env: server.env.filter(
+        ({ name }) =>
+          name !== "LABORER_MEMORY_REGISTRATION_NONCE" &&
+          name !== "LABORER_MEMORY_READY_PATH"
+      ),
+      name: server.name,
+      type: server.type,
+    })
+  );
 
 describe("issue #241 durable ACP session bindings", () => {
   it.live(
@@ -562,8 +566,16 @@ describe("issue #241 durable ACP session bindings", () => {
           );
           const prompts = yield* readPrompts(join(controls, "prompts.jsonl"));
           assert.strictEqual(prompts.length, 2);
+          assert.deepStrictEqual(
+            prompts.map(({ sessionId }) => sessionId),
+            [
+              afterNew.conversations[0]?.agentSessionBinding.sessionId,
+              afterNew.conversations[0]?.agentSessionBinding.sessionId,
+            ]
+          );
           assert.ok(!prompts[1]?.prompt.includes("Changed First Name"));
           assert.ok(prompts[1]?.prompt.includes("Current Second Name"));
+          assert.strictEqual(secondPublished.length, firstPublished.length);
           assert.ok(
             secondPublished.every(
               (output) =>

@@ -53,6 +53,7 @@ import {
   type SlackWorkspaceStartupAdapter,
   startSlackWorkspaceDirectory,
 } from "../src/slack/workspace-startup.ts";
+import { isProcessRunning } from "./support/process-state.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const fakeOpenCodePath = resolve(
@@ -131,15 +132,7 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
   const pid = Number(yield* Effect.promise(() => readFile(pidPath, "utf8")));
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
   while (Date.now() < deadline) {
-    const exited = yield* Effect.sync(() => {
-      try {
-        process.kill(pid, 0);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-    if (exited) {
+    if (!isProcessRunning(pid)) {
       return;
     }
     yield* Effect.sleep("10 millis");
@@ -149,14 +142,7 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
 
 const processIsRunning = Effect.fnUntraced(function* (pidPath: string) {
   const pid = Number(yield* Effect.promise(() => readFile(pidPath, "utf8")));
-  return yield* Effect.sync(() => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  return isProcessRunning(pid);
 });
 
 const waitForMessageCount = Effect.fnUntraced(function* (

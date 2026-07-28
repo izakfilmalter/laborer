@@ -20,6 +20,7 @@ import {
   canReuseCompletedHead,
   mergePullRequestArgs,
   reviewedHeadNeedsPush,
+  sandcastleFullGateCommand,
   shellQuote,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
@@ -136,7 +137,7 @@ const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
 const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
-const FULL_GATE = "bun run --cwd next check";
+const FULL_GATE = sandcastleFullGateCommand;
 const REPO_ROOT = "..";
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
 const HOST_OPENCODE_AUTH = resolve(

@@ -835,13 +835,25 @@ describe("private Action MCP bridge", () => {
             statePath: join(root, "authority.json"),
             trustedRoot: root,
           });
+          let capabilityTime = 1000;
+          let expireBeforeInvocationValidation = false;
           const bridge = yield* makeLaborerActionMcpBridge({
             authorityRepository: authority,
             bootstrapPath: join(root, "action-bootstrap"),
+            capabilityTtlMillis: 100,
             processGeneration: 17,
             root,
             rootAuthority: `${root}:retained`,
             statePath: join(root, "action-capabilities.json"),
+            testHooks: {
+              currentTimeMillis: () => capabilityTime,
+              beforeInvokeLeaseValidation: () => {
+                if (expireBeforeInvocationValidation) {
+                  capabilityTime += 101;
+                }
+                return Promise.resolve();
+              },
+            },
             trustedRuntimeRoot: root,
             workspaceId: "T246ACTION",
           });
@@ -1112,12 +1124,68 @@ describe("private Action MCP bridge", () => {
           assert.strictEqual(yield* Ref.get(invocationCount), 2);
           yield* closeSecondTurn;
 
+          const expiredSessionId = "session-action-246-expired";
+          const expiredInput = {
+            prompt: "This capability must expire before invocation.",
+            worktreeName: "action-246-expired",
+          };
+          const closeExpiredTurn = yield* bridge.activateTurn({
+            actionServerGeneration: currentRegistration.actionServerGeneration,
+            actions: [action],
+            scope: {
+              bindingGeneration: 5,
+              channelId: "C246EXPIRED",
+              conversationId: "workspace:T246ACTION:C246EXPIRED:3.0",
+              processGeneration: 17,
+              promptId: "prompt-246-expired",
+              rootTs: "3.0",
+              sessionId: expiredSessionId,
+              turnId: "turn-246-expired",
+              workspaceId: "T246ACTION",
+            },
+          });
+          const expiredToolCallId = "call-246-expired";
+          bridge.observeToolCall({
+            sessionId: expiredSessionId,
+            update: {
+              kind: "other",
+              name: permission,
+              rawInput: expiredInput,
+              sessionUpdate: "tool_call",
+              status: "pending",
+              title: permission,
+              toolCallId: expiredToolCallId,
+            },
+          });
+          assert.strictEqual(
+            (yield* bridge.tryAuthorizePermission(
+              allowRequest({
+                input: expiredInput,
+                permission,
+                sessionId: expiredSessionId,
+                toolCallId: expiredToolCallId,
+              })
+            ))?.outcome.outcome,
+            "selected"
+          );
+          expireBeforeInvocationValidation = true;
+          const expiredCall = yield* Effect.promise(() =>
+            currentClient.callTool({
+              arguments: expiredInput,
+              name: "create-feature",
+            })
+          );
+          expireBeforeInvocationValidation = false;
+          assert.strictEqual(expiredCall.isError, true);
+          assert.strictEqual(yield* Ref.get(invocationCount), 2);
+          yield* closeExpiredTurn;
+
           const staleGeneration = yield* Effect.result(
             bridge.activateTurn({
               actionServerGeneration: registration.actionServerGeneration,
               actions: [action],
               scope: {
-                bindingGeneration: 5,
+                bindingGeneration: 6,
                 channelId: "C246-stale",
                 conversationId: "workspace:T246ACTION:C246-stale:3.0",
                 processGeneration: 17,

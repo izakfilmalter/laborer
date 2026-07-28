@@ -18,6 +18,7 @@ import {
   prepareAcpAgentContextSources,
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
+import { DealWithBugActionResult } from "../src/action-catalog.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
@@ -72,6 +73,12 @@ const OBSERVATION_TIMEOUT_MILLIS = 5000;
 const SessionMethod = Schema.Struct({
   method: Schema.Literals(["session/new", "session/resume"]),
   params: Schema.Record(Schema.String, Schema.Unknown),
+});
+
+const BugActionInvocationResults = Schema.Struct({
+  actionName: Schema.Literal("deal-with-bug"),
+  duplicate: DealWithBugActionResult,
+  first: DealWithBugActionResult,
 });
 
 const FakeLaunch = Schema.Struct({
@@ -1594,23 +1601,14 @@ describe("issue #244 opt-in production ACP composition", () => {
           );
           assert.strictEqual(state.executions.length, 1);
           assert.strictEqual(state.executions[0]?.actionName, "deal-with-bug");
-          const actionResults = JSON.parse(
-            yield* Effect.promise(() => readFile(actionResultPath, "utf8"))
-          ) as {
-            readonly actionName: string;
-            readonly duplicate: {
-              readonly actionName: string;
-              readonly deduplicated: boolean;
-              readonly executionId: string;
-              readonly status: string;
-            };
-            readonly first: {
-              readonly actionName: string;
-              readonly deduplicated: boolean;
-              readonly executionId: string;
-              readonly status: string;
-            };
-          };
+          const actionResults = yield* Schema.decodeUnknownEffect(
+            BugActionInvocationResults,
+            { onExcessProperty: "error" }
+          )(
+            JSON.parse(
+              yield* Effect.promise(() => readFile(actionResultPath, "utf8"))
+            )
+          );
           assert.strictEqual(actionResults.actionName, "deal-with-bug");
           assert.strictEqual(actionResults.first.actionName, "deal-with-bug");
           assert.strictEqual(actionResults.first.deduplicated, false);

@@ -2496,7 +2496,14 @@ describe("issue #244 opt-in production ACP composition", () => {
                   })
                 );
               }
-              yield* Effect.sleep("100 millis");
+              for (let attempt = 0; attempt < 200; attempt += 1) {
+                if (invalidAcknowledgements === 6) {
+                  break;
+                }
+                yield* Effect.promise(
+                  () => new Promise<void>((resolve) => setTimeout(resolve, 5))
+                );
+              }
               assert.strictEqual(invalidAcknowledgements, 6);
               assert.strictEqual(
                 yield* Effect.promise(() =>
@@ -2606,7 +2613,14 @@ describe("issue #244 opt-in production ACP composition", () => {
                 teamId: spec.identity.teamId,
               })
             );
-            yield* Effect.sleep("50 millis");
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              if (replayAcknowledged) {
+                break;
+              }
+              yield* Effect.promise(
+                () => new Promise<void>((resolve) => setTimeout(resolve, 5))
+              );
+            }
             assert.ok(replayAcknowledged);
             assert.strictEqual(
               spec.reactions.filter(({ method }) => method === "chat.update")
@@ -2955,7 +2969,10 @@ describe("issue #244 opt-in production ACP composition", () => {
           );
         })
       ),
-    20_000
+    // This scene spawns several real children; under a busy parallel gate the
+    // whole file can take more than a minute, so give the single scene the
+    // same slack as the heaviest scenes instead of racing host load.
+    60_000
   );
 
   it.live(

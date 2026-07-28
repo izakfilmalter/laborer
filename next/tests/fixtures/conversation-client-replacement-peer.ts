@@ -3,6 +3,7 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Schema } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   ApplicationConversationMessageChunk,
   type ApplicationEvent,
@@ -81,20 +82,44 @@ const waitForTerminal = Effect.fn("clientReplacementWaitForTerminal")(
   }
 );
 
-const waitForPendingEvents = Effect.fn("clientReplacementWaitForPendingEvents")(
-  function* (runtime: RootDurableRuntimeShape) {
-    for (let attempt = 0; attempt < 1000; attempt += 1) {
-      const pending = yield* runtime.pendingEvents(conversationId, workspaceId);
-      if (pending.length > 0) {
-        return pending;
+// A terminal Execution event is durably parked in the Conversation journal
+// while no Conversation client is attached: the ConversationWorkflow cannot
+// complete delivery without a registered handler. The outbox row, by
+// contrast, is acknowledged as soon as the event is accepted into the
+// journal, so polling `pendingEvents` races that internal handoff.
+const waitForUndeliveredTerminalEvent = Effect.fn(
+  "clientReplacementWaitForUndeliveredTerminalEvent"
+)(function* (executionId: string) {
+  const sql = yield* SqlClient;
+  const terminalEventId = `execution:${executionId}:terminal`;
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const rows = yield* sql<{
+      readonly eventId: string;
+      readonly status: string;
+    }>`
+      SELECT event_id AS eventId, status
+      FROM laborer_conversation_events
+      WHERE event_id = ${terminalEventId}
+        AND workspace_id = ${workspaceId}
+        AND conversation_id = ${conversationId}
+    `;
+    const row = rows[0];
+    if (row !== undefined) {
+      if (row.status === "completed" || row.status === "failed") {
+        return yield* Effect.die(
+          new Error(
+            `terminal event settled to ${row.status} without an attached client`
+          )
+        );
       }
-      yield* Effect.sleep("10 millis");
+      return [row];
     }
-    return yield* Effect.die(
-      new Error("Execution became terminal without a durable pending event")
-    );
+    yield* Effect.sleep("10 millis");
   }
-);
+  return yield* Effect.die(
+    new Error("Execution became terminal without a durable pending event")
+  );
+});
 
 const runProcess = Effect.fn("runClientReplacementProcess")(function* (
   label: string,
@@ -321,10 +346,12 @@ const program = Effect.scoped(
       runtime,
       first.executions[0]?.executionId ?? "missing"
     );
-    // The terminal snapshot and its outbox event settle in consecutive
-    // workflow steps. Wait for the durable event rather than racing that
-    // internal handoff after observing the terminal snapshot.
-    const pendingWithoutClient = yield* waitForPendingEvents(runtime);
+    // The terminal snapshot and the durable journal record settle in
+    // consecutive workflow steps. Wait for the journal record rather than
+    // racing that internal handoff after observing the terminal snapshot.
+    const pendingWithoutClient = yield* waitForUndeliveredTerminalEvent(
+      first.executions[0]?.executionId ?? "missing"
+    );
     const secondPid = Number(actionPidsBefore[1]);
     process.kill(secondPid, 0);
 

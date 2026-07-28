@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, unlink } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
@@ -26,11 +26,23 @@ export interface OperatorStatusPaths {
 export const operatorStatusPaths = (
   runtimeRoot: string
 ): OperatorStatusPaths => {
-  const directory = resolve(runtimeRoot, "operator-status");
+  const resolvedRuntimeRoot = resolve(runtimeRoot);
+  const directory = resolve(resolvedRuntimeRoot, "operator-status");
+  const preferredSocket = resolve(directory, "daemon.sock");
+  const socket =
+    Buffer.byteLength(preferredSocket, "utf8") <= 96
+      ? preferredSocket
+      : resolve(
+          "/tmp",
+          `laborer-operator-${createHash("sha256")
+            .update(resolvedRuntimeRoot, "utf8")
+            .digest("hex")
+            .slice(0, 32)}.sock`
+        );
   return {
     directory,
-    runtimeRoot: resolve(runtimeRoot),
-    socket: resolve(directory, "daemon.sock"),
+    runtimeRoot: resolvedRuntimeRoot,
+    socket,
     token: resolve(directory, "authentication-token"),
   };
 };

@@ -551,6 +551,7 @@ describe("durable Conversation stream delivery", () => {
           const rootTs = "1700000006.000001";
           const threadId = canonicalThreadId("CWORK", rootTs, "TWORK");
           const firstRequest = yield* Deferred.make<void>();
+          const secondRequest = yield* Deferred.make<void>();
           let starts = 0;
           const slack: SlackGatewayShape = {
             conversationStreamDeliveryPolicy: {
@@ -581,7 +582,9 @@ describe("durable Conversation stream delivery", () => {
                       )
                     );
                   }
-                  return Effect.succeed({ ts: "native-rate-stream" });
+                  return Deferred.succeed(secondRequest, undefined).pipe(
+                    Effect.as({ ts: "native-rate-stream" })
+                  );
                 }),
               stop: () => Effect.void,
             },
@@ -644,9 +647,11 @@ describe("durable Conversation stream delivery", () => {
             slack,
             store: restartedStore,
           });
-          const recoveryStartedAt = Date.now();
-          yield* restartedDelivery.recover;
-          assert.ok(Date.now() - recoveryStartedAt < 25);
+          const recoveryOutcome = yield* Effect.race(
+            restartedDelivery.recover.pipe(Effect.as("recovered" as const)),
+            Deferred.await(secondRequest).pipe(Effect.as("retried" as const))
+          );
+          assert.strictEqual(recoveryOutcome, "recovered");
           yield* Effect.sleep("50 millis");
           assert.strictEqual(starts, 1);
           for (let attempt = 0; attempt < 200 && starts < 2; attempt += 1) {

@@ -66,7 +66,8 @@ const scriptedPeerPath = resolve(
 const EXPECTED_MARKDOWN = "**Streaming** from ACP\n\n- complete\n- unchanged";
 const EXPECTED_BLOCKED_NOTICE =
   "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
-const OBSERVATION_TIMEOUT_MILLIS = 5000;
+// Process-backed integration tests share the host with concurrent Sandcastle gates.
+const OBSERVATION_TIMEOUT_MILLIS = 15_000;
 
 const SessionMethod = Schema.Struct({
   method: Schema.Literals(["session/new", "session/resume"]),

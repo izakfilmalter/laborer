@@ -42,6 +42,15 @@ const readFirstRecord = (
   });
 
 describe("operator status protocol", () => {
+  it("bounds socket paths independently of the runtime root length", () => {
+    const paths = operatorStatusPaths(
+      join("/tmp", `laborer-${"nested-".repeat(20)}`)
+    );
+
+    expect(Buffer.byteLength(paths.socket, "utf8")).toBeLessThanOrEqual(96);
+    expect(paths.token.startsWith(paths.directory)).toBe(true);
+  });
+
   it("decodes a bounded versioned snapshot and rejects unsafe records", () => {
     const snapshot = decodeOperatorSnapshot(
       JSON.stringify({

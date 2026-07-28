@@ -205,24 +205,30 @@ const makeRootRuntimeDirectory = Effect.fn("makeRootRuntimeDirectory")(
             }
           );
           if (isOwner) {
-            const runtimeScope = yield* Scope.make();
-            const exit = yield* Effect.exit(
-              makeRootRuntime({
-                ...root,
-                ...(legacyWorkspaceId === undefined
-                  ? {}
-                  : { legacyWorkspaceId }),
-              }).pipe(Effect.provideService(Scope.Scope, runtimeScope))
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const runtimeScope = yield* Scope.make();
+                const exit = yield* Effect.exit(
+                  restore(
+                    makeRootRuntime({
+                      ...root,
+                      ...(legacyWorkspaceId === undefined
+                        ? {}
+                        : { legacyWorkspaceId }),
+                    }).pipe(Effect.provideService(Scope.Scope, runtimeScope))
+                  )
+                );
+                if (Exit.isFailure(exit)) {
+                  yield* Scope.close(runtimeScope, exit);
+                  yield* Deferred.failCause(runtime, exit.cause);
+                } else {
+                  yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
+                    Scope.close(runtimeScope, ownerExit)
+                  );
+                  yield* Deferred.succeed(runtime, exit.value);
+                }
+              })
             );
-            if (Exit.isFailure(exit)) {
-              yield* Scope.close(runtimeScope, exit);
-              yield* Deferred.failCause(runtime, exit.cause);
-            } else {
-              yield* Scope.addFinalizerExit(ownerScope, (ownerExit) =>
-                Scope.close(runtimeScope, ownerExit)
-              );
-              yield* Deferred.succeed(runtime, exit.value);
-            }
           }
           return yield* Deferred.await(runtime);
         });
@@ -260,10 +266,16 @@ const makeRootLockDirectory = (
             }
           );
           if (isOwner) {
-            const exit = yield* Effect.exit(acquireRootLock(paths));
-            yield* Deferred.succeed(
-              lock,
-              exit._tag === "Success" && exit.value
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const exit = yield* Effect.exit(
+                  restore(acquireRootLock(paths))
+                );
+                yield* Deferred.succeed(
+                  lock,
+                  exit._tag === "Success" && exit.value
+                );
+              })
             );
           }
           return yield* Deferred.await(lock);

@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
+  assertRecordedRecoveryLineage,
   classifyBranchRecovery,
 } from "./agent-completion/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
@@ -691,10 +692,11 @@ async function buildIssue(issue: PlannedIssue) {
       recordedProgress(issue)
     );
     if (recovery !== "build") {
-      assertCommitIsDescendant(
-        sandbox.worktreePath,
-        acceptedHead,
-        startingHead
+      assertRecordedRecoveryLineage(
+        issue.latestImplementedHead,
+        startingHead,
+        (ancestor, descendant) =>
+          commitIsAncestor(sandbox.worktreePath, ancestor, descendant)
       );
       if (recovery === "publish") {
         return [];
@@ -802,19 +804,24 @@ function deleteRecordedCompletion(issue: PlannedIssue) {
   }
 }
 
-function assertCommitIsDescendant(
+function commitIsAncestor(
   worktreePath: string,
-  acceptedHead: string,
-  completedHead: string
+  ancestor: string,
+  descendant: string
 ) {
-  runFile("git", [
-    "-C",
-    worktreePath,
-    "merge-base",
-    "--is-ancestor",
-    acceptedHead,
-    completedHead,
-  ]);
+  try {
+    runFile("git", [
+      "-C",
+      worktreePath,
+      "merge-base",
+      "--is-ancestor",
+      ancestor,
+      descendant,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function createIssueSandbox(issue: PlannedIssue) {

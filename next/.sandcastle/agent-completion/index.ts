@@ -21,6 +21,18 @@ export const assertNewWorkAfterAcceptedHead = (
   }
 };
 
+export const assertRecordedRecoveryLineage = (
+  acceptedHead: string | undefined,
+  recoveryHead: string,
+  isAncestor: (ancestor: string, descendant: string) => boolean
+) => {
+  if (acceptedHead !== undefined && !isAncestor(acceptedHead, recoveryHead)) {
+    throw new Error(
+      `Recovery head ${recoveryHead} does not descend from accepted head ${acceptedHead}.`
+    );
+  }
+};
+
 export const classifyBranchRecovery = (
   acceptedHead: string,
   currentHead: string,

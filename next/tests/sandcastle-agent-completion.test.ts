@@ -2,11 +2,13 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
+  assertRecordedRecoveryLineage,
   classifyBranchRecovery,
 } from "../.sandcastle/agent-completion/index.ts";
 
 const missingCompletionPattern = /did not emit its completion signal/;
 const missingNewWorkPattern = /without work after its accepted head/;
+const unrelatedRecoveryPattern = /does not descend from accepted head/;
 const unrecordedCommitsPattern = /unrecorded commits/;
 
 describe("Sandcastle agent completion gates", () => {
@@ -52,6 +54,27 @@ describe("Sandcastle agent completion gates", () => {
     assert.throws(
       () => classifyBranchRecovery("base", "unrecorded", "done", "progress"),
       unrecordedCommitsPattern
+    );
+  });
+
+  it("allows a runner-recorded recovery head to lag a newly advanced base", () => {
+    let ancestryChecks = 0;
+    assert.doesNotThrow(() =>
+      assertRecordedRecoveryLineage(undefined, "progress", () => {
+        ancestryChecks += 1;
+        return false;
+      })
+    );
+    assert.strictEqual(ancestryChecks, 0);
+  });
+
+  it("retains ancestry enforcement for shared spec progress", () => {
+    assert.throws(
+      () => assertRecordedRecoveryLineage("accepted", "progress", () => false),
+      unrelatedRecoveryPattern
+    );
+    assert.doesNotThrow(() =>
+      assertRecordedRecoveryLineage("accepted", "progress", () => true)
     );
   });
 });

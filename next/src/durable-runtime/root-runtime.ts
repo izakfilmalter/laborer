@@ -2589,30 +2589,50 @@ const makeRuntimeService = Effect.gen(function* () {
     }
   );
 
-  const queued = yield* sql.unsafe<StoredExecutionRow>(
-    `${executionSelect} WHERE status = 'queued' ORDER BY execution_id`
-  );
-  yield* Effect.forEach(
-    queued,
-    (row) =>
-      RegisteredActionExecutionWorkflow.execute(
-        {
-          actionName: row.actionName,
-          actionRevision: row.actionRevision,
-          actionFingerprint: row.actionFingerprint,
-          catalogFingerprint: row.catalogFingerprint,
-          conversationId: row.conversationId,
-          encodedInput: row.inputJson,
-          invocationId: row.invocationId,
-          rootIdentity,
-          workspaceId: row.workspaceId,
-        },
-        { discard: true }
-      ).pipe(
-        Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
-      ),
-    { discard: true }
-  );
+  // Re-submit every recoverable domain projection through Workflow's public
+  // idempotent execute API. Cluster normally restores persisted messages by
+  // itself, but the domain row can be ahead of the journal after a process
+  // death. Re-submission closes that acceptance window without inspecting
+  // Cluster's private SQL tables. A running Workflow replays completed
+  // activities from its journal; its Action recovery policy fences any
+  // unfinished external boundary.
+  let recoveryCursor = "";
+  let recoveryBatchSize = 128;
+  while (recoveryBatchSize === 128) {
+    const recoverable = yield* sql.unsafe<StoredExecutionRow>(
+      `${executionSelect}
+       WHERE status IN ('queued', 'running') AND execution_id > ?
+       ORDER BY execution_id
+       LIMIT 128`,
+      [recoveryCursor]
+    );
+    recoveryBatchSize = recoverable.length;
+    yield* Effect.forEach(
+      recoverable,
+      (row) =>
+        RegisteredActionExecutionWorkflow.execute(
+          {
+            actionName: row.actionName,
+            actionRevision: row.actionRevision,
+            actionFingerprint: row.actionFingerprint,
+            catalogFingerprint: row.catalogFingerprint,
+            conversationId: row.conversationId,
+            encodedInput: row.inputJson,
+            invocationId: row.invocationId,
+            rootIdentity,
+            workspaceId: row.workspaceId,
+          },
+          { discard: true }
+        ).pipe(
+          Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+        ),
+      {
+        concurrency: RUNTIME_MAX_CONCURRENT_EXECUTIONS,
+        discard: true,
+      }
+    );
+    recoveryCursor = recoverable.at(-1)?.executionId ?? recoveryCursor;
+  }
 
   return {
     acknowledgeEvent,

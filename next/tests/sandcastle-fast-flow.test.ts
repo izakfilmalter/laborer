@@ -3,11 +3,26 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   boundedGateFailureContext,
   canReuseCompletedHead,
+  mergePullRequestArgs,
   reviewedHeadNeedsPush,
   shellQuote,
 } from "../.sandcastle/fast-flow/index.ts";
 
 describe("Sandcastle fast flow", () => {
+  it("merges without asking gh to delete a checked-out worktree branch", () => {
+    const args = mergePullRequestArgs("https://example.test/pull/42", "abc123");
+
+    assert.deepStrictEqual(args, [
+      "pr",
+      "merge",
+      "https://example.test/pull/42",
+      "--squash",
+      "--match-head-commit",
+      "abc123",
+    ]);
+    assert.notInclude(args, "--delete-branch");
+  });
+
   it("quotes untrusted Git refs as inert shell arguments", () => {
     assert.strictEqual(shellQuote("main"), "'main'");
     assert.strictEqual(

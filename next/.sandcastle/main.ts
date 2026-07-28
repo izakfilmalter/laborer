@@ -18,6 +18,7 @@ import {
 import {
   boundedGateFailureContext,
   canReuseCompletedHead,
+  mergePullRequestArgs,
   reviewedHeadNeedsPush,
   shellQuote,
 } from "./fast-flow/index.ts";
@@ -1471,15 +1472,7 @@ function reviewIsComplete(prUrl: string) {
 }
 
 function mergePr(prUrl: string, headSha: string) {
-  runFile("gh", [
-    "pr",
-    "merge",
-    prUrl,
-    "--squash",
-    "--delete-branch",
-    "--match-head-commit",
-    headSha,
-  ]);
+  runFile("gh", mergePullRequestArgs(prUrl, headSha));
   console.log(`  Merged ${prUrl}`);
 }
 

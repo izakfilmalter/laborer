@@ -13,6 +13,15 @@ export const reviewedHeadNeedsPush = (
   reviewedLocalHead: string
 ) => pullRequestHead !== reviewedLocalHead;
 
+export const mergePullRequestArgs = (prUrl: string, headSha: string) => [
+  "pr",
+  "merge",
+  prUrl,
+  "--squash",
+  "--match-head-commit",
+  headSha,
+];
+
 export const boundedGateFailureContext = (
   result: {
     readonly exitCode: number;

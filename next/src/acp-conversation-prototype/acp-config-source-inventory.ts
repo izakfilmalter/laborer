@@ -589,7 +589,12 @@ const sourceRoots = (options: {
   readonly environment: NodeJS.ProcessEnv;
   readonly projectRoot: string;
 }): readonly InventoryRoot[] => {
-  const ancestors = projectAncestors(options.projectRoot);
+  const disableProjectConfig =
+    options.environment.OPENCODE_DISABLE_PROJECT_CONFIG?.toLowerCase();
+  const ancestors =
+    disableProjectConfig === "true" || disableProjectConfig === "1"
+      ? []
+      : projectAncestors(options.projectRoot);
   const roots: InventoryRoot[] = ancestors.flatMap((ancestor, index) => [
     {
       includeResources: false,
@@ -606,8 +611,12 @@ const sourceRoots = (options: {
       scope: "project" as const,
     },
   ]);
-  const xdgConfigHome = options.environment.XDG_CONFIG_HOME;
-  const home = options.environment.HOME;
+  const xdgConfigHome = nonEmptyEnvironmentValue(
+    options.environment.XDG_CONFIG_HOME
+  );
+  const home = nonEmptyEnvironmentValue(options.environment.HOME) ?? homedir();
+  const openCodeHome =
+    nonEmptyEnvironmentValue(options.environment.OPENCODE_TEST_HOME) ?? home;
   if (xdgConfigHome !== undefined) {
     roots.push({
       includeResources: true,
@@ -616,7 +625,7 @@ const sourceRoots = (options: {
       sourceId: "xdg-config",
       scope: "xdg-config",
     });
-  } else if (home !== undefined) {
+  } else {
     roots.push({
       includeResources: true,
       includeLegacyConfig: true,
@@ -625,7 +634,7 @@ const sourceRoots = (options: {
       scope: "xdg-config",
     });
   }
-  const dataHome = options.environment.XDG_DATA_HOME;
+  const dataHome = nonEmptyEnvironmentValue(options.environment.XDG_DATA_HOME);
   if (dataHome !== undefined) {
     roots.push({
       includeResources: false,
@@ -634,7 +643,7 @@ const sourceRoots = (options: {
       sourceId: "xdg-auth",
       scope: "global-auth",
     });
-  } else if (home !== undefined) {
+  } else {
     roots.push({
       includeResources: false,
       includeLegacyConfig: false,
@@ -643,7 +652,16 @@ const sourceRoots = (options: {
       scope: "global-auth",
     });
   }
-  const customConfigDirectory = options.environment.OPENCODE_CONFIG_DIR;
+  roots.push({
+    includeLegacyConfig: false,
+    includeResources: true,
+    path: resolve(openCodeHome, ".opencode"),
+    sourceId: "opencode-home",
+    scope: "xdg-config",
+  });
+  const customConfigDirectory = nonEmptyEnvironmentValue(
+    options.environment.OPENCODE_CONFIG_DIR
+  );
   if (customConfigDirectory !== undefined) {
     const path = resolve(options.projectRoot, customConfigDirectory);
     assertContained(resolve(options.projectRoot), path);
@@ -685,7 +703,9 @@ export const inventoryAcpConfigSources = Effect.fn("inventoryAcpConfigSources")(
           }
           await collectRoot(root, collected, incompleteReasons);
         }
-        const customConfig = options.environment.OPENCODE_CONFIG;
+        const customConfig = nonEmptyEnvironmentValue(
+          options.environment.OPENCODE_CONFIG
+        );
         if (customConfig !== undefined) {
           const projectRoot = resolve(options.projectRoot);
           const path = resolve(projectRoot, customConfig);

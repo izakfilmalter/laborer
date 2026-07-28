@@ -374,6 +374,20 @@ describe("issue #245 bounded effective ACP metadata", () => {
             repository,
           });
           assert.notStrictEqual(changed.digest, first.digest);
+
+          const disabled = yield* inventoryAcpConfigSources({
+            environment: {
+              HOME: home,
+              OPENCODE_CONFIG: "",
+              OPENCODE_CONFIG_DIR: "",
+              OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+              XDG_CONFIG_HOME: "",
+              XDG_DATA_HOME: "",
+            },
+            projectRoot: project,
+            repository,
+          });
+          assert.deepStrictEqual(disabled.categories, []);
         })
       )
   );

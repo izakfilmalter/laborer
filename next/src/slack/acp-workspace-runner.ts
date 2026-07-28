@@ -68,7 +68,10 @@ import type { SlackWorkspaceRuntimeOptions } from "./workspace-startup.ts";
 export class AcpWorkspaceStartupError extends Schema.TaggedErrorClass<AcpWorkspaceStartupError>()(
   "AcpWorkspaceStartupError",
   {
-    reason: Schema.Literal("acp-child-incompatible-or-unavailable"),
+    reason: Schema.Literals([
+      "acp-child-incompatible-or-unavailable",
+      "acp-composition-incompatible",
+    ]),
     workspaceId: Schema.String,
   }
 ) {}
@@ -422,9 +425,10 @@ export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
 > {
   const applicationConfig = options.laborer.config.application;
   if (applicationConfig === undefined) {
-    return yield* Effect.die(
-      new Error("ACP production composition requires reference-coding")
-    );
+    return yield* AcpWorkspaceStartupError.make({
+      reason: "acp-composition-incompatible",
+      workspaceId: options.identity.teamId,
+    });
   }
   const workspace = yield* makeProductionAcpWorkspaceApplication(
     {

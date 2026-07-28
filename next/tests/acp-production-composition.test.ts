@@ -960,6 +960,48 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
 });
 
 describe("issue #244 opt-in production ACP composition", () => {
+  it.effect(
+    "fails a non-reference-coding binding with a typed composition error",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-244-incompatible-composition-"
+          );
+          const paths = yield* prepareSlackRuntimePaths(
+            root,
+            "T244INCOMPATIBLE"
+          );
+          const failure = yield* Effect.flip(
+            makeProductionAcpSlackWorkspaceRuntime({
+              client: makeFixtureSlackClient(),
+              gateway: makeCapturingSlack([]),
+              identity: {
+                botId: "B244INCOMPATIBLE",
+                botUserId: "U244LABORER",
+                teamId: "T244INCOMPATIBLE",
+              },
+              laborer: {
+                config: {
+                  workHandler: {
+                    args: [],
+                    command: "unused",
+                    environment: [],
+                  },
+                },
+                root,
+              },
+              paths,
+            })
+          );
+
+          assert.ok(failure instanceof AcpWorkspaceStartupError);
+          assert.strictEqual(failure.reason, "acp-composition-incompatible");
+          assert.strictEqual(failure.workspaceId, "T244INCOMPATIBLE");
+        })
+      )
+  );
+
   it.live(
     "runs the credential-free Socket Mode to generated Action MCP to terminal ACP scene once",
     () =>

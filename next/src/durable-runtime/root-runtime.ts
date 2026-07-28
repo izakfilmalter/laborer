@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   Cause,
   Context,
+  Deferred,
   Effect,
   Array as EffectArray,
   Layer,
@@ -227,6 +228,13 @@ const ConversationWorkflowPayload = Schema.Struct({
 });
 type ConversationWorkflowPayload = typeof ConversationWorkflowPayload.Type;
 
+const ConversationActivityOutcome = Schema.Union([
+  Schema.TaggedStruct("Success", {
+    outputs: Schema.Array(ConversationOutput),
+  }),
+  Schema.TaggedStruct("Failure", {}),
+]);
+
 export const ConversationWorkflow = Workflow.make("Laborer/Conversation/v1", {
   error: DurableRuntimeError,
   idempotencyKey: (payload) =>
@@ -278,13 +286,26 @@ class ConversationHandlerRegistry extends Context.Service<
 
 const makeConversationHandlerRegistry = Effect.gen(function* () {
   const handlers = new Map<string, ConversationHandler>();
+  const handlerWaiters = new Map<
+    string,
+    Deferred.Deferred<ConversationHandler>
+  >();
   const conversationPermits = new Map<string, Semaphore.Semaphore>();
   return ConversationHandlerRegistry.of({
     get: (workspaceId) => {
       const handler = handlers.get(workspaceId);
-      return handler === undefined
-        ? Effect.fail(runtimeError("conversation-handler-unavailable"))
-        : Effect.succeed(handler);
+      if (handler !== undefined) {
+        return Effect.succeed(handler);
+      }
+      let waiter = handlerWaiters.get(workspaceId);
+      if (waiter === undefined) {
+        waiter = Deferred.makeUnsafe<ConversationHandler>();
+        handlerWaiters.set(workspaceId, waiter);
+      }
+      // Cluster restoration can begin before the workspace Runner has built
+      // its ACP application. Waiting here keeps the durable workflow pending
+      // instead of permanently failing it during that startup window.
+      return Deferred.await(waiter);
     },
     register: (workspaceId, handler) =>
       Effect.acquireRelease(
@@ -295,12 +316,18 @@ const makeConversationHandlerRegistry = Effect.gen(function* () {
             );
           }
           handlers.set(workspaceId, handler);
-          return Effect.void;
+          let waiter = handlerWaiters.get(workspaceId);
+          if (waiter === undefined) {
+            waiter = Deferred.makeUnsafe<ConversationHandler>();
+            handlerWaiters.set(workspaceId, waiter);
+          }
+          return Deferred.succeed(waiter, handler).pipe(Effect.asVoid);
         }),
         () =>
           Effect.sync(() => {
             if (handlers.get(workspaceId) === handler) {
               handlers.delete(workspaceId);
+              handlerWaiters.delete(workspaceId);
             }
           })
       ),
@@ -488,48 +515,6 @@ const conversationWorkflowLayer = ConversationWorkflow.toLayer((payload) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const registry = yield* ConversationHandlerRegistry;
-    const existing = yield* sql<{
-      readonly outputsJson: string | null;
-      readonly status: string;
-    }>`
-        SELECT outputs_json AS outputsJson, status
-        FROM laborer_conversation_events
-        WHERE event_id = ${payload.eventId}
-          AND workspace_id = ${payload.workspaceId}
-      `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
-    const existingEvent = pipe(existing, EffectArray.head);
-    if (
-      Option.isSome(existingEvent) &&
-      existingEvent.value.status === "completed" &&
-      existingEvent.value.outputsJson !== null
-    ) {
-      const outputs = yield* decodeStoredJson(
-        existingEvent.value.outputsJson
-      ).pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
-            onExcessProperty: "error",
-          })
-        ),
-        Effect.mapError(() => runtimeError("storage-failure"))
-      );
-      return ConversationReceipt.make({
-        conversationId: payload.conversationId,
-        eventId: payload.eventId,
-        outputs,
-        sequence: payload.sequence,
-        sessionId: payload.sessionId,
-        workspaceId: payload.workspaceId,
-      });
-    }
-    if (
-      Option.isNone(existingEvent) ||
-      (existingEvent.value.status !== "accepted" &&
-        existingEvent.value.status !== "running")
-    ) {
-      return yield* runtimeError("storage-failure");
-    }
-    const handler = yield* registry.get(payload.workspaceId);
     const event = yield* decodeStoredJson(payload.encodedEvent).pipe(
       Effect.flatMap(
         Schema.decodeUnknownEffect(ParticipantInputEvent, {
@@ -538,47 +523,149 @@ const conversationWorkflowLayer = ConversationWorkflow.toLayer((payload) =>
       ),
       Effect.mapError(() => runtimeError("storage-failure"))
     );
-    yield* sql`
-        UPDATE laborer_conversation_events
-        SET status = 'running'
-        WHERE event_id = ${payload.eventId}
-          AND workspace_id = ${payload.workspaceId}
-          AND status = 'accepted'
+
+    // Cluster may schedule accepted events concurrently. Do not let a later
+    // sequence race ahead merely because its workflow fiber obtained a permit
+    // first; durable Conversation order is defined by the SQL sequence.
+    let precedingEventIsRunning = true;
+    while (precedingEventIsRunning) {
+      const preceding = yield* sql<{ readonly present: number }>`
+        SELECT 1 AS present
+        FROM laborer_conversation_events
+        WHERE conversation_id = ${payload.conversationId}
+          AND sequence < ${payload.sequence}
+          AND status IN ('accepted', 'running')
+        LIMIT 1
       `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
-    const outputs = yield* registry.withPermit(
+      precedingEventIsRunning = preceding.length > 0;
+      if (precedingEventIsRunning) {
+        yield* Effect.sleep("25 millis");
+      }
+    }
+
+    return yield* registry.withPermit(
       payload.conversationId,
-      Activity.make({
-        execute: handler.handle(event).pipe(
-          Effect.flatMap((candidate) =>
-            Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
-              onExcessProperty: "error",
-            })(candidate)
+      Effect.gen(function* () {
+        // Re-read after taking the permit. Concurrent replay of one event must
+        // observe the first completion instead of invoking ACP a second time.
+        const rows = yield* sql<{
+          readonly conversationId: string;
+          readonly eventJson: string;
+          readonly outputsJson: string | null;
+          readonly requestHash: string;
+          readonly sequence: number;
+          readonly status: string;
+        }>`
+          SELECT
+            conversation_id AS conversationId,
+            event_json AS eventJson,
+            outputs_json AS outputsJson,
+            request_hash AS requestHash,
+            sequence,
+            status
+          FROM laborer_conversation_events
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        const stored = pipe(rows, EffectArray.head);
+        if (
+          Option.isNone(stored) ||
+          stored.value.conversationId !== payload.conversationId ||
+          stored.value.eventJson !== payload.encodedEvent ||
+          stored.value.requestHash !== payload.requestHash ||
+          stored.value.sequence !== payload.sequence
+        ) {
+          return yield* runtimeError("storage-failure");
+        }
+        if (
+          stored.value.status === "completed" &&
+          stored.value.outputsJson !== null
+        ) {
+          const outputs = yield* decodeStoredJson(
+            stored.value.outputsJson
+          ).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.mapError(() => runtimeError("storage-failure"))
+          );
+          return ConversationReceipt.make({
+            conversationId: payload.conversationId,
+            eventId: payload.eventId,
+            outputs,
+            sequence: payload.sequence,
+            sessionId: payload.sessionId,
+            workspaceId: payload.workspaceId,
+          });
+        }
+        if (
+          stored.value.status !== "accepted" &&
+          stored.value.status !== "running"
+        ) {
+          return yield* runtimeError(
+            stored.value.status === "failed"
+              ? "conversation-handler-unavailable"
+              : "storage-failure"
+          );
+        }
+        yield* sql`
+          UPDATE laborer_conversation_events
+          SET status = 'running'
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+            AND status = 'accepted'
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        const handler = yield* registry.get(payload.workspaceId);
+        const outcome = yield* Activity.make({
+          execute: handler.handle(event).pipe(
+            Effect.flatMap((candidate) =>
+              Schema.decodeUnknownEffect(Schema.Array(ConversationOutput), {
+                onExcessProperty: "error",
+              })(candidate)
+            ),
+            Effect.flatMap((outputs) =>
+              boundedPayloadJson(outputs).pipe(Effect.as(outputs))
+            ),
+            Effect.map((outputs) => ({ _tag: "Success" as const, outputs })),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : Effect.succeed({ _tag: "Failure" as const })
+            )
           ),
-          Effect.mapError(() =>
-            runtimeError("conversation-handler-unavailable")
-          ),
-          Effect.orDie
-        ),
-        name: "Laborer/Conversation/respond/v1",
-        success: Schema.Array(ConversationOutput),
+          name: "Laborer/Conversation/respond/v1",
+          success: ConversationActivityOutcome,
+        });
+        if (outcome._tag === "Failure") {
+          yield* sql`
+            UPDATE laborer_conversation_events
+            SET status = 'failed'
+            WHERE event_id = ${payload.eventId}
+              AND workspace_id = ${payload.workspaceId}
+              AND request_hash = ${payload.requestHash}
+          `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+          return yield* runtimeError("conversation-handler-unavailable");
+        }
+        const outputsJson = yield* boundedPayloadJson(outcome.outputs);
+        yield* sql`
+          UPDATE laborer_conversation_events
+          SET status = 'completed', outputs_json = ${outputsJson}
+          WHERE event_id = ${payload.eventId}
+            AND workspace_id = ${payload.workspaceId}
+            AND request_hash = ${payload.requestHash}
+        `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+        return ConversationReceipt.make({
+          conversationId: payload.conversationId,
+          eventId: payload.eventId,
+          outputs: outcome.outputs,
+          sequence: payload.sequence,
+          sessionId: payload.sessionId,
+          workspaceId: payload.workspaceId,
+        });
       })
     );
-    const outputsJson = yield* boundedPayloadJson(outputs);
-    yield* sql`
-        UPDATE laborer_conversation_events
-        SET status = 'completed', outputs_json = ${outputsJson}
-        WHERE event_id = ${payload.eventId}
-          AND workspace_id = ${payload.workspaceId}
-          AND request_hash = ${payload.requestHash}
-      `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
-    return ConversationReceipt.make({
-      conversationId: payload.conversationId,
-      eventId: payload.eventId,
-      outputs,
-      sequence: payload.sequence,
-      sessionId: payload.sessionId,
-      workspaceId: payload.workspaceId,
-    });
   })
 );
 
@@ -971,6 +1058,7 @@ const validateRootRegistration = Effect.gen(function* () {
           stored.sequence < 1 ||
           (stored.status !== "accepted" &&
             stored.status !== "running" &&
+            stored.status !== "failed" &&
             stored.status !== "completed") ||
           (stored.status === "completed") !== (stored.outputsJson !== null)
         ) {

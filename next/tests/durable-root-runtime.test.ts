@@ -67,8 +67,13 @@ describe("root durable runtime", () => {
             const handled: string[] = [];
             yield* runtime.registerConversationHandler("T-CONVERSATION", {
               handle: (event) =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   handled.push(event.turnId);
+                  if (event.turnId === "turn-3") {
+                    return yield* Effect.fail({
+                      _tag: "ScriptedConversationFailure",
+                    } as const);
+                  }
                   const text = event.messages[0]?.text ?? "missing";
                   return [
                     ApplicationConversationMessageChunk.make({
@@ -144,6 +149,23 @@ describe("root durable runtime", () => {
               second.outputs.map((output) => output.text),
               ["ACP again", "completed again"]
             );
+            const failed = yield* Effect.flip(
+              runtime.runConversation(request(turn(3, "fail")))
+            );
+            const fourth = yield* runtime.runConversation(
+              request(turn(4, "after failure"))
+            );
+            assert.strictEqual(
+              failed.reason,
+              "conversation-handler-unavailable"
+            );
+            assert.strictEqual(fourth.sequence, 4);
+            assert.deepStrictEqual(handled, [
+              "turn-1",
+              "turn-2",
+              "turn-3",
+              "turn-4",
+            ]);
           }).pipe(Effect.provide(layer));
         })
       ),

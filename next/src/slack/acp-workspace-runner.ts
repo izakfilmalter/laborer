@@ -38,7 +38,6 @@ import {
 } from "../acp-conversation-prototype/slack-participant-lookup.ts";
 import type { ApplicationShape } from "../application.ts";
 import { applicationThroughRootConversationRuntime } from "../durable-runtime/conversation-application.ts";
-import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
 import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
 import {
@@ -439,19 +438,6 @@ export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
       new Error("ACP production composition requires reference-coding")
     );
   }
-  const rootRuntime =
-    options.rootRuntime ??
-    (yield* makeNodeRootDurableRuntime({
-      databasePath: options.paths.runtimeDatabase,
-      rootIdentity: options.laborer.root,
-    }).pipe(
-      Effect.mapError(() =>
-        AcpWorkspaceStartupError.make({
-          reason: "acp-child-incompatible-or-unavailable",
-          workspaceId: options.identity.teamId,
-        })
-      )
-    ));
   const workspace = yield* makeProductionAcpWorkspaceApplication(
     {
       applicationConfig,
@@ -461,7 +447,9 @@ export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
       laborerSlackId: options.identity.botUserId,
       paths: options.paths,
       root: options.laborer.root,
-      rootRuntime,
+      ...(options.rootRuntime === undefined
+        ? {}
+        : { rootRuntime: options.rootRuntime }),
       workspaceId: options.identity.teamId,
     },
     dependencies

@@ -20,6 +20,8 @@ import {
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
+import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
+import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
@@ -912,6 +914,7 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
   readonly messages: CapturedSlackMessage[];
   readonly paths: SlackRuntimePaths;
   readonly root: string;
+  readonly rootRuntime?: RootDurableRuntimeShape;
   readonly workspaceId: string;
   readonly worktreeCalls: { count: number };
   readonly implementationCounters: {
@@ -933,6 +936,9 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
         root: options.root,
       },
       paths: options.paths,
+      ...(options.rootRuntime === undefined
+        ? {}
+        : { rootRuntime: options.rootRuntime }),
     },
     {
       environment: options.environment,
@@ -3558,6 +3564,10 @@ describe("issue #244 opt-in production ACP composition", () => {
           "laborer-244-production-controls-"
         );
         const paths = yield* prepareSlackRuntimePaths(root, "T244PRODUCTION");
+        const rootRuntime = yield* makeNodeRootDurableRuntime({
+          databasePath: paths.runtimeDatabase,
+          rootIdentity: root,
+        });
         const firstProcess = scriptedProcessPaths(controls, "first");
         const secondProcess = {
           ...scriptedProcessPaths(controls, "second"),
@@ -3596,6 +3606,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages,
               paths,
               root,
+              rootRuntime,
               workspaceId: "T244PRODUCTION",
               worktreeCalls,
             });
@@ -3636,6 +3647,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages,
               paths,
               root,
+              rootRuntime,
               workspaceId: "T244PRODUCTION",
               worktreeCalls,
             });
@@ -4047,6 +4059,10 @@ describe("issue #244 opt-in production ACP composition", () => {
 
         yield* Effect.scoped(
           Effect.gen(function* () {
+            const rootRuntime = yield* makeNodeRootDurableRuntime({
+              databasePath: firstPaths.runtimeDatabase,
+              rootIdentity: root,
+            });
             const first = yield* makeProductionHarness({
               environment: scriptedEnvironment(firstProcess),
               health: [],
@@ -4054,6 +4070,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages: firstMessages,
               paths: firstPaths,
               root,
+              rootRuntime,
               workspaceId: "T244FIRST",
               worktreeCalls,
             });
@@ -4064,6 +4081,7 @@ describe("issue #244 opt-in production ACP composition", () => {
               messages: secondMessages,
               paths: secondPaths,
               root,
+              rootRuntime,
               workspaceId: "T244SECOND",
               worktreeCalls,
             });

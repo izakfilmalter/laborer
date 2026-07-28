@@ -3,7 +3,10 @@ import type {
   AcceptApplicationEvent,
   ApplicationPublicOutput,
   ApplicationShape,
+  ConversationBlocked,
+  PublishApplicationOutput,
 } from "../application.ts";
+import type { StoreError } from "../prototype/errors.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import type {
   DurableRuntimeError,
@@ -42,19 +45,38 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   readonly workspaceId: string;
 }) {
   const eventAcceptors = new Map<string, AcceptApplicationEvent>();
+  const failures = new Map<
+    string,
+    ConversationBlocked | HandlerFailure | StoreError
+  >();
+  const publishers = new Map<string, PublishApplicationOutput>();
+  const handledEvents = new Set<string>();
   yield* options.runtime
     .registerConversationHandler(options.workspaceId, {
       handle: (event) =>
         Effect.gen(function* () {
+          handledEvents.add(event.turnId);
           const outputs: ApplicationPublicOutput[] = [];
-          yield* options.application.handle(
-            event,
-            (output) =>
-              Effect.sync(() => {
-                outputs.push(output);
-              }),
-            eventAcceptors.get(event.turnId) ?? unavailableEventAcceptance
-          );
+          yield* options.application
+            .handle(
+              event,
+              (output) =>
+                Effect.gen(function* () {
+                  outputs.push(output);
+                  const publish = publishers.get(event.turnId);
+                  if (publish !== undefined) {
+                    yield* publish(output);
+                  }
+                }),
+              eventAcceptors.get(event.turnId) ?? unavailableEventAcceptance
+            )
+            .pipe(
+              Effect.tapError((failure) =>
+                Effect.sync(() => {
+                  failures.set(event.turnId, failure);
+                })
+              )
+            );
           return outputs;
         }),
     })
@@ -74,6 +96,9 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
       return Effect.acquireUseRelease(
         Effect.sync(() => {
           eventAcceptors.set(event.turnId, acceptEvent);
+          failures.delete(event.turnId);
+          handledEvents.delete(event.turnId);
+          publishers.set(event.turnId, publish);
         }),
         () =>
           runConversationRpcLocally(options.runtime, {
@@ -82,14 +107,24 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             rootIdentity: options.rootIdentity,
             workspaceId: options.workspaceId,
           }).pipe(
-            Effect.mapError(runtimeFailure),
+            Effect.catch((error) => {
+              const failure = failures.get(event.turnId);
+              return failure === undefined
+                ? Effect.fail(runtimeFailure(error))
+                : Effect.fail(failure);
+            }),
             Effect.flatMap((receipt) =>
-              Effect.forEach(receipt.outputs, publish, { discard: true })
+              handledEvents.has(event.turnId)
+                ? Effect.void
+                : Effect.forEach(receipt.outputs, publish, { discard: true })
             )
           ),
         () =>
           Effect.sync(() => {
             eventAcceptors.delete(event.turnId);
+            failures.delete(event.turnId);
+            handledEvents.delete(event.turnId);
+            publishers.delete(event.turnId);
           })
       );
     },

@@ -149,6 +149,25 @@ describe("root durable runtime", () => {
               second.outputs.map((output) => output.text),
               ["ACP again", "completed again"]
             );
+            yield* runtime.registerConversationHandler("T-OTHER", {
+              handle: (event) =>
+                Effect.succeed([
+                  ApplicationConversationMessageChunk.make({
+                    messageId: `other:${event.turnId}`,
+                    text: "other workspace",
+                  }),
+                ]),
+            });
+            const otherWorkspace = yield* runtime.runConversation({
+              ...request(turn(1, "same canonical thread")),
+              workspaceId: "T-OTHER",
+            });
+            assert.strictEqual(otherWorkspace.sequence, 1);
+            assert.notStrictEqual(otherWorkspace.sessionId, first.sessionId);
+            assert.deepStrictEqual(
+              otherWorkspace.outputs.map((output) => output.text),
+              ["other workspace"]
+            );
             const failed = yield* Effect.flip(
               runtime.runConversation(request(turn(3, "fail")))
             );

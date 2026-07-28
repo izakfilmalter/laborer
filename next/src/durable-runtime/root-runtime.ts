@@ -533,6 +533,7 @@ const conversationWorkflowLayer = ConversationWorkflow.toLayer((payload) =>
         SELECT 1 AS present
         FROM laborer_conversation_events
         WHERE conversation_id = ${payload.conversationId}
+          AND workspace_id = ${payload.workspaceId}
           AND sequence < ${payload.sequence}
           AND status IN ('accepted', 'running')
         LIMIT 1
@@ -544,7 +545,7 @@ const conversationWorkflowLayer = ConversationWorkflow.toLayer((payload) =>
     }
 
     return yield* registry.withPermit(
-      payload.conversationId,
+      `${payload.workspaceId}\0${payload.conversationId}`,
       Effect.gen(function* () {
         // Re-read after taking the permit. Concurrent replay of one event must
         // observe the first completion instead of invoking ACP a second time.
@@ -875,9 +876,10 @@ const initializeLaborerTables = Effect.gen(function* () {
       `;
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_conversations (
-          conversation_id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
           workspace_id TEXT NOT NULL,
-          session_id TEXT NOT NULL UNIQUE
+          session_id TEXT NOT NULL UNIQUE,
+          PRIMARY KEY (workspace_id, conversation_id)
         )
       `;
       yield* sql`
@@ -891,13 +893,14 @@ const initializeLaborerTables = Effect.gen(function* () {
           status TEXT NOT NULL,
           outputs_json TEXT,
           PRIMARY KEY (workspace_id, event_id),
-          UNIQUE (conversation_id, sequence),
-          FOREIGN KEY (conversation_id) REFERENCES laborer_conversations(conversation_id)
+          UNIQUE (workspace_id, conversation_id, sequence),
+          FOREIGN KEY (workspace_id, conversation_id)
+            REFERENCES laborer_conversations(workspace_id, conversation_id)
         )
       `;
       yield* sql`
         CREATE INDEX IF NOT EXISTS laborer_conversation_events_order
-        ON laborer_conversation_events (conversation_id, sequence)
+        ON laborer_conversation_events (workspace_id, conversation_id, sequence)
       `;
       yield* sql`
         CREATE TABLE IF NOT EXISTS laborer_executions (
@@ -1026,7 +1029,8 @@ const validateRootRegistration = Effect.gen(function* () {
       events.outputs_json AS outputsJson
     FROM laborer_conversation_events AS events
     LEFT JOIN laborer_conversations AS conversations
-      ON conversations.conversation_id = events.conversation_id
+      ON conversations.workspace_id = events.workspace_id
+      AND conversations.conversation_id = events.conversation_id
     ORDER BY events.conversation_id, events.sequence
   `;
   yield* Effect.forEach(
@@ -1253,6 +1257,7 @@ const makeRuntimeService = Effect.gen(function* () {
               UPDATE laborer_conversations
               SET conversation_id = conversation_id
               WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
             `;
             const conversations = yield* sql<{
               readonly sessionId: string;
@@ -1261,6 +1266,7 @@ const makeRuntimeService = Effect.gen(function* () {
               SELECT session_id AS sessionId, workspace_id AS workspaceId
               FROM laborer_conversations
               WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
             `;
             const conversation = pipe(
               conversations,
@@ -1290,7 +1296,8 @@ const makeRuntimeService = Effect.gen(function* () {
                 events.workspace_id AS workspaceId
               FROM laborer_conversation_events AS events
               INNER JOIN laborer_conversations AS conversations
-                ON conversations.conversation_id = events.conversation_id
+                ON conversations.workspace_id = events.workspace_id
+                AND conversations.conversation_id = events.conversation_id
               WHERE events.event_id = ${validatedRequest.event.turnId}
                 AND events.workspace_id = ${validatedRequest.workspaceId}
             `;
@@ -1312,6 +1319,7 @@ const makeRuntimeService = Effect.gen(function* () {
               SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
               FROM laborer_conversation_events
               WHERE conversation_id = ${validatedRequest.event.conversationId}
+                AND workspace_id = ${validatedRequest.workspaceId}
             `;
             const sequence = pipe(
               sequences,

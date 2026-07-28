@@ -6,6 +6,7 @@ import {
   ApplicationConversationMessageChunk,
   ApplicationPublicReply,
   type ApplicationShape,
+  type ExternalInputEvent,
   ParticipantInputEvent,
 } from "../src/application.ts";
 import {
@@ -235,6 +236,166 @@ describe("root durable runtime", () => {
               "durable Conversation output invalid"
             );
             assert.deepStrictEqual(accidentallyPublished, []);
+          }).pipe(Effect.provide(layer));
+        })
+      ),
+    20_000
+  );
+
+  it.live(
+    "hands durable Action events back to the Runner before publishing output",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-durable-action-delivery-"
+          );
+          const action = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Report one fixture update",
+            input: Schema.Struct({ value: Schema.String }),
+            name: "fixture/report-update",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ value: Schema.String }),
+            revision: "fixture-v1",
+            run: (input, context) =>
+              Effect.gen(function* () {
+                yield* context.reportProgress("reported", {
+                  phase: "reported",
+                });
+                return input;
+              }),
+          });
+          const catalog = defineApplication({ actions: [action] });
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            catalog.actions,
+            "root-delivery-fixture"
+          );
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const handledExternalEvents: string[] = [];
+            const acceptedExternalEvents: ExternalInputEvent[] = [];
+            const published: string[] = [];
+            const application: ApplicationShape = {
+              handle: (event, publish) => {
+                if (event._tag === "ParticipantInput") {
+                  return Effect.void;
+                }
+                return Effect.gen(function* () {
+                  handledExternalEvents.push(event.eventId);
+                  const executionEvent = yield* Schema.decodeUnknownEffect(
+                    ExecutionEvent
+                  )(event.payload).pipe(Effect.orDie);
+                  yield* publish(
+                    ApplicationConversationMessageChunk.make({
+                      messageId: `message:${event.eventId}`,
+                      text: `observed ${executionEvent.kind}`,
+                    })
+                  );
+                });
+              },
+            };
+            const durableApplication =
+              yield* applicationThroughRootConversationRuntime({
+                application,
+                rootIdentity: "root-delivery-fixture",
+                runtime,
+                workspaceId: "T-DELIVERY",
+              });
+            const conversationId = ThreadId.make(
+              "workspace:T-DELIVERY:thread:C1:1.0"
+            );
+            const acceptEvent = (event: ExternalInputEvent) =>
+              Effect.sync(() => {
+                acceptedExternalEvents.push(event);
+                return {
+                  decision: {
+                    _tag: "Accepted" as const,
+                    eventId: event.eventId,
+                  },
+                  scheduling: "Scheduled" as const,
+                };
+              });
+            yield* durableApplication.handle(
+              ParticipantInputEvent.make({
+                attemptNumber: 1,
+                channelId: "C1",
+                context: [],
+                conversationId,
+                initializationStatus: "not_applicable",
+                messages: [
+                  NormalizedMessage.make({
+                    authorKind: "human",
+                    authorSlackId: "U1",
+                    classification: "input",
+                    id: MessageId.make("message-delivery"),
+                    isActivation: true,
+                    slackTs: "1.0",
+                    text: "activate delivery",
+                  }),
+                ],
+                rootTs: "1.0",
+                source: "slack",
+                turnId: TurnId.make("turn-delivery"),
+                workingDirectory: null,
+              }),
+              (output) =>
+                Effect.sync(() => {
+                  published.push(output.text);
+                }),
+              acceptEvent
+            );
+            const execution = yield* runtime.startExecution({
+              actionName: action.name,
+              conversationId,
+              input: { value: "done" },
+              invocationId: "delivery-invocation",
+              rootIdentity: "root-delivery-fixture",
+              workspaceId: "T-DELIVERY",
+            });
+            yield* waitForTerminal(
+              execution.executionId,
+              conversationId,
+              "T-DELIVERY"
+            );
+            for (let attempt = 0; attempt < 500; attempt += 1) {
+              if (acceptedExternalEvents.length === 2) {
+                break;
+              }
+              yield* Effect.sleep("10 millis");
+            }
+
+            assert.deepStrictEqual(handledExternalEvents, []);
+            assert.deepStrictEqual(published, []);
+            const acceptedKinds = yield* Effect.forEach(
+              acceptedExternalEvents,
+              (event) =>
+                Schema.decodeUnknownEffect(ExecutionEvent)(event.payload).pipe(
+                  Effect.map((payload) => payload.kind),
+                  Effect.orDie
+                )
+            );
+            assert.deepStrictEqual(acceptedKinds, ["progress", "completed"]);
+
+            for (const event of acceptedExternalEvents) {
+              yield* durableApplication.handle(
+                event,
+                (output) =>
+                  Effect.sync(() => {
+                    published.push(output.text);
+                  }),
+                acceptEvent
+              );
+            }
+            assert.deepStrictEqual(handledExternalEvents, [
+              acceptedExternalEvents[0]?.eventId,
+              acceptedExternalEvents[1]?.eventId,
+            ]);
+            assert.deepStrictEqual(published, [
+              "observed progress",
+              "observed completed",
+            ]);
           }).pipe(Effect.provide(layer));
         })
       ),

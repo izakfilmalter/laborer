@@ -1991,15 +1991,14 @@ const makeRuntimeService = Effect.gen(function* () {
       Schema.decodeUnknownEffect(RuntimeWorkspaceId)(workspaceId).pipe(
         Effect.mapError(() => runtimeError("invalid-payload")),
         Effect.flatMap((validatedWorkspaceId) =>
-          conversationHandlers
-            .register(validatedWorkspaceId, handler)
-            .pipe(
-              Effect.tap(() =>
-                deliverPendingExecutionEvents(validatedWorkspaceId).pipe(
-                  Effect.mapError(() => runtimeError("storage-failure"))
-                )
+          conversationHandlers.register(validatedWorkspaceId, handler).pipe(
+            Effect.tap(() =>
+              deliverPendingExecutionEvents(validatedWorkspaceId).pipe(
+                Effect.mapError(() => runtimeError("storage-failure")),
+                Effect.forkScoped
               )
             )
+          )
         )
       ),
     runConversation,

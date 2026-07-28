@@ -18,71 +18,97 @@ const INSPECT_CURRENT_WORKTREE_PATTERN = /Inspect the current worktree/i;
 const FOLLOW_UP_REQUEST_PATTERN = /Now add coverage/;
 
 describe("OpenCode ImplementationAgent", () => {
-  it.effect(
-    "accepts a completed response before the implementation prompt becomes terminal",
-    () =>
-      Effect.gen(function* () {
-        const promptTerminal = yield* Deferred.make<void>();
-        const responseAccepted = yield* Deferred.make<void>();
-        let messages: readonly {
-          readonly id: string;
-          readonly role: "assistant" | "user";
-          readonly status?: "completed" | "error" | "in-progress";
-          readonly text: string;
-        }[] = [{ id: "prompt-1", role: "user", text: "Build" }];
-        const client: OpenCodeSessionClient = {
-          createSession: () => Effect.void,
-          interrupt: () => Effect.void,
-          prepareSessionForReuse: () => Effect.void,
-          readMessages: () => Effect.succeed(messages),
-          sessionExists: () => Effect.succeed(true),
-          submitPrompt: () =>
-            Effect.sync(() => {
-              messages = [
-                ...messages,
-                {
-                  id: "assistant-progress",
-                  role: "assistant",
-                  status: "completed",
-                  text: "Implemented the first slice.",
-                },
-              ];
-            }),
-          wait: () => Deferred.await(promptTerminal),
-        };
-        const agent = makeOpenCodeImplementationAgent({
-          client,
-          observationPollIntervalMs: 1,
-        });
-        const session = yield* agent.start(
-          {
-            actionName: "create-feature",
-            conversationId: "conversation-1",
-            executionId: "execution-1",
-            implementationSessionId: "session-1",
-            prompt: "Build",
-            promptId: "prompt-1",
-            workingDirectory: "/repo/worktree",
-          },
-          (response) =>
-            Effect.gen(function* () {
-              assert.deepStrictEqual(response, {
-                responseId: "assistant-progress",
+  it.effect("accepts before terminal and closes the completion race", () =>
+    Effect.gen(function* () {
+      const promptTerminal = yield* Deferred.make<void>();
+      const responseAccepted = yield* Deferred.make<void>();
+      const accepted: Array<{
+        readonly responseId: string;
+        readonly text: string;
+      }> = [];
+      let messages: readonly {
+        readonly id: string;
+        readonly role: "assistant" | "user";
+        readonly status?: "completed" | "error" | "in-progress";
+        readonly text: string;
+      }[] = [{ id: "prompt-1", role: "user", text: "Build" }];
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        prepareSessionForReuse: () => Effect.void,
+        readMessages: () => Effect.succeed(messages),
+        sessionExists: () => Effect.succeed(true),
+        submitPrompt: () =>
+          Effect.sync(() => {
+            messages = [
+              ...messages,
+              {
+                id: "assistant-progress",
+                role: "assistant",
+                status: "completed",
                 text: "Implemented the first slice.",
-              });
+              },
+            ];
+          }),
+        wait: () =>
+          Deferred.await(promptTerminal).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                messages = [
+                  ...messages,
+                  {
+                    id: "assistant-final",
+                    role: "assistant",
+                    status: "completed",
+                    text: "Finished the implementation.",
+                  },
+                ];
+              })
+            )
+          ),
+      };
+      const agent = makeOpenCodeImplementationAgent({
+        client,
+        observationPollIntervalMs: 1,
+      });
+      const session = yield* agent.start(
+        {
+          actionName: "create-feature",
+          conversationId: "conversation-1",
+          executionId: "execution-1",
+          implementationSessionId: "session-1",
+          prompt: "Build",
+          promptId: "prompt-1",
+          workingDirectory: "/repo/worktree",
+        },
+        (response) =>
+          Effect.gen(function* () {
+            accepted.push(response);
+            if (response.responseId === "assistant-progress") {
               yield* Deferred.succeed(responseAccepted, undefined);
-            })
-        );
-        const completion = yield* Effect.forkChild(session.completion, {
-          startImmediately: true,
-        });
+            }
+          })
+      );
+      const completion = yield* Effect.forkChild(session.completion, {
+        startImmediately: true,
+      });
 
-        yield* Effect.yieldNow;
-        assert.strictEqual(yield* Deferred.isDone(responseAccepted), true);
-        assert.strictEqual(yield* Deferred.isDone(promptTerminal), false);
-        yield* Deferred.succeed(promptTerminal, undefined);
-        yield* Fiber.join(completion);
-      })
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Deferred.isDone(responseAccepted), true);
+      assert.strictEqual(yield* Deferred.isDone(promptTerminal), false);
+      yield* Deferred.succeed(promptTerminal, undefined);
+      yield* Fiber.join(completion);
+      assert.deepStrictEqual(accepted, [
+        {
+          responseId: "assistant-progress",
+          text: "Implemented the first slice.",
+        },
+        {
+          responseId: "assistant-final",
+          text: "Finished the implementation.",
+        },
+      ]);
+    })
   );
 
   it.effect(
@@ -217,7 +243,7 @@ describe("OpenCode ImplementationAgent", () => {
         const outcome = yield* Effect.result(session.completion);
 
         assert.strictEqual(outcome._tag, "Failure");
-        assert.strictEqual(accepted, 1);
+        assert.strictEqual(accepted, 0);
         if (outcome._tag === "Failure") {
           assert.strictEqual(
             outcome.failure.safeDetail,

@@ -1156,21 +1156,28 @@ const acceptImplementationMessages = (
       protocolFailure("OpenCode Implementation response exceeded the limit")
     );
   }
+  const observedResponses = new Map(acceptedResponses);
+  for (const message of responses) {
+    const observedText = observedResponses.get(message.id);
+    if (observedText !== undefined) {
+      if (observedText !== message.text) {
+        return Effect.fail(
+          protocolFailure("OpenCode Implementation response identity conflicts")
+        );
+      }
+      continue;
+    }
+    if (observedResponses.size >= MAX_IMPLEMENTATION_RESPONSES) {
+      return Effect.fail(
+        protocolFailure("OpenCode Implementation response exceeded the limit")
+      );
+    }
+    observedResponses.set(message.id, message.text);
+  }
   return Effect.gen(function* () {
     for (const message of responses) {
-      const acceptedText = acceptedResponses.get(message.id);
-      if (acceptedText !== undefined) {
-        if (acceptedText !== message.text) {
-          return yield* protocolFailure(
-            "OpenCode Implementation response identity conflicts"
-          );
-        }
+      if (acceptedResponses.has(message.id)) {
         continue;
-      }
-      if (acceptedResponses.size >= MAX_IMPLEMENTATION_RESPONSES) {
-        return yield* protocolFailure(
-          "OpenCode Implementation response exceeded the limit"
-        );
       }
       yield* acceptResponse({ responseId: message.id, text: message.text });
       acceptedResponses.set(message.id, message.text);

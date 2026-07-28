@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const execFilePromise = promisify(execFile);
@@ -14,6 +14,44 @@ const fixturePath = resolve(
 );
 const readyPrefix = "COLD_RECOVERY_READY:";
 const evidencePrefix = "COLD_RECOVERY_EVIDENCE:";
+const privateInput = "COLD_RECOVERY_PRIVATE_INPUT";
+
+const ReadyEvidence = Schema.Struct({
+  ambiguousExecutionId: Schema.String,
+  completedExecutionId: Schema.String,
+  idempotentExecutionId: Schema.String,
+  rootProcessId: Schema.Int,
+});
+
+const ExecutionEvidence = Schema.Struct({
+  executionId: Schema.String,
+  failureCategory: Schema.NullOr(Schema.String),
+  result: Schema.optional(Schema.Unknown),
+  status: Schema.String,
+});
+
+const AttemptEvidence = Schema.Struct({
+  attempts: Schema.Int,
+  executionId: Schema.String,
+});
+
+const RecoveryEvidence = Schema.Struct({
+  ambiguous: ExecutionEvidence,
+  ambiguousRecord: AttemptEvidence,
+  completed: ExecutionEvidence,
+  completedRecord: AttemptEvidence,
+  idempotent: ExecutionEvidence,
+  idempotentRecord: AttemptEvidence,
+  pending: Schema.Array(
+    Schema.Struct({
+      eventId: Schema.String,
+      executionId: Schema.String,
+      kind: Schema.String,
+      sequence: Schema.Int,
+    })
+  ),
+  rootProcessId: Schema.Int,
+});
 
 const waitForOutputLine = (
   child: ChildProcessByStdio<null, Readable, Readable>,
@@ -86,16 +124,13 @@ describe("cold root runtime recovery", () => {
                 }
               })
           );
-          const ready = JSON.parse(
+          const ready = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(ReadyEvidence)
+          )(
             yield* Effect.tryPromise(() =>
               waitForOutputLine(child, readyPrefix)
             )
-          ) as {
-            readonly ambiguousExecutionId: string;
-            readonly completedExecutionId: string;
-            readonly idempotentExecutionId: string;
-            readonly rootProcessId: number;
-          };
+          );
           const closed = new Promise<void>((resolveClose) => {
             child.once("close", () => resolveClose());
           });
@@ -140,44 +175,14 @@ describe("cold root runtime recovery", () => {
             .split("\n")
             .find((line) => line.startsWith(evidencePrefix));
           assert.ok(evidenceLine);
-          const evidence = JSON.parse(
-            evidenceLine.slice(evidencePrefix.length)
-          ) as {
-            readonly ambiguous: {
-              readonly executionId: string;
-              readonly failureCategory: string | null;
-              readonly status: string;
-            };
-            readonly ambiguousRecord: {
-              readonly attempts: number;
-              readonly executionId: string;
-            };
-            readonly completed: {
-              readonly executionId: string;
-              readonly result: unknown;
-              readonly status: string;
-            };
-            readonly completedRecord: {
-              readonly attempts: number;
-              readonly executionId: string;
-            };
-            readonly idempotent: {
-              readonly executionId: string;
-              readonly result: unknown;
-              readonly status: string;
-            };
-            readonly idempotentRecord: {
-              readonly attempts: number;
-              readonly executionId: string;
-            };
-            readonly pending: readonly {
-              readonly eventId: string;
-              readonly executionId: string;
-              readonly kind: string;
-              readonly sequence: number;
-            }[];
-            readonly rootProcessId: number;
-          };
+          const evidence = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(RecoveryEvidence)
+          )(evidenceLine.slice(evidencePrefix.length));
+
+          assert.ok(!recovered.stdout.includes(privateInput));
+          assert.ok(!recovered.stderr.includes(privateInput));
+          assert.ok(!recovered.stdout.includes(databasePath));
+          assert.ok(!recovered.stderr.includes(databasePath));
 
           assert.notStrictEqual(evidence.rootProcessId, ready.rootProcessId);
           assert.strictEqual(

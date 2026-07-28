@@ -1687,6 +1687,16 @@ interface StoredExecutionRow {
   readonly workspaceId: string;
 }
 
+interface StoredConversationRecoveryRow {
+  readonly conversationId: string;
+  readonly eventId: string;
+  readonly eventJson: string;
+  readonly requestHash: string;
+  readonly sequence: number;
+  readonly sessionId: string;
+  readonly workspaceId: string;
+}
+
 const executionSelect = `
   SELECT
     execution_id AS executionId,
@@ -2591,11 +2601,72 @@ const makeRuntimeService = Effect.gen(function* () {
 
   // Re-submit every recoverable domain projection through Workflow's public
   // idempotent execute API. Cluster normally restores persisted messages by
-  // itself, but the domain row can be ahead of the journal after a process
+  // itself, but a domain row can be ahead of the journal after a process
   // death. Re-submission closes that acceptance window without inspecting
-  // Cluster's private SQL tables. A running Workflow replays completed
-  // activities from its journal; its Action recovery policy fences any
+  // Cluster's private SQL tables. Running Workflows replay completed
+  // activities from their journals; each Action recovery policy fences any
   // unfinished external boundary.
+  let conversationWorkspaceCursor = "";
+  let conversationEventCursor = "";
+  let conversationRecoveryBatchSize = 128;
+  while (conversationRecoveryBatchSize === 128) {
+    const recoverable = yield* sql.unsafe<StoredConversationRecoveryRow>(
+      `SELECT
+         events.event_id AS eventId,
+         events.conversation_id AS conversationId,
+         events.workspace_id AS workspaceId,
+         events.sequence,
+         events.request_hash AS requestHash,
+         events.event_json AS eventJson,
+         conversations.session_id AS sessionId
+       FROM laborer_conversation_events AS events
+       INNER JOIN laborer_conversations AS conversations
+         ON conversations.workspace_id = events.workspace_id
+         AND conversations.conversation_id = events.conversation_id
+       WHERE events.status IN ('accepted', 'running')
+         AND (
+           events.workspace_id > ?
+           OR (events.workspace_id = ? AND events.event_id > ?)
+         )
+       ORDER BY events.workspace_id, events.event_id
+       LIMIT 128`,
+      [
+        conversationWorkspaceCursor,
+        conversationWorkspaceCursor,
+        conversationEventCursor,
+      ]
+    );
+    conversationRecoveryBatchSize = recoverable.length;
+    yield* Effect.forEach(
+      recoverable,
+      (row) =>
+        ConversationWorkflow.execute(
+          {
+            conversationId: row.conversationId,
+            encodedEvent: row.eventJson,
+            eventId: row.eventId,
+            requestHash: row.requestHash,
+            rootIdentity,
+            sequence: row.sequence,
+            sessionId: row.sessionId,
+            workspaceId: row.workspaceId,
+          },
+          { discard: true }
+        ).pipe(
+          Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
+        ),
+      {
+        concurrency: RUNTIME_MAX_CONCURRENT_EXECUTIONS,
+        discard: true,
+      }
+    );
+    const lastConversation = recoverable.at(-1);
+    if (lastConversation !== undefined) {
+      conversationWorkspaceCursor = lastConversation.workspaceId;
+      conversationEventCursor = lastConversation.eventId;
+    }
+  }
+
   let recoveryCursor = "";
   let recoveryBatchSize = 128;
   while (recoveryBatchSize === 128) {

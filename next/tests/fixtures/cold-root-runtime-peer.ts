@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { NodeRuntime } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
@@ -28,27 +28,34 @@ const workspaceId = "T-COLD-RECOVERY";
 const conversationId = "workspace:T-COLD-RECOVERY:thread:C-COLD-RECOVERY:275.0";
 const privateInput = "COLD_RECOVERY_PRIVATE_INPUT";
 
-interface AttemptRecord {
-  readonly attempts: number;
-  readonly executionId: string;
-}
+const AttemptRecord = Schema.Struct({
+  attempts: Schema.Int.check(Schema.isGreaterThan(0)),
+  executionId: Schema.String,
+});
+type AttemptRecord = typeof AttemptRecord.Type;
 
 const recordPath = (name: string) => join(evidenceDirectory, `${name}.json`);
 
 const readRecord = (name: string) =>
   Effect.tryPromise({
     catch: () => undefined,
-    try: async () =>
-      JSON.parse(await readFile(recordPath(name), "utf8")) as AttemptRecord,
-  }).pipe(Effect.catch(() => Effect.void));
+    try: async () => JSON.parse(await readFile(recordPath(name), "utf8")),
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(AttemptRecord)),
+    Effect.catch(() => Effect.void)
+  );
 
-const writeRecord = (name: string, record: AttemptRecord) =>
-  Effect.promise(() =>
-    writeFile(recordPath(name), JSON.stringify(record), {
+const writeRecord = (name: string, record: AttemptRecord) => {
+  const destination = recordPath(name);
+  const temporary = `${destination}.${String(process.pid)}.tmp`;
+  return Effect.promise(async () => {
+    await writeFile(temporary, JSON.stringify(record), {
       encoding: "utf8",
       mode: 0o600,
-    })
-  );
+    });
+    await rename(temporary, destination);
+  });
+};
 
 const completedAction = defineAction({
   annotations: { idempotentHint: true },

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Redacted } from "effect";
+import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
 import {
   EventId,
   PublicReplyProtocolRecord,
@@ -130,6 +131,16 @@ const noContextGateway: SlackGatewayShape = {
   readActivationContext: () => Effect.succeed([]),
 };
 
+const fakeRootRuntime = (): RootDurableRuntimeShape => ({
+  acknowledgeEvent: () => Effect.void,
+  getExecution: () => Effect.die("unused fixture Execution lookup"),
+  pendingEvents: () => Effect.succeed([]),
+  registerConversationHandler: () =>
+    Effect.acquireRelease(Effect.void, () => Effect.void),
+  runConversation: () => Effect.die("unused fixture Conversation"),
+  startExecution: () => Effect.die("unused fixture Execution start"),
+});
+
 const createLaborerRoot = Effect.fnUntraced(function* (root: string) {
   yield* Effect.promise(() => mkdir(root));
   yield* Effect.promise(() =>
@@ -163,6 +174,8 @@ const makeTestStartupAdapter = (options: {
   }[];
   readonly runnerGates?: ReadonlyMap<string, Deferred.Deferred<void>>;
   readonly runners: Map<string, Runner>;
+  readonly rootRuntimeCreations?: Map<string, number>;
+  readonly rootRuntimeObservations?: Map<string, RootDurableRuntimeShape>;
   readonly schedulingCounts?: Map<string, number>;
   readonly setupReplies: { readonly teamId: string; readonly text: string }[];
   readonly setupReplyObserved?: Deferred.Deferred<void>;
@@ -194,8 +207,30 @@ const makeTestStartupAdapter = (options: {
       teamId: identity.teamId,
     };
   },
+  ...(options.rootRuntimeCreations === undefined &&
+  options.rootRuntimeObservations === undefined
+    ? {}
+    : {
+        makeRootRuntime: (root) =>
+          Effect.sync(() => {
+            const creations = options.rootRuntimeCreations;
+            if (creations !== undefined) {
+              creations.set(
+                root.paths.root,
+                (creations.get(root.paths.root) ?? 0) + 1
+              );
+            }
+            return fakeRootRuntime();
+          }),
+      }),
   makeRunner: (runtime) =>
     Effect.gen(function* () {
+      if (runtime.rootRuntime !== undefined) {
+        options.rootRuntimeObservations?.set(
+          runtime.identity.teamId,
+          runtime.rootRuntime
+        );
+      }
       const runnerGate = options.runnerGates?.get(runtime.identity.teamId);
       if (runnerGate !== undefined) {
         yield* Effect.uninterruptible(Deferred.await(runnerGate));
@@ -1173,6 +1208,11 @@ describe("multi-workspace Slack daemon", () => {
               const runners = new Map<string, Runner>();
               const statePaths = new Map<string, string>();
               const handlerStatePaths = new Map<string, string>();
+              const rootRuntimeCreations = new Map<string, number>();
+              const rootRuntimeObservations = new Map<
+                string,
+                RootDurableRuntimeShape
+              >();
               const routeDirectory = yield* startSlackWorkspaceDirectory({
                 adapter: makeTestStartupAdapter({
                   gatewayTeams: [],
@@ -1183,6 +1223,8 @@ describe("multi-workspace Slack daemon", () => {
                     [secondToken, secondIdentity],
                   ]),
                   runners,
+                  rootRuntimeCreations,
+                  rootRuntimeObservations,
                   setupReplies: [],
                   statePaths,
                   stores,
@@ -1197,6 +1239,11 @@ describe("multi-workspace Slack daemon", () => {
               const routes = yield* routeDirectory.snapshot;
               assert.strictEqual(routes.length, 2);
               assert.strictEqual(runners.size, 2);
+              assert.strictEqual(rootRuntimeCreations.get(lockPaths.root), 1);
+              assert.strictEqual(
+                rootRuntimeObservations.get(firstIdentity.teamId),
+                rootRuntimeObservations.get(secondIdentity.teamId)
+              );
               assert.notStrictEqual(
                 statePaths.get(firstIdentity.teamId),
                 statePaths.get(secondIdentity.teamId)

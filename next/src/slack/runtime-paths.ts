@@ -21,6 +21,7 @@ export interface SlackRuntimePaths {
   readonly recoverySocket: string;
   readonly root: string;
   readonly runnerState: string;
+  readonly runtimeDatabase: string;
   readonly workThreads: string;
 }
 
@@ -99,6 +100,7 @@ export const prepareSlackRuntimePaths = (
       root,
       recoverySocket: recoverySocketPath(workspaceRoot),
       runnerState,
+      runtimeDatabase: resolve(root, "runtime.sqlite"),
       workThreads,
     };
   });

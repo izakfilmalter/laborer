@@ -36,6 +36,18 @@
 > owns one scoped ACP child and isolated workspace state. Incompatible startup
 > quarantines only that binding. There is no legacy Conversation fallback and
 > no dual publication or alternate production entrypoint.
+>
+> **THROWAWAY BIDIRECTIONAL COMMUNICATION POC for issues #266–#268.** The
+> OpenCode implementation adapter observes completed, nonblank assistant
+> messages for the exact active implementation prompt while it remains
+> nonterminal. Each bounded, provider-ordered message uses the existing durable
+> Execution-response path to wake the owning Conversation; implementation text
+> remains escaped untrusted data and never publishes directly to Slack. A final
+> observation after terminal wait closes the completion race, while explicit
+> Execution lifecycle events remain independent and authoritative. An awakened
+> Conversation can use `prompt-execution` to send its interpreted follow-up into
+> that same owned Execution, implementation session, and working directory;
+> subsequent assistant messages traverse the same ordered private update path.
 
 ## Run it
 

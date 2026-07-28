@@ -1,10 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import {
   makeOpenCodeImplementationAgent,
   type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
+import { ThreadId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
@@ -18,6 +19,99 @@ const INSPECT_CURRENT_WORKTREE_PATTERN = /Inspect the current worktree/i;
 const FOLLOW_UP_REQUEST_PATTERN = /Now add coverage/;
 
 describe("OpenCode ImplementationAgent", () => {
+  it.effect("accepts before terminal and closes the completion race", () =>
+    Effect.gen(function* () {
+      const promptTerminal = yield* Deferred.make<void>();
+      const responseAccepted = yield* Deferred.make<void>();
+      const accepted: Array<{
+        readonly responseId: string;
+        readonly text: string;
+      }> = [];
+      let messages: readonly {
+        readonly id: string;
+        readonly role: "assistant" | "user";
+        readonly status?: "completed" | "error" | "in-progress";
+        readonly text: string;
+      }[] = [{ id: "prompt-1", role: "user", text: "Build" }];
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        prepareSessionForReuse: () => Effect.void,
+        readMessages: () => Effect.succeed(messages),
+        sessionExists: () => Effect.succeed(true),
+        submitPrompt: () =>
+          Effect.sync(() => {
+            messages = [
+              ...messages,
+              {
+                id: "assistant-progress",
+                role: "assistant",
+                status: "completed",
+                text: "Implemented the first slice.",
+              },
+            ];
+          }),
+        wait: () =>
+          Deferred.await(promptTerminal).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                messages = [
+                  ...messages,
+                  {
+                    id: "assistant-final",
+                    role: "assistant",
+                    status: "completed",
+                    text: "Finished the implementation.",
+                  },
+                ];
+              })
+            )
+          ),
+      };
+      const agent = makeOpenCodeImplementationAgent({
+        client,
+        observationPollIntervalMs: 1,
+      });
+      const session = yield* agent.start(
+        {
+          actionName: "create-feature",
+          conversationId: "conversation-1",
+          executionId: "execution-1",
+          implementationSessionId: "session-1",
+          prompt: "Build",
+          promptId: "prompt-1",
+          workingDirectory: "/repo/worktree",
+        },
+        (response) =>
+          Effect.gen(function* () {
+            accepted.push(response);
+            if (response.responseId === "assistant-progress") {
+              yield* Deferred.succeed(responseAccepted, undefined);
+            }
+          })
+      );
+      const completion = yield* Effect.forkChild(session.completion, {
+        startImmediately: true,
+      });
+
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Deferred.isDone(responseAccepted), true);
+      assert.strictEqual(yield* Deferred.isDone(promptTerminal), false);
+      yield* Deferred.succeed(promptTerminal, undefined);
+      yield* Fiber.join(completion);
+      assert.deepStrictEqual(accepted, [
+        {
+          responseId: "assistant-progress",
+          text: "Implemented the first slice.",
+        },
+        {
+          responseId: "assistant-final",
+          text: "Finished the implementation.",
+        },
+      ]);
+    })
+  );
+
   it.effect(
     "forwards each textual response while excluding empty tool-only assistants",
     () =>
@@ -39,6 +133,18 @@ describe("OpenCode ImplementationAgent", () => {
                 role: "assistant",
                 status: "completed",
                 text: "",
+              },
+              {
+                id: "assistant-in-progress",
+                role: "assistant",
+                status: "in-progress",
+                text: "Mutable snapshot that must remain private.",
+              },
+              {
+                id: "assistant-error",
+                role: "assistant",
+                status: "error",
+                text: "Failed assistant state that must remain private.",
               },
               {
                 finish: "tool-calls",
@@ -88,6 +194,66 @@ describe("OpenCode ImplementationAgent", () => {
       })
   );
 
+  it.effect(
+    "fails closed when a completed response identity changes text",
+    () =>
+      Effect.gen(function* () {
+        let accepted = 0;
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () => Effect.void,
+          readMessages: () =>
+            Effect.succeed([
+              { id: "prompt-1", role: "user", text: "Build" },
+              {
+                id: "assistant-conflict",
+                role: "assistant",
+                status: "completed",
+                text: "First immutable text.",
+              },
+              {
+                id: "assistant-conflict",
+                role: "assistant",
+                status: "completed",
+                text: "Conflicting immutable text.",
+              },
+            ]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () => Effect.void,
+          wait: () => Effect.void,
+        };
+        const session = yield* makeOpenCodeImplementationAgent({
+          client,
+        }).start(
+          {
+            actionName: "deal-with-bug",
+            conversationId: "conversation-1",
+            executionId: "execution-1",
+            implementationSessionId: "session-1",
+            prompt: "Fix",
+            promptId: "prompt-1",
+            workingDirectory: "/repo/worktree",
+          },
+          () =>
+            Effect.sync(() => {
+              accepted += 1;
+            })
+        );
+
+        const outcome = yield* Effect.result(session.completion);
+
+        assert.strictEqual(outcome._tag, "Failure");
+        assert.strictEqual(accepted, 0);
+        if (outcome._tag === "Failure") {
+          assert.strictEqual(
+            outcome.failure.safeDetail,
+            "OpenCode Implementation response identity conflicts"
+          );
+        }
+      })
+  );
+
   it.effect("forwards responses only for the exact durable prompt", () =>
     Effect.gen(function* () {
       const accepted: string[] = [];
@@ -101,12 +267,14 @@ describe("OpenCode ImplementationAgent", () => {
             {
               id: "assistant-for-prompt-1",
               role: "assistant",
+              status: "completed",
               text: "First response.",
             },
             { id: "prompt-2", role: "user", text: "Later" },
             {
               id: "assistant-for-prompt-2",
               role: "assistant",
+              status: "completed",
               text: "Later response.",
             },
           ]),
@@ -170,11 +338,13 @@ describe("OpenCode ImplementationAgent", () => {
               {
                 id: "assistant-response-1",
                 role: "assistant",
+                status: "completed",
                 text: "Implemented the vertical slice.",
               },
               {
                 id: "assistant-response-2",
                 role: "assistant",
+                status: "completed",
                 text: "Focused tests pass.",
               },
             ]),
@@ -267,6 +437,7 @@ describe("OpenCode ImplementationAgent", () => {
                   {
                     id: `response:${latest.promptId}`,
                     role: "assistant" as const,
+                    status: "completed" as const,
                     text: `answer:${latest.promptId}`,
                   },
                 ]
@@ -298,7 +469,7 @@ describe("OpenCode ImplementationAgent", () => {
       yield* session.completion;
       yield* session.resume(
         {
-          conversationId: "conversation-1" as never,
+          conversationId: "conversation-1",
           executionId: "execution-1",
           implementationSessionId: "implementation-session-1",
           prompt: "Now add coverage",
@@ -313,7 +484,7 @@ describe("OpenCode ImplementationAgent", () => {
       assert.ok(session.control);
       yield* session.control({
         control: "cancel",
-        conversationId: "conversation-1" as never,
+        conversationId: ThreadId.make("conversation-1"),
         executionId: "execution-1",
         implementationSessionId: "implementation-session-1",
         workingDirectory: "/repo/worktree",
@@ -340,6 +511,8 @@ describe("OpenCode ImplementationAgent", () => {
       assert.match(prompted[1]?.text ?? "", FOLLOW_UP_REQUEST_PATTERN);
       assert.deepStrictEqual(readPromptIds, [
         "implementation-prompt-1",
+        "implementation-prompt-1",
+        "implementation-prompt-2",
         "implementation-prompt-2",
       ]);
       assert.deepStrictEqual(interruptedPromptIds, ["implementation-prompt-2"]);
@@ -348,6 +521,82 @@ describe("OpenCode ImplementationAgent", () => {
         "response:implementation-prompt-2",
       ]);
     })
+  );
+
+  it.effect(
+    "rejects follow-ups outside the owning Conversation or Execution",
+    () =>
+      Effect.gen(function* () {
+        let reusePreparations = 0;
+        let submissions = 0;
+        const client: OpenCodeSessionClient = {
+          createSession: () => Effect.void,
+          interrupt: () => Effect.void,
+          prepareSessionForReuse: () =>
+            Effect.sync(() => {
+              reusePreparations += 1;
+            }),
+          readMessages: () =>
+            Effect.succeed([
+              { id: "initial-prompt", role: "user", text: "Build" },
+            ]),
+          sessionExists: () => Effect.succeed(true),
+          submitPrompt: () =>
+            Effect.sync(() => {
+              submissions += 1;
+            }),
+          wait: () => Effect.void,
+        };
+        const session = yield* makeOpenCodeImplementationAgent({
+          client,
+        }).start(
+          {
+            actionName: "create-feature",
+            conversationId: "conversation-1",
+            executionId: "execution-1",
+            implementationSessionId: "session-1",
+            prompt: "Build",
+            promptId: "initial-prompt",
+            workingDirectory: "/repo/worktree",
+          },
+          () => Effect.void
+        );
+        yield* session.completion;
+        const baselinePreparations = reusePreparations;
+        const baselineSubmissions = submissions;
+
+        const wrongConversation = yield* Effect.result(
+          session.resume(
+            {
+              conversationId: "conversation-2",
+              executionId: "execution-1",
+              implementationSessionId: "session-1",
+              prompt: "Cross the Conversation boundary",
+              promptId: "follow-up-1",
+              workingDirectory: "/repo/worktree",
+            },
+            () => Effect.void
+          )
+        );
+        const wrongExecution = yield* Effect.result(
+          session.resume(
+            {
+              conversationId: "conversation-1",
+              executionId: "execution-2",
+              implementationSessionId: "session-1",
+              prompt: "Cross the Execution boundary",
+              promptId: "follow-up-2",
+              workingDirectory: "/repo/worktree",
+            },
+            () => Effect.void
+          )
+        );
+
+        assert.strictEqual(wrongConversation._tag, "Failure");
+        assert.strictEqual(wrongExecution._tag, "Failure");
+        assert.strictEqual(reusePreparations, baselinePreparations);
+        assert.strictEqual(submissions, baselineSubmissions);
+      })
   );
 
   it.effect(
@@ -366,6 +615,7 @@ describe("OpenCode ImplementationAgent", () => {
               {
                 id: "recovered-response-1",
                 role: "assistant",
+                status: "completed",
                 text: "Recovered durable output.",
               },
             ]),
@@ -439,7 +689,7 @@ describe("OpenCode ImplementationAgent", () => {
       assert.ok(session.control);
       yield* session.control({
         control: "cancel",
-        conversationId: "conversation-1" as never,
+        conversationId: ThreadId.make("conversation-1"),
         executionId: "execution-1",
         implementationSessionId: "implementation-session-1",
         workingDirectory: "/repo/worktree",
@@ -468,6 +718,7 @@ describe("OpenCode ImplementationAgent", () => {
             {
               id: "oversized-response",
               role: "assistant",
+              status: "completed",
               text: "x".repeat(20_000),
             },
           ]),

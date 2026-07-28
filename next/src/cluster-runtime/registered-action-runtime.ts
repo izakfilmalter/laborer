@@ -67,6 +67,17 @@ const ExecutionRow = Schema.Struct({
 });
 type ExecutionRow = typeof ExecutionRow.Type;
 
+const NonterminalExecutionRow = Schema.Struct({
+  actionName: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  actionRevision: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  catalogFingerprint: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  conversationId: BoundedRuntimeId,
+  executionId: BoundedRuntimeId,
+  inputHash: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  inputJson: BoundedStoredJson,
+});
+const ExecutionActivityState = Schema.Struct({ status: ExecutionStatus });
+
 export interface RegisteredExecutionSnapshot {
   readonly actionName: string;
   readonly actionRevision: string;
@@ -140,6 +151,42 @@ const inputHashFor = (canonicalInput: string): string =>
     .update("laborer-registered-action-input-v1\0", "utf8")
     .update(canonicalInput, "utf8")
     .digest("base64url");
+
+const claimActionActivity = Effect.fn("claimActionActivity")(function* (
+  executionId: string,
+  idempotentHint: boolean
+) {
+  const sql = yield* SqlClient;
+  yield* sql`
+    UPDATE laborer_action_executions
+    SET status = 'running'
+    WHERE execution_id = ${executionId} AND status = 'queued'
+  `;
+  const changes = yield* sql<{ readonly claimed: number }>`
+    SELECT changes() AS claimed
+  `;
+  if (changes[0]?.claimed === 1) {
+    return true;
+  }
+  const stateRows = yield* sql`
+    SELECT status
+    FROM laborer_action_executions
+    WHERE execution_id = ${executionId}
+  `;
+  const state = yield* EffectArray.head(stateRows).pipe(
+    Option.match({
+      onNone: () => Effect.die("registered Action row is missing"),
+      onSome: (value) =>
+        Schema.decodeUnknownEffect(ExecutionActivityState)(value).pipe(
+          Effect.orDie
+        ),
+    })
+  );
+  if (state.status !== "running") {
+    return yield* Effect.die("registered Action has an invalid activity state");
+  }
+  return idempotentHint;
+});
 
 const terminalEventId = (executionId: string): string =>
   `${executionId}:terminal`;
@@ -238,7 +285,7 @@ export interface RegisteredActionRuntimeShape {
     {
       readonly deduplicated: boolean;
       readonly executionId: string;
-      readonly status: "queued";
+      readonly status: RegisteredExecutionStatus;
     },
     RegisteredActionRuntimeError
   >;
@@ -272,11 +319,17 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
           status: Schema.Literals(["failed", "succeeded"]),
         }),
         execute: Effect.gen(function* () {
-          yield* sql`
-            UPDATE laborer_action_executions
-            SET status = 'running'
-            WHERE execution_id = ${payload.executionId} AND status = 'queued'
-          `;
+          const mayExecute = yield* claimActionActivity(
+            payload.executionId,
+            action.annotations.idempotentHint
+          );
+          if (!mayExecute) {
+            return {
+              failureCode: "action-recovery-required",
+              result: null,
+              status: "failed" as const,
+            };
+          }
           const reportProgress = (candidate: RegisteredActionProgress) =>
             Schema.decodeUnknownEffect(Progress, {
               onExcessProperty: "error",
@@ -291,6 +344,7 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
                     UPDATE laborer_action_executions
                     SET progress_json = ${progressJson}
                     WHERE execution_id = ${payload.executionId}
+                      AND status = 'running'
                   `
                   )
                 )
@@ -335,23 +389,36 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
         }).pipe(Effect.orDie),
       });
 
-      const event: ConversationTerminalEvent = {
-        actionName: payload.actionName,
-        conversationId: payload.conversationId,
-        eventId: terminalEventId(payload.executionId),
-        executionId: payload.executionId,
-        result: outcome.status === "succeeded" ? outcome.result : null,
-        status: outcome.status,
-        version: 1,
+      const prepareTerminal = (candidate: typeof outcome) => {
+        const event: ConversationTerminalEvent = {
+          actionName: payload.actionName,
+          conversationId: payload.conversationId,
+          eventId: terminalEventId(payload.executionId),
+          executionId: payload.executionId,
+          result: candidate.status === "succeeded" ? candidate.result : null,
+          status: candidate.status,
+          version: 1,
+        };
+        return validateDurableActionValue(event, "result").pipe(
+          Effect.map((eventJson) => ({ candidate, event, eventJson }))
+        );
       };
-      const eventJson = yield* validateDurableActionValue(event, "result").pipe(
+      const terminal = yield* prepareTerminal(outcome).pipe(
+        Effect.catch(() =>
+          prepareTerminal({
+            failureCode: "action-failed-or-invalid-output",
+            result: null,
+            status: "failed" as const,
+          })
+        ),
         Effect.orDie
       );
       const resultJson =
-        outcome.status === "succeeded"
-          ? yield* validateDurableActionValue(outcome.result, "result").pipe(
-              Effect.orDie
-            )
+        terminal.candidate.status === "succeeded"
+          ? yield* validateDurableActionValue(
+              terminal.candidate.result,
+              "result"
+            ).pipe(Effect.orDie)
           : null;
 
       yield* Activity.make({
@@ -362,17 +429,17 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
               yield* sql`
               UPDATE laborer_action_executions
               SET
-                status = ${outcome.status},
+                status = ${terminal.candidate.status},
                 result_json = ${resultJson},
-                failure_code = ${outcome.failureCode}
+                failure_code = ${terminal.candidate.failureCode}
               WHERE execution_id = ${payload.executionId}
             `;
               yield* sql`
               INSERT OR IGNORE INTO laborer_execution_terminal_outbox (
                 event_id, execution_id, conversation_id, event_json, delivered
               ) VALUES (
-                ${event.eventId}, ${event.executionId}, ${event.conversationId},
-                ${eventJson}, 0
+                ${terminal.event.eventId}, ${terminal.event.executionId},
+                ${terminal.event.conversationId}, ${terminal.eventJson}, 0
               )
             `;
             })
@@ -386,16 +453,16 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
           const pending = yield* sql<{ readonly delivered: number }>`
             SELECT delivered
             FROM laborer_execution_terminal_outbox
-            WHERE event_id = ${event.eventId}
+            WHERE event_id = ${terminal.event.eventId}
           `;
           if (pending[0]?.delivered === 1) {
             return;
           }
-          yield* options.deliverTerminal(event);
+          yield* options.deliverTerminal(terminal.event);
           yield* sql`
             UPDATE laborer_execution_terminal_outbox
             SET delivered = 1
-            WHERE event_id = ${event.eventId}
+            WHERE event_id = ${terminal.event.eventId}
           `;
         }).pipe(Effect.orDie),
       });
@@ -455,28 +522,27 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
     const engine = yield* WorkflowEngine.WorkflowEngine;
     yield* initializeApplicationTables;
 
-    const nonterminal = yield* sql<{
-      readonly actionName: string;
-      readonly actionRevision: string;
-      readonly catalogFingerprint: string;
-      readonly conversationId: string;
-      readonly executionId: string;
-      readonly inputJson: string;
-    }>`
+    const nonterminal = yield* sql`
       SELECT
         action_name AS actionName,
         action_revision AS actionRevision,
         catalog_fingerprint AS catalogFingerprint,
         conversation_id AS conversationId,
         execution_id AS executionId,
+        input_hash AS inputHash,
         input_json AS inputJson
       FROM laborer_action_executions
       WHERE status IN ('queued', 'running')
     `;
     yield* Effect.forEach(
       nonterminal,
-      (record) =>
+      (untrustedRecord) =>
         Effect.gen(function* () {
+          const record = yield* Schema.decodeUnknownEffect(
+            NonterminalExecutionRow
+          )(untrustedRecord).pipe(
+            Effect.mapError(() => runtimeError("storage"))
+          );
           const action = yield* options.catalog
             .require(record.actionName, record.actionRevision)
             .pipe(
@@ -486,6 +552,15 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
             try: () => JSON.parse(record.inputJson) as unknown,
             catch: () => runtimeError("storage"),
           });
+          yield* validateDurableActionValue(encodedInput, "input").pipe(
+            Effect.filterOrFail(
+              (canonical) =>
+                canonical === record.inputJson &&
+                inputHashFor(canonical) === record.inputHash,
+              () => runtimeError("storage")
+            ),
+            Effect.mapError(() => runtimeError("storage"))
+          );
           yield* action
             .decodeInput(encodedInput)
             .pipe(Effect.mapError(() => runtimeError("storage")));
@@ -627,7 +702,7 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
       return {
         deduplicated: !inserted,
         executionId: row.executionId,
-        status: "queued" as const,
+        status: row.status,
       };
     });
 

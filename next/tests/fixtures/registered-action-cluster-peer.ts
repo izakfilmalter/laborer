@@ -49,7 +49,7 @@ const action = defineRegisteredAction({
   }),
   name: "forge-fixture-widget",
   result: Schema.Struct({
-    artifact: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+    artifact: Schema.NonEmptyString.check(Schema.isMaxLength(65_520)),
   }),
   revision: "forge-fixture-widget/2026-07-27",
   run: (input, context) =>
@@ -61,12 +61,32 @@ const action = defineRegisteredAction({
       if (input.widget === "invalid-result") {
         return { artifact: 42 } as unknown as { readonly artifact: string };
       }
+      if (input.widget === "oversized-result") {
+        return { artifact: "x".repeat(65_400) };
+      }
       return {
         artifact: `${input.widget}:${input.quantity}:${input.requestedAt.getUTCFullYear()}`,
       };
     }),
 });
-const catalog = makeRegisteredActionCatalog([action]);
+const interruptedNonIdempotentAction = defineRegisteredAction({
+  annotations: {
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+    readOnlyHint: false,
+  },
+  description: "Interrupt one non-idempotent fixture invocation.",
+  input: Schema.Struct({ reason: Schema.NonEmptyString }),
+  name: "interrupt-one-shot-fixture",
+  result: Schema.Struct({ completed: Schema.Boolean }),
+  revision: "interrupt-one-shot-fixture/v1",
+  run: () => Effect.interrupt,
+});
+const catalog = makeRegisteredActionCatalog([
+  action,
+  interruptedNonIdempotentAction,
+]);
 const sqliteLayer = SqliteClient.layer({ filename: databasePath });
 
 const program = Effect.gen(function* () {
@@ -147,9 +167,32 @@ const program = Effect.gen(function* () {
       runtime.get(malformedAccepted.executionId),
       ({ status }) => status === "failed"
     );
+    const oversizedAccepted = yield* runtime.start({
+      ...request,
+      input: {
+        quantity: 1,
+        requestedAt: "2026-07-27T00:00:00.000Z",
+        widget: "oversized-result",
+      },
+      invocationId: "invocation-oversized-result",
+    });
+    const oversized = yield* eventually(
+      runtime.get(oversizedAccepted.executionId),
+      ({ status }) => status === "failed"
+    );
+    const interruptedAccepted = yield* runtime.start({
+      actionName: interruptedNonIdempotentAction.name,
+      conversationId: request.conversationId,
+      input: { reason: "fixture interruption" },
+      invocationId: "invocation-interrupted-one-shot",
+    });
+    const interrupted = yield* eventually(
+      runtime.get(interruptedAccepted.executionId),
+      ({ status }) => status === "failed"
+    );
     const allDelivered = yield* eventually(
       Ref.get(terminalEvents),
-      (events) => events.length === 2
+      (events) => events.length === 4
     );
     yield* Console.log(
       `REGISTERED_ACTION_EVIDENCE:${JSON.stringify({
@@ -159,7 +202,9 @@ const program = Effect.gen(function* () {
         conflict: conflict._tag,
         delivered,
         invalid: invalid._tag,
+        interrupted,
         malformed,
+        oversized,
         privateTools: runtime.privateTools,
         replay,
       })}`

@@ -130,7 +130,17 @@ describe("registered Action Cluster runtime", () => {
               readonly result: unknown;
             }[];
             readonly invalid: string;
+            readonly interrupted: {
+              readonly failureCode: string | null;
+              readonly result: unknown;
+              readonly status: string;
+            };
             readonly malformed: {
+              readonly failureCode: string | null;
+              readonly result: unknown;
+              readonly status: string;
+            };
+            readonly oversized: {
               readonly failureCode: string | null;
               readonly result: unknown;
               readonly status: string;
@@ -176,7 +186,7 @@ describe("registered Action Cluster runtime", () => {
           });
           assert.deepStrictEqual(
             evidence.privateTools.map(({ name }) => name),
-            ["forge-fixture-widget"]
+            ["forge-fixture-widget", "interrupt-one-shot-fixture"]
           );
           assert.strictEqual(
             evidence.privateTools[0]?.inputSchema.additionalProperties,
@@ -200,7 +210,19 @@ describe("registered Action Cluster runtime", () => {
             "action-failed-or-invalid-output"
           );
           assert.strictEqual(evidence.malformed.result, null);
-          assert.strictEqual(evidence.allDelivered.length, 2);
+          assert.strictEqual(evidence.oversized.status, "failed");
+          assert.strictEqual(
+            evidence.oversized.failureCode,
+            "action-failed-or-invalid-output"
+          );
+          assert.strictEqual(evidence.oversized.result, null);
+          assert.strictEqual(evidence.interrupted.status, "failed");
+          assert.strictEqual(
+            evidence.interrupted.failureCode,
+            "action-recovery-required"
+          );
+          assert.strictEqual(evidence.interrupted.result, null);
+          assert.strictEqual(evidence.allDelivered.length, 4);
           assert.strictEqual(evidence.allDelivered[1]?.status, "failed");
           assert.strictEqual(evidence.allDelivered[1]?.result, null);
         })

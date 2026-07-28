@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import {
   CancelExecutionRequest,
+  ConversationClientCompatibility,
   ConversationReceipt,
   DurableRuntimeError,
   ExecutionControlReceipt,
@@ -19,9 +20,60 @@ import {
   StartExecutionRequest,
 } from "./root-runtime.ts";
 
-export const ROOT_RUNTIME_PROTOCOL_VERSION = 3;
+export const ROOT_RUNTIME_PROTOCOL_VERSION = 4;
 
 const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
+const NegotiatedProtocolVersion = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1)
+);
+
+export const AttachConversationClientRpcRequest = Schema.Struct({
+  compatibility: ConversationClientCompatibility,
+  // Decode well-formed future versions so negotiation can reject them with
+  // the declared, stable incompatible-client error instead of a transport
+  // schema failure before the RPC handler runs.
+  protocolVersion: NegotiatedProtocolVersion,
+  workspaceId: RuntimeWorkspaceId,
+});
+
+export const NegotiateConversationClientRpc = Rpc.make(
+  "RootRuntime.NegotiateConversationClient",
+  {
+    error: DurableRuntimeError,
+    payload: AttachConversationClientRpcRequest,
+    success: Schema.Void,
+  }
+);
+
+/**
+ * Establishes the scoped, process-local delivery half of the versioned RPC
+ * boundary. The callback is deliberately not an RPC payload; remote transports
+ * negotiate this request first and then bind their connection-owned handler.
+ */
+export const attachConversationClientLocally = Effect.fn(
+  "attachConversationClientLocally"
+)(function* (
+  runtime: RootDurableRuntimeShape,
+  untrustedRequest: unknown,
+  handler: Parameters<RootDurableRuntimeShape["attachConversationClient"]>[2]
+) {
+  const request = yield* Schema.decodeUnknownEffect(
+    AttachConversationClientRpcRequest,
+    { onExcessProperty: "error" }
+  )(untrustedRequest).pipe(
+    Effect.mapError(() =>
+      DurableRuntimeError.make({ reason: "incompatible-client" })
+    )
+  );
+  if (request.protocolVersion !== ROOT_RUNTIME_PROTOCOL_VERSION) {
+    return yield* DurableRuntimeError.make({ reason: "incompatible-client" });
+  }
+  yield* runtime.attachConversationClient(
+    request.compatibility,
+    request.workspaceId,
+    handler
+  );
+});
 
 export const StartExecutionRpc = Rpc.make("RootRuntime.StartExecution", {
   error: DurableRuntimeError,
@@ -138,6 +190,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
 );
 
 export const RootRuntimeRpcs = RpcGroup.make(
+  NegotiateConversationClientRpc,
   RunConversationRpc,
   StartExecutionRpc,
   GetExecutionRpc,
@@ -174,6 +227,15 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           executionId,
           workspaceId,
         }),
+      "RootRuntime.NegotiateConversationClient": ({
+        compatibility,
+        protocolVersion,
+      }) =>
+        protocolVersion === ROOT_RUNTIME_PROTOCOL_VERSION
+          ? runtime.checkConversationClientCompatibility(compatibility)
+          : Effect.fail(
+              DurableRuntimeError.make({ reason: "incompatible-client" })
+            ),
       "RootRuntime.FollowUpExecution": ({
         content,
         controlId,

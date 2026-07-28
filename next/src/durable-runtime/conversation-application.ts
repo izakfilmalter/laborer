@@ -16,6 +16,7 @@ import {
   RUNTIME_PAYLOAD_MAX_BYTES,
 } from "./root-runtime.ts";
 import {
+  attachConversationClientLocally,
   ROOT_RUNTIME_PROTOCOL_VERSION,
   runConversationRpcLocally,
 } from "./rpc.ts";
@@ -50,6 +51,7 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   "applicationThroughRootConversationRuntime"
 )(function* (options: {
   readonly application: ApplicationShape;
+  readonly actionCatalogFingerprint: string;
   readonly rootIdentity: string;
   readonly runtime: RootDurableRuntimeShape;
   readonly workspaceId: string;
@@ -64,8 +66,16 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   const runnerEventAcceptance = yield* Deferred.make<AcceptApplicationEvent>();
   const rememberRunnerEventAcceptance = (acceptEvent: AcceptApplicationEvent) =>
     Deferred.succeed(runnerEventAcceptance, acceptEvent).pipe(Effect.asVoid);
-  yield* options.runtime
-    .registerConversationHandler(options.workspaceId, {
+  yield* attachConversationClientLocally(
+    options.runtime,
+    {
+      compatibility: {
+        actionCatalogFingerprint: options.actionCatalogFingerprint,
+      },
+      protocolVersion: ROOT_RUNTIME_PROTOCOL_VERSION,
+      workspaceId: options.workspaceId,
+    },
+    {
       handle: (event) =>
         Effect.gen(function* () {
           if (event._tag === "ExternalInput") {
@@ -119,8 +129,8 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             );
           return outputs;
         }),
-    })
-    .pipe(Effect.mapError(runtimeFailure));
+    }
+  ).pipe(Effect.mapError(runtimeFailure));
 
   return {
     ...(options.application.decideConversationRecovery === undefined

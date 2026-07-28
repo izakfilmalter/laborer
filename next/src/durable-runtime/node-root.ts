@@ -8,6 +8,8 @@ import {
 } from "./root-runtime.ts";
 
 const conversationOnlyApplication = defineApplication({ actions: [] });
+export const CONVERSATION_ONLY_ACTION_CATALOG_FINGERPRINT =
+  conversationOnlyApplication.actions.fingerprint;
 
 export const makeNodeRootDurableRuntime = Effect.fn(
   "makeNodeRootDurableRuntime"

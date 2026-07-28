@@ -201,6 +201,14 @@ export const ConversationReceipt = Schema.Struct({
 });
 export type ConversationReceipt = typeof ConversationReceipt.Type;
 
+export const ConversationClientCompatibility = Schema.Struct({
+  actionCatalogFingerprint: boundedNonBlankString(
+    RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH
+  ),
+});
+export type ConversationClientCompatibility =
+  typeof ConversationClientCompatibility.Type;
+
 export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeError>()(
   "DurableRuntimeError",
   {
@@ -211,6 +219,7 @@ export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeE
       "execution-not-active",
       "execution-not-found",
       "invalid-payload",
+      "incompatible-client",
       "conversation-handler-unavailable",
       "storage-failure",
       "unsupported-control",
@@ -1742,9 +1751,17 @@ export interface RootDurableRuntimeShape {
     conversationId: string,
     workspaceId: string
   ) => Effect.Effect<void, DurableRuntimeError>;
+  readonly attachConversationClient: (
+    compatibility: ConversationClientCompatibility,
+    workspaceId: string,
+    handler: ConversationHandler
+  ) => Effect.Effect<void, DurableRuntimeError, import("effect").Scope.Scope>;
   readonly cancelExecution: (
     request: CancelExecutionRequest
   ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
+  readonly checkConversationClientCompatibility: (
+    compatibility: ConversationClientCompatibility
+  ) => Effect.Effect<void, DurableRuntimeError>;
   readonly followUpExecution: (
     request: FollowUpExecutionRequest
   ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
@@ -1761,10 +1778,6 @@ export interface RootDurableRuntimeShape {
     workspaceId: string,
     limit?: number
   ) => Effect.Effect<readonly ExecutionEvent[], DurableRuntimeError>;
-  readonly registerConversationHandler: (
-    workspaceId: string,
-    handler: ConversationHandler
-  ) => Effect.Effect<void, DurableRuntimeError, import("effect").Scope.Scope>;
   readonly runConversation: (
     request: RunConversationRequest
   ) => Effect.Effect<ConversationReceipt, DurableRuntimeError>;
@@ -2705,27 +2718,49 @@ const makeRuntimeService = Effect.gen(function* () {
     recoveryCursor = recoverable.at(-1)?.executionId ?? recoveryCursor;
   }
 
+  const checkConversationClientCompatibility = Effect.fn(
+    "RootDurableRuntime.checkConversationClientCompatibility"
+  )(function* (compatibility: ConversationClientCompatibility) {
+    const validatedCompatibility = yield* Schema.decodeUnknownEffect(
+      ConversationClientCompatibility,
+      { onExcessProperty: "error" }
+    )(compatibility).pipe(
+      Effect.mapError(() => runtimeError("incompatible-client"))
+    );
+    if (
+      validatedCompatibility.actionCatalogFingerprint !== catalog.fingerprint
+    ) {
+      return yield* runtimeError("incompatible-client");
+    }
+  });
+
   return {
     acknowledgeEvent,
     cancelExecution: (request) => mutateExecution("cancel", request),
+    checkConversationClientCompatibility,
     followUpExecution: (request) => mutateExecution("follow-up", request),
     getExecution,
     inspectExecution,
     pendingEvents,
-    registerConversationHandler: (workspaceId, handler) =>
-      Schema.decodeUnknownEffect(RuntimeWorkspaceId)(workspaceId).pipe(
-        Effect.mapError(() => runtimeError("invalid-payload")),
-        Effect.flatMap((validatedWorkspaceId) =>
-          conversationHandlers.register(validatedWorkspaceId, handler).pipe(
+    attachConversationClient: (compatibility, workspaceId, handler) =>
+      Effect.gen(function* () {
+        yield* checkConversationClientCompatibility(compatibility);
+        const validatedWorkspaceId = yield* Schema.decodeUnknownEffect(
+          RuntimeWorkspaceId
+        )(workspaceId).pipe(
+          Effect.mapError(() => runtimeError("invalid-payload"))
+        );
+        yield* conversationHandlers
+          .register(validatedWorkspaceId, handler)
+          .pipe(
             Effect.tap(() =>
               deliverPendingExecutionEvents(validatedWorkspaceId).pipe(
                 Effect.mapError(() => runtimeError("storage-failure")),
                 Effect.forkScoped
               )
             )
-          )
-        )
-      ),
+          );
+      }),
     runConversation,
     startExecution,
   } satisfies RootDurableRuntimeShape;

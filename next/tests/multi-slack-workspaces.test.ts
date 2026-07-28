@@ -133,13 +133,14 @@ const noContextGateway: SlackGatewayShape = {
 
 const fakeRootRuntime = (): RootDurableRuntimeShape => ({
   acknowledgeEvent: () => Effect.void,
+  attachConversationClient: () =>
+    Effect.acquireRelease(Effect.void, () => Effect.void),
   cancelExecution: () => Effect.die("unused fixture Execution cancellation"),
+  checkConversationClientCompatibility: () => Effect.void,
   followUpExecution: () => Effect.die("unused fixture Execution follow-up"),
   getExecution: () => Effect.die("unused fixture Execution lookup"),
   inspectExecution: () => Effect.die("unused fixture Execution inspection"),
   pendingEvents: () => Effect.succeed([]),
-  registerConversationHandler: () =>
-    Effect.acquireRelease(Effect.void, () => Effect.void),
   runConversation: () => Effect.die("unused fixture Conversation"),
   startExecution: () => Effect.die("unused fixture Execution start"),
 });

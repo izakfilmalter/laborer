@@ -301,6 +301,59 @@ describe("issue #238 ACP Agent context", () => {
       )
   );
 
+  it.effect(
+    "leaves intentionally blank Soul and Workspace memory files untouched on repeated startup",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const laborerRoot = yield* makeTempDirectoryScoped(
+            "laborer-acp-context-blank-restart-"
+          );
+          const workspaceId = "T238-BLANK-RESTART";
+          const initial = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          yield* Effect.promise(() =>
+            Promise.all([
+              writeFile(initial.soulPath, ""),
+              writeFile(initial.workspaceMemoryPath, ""),
+            ])
+          );
+          const [soulBefore, memoryBefore] = yield* Effect.promise(() =>
+            Promise.all([
+              stat(initial.soulPath),
+              stat(initial.workspaceMemoryPath),
+            ])
+          );
+
+          const restarted = yield* prepareAcpAgentContextSources({
+            root: laborerRoot,
+            workspaceId,
+          });
+          const [soulAfter, memoryAfter] = yield* Effect.promise(() =>
+            Promise.all([
+              stat(restarted.soulPath),
+              stat(restarted.workspaceMemoryPath),
+            ])
+          );
+
+          assert.strictEqual(
+            yield* Effect.promise(() => readFile(restarted.soulPath, "utf8")),
+            ""
+          );
+          assert.strictEqual(
+            yield* Effect.promise(() =>
+              readFile(restarted.workspaceMemoryPath, "utf8")
+            ),
+            ""
+          );
+          assert.strictEqual(soulAfter.ino, soulBefore.ino);
+          assert.strictEqual(memoryAfter.ino, memoryBefore.ino);
+        })
+      )
+  );
+
   it.live(
     "rejects non-regular context without blocking and logs degraded sources",
     () =>

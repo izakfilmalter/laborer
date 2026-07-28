@@ -836,7 +836,7 @@ describe("private Action MCP bridge", () => {
             trustedRoot: root,
           });
           let capabilityTime = 1000;
-          let expireBeforeInvocationValidation = false;
+          let expireBeforeActionInvocation = false;
           const bridge = yield* makeLaborerActionMcpBridge({
             authorityRepository: authority,
             bootstrapPath: join(root, "action-bootstrap"),
@@ -846,13 +846,13 @@ describe("private Action MCP bridge", () => {
             rootAuthority: `${root}:retained`,
             statePath: join(root, "action-capabilities.json"),
             testHooks: {
-              currentTimeMillis: () => capabilityTime,
-              beforeInvokeLeaseValidation: () => {
-                if (expireBeforeInvocationValidation) {
+              beforeRunInvocation: () => {
+                if (expireBeforeActionInvocation) {
                   capabilityTime += 101;
                 }
                 return Promise.resolve();
               },
+              currentTimeMillis: () => capabilityTime,
             },
             trustedRuntimeRoot: root,
             workspaceId: "T246ACTION",
@@ -1168,14 +1168,14 @@ describe("private Action MCP bridge", () => {
             ))?.outcome.outcome,
             "selected"
           );
-          expireBeforeInvocationValidation = true;
+          expireBeforeActionInvocation = true;
           const expiredCall = yield* Effect.promise(() =>
             currentClient.callTool({
               arguments: expiredInput,
               name: "create-feature",
             })
           );
-          expireBeforeInvocationValidation = false;
+          expireBeforeActionInvocation = false;
           assert.strictEqual(expiredCall.isError, true);
           assert.strictEqual(yield* Ref.get(invocationCount), 2);
           yield* closeExpiredTurn;

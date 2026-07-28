@@ -427,6 +427,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   readonly testHooks?: {
     readonly beforeInvokeLeaseValidation?: () => Promise<void>;
     readonly beforeObservationPersist?: () => Promise<void>;
+    readonly beforeRunInvocation?: () => Promise<void>;
     readonly currentTimeMillis?: () => number;
     readonly maxInFlightOperations?: number;
     readonly maxWaitersPerOperation?: number;
@@ -868,15 +869,21 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     capability: LiveCapability,
     runInvocation: Effect.Effect<BoundedActionResult, HandlerFailure>
   ) {
+    if (options.testHooks?.beforeRunInvocation !== undefined) {
+      yield* Effect.tryPromise({
+        try: options.testHooks.beforeRunInvocation,
+        catch: () => bridgeFailure("Action invocation attribution failed"),
+      });
+    }
+    const remainingMillis = capability.expiresAt - currentTimeMillis();
+    if (remainingMillis <= 0) {
+      return yield* bridgeFailure("Action invocation attribution is invalid");
+    }
     const claim = yield* claimSingleFlight(capability);
     if (claim.role === "waiter") {
       return yield* attachToInFlightOperation(claim.entry);
     }
     const { entry } = claim;
-    const remainingMillis = Math.max(
-      1,
-      capability.expiresAt - currentTimeMillis()
-    );
     return yield* Effect.uninterruptibleMask((restore) =>
       restore(
         runInvocation.pipe(

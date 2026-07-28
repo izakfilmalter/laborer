@@ -4518,7 +4518,10 @@ const globalIdentityFailure = (
     : null;
 };
 
-const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
+const validateAcknowledgements = (
+  state: PrototypeState,
+  seenEventIds: ReadonlySet<string>
+): StoreError | null => {
   const acknowledgementIds = state.acknowledgements.map(({ id }) => id);
   if (duplicateValue(acknowledgementIds) !== null) {
     return storeFailure("validate", "duplicate-acknowledgement-id");
@@ -4547,7 +4550,7 @@ const validateAcknowledgements = (state: PrototypeState): StoreError | null => {
           acknowledgement.messageTs,
           matchingActivationThreads[0]?.workspaceId
         ) ||
-      !EffectArray.contains(state.seenEventIds, acknowledgement.eventId) ||
+      !seenEventIds.has(acknowledgement.eventId) ||
       matchingActivationThreads.length !== 1 ||
       !Number.isInteger(acknowledgement.attempts) ||
       acknowledgement.attempts < 0 ||
@@ -5096,7 +5099,10 @@ const validateConversationStreams = (
 };
 
 const semanticStateFailure = (state: PrototypeState): StoreError | null => {
-  const acknowledgementFailure = validateAcknowledgements(state);
+  // Membership checks against seen event IDs run on every persisted mutation.
+  // A Set keeps this validation linear as the durable event history grows.
+  const seenEventIds = new Set(state.seenEventIds);
+  const acknowledgementFailure = validateAcknowledgements(state, seenEventIds);
   if (acknowledgementFailure !== null) {
     return acknowledgementFailure;
   }
@@ -5104,14 +5110,13 @@ const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   if (completionReactionFailure !== null) {
     return completionReactionFailure;
   }
-  if (duplicateValue(state.seenEventIds) !== null) {
+  if (seenEventIds.size !== state.seenEventIds.length) {
     return storeFailure("validate", "duplicate-event-id");
   }
   if (
     EffectArray.some(
       state.ignoredInbound,
-      (ignoredInbound) =>
-        !EffectArray.contains(state.seenEventIds, ignoredInbound.eventId)
+      (ignoredInbound) => !seenEventIds.has(ignoredInbound.eventId)
     )
   ) {
     return storeFailure("validate", "ignored-event-not-found");
@@ -5126,8 +5131,7 @@ const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   if (
     EffectArray.some(
       state.threads,
-      (thread) =>
-        !EffectArray.contains(state.seenEventIds, thread.activationEventId)
+      (thread) => !seenEventIds.has(thread.activationEventId)
     )
   ) {
     return storeFailure("validate", "activation-event-not-found");
@@ -5147,14 +5151,22 @@ const semanticStateFailure = (state: PrototypeState): StoreError | null => {
   return globalIdentityFailure(inputIds, turnIds, outboundIds);
 };
 
+// Hoisted so the schema parser compiles once instead of on every persisted
+// mutation. The synchronous form keeps the same schema and failure behavior
+// while avoiding a fiber round trip per validation.
+const decodePrototypeStateSync = Schema.decodeUnknownSync(
+  PrototypeStateSchema,
+  { onExcessProperty: "error" }
+);
+
 const validateState = (state: PrototypeState) =>
-  Schema.decodeUnknownEffect(PrototypeStateSchema, {
-    onExcessProperty: "error",
-  })(state).pipe(
-    Effect.mapError(() => storeFailure("validate", "invalid-state")),
+  Effect.try({
+    catch: () => storeFailure("validate", "invalid-state"),
+    try: () => decodePrototypeStateSync(state),
+  }).pipe(
     Effect.flatMap((decoded) => {
       if (
-        new TextEncoder().encode(JSON.stringify(decoded)).byteLength >
+        Buffer.byteLength(JSON.stringify(decoded), "utf8") >
         MAX_RUNNER_STATE_BYTES
       ) {
         return Effect.fail(
@@ -5176,7 +5188,10 @@ export const makeInMemoryStoreLayer = (
       laborerSlackId,
       options?.initializeNewThreads ?? false,
       initialPrototypeState,
-      (state) => validateState(state).pipe(Effect.as(published))
+      // makeStore already validates every candidate state inside the same
+      // uninterruptible transition, so re-validating here would only repeat
+      // the identical pure check on the identical value.
+      () => Effect.succeed(published)
     )
   );
 

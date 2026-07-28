@@ -1463,7 +1463,10 @@ describe("private Action MCP bridge", () => {
           assert.strictEqual(yield* bridge.activeCallCount, 0);
           yield* closeTurn;
         })
-      )
+      ),
+    // Two hundred concurrent retries through a real MCP child exceed the
+    // default five-second budget when the host is running a parallel gate.
+    30_000
   );
 
   it.effect("rejects an invocation when the active prompt lease swaps", () =>

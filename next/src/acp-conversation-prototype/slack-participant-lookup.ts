@@ -21,6 +21,13 @@ export interface SlackParticipantVisibleNameResult {
   readonly visibleName: string;
 }
 
+export interface SlackParticipantLookupWithResultShape
+  extends SlackParticipantLookupShape {
+  readonly lookupVisibleNameResult: (
+    slackUserId: string
+  ) => Effect.Effect<SlackParticipantVisibleNameResult>;
+}
+
 export interface SlackUsersInfoClient {
   readonly users: {
     readonly info: (request: { readonly user: string }) => Promise<unknown>;
@@ -124,7 +131,7 @@ const positiveSafeIntegerOr = (
 export const makeSlackParticipantLookup = (
   client: SlackUsersInfoClient,
   options?: SlackParticipantLookupOptions
-): SlackParticipantLookupShape => {
+): SlackParticipantLookupWithResultShape => {
   const lookupVisibleNameResult = Effect.fn(
     "SlackParticipantLookup.lookupVisibleNameResult"
   )(function* (slackUserId: string) {
@@ -167,7 +174,7 @@ export const makeSlackParticipantLookup = (
  */
 export const makeBoundedSlackParticipantLookup = (
   options: BoundedSlackParticipantLookupOptions
-): SlackParticipantLookupShape => {
+): SlackParticipantLookupWithResultShape => {
   const effectTimeoutMillis = Math.max(
     2,
     positiveSafeIntegerOr(

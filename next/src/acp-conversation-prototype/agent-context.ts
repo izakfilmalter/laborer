@@ -762,8 +762,10 @@ export const loadAcpSlackParticipantContexts = Effect.fn(
             participantLookup.lookupVisibleNameResult?.(slackUserId) ??
             participantLookup.lookupVisibleName(slackUserId).pipe(
               Effect.map((visibleName) => ({
-                lookupFailed:
-                  visibleName === safeSlackIdVisibleName(slackUserId),
+                // Legacy/custom lookups cannot distinguish a successful
+                // Slack-ID fallback from a failed request. Do not report a
+                // failure unless the lookup explicitly supplies that status.
+                lookupFailed: false,
                 visibleName,
               }))
             ),

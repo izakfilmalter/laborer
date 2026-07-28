@@ -562,8 +562,16 @@ describe("issue #241 durable ACP session bindings", () => {
           );
           const prompts = yield* readPrompts(join(controls, "prompts.jsonl"));
           assert.strictEqual(prompts.length, 2);
+          assert.deepStrictEqual(
+            prompts.map(({ sessionId }) => sessionId),
+            [
+              afterNew.conversations[0]?.agentSessionBinding.sessionId,
+              afterNew.conversations[0]?.agentSessionBinding.sessionId,
+            ]
+          );
           assert.ok(!prompts[1]?.prompt.includes("Changed First Name"));
           assert.ok(prompts[1]?.prompt.includes("Current Second Name"));
+          assert.strictEqual(secondPublished.length, firstPublished.length);
           assert.ok(
             secondPublished.every(
               (output) =>

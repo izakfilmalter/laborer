@@ -34,7 +34,7 @@ Explore before changing code. Prefer a red-green-refactor loop for behavior. Pre
 
 {{VERIFICATION_POLICY}}
 
-Run the narrowest useful checks while iterating. Do not run live Slack or ACP canaries. Do not invoke review skills or subagents; dedicated review phases follow. Do not push, merge, poll GitHub, or wait for CI. Do not run `bun install` unless dependencies changed; the runner already installed them.
+Run the narrowest useful checks while iterating. Do not run `bun run --cwd next check`; the runner executes that comprehensive gate once after review. Do not run live Slack or ACP canaries. Do not invoke review skills or subagents; dedicated review phases follow. Do not push, merge, poll GitHub, or wait for CI. Do not run `bun install` unless dependencies changed; the runner already installed them.
 
 # COMMIT
 

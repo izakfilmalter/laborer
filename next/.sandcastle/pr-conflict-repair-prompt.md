@@ -7,7 +7,7 @@ Base branch: {{BASE_BRANCH}}
 
 {{VERIFICATION_POLICY}}
 
-Fetch `origin/{{BASE_BRANCH}}`, merge it into `{{BRANCH}}`, and resolve conflicts while preserving both the issue's intent and current base behavior. Run checks targeted to affected files, then `bun run --cwd next check`, and commit the resolution.
+Fetch `origin/{{BASE_BRANCH}}`, merge it into `{{BRANCH}}`, and resolve conflicts while preserving both the issue's intent and current base behavior. Run checks targeted to affected files and commit the resolution. Do not run `bun run --cwd next check`; the runner executes that comprehensive gate once after review.
 
 Do not force-push, bypass checks, merge the PR locally, poll CI, invoke review workflows or subagents, or install unchanged dependencies. If the issue is obsolete or unsafe, report the blocker in your final output and stop; the sandbox token is intentionally read-only.
 

@@ -40,19 +40,121 @@ describe("Sandcastle agent completion gates", () => {
 
   it("recovers only runner-recorded completed or in-progress heads", () => {
     assert.strictEqual(
-      classifyBranchRecovery("base", "base", undefined, undefined),
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "base",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: undefined,
+        uiReviewedHead: undefined,
+      }),
       "build"
     );
     assert.strictEqual(
-      classifyBranchRecovery("base", "done", "done", undefined),
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: "done",
+        currentHead: "done",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: undefined,
+        uiReviewedHead: undefined,
+      }),
       "publish"
     );
     assert.strictEqual(
-      classifyBranchRecovery("base", "progress", undefined, "progress"),
-      "verify"
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "reviewed",
+        gatePassedHead: undefined,
+        gatePendingHead: "reviewed",
+        implementationHead: undefined,
+        progressHead: "reviewed",
+        uiReviewedHead: undefined,
+      }),
+      "gate"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "progress",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: "progress",
+        uiReviewedHead: undefined,
+      }),
+      "review"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "implementation",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: "implementation",
+        progressHead: undefined,
+        uiReviewedHead: undefined,
+      }),
+      "ui"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "ui-reviewed",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: "progress",
+        uiReviewedHead: "ui-reviewed",
+      }),
+      "code-review"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "passed",
+        gatePassedHead: "passed",
+        gatePendingHead: "passed",
+        implementationHead: undefined,
+        progressHead: "passed",
+        uiReviewedHead: undefined,
+      }),
+      "complete"
+    );
+    assert.strictEqual(
+      classifyBranchRecovery({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "base",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: "base",
+        progressHead: undefined,
+        uiReviewedHead: undefined,
+      }),
+      "ui"
     );
     assert.throws(
-      () => classifyBranchRecovery("base", "unrecorded", "done", "progress"),
+      () =>
+        classifyBranchRecovery({
+          acceptedHead: "base",
+          completedHead: "done",
+          currentHead: "unrecorded",
+          gatePassedHead: "passed",
+          gatePendingHead: "reviewed",
+          implementationHead: "implementation",
+          progressHead: "progress",
+          uiReviewedHead: "ui-reviewed",
+        }),
       unrecordedCommitsPattern
     );
   });

@@ -15,6 +15,12 @@ import {
   assertRecordedRecoveryLineage,
   classifyBranchRecovery,
 } from "./agent-completion/index.ts";
+import {
+  boundedGateFailureContext,
+  canReuseCompletedHead,
+  reviewedHeadNeedsPush,
+  shellQuote,
+} from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
 import {
   type ExistingPullRequest,
@@ -92,7 +98,7 @@ const MAX_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
 );
 const MAX_LOCAL_GATE_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
   "SANDCASTLE_MAX_LOCAL_GATE_REPAIR_ATTEMPTS",
-  2
+  1
 );
 const GITHUB_POLL_INTERVAL_MS = positiveIntegerEnv(
   "SANDCASTLE_GITHUB_POLL_INTERVAL_MS",
@@ -142,7 +148,7 @@ const HOST_OPENCODE_ACCOUNT = resolve(
 );
 const VERIFICATION_POLICY = [
   "Run deterministic offline checks only.",
-  "Use targeted commands while iterating and `bun run --cwd next check` for the comprehensive gate.",
+  "Run only targeted checks; the runner owns the single comprehensive `bun run --cwd next check` gate.",
   "Never run live Slack or ACP canaries unless an issue explicitly requires a manual credentialed smoke test.",
 ].join(" ");
 
@@ -181,6 +187,7 @@ const sandboxProvider = () =>
   });
 
 const acquireSlot = createSlotLimiter(MAX_PARALLEL);
+const acquireGateSlot = createSlotLimiter(1);
 const issueGraphSource = new GitHubCliIssueGraphSource(
   (args) => runFile("gh", [...args]),
   undefined,
@@ -250,18 +257,23 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       console.log(`  #${issue.id}: ${issue.title} -> ${issue.branch}`);
     }
 
-    const buildResults = await Promise.allSettled(
+    const workResults = await Promise.allSettled(
       plannedIssues.map(async (issue) => {
         const releaseSlot = await acquireSlot();
         try {
-          return { commits: await buildIssue(issue), issue };
+          await buildIssue(issue);
+          if (issue.kind === "spec-leaf") {
+            await publishSpecProgress(issue);
+            return { issue };
+          }
+          return { issue, prUrl: publishIssuePr(issue) };
         } finally {
           releaseSlot();
         }
       })
     );
 
-    for (const [index, result] of buildResults.entries()) {
+    for (const [index, result] of workResults.entries()) {
       const issue = plannedIssues[index];
       if (!issue) {
         continue;
@@ -271,16 +283,26 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         console.error(`  Issue #${issue.id} failed: ${String(result.reason)}`);
         continue;
       }
+      madeProgress = true;
+    }
+
+    for (const result of workResults) {
+      if (
+        result.status === "rejected" ||
+        result.value.issue.kind === "spec-leaf"
+      ) {
+        continue;
+      }
       try {
-        if (issue.kind === "spec-leaf") {
-          await publishSpecProgress(issue);
-        } else {
-          await publishAndMaybeMergeStandalone(issue);
-        }
-        madeProgress = true;
+        await publishAndMaybeMergeStandalone(
+          result.value.issue,
+          result.value.prUrl
+        );
       } catch (error) {
         process.exitCode = 1;
-        console.error(`  Publishing #${issue.id} failed: ${String(error)}`);
+        console.error(
+          `  Preparing #${result.value.issue.id} failed: ${String(error)}`
+        );
       }
     }
   }
@@ -421,8 +443,13 @@ async function publishSpecProgress(issue: PlannedIssue) {
     );
   }
 
-  pushIssueBranch(issue.branch);
   const acceptedHead = localBranchHead(issue.branch);
+  if (recordedCompletion(issue) !== acceptedHead) {
+    throw new Error(
+      `Refusing to publish #${issue.id}: local head does not match its completed head.`
+    );
+  }
+  pushIssueBranch(issue.branch, acceptedHead);
   let current = issueGraphSource.pullRequest(issue.branch);
   if (current === undefined) {
     const body = createSpecPullRequestBody(
@@ -452,10 +479,13 @@ async function publishSpecProgress(issue: PlannedIssue) {
   }
   assertOpenDraftSpecPullRequest(current, issue);
   await waitForPrHead(current.url, acceptedHead);
-  const body = appendSpecProgress(
-    current.body,
-    issue.root.number,
-    Number(issue.id),
+  const body = recordReviewedHead(
+    appendSpecProgress(
+      current.body,
+      issue.root.number,
+      Number(issue.id),
+      acceptedHead
+    ),
     acceptedHead
   );
   if (body !== current.body) {
@@ -471,9 +501,12 @@ async function publishSpecProgress(issue: PlannedIssue) {
   if (
     !confirmed.body.includes(
       implementationMarker(Number(issue.id), acceptedHead)
-    )
+    ) ||
+    reviewedHeadFromBody(confirmed.body) !== acceptedHead
   ) {
-    throw new Error(`Shared PR did not retain the marker for #${issue.id}.`);
+    throw new Error(
+      `Shared PR did not retain the implementation and reviewed-head markers for #${issue.id}.`
+    );
   }
   deleteRecordedCompletion(issue);
   console.log(`  Recorded #${issue.id} on shared draft PR ${confirmed.url}`);
@@ -685,12 +718,16 @@ async function buildIssue(issue: PlannedIssue) {
     const acceptedHead =
       issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
     const startingHead = worktreeHead(sandbox.worktreePath);
-    const recovery = classifyBranchRecovery(
+    const recovery = classifyBranchRecovery({
       acceptedHead,
-      startingHead,
-      recordedCompletion(issue),
-      recordedProgress(issue)
-    );
+      completedHead: recordedCompletion(issue),
+      currentHead: startingHead,
+      gatePassedHead: recordedGatePassed(issue),
+      gatePendingHead: recordedGatePending(issue),
+      implementationHead: recordedImplementation(issue),
+      progressHead: recordedProgress(issue),
+      uiReviewedHead: recordedUiReview(issue),
+    });
     if (recovery !== "build") {
       assertRecordedRecoveryLineage(
         issue.latestImplementedHead,
@@ -701,7 +738,22 @@ async function buildIssue(issue: PlannedIssue) {
       if (recovery === "publish") {
         return [];
       }
-      const resumedCommits = await runReviewAndVerification(issue, sandbox);
+      let resumedCommits: Array<{ sha: string }> = [];
+      if (recovery === "complete") {
+        // The exact head passed the runner gate before interruption.
+      } else if (recovery === "gate") {
+        resumedCommits = await enforceLocalGate(issue, sandbox, true);
+      } else if (recovery === "ui") {
+        resumedCommits = await runUiImplementation(issue, sandbox);
+        resumedCommits.push(...(await runReviewAndGate(issue, sandbox)));
+      } else {
+        resumedCommits = await runReviewAndGate(
+          issue,
+          sandbox,
+          true,
+          recovery === "code-review"
+        );
+      }
       const completedHead = worktreeHead(sandbox.worktreePath);
       assertNewWorkAfterAcceptedHead(
         acceptedHead,
@@ -709,39 +761,30 @@ async function buildIssue(issue: PlannedIssue) {
         `Issue #${issue.id}`
       );
       recordCompletion(issue, completedHead);
-      deleteRecordedProgress(issue);
+      deleteRecordedStages(issue);
       return resumedCommits;
     }
     const commits: Array<{ sha: string }> = [];
     const implementation = await sandbox.run({
       agent: allAroundAgent(),
       idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-      maxIterations: 100,
+      maxIterations: 3,
       name: `all-around-builder-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
       promptFile: ".sandcastle/implement-prompt.md",
       signal: agentRunSignal(),
     });
-    recordProgress(issue, worktreeHead(sandbox.worktreePath));
     assertAgentCompleted(implementation, `implementation for #${issue.id}`);
     commits.push(...implementation.commits);
 
     if (issue.needsUi) {
-      const ui = await sandbox.run({
-        agent: uiAgent(),
-        idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-        maxIterations: 20,
-        name: `ui-builder-${issue.id}`,
-        promptArgs: issuePromptArgs(issue),
-        promptFile: ".sandcastle/ui-prompt.md",
-        signal: agentRunSignal(),
-      });
+      recordImplementation(issue, worktreeHead(sandbox.worktreePath));
+      commits.push(...(await runUiImplementation(issue, sandbox)));
+    } else {
       recordProgress(issue, worktreeHead(sandbox.worktreePath));
-      assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
-      commits.push(...ui.commits);
     }
 
-    commits.push(...(await runReviewAndVerification(issue, sandbox)));
+    commits.push(...(await runReviewAndGate(issue, sandbox)));
     const completedHead = worktreeHead(sandbox.worktreePath);
     assertNewWorkAfterAcceptedHead(
       acceptedHead,
@@ -749,7 +792,7 @@ async function buildIssue(issue: PlannedIssue) {
       `Issue #${issue.id}`
     );
     recordCompletion(issue, completedHead);
-    deleteRecordedProgress(issue);
+    deleteRecordedStages(issue);
     return commits;
   } finally {
     await sandbox.close();
@@ -762,6 +805,26 @@ function completionRef(issue: PlannedIssue) {
 
 function progressRef(issue: PlannedIssue) {
   return `refs/sandcastle/progress/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function implementationRef(issue: PlannedIssue) {
+  return `refs/sandcastle/implemented/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function uiReviewRef(issue: PlannedIssue) {
+  return `refs/sandcastle/ui-reviewed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function gatePendingRef(issue: PlannedIssue) {
+  return `refs/sandcastle/gate-pending/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function gatePassedRef(issue: PlannedIssue) {
+  return `refs/sandcastle/gate-passed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function repairRef(issue: PlannedIssue) {
+  return `refs/sandcastle/repaired/${issue.kind}/${issue.root.number}/${issue.id}`;
 }
 
 function recordedCompletion(issue: PlannedIssue) {
@@ -796,6 +859,94 @@ function deleteRecordedProgress(issue: PlannedIssue) {
   if (recordedProgress(issue) !== undefined) {
     runFile("git", ["update-ref", "-d", progressRef(issue)]);
   }
+}
+
+function recordedStageRef(ref: string) {
+  const output = tryFile("git", [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    ref,
+  ]).trim();
+  return output || undefined;
+}
+
+function recordedImplementation(issue: PlannedIssue) {
+  return recordedStageRef(implementationRef(issue));
+}
+
+function recordedUiReview(issue: PlannedIssue) {
+  return recordedStageRef(uiReviewRef(issue));
+}
+
+function recordedGatePending(issue: PlannedIssue) {
+  return recordedStageRef(gatePendingRef(issue));
+}
+
+function recordedGatePassed(issue: PlannedIssue) {
+  return recordedStageRef(gatePassedRef(issue));
+}
+
+function recordedRepair(issue: PlannedIssue) {
+  return recordedStageRef(repairRef(issue));
+}
+
+function recordImplementation(issue: PlannedIssue, head: string) {
+  runFile("git", ["update-ref", implementationRef(issue), head]);
+}
+
+function recordUiReview(issue: PlannedIssue, head: string) {
+  runFile("git", ["update-ref", uiReviewRef(issue), head]);
+}
+
+function recordGatePassed(issue: PlannedIssue, head: string) {
+  runFile("git", ["update-ref", gatePassedRef(issue), head]);
+}
+
+function recordGatePendingCheckpoint(issue: PlannedIssue, head: string) {
+  updateRefsAtomically([
+    [progressRef(issue), head],
+    [gatePendingRef(issue), head],
+  ]);
+}
+
+function recordGateRepairCheckpoint(issue: PlannedIssue, head: string) {
+  updateRefsAtomically([
+    [progressRef(issue), head],
+    [gatePendingRef(issue), head],
+    [repairRef(issue), head],
+  ]);
+}
+
+function updateRefsAtomically(
+  entries: ReadonlyArray<readonly [string, string]>
+) {
+  runFileWithInput(
+    "git",
+    ["update-ref", "--stdin"],
+    [
+      "start",
+      ...entries.map(([ref, head]) => `update ${ref} ${head}`),
+      "prepare",
+      "commit",
+      "",
+    ].join("\n")
+  );
+}
+
+function deleteRecordedStage(ref: string) {
+  if (recordedStageRef(ref) !== undefined) {
+    runFile("git", ["update-ref", "-d", ref]);
+  }
+}
+
+function deleteRecordedStages(issue: PlannedIssue) {
+  deleteRecordedProgress(issue);
+  deleteRecordedStage(implementationRef(issue));
+  deleteRecordedStage(uiReviewRef(issue));
+  deleteRecordedStage(gatePendingRef(issue));
+  deleteRecordedStage(gatePassedRef(issue));
+  deleteRecordedStage(repairRef(issue));
 }
 
 function deleteRecordedCompletion(issue: PlannedIssue) {
@@ -906,61 +1057,102 @@ function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
   ]);
 }
 
-async function runReviewAndVerification(
+async function runUiImplementation(issue: PlannedIssue, sandbox: Sandbox) {
+  const ui = await sandbox.run({
+    agent: uiAgent(),
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+    maxIterations: 2,
+    name: `ui-builder-${issue.id}`,
+    promptArgs: issuePromptArgs(issue),
+    promptFile: ".sandcastle/ui-prompt.md",
+    signal: agentRunSignal(),
+  });
+  assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
+  recordProgress(issue, worktreeHead(sandbox.worktreePath));
+  deleteRecordedStage(implementationRef(issue));
+  return ui.commits;
+}
+
+async function runReviewAndGate(
   issue: PlannedIssue,
   sandbox: Sandbox,
-  trackBuildProgress = true
+  trackBuildProgress = true,
+  skipUiReview = false
+) {
+  const commits = await runModifyingReview(
+    issue,
+    sandbox,
+    trackBuildProgress,
+    skipUiReview
+  );
+  if (trackBuildProgress) {
+    const reviewedHead = worktreeHead(sandbox.worktreePath);
+    recordGatePendingCheckpoint(issue, reviewedHead);
+    deleteRecordedStage(uiReviewRef(issue));
+  }
+  commits.push(...(await enforceLocalGate(issue, sandbox, trackBuildProgress)));
+  if (trackBuildProgress) {
+    recordGatePassed(issue, worktreeHead(sandbox.worktreePath));
+  }
+  return commits;
+}
+
+async function runRecoverableReviewAndGate(
+  issue: PlannedIssue,
+  sandbox: Sandbox
+) {
+  const currentHead = worktreeHead(sandbox.worktreePath);
+  if (recordedGatePassed(issue) === currentHead) {
+    return [];
+  }
+  if (recordedGatePending(issue) === currentHead) {
+    const commits = await enforceLocalGate(issue, sandbox, true);
+    recordGatePassed(issue, worktreeHead(sandbox.worktreePath));
+    return commits;
+  }
+  return runReviewAndGate(
+    issue,
+    sandbox,
+    true,
+    recordedUiReview(issue) === currentHead
+  );
+}
+
+async function runModifyingReview(
+  issue: PlannedIssue,
+  sandbox: Sandbox,
+  trackBuildProgress: boolean,
+  skipUiReview: boolean
 ) {
   const commits: Array<{ sha: string }> = [];
-  const trackProgress = () => {
-    if (trackBuildProgress) {
-      recordProgress(issue, worktreeHead(sandbox.worktreePath));
-    }
-  };
-  if (issue.needsUi) {
+  if (issue.needsUi && !skipUiReview) {
     const uiReview = await sandbox.run({
       agent: uiAgent(),
       idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-      maxIterations: 3,
+      maxIterations: 1,
       name: `pre-publish-ui-review-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
       promptFile: ".sandcastle/ui-review-prompt.md",
       signal: agentRunSignal(),
     });
-    trackProgress();
     assertAgentCompleted(uiReview, `UI review for #${issue.id}`);
     commits.push(...uiReview.commits);
+    if (trackBuildProgress) {
+      recordUiReview(issue, worktreeHead(sandbox.worktreePath));
+    }
   }
 
   const review = await sandbox.run({
     agent: allAroundAgent(),
     idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-    maxIterations: 3,
+    maxIterations: 1,
     name: `pre-publish-code-review-${issue.id}`,
     promptArgs: issuePromptArgs(issue),
     promptFile: ".sandcastle/review-prompt.md",
     signal: agentRunSignal(),
   });
-  trackProgress();
   assertAgentCompleted(review, `code review for #${issue.id}`);
   commits.push(...review.commits);
-
-  const verify = await sandbox.run({
-    agent: allAroundAgent(),
-    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-    maxIterations: 30,
-    name: `verify-fixer-${issue.id}`,
-    promptArgs: {
-      ...issuePromptArgs(issue),
-      GATE_CONTEXT: "No prior runner-enforced gate failure.",
-    },
-    promptFile: ".sandcastle/verify-fix-prompt.md",
-    signal: agentRunSignal(),
-  });
-  trackProgress();
-  assertAgentCompleted(verify, `verification for #${issue.id}`);
-  commits.push(...verify.commits);
-  commits.push(...(await enforceLocalGate(issue, sandbox, trackBuildProgress)));
   return commits;
 }
 
@@ -975,9 +1167,16 @@ async function enforceLocalGate(
       sandbox.worktreePath,
       `before the gate for #${issue.id}`
     );
-    const result = await sandbox.exec(boundedSandboxCommand(FULL_GATE), {
-      onLine: (line) => console.log(`  ${line}`),
-    });
+    const gatedHead = worktreeHead(sandbox.worktreePath);
+    const releaseGateSlot = await acquireGateSlot();
+    const result = await sandbox
+      .exec(boundedSandboxCommand(FULL_GATE), {
+        onLine: (line) => console.log(`  ${line}`),
+      })
+      .finally(releaseGateSlot);
+    if (worktreeHead(sandbox.worktreePath) !== gatedHead) {
+      throw new Error(`Branch head moved while gating #${issue.id}.`);
+    }
     if (result.exitCode === 0) {
       assertWorktreeClean(
         sandbox.worktreePath,
@@ -985,7 +1184,10 @@ async function enforceLocalGate(
       );
       return commits;
     }
-    if (attempt >= MAX_LOCAL_GATE_REPAIR_ATTEMPTS) {
+    if (
+      attempt >= MAX_LOCAL_GATE_REPAIR_ATTEMPTS ||
+      recordedRepair(issue) === gatedHead
+    ) {
       throw new Error(
         `Local gate failed for #${issue.id} with exit code ${result.exitCode}.`
       );
@@ -993,19 +1195,20 @@ async function enforceLocalGate(
     const repair = await sandbox.run({
       agent: allAroundAgent(),
       idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-      maxIterations: 30,
+      maxIterations: 1,
       name: `local-gate-repair-${issue.id}-${attempt + 1}`,
       promptArgs: {
         ...issuePromptArgs(issue),
-        GATE_CONTEXT: `The runner-enforced ${FULL_GATE} command failed with exit code ${result.exitCode}.`,
+        GATE_CONTEXT: boundedGateFailureContext(result),
       },
       promptFile: ".sandcastle/verify-fix-prompt.md",
       signal: agentRunSignal(),
     });
-    if (trackBuildProgress) {
-      recordProgress(issue, worktreeHead(sandbox.worktreePath));
-    }
     assertAgentCompleted(repair, `local gate repair for #${issue.id}`);
+    if (trackBuildProgress) {
+      const repairedHead = worktreeHead(sandbox.worktreePath);
+      recordGateRepairCheckpoint(issue, repairedHead);
+    }
     commits.push(...repair.commits);
   }
 }
@@ -1013,22 +1216,22 @@ async function enforceLocalGate(
 async function reviewPublishedBranch(issue: PlannedIssue, prUrl: string) {
   console.log(`  Reviewing current PR head: ${prUrl}`);
   const sandbox = await createIssueSandbox(issue);
-  let commits: Array<{ sha: string }> = [];
   let reviewedLocalHead: string;
   try {
-    commits = await runReviewAndVerification(issue, sandbox, false);
+    await runRecoverableReviewAndGate(issue, sandbox);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
   }
-  if (commits.length > 0) {
-    pushIssueBranch(issue.branch);
+  if (reviewedHeadNeedsPush(requiredPrHead(prUrl), reviewedLocalHead)) {
+    pushIssueBranch(issue.branch, reviewedLocalHead);
   }
   if (!reviewIsComplete(prUrl)) {
     runFile("gh", ["pr", "comment", prUrl, "--body", REVIEW_MARKER]);
   }
   await waitForPrHead(prUrl, reviewedLocalHead);
   recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
   return reviewedLocalHead;
 }
 
@@ -1042,6 +1245,30 @@ async function preparePrForMerge(
   const status = getPrStatus(prUrl);
   if (status.state === "MERGED" || status.mergedAt) {
     throw new Error(`Cannot prepare an already merged PR: ${prUrl}`);
+  }
+  const pullRequest = issueGraphSource.pullRequest(issue.branch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${issue.branch}.`);
+  }
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, issue.branch);
+  const durableReviewedHead = reviewedHeadFromBody(pullRequest.body);
+  if (durableReviewedHead === status.headRefOid) {
+    console.log(
+      `  Reusing reviewed PR head ${status.headRefOid.slice(0, 12)}.`
+    );
+    const reviewedHead = assertReviewedHead(prUrl, durableReviewedHead);
+    deleteRecordedStages(issue);
+    return reviewedHead;
+  }
+  const completedHead = recordedCompletion(issue);
+  if (canReuseCompletedHead(completedHead, status.headRefOid)) {
+    console.log(
+      `  Reusing pre-publish review and gate for ${status.headRefOid.slice(0, 12)}.`
+    );
+    recordPullRequestReviewedHead(issue, prUrl, status.headRefOid);
+    const reviewedHead = assertReviewedHead(prUrl, status.headRefOid);
+    deleteRecordedStages(issue);
+    return reviewedHead;
   }
   const reviewedHead = await reviewPublishedBranch(issue, prUrl);
   return assertReviewedHead(prUrl, reviewedHead);
@@ -1098,13 +1325,38 @@ async function ensureBranchUpToDate(issue: PlannedIssue, prUrl: string) {
       if (attempt > MAX_REPAIR_ATTEMPTS) {
         return false;
       }
-      runFile("gh", ["pr", "update-branch", prUrl]);
-      await sleep(GITHUB_POLL_INTERVAL_MS);
+      await updateBehindBranch(issue, prUrl);
       continue;
     }
     return true;
   }
   return false;
+}
+
+async function updateBehindBranch(issue: PlannedIssue, prUrl: string) {
+  const sandbox = await createIssueSandbox(issue);
+  let reviewedLocalHead: string;
+  try {
+    const baseRef = `origin/${BASE_BRANCH}`;
+    const merge = await sandbox.exec(
+      boundedSandboxCommand(
+        `git fetch --no-tags origin ${shellQuote(BASE_BRANCH)} && git merge --no-edit ${shellQuote(baseRef)}`
+      ),
+      { onLine: (line) => console.log(`  ${line}`) }
+    );
+    if (merge.exitCode !== 0) {
+      await sandbox.exec(boundedSandboxCommand("git merge --abort"));
+      throw new Error(`Could not update ${issue.branch} from ${BASE_BRANCH}.`);
+    }
+    await runRecoverableReviewAndGate(issue, sandbox);
+    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
+  } finally {
+    await sandbox.close();
+  }
+  pushIssueBranch(issue.branch, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
 }
 
 async function repairConflict(
@@ -1118,7 +1370,7 @@ async function repairConflict(
     const repair = await sandbox.run({
       agent: allAroundAgent(),
       idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
-      maxIterations: 30,
+      maxIterations: 1,
       name: `pr-conflict-repair-${issue.id}-${attempt}`,
       promptArgs: {
         ...issuePromptArgs(issue),
@@ -1129,18 +1381,31 @@ async function repairConflict(
       signal: agentRunSignal(),
     });
     assertAgentCompleted(repair, `conflict repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox, false);
+    await runRecoverableReviewAndGate(issue, sandbox);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
   }
-  pushIssueBranch(issue.branch);
+  pushIssueBranch(issue.branch, reviewedLocalHead);
   await waitForPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
   return reviewedLocalHead;
 }
 
 function publishIssuePr(issue: PlannedIssue) {
-  pushIssueBranch(issue.branch);
+  const completedHead = recordedCompletion(issue);
+  if (completedHead === undefined) {
+    throw new Error(
+      `Refusing to publish #${issue.id} without a completed head.`
+    );
+  }
+  if (localBranchHead(issue.branch) !== completedHead) {
+    throw new Error(
+      `Refusing to publish #${issue.id}: local head does not match its completed head.`
+    );
+  }
+  pushIssueBranch(issue.branch, completedHead);
   const existing = findIssuePr(issue);
   if (existing) {
     return existing;
@@ -1166,8 +1431,16 @@ function publishIssuePr(issue: PlannedIssue) {
   ]).trim();
 }
 
-function pushIssueBranch(branch: string) {
-  runFile("git", ["push", "--set-upstream", "origin", branch]);
+function pushIssueBranch(branch: string, expectedHead: string) {
+  if (localBranchHead(branch) !== expectedHead) {
+    throw new Error(`Refusing to push moved branch ${branch}.`);
+  }
+  runFile("git", [
+    "push",
+    "--set-upstream",
+    "origin",
+    `${expectedHead}:refs/heads/${branch}`,
+  ]);
 }
 
 function findIssuePr(issue: PlannedIssue) {
@@ -1373,6 +1646,15 @@ function runFile(command: string, args: string[]) {
   });
 }
 
+function runFileWithInput(command: string, args: string[], input: string) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: HOST_COMMAND_TIMEOUT_MS,
+  });
+}
+
 function tryFile(command: string, args: string[]) {
   try {
     return runFile(command, args);
@@ -1403,7 +1685,7 @@ function boundedSandboxCommand(command: string) {
     `${SANDBOX_COMMAND_TIMEOUT_SECONDS}s`,
     "sh",
     "-c",
-    JSON.stringify(command),
+    shellQuote(command),
   ].join(" ");
 }
 

@@ -33,20 +33,45 @@ export const assertRecordedRecoveryLineage = (
   }
 };
 
-export const classifyBranchRecovery = (
-  acceptedHead: string,
-  currentHead: string,
-  completedHead: string | undefined,
-  progressHead: string | undefined
-) => {
-  if (currentHead === acceptedHead) {
-    return "build" as const;
-  }
+export const classifyBranchRecovery = ({
+  acceptedHead,
+  completedHead,
+  currentHead,
+  gatePassedHead,
+  gatePendingHead,
+  implementationHead,
+  progressHead,
+  uiReviewedHead,
+}: {
+  readonly acceptedHead: string;
+  readonly completedHead: string | undefined;
+  readonly currentHead: string;
+  readonly gatePassedHead: string | undefined;
+  readonly gatePendingHead: string | undefined;
+  readonly implementationHead: string | undefined;
+  readonly progressHead: string | undefined;
+  readonly uiReviewedHead: string | undefined;
+}) => {
   if (currentHead === completedHead) {
     return "publish" as const;
   }
+  if (currentHead === gatePassedHead) {
+    return "complete" as const;
+  }
+  if (currentHead === gatePendingHead) {
+    return "gate" as const;
+  }
+  if (currentHead === uiReviewedHead) {
+    return "code-review" as const;
+  }
   if (currentHead === progressHead) {
-    return "verify" as const;
+    return "review" as const;
+  }
+  if (currentHead === implementationHead) {
+    return "ui" as const;
+  }
+  if (currentHead === acceptedHead) {
+    return "build" as const;
   }
   throw new Error(
     `Branch contains unrecorded commits after accepted head ${acceptedHead}.`

@@ -183,6 +183,17 @@ const botReplies = Effect.fnUntraced(function* (
   );
 });
 
+const replyTimestamp = (
+  reply: Record<string, unknown> | undefined,
+  description: string
+): string => {
+  const timestamp = reply?.ts;
+  if (typeof timestamp !== "string" || timestamp === "") {
+    assert.fail(`${description} must have a timestamp`);
+  }
+  return timestamp;
+};
+
 const waitForBotReplyText = Effect.fnUntraced(function* (
   fixture: EmulatedSlackFixture,
   rootTs: string,
@@ -454,6 +465,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_PARTIAL
               );
               assert.strictEqual(partialReplies[0]?.thread_ts, rootTs);
+              const partialReplyTs = replyTimestamp(
+                partialReplies[0],
+                "partial Slack reply"
+              );
 
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
@@ -466,6 +481,11 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_COMPLETE
               );
               assert.strictEqual(completedReplies[0]?.thread_ts, rootTs);
+              assert.strictEqual(
+                completedReplies[0]?.ts,
+                partialReplyTs,
+                "later ACP chunks must update the original Slack reply"
+              );
               const allPublicText = pipe(
                 completedReplies,
                 EffectArray.map((message) => String(message.text ?? "")),
@@ -704,6 +724,15 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 EXPECTED_SEMANTIC_MESSAGES
               );
               assertSafeBotReplies(fixture, rootTs, initialReplies);
+              const initialReplyTimestamps = initialReplies.map(
+                (reply, index) =>
+                  replyTimestamp(reply, `ACP message ${index + 1} Slack reply`)
+              );
+              assert.strictEqual(
+                new Set(initialReplyTimestamps).size,
+                EXPECTED_SEMANTIC_MESSAGES.length,
+                "each ACP message boundary must create one distinct Slack reply"
+              );
 
               const followUpInput = "queued participant follow-up";
               const followUp = yield* postHumanMessage(fixture, followUpInput, {
@@ -732,6 +761,23 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 [...EXPECTED_SEMANTIC_MESSAGES, "Follow-up complete"]
               );
               assertSafeBotReplies(fixture, rootTs, completedReplies);
+              assert.deepStrictEqual(
+                completedReplies
+                  .slice(0, EXPECTED_SEMANTIC_MESSAGES.length)
+                  .map((reply, index) =>
+                    replyTimestamp(
+                      reply,
+                      `completed ACP message ${index + 1} Slack reply`
+                    )
+                  ),
+                initialReplyTimestamps,
+                "prompt completion and the queued turn must not duplicate prior replies"
+              );
+              const followUpReplyTs = replyTimestamp(
+                completedReplies.at(-1),
+                "follow-up Slack reply"
+              );
+              assert.ok(!initialReplyTimestamps.includes(followUpReplyTs));
               const promptLines = yield* waitForFileLineCount(promptLogPath, 2);
               assert.deepStrictEqual(promptLines, [
                 `acp-session-secret-234-1\t${firstInput}`,
@@ -789,6 +835,10 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 ["Partial answer stays."]
               );
               assertSafeBotReplies(fixture, rootTs, partialReplies);
+              const partialReplyTs = replyTimestamp(
+                partialReplies[0],
+                "partial Slack reply"
+              );
               yield* Effect.promise(() =>
                 writeFile(releasePath, "release", { mode: 0o600 })
               );
@@ -799,6 +849,20 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
                 ["Partial answer stays.", EXPECTED_BLOCKED_NOTICE]
               );
               assertSafeBotReplies(fixture, rootTs, failedReplies);
+              assert.strictEqual(
+                failedReplies[0]?.ts,
+                partialReplyTs,
+                "a failed ACP prompt must not retract or replace partial output"
+              );
+              const noticeTs = replyTimestamp(
+                failedReplies[1],
+                "sanitized failure notice"
+              );
+              assert.notStrictEqual(
+                noticeTs,
+                partialReplyTs,
+                "the sanitized failure notice must be a separate Slack reply"
+              );
             })
           );
           yield* waitForFile(exitPath);

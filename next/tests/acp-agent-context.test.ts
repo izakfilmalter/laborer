@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { assert, describe, it } from "@effect/vitest";
@@ -320,6 +320,17 @@ describe("issue #238 ACP Agent context", () => {
               writeFile(initial.workspaceMemoryPath, ""),
             ])
           );
+          const preservedTimestamp = new Date("2000-01-01T00:00:00.000Z");
+          yield* Effect.promise(() =>
+            Promise.all([
+              utimes(initial.soulPath, preservedTimestamp, preservedTimestamp),
+              utimes(
+                initial.workspaceMemoryPath,
+                preservedTimestamp,
+                preservedTimestamp
+              ),
+            ])
+          );
           const [soulBefore, memoryBefore] = yield* Effect.promise(() =>
             Promise.all([
               stat(initial.soulPath),
@@ -350,6 +361,8 @@ describe("issue #238 ACP Agent context", () => {
           );
           assert.strictEqual(soulAfter.ino, soulBefore.ino);
           assert.strictEqual(memoryAfter.ino, memoryBefore.ino);
+          assert.strictEqual(soulAfter.mtimeMs, soulBefore.mtimeMs);
+          assert.strictEqual(memoryAfter.mtimeMs, memoryBefore.mtimeMs);
         })
       )
   );

@@ -76,7 +76,15 @@ const NonterminalExecutionRow = Schema.Struct({
   inputHash: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
   inputJson: BoundedStoredJson,
 });
-const ExecutionActivityState = Schema.Struct({ status: ExecutionStatus });
+const ExecutionClaimState = Schema.Struct({
+  actionName: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  actionRevision: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  catalogFingerprint: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  conversationId: BoundedRuntimeId,
+  inputHash: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  inputJson: BoundedStoredJson,
+  status: ExecutionStatus,
+});
 
 export interface RegisteredExecutionSnapshot {
   readonly actionName: string;
@@ -153,14 +161,29 @@ const inputHashFor = (canonicalInput: string): string =>
     .digest("base64url");
 
 const claimActionActivity = Effect.fn("claimActionActivity")(function* (
-  executionId: string,
+  accepted: {
+    readonly actionName: string;
+    readonly actionRevision: string;
+    readonly catalogFingerprint: string;
+    readonly conversationId: string;
+    readonly executionId: string;
+    readonly inputHash: string;
+    readonly inputJson: string;
+  },
   idempotentHint: boolean
 ) {
   const sql = yield* SqlClient;
   yield* sql`
     UPDATE laborer_action_executions
     SET status = 'running'
-    WHERE execution_id = ${executionId} AND status = 'queued'
+    WHERE execution_id = ${accepted.executionId}
+      AND action_name = ${accepted.actionName}
+      AND action_revision = ${accepted.actionRevision}
+      AND catalog_fingerprint = ${accepted.catalogFingerprint}
+      AND conversation_id = ${accepted.conversationId}
+      AND input_hash = ${accepted.inputHash}
+      AND input_json = ${accepted.inputJson}
+      AND status = 'queued'
   `;
   const changes = yield* sql<{ readonly claimed: number }>`
     SELECT changes() AS claimed
@@ -169,20 +192,35 @@ const claimActionActivity = Effect.fn("claimActionActivity")(function* (
     return true;
   }
   const stateRows = yield* sql`
-    SELECT status
+    SELECT
+      action_name AS actionName,
+      action_revision AS actionRevision,
+      catalog_fingerprint AS catalogFingerprint,
+      conversation_id AS conversationId,
+      input_hash AS inputHash,
+      input_json AS inputJson,
+      status
     FROM laborer_action_executions
-    WHERE execution_id = ${executionId}
+    WHERE execution_id = ${accepted.executionId}
   `;
   const state = yield* EffectArray.head(stateRows).pipe(
     Option.match({
       onNone: () => Effect.die("registered Action row is missing"),
       onSome: (value) =>
-        Schema.decodeUnknownEffect(ExecutionActivityState)(value).pipe(
+        Schema.decodeUnknownEffect(ExecutionClaimState)(value).pipe(
           Effect.orDie
         ),
     })
   );
-  if (state.status !== "running") {
+  if (
+    state.actionName !== accepted.actionName ||
+    state.actionRevision !== accepted.actionRevision ||
+    state.catalogFingerprint !== accepted.catalogFingerprint ||
+    state.conversationId !== accepted.conversationId ||
+    state.inputHash !== accepted.inputHash ||
+    state.inputJson !== accepted.inputJson ||
+    state.status !== "running"
+  ) {
     return yield* Effect.die("registered Action has an invalid activity state");
   }
   return idempotentHint;
@@ -197,6 +235,26 @@ const parseStoredJson = (value: string | null): unknown | null => {
   }
   return JSON.parse(value) as unknown;
 };
+
+const validatedStoredInput = (
+  row: Pick<ExecutionRow, "inputHash" | "inputJson">
+): Effect.Effect<unknown, RegisteredActionRuntimeError> =>
+  Effect.gen(function* () {
+    const input = yield* Effect.try({
+      try: () => JSON.parse(row.inputJson) as unknown,
+      catch: () => runtimeError("storage"),
+    });
+    yield* validateDurableActionValue(input, "input").pipe(
+      Effect.filterOrFail(
+        (canonical) =>
+          canonical === row.inputJson &&
+          inputHashFor(canonical) === row.inputHash,
+        () => runtimeError("storage")
+      ),
+      Effect.mapError(() => runtimeError("storage"))
+    );
+    return input;
+  });
 
 const snapshotFromRow = (
   row: ExecutionRow
@@ -310,6 +368,11 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
       const action = yield* options.catalog
         .require(payload.actionName, payload.actionRevision)
         .pipe(Effect.orDie);
+      const inputJson = yield* validateDurableActionValue(
+        payload.encodedInput,
+        "input"
+      ).pipe(Effect.orDie);
+      const inputHash = inputHashFor(inputJson);
 
       const outcome = yield* Activity.make({
         name: "RunRegisteredAction",
@@ -320,7 +383,15 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
         }),
         execute: Effect.gen(function* () {
           const mayExecute = yield* claimActionActivity(
-            payload.executionId,
+            {
+              actionName: payload.actionName,
+              actionRevision: payload.actionRevision,
+              catalogFingerprint: payload.catalogFingerprint,
+              conversationId: payload.conversationId,
+              executionId: payload.executionId,
+              inputHash,
+              inputJson,
+            },
             action.annotations.idempotentHint
           );
           if (!mayExecute) {
@@ -548,19 +619,7 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
             .pipe(
               Effect.mapError(() => runtimeError("registration-unavailable"))
             );
-          const encodedInput = yield* Effect.try({
-            try: () => JSON.parse(record.inputJson) as unknown,
-            catch: () => runtimeError("storage"),
-          });
-          yield* validateDurableActionValue(encodedInput, "input").pipe(
-            Effect.filterOrFail(
-              (canonical) =>
-                canonical === record.inputJson &&
-                inputHashFor(canonical) === record.inputHash,
-              () => runtimeError("storage")
-            ),
-            Effect.mapError(() => runtimeError("storage"))
-          );
+          const encodedInput = yield* validatedStoredInput(record);
           yield* action
             .decodeInput(encodedInput)
             .pipe(Effect.mapError(() => runtimeError("storage")));
@@ -677,13 +736,16 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
           };
         })
       );
+      yield* snapshotFromRow(row);
+      const durableInput = yield* validatedStoredInput(row);
       if (
         !inserted &&
         (row.actionName !== request.actionName ||
           row.actionRevision !== action.revision ||
           row.conversationId !== request.conversationId ||
           row.executionId !== executionId ||
-          row.inputHash !== inputHash)
+          row.inputHash !== inputHash ||
+          row.inputJson !== inputJson)
       ) {
         return yield* runtimeError("conflict");
       }
@@ -694,7 +756,7 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
           actionRevision: row.actionRevision,
           catalogFingerprint: row.catalogFingerprint,
           conversationId: row.conversationId,
-          encodedInput,
+          encodedInput: durableInput,
           executionId: row.executionId,
         },
         { discard: true }

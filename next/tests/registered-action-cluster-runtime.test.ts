@@ -124,6 +124,7 @@ describe("registered Action Cluster runtime", () => {
               readonly status: string;
             };
             readonly conflict: string;
+            readonly corruptedReplay: string;
             readonly delivered: readonly {
               readonly conversationId: string;
               readonly executionId: string;
@@ -157,6 +158,7 @@ describe("registered Action Cluster runtime", () => {
 
           assert.strictEqual(evidence.invalid, "Failure");
           assert.strictEqual(evidence.conflict, "Failure");
+          assert.strictEqual(evidence.corruptedReplay, "Failure");
           assert.strictEqual(evidence.accepted.status, "queued");
           assert.strictEqual(evidence.accepted.deduplicated, false);
           assert.strictEqual(evidence.replay.deduplicated, true);

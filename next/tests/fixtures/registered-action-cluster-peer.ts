@@ -1,6 +1,7 @@
 import { BunRuntime } from "@effect/platform-bun";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Console, Effect, Layer, Ref, Schema } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   defineRegisteredAction,
   makeRegisteredActionCatalog,
@@ -103,6 +104,7 @@ const program = Effect.gen(function* () {
 
   yield* Effect.gen(function* () {
     const runtime = yield* RegisteredActionRuntime;
+    const sql = yield* SqlClient;
     const invalid = yield* Effect.result(
       runtime.start({
         actionName: action.name,
@@ -194,12 +196,19 @@ const program = Effect.gen(function* () {
       Ref.get(terminalEvents),
       (events) => events.length === 4
     );
+    yield* sql`
+      UPDATE laborer_action_executions
+      SET input_json = '{"tampered":true}'
+      WHERE execution_id = ${accepted.executionId}
+    `;
+    const corruptedReplay = yield* Effect.result(runtime.start(request));
     yield* Console.log(
       `REGISTERED_ACTION_EVIDENCE:${JSON.stringify({
         accepted,
         allDelivered,
         completed,
         conflict: conflict._tag,
+        corruptedReplay: corruptedReplay._tag,
         delivered,
         invalid: invalid._tag,
         interrupted,

@@ -656,6 +656,21 @@ describe("issue #245 durable ACP permission broker", () => {
           yield* waitForMessageBinding(repository);
           const capability = capture.posted[0]?.capability;
           assert.ok(capability !== undefined);
+          // The repository shows the message binding as soon as its rename
+          // lands, but the binding transact is still inside the broker's
+          // serialized gate section until it signals message readiness.
+          // Arming the rename failure in that window would hand the one-shot
+          // failure to the binding transact instead of the claim, killing the
+          // binding fiber before readiness and hanging the claim forever. A
+          // gated interaction for an unknown capability cannot start until
+          // the binding section finishes, so its completion proves the
+          // one-shot failure can only be consumed by the claim below.
+          assert.strictEqual(
+            yield* broker.handleInteraction(
+              interaction("unknown-capability-245")
+            ),
+            "ignored"
+          );
           failAfterRename = true;
           assert.strictEqual(
             yield* broker.handleInteraction(interaction(capability)),

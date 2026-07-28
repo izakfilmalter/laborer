@@ -76,31 +76,35 @@ describe("root durable runtime", () => {
           yield* Effect.gen(function* () {
             const runtime = yield* RootDurableRuntime;
             const handled: string[] = [];
-            yield* runtime.registerConversationHandler("T-CONVERSATION", {
-              handle: (event) =>
-                Effect.gen(function* () {
-                  if (event._tag !== "ParticipantInput") {
-                    return yield* Effect.die("unexpected external event");
-                  }
-                  handled.push(event.turnId);
-                  if (event.turnId === "turn-3") {
-                    return yield* Effect.fail({
-                      _tag: "ScriptedConversationFailure",
-                    } as const);
-                  }
-                  const text = event.messages[0]?.text ?? "missing";
-                  return [
-                    ApplicationConversationMessageChunk.make({
-                      messageId: `message:${event.turnId}`,
-                      text: `ACP ${text}`,
-                    }),
-                    ApplicationPublicReply.make({
-                      replyId: `reply:${event.turnId}`,
-                      text: `completed ${text}`,
-                    }),
-                  ];
-                }),
-            });
+            yield* runtime.attachConversationClient(
+              { actionCatalogFingerprint: application.actions.fingerprint },
+              "T-CONVERSATION",
+              {
+                handle: (event) =>
+                  Effect.gen(function* () {
+                    if (event._tag !== "ParticipantInput") {
+                      return yield* Effect.die("unexpected external event");
+                    }
+                    handled.push(event.turnId);
+                    if (event.turnId === "turn-3") {
+                      return yield* Effect.fail({
+                        _tag: "ScriptedConversationFailure",
+                      } as const);
+                    }
+                    const text = event.messages[0]?.text ?? "missing";
+                    return [
+                      ApplicationConversationMessageChunk.make({
+                        messageId: `message:${event.turnId}`,
+                        text: `ACP ${text}`,
+                      }),
+                      ApplicationPublicReply.make({
+                        replyId: `reply:${event.turnId}`,
+                        text: `completed ${text}`,
+                      }),
+                    ];
+                  }),
+              }
+            );
             const conversationId = ThreadId.make(
               "workspace:T-CONVERSATION:thread:C1:1.0"
             );
@@ -145,7 +149,7 @@ describe("root durable runtime", () => {
             const incompatible = yield* Effect.flip(
               runConversationRpcLocally(runtime, {
                 ...request(turn(3, "incompatible")),
-                protocolVersion: 4,
+                protocolVersion: 5,
               })
             );
 
@@ -163,17 +167,21 @@ describe("root durable runtime", () => {
               second.outputs.map((output) => output.text),
               ["ACP again", "completed again"]
             );
-            yield* runtime.registerConversationHandler("T-OTHER", {
-              handle: (event) =>
-                event._tag === "ParticipantInput"
-                  ? Effect.succeed([
-                      ApplicationConversationMessageChunk.make({
-                        messageId: `other:${event.turnId}`,
-                        text: "other workspace",
-                      }),
-                    ])
-                  : Effect.die("unexpected external event"),
-            });
+            yield* runtime.attachConversationClient(
+              { actionCatalogFingerprint: application.actions.fingerprint },
+              "T-OTHER",
+              {
+                handle: (event) =>
+                  event._tag === "ParticipantInput"
+                    ? Effect.succeed([
+                        ApplicationConversationMessageChunk.make({
+                          messageId: `other:${event.turnId}`,
+                          text: "other workspace",
+                        }),
+                      ])
+                    : Effect.die("unexpected external event"),
+              }
+            );
             const otherWorkspace = yield* runtime.runConversation({
               ...request(turn(1, "same canonical thread")),
               workspaceId: "T-OTHER",
@@ -214,6 +222,7 @@ describe("root durable runtime", () => {
             };
             const boundedApplication =
               yield* applicationThroughRootConversationRuntime({
+                actionCatalogFingerprint: application.actions.fingerprint,
                 application: oversizedApplication,
                 rootIdentity: "root-conversation-fixture",
                 runtime,
@@ -298,6 +307,7 @@ describe("root durable runtime", () => {
             };
             const durableApplication =
               yield* applicationThroughRootConversationRuntime({
+                actionCatalogFingerprint: catalog.actions.fingerprint,
                 application,
                 rootIdentity: "root-delivery-fixture",
                 runtime,
@@ -673,42 +683,49 @@ describe("root durable runtime", () => {
             >();
             const participantTurns: string[] = [];
             const register = (workspaceId: string) =>
-              runtime.registerConversationHandler(workspaceId, {
-                handle: (event) =>
-                  Effect.gen(function* () {
-                    if (event._tag === "ParticipantInput") {
-                      participantTurns.push(event.turnId);
+              runtime.attachConversationClient(
+                { actionCatalogFingerprint: application.actions.fingerprint },
+                workspaceId,
+                {
+                  handle: (event) =>
+                    Effect.gen(function* () {
+                      if (event._tag === "ParticipantInput") {
+                        participantTurns.push(event.turnId);
+                        return [
+                          ApplicationConversationMessageChunk.make({
+                            messageId: `ordinary:${event.turnId}`,
+                            text: "Conversation handled ordinary input.",
+                          }),
+                        ];
+                      }
+                      const executionEvent = yield* Schema.decodeUnknownEffect(
+                        ExecutionEvent,
+                        {
+                          onExcessProperty: "error",
+                        }
+                      )(event.payload);
+                      const prior =
+                        observed.get(executionEvent.executionId) ?? [];
+                      observed.set(executionEvent.executionId, [
+                        ...prior,
+                        {
+                          kind: executionEvent.kind,
+                          sequence: executionEvent.sequence,
+                        },
+                      ]);
+                      assert.strictEqual(
+                        executionEvent.workspaceId,
+                        workspaceId
+                      );
                       return [
                         ApplicationConversationMessageChunk.make({
-                          messageId: `ordinary:${event.turnId}`,
-                          text: "Conversation handled ordinary input.",
+                          messageId: `execution-summary:${event.eventId}`,
+                          text: `Conversation observed ${executionEvent.kind}.`,
                         }),
                       ];
-                    }
-                    const executionEvent = yield* Schema.decodeUnknownEffect(
-                      ExecutionEvent,
-                      {
-                        onExcessProperty: "error",
-                      }
-                    )(event.payload);
-                    const prior =
-                      observed.get(executionEvent.executionId) ?? [];
-                    observed.set(executionEvent.executionId, [
-                      ...prior,
-                      {
-                        kind: executionEvent.kind,
-                        sequence: executionEvent.sequence,
-                      },
-                    ]);
-                    assert.strictEqual(executionEvent.workspaceId, workspaceId);
-                    return [
-                      ApplicationConversationMessageChunk.make({
-                        messageId: `execution-summary:${event.eventId}`,
-                        text: `Conversation observed ${executionEvent.kind}.`,
-                      }),
-                    ];
-                  }),
-              });
+                    }),
+                }
+              );
             yield* register("T-CONCURRENT-A");
             const conversationA = ThreadId.make(
               "workspace:T-CONCURRENT-A:thread:C1:1.0"

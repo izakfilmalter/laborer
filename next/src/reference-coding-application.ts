@@ -5997,96 +5997,103 @@ export const makeReferenceCodingApplication = Effect.fn(
   const acceptImplementationResponse = (
     execution: ConversationExecution,
     acceptEvent: AcceptApplicationEvent
-  ): AcceptImplementationAgentResponse =>
-    Effect.fn("ReferenceCodingApplication.acceptImplementationResponse")(
-      function* (response) {
-        const eventId = `${execution.executionId}:response:${response.responseId}`;
-        const stateBeforeAcceptance = yield* Ref.get(applicationState);
-        const persistedBeforeAcceptance = stateBeforeAcceptance.executions.find(
-          (candidate) => candidate.executionId === execution.executionId
-        );
-        const existingBeforeAcceptance =
-          persistedBeforeAcceptance?.responses.find(
-            (candidate) => candidate.responseId === response.responseId
-          );
-        const isExactPersistedResponse =
-          existingBeforeAcceptance?.eventId === eventId &&
-          existingBeforeAcceptance.text === response.text;
-        if (
-          !isExactPersistedResponse &&
-          (response.responseId.trim().length === 0 ||
-            response.responseId.length > MAX_IMPLEMENTATION_ID_LENGTH ||
-            response.text.trim().length === 0 ||
-            response.text.length > MAX_IMPLEMENTATION_RESPONSE_LENGTH)
-        ) {
-          return yield* HandlerFailure.make({
-            category: "protocol",
-            safeDetail: "implementation response is invalid",
-          });
-        }
-        const staged = yield* updatePersistedExecution(
-          execution.executionId,
-          (persisted) => {
-            if (
-              persisted.status === "cancelling" ||
-              persisted.status === "cancelled"
-            ) {
-              return persisted;
-            }
-            const existing = persisted.responses.find(
-              (candidate) => candidate.responseId === response.responseId
-            );
-            if (existing !== undefined) {
-              return persisted;
-            }
-            const candidate = PersistedExecution.make({
-              ...persisted,
-              responses: EffectArray.append(
-                persisted.responses,
-                PersistedImplementationResponse.make({
-                  eventId,
-                  responseId: response.responseId,
-                  status: "staged",
-                  text: response.text,
-                })
-              ),
-            });
-            return persisted.responses.length >=
-              MAX_IMPLEMENTATION_RESPONSES_PER_EXECUTION ||
-              Buffer.byteLength(JSON.stringify(candidate), "utf8") >
-                MAX_EXECUTION_RECORD_BYTES
-              ? persisted
-              : candidate;
-          }
-        );
-        const persistedResponse = staged?.responses.find(
+  ): AcceptImplementationAgentResponse => {
+    const acceptNonemptyResponse = Effect.fn(
+      "ReferenceCodingApplication.acceptImplementationResponse"
+    )(function* (response: ImplementationAgentResponse) {
+      const eventId = `${execution.executionId}:response:${response.responseId}`;
+      const stateBeforeAcceptance = yield* Ref.get(applicationState);
+      const persistedBeforeAcceptance = stateBeforeAcceptance.executions.find(
+        (candidate) => candidate.executionId === execution.executionId
+      );
+      const existingBeforeAcceptance =
+        persistedBeforeAcceptance?.responses.find(
           (candidate) => candidate.responseId === response.responseId
         );
-        if (staged?.status === "cancelling" || staged?.status === "cancelled") {
-          return;
-        }
-        if (
-          persistedResponse === undefined ||
-          persistedResponse.eventId !== eventId ||
-          persistedResponse.text !== response.text
-        ) {
-          return yield* HandlerFailure.make({
-            category: "protocol",
-            safeDetail: "implementation response identity conflicts",
-          });
-        }
-        if (
-          persistedResponse.status === "enqueued" ||
-          persistedResponse.status === "delivered"
-        ) {
-          return;
-        }
-        yield* flushConversationExecutionOutbox(
-          execution.conversationId,
-          acceptEvent
-        );
+      const isExactPersistedResponse =
+        existingBeforeAcceptance?.eventId === eventId &&
+        existingBeforeAcceptance.text === response.text;
+      if (
+        !isExactPersistedResponse &&
+        (response.responseId.trim().length === 0 ||
+          response.responseId.length > MAX_IMPLEMENTATION_ID_LENGTH ||
+          response.text.length > MAX_IMPLEMENTATION_RESPONSE_LENGTH)
+      ) {
+        return yield* HandlerFailure.make({
+          category: "protocol",
+          safeDetail: "implementation response is invalid",
+        });
       }
-    );
+      const staged = yield* updatePersistedExecution(
+        execution.executionId,
+        (persisted) => {
+          if (
+            persisted.status === "cancelling" ||
+            persisted.status === "cancelled"
+          ) {
+            return persisted;
+          }
+          const existing = persisted.responses.find(
+            (candidate) => candidate.responseId === response.responseId
+          );
+          if (existing !== undefined) {
+            return persisted;
+          }
+          const candidate = PersistedExecution.make({
+            ...persisted,
+            responses: EffectArray.append(
+              persisted.responses,
+              PersistedImplementationResponse.make({
+                eventId,
+                responseId: response.responseId,
+                status: "staged",
+                text: response.text,
+              })
+            ),
+          });
+          return persisted.responses.length >=
+            MAX_IMPLEMENTATION_RESPONSES_PER_EXECUTION ||
+            Buffer.byteLength(JSON.stringify(candidate), "utf8") >
+              MAX_EXECUTION_RECORD_BYTES
+            ? persisted
+            : candidate;
+        }
+      );
+      const persistedResponse = staged?.responses.find(
+        (candidate) => candidate.responseId === response.responseId
+      );
+      if (staged?.status === "cancelling" || staged?.status === "cancelled") {
+        return;
+      }
+      if (
+        persistedResponse === undefined ||
+        persistedResponse.eventId !== eventId ||
+        persistedResponse.text !== response.text
+      ) {
+        return yield* HandlerFailure.make({
+          category: "protocol",
+          safeDetail: "implementation response identity conflicts",
+        });
+      }
+      if (
+        persistedResponse.status === "enqueued" ||
+        persistedResponse.status === "delivered"
+      ) {
+        return;
+      }
+      yield* flushConversationExecutionOutbox(
+        execution.conversationId,
+        acceptEvent
+      );
+    });
+    return (response) =>
+      // Implementation adapters may observe protocol message boundaries that
+      // contain no user-visible content. They are not Conversation events and
+      // must not prevent a later meaningful response from being accepted.
+      response.text.trim().length === 0
+        ? Effect.void
+        : acceptNonemptyResponse(response);
+  };
 
   const recoverWorktree = Effect.fn(
     "ReferenceCodingApplication.recoverWorktree"

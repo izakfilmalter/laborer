@@ -63,6 +63,115 @@ const failedExecutionState = (conversationId: ThreadId) => ({
 
 describe("issue #247 review findings", () => {
   it.effect(
+    "ignores empty implementation output without losing the next nonempty response",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const conversationId = ThreadId.make("C247NONEMPTY:1.0");
+          const sources = yield* Ref.make<readonly string[]>([]);
+          const delivered = yield* Ref.make<readonly string[]>([]);
+          const repository = yield* makeInMemoryApplicationRepository();
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent: {
+              handle: (request) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(sources, (current) => [
+                    ...current,
+                    request.source,
+                  ]);
+                  if (request.source === "slack") {
+                    const action = request.actions.find(
+                      (candidate) => candidate.name === "create-feature"
+                    );
+                    assert.ok(action);
+                    yield* action.invoke({
+                      prompt: "Produce one meaningful response.",
+                      worktreeName: "nonempty-response",
+                    });
+                    return [];
+                  }
+                  if (request.source === "implementation-agent") {
+                    return [
+                      {
+                        replyId: "nonempty-reviewed",
+                        text: "Meaningful implementation output reviewed.",
+                      },
+                    ];
+                  }
+                  return [];
+                }),
+            },
+            implementationAgent: ImplementationAgent.of({
+              start: (request, acceptResponse) =>
+                Effect.succeed({
+                  completion: acceptResponse({
+                    responseId: "empty-response",
+                    text: "  \n ",
+                  }).pipe(
+                    Effect.andThen(
+                      acceptResponse({
+                        responseId: "meaningful-response",
+                        text: "Durable implementation output.",
+                      })
+                    )
+                  ),
+                  resume: () => Effect.void,
+                  sessionId: request.implementationSessionId,
+                }),
+            }),
+            repository,
+            worktreeManager: WorktreeManager.of({
+              create: () =>
+                Effect.succeed({ workingDirectory: "/tmp/nonempty-response" }),
+            }),
+          });
+          const harness = yield* makePrototypeHarness({
+            application,
+            laborerSlackId: "U247LABORER",
+            slack: {
+              postThreadMessage: ({ text }) =>
+                Ref.update(delivered, (messages) => [...messages, text]).pipe(
+                  Effect.as({ ts: `message-${text}` })
+                ),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+          yield* harness.runner.accept(
+            normalizedEvent({
+              authorSlackId: "U247HUMAN",
+              channelId: "C247NONEMPTY",
+              eventId: "event:247:nonempty",
+              messageTs: "1.0",
+              text: "<@U247LABORER> start response work",
+            })
+          );
+          yield* harness.runner.drain(conversationId);
+
+          assert.deepStrictEqual(yield* Ref.get(sources), [
+            "slack",
+            "implementation-agent",
+            "action-terminal",
+          ]);
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "Meaningful implementation output reviewed.",
+          ]);
+          assert.deepStrictEqual(
+            (yield* repository.load).executions[0]?.responses.map(
+              ({ responseId, status, text }) => ({ responseId, status, text })
+            ),
+            [
+              {
+                responseId: "meaningful-response",
+                status: "delivered",
+                text: "Durable implementation output.",
+              },
+            ]
+          );
+        })
+      )
+  );
+
+  it.effect(
     "keeps implementation output FIFO behind an active human turn",
     () =>
       Effect.scoped(

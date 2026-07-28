@@ -50,6 +50,7 @@ export const RUNTIME_FOLLOW_UP_MAX_LENGTH = 16 * 1024;
 export const RUNTIME_WORKSPACE_ID_MAX_LENGTH = 256;
 const RUNTIME_CATALOG_FINGERPRINT_MAX_LENGTH = 64;
 const RUNTIME_ACTION_FINGERPRINT_MAX_LENGTH = 64;
+const SHA256_BASE64URL_PATTERN = /^[\w-]{43}$/u;
 const NONBLANK_PATTERN = /\S/;
 
 const boundedNonBlankString = (maximumLength: number) =>
@@ -1351,6 +1352,55 @@ const initializeLaborerTables = Effect.gen(function* () {
         CREATE INDEX IF NOT EXISTS laborer_execution_events_conversation
         ON laborer_execution_events (conversation_id, event_id)
       `;
+      // A process can stop after a control is durably accepted but before its
+      // user-owned capability reports an outcome. Replaying that capability
+      // could duplicate an external side effect, so recovery fails the control
+      // closed before Cluster resumes. An ambiguous cancellation terminally
+      // fences its Execution instead of leaving it stuck cancelling.
+      const interruptedCancellations = yield* sql<{
+        readonly conversationId: string;
+        readonly executionId: string;
+        readonly workspaceId: string;
+      }>`
+        SELECT controls.execution_id AS executionId,
+          controls.conversation_id AS conversationId,
+          controls.workspace_id AS workspaceId
+        FROM laborer_execution_controls AS controls
+        WHERE controls.status = 'accepted' AND controls.kind = 'cancel'
+        ORDER BY controls.execution_id, controls.sequence
+      `;
+      yield* sql`
+        UPDATE laborer_execution_controls
+        SET status = 'failed'
+        WHERE status = 'accepted'
+      `;
+      yield* Effect.forEach(
+        interruptedCancellations,
+        (control) =>
+          Effect.gen(function* () {
+            yield* sql`
+              UPDATE laborer_executions
+              SET status = 'needs-attention',
+                failure_category = 'needs-attention'
+              WHERE execution_id = ${control.executionId}
+                AND status = 'cancelling'
+            `;
+            const changes = yield* sql<{ readonly count: number }>`
+              SELECT changes() AS count
+            `;
+            if (changes[0]?.count !== 1) {
+              return;
+            }
+            yield* persistEvent({
+              conversationId: control.conversationId,
+              executionId: control.executionId,
+              kind: "failed",
+              payload: { category: "needs-attention" },
+              workspaceId: control.workspaceId,
+            }).pipe(Effect.provideService(SqlClient, sql));
+          }),
+        { concurrency: 1, discard: true }
+      );
       yield* sql`
         INSERT INTO laborer_schema_versions (component, version)
         VALUES ('runtime', ${RUNTIME_SCHEMA_VERSION})
@@ -1496,6 +1546,87 @@ const validateRootRegistration = Effect.gen(function* () {
           if (canonicalOutputs !== stored.outputsJson) {
             return yield* Effect.die(
               new Error("invalid durable Conversation output")
+            );
+          }
+        }
+      }),
+    { discard: true }
+  );
+  const controls = yield* sql<{
+    readonly controlId: string;
+    readonly conversationId: string;
+    readonly executionId: string;
+    readonly kind: string;
+    readonly ownerConversationId: string;
+    readonly ownerWorkspaceId: string;
+    readonly requestHash: string;
+    readonly resultJson: string | null;
+    readonly sequence: number;
+    readonly status: string;
+    readonly workspaceId: string;
+  }>`
+    SELECT controls.control_id AS controlId,
+      controls.execution_id AS executionId,
+      controls.conversation_id AS conversationId,
+      controls.workspace_id AS workspaceId, controls.sequence, controls.kind,
+      controls.request_hash AS requestHash, controls.result_json AS resultJson,
+      controls.status, executions.conversation_id AS ownerConversationId,
+      executions.workspace_id AS ownerWorkspaceId
+    FROM laborer_execution_controls AS controls
+    LEFT JOIN laborer_executions AS executions
+      ON executions.execution_id = controls.execution_id
+    ORDER BY controls.execution_id, controls.sequence
+  `;
+  yield* Effect.forEach(
+    controls,
+    (control) =>
+      Effect.gen(function* () {
+        yield* Effect.all([
+          Schema.decodeUnknownEffect(RuntimeControlId)(control.controlId),
+          Schema.decodeUnknownEffect(RuntimeExecutionId)(control.executionId),
+          Schema.decodeUnknownEffect(RuntimeConversationId)(
+            control.conversationId
+          ),
+          Schema.decodeUnknownEffect(RuntimeWorkspaceId)(control.workspaceId),
+        ]).pipe(Effect.orDie);
+        if (
+          control.ownerConversationId !== control.conversationId ||
+          control.ownerWorkspaceId !== control.workspaceId ||
+          !Number.isSafeInteger(control.sequence) ||
+          control.sequence < 1 ||
+          !SHA256_BASE64URL_PATTERN.test(control.requestHash) ||
+          (control.kind !== "inspect" &&
+            control.kind !== "follow-up" &&
+            control.kind !== "cancel") ||
+          (control.status !== "completed" && control.status !== "failed") ||
+          (control.status === "completed") !== (control.resultJson !== null)
+        ) {
+          return yield* Effect.die(
+            new Error("invalid durable Execution control")
+          );
+        }
+        if (control.resultJson !== null) {
+          const receipt = yield* decodeStoredJson(control.resultJson).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(ExecutionControlReceipt, {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.orDie
+          );
+          const canonicalReceipt = yield* boundedPayloadJson(receipt).pipe(
+            Effect.orDie
+          );
+          if (
+            canonicalReceipt !== control.resultJson ||
+            receipt.controlId !== control.controlId ||
+            receipt.deduplicated ||
+            receipt.execution.executionId !== control.executionId ||
+            receipt.execution.conversationId !== control.conversationId ||
+            receipt.execution.workspaceId !== control.workspaceId
+          ) {
+            return yield* Effect.die(
+              new Error("invalid durable Execution control receipt")
             );
           }
         }
@@ -2174,13 +2305,18 @@ const makeRuntimeService = Effect.gen(function* () {
               rootIdentity,
               workspaceId: request.workspaceId,
             };
-            const controlEffect =
-              kind === "cancel"
-                ? action.controls.cancel?.(controlContext)
-                : action.controls.followUp?.(
-                    (request as FollowUpExecutionRequest).content,
-                    controlContext
-                  );
+            let controlEffect: Effect.Effect<void, unknown> | undefined;
+            if (kind === "cancel") {
+              controlEffect = action.controls.cancel?.(controlContext);
+            } else if (
+              "content" in request &&
+              typeof request.content === "string"
+            ) {
+              controlEffect = action.controls.followUp?.(
+                request.content,
+                controlContext
+              );
+            }
             if (controlEffect === undefined) {
               return yield* runtimeError("storage-failure");
             }

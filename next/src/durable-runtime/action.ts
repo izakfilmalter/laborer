@@ -78,6 +78,16 @@ export interface RegisteredActionControls {
   ) => Effect.Effect<void, unknown>;
 }
 
+const catalogControlMetadata = (controls: RegisteredActionControls) =>
+  controls.cancel === undefined && controls.followUp === undefined
+    ? {}
+    : {
+        controls: {
+          cancel: controls.cancel !== undefined,
+          followUp: controls.followUp !== undefined,
+        },
+      };
+
 export interface RegisteredAction<Name extends string = string> {
   readonly annotations: RegisteredActionAnnotations;
   readonly controls: RegisteredActionControls;
@@ -231,10 +241,7 @@ export const defineAction = <const Name extends string, Input, Result, Error>(
     .update(
       canonicalCatalogJson({
         annotations,
-        controls: {
-          cancel: controls.cancel !== undefined,
-          followUp: controls.followUp !== undefined,
-        },
+        ...catalogControlMetadata(controls),
         inputSchema: inputJsonSchema,
         name: options.name,
         outputSchema: resultJsonSchema,

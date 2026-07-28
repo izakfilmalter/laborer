@@ -3,6 +3,7 @@ import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
   assertRecordedRecoveryLineage,
+  canRetryGateAfterIncompleteRepair,
   classifyBranchRecovery,
 } from "../.sandcastle/agent-completion/index.ts";
 
@@ -25,6 +26,22 @@ describe("Sandcastle agent completion gates", () => {
         { completionSignal: "<promise>COMPLETE</promise>" },
         "implementation for #42"
       )
+    );
+  });
+
+  it("retries the gate when an infrastructure-blocked repair leaves its clean head unchanged", () => {
+    assert.isTrue(
+      canRetryGateAfterIncompleteRepair({}, "reviewed", "reviewed")
+    );
+    assert.isFalse(
+      canRetryGateAfterIncompleteRepair(
+        { completionSignal: "<promise>COMPLETE</promise>" },
+        "reviewed",
+        "reviewed"
+      )
+    );
+    assert.isFalse(
+      canRetryGateAfterIncompleteRepair({}, "reviewed", "unconfirmed-change")
     );
   });
 

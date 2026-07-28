@@ -5,6 +5,7 @@ import {
   canReuseCompletedHead,
   mergePullRequestArgs,
   reviewedHeadNeedsPush,
+  sandcastleFullGateCommand,
   shellQuote,
 } from "../.sandcastle/fast-flow/index.ts";
 
@@ -37,6 +38,10 @@ describe("Sandcastle fast flow", () => {
   });
 
   it("keeps the comprehensive gate runner-owned and single-path", () => {
+    assert.strictEqual(
+      sandcastleFullGateCommand,
+      "VITEST_MAX_WORKERS=2 bun run --cwd next check"
+    );
     const main = readFileSync(".sandcastle/main.ts", "utf8");
     const gateExecutions = main.match(
       /\.exec\(boundedSandboxCommand\(FULL_GATE\)/g

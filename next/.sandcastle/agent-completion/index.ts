@@ -9,6 +9,12 @@ export const assertAgentCompleted = (
   }
 };
 
+export const canRetryGateAfterIncompleteRepair = (
+  result: { readonly completionSignal?: string },
+  gatedHead: string,
+  currentHead: string
+) => result.completionSignal === undefined && currentHead === gatedHead;
+
 export const assertNewWorkAfterAcceptedHead = (
   acceptedHead: string,
   completedHead: string,

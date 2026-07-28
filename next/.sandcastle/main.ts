@@ -13,6 +13,7 @@ import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
   assertRecordedRecoveryLineage,
+  canRetryGateAfterIncompleteRepair,
   classifyBranchRecovery,
 } from "./agent-completion/index.ts";
 import {
@@ -20,6 +21,7 @@ import {
   canReuseCompletedHead,
   mergePullRequestArgs,
   reviewedHeadNeedsPush,
+  sandcastleFullGateCommand,
   shellQuote,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
@@ -136,7 +138,7 @@ const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
 const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
-const FULL_GATE = "bun run --cwd next check";
+const FULL_GATE = sandcastleFullGateCommand;
 const REPO_ROOT = "..";
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
 const HOST_OPENCODE_AUTH = resolve(
@@ -1163,6 +1165,7 @@ async function enforceLocalGate(
   trackBuildProgress: boolean
 ) {
   const commits: Array<{ sha: string }> = [];
+  let infrastructureRetryUsed = false;
   for (let attempt = 0; ; attempt++) {
     assertWorktreeClean(
       sandbox.worktreePath,
@@ -1187,6 +1190,7 @@ async function enforceLocalGate(
     }
     if (
       attempt >= MAX_LOCAL_GATE_REPAIR_ATTEMPTS ||
+      infrastructureRetryUsed ||
       recordedRepair(issue) === gatedHead
     ) {
       throw new Error(
@@ -1205,9 +1209,20 @@ async function enforceLocalGate(
       promptFile: ".sandcastle/verify-fix-prompt.md",
       signal: agentRunSignal(),
     });
+    const repairedHead = worktreeHead(sandbox.worktreePath);
+    if (canRetryGateAfterIncompleteRepair(repair, gatedHead, repairedHead)) {
+      assertWorktreeClean(
+        sandbox.worktreePath,
+        `after an infrastructure-blocked gate repair for #${issue.id}`
+      );
+      console.warn(
+        `  Repair for #${issue.id} reported an infrastructure blocker; retrying the unchanged gate once.`
+      );
+      infrastructureRetryUsed = true;
+      continue;
+    }
     assertAgentCompleted(repair, `local gate repair for #${issue.id}`);
     if (trackBuildProgress) {
-      const repairedHead = worktreeHead(sandbox.worktreePath);
       recordGateRepairCheckpoint(issue, repairedHead);
     }
     commits.push(...repair.commits);

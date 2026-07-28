@@ -1,5 +1,8 @@
 const DEFAULT_GATE_OUTPUT_LIMIT = 20_000;
 
+export const sandcastleFullGateCommand =
+  "VITEST_MAX_WORKERS=2 bun run --cwd next check";
+
 export const canReuseCompletedHead = (
   completedHead: string | undefined,
   pullRequestHead: string

@@ -8,6 +8,7 @@ import {
   ExternalInputEvent,
 } from "../src/application.ts";
 import { ThreadId } from "../src/prototype/domain.ts";
+import type { HandlerFailure } from "../src/prototype/errors.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -383,6 +384,128 @@ Preserve the Runner boundary and prove the behavior with integration tests.`;
             thread?.turns.map((turn) => turn.status),
             ["completed", "completed"]
           );
+        })
+      )
+  );
+
+  it.effect(
+    "wakes the Conversation from an Execution update before terminal completion",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const implementationTerminal = yield* Deferred.make<void>();
+          const responseSink =
+            yield* Deferred.make<
+              (
+                response: ImplementationAgentResponse
+              ) => Effect.Effect<void, HandlerFailure>
+            >();
+          const terminalObserved = yield* Deferred.make<void>();
+          const delivered = yield* Ref.make<readonly string[]>([]);
+          const conversationAgent = {
+            handle: Effect.fn("InProgressUpdateConversation.handle")(function* (
+              request: ConversationAgentRequest
+            ) {
+              if (request.source === "slack") {
+                const action = request.actions.find(
+                  (candidate) => candidate.name === "create-feature"
+                );
+                assert.ok(action);
+                const accepted = yield* action.invoke({
+                  prompt: "Implement incremental updates.",
+                  worktreeName: "incremental-updates",
+                });
+                return [
+                  {
+                    replyId: `${request.turnId}:started`,
+                    text: `Started ${accepted.executionId}.`,
+                  },
+                ];
+              }
+              if (request.input.includes('source="action-terminal"')) {
+                yield* Deferred.succeed(terminalObserved, undefined);
+                return [
+                  {
+                    replyId: `${request.turnId}:terminal`,
+                    text: "Implementation completed.",
+                  },
+                ];
+              }
+              return [
+                {
+                  replyId: `${request.turnId}:update`,
+                  text: "Implementation is making progress.",
+                },
+              ];
+            }),
+          };
+          const implementationAgent = ImplementationAgent.of({
+            start: (request, acceptResponse) =>
+              Deferred.succeed(responseSink, acceptResponse).pipe(
+                Effect.as({
+                  completion: Deferred.await(implementationTerminal),
+                  resume: () => Effect.void,
+                  sessionId: request.implementationSessionId,
+                })
+              ),
+          });
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent,
+            implementationAgent,
+            repository: yield* makeInMemoryApplicationRepository(),
+            worktreeManager: WorktreeManager.of({
+              create: () =>
+                Effect.succeed({
+                  workingDirectory: "/tmp/incremental-updates",
+                }),
+            }),
+          });
+          const harness = yield* makePrototypeHarness({
+            application,
+            laborerSlackId: LABORER_SLACK_ID,
+            slack: {
+              postThreadMessage: (request) =>
+                Ref.update(delivered, (messages) =>
+                  EffectArray.append(messages, request.text)
+                ).pipe(Effect.as({ ts: `reply-${request.text}` })),
+              readActivationContext: () => Effect.succeed([]),
+            },
+          });
+          const threadId = ThreadId.make("CINPROGRESS:1.0");
+
+          yield* harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "UHUMAN",
+              channelId: "CINPROGRESS",
+              eventId: "event:in-progress:start",
+              messageTs: "1.0",
+              text: `<@${LABORER_SLACK_ID}> implement incremental updates`,
+            })
+          );
+          const acceptResponse = yield* Deferred.await(responseSink);
+          yield* acceptResponse({
+            responseId: "provider-message-1",
+            text: "The first implementation slice is complete.",
+          });
+          yield* harness.runner.drain(threadId);
+
+          assert.strictEqual(
+            yield* Deferred.isDone(implementationTerminal),
+            false
+          );
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "Started CINPROGRESS:1.0:execution:1.",
+            "Implementation is making progress.",
+          ]);
+
+          yield* Deferred.succeed(implementationTerminal, undefined);
+          yield* Deferred.await(terminalObserved);
+          yield* harness.runner.drain(threadId);
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "Started CINPROGRESS:1.0:execution:1.",
+            "Implementation is making progress.",
+            "Implementation completed.",
+          ]);
         })
       )
   );

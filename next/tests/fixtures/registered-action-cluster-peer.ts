@@ -198,6 +198,22 @@ const program = Effect.gen(function* () {
     );
     yield* sql`
       UPDATE laborer_action_executions
+      SET catalog_fingerprint = 'tampered-catalog-fingerprint'
+      WHERE execution_id = ${malformedAccepted.executionId}
+    `;
+    const changedCatalogReplay = yield* Effect.result(
+      runtime.start({
+        ...request,
+        input: {
+          quantity: 1,
+          requestedAt: "2026-07-27T00:00:00.000Z",
+          widget: "invalid-result",
+        },
+        invocationId: "invocation-invalid-result",
+      })
+    );
+    yield* sql`
+      UPDATE laborer_action_executions
       SET input_json = '{"tampered":true}'
       WHERE execution_id = ${accepted.executionId}
     `;
@@ -206,6 +222,7 @@ const program = Effect.gen(function* () {
       `REGISTERED_ACTION_EVIDENCE:${JSON.stringify({
         accepted,
         allDelivered,
+        changedCatalogReplay: changedCatalogReplay._tag,
         completed,
         conflict: conflict._tag,
         corruptedReplay: corruptedReplay._tag,

@@ -365,6 +365,11 @@ const workflowLayer = (options: RegisteredActionRuntimeOptions) =>
   RegisteredActionWorkflow.toLayer((payload) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient;
+      if (payload.catalogFingerprint !== options.catalog.fingerprint) {
+        return yield* Effect.die(
+          "registered Action catalog fingerprint is unavailable"
+        );
+      }
       const action = yield* options.catalog
         .require(payload.actionName, payload.actionRevision)
         .pipe(Effect.orDie);
@@ -619,6 +624,9 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
             .pipe(
               Effect.mapError(() => runtimeError("registration-unavailable"))
             );
+          if (record.catalogFingerprint !== options.catalog.fingerprint) {
+            return yield* runtimeError("registration-unavailable");
+          }
           const encodedInput = yield* validatedStoredInput(record);
           yield* action
             .decodeInput(encodedInput)
@@ -742,6 +750,7 @@ const makeRuntime = (options: RegisteredActionRuntimeOptions) =>
         !inserted &&
         (row.actionName !== request.actionName ||
           row.actionRevision !== action.revision ||
+          row.catalogFingerprint !== options.catalog.fingerprint ||
           row.conversationId !== request.conversationId ||
           row.executionId !== executionId ||
           row.inputHash !== inputHash ||

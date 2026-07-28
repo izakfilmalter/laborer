@@ -39,8 +39,16 @@ describe("registered Action Cluster runtime", () => {
             Effect.succeed({ value: key }),
         } as const;
         const action = defineRegisteredAction(actionOptions);
+        const changedDescription = defineRegisteredAction({
+          ...actionOptions,
+          description: "Look up a different bounded fixture value.",
+        });
 
         assert.throws(() => makeRegisteredActionCatalog([action, action]));
+        assert.notStrictEqual(
+          makeRegisteredActionCatalog([action]).fingerprint,
+          makeRegisteredActionCatalog([changedDescription]).fingerprint
+        );
         assert.throws(() =>
           defineRegisteredAction({
             ...actionOptions,
@@ -114,6 +122,7 @@ describe("registered Action Cluster runtime", () => {
               readonly result: unknown;
               readonly status: string;
             }[];
+            readonly changedCatalogReplay: string;
             readonly completed: {
               readonly actionName: string;
               readonly actionRevision: string;
@@ -158,6 +167,7 @@ describe("registered Action Cluster runtime", () => {
 
           assert.strictEqual(evidence.invalid, "Failure");
           assert.strictEqual(evidence.conflict, "Failure");
+          assert.strictEqual(evidence.changedCatalogReplay, "Failure");
           assert.strictEqual(evidence.corruptedReplay, "Failure");
           assert.strictEqual(evidence.accepted.status, "queued");
           assert.strictEqual(evidence.accepted.deduplicated, false);

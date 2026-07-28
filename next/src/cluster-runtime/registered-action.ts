@@ -256,8 +256,16 @@ export const makeRegisteredActionCatalog = (
     .update(
       canonicalCatalogJson({
         registrations: registrations.map(
-          ({ annotations, inputSchema, name, outputSchema, revision }) => ({
+          ({
             annotations,
+            description,
+            inputSchema,
+            name,
+            outputSchema,
+            revision,
+          }) => ({
+            annotations,
+            description,
             inputSchema,
             name,
             outputSchema,

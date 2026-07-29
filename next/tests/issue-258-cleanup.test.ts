@@ -2,6 +2,9 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
+const OPEN_CODE_AUTHORITY_DOCUMENTATION =
+  /Conversation agent and model selection come only from the user's OpenCode\s+configuration\./;
+
 const sourceFiles = async (directory: string): Promise<readonly string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
@@ -98,5 +101,22 @@ describe("issue #258 legacy Conversation cleanup", () => {
     );
     assert.ok(runner.includes("makeLazyOpenCodeImplementationAgent"));
     assert.ok(runner.includes("legacyHandlerState"));
+  });
+
+  it("documents ACP as the only Conversation runtime", async () => {
+    const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+    const forbidden = [
+      "Run the live issue #207 configured-handler prototype",
+      "tracked configuration selects the throwaway issue #207 Bash handler",
+      "creates one in-memory ACP session per accepted Slack work thread",
+    ];
+
+    for (const text of forbidden) {
+      assert.ok(
+        !readme.includes(text),
+        `obsolete runtime documentation: ${text}`
+      );
+    }
+    assert.ok(OPEN_CODE_AUTHORITY_DOCUMENTATION.test(readme));
   });
 });

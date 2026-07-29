@@ -24,6 +24,7 @@ const ABANDONED_NOTICE_PATTERN =
 const RETRY_NOTICE_PATTERN =
   /^\*Resumed — the uncertain attempt was retried\.\*\n.*duplicated.*replacement agent session/s;
 const UNSAFE_NOTICE_PATTERN = /attempt-|prompt-|session-|decision-|\/|--|<@/;
+const UNSAFE_AUTHORITY_KEY_PATTERN = /unsafe recovery authority key/;
 
 describe("issue #253 ambiguous ACP recovery", () => {
   it("presents both operator choices and a sanitized outcome in Slack", () => {
@@ -148,6 +149,19 @@ describe("issue #253 ambiguous ACP recovery", () => {
       ]) {
         assert.notInclude(serialized, privateIdentity);
       }
+      await writeFile(paths.acpAuthorityKey, Buffer.alloc(4097, "x"));
+      let oversizedKeyFailure: unknown = null;
+      try {
+        await inspectAcpRecoveryOffline({
+          attemptId,
+          paths,
+          workspaceId: "T253",
+        });
+      } catch (cause) {
+        oversizedKeyFailure = cause;
+      }
+      assert.instanceOf(oversizedKeyFailure, Error);
+      assert.match(oversizedKeyFailure.message, UNSAFE_AUTHORITY_KEY_PATTERN);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -414,7 +428,7 @@ describe("issue #253 ambiguous ACP recovery", () => {
           );
           assert.deepStrictEqual(
             thread?.turns[0]?.attempts.map((attempt) => attempt.status),
-            ["interrupted", "interrupted", "succeeded"]
+            ["interrupted", "succeeded"]
           );
           const secondTurn = thread?.turns[1];
           assert.ok(secondTurn);

@@ -2681,13 +2681,11 @@ const resolveBlockedTurn = (
     request.kind === "retry"
       ? TurnState.make({
           ...turn,
-          attempts: [
-            ...turn.attempts,
-            HandlerAttempt.make({
-              number: turn.attempts.length + 1,
-              status: "running",
-            }),
-          ],
+          attempts: turn.attempts.map((attempt, attemptIndex) =>
+            attemptIndex === turn.attempts.length - 1
+              ? HandlerAttempt.make({ ...attempt, status: "running" })
+              : attempt
+          ),
           blocked: null,
           status: "running",
         })

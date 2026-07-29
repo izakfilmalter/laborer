@@ -473,7 +473,6 @@ export const makeAcpSlackWorkspaceRunner = Effect.fn(
     dependencies
   );
   const recovery = makeAcpRecoveryService({
-    cancelPermissions: runtime.permissionBroker.cancelAll,
     paths: options.paths,
     runner: runtime.harness.runner,
     supervisorHealth: runtime.health,

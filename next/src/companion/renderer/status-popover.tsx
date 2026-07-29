@@ -1,5 +1,7 @@
 import {
   CircleCheck,
+  CircleDot,
+  Clock3,
   LoaderCircle,
   type LucideIcon,
   PlugZap,
@@ -197,6 +199,7 @@ type RunningStatus = Extract<
 >;
 
 type WorkspaceBinding = RunningStatus["workspaces"][number];
+type WorkThread = WorkspaceBinding["threads"][number];
 
 interface BindingCounts {
   readonly pending: number;
@@ -341,6 +344,101 @@ const orderedBindings = (
     )
     .map((entry) => entry.workspace);
 
+const activityTitle: Record<WorkThread["activity"], string> = {
+  "in-progress": "In progress",
+  "needs-attention": "Needs attention",
+  dormant: "Recent",
+};
+
+const activityTone: Record<WorkThread["activity"], StatusTone> = {
+  "in-progress": "warning",
+  "needs-attention": "danger",
+  dormant: "neutral",
+};
+
+const WorkThreadRow = ({ thread }: { readonly thread: WorkThread }) => {
+  const tone = activityTone[thread.activity];
+  const changed = new Date(thread.stateChangedAtUnixMs);
+  return (
+    <li className="flex items-start gap-2.5 border-border border-t px-3 py-2.5 first:border-t-0">
+      {thread.activity === "dormant" ? (
+        <Clock3
+          aria-hidden="true"
+          className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+        />
+      ) : (
+        <CircleDot
+          aria-hidden="true"
+          className={`mt-0.5 size-3.5 shrink-0 ${tone === "danger" ? "text-danger" : "text-warning"}`}
+        />
+      )}
+      <div className="min-w-0 flex-1">
+        <p
+          className="truncate font-medium text-xs leading-4"
+          title={thread.label}
+        >
+          {thread.label}
+        </p>
+        <time
+          className="mt-0.5 block text-[11px] text-muted-foreground leading-4"
+          dateTime={changed.toISOString()}
+          title={changed.toLocaleString()}
+        >
+          Status changed{" "}
+          {changed.toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </time>
+      </div>
+      <span
+        className={`mt-0.5 size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${thread.activity === "in-progress" ? "animate-pulse motion-reduce:animate-none" : ""}`}
+      />
+    </li>
+  );
+};
+
+const WorkThreadSections = ({
+  threads,
+}: {
+  readonly threads: WorkspaceBinding["threads"];
+}) => {
+  const sections = (["needs-attention", "in-progress", "dormant"] as const).map(
+    (activity) => ({
+      activity,
+      threads: threads.filter((thread) => thread.activity === activity),
+    })
+  );
+  if (threads.length === 0) {
+    return (
+      <p className="border-border border-t px-3 py-3 text-muted-foreground text-xs leading-5">
+        No active or recent work threads.
+      </p>
+    );
+  }
+  return (
+    <div className="border-border border-t">
+      {sections.map(({ activity, threads: sectionThreads }) =>
+        sectionThreads.length === 0 ? null : (
+          <section key={activity}>
+            <h4 className="bg-muted/40 px-3 py-1.5 font-semibold text-[10px] text-muted-foreground uppercase tracking-wide">
+              {activityTitle[activity]}{" "}
+              <span className="ml-1.5 tabular-nums">
+                {sectionThreads.length}
+              </span>
+            </h4>
+            <ul>
+              {sectionThreads.map((thread) => (
+                <WorkThreadRow key={thread.id} thread={thread} />
+              ))}
+            </ul>
+          </section>
+        )
+      )}
+    </div>
+  );
+};
+
 const WorkspaceBindingCard = ({
   workspace,
 }: {
@@ -348,27 +446,30 @@ const WorkspaceBindingCard = ({
 }) => {
   const tone = bindingTone[workspace.readiness];
   return (
-    <article className="rounded-xl border border-border bg-surface p-3">
-      <div className="flex items-start justify-between gap-2">
-        <h3
-          className={`min-w-0 flex-1 truncate font-semibold text-sm leading-5 ${workspace.teamId === null ? "" : "font-mono"}`}
-          title={workspace.label}
-        >
-          {workspace.label}
-        </h3>
-        <span
-          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-[11px] leading-5 ${badgeTone[tone]}`}
-        >
+    <article className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <h3
+            className={`min-w-0 flex-1 truncate font-semibold text-sm leading-5 ${workspace.teamId === null ? "" : "font-mono"}`}
+            title={workspace.label}
+          >
+            {workspace.label}
+          </h3>
           <span
-            aria-hidden="true"
-            className={`size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${workspace.readiness === "pending" ? "animate-pulse motion-reduce:animate-none" : ""}`}
-          />
-          {bindingTitle[workspace.readiness]}
-        </span>
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-[11px] leading-5 ${badgeTone[tone]}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${workspace.readiness === "pending" ? "animate-pulse motion-reduce:animate-none" : ""}`}
+            />
+            {bindingTitle[workspace.readiness]}
+          </span>
+        </div>
+        <p className="mt-1.5 text-muted-foreground text-xs leading-5">
+          {bindingBody(workspace)}
+        </p>
       </div>
-      <p className="mt-1.5 text-muted-foreground text-xs leading-5">
-        {bindingBody(workspace)}
-      </p>
+      <WorkThreadSections threads={workspace.threads} />
     </article>
   );
 };

@@ -62,6 +62,7 @@ import {
 import { makeSlackConversationAdoptionHistoryGateway } from "./conversation-adoption-history.ts";
 import { environmentForAcpConversation } from "./handler-environment.ts";
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
+import { observePrototypeWorkThreads } from "./work-thread-activity-projection.ts";
 import {
   makeReferenceCodingWorkspaceApplicationWithConversationAgent,
   type ReferenceCodingWorkspaceApplicationDependencies,
@@ -515,5 +516,16 @@ export const makeAcpSlackWorkspaceRunner = Effect.fn(
     handleInteraction: runtime.permissionBroker.handleInteraction,
     health: recovery.health,
     recovery,
+    workThreadActivity: Effect.all({
+      executions:
+        options.rootRuntime?.nonterminalExecutionActivity?.(
+          options.identity.teamId
+        ) ?? Effect.succeed([]),
+      state: runtime.harness.store.snapshot,
+    }).pipe(
+      Effect.map(({ executions, state }) =>
+        observePrototypeWorkThreads(state, options.identity.teamId, executions)
+      )
+    ),
   };
 });

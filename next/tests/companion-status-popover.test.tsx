@@ -26,6 +26,7 @@ describe("companion status popover", () => {
               label: "TFIRST",
               readiness: "ready",
               teamId: "TFIRST",
+              threads: [],
             },
           ],
         }}
@@ -179,6 +180,7 @@ describe("companion status popover", () => {
               label: "TFIRST",
               readiness: "ready",
               teamId: "TFIRST",
+              threads: [],
             },
             {
               detail: "setup-required",
@@ -186,6 +188,7 @@ describe("companion status popover", () => {
               label: "TSECOND",
               readiness: "setup-incomplete",
               teamId: "TSECOND",
+              threads: [],
             },
           ],
         }}
@@ -222,6 +225,7 @@ describe("companion status popover", () => {
               label: "TREADY",
               readiness: "ready",
               teamId: "TREADY",
+              threads: [],
             },
             {
               detail: null,
@@ -229,6 +233,7 @@ describe("companion status popover", () => {
               label: "TPENDING",
               readiness: "pending",
               teamId: "TPENDING",
+              threads: [],
             },
             {
               detail: "root-unavailable",
@@ -236,6 +241,7 @@ describe("companion status popover", () => {
               label: "TBROKEN",
               readiness: "unavailable",
               teamId: "TBROKEN",
+              threads: [],
             },
             {
               detail: "configuration-invalid",
@@ -243,6 +249,7 @@ describe("companion status popover", () => {
               label: "Workspace binding 4",
               readiness: "unknown",
               teamId: null,
+              threads: [],
             },
           ],
         }}
@@ -267,6 +274,63 @@ describe("companion status popover", () => {
     expect(screen.getByText("1 connected")).toBeTruthy();
     expect(screen.getByText("1 pending")).toBeTruthy();
     expect(screen.getByText("2 unavailable")).toBeTruthy();
+  });
+
+  it("groups actionable, ongoing, and recent threads beneath their owning workspace", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "needs-attention",
+                  id: "workspace:TFIRST:C123:1000.000001",
+                  label: "C123 · 1000.000001",
+                  stateChangedAtUnixMs: 3000,
+                  workspaceId: "TFIRST",
+                },
+                {
+                  activity: "in-progress",
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: 2000,
+                  workspaceId: "TFIRST",
+                },
+                {
+                  activity: "dormant",
+                  id: "workspace:TFIRST:C123:1002.000001",
+                  label: "C123 · 1002.000001",
+                  stateChangedAtUnixMs: 1000,
+                  workspaceId: "TFIRST",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Needs attention 1" })
+    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "In progress 1" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Recent 1" })).toBeTruthy();
+    expect(screen.getByText("C123 · 1000.000001")).toBeTruthy();
+    expect(screen.getByText("C123 · 1001.000001")).toBeTruthy();
+    expect(screen.getByText("C123 · 1002.000001")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("prompt");
   });
 
   it("explains the empty workspace surface without exposing configuration", () => {

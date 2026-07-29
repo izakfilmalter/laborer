@@ -139,6 +139,33 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
       }
     },
   });
+  yield* Effect.forever(
+    routeDirectory.snapshot.pipe(
+      Effect.flatMap((installations) =>
+        Effect.forEach(
+          installations,
+          (installation) => {
+            const activity = installation.runner?.workThreadActivity;
+            return activity === undefined
+              ? Effect.void
+              : activity.pipe(
+                  Effect.tap((threads) =>
+                    Effect.sync(() =>
+                      operatorProjection.observeWorkThreads(
+                        installation.identity.teamId,
+                        threads
+                      )
+                    )
+                  ),
+                  Effect.catch(() => Effect.void)
+                );
+          },
+          { discard: true }
+        )
+      ),
+      Effect.andThen(Effect.sleep("1 second"))
+    )
+  ).pipe(Effect.forkScoped);
   yield* Effect.promise(() => preflightSettled);
   const socketClient = new SocketModeClient({
     appToken: Redacted.value(config.appToken),

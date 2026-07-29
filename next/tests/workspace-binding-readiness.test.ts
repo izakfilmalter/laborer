@@ -77,6 +77,7 @@ describe("workspace-binding operator projection", () => {
           label: "TFIRST",
           readiness: "ready",
           teamId: "TFIRST",
+          threads: [],
         },
         {
           detail: "setup-required",
@@ -84,6 +85,7 @@ describe("workspace-binding operator projection", () => {
           label: "TSECOND",
           readiness: "setup-incomplete",
           teamId: "TSECOND",
+          threads: [],
         },
       ],
     });
@@ -201,7 +203,44 @@ describe("workspace-binding operator projection", () => {
         label: "Workspace binding 1",
         readiness: "ready",
         teamId: null,
+        threads: [],
       },
+    ]);
+  });
+
+  it("attaches live work-thread activity only to its owning workspace", () => {
+    const projection = makeWorkspaceBindingProjection(
+      config(["first", "second"])
+    );
+    projection.observeWorkThreads("TFIRST", [
+      {
+        activity: "in-progress",
+        evidenceAtUnixMs: 1000,
+        id: "workspace:TFIRST:C123:1000.000001",
+        label: "C123 · 1000.000001",
+        workspaceId: "TFIRST",
+      },
+    ]);
+    projection.observeWorkThreads("TUNKNOWN", [
+      {
+        activity: "needs-attention",
+        evidenceAtUnixMs: 2000,
+        id: "workspace:TUNKNOWN:C123:1000.000001",
+        label: "C123 · 1000.000001",
+        workspaceId: "TUNKNOWN",
+      },
+    ]);
+
+    expect(
+      projection.snapshot().workspaces.map(({ threads }) => threads)
+    ).toEqual([
+      [
+        expect.objectContaining({
+          activity: "in-progress",
+          id: "workspace:TFIRST:C123:1000.000001",
+        }),
+      ],
+      [],
     ]);
   });
 });

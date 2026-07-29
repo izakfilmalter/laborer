@@ -71,6 +71,15 @@ describe("operator status protocol", () => {
             label: "TFIRST",
             readiness: "ready",
             teamId: "TFIRST",
+            threads: [
+              {
+                activity: "in-progress",
+                id: "workspace:TFIRST:C123:1000.000001",
+                label: "C123 · 1000.000001",
+                stateChangedAtUnixMs: 4000,
+                workspaceId: "TFIRST",
+              },
+            ],
           },
         ],
       })
@@ -78,6 +87,7 @@ describe("operator status protocol", () => {
 
     expect(snapshot.daemon.version).toBe("0.1.0");
     expect(snapshot.sequence).toBe(3);
+    expect(snapshot.workspaces[0]?.threads[0]?.activity).toBe("in-progress");
     expect(() =>
       decodeOperatorSnapshot(
         JSON.stringify({
@@ -102,6 +112,24 @@ describe("operator status protocol", () => {
         })
       )
     ).toThrowError(OperatorProtocolError);
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          workspaces: [
+            {
+              ...snapshot.workspaces[0],
+              threads: [
+                {
+                  ...snapshot.workspaces[0]?.threads[0],
+                  label: "private prompt or /Users/operator/secret",
+                },
+              ],
+            },
+          ],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
     expect(() => decodeOperatorSnapshot("not-json")).toThrowError(
       OperatorProtocolError
     );
@@ -116,6 +144,7 @@ describe("operator status protocol", () => {
               label: "TFIRST",
               readiness: "ready",
               teamId: "TFIRST",
+              threads: [],
             },
           ],
         })

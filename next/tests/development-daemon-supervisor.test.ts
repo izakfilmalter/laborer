@@ -61,10 +61,7 @@ describe("development Daemon supervisor", () => {
         );
 
         assert.strictEqual(result._tag, "Failure");
-        assert.deepStrictEqual(events, [
-          "daemon-1:activate",
-          "daemon-1:stop",
-        ]);
+        assert.deepStrictEqual(events, ["daemon-1:activate", "daemon-1:stop"]);
       })
     )
   );

@@ -410,13 +410,15 @@ const activityPresentation: Record<
     readonly tone: StatusTone;
   }
 > = {
+  // Ongoing work is healthy, so it reads in the same tone as the summary above
+  // rather than borrowing the warning tone that marks transitional bindings.
   "in-progress": {
     icon: CircleDot,
-    iconClassName: "animate-pulse text-warning motion-reduce:animate-none",
+    iconClassName: "animate-pulse text-success motion-reduce:animate-none",
     labelClassName: "text-foreground",
     rowClassName: "",
     title: "In progress",
-    tone: "warning",
+    tone: "success",
   },
   "needs-attention": {
     icon: TriangleAlert,
@@ -515,19 +517,24 @@ const WorkThreadRow = ({
 };
 
 const sectionHeadingClassName =
-  "flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wide";
+  "flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wide";
 
 const WorkThreadSection = ({
   activity,
   headingId,
   nowUnixMs,
+  open,
   threads,
 }: {
   readonly activity: WorkThread["activity"];
   readonly headingId: string;
   readonly nowUnixMs: number;
+  readonly open: boolean;
   readonly threads: readonly WorkThread[];
 }) => {
+  // The disclosure stays operator-controlled once opened: status pushes and the
+  // relative-time tick re-render this card, and neither should collapse it.
+  const [expanded, setExpanded] = useState(open);
   const presentation = activityPresentation[activity];
   const rows = (
     <ul aria-labelledby={headingId}>
@@ -537,7 +544,7 @@ const WorkThreadSection = ({
     </ul>
   );
   const count = (
-    <span aria-hidden="true" className="tabular-nums opacity-70">
+    <span aria-hidden="true" className="font-normal tabular-nums">
       {threads.length}
     </span>
   );
@@ -546,11 +553,15 @@ const WorkThreadSection = ({
   // while in-progress and needs-attention rows keep the top of the card.
   if (activity === "dormant") {
     return (
-      <details className="group">
-        <summary className="list-none rounded-none bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+      <details
+        className="group"
+        onToggle={(event) => setExpanded(event.currentTarget.open)}
+        open={expanded}
+      >
+        <summary className="list-none rounded-none bg-muted/40 outline-none transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset motion-reduce:transition-none [&::-webkit-details-marker]:hidden">
           <h4
             aria-label={headingLabel}
-            className={`${sectionHeadingClassName} cursor-default px-3 py-1.5 text-muted-foreground`}
+            className={`${sectionHeadingClassName} cursor-pointer select-none px-3 py-1.5 text-muted-foreground`}
             id={headingId}
           >
             <ChevronRight
@@ -608,6 +619,11 @@ const WorkThreadSections = ({
       </p>
     ) : null;
   }
+  // With nothing live to read, recent work is the only story the card can tell,
+  // so it opens rather than leaving the operator facing a collapsed strip.
+  const hasLiveWork = sections.some(
+    ({ activity, threads }) => activity !== "dormant" && threads.length > 0
+  );
   return (
     <div className="border-border border-t">
       {sections.map(({ activity, threads }) =>
@@ -617,6 +633,7 @@ const WorkThreadSections = ({
             headingId={`${workspace.id}-${activity}`}
             key={activity}
             nowUnixMs={nowUnixMs}
+            open={!hasLiveWork}
             threads={threads}
           />
         )
@@ -633,8 +650,15 @@ const WorkspaceBindingCard = ({
   readonly workspace: WorkspaceBinding;
 }) => {
   const tone = bindingTone[workspace.readiness];
+  // A card the operator has to act on carries its urgency at the card edge so
+  // it is findable in a scroll of otherwise identical cards.
+  const needsAction =
+    tone === "danger" ||
+    workspace.threads.some((thread) => thread.activity === "needs-attention");
   return (
-    <article className="overflow-hidden rounded-xl border border-border bg-surface">
+    <article
+      className={`overflow-hidden rounded-xl border bg-surface ${needsAction ? "border-danger/40" : "border-border"}`}
+    >
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
           <h3

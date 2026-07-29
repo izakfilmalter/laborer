@@ -509,6 +509,75 @@ describe("companion status popover", () => {
     ).toBeTruthy();
   });
 
+  it("opens recent work only when no live thread is competing for attention", () => {
+    const recentThread = {
+      activity: "dormant",
+      id: "workspace:TFIRST:C123:1002.000001",
+      label: "C123 · 1002.000001",
+      stateChangedAtUnixMs: Date.now() - 3 * 3_600_000,
+      workspaceId: "TFIRST",
+    } as const;
+    const quiet = render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [recentThread],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect((screen.getByRole("group") as HTMLDetailsElement).open).toBe(true);
+    quiet.unmount();
+
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "in-progress",
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: Date.now(),
+                  workspaceId: "TFIRST",
+                },
+                recentThread,
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect((screen.getByRole("group") as HTMLDetailsElement).open).toBe(false);
+  });
+
   it("explains the empty workspace surface without exposing configuration", () => {
     render(
       <StatusPopover

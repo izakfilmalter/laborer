@@ -540,10 +540,18 @@ branch, worktree, or copied files for a custom process handler.
    create the app. The manifest enables Socket Mode, creates the Laborer bot,
    subscribes only to `app_mention`, `message.channels`, and `message.groups`,
    and requests only `app_mentions:read`, `channels:history`, `groups:history`,
-   `chat:write`, `reactions:write`, and `users:read` bot scopes. It does not
+   `chat:write`, `files:read`, `reactions:write`, and `users:read` bot scopes.
+   `files:read` is used only by the Slack adapter to retrieve supported inbound
+   images; private URLs and credentials never enter handler input. It does not
    request `users:read.email`.
 3. In **OAuth & Permissions**, choose **Install to Workspace** (or reinstall
    after a manifest change), approve it, and copy the **Bot User OAuth Token**.
+   Existing installations must be reauthorized after adding `files:read` before
+   inbound images can be accepted.
+   Accepted image bytes are content-addressed under the workspace Runner's
+   owner-only `.laborer-runtime` partition and retained for as long as durable
+   Work-thread state may reference them. Laborer does not currently expire Work
+   threads, so it does not independently age out referenced images.
 4. In **Basic Information → App-Level Tokens**, choose **Generate Token and
    Scopes**. Give it a local-development name, grant only
    `connections:write`, generate it, and copy the app-level token.

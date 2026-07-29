@@ -26,6 +26,7 @@ export type ConversationAdoptionHistoryAuthorKind =
 export interface ConversationAdoptionHistoryMessage {
   readonly authorKind: ConversationAdoptionHistoryAuthorKind;
   readonly authorSlackId: string;
+  readonly imageUnavailable?: true;
   readonly messageId: string;
   readonly slackTs: string;
   readonly text: string;
@@ -181,6 +182,15 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
     typeof options.message.ts === "string" ? options.message.ts : null;
   const text =
     typeof options.message.text === "string" ? options.message.text : null;
+  const imageUnavailable =
+    Array.isArray(options.message.files) &&
+    options.message.files.some(
+      (file) =>
+        typeof file === "object" &&
+        file !== null &&
+        "id" in file &&
+        typeof file.id === "string"
+    );
   const subtype =
     typeof options.message.subtype === "string"
       ? options.message.subtype
@@ -188,8 +198,7 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
   if (
     slackTs === null ||
     timestampMicros(slackTs) === null ||
-    text === null ||
-    text.trim().length === 0 ||
+    ((text === null || text.trim().length === 0) && !imageUnavailable) ||
     !supportedSubtype(subtype)
   ) {
     return null;
@@ -225,13 +234,14 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
       slackTs,
       workspaceId: options.workspaceId,
     }),
+    ...(imageUnavailable ? { imageUnavailable: true as const } : {}),
     slackTs,
-    text,
+    text: text ?? "",
   };
 };
 
 const renderMessage = (message: ConversationAdoptionHistoryMessage): string =>
-  `<slack-message author-kind="${xmlEscape(message.authorKind, true)}" author-slack-id="${xmlEscape(message.authorSlackId, true)}" id="${xmlEscape(message.messageId, true)}" slack-ts="${xmlEscape(message.slackTs, true)}">${xmlEscape(message.text)}</slack-message>`;
+  `<slack-message author-kind="${xmlEscape(message.authorKind, true)}" author-slack-id="${xmlEscape(message.authorSlackId, true)}" id="${xmlEscape(message.messageId, true)}" slack-ts="${xmlEscape(message.slackTs, true)}">${xmlEscape(message.text)}${message.imageUnavailable === true ? '<slack-image unavailable="true" reason="adoption-history-not-hydrated" />' : ""}</slack-message>`;
 
 const renderHistory = (options: {
   readonly degradation: ConversationAdoptionHistorySnapshot["degradation"];

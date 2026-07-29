@@ -341,6 +341,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
           durableSessionMode: true,
           environment: childEnvironment,
           laborerSlackId: options.laborerSlackId,
+          imageStorageRoot: options.paths.root,
           memoryMcpServer,
           participantLookup:
             dependencies.participantLookup ??

@@ -83,7 +83,14 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
           logger: silentSocketLogger,
           ...slackWebApiRequestPolicy,
         }),
-      makeGateway: ({ client, identity, namespaceWorkspace }) =>
+      inboundImageResolverFor: (gateway) => gateway.resolveInboundImages,
+      makeGateway: ({
+        client,
+        enableInboundImages,
+        identity,
+        namespaceWorkspace,
+        paths,
+      }) =>
         makeSlackGateway({
           botClient: client,
           botId: identity.botId,
@@ -95,6 +102,9 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
             recipientTeamId: identity.teamId,
           }),
           pageSize: 100,
+          ...(enableInboundImages === true && paths !== undefined
+            ? { storageRoot: paths.root }
+            : {}),
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
       makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>

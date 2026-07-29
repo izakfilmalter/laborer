@@ -2,8 +2,10 @@ import { Effect, Schema } from "effect";
 import {
   EventId,
   type InboundRecordKind,
+  type NormalizedImage,
   NormalizedInboundEvent,
   stableEventId,
+  UnavailableNormalizedImageInput,
 } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SlackBoundaryError } from "./errors.ts";
@@ -14,6 +16,7 @@ const SlackMessageFragment = Schema.Struct({
   channel_type: Schema.optional(Schema.String),
   deleted_ts: Schema.optional(Schema.String),
   event_ts: Schema.optional(Schema.String),
+  files: Schema.optional(Schema.Array(Schema.Unknown)),
   message: Schema.optional(Schema.Unknown),
   previous_message: Schema.optional(Schema.Unknown),
   subtype: Schema.optional(Schema.String),
@@ -32,6 +35,65 @@ const SlackEventCallback = Schema.Struct({
 });
 
 type SlackMessageFragmentType = typeof SlackMessageFragment.Type;
+
+export interface SlackInboundImageCandidate {
+  readonly id: string;
+}
+
+export type ResolveSlackInboundImages = (request: {
+  readonly candidates: readonly SlackInboundImageCandidate[];
+  readonly channelId: string;
+  readonly messageTs: string;
+}) => Effect.Effect<readonly NormalizedImage[], SlackBoundaryError>;
+
+const imageCandidatesFor = (
+  authored: SlackMessageFragmentType,
+  raw: SlackMessageFragmentType
+): readonly SlackInboundImageCandidate[] => {
+  const candidates: SlackInboundImageCandidate[] = [];
+  for (const value of authored.files ?? raw.files ?? []) {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "id" in value &&
+      typeof value.id === "string" &&
+      value.id.trim().length > 0
+    ) {
+      candidates.push({ id: value.id });
+    }
+  }
+  return candidates;
+};
+
+const resolveImagesForEvent = (options: {
+  readonly candidates: readonly SlackInboundImageCandidate[];
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly resolveImages?: ResolveSlackInboundImages;
+}): Effect.Effect<readonly NormalizedImage[]> => {
+  if (options.candidates.length === 0 || options.resolveImages === undefined) {
+    return Effect.succeed([]);
+  }
+  return options
+    .resolveImages({
+      candidates: options.candidates,
+      channelId: options.channelId,
+      messageTs: options.messageTs,
+    })
+    .pipe(
+      Effect.catch((failure) =>
+        Effect.succeed(
+          options.candidates.map((candidate, index) =>
+            UnavailableNormalizedImageInput.make({
+              failureReason: failure.reason,
+              id: `${options.channelId}:${options.messageTs}:${index}:${candidate.id}`,
+              slackFileId: candidate.id,
+            })
+          )
+        )
+      )
+    );
+};
 
 const decodeFragment = (
   value: unknown,
@@ -135,8 +197,12 @@ const authorFor = (
 export const normalizeSlackEvent = (
   input: unknown,
   identity: SlackRuntimeIdentity,
-  options?: { readonly namespaceWorkspace?: boolean }
+  options?: {
+    readonly namespaceWorkspace?: boolean;
+    readonly resolveImages?: ResolveSlackInboundImages;
+  }
 ): Effect.Effect<NormalizedInboundEvent | null, SlackBoundaryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one strict Slack callback decoder keeps nested message authorship and routing normalization at the adapter boundary
   Effect.gen(function* () {
     const callback = yield* Schema.decodeUnknownEffect(SlackEventCallback)(
       input
@@ -171,6 +237,16 @@ export const normalizeSlackEvent = (
     const author = authorFor(raw, authored, identity);
     const text =
       recordKind === "message" ? (authored.text ?? raw.text ?? null) : null;
+    const imageCandidates =
+      recordKind === "message" ? imageCandidatesFor(authored, raw) : [];
+    const images = yield* resolveImagesForEvent({
+      candidates: imageCandidates,
+      channelId,
+      messageTs,
+      ...(options?.resolveImages === undefined
+        ? {}
+        : { resolveImages: options.resolveImages }),
+    });
 
     return NormalizedInboundEvent.make({
       authorKind: author.kind,
@@ -181,6 +257,7 @@ export const normalizeSlackEvent = (
         options?.namespaceWorkspace === true
           ? stableEventId(identity.teamId, callback.event_id)
           : EventId.make(callback.event_id),
+      images,
       messageTs,
       recordKind,
       text,

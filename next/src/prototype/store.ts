@@ -1999,6 +1999,7 @@ const acceptTransition = (
   event: NormalizedInboundEvent,
   laborerSlackId: string,
   initializeNewThreads: boolean
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the durable acceptance state machine keeps identity, eligibility, activation, and queue publication in one atomic transition
 ): readonly [InboundDecision, PrototypeState] | StoreError => {
   if (EffectArray.contains(state.seenEventIds, event.eventId)) {
     return ignored(state, event, "duplicate", false);
@@ -2015,7 +2016,10 @@ const acceptTransition = (
   if (event.recordKind !== "message") {
     return ignored(state, event, "unsupported-record");
   }
-  if (event.text === null || event.text.trim().length === 0) {
+  if (
+    (event.text === null || event.text.trim().length === 0) &&
+    (event.images?.length ?? 0) === 0
+  ) {
     return ignored(state, event, "blank");
   }
 
@@ -2028,7 +2032,9 @@ const acceptTransition = (
       existing.message.authorKind === event.authorKind &&
       existing.message.authorSlackId === event.authorSlackId &&
       existing.message.slackTs === event.messageTs &&
-      existing.message.text === event.text;
+      existing.message.text === (event.text ?? "") &&
+      JSON.stringify(existing.message.images ?? []) ===
+        JSON.stringify(event.images ?? []);
     return isIdentical
       ? ignored(state, event, "duplicate-message")
       : storeFailure("accept", "conflicting-message-identity");
@@ -2036,7 +2042,7 @@ const acceptTransition = (
   const threadIndex = findThreadIndex(state, threadId);
   const isActiveReply = event.threadTs !== null && threadIndex >= 0;
   const isActivation =
-    !isActiveReply && event.text.includes(`<@${laborerSlackId}>`);
+    !isActiveReply && event.text?.includes(`<@${laborerSlackId}>`) === true;
   if (!(isActiveReply || isActivation)) {
     return ignored(state, event, "outside-active-thread");
   }
@@ -2045,10 +2051,11 @@ const acceptTransition = (
     id: messageId,
     classification: "input",
     isActivation,
+    images: event.images ?? [],
     authorKind: event.authorKind,
     authorSlackId: event.authorSlackId,
     slackTs: event.messageTs,
-    text: event.text,
+    text: event.text ?? "",
   });
   const threads =
     threadIndex < 0

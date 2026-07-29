@@ -1,11 +1,12 @@
 /** Opt-in ACP stable-v1 conversation-agent proof for issues #234 and #236. */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { basename, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   type ActiveSessionMessage,
+  type ContentBlock,
   client,
   type McpServerStdio,
   methods,
@@ -17,6 +18,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Clock, Effect, Exit, Schema, Scope, Semaphore } from "effect";
 import { HandlerFailure } from "../prototype/errors.ts";
+import { assertNoSymlinkPathComponents } from "../prototype/path-safety.ts";
 import {
   type ProcessTerminationOutcome,
   processSupervisorProxyPath,
@@ -66,6 +68,8 @@ import {
 import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
 
 const MAX_PROMPT_BYTES = 256 * 1024;
+const MAX_PROMPT_IMAGES = 4;
+const MAX_PROMPT_IMAGE_BYTES = 1024 * 1024;
 const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024;
 const MAX_PUBLIC_MESSAGES = 32;
 const CHILD_EXIT_GRACE_MILLIS = 2000;
@@ -160,6 +164,7 @@ export interface AcpConversationAgentOptions {
   /** Skip #240's eager probe; durable new/resume requests verify memory directly. */
   readonly durableSessionMode?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly imageStorageRoot?: string;
   readonly inboundLimits?: {
     readonly maxLineBytes?: number;
     readonly maxProcessBytes?: number;
@@ -428,7 +433,7 @@ interface RoutedAcpSession {
   readonly effectiveMetadata: SignedAcpEffectiveMetadata | null;
   nextUpdate(): Promise<ActiveSessionMessage>;
   prompt(
-    input: string,
+    input: readonly ContentBlock[],
     options: { readonly cancellationSignal: AbortSignal }
   ): Promise<PromptResponse>;
   readonly sessionId: string;
@@ -683,6 +688,9 @@ const makePromptEpochGate = (
 const failure = (
   operation: AcpConversationFailure["operation"]
 ): AcpConversationFailure => AcpConversationFailure.make({ operation });
+
+const imageInputFailure = (safeDetail: string): HandlerFailure =>
+  HandlerFailure.make({ category: "protocol", safeDetail });
 
 const toHandlerFailure = (): HandlerFailure =>
   HandlerFailure.make({
@@ -1212,6 +1220,7 @@ const settlePromptProtocolFailure = Effect.fn(
   return yield* terminalStopFailure("protocol_failed");
 });
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: prompt admission, bounded context rendering, durable image validation, streaming, and terminal settlement share one ACP ownership boundary
 const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   session: RoutedAcpSession,
   request: ConversationAgentRequest,
@@ -1221,12 +1230,14 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   participantLookup: SlackParticipantLookupShape | undefined,
   participantIds: readonly string[],
   startPrompt: (
-    input: string,
+    input: readonly ContentBlock[],
     introducedParticipantIds: readonly string[]
   ) => Effect.Effect<ActivePrompt, AcpConversationFailure | HandlerFailure>,
   publishMessage: PublishConversationAgentMessage,
   invalidate: (prompt: ActivePrompt) => Effect.Effect<void>,
-  promptDeadlineMillis: number
+  promptDeadlineMillis: number,
+  imageStorageRoot: string | undefined,
+  imagePromptCapable: boolean
 ) {
   if (textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES) {
     return yield* failure("prompt");
@@ -1256,8 +1267,94 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
     input = rendered.prompt;
     submittedParticipantIds = rendered.introducedParticipantIds;
   }
+  const images = [...request.context, ...request.messages].flatMap(
+    (message) => message.images ?? []
+  );
+  if (images.some((image) => "failureReason" in image)) {
+    return yield* imageInputFailure(
+      "required image input is unavailable; re-upload a supported image and try again"
+    );
+  }
+  const aggregateImageBytes = images.reduce(
+    (total, image) =>
+      "failureReason" in image ? total : total + image.byteLength,
+    0
+  );
+  if (
+    images.length > MAX_PROMPT_IMAGES ||
+    aggregateImageBytes > MAX_PROMPT_IMAGE_BYTES
+  ) {
+    return yield* imageInputFailure(
+      "image input exceeds the supported count or aggregate byte limit"
+    );
+  }
+  if (
+    images.length > 0 &&
+    (!imagePromptCapable || imageStorageRoot === undefined)
+  ) {
+    return yield* imageInputFailure(
+      imageStorageRoot === undefined
+        ? "image storage is unavailable"
+        : "the selected Conversation agent does not support image input"
+    );
+  }
+  const promptBlocks: ContentBlock[] = [];
+  let remainingText = input;
+  for (const image of images) {
+    if ("failureReason" in image) {
+      return yield* imageInputFailure("required image input is unavailable");
+    }
+    const root = resolve(imageStorageRoot as string);
+    const path = resolve(root, image.contentPath);
+    if (path !== root && !path.startsWith(`${root}${sep}`)) {
+      return yield* imageInputFailure("accepted image storage is invalid");
+    }
+    const bytes = yield* Effect.tryPromise({
+      try: async () => {
+        await assertNoSymlinkPathComponents(path, "read-inbound-image");
+        const metadata = await stat(path);
+        if (!metadata.isFile() || metadata.size !== image.byteLength) {
+          throw new Error("image-content-invalid");
+        }
+        const content = await readFile(path);
+        if (
+          createHash("sha256").update(content).digest("hex") !==
+          image.contentDigest
+        ) {
+          throw new Error("image-digest-mismatch");
+        }
+        return content;
+      },
+      catch: () =>
+        imageInputFailure(
+          "accepted image content is unavailable; re-upload the image and try again"
+        ),
+    });
+    const markerStart = remainingText.indexOf("<slack-image ");
+    const markerEnd =
+      markerStart < 0 ? -1 : remainingText.indexOf("/>", markerStart);
+    if (markerEnd >= 0) {
+      promptBlocks.push({
+        text: remainingText.slice(0, markerEnd + 2),
+        type: "text",
+      });
+      remainingText = remainingText.slice(markerEnd + 2);
+    } else if (promptBlocks.length === 0) {
+      promptBlocks.push({ text: remainingText, type: "text" });
+      remainingText = "";
+    }
+    promptBlocks.push({
+      data: bytes.toString("base64"),
+      mimeType: image.mimeType,
+      type: "image",
+      uri: null,
+    });
+  }
+  if (remainingText.length > 0 || promptBlocks.length === 0) {
+    promptBlocks.push({ text: remainingText, type: "text" });
+  }
   return yield* Effect.acquireUseRelease(
-    startPrompt(input, submittedParticipantIds),
+    startPrompt(promptBlocks, submittedParticipantIds),
     (prompt) =>
       Effect.gen(function* () {
         const consumeUpdates = Effect.gen(function* () {
@@ -1744,7 +1841,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                       }),
                   [PROMPT_EPOCH_META_KEY]: marker,
                 },
-                prompt: [{ text: input, type: "text" }],
+                prompt: [...input],
                 sessionId,
               },
               {
@@ -3198,7 +3295,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       const submitOwnedPrompt = (
         request: ConversationAgentRequest,
         managed: ManagedSession,
-        input: string,
+        input: readonly ContentBlock[],
         introducedParticipantIds: readonly string[],
         attemptId: string | null,
         attemptStore: ConversationPromptAttemptStore | undefined,
@@ -3269,7 +3366,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       const startOwnedPrompt = (
         request: ConversationAgentRequest,
         managed: ManagedSession,
-        input: string,
+        input: readonly ContentBlock[],
         introducedParticipantIds: readonly string[]
       ): Effect.Effect<
         ActivePrompt,
@@ -3410,7 +3507,10 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                   ),
                 publishMessage,
                 invalidateSession(request.conversationId, managed),
-                configuredPromptDeadlineMillis(options)
+                configuredPromptDeadlineMillis(options),
+                options.imageStorageRoot,
+                initialized.agentCapabilities?.promptCapabilities?.image ===
+                  true
               );
             })
           );

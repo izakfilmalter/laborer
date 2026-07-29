@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
-import { chmod, lstat, open, readFile, rm, stat } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { chmod, lstat, open, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { Effect, Schema, type Scope } from "effect";
 import type { AcpWorkspaceSupervisorHealthSnapshot } from "../acp-conversation-prototype/acp-process-supervisor.ts";
@@ -15,6 +16,8 @@ import {
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
 
 const MAX_INSPECTION_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_AUTHORITY_KEY_BYTES = 4 * 1024;
+const MAX_CORRELATED_IDENTITIES = 64;
 const MAX_SOCKET_REQUEST_BYTES = 16 * 1024;
 
 export class AcpRecoveryError extends Schema.TaggedErrorClass<AcpRecoveryError>()(
@@ -43,6 +46,16 @@ interface ReadRevision extends FileRevision {
 export interface AcpRecoveryInspection {
   readonly attemptDigest: string;
   readonly consistency: "consistent" | "incomplete" | "revision-changed";
+  readonly correlations: {
+    readonly agentSessionDigest: string | null;
+    readonly bindingGeneration: number | null;
+    readonly conversationDigest: string;
+    readonly executionDigests: readonly string[];
+    readonly ownerDigest: string;
+    readonly processGeneration: number;
+    readonly promptDigest: string;
+    readonly streamDigests: readonly string[];
+  };
   readonly evidence: {
     readonly action: {
       readonly capabilityCount: number;
@@ -55,6 +68,11 @@ export interface AcpRecoveryInspection {
     readonly authority: {
       readonly pendingCount: number;
       readonly terminalCount: number;
+    };
+    readonly execution: {
+      readonly count: number;
+      readonly nonterminalCount: number;
+      readonly unresolvedCount: number;
     };
     readonly process: {
       readonly generation: number | null;
@@ -161,14 +179,21 @@ const readRevision = async (
     ) {
       throw new Error("unsafe inspection source");
     }
-    const file = await open(path, "r");
+    // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are combined as a bitmask.
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     let source: string;
+    let after: Stats;
     try {
-      source = await file.readFile("utf8");
+      const buffer = Buffer.allocUnsafe(MAX_INSPECTION_FILE_BYTES + 1);
+      const { bytesRead } = await file.read(buffer, 0, buffer.byteLength, 0);
+      if (bytesRead > MAX_INSPECTION_FILE_BYTES) {
+        throw new Error("unsafe inspection source");
+      }
+      source = buffer.toString("utf8", 0, bytesRead);
+      after = await file.stat();
     } finally {
       await file.close();
     }
-    const after = await stat(path);
     const stable =
       before.dev === after.dev &&
       before.ino === after.ino &&
@@ -190,6 +215,38 @@ const readRevision = async (
       return { digest: "missing", present: false, stable: true, value: {} };
     }
     throw cause;
+  }
+};
+
+const readAuthorityKey = async (
+  path: string,
+  trustedRoot: string
+): Promise<Buffer> => {
+  await assertSafeFilePath({
+    anchor: trustedRoot,
+    operation: "inspect-acp-recovery-authority",
+    path,
+  });
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are combined as a bitmask.
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const metadata = await file.stat();
+    const currentUid = process.getuid?.();
+    if (
+      !metadata.isFile() ||
+      metadata.size > MAX_AUTHORITY_KEY_BYTES ||
+      (currentUid !== undefined && metadata.uid !== currentUid)
+    ) {
+      throw new Error("unsafe recovery authority key");
+    }
+    const key = Buffer.allocUnsafe(MAX_AUTHORITY_KEY_BYTES + 1);
+    const { bytesRead } = await file.read(key, 0, key.byteLength, 0);
+    if (bytesRead === 0 || bytesRead > MAX_AUTHORITY_KEY_BYTES) {
+      throw new Error("unsafe recovery authority key");
+    }
+    return key.subarray(0, bytesRead);
+  } finally {
+    await file.close();
   }
 };
 
@@ -240,6 +297,21 @@ const uncertainStatus = (value: unknown): boolean =>
     statusOf(value).includes(marker)
   );
 
+const executionIsUnresolved = (value: unknown): boolean => {
+  const execution = safeRecord(value);
+  if (
+    uncertainStatus(execution) ||
+    statusOf(execution.attachment) === "unresolved" ||
+    execution.recoveryFailure != null
+  ) {
+    return true;
+  }
+  return safeArray(execution.prompts).some((promptValue) => {
+    const prompt = safeRecord(promptValue);
+    return uncertainStatus(prompt) || uncertainStatus(prompt.attempt);
+  });
+};
+
 const runnerHealthCounts = (runner: unknown) => {
   const state = safeRecord(runner);
   const threads = safeArray(state.threads).map(safeRecord);
@@ -276,7 +348,7 @@ const applicationHealthCounts = (application: unknown) => {
       (item) => safeRecord(item).status !== "settled"
     ).length,
     executionUncertain:
-      executions.filter(uncertainStatus).length +
+      executions.filter(executionIsUnresolved).length +
       attempts.filter(uncertainStatus).length,
   };
 };
@@ -467,12 +539,10 @@ const inspectSnapshot = async (options: {
     typeof match.prompt.promptId === "string" ? match.prompt.promptId : "";
   let promptDigest = "authority-key-unavailable";
   try {
-    await assertSafeFilePath({
-      anchor: options.paths.root,
-      operation: "inspect-acp-recovery-authority",
-      path: options.paths.acpAuthorityKey,
-    });
-    const authorityKey = await readFile(options.paths.acpAuthorityKey);
+    const authorityKey = await readAuthorityKey(
+      options.paths.acpAuthorityKey,
+      options.paths.root
+    );
     promptDigest = createHmac("sha256", authorityKey)
       .update("prompt\0", "utf8")
       .update(promptId, "utf8")
@@ -499,6 +569,14 @@ const inspectSnapshot = async (options: {
   const correlatedActionRecords = actionRecords.filter(
     (record) => safeRecord(record).promptDigest === promptDigest
   );
+  const sessionBinding = safeRecord(match.conversation.agentSessionBinding);
+  const sessionId = sessionBinding.sessionId;
+  const correlatedExecutions = safeArray(application.executions)
+    .map(safeRecord)
+    .filter(
+      (execution) =>
+        execution.conversationId === match.conversation.conversationId
+    );
   const processState = safeRecord(revisions.process?.value);
   const allStable = Object.values(revisions).every(
     (revision) => revision.stable
@@ -513,6 +591,34 @@ const inspectSnapshot = async (options: {
   return {
     attemptDigest: digestId("attempt", options.attemptId),
     consistency,
+    correlations: {
+      agentSessionDigest:
+        typeof sessionId === "string"
+          ? digestId("agent-session", sessionId)
+          : null,
+      bindingGeneration:
+        typeof match.attempt.bindingGeneration === "number"
+          ? match.attempt.bindingGeneration
+          : null,
+      conversationDigest: digestId(
+        "conversation",
+        String(match.conversation.conversationId ?? "")
+      ),
+      executionDigests: correlatedExecutions
+        .slice(0, MAX_CORRELATED_IDENTITIES)
+        .map((execution) =>
+          digestId("execution", String(execution.executionId ?? ""))
+        ),
+      ownerDigest: digestId("owner", String(ownerId ?? "")),
+      processGeneration:
+        typeof match.attempt.processGeneration === "number"
+          ? match.attempt.processGeneration
+          : 0,
+      promptDigest,
+      streamDigests: correlatedStreams
+        .slice(0, MAX_CORRELATED_IDENTITIES)
+        .map((stream) => digestId("stream", String(stream.id ?? ""))),
+    },
     evidence: {
       action: {
         capabilityCount: countByState(
@@ -539,6 +645,16 @@ const inspectSnapshot = async (options: {
           correlatedAuthorityRecords,
           (record) => record.state !== "pending"
         ),
+      },
+      execution: {
+        count: correlatedExecutions.length,
+        nonterminalCount: correlatedExecutions.filter(
+          (execution) =>
+            typeof execution.status === "string" &&
+            !["cancelled", "completed", "failed"].includes(execution.status)
+        ).length,
+        unresolvedCount: correlatedExecutions.filter(executionIsUnresolved)
+          .length,
       },
       process: {
         generation:
@@ -683,7 +799,6 @@ const mapDecisionError = (): AcpRecoveryError =>
   AcpRecoveryError.make({ code: "conflict" });
 
 export const makeAcpRecoveryService = (options: {
-  readonly cancelPermissions?: Effect.Effect<void>;
   readonly paths: SlackRuntimePaths;
   readonly runner: Runner;
   readonly supervisorHealth?: Effect.Effect<AcpWorkspaceSupervisorHealthSnapshot>;
@@ -742,7 +857,6 @@ export const makeAcpRecoveryService = (options: {
     if (blocked === undefined) {
       return yield* AcpRecoveryError.make({ code: "not-found" });
     }
-    yield* options.cancelPermissions ?? Effect.void;
     return yield* decideRecovery({
       acknowledgeDuplicateSideEffects,
       actorUid: process.getuid?.() ?? 0,

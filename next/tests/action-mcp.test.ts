@@ -74,6 +74,7 @@ describe("private Action MCP bridge", () => {
             yield* Ref.make<ConversationExecutionControl | null>(null);
           const executionIdRef = yield* Ref.make<string | null>(null);
           const resumes = yield* Ref.make(0);
+          const cancellationOperationIds: string[] = [];
           const finishInitial = yield* Deferred.make<void>();
           const application = yield* makeReferenceCodingApplication({
             conversationAgent: {
@@ -151,6 +152,29 @@ describe("private Action MCP bridge", () => {
             statePath: join(root, "authority.json"),
             trustedRoot: root,
           });
+          const cancelControl: ConversationExecutionControl = {
+            description: "Cancel an owned Execution",
+            invoke: (_input, trustedInvocation) => {
+              assert.ok(trustedInvocation);
+              const deduplicated = cancellationOperationIds.includes(
+                trustedInvocation.operationId
+              );
+              cancellationOperationIds.push(trustedInvocation.operationId);
+              return Effect.succeed({
+                deduplicated,
+                execution: {
+                  actionName: "create-feature",
+                  canCancel: false,
+                  canPrompt: false,
+                  executionId: "execution-control-duplicate-249",
+                  status: "cancelled",
+                  worktreeName: "preserved-control-worktree",
+                },
+                schemaVersion: 1,
+              } as never);
+            },
+            name: "cancel-execution",
+          };
           const bridge = yield* makeLaborerActionMcpBridge({
             authorityRepository: authority,
             bootstrapPath: join(root, "bootstrap"),
@@ -189,7 +213,7 @@ describe("private Action MCP bridge", () => {
           const closeTurn = yield* bridge.activateTurn({
             actionServerGeneration: registration.actionServerGeneration,
             actions: [],
-            controls: [control, inspect],
+            controls: [control, inspect, cancelControl],
             scope: {
               bindingGeneration: 1,
               channelId: "C247",
@@ -252,6 +276,65 @@ describe("private Action MCP bridge", () => {
             Buffer.byteLength(JSON.stringify(inspected.structuredContent)) <
               64 * 1024
           );
+          const cancelInput = {
+            executionId: "execution-control-duplicate-249",
+          };
+          const cancelPermission = `${bridge.serverName}_cancel-execution`;
+          for (const cancelToolCallId of [
+            "cancel-call-249-first",
+            "cancel-call-249-second",
+          ]) {
+            bridge.observeToolCall({
+              sessionId,
+              update: {
+                kind: "other",
+                name: cancelPermission,
+                rawInput: cancelInput,
+                sessionUpdate: "tool_call",
+                status: "pending",
+                title: cancelPermission,
+                toolCallId: cancelToolCallId,
+              },
+            });
+            assert.strictEqual(
+              (yield* bridge.tryAuthorizePermission(
+                allowRequest({
+                  input: cancelInput,
+                  permission: cancelPermission,
+                  sessionId,
+                  toolCallId: cancelToolCallId,
+                })
+              ))?.outcome.outcome,
+              "selected"
+            );
+            const result = yield* Effect.promise(() =>
+              client.callTool({
+                arguments: cancelInput,
+                name: "cancel-execution",
+              })
+            );
+            assert.strictEqual(result.isError, undefined);
+          }
+          const cancellationRetry = yield* Effect.promise(() =>
+            client.callTool({
+              arguments: cancelInput,
+              name: "cancel-execution",
+            })
+          );
+          assert.deepStrictEqual(cancellationRetry.structuredContent, {
+            deduplicated: true,
+            execution: {
+              actionName: "create-feature",
+              canCancel: false,
+              canPrompt: false,
+              executionId: "execution-control-duplicate-249",
+              status: "cancelled",
+              worktreeName: "preserved-control-worktree",
+            },
+            schemaVersion: 1,
+          });
+          assert.strictEqual(cancellationOperationIds.length, 3);
+          assert.strictEqual(new Set(cancellationOperationIds).size, 1);
           bridge.observeToolCall({
             sessionId,
             update: {
@@ -835,13 +918,25 @@ describe("private Action MCP bridge", () => {
             statePath: join(root, "authority.json"),
             trustedRoot: root,
           });
+          let capabilityTime = 1000;
+          let expireBeforeActionInvocation = false;
           const bridge = yield* makeLaborerActionMcpBridge({
             authorityRepository: authority,
             bootstrapPath: join(root, "action-bootstrap"),
+            capabilityTtlMillis: 100,
             processGeneration: 17,
             root,
             rootAuthority: `${root}:retained`,
             statePath: join(root, "action-capabilities.json"),
+            testHooks: {
+              beforeRunInvocation: () => {
+                if (expireBeforeActionInvocation) {
+                  capabilityTime += 101;
+                }
+                return Promise.resolve();
+              },
+              currentTimeMillis: () => capabilityTime,
+            },
             trustedRuntimeRoot: root,
             workspaceId: "T246ACTION",
           });
@@ -1112,12 +1207,68 @@ describe("private Action MCP bridge", () => {
           assert.strictEqual(yield* Ref.get(invocationCount), 2);
           yield* closeSecondTurn;
 
+          const expiredSessionId = "session-action-246-expired";
+          const expiredInput = {
+            prompt: "This capability must expire before invocation.",
+            worktreeName: "action-246-expired",
+          };
+          const closeExpiredTurn = yield* bridge.activateTurn({
+            actionServerGeneration: currentRegistration.actionServerGeneration,
+            actions: [action],
+            scope: {
+              bindingGeneration: 5,
+              channelId: "C246EXPIRED",
+              conversationId: "workspace:T246ACTION:C246EXPIRED:3.0",
+              processGeneration: 17,
+              promptId: "prompt-246-expired",
+              rootTs: "3.0",
+              sessionId: expiredSessionId,
+              turnId: "turn-246-expired",
+              workspaceId: "T246ACTION",
+            },
+          });
+          const expiredToolCallId = "call-246-expired";
+          bridge.observeToolCall({
+            sessionId: expiredSessionId,
+            update: {
+              kind: "other",
+              name: permission,
+              rawInput: expiredInput,
+              sessionUpdate: "tool_call",
+              status: "pending",
+              title: permission,
+              toolCallId: expiredToolCallId,
+            },
+          });
+          assert.strictEqual(
+            (yield* bridge.tryAuthorizePermission(
+              allowRequest({
+                input: expiredInput,
+                permission,
+                sessionId: expiredSessionId,
+                toolCallId: expiredToolCallId,
+              })
+            ))?.outcome.outcome,
+            "selected"
+          );
+          expireBeforeActionInvocation = true;
+          const expiredCall = yield* Effect.promise(() =>
+            currentClient.callTool({
+              arguments: expiredInput,
+              name: "create-feature",
+            })
+          );
+          expireBeforeActionInvocation = false;
+          assert.strictEqual(expiredCall.isError, true);
+          assert.strictEqual(yield* Ref.get(invocationCount), 2);
+          yield* closeExpiredTurn;
+
           const staleGeneration = yield* Effect.result(
             bridge.activateTurn({
               actionServerGeneration: registration.actionServerGeneration,
               actions: [action],
               scope: {
-                bindingGeneration: 5,
+                bindingGeneration: 6,
                 channelId: "C246-stale",
                 conversationId: "workspace:T246ACTION:C246-stale:3.0",
                 processGeneration: 17,

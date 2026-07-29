@@ -108,6 +108,7 @@ export interface ConversationStreamDeliveryTestHooks {
   readonly afterRequestBeforeOutcomePersisted?: (
     operation: ConversationStreamOperation
   ) => Effect.Effect<void>;
+  readonly afterScheduledDrive?: (streamId: string) => Effect.Effect<void>;
 }
 
 interface StreamSemaphoreEntry {
@@ -655,7 +656,10 @@ export const makeConversationStreamDelivery = Effect.fn(
     );
   });
 
-  const schedule = Effect.fnUntraced(function* (
+  const schedule: (
+    streamId: string,
+    flushDeadlineMillis: number
+  ) => Effect.Effect<void> = Effect.fnUntraced(function* (
     streamId: string,
     flushDeadlineMillis: number
   ) {
@@ -670,22 +674,49 @@ export const makeConversationStreamDelivery = Effect.fn(
     if (!shouldStart) {
       return;
     }
+    let driveSucceeded = false;
     const scheduledDrive = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       if (flushDeadlineMillis > now) {
         yield* Effect.sleep(`${flushDeadlineMillis - now} millis`);
       }
       yield* drive(streamId);
+      if (options.testHooks?.afterScheduledDrive !== undefined) {
+        yield* options.testHooks.afterScheduledDrive(streamId);
+      }
+      driveSucceeded = true;
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logError("Conversation stream scheduled flush stopped", cause)
       ),
       Effect.ensuring(
-        Ref.update(scheduled, (current) => {
-          const next = new Set(current);
-          next.delete(streamId);
-          return next;
-        })
+        Effect.gen(function* () {
+          yield* Ref.update(scheduled, (current) => {
+            const next = new Set(current);
+            next.delete(streamId);
+            return next;
+          });
+          if (!driveSucceeded) {
+            return;
+          }
+          const stream = yield* findStream(streamId);
+          if (
+            stream === null ||
+            streamIsTerminal(stream) ||
+            stream.flushDeadlineMillis === null ||
+            stream.confirmedOffset >= codePointLength(stream.cumulativeText)
+          ) {
+            return;
+          }
+          yield* schedule(streamId, stream.flushDeadlineMillis);
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError(
+              "Conversation stream scheduled flush release stopped",
+              cause
+            )
+          )
+        )
       )
     );
     yield* scheduledDrive.pipe(

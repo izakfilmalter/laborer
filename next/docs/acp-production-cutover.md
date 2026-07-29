@@ -1,9 +1,10 @@
 # ACP production cutover gate and rollback
 
 `bun run start:slack` is the only authoritative production receiver. It uses
-durable ACP Conversations, the process supervisor, native Slack stream
-projection, Action/Execution MCP, interactive permissions, adoption, and
-recovery. There is no alternate production receiver or runtime selector.
+durable ACP Conversations through the root-scoped SQLite and Effect Cluster
+runtime, the process supervisor, native Slack stream projection,
+Action/Execution MCP, interactive permissions, adoption, and recovery. There is
+no alternate production receiver or runtime selector.
 
 ## Automated verification
 
@@ -16,7 +17,8 @@ recovery. There is no alternate production receiver or runtime selector.
   blocked prompts, uncertain Action/Execution outcomes, stream uncertainty, or
   outbox backlog.
 - Confirm the normal receiver is the ACP composition and the diagnostic ACP
-  canary is not running with production Slack credentials.
+  canary uses its isolated Cluster database and is not running with production
+  Slack credentials.
 
 ## Manual credentialed gate
 

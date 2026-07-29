@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import {
   type ApplicationPublicOutput,
   type ApplicationShape,
@@ -18,6 +18,7 @@ import {
 } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import {
+  type AcceptImplementationAgentResponse,
   type ConversationAgentRequest,
   type ConversationAgentShape,
   type ConversationPromptAttemptOutcome,
@@ -60,23 +61,29 @@ const acceptEvent = () =>
     scheduling: "Scheduled" as const,
   });
 
+const historyRendered =
+  '<conversation-adoption-history trust="untrusted-reference-only"><slack-message author-kind="human" author-slack-id="U-OLD" slack-ts="255.000001">old current history</slack-message></conversation-adoption-history>';
+
 const historySnapshot: ConversationAdoptionHistorySnapshot = {
-  bytes: 321,
+  bytes: Buffer.byteLength(historyRendered, "utf8"),
   degradation: "complete",
   diagnosticCodes: [],
-  digest: "history-digest-255",
+  digest: createHash("sha256")
+    .update(historyRendered, "utf8")
+    .digest("base64url"),
   firstSlackTs: "255.000001",
   lastSlackTs: "255.000001",
   messageCount: 1,
-  rendered:
-    '<conversation-adoption-history trust="untrusted-reference-only"><slack-message author-kind="human" author-slack-id="U-OLD" slack-ts="255.000001">old current history</slack-message></conversation-adoption-history>',
+  rendered: historyRendered,
   requestCount: 1,
   truncation: { age: false, bytes: false, count: false },
 };
 
 const makeApplication = (
   repository: ReferenceCodingApplicationRepository,
-  conversationAgent: ConversationAgentShape
+  conversationAgent: ConversationAgentShape,
+  adoptionHistory: ConversationAdoptionHistorySnapshot = historySnapshot,
+  historyReadStatus: "session_created" | "staged" = "staged"
 ) =>
   makeReferenceCodingApplication({
     conversationAdoptionHistory: {
@@ -87,7 +94,7 @@ const makeApplication = (
             Effect.sync(() => {
               assert.strictEqual(
                 state.conversationAdoptions[0]?.status,
-                "staged"
+                historyReadStatus
               );
               assert.strictEqual(
                 state.conversationAdoptions[0]?.cutoffSlackTs,
@@ -95,7 +102,7 @@ const makeApplication = (
               );
             })
           ),
-          Effect.as(historySnapshot)
+          Effect.as(adoptionHistory)
         ),
     },
     conversationAgent,
@@ -242,26 +249,50 @@ const writeV15State = Effect.fnUntraced(function* (
   executions: readonly ReturnType<typeof persistedExecution>[]
 ) {
   const first = executions[0];
+  const firstResponse = first?.responses[0];
+  const firstEvent = first?.events[0];
   const executionEventOutbox =
-    first === undefined
+    first === undefined ||
+    firstResponse === undefined ||
+    firstEvent === undefined
       ? []
       : [
           {
-            contentHash: "pre-linearization-content-hash",
+            contentHash: createHash("sha256")
+              .update("laborer-execution-response-content-v1\0", "utf8")
+              .update(
+                JSON.stringify({
+                  eventId: firstResponse.eventId,
+                  responseId: firstResponse.responseId,
+                  text: firstResponse.text,
+                }),
+                "utf8"
+              )
+              .digest("base64url"),
             conversationId: CONVERSATION_ID,
             executionId: first.executionId,
             outboxId: "pre-linearization-outbox-id",
-            recordId: first.responses[0]?.responseId,
+            recordId: firstResponse.responseId,
             recordKind: "response",
             sequence: 1,
             status: "staged",
           },
           {
-            contentHash: "pre-linearization-event-content-hash",
+            contentHash: createHash("sha256")
+              .update("laborer-execution-event-content-v1\0", "utf8")
+              .update(
+                JSON.stringify({
+                  eventId: firstEvent.eventId,
+                  payload: firstEvent.payload,
+                  source: firstEvent.source,
+                }),
+                "utf8"
+              )
+              .digest("base64url"),
             conversationId: CONVERSATION_ID,
             executionId: first.executionId,
             outboxId: "pre-linearization-event-outbox-id",
-            recordId: first.events[0]?.eventId,
+            recordId: firstEvent.eventId,
             recordKind: "event",
             sequence: 2,
             status: "staged",
@@ -604,10 +635,71 @@ describe("issue #255 Conversation adoption", () => {
           readFile(path, "utf8")
         );
         assert.ok(!persistedText.includes("old current history"));
-        assert.ok(persistedText.includes("history-digest-255"));
+        assert.ok(persistedText.includes(historySnapshot.digest));
 
         yield* runTurn(application, 2);
         assert.strictEqual(requests.length, 1);
+      })
+    )
+  );
+
+  it.live("rejects malformed history snapshots before ACP side effects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changedRendered = historySnapshot.rendered.replace(
+          "old current history",
+          "different history with a stale digest"
+        );
+        const oversizedRendered = "x".repeat(256 * 1024 + 1);
+        const malformedSnapshots: readonly ConversationAdoptionHistorySnapshot[] =
+          [
+            {
+              ...historySnapshot,
+              bytes: Buffer.byteLength(changedRendered, "utf8"),
+              rendered: changedRendered,
+            },
+            {
+              ...historySnapshot,
+              bytes: Buffer.byteLength(oversizedRendered, "utf8"),
+              digest: createHash("sha256")
+                .update(oversizedRendered, "utf8")
+                .digest("base64url"),
+              rendered: oversizedRendered,
+            },
+          ];
+
+        for (const [index, snapshot] of malformedSnapshots.entries()) {
+          const root = yield* makeTempDirectoryScoped(
+            `laborer-255-invalid-history-${index}-`
+          );
+          const path = join(root, "application.json");
+          yield* createLegacyV14Conversation(path, root);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          let agentCalls = 0;
+          const application = yield* makeApplication(
+            repository,
+            {
+              handle: () =>
+                Effect.sync(() => {
+                  agentCalls += 1;
+                  return [];
+                }),
+            },
+            snapshot
+          );
+
+          const failure = yield* Effect.flip(runTurn(application, 2));
+          assert.ok(failure instanceof HandlerFailure);
+          assert.strictEqual(
+            failure.safeDetail,
+            "Conversation adoption history snapshot is invalid"
+          );
+          assert.strictEqual(agentCalls, 0);
+          const adoption = (yield* repository.load).conversationAdoptions[0];
+          assert.strictEqual(adoption?.status, "staged");
+          assert.strictEqual(adoption?.historyDigest, null);
+          assert.strictEqual(adoption?.sessionCreationAttemptedAt, null);
+        }
       })
     )
   );
@@ -659,6 +751,111 @@ describe("issue #255 Conversation adoption", () => {
           const restartFailure = yield* Effect.flip(runTurn(restarted, 2));
           assert.ok(restartFailure instanceof ConversationBlocked);
           assert.strictEqual(calls, 1);
+        })
+      )
+  );
+
+  it.live(
+    "blocks restart when Slack history changes after the fresh session is durably created",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-255-history-change-"
+          );
+          const path = join(root, "application.json");
+          yield* createLegacyV14Conversation(path, root);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const sessionCreated = yield* Deferred.make<void>();
+          const interrupted = yield* makeApplication(repository, {
+            handle: (request) =>
+              Effect.gen(function* () {
+                const bindingStore = request.sessionBindingStore;
+                if (
+                  bindingStore === undefined ||
+                  bindingStore.beginSessionCreation === undefined
+                ) {
+                  return yield* HandlerFailure.make({
+                    category: "protocol",
+                    safeDetail: "adoption store unavailable",
+                  });
+                }
+                yield* bindingStore.beginSessionCreation();
+                yield* bindingStore.replace(null, {
+                  ambiguousPromptId: null,
+                  cwd: "/tmp/laborer-255-history-change",
+                  cwdIdentity: "device:inode",
+                  effectiveMetadata: null,
+                  effectiveMetadataFingerprint: null,
+                  initializationPhase: "pending",
+                  introducedParticipantIds: [],
+                  lastAttachedProcessGeneration: 1,
+                  pendingParticipantIds: [],
+                  requiresReplacement: false,
+                  sessionId: "fresh-acp-session-before-history-change",
+                });
+                yield* Deferred.succeed(sessionCreated, undefined);
+                return yield* Effect.never;
+              }),
+          });
+          const firstRun = yield* Effect.forkChild(runTurn(interrupted, 2));
+          yield* Deferred.await(sessionCreated);
+          yield* Fiber.interrupt(firstRun);
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]?.status,
+            "session_created"
+          );
+
+          const changedRendered = historySnapshot.rendered.replace(
+            "old current history",
+            "edited after session creation"
+          );
+          const changedHistory = {
+            ...historySnapshot,
+            bytes: Buffer.byteLength(changedRendered, "utf8"),
+            digest: createHash("sha256")
+              .update(changedRendered, "utf8")
+              .digest("base64url"),
+            rendered: changedRendered,
+          };
+          let restartCalls = 0;
+          const restartedRepository = yield* makeFileApplicationRepository(
+            path,
+            root
+          );
+          const restarted = yield* makeApplication(
+            restartedRepository,
+            {
+              handle: () =>
+                Effect.sync(() => {
+                  restartCalls += 1;
+                  return [];
+                }),
+              recover: () =>
+                Effect.sync(() => {
+                  restartCalls += 1;
+                  return [];
+                }),
+            },
+            changedHistory,
+            "session_created"
+          );
+          const failure = yield* Effect.flip(runTurn(restarted, 2));
+          assert.ok(failure instanceof ConversationBlocked);
+          assert.strictEqual(restartCalls, 0);
+          const adoption = (yield* restartedRepository.load)
+            .conversationAdoptions[0];
+          assert.strictEqual(adoption?.status, "unresolved");
+          assert.strictEqual(
+            adoption?.unresolvedDiagnosticCode,
+            "history-digest-changed-before-seed"
+          );
+          assert.strictEqual(adoption?.historyDigest, historySnapshot.digest);
+          assert.ok(
+            adoption?.historyDiagnosticCodes.includes(
+              "history-digest-changed-before-seed"
+            )
+          );
         })
       )
   );
@@ -796,6 +993,234 @@ describe("issue #255 Conversation adoption", () => {
             );
             assert.strictEqual(requests.length, 1);
           }
+        })
+      )
+  );
+
+  it.live(
+    "keeps recovered live-Execution evidence behind the adoption linearization point",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-256-recovery-linearization-"
+          );
+          const path = join(root, "application.json");
+          const execution = persistedExecution(
+            "execution-recovery-linearization",
+            "running"
+          );
+          yield* writeV15State(path, [execution]);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const requests: ConversationAgentRequest[] = [];
+          const application = yield* makeReferenceCodingApplication({
+            conversationAdoptionHistory: {
+              read: () => Effect.succeed(historySnapshot),
+            },
+            conversationAgent: adoptingAgent(requests),
+            implementationAgent: {
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    sessionId: execution.implementationSessionId,
+                  },
+                  status: "available" as const,
+                }),
+              recover: () =>
+                Effect.succeed({
+                  completion: Effect.never,
+                  resume: () => Effect.void,
+                  sessionId: execution.implementationSessionId,
+                }),
+              start: () =>
+                Effect.die(new Error("recovery must not start a replacement")),
+            },
+            now: () => 255_000,
+            repository,
+            worktreeManager: {
+              create: () =>
+                Effect.die(new Error("recovery must not create a worktree")),
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    workingDirectory: execution.workingDirectory,
+                  },
+                  status: "available" as const,
+                }),
+            },
+          });
+          const acceptedBeforeAdoption: ExternalInputEvent[] = [];
+          yield* application.recover?.((event) =>
+            Effect.sync(() => {
+              acceptedBeforeAdoption.push(event);
+              return {
+                decision: { _tag: "Accepted" as const, eventId: event.eventId },
+                scheduling: "Scheduled" as const,
+              };
+            })
+          ) ?? Effect.void;
+
+          assert.deepStrictEqual(acceptedBeforeAdoption, []);
+          assert.deepStrictEqual(
+            (yield* repository.load).executionEventOutbox.map(
+              (item) => item.status
+            ),
+            ["staged", "staged"]
+          );
+
+          yield* runTurn(application, 2);
+          assert.strictEqual(requests.length, 1);
+          assert.ok(
+            !(requests[0]?.adoptionHistory ?? "").includes(
+              "private implementation output"
+            )
+          );
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]?.status,
+            "adopted"
+          );
+        })
+      )
+  );
+
+  it.live(
+    "queues an implementation response arriving after linearization for the adopted ACP binding",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-256-response-during-adoption-"
+          );
+          const path = join(root, "application.json");
+          const execution = persistedExecution(
+            "execution-response-during-adoption",
+            "running"
+          );
+          yield* writeV15State(path, [execution]);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const historyReadStarted = yield* Deferred.make<void>();
+          const releaseHistoryRead = yield* Deferred.make<void>();
+          let acceptResponse: AcceptImplementationAgentResponse | undefined;
+          const requests: ConversationAgentRequest[] = [];
+          const adoptionAgent = adoptingAgent(requests);
+          const application = yield* makeReferenceCodingApplication({
+            conversationAdoptionHistory: {
+              read: () =>
+                Deferred.succeed(historyReadStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseHistoryRead)),
+                  Effect.as(historySnapshot)
+                ),
+            },
+            conversationAgent: {
+              handle: (request, publish) =>
+                request.adoptionHistory === undefined
+                  ? Effect.sync(() => {
+                      requests.push(request);
+                      return [];
+                    })
+                  : adoptionAgent.handle(request, publish),
+            },
+            implementationAgent: {
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    sessionId: execution.implementationSessionId,
+                  },
+                  status: "available" as const,
+                }),
+              recover: (_request, accept) => {
+                acceptResponse = accept;
+                return Effect.succeed({
+                  completion: Effect.never,
+                  resume: () => Effect.void,
+                  sessionId: execution.implementationSessionId,
+                });
+              },
+              start: () =>
+                Effect.die(new Error("recovery must not start a replacement")),
+            },
+            now: () => 255_000,
+            repository,
+            worktreeManager: {
+              create: () =>
+                Effect.die(new Error("recovery must not create a worktree")),
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    workingDirectory: execution.workingDirectory,
+                  },
+                  status: "available" as const,
+                }),
+            },
+          });
+          const accepted: ExternalInputEvent[] = [];
+          const acceptDuringAdoption = (event: ExternalInputEvent) =>
+            Effect.sync(() => {
+              accepted.push(event);
+              return {
+                decision: { _tag: "Accepted" as const, eventId: event.eventId },
+                scheduling: "Scheduled" as const,
+              };
+            });
+          yield* application.recover?.(acceptDuringAdoption) ?? Effect.void;
+          assert.ok(acceptResponse !== undefined);
+
+          const adoption = yield* Effect.forkChild(
+            application.handle(
+              participantEvent(2),
+              () => Effect.void,
+              acceptDuringAdoption
+            )
+          );
+          yield* Deferred.await(historyReadStarted);
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]
+              ?.executionEventOutboxHighWatermark,
+            2
+          );
+
+          yield* acceptResponse({
+            responseId: "response-during-adoption",
+            text: "implementation response during adoption",
+          });
+          assert.deepStrictEqual(
+            accepted.map((event) => event.eventId),
+            [
+              "execution-response-during-adoption:response:response-during-adoption",
+            ]
+          );
+          yield* Deferred.succeed(releaseHistoryRead, undefined);
+          yield* Fiber.join(adoption);
+
+          const queued = accepted[0];
+          assert.ok(queued !== undefined);
+          yield* application.handle(queued, () => Effect.void, acceptEvent);
+          assert.strictEqual(requests.length, 2);
+          assert.strictEqual(requests[1]?.source, "implementation-agent");
+          assert.ok(
+            requests[1]?.input.includes(
+              "implementation response during adoption"
+            )
+          );
+          const adoptedBindingStore = requests[1]?.sessionBindingStore;
+          assert.ok(adoptedBindingStore !== undefined);
+          assert.strictEqual(
+            (yield* adoptedBindingStore.load)?.sessionId,
+            "fresh-acp-session-255"
+          );
+          const response =
+            (yield* repository.load).executions[0]?.responses.find(
+              (candidate) => candidate.responseId === "response-during-adoption"
+            );
+          assert.strictEqual(response?.status, "delivered");
         })
       )
   );

@@ -451,6 +451,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
       let stopCause: AcpProcessStopCause = "initialization_failed";
       let becameReady = false;
       let readyAt: number | null = null;
+      let observedStopPhase: "idle" | "prompt" | "startup" | null = null;
       const observeHealth = (health: AcpConversationProcessHealth): void => {
         if (health.generation !== generation) {
           return;
@@ -460,6 +461,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
           return;
         }
         if (health.status === "closed" || health.status === "quarantined") {
+          observedStopPhase ??= stopPhaseFor(becameReady, activePrompts);
           available.current = false;
           stopCause = becameReady ? "transport_lost" : stopCause;
           runPrivate(Deferred.succeed(lost, undefined).pipe(Effect.asVoid));
@@ -546,7 +548,8 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
             code: exit.code,
             expected: expectedShutdown,
             generation,
-            phase: stopPhaseFor(becameReady, activePrompts),
+            phase:
+              observedStopPhase ?? stopPhaseFor(becameReady, activePrompts),
             signal: exit.signal,
             timestamp: stoppedAt,
           })

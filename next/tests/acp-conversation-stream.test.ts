@@ -9,6 +9,7 @@ import {
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
 import { terminateSupervisedProcess } from "../src/prototype/process-supervisor.ts";
+import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -21,6 +22,7 @@ import type {
   PublishConversationAgentMessage,
 } from "../src/reference-coding-application.ts";
 import { makeReferenceCodingApplication } from "../src/reference-coding-application.ts";
+import { isProcessRunning } from "./support/process-state.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const projectRoot = process.cwd();
@@ -34,8 +36,7 @@ const fakeOpenCodePath = resolve(
 );
 const EXPECTED_PARTIAL = "**Streaming** from ACP";
 const EXPECTED_COMPLETE = `${EXPECTED_PARTIAL}\n\n- complete\n- unchanged`;
-const EXPECTED_BLOCKED_NOTICE =
-  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
+const EXPECTED_BLOCKED_NOTICE = RECOVERY_NOTICE_TEXT.blocked;
 const EXPECTED_SEMANTIC_MESSAGES = [
   "**First** message",
   "Second message",
@@ -98,14 +99,7 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
   assert.ok(Number.isSafeInteger(pid) && pid > 0);
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
   while (Date.now() < deadline) {
-    const isRunning = yield* Effect.sync(() => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const isRunning = yield* Effect.sync(() => isProcessRunning(pid));
     if (!isRunning) {
       return;
     }

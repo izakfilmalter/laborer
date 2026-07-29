@@ -79,6 +79,10 @@ import {
   retainTrustedDirectory,
   verifyRetainedDirectory,
 } from "./path-safety.ts";
+import {
+  type RecoveryNoticeKind,
+  recoveryNoticeText,
+} from "./recovery-notice.ts";
 
 export interface ActivationContextRequest {
   readonly activationTs: string;
@@ -1725,17 +1729,10 @@ const applicationEventFailureNoticeId = (eventId: string): string =>
 const GENERIC_TURN_FAILURE_NOTICE =
   "This conversation turn could not be completed. Please try again.";
 
-const BLOCKED_NOTICE =
-  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
-const ABANDONED_NOTICE =
-  "The uncertain agent turn was abandoned by an operator. Later conversation work can now continue.";
-const RETRY_NOTICE =
-  "An operator acknowledged possible duplicate side effects and retried the uncertain agent turn in a replacement session.";
-
 const recoveryNoticeId = (
   ownerKind: ConversationStreamOwnerKind,
   ownerId: string,
-  kind: "abandon" | "blocked" | "retry",
+  kind: RecoveryNoticeKind,
   correlationId: string
 ): string => {
   const correlationDigest = createHash("sha256")
@@ -1743,13 +1740,6 @@ const recoveryNoticeId = (
     .update(correlationId, "utf8")
     .digest("base64url");
   return `notice:${ownerTurnId(ownerKind, ownerId)}:recovery:${kind}:${correlationDigest}`;
-};
-
-const recoveryNoticeText = (kind: "abandon" | "blocked" | "retry"): string => {
-  if (kind === "blocked") {
-    return BLOCKED_NOTICE;
-  }
-  return kind === "abandon" ? ABANDONED_NOTICE : RETRY_NOTICE;
 };
 
 const ownerTurnId = (
@@ -1764,7 +1754,7 @@ const appendRecoveryNotice = (
   thread: WorkThreadState,
   ownerKind: ConversationStreamOwnerKind,
   ownerId: string,
-  kind: "abandon" | "blocked" | "retry",
+  kind: RecoveryNoticeKind,
   correlationId: string
 ): readonly OutboundItem[] => {
   const id = recoveryNoticeId(ownerKind, ownerId, kind, correlationId);
@@ -2691,13 +2681,11 @@ const resolveBlockedTurn = (
     request.kind === "retry"
       ? TurnState.make({
           ...turn,
-          attempts: [
-            ...turn.attempts,
-            HandlerAttempt.make({
-              number: turn.attempts.length + 1,
-              status: "running",
-            }),
-          ],
+          attempts: turn.attempts.map((attempt, attemptIndex) =>
+            attemptIndex === turn.attempts.length - 1
+              ? HandlerAttempt.make({ ...attempt, status: "running" })
+              : attempt
+          ),
           blocked: null,
           status: "running",
         })

@@ -1530,6 +1530,115 @@ describe("durable Conversation stream delivery", () => {
   );
 
   it.effect(
+    "does not strand a finalizing tiny delta while a scheduled flush releases ownership",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-coalesce-release-race-"
+          );
+          const statePath = join(root, "runner.json");
+          const rootTs = "1700000003.000002";
+          const threadId = canonicalThreadId("CWORK", rootTs, "TWORK");
+          const calls: string[] = [];
+          const scheduledDriveFinished = yield* Deferred.make<void>();
+          const scheduledDriveRedriven = yield* Deferred.make<void>();
+          const releaseScheduledOwnership = yield* Deferred.make<void>();
+          const context = yield* Layer.build(
+            makeFileStoreLayer(LABORER_SLACK_ID, statePath, root)
+          );
+          const store = yield* PrototypeStore.pipe(Effect.provide(context));
+          yield* store.accept(
+            normalizedEvent({
+              authorSlackId: "UASKER",
+              channelId: "CWORK",
+              eventId: "event:coalesce-release-race",
+              messageTs: rootTs,
+              text: `<@${LABORER_SLACK_ID}> stream`,
+              workspaceId: "TWORK",
+            })
+          );
+          const owner = yield* claimParticipantOwner(store, threadId);
+          let scheduledDrives = 0;
+          const delivery = yield* makeConversationStreamDelivery({
+            policy: {
+              ...immediateConversationStreamDeliveryPolicy,
+              coalesceCodePoints: 4,
+              maxCoalesceMillis: 1000,
+            },
+            slack: {
+              postThreadMessage: ({ text }) =>
+                Effect.sync(() => {
+                  calls.push(`post:${text}`);
+                  return { ts: "coalesce-release-message" };
+                }),
+              readActivationContext: () => Effect.succeed([]),
+              updateThreadMessage: ({ text }) =>
+                Effect.sync(() => {
+                  calls.push(`update:${text}`);
+                }),
+            },
+            store,
+            testHooks: {
+              afterScheduledDrive: () =>
+                Effect.gen(function* () {
+                  scheduledDrives += 1;
+                  if (scheduledDrives === 1) {
+                    yield* Deferred.succeed(scheduledDriveFinished, undefined);
+                    yield* Deferred.await(releaseScheduledOwnership);
+                  } else if (scheduledDrives === 2) {
+                    yield* Deferred.succeed(scheduledDriveRedriven, undefined);
+                  }
+                }),
+            },
+          });
+          const publisher = delivery.publisherFor(owner);
+          yield* publisher.publish(
+            ApplicationConversationMessageChunk.make({
+              messageId: "assistant-message",
+              sequence: 0,
+              text: "A",
+            })
+          );
+          yield* publisher.publish(
+            ApplicationConversationMessageChunk.make({
+              messageId: "assistant-message",
+              sequence: 1,
+              text: "b",
+            })
+          );
+
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(scheduledDriveFinished);
+          assert.deepStrictEqual(calls, ["post:A", "update:Ab"]);
+          yield* store.requestConversationStreamFinalization({
+            ...owner,
+            terminalReason: "completed",
+          });
+          yield* publisher.publish(
+            ApplicationConversationMessageChunk.make({
+              messageId: "assistant-message",
+              sequence: 2,
+              text: "c",
+            })
+          );
+          yield* Deferred.succeed(releaseScheduledOwnership, undefined);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(scheduledDriveRedriven);
+
+          assert.deepStrictEqual(calls, ["post:A", "update:Ab", "update:Abc"]);
+          const state = yield* store.snapshot;
+          assert.strictEqual(state.conversationStreams.length, 0);
+          assert.strictEqual(
+            state.conversationStreamTombstones[0]?.lifecycle,
+            "stopped"
+          );
+        })
+      )
+  );
+
+  it.effect(
     "marks a response-lost native start unresolved after restart and never starts duplicate public text",
     () =>
       Effect.scoped(

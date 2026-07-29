@@ -19,6 +19,56 @@ const EXIT_REJECTED = 3;
 const EXIT_UNAVAILABLE = 4;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
+const USAGE = `Laborer recovery CLI — inspect and resolve uncertain agent turns.
+
+Usage
+  bun run --cwd next recovery <command> [options]
+
+Commands
+  health   Report runtime readiness and bounded reason codes per workspace.
+  list     List attempts that are blocked awaiting an operator decision.
+  inspect  Show bounded, opaque correlated evidence for one blocked attempt.
+  abandon  Drop the uncertain attempt and continue in a replacement agent session.
+  retry    Rerun the uncertain attempt in a replacement agent session. This is
+           the only command that can duplicate external side effects.
+
+Options
+  --workspace <slack-team-id>  Required by inspect, abandon, and retry. Omit it
+                               to run health or list across every workspace.
+  --attempt <attempt-id>       Required by inspect, abandon, and retry.
+  --decision-id <id>           Required by abandon and retry. Replaying the same
+                               ID is idempotent; a different decision for the
+                               same attempt fails closed.
+  --acknowledge-duplicate-side-effects
+                               Required by retry, spelled in full, to confirm
+                               that external side effects may be duplicated.
+  --root <path>                Laborer root. Defaults to the working directory.
+  --help, -h                   Show this help.
+
+Output
+  Every command prints exactly one JSON line on stdout:
+    {"ok":true,"result":...}     the command was accepted
+    {"ok":false,"error":"..."}   the command was rejected or unavailable
+  Usage errors additionally print an explanation and this help on stderr.
+  Exit codes: 0 accepted, 2 usage, 3 rejected, 4 runtime unavailable.
+
+Resolving a paused work thread
+  1. Find the blocked attempts:
+       bun run --cwd next recovery list
+  2. Review the bounded evidence for one of them:
+       bun run --cwd next recovery inspect --workspace <team> --attempt <attempt>
+  3. Record one decision under a new unique --decision-id:
+       bun run --cwd next recovery abandon --workspace <team> --attempt <attempt> \\
+         --decision-id <unique-id>
+     Choose retry instead only when duplicated external side effects are
+     acceptable:
+       bun run --cwd next recovery retry --workspace <team> --attempt <attempt> \\
+         --decision-id <unique-id> --acknowledge-duplicate-side-effects
+
+Slack shows only the sanitized paused notice and the sanitized outcome; the
+work thread resumes on its own once one decision is recorded.
+`;
+
 interface CliOptions {
   readonly acknowledgeDuplicateSideEffects: boolean;
   readonly attemptId: string | null;
@@ -53,7 +103,11 @@ const parseOptions = (args: readonly string[]): CliOptions => {
     command !== "abandon" &&
     command !== "retry"
   ) {
-    return failUsage("expected recovery health|list|inspect|abandon|retry");
+    return failUsage(
+      `expected one command: health, list, inspect, abandon, or retry${
+        command === undefined ? "" : ` (received "${command}")`
+      }`
+    );
   }
   let acknowledgeDuplicateSideEffects = false;
   let attemptId: string | null = null;
@@ -91,14 +145,18 @@ const parseOptions = (args: readonly string[]): CliOptions => {
     command !== "health" &&
     (workspaceId === null || attemptId === null)
   ) {
-    return failUsage("--workspace and --attempt are required");
+    return failUsage(
+      `${command} needs the exact attempt it resolves: pass --workspace <slack-team-id> and --attempt <attempt-id> (run "recovery list" to find them)`
+    );
   }
   if ((command === "abandon" || command === "retry") && decisionId === null) {
-    return failUsage("--decision-id is required");
+    return failUsage(
+      `${command} needs --decision-id <id> so the same decision can be replayed idempotently`
+    );
   }
   if (command === "retry" && !acknowledgeDuplicateSideEffects) {
     return failUsage(
-      "retry requires --acknowledge-duplicate-side-effects (abbreviations are not accepted)"
+      "retry may duplicate external side effects, so it requires --acknowledge-duplicate-side-effects spelled in full (abbreviations are not accepted); use abandon instead to continue in a replacement agent session"
     );
   }
   return {
@@ -331,8 +389,17 @@ const offlineResponse = async (options: CliOptions): Promise<unknown> => {
   return { ok: true, result };
 };
 
+const helpRequested = (args: readonly string[]): boolean =>
+  args[0] === "help" ||
+  args.some((argument) => argument === "--help" || argument === "-h");
+
 const main = async (): Promise<number> => {
-  const options = parseOptions(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  if (helpRequested(args)) {
+    process.stdout.write(USAGE);
+    return EXIT_OK;
+  }
+  const options = parseOptions(args);
   let response: unknown;
   try {
     response =
@@ -363,6 +430,11 @@ try {
       : {};
   const exitCode =
     typeof error.exitCode === "number" ? error.exitCode : EXIT_UNAVAILABLE;
+  if (exitCode === EXIT_USAGE) {
+    process.stderr.write(
+      `${typeof error.message === "string" ? error.message : "invalid recovery request"}\n\n${USAGE}`
+    );
+  }
   process.stdout.write(
     `${JSON.stringify({
       error:

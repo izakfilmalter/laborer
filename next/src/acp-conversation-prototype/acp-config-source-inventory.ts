@@ -52,6 +52,7 @@ interface InventoryFile {
   readonly relativePath: string;
   readonly scope: "global-auth" | "project" | "xdg-config";
   readonly size: number;
+  readonly sourceId: string;
 }
 
 interface InventoryRoot {
@@ -59,6 +60,7 @@ interface InventoryRoot {
   readonly includeResources: boolean;
   readonly path: string;
   readonly scope: InventoryFile["scope"];
+  readonly sourceId: string;
 }
 
 const inventoryFailure = (): HandlerFailure =>
@@ -399,6 +401,7 @@ const recordFile = async (options: {
     category: categoryFor(options.relativePath),
     contentDigest: createHash("sha256").update(content).digest("base64url"),
     relativePath: options.relativePath.split(sep).join("/"),
+    sourceId: options.root.sourceId,
     scope: options.root.scope,
     size: content.byteLength,
   });
@@ -586,54 +589,79 @@ const sourceRoots = (options: {
   readonly environment: NodeJS.ProcessEnv;
   readonly projectRoot: string;
 }): readonly InventoryRoot[] => {
-  const roots: InventoryRoot[] = [
+  const disableProjectConfig =
+    options.environment.OPENCODE_DISABLE_PROJECT_CONFIG?.toLowerCase();
+  const ancestors =
+    disableProjectConfig === "true" || disableProjectConfig === "1"
+      ? []
+      : projectAncestors(options.projectRoot);
+  const roots: InventoryRoot[] = ancestors.flatMap((ancestor, index) => [
     {
       includeResources: false,
       includeLegacyConfig: false,
-      path: options.projectRoot,
-      scope: "project",
+      path: ancestor,
+      sourceId: `project-config-${index}`,
+      scope: "project" as const,
     },
     {
       includeResources: true,
       includeLegacyConfig: false,
-      path: resolve(options.projectRoot, ".opencode"),
-      scope: "project",
+      path: resolve(ancestor, ".opencode"),
+      sourceId: `project-resources-${index}`,
+      scope: "project" as const,
     },
-  ];
-  const xdgConfigHome = options.environment.XDG_CONFIG_HOME;
-  const home = options.environment.HOME;
+  ]);
+  const xdgConfigHome = nonEmptyEnvironmentValue(
+    options.environment.XDG_CONFIG_HOME
+  );
+  const home = nonEmptyEnvironmentValue(options.environment.HOME) ?? homedir();
+  const openCodeHome =
+    nonEmptyEnvironmentValue(options.environment.OPENCODE_TEST_HOME) ?? home;
   if (xdgConfigHome !== undefined) {
     roots.push({
       includeResources: true,
       includeLegacyConfig: true,
       path: resolve(xdgConfigHome, "opencode"),
+      sourceId: "xdg-config",
       scope: "xdg-config",
     });
-  } else if (home !== undefined) {
+  } else {
     roots.push({
       includeResources: true,
       includeLegacyConfig: true,
       path: resolve(home, ".config", "opencode"),
+      sourceId: "home-config",
       scope: "xdg-config",
     });
   }
-  const dataHome = options.environment.XDG_DATA_HOME;
+  const dataHome = nonEmptyEnvironmentValue(options.environment.XDG_DATA_HOME);
   if (dataHome !== undefined) {
     roots.push({
       includeResources: false,
       includeLegacyConfig: false,
       path: resolve(dataHome, "opencode"),
+      sourceId: "xdg-auth",
       scope: "global-auth",
     });
-  } else if (home !== undefined) {
+  } else {
     roots.push({
       includeResources: false,
       includeLegacyConfig: false,
       path: resolve(home, ".local", "share", "opencode"),
+      sourceId: "home-auth",
       scope: "global-auth",
     });
   }
-  const customConfigDirectory = options.environment.OPENCODE_CONFIG_DIR;
+  roots.push({
+    includeLegacyConfig: false,
+    includeResources: true,
+    path: resolve(openCodeHome, ".opencode"),
+    sourceId: "opencode-home",
+    scope: "xdg-config",
+  });
+  const customConfigDirectory = nonEmptyEnvironmentValue(
+    options.environment.OPENCODE_CONFIG_DIR
+  );
   if (customConfigDirectory !== undefined) {
     const path = resolve(options.projectRoot, customConfigDirectory);
     assertContained(resolve(options.projectRoot), path);
@@ -641,6 +669,7 @@ const sourceRoots = (options: {
       includeLegacyConfig: false,
       includeResources: true,
       path,
+      sourceId: "custom-config-directory",
       scope: "project",
     });
   }
@@ -674,7 +703,9 @@ export const inventoryAcpConfigSources = Effect.fn("inventoryAcpConfigSources")(
           }
           await collectRoot(root, collected, incompleteReasons);
         }
-        const customConfig = options.environment.OPENCODE_CONFIG;
+        const customConfig = nonEmptyEnvironmentValue(
+          options.environment.OPENCODE_CONFIG
+        );
         if (customConfig !== undefined) {
           const projectRoot = resolve(options.projectRoot);
           const path = resolve(projectRoot, customConfig);
@@ -689,20 +720,21 @@ export const inventoryAcpConfigSources = Effect.fn("inventoryAcpConfigSources")(
               includeLegacyConfig: false,
               includeResources: false,
               path: projectRoot,
+              sourceId: "custom-config-file",
               scope: "project",
             },
           });
         }
         collected.sort((left, right) =>
-          `${left.scope}:${left.relativePath}`.localeCompare(
-            `${right.scope}:${right.relativePath}`
+          `${left.scope}:${left.sourceId}:${left.relativePath}`.localeCompare(
+            `${right.scope}:${right.sourceId}:${right.relativePath}`
           )
         );
         const uniqueFiles = collected.filter(
           (file, index) =>
             index === 0 ||
-            `${file.scope}:${file.relativePath}` !==
-              `${collected[index - 1]?.scope}:${collected[index - 1]?.relativePath}`
+            `${file.scope}:${file.sourceId}:${file.relativePath}` !==
+              `${collected[index - 1]?.scope}:${collected[index - 1]?.sourceId}:${collected[index - 1]?.relativePath}`
         );
         return {
           files: uniqueFiles,

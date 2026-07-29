@@ -26,8 +26,9 @@
 > delivered stream is not yet guaranteed.
 >
 > **DEDICATED LIVE ACP CANARY.** `start:acp-canary` composes the production ACP
-> runtime under isolated credentials and state. It is a manual gate and must
-> prove native streaming plus one Action/Execution scene.
+> adapter through an isolated SQLite- and Cluster-backed root runtime under
+> dedicated credentials and state. It is a manual gate and must prove native
+> streaming plus one Action/Execution scene.
 >
 > **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
 > the normal workspace registry, root lock, durable Runner and file Application
@@ -131,9 +132,9 @@ counts as semantic output for bounded `max_tokens` and `max_turn_requests`
 completion. Text that merely contains or ends with the token remains visible;
 transport output and message bounds still include held text.
 
-Existing pre-ACP Conversations are adopted through the v15 migration ledger on
-their first ACP-handled participant turn, provided they have no ACP binding or
-live Execution. Laborer durably fixes the triggering-message cutoff before a
+Existing pre-ACP Conversations are adopted through a versioned migration ledger
+on their first ACP-handled participant turn, provided they have no ACP binding.
+Laborer durably fixes the triggering-message cutoff before a
 dedicated `conversations.replies` read, then retains the newest chronological
 suffix up to 90 days, 200 messages, and 256 KiB including trust and degradation
 markers. The snapshot uses current visible Slack text, excludes the triggering
@@ -145,8 +146,19 @@ range, truncation, and sanitized diagnostic codes. A fresh ACP session and its
 deterministic seed attempt are never blindly repeated: an uncorrelatable
 `session/new` boundary becomes unresolved for operator recovery, while a
 persisted binding resumes the existing fresh ACP session and seed admission uses
-the normal no-blind-replay prompt ledger. Later participant and Execution events
-remain in the Runner FIFO until adoption is terminal.
+the normal no-blind-replay prompt ledger. If an interrupted adoption observes a
+different current-history digest before the seed is admitted, it preserves the
+first bounded snapshot evidence and becomes explicitly unresolved rather than
+silently changing the seed. Later participant and Execution events remain in the
+Runner FIFO until adoption is terminal.
+Live Executions keep their existing identity, owner, lifecycle, worktree, branch,
+implementation session, prompt queue, responses, and recovery evidence. Adoption
+adds a bounded, redacted, untrusted-reference snapshot of the owning
+Conversation's Executions to the seed; it does not copy implementation prompts or
+responses into public context. Startup holds pre-linearization Execution outbox
+evidence for a legacy Conversation until the participant-triggered adoption fixes
+its watermark. New Execution evidence then queues behind that point and targets
+only the adopted ACP binding.
 
 ACP tool permissions are fail-closed and one-shot. Laborer posts only a safe
 category, the authorized Slack actor, and **Allow once** or **Reject** controls;
@@ -202,9 +214,10 @@ manual live-acceptance gate, and rollback policy are in
 ## Run the production-runtime OpenCode ACP canary later
 
 This Slack-connected live step is deliberately **not** part of automated
-acceptance. The canary uses the production ACP supervisor, Action/Execution MCP,
-permission interactions, durable native stream projection, adoption, and
-recovery under dedicated Slack credentials and the isolated
+acceptance. The canary uses the production ACP supervisor, SQLite- and
+Cluster-backed Conversation runtime, Action/Execution MCP, permission
+interactions, durable native stream projection, adoption, and recovery under
+dedicated Slack credentials and the isolated
 `acp-canary:<team>` runtime namespace. It has no legacy Conversation path.
 
 For a later human smoke test, create and install a **separate Slack app** for the
@@ -277,8 +290,20 @@ which proves the prompt was not submitted. For ambiguous or otherwise
 non-pending running turns, recovery
 resumes or safely rebinds the ACP session to reconcile process health, emits no
 prompt or public output, and returns a conservative failure so the Application
-keeps the turn running rather than claiming model completion. Issue #253 will
-add operator resolution and explicit blocking for this ambiguous state. On
+keeps the turn running rather than claiming model completion. Issue #253 keeps
+that owner durably blocked with later participant, permission, and Execution
+events queued behind it. The owner-only local recovery service can list and
+inspect bounded opaque correlations across the workspace, Conversation, turn,
+ACP process and binding generations, Agent session, Actions, Executions, and
+Slack streams. An audited operator decision either abandons into a replacement
+session or allocates a fresh retry attempt only after duplicate-side-effect risk
+is explicitly acknowledged; duplicate decisions are idempotent and conflicts
+fail closed. Slack receives one sanitized paused notice that names the pause,
+what stays queued, and both operator choices, followed by one sanitized resumed
+notice naming the decision that was taken; that copy lives in
+`src/prototype/recovery-notice.ts` and never carries prompt contents,
+identifiers, or private evidence. `bun run --cwd next recovery --help` documents
+the matching operator flow. On
 restart, stable ACP v1
 `session/resume` receives the original cwd and a freshly readiness-verified copy
 of the exact workspace memory MCP configuration; `session/load` and transcript

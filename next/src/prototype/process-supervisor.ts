@@ -33,19 +33,27 @@ const signalProcessGroup = (
 const processGroupMembers = async (
   processGroupId: number
 ): Promise<readonly number[]> => {
-  const { stdout } = await execFilePromise("/bin/ps", ["-axo", "pid=,pgid="], {
-    maxBuffer: 1024 * 1024,
-  });
+  const { stdout } = await execFilePromise(
+    "/bin/ps",
+    ["-axo", "pid=,pgid=,stat="],
+    {
+      maxBuffer: 1024 * 1024,
+    }
+  );
   return stdout
     .trim()
     .split("\n")
     .flatMap((line) => {
-      const [pidSource, groupSource] = line
+      const [pidSource, groupSource, status] = line
         .trim()
-        .split(PROCESS_COLUMNS_SEPARATOR, 2);
+        .split(PROCESS_COLUMNS_SEPARATOR, 3);
       const pid = Number(pidSource);
       const group = Number(groupSource);
-      return group === processGroupId && Number.isSafeInteger(pid) ? [pid] : [];
+      return group === processGroupId &&
+        Number.isSafeInteger(pid) &&
+        !status?.startsWith("Z")
+        ? [pid]
+        : [];
     });
 };
 

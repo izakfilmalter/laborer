@@ -171,6 +171,7 @@ const closeSessionReleasePath =
 const sessionRemainderPath = process.env.SCRIPTED_ACP_SESSION_REMAINDER_PATH;
 const memoryOperationJson = process.env.SCRIPTED_ACP_MEMORY_OPERATION_JSON;
 const actionOperationJson = process.env.SCRIPTED_ACP_ACTION_OPERATION_JSON;
+const actionResultPath = process.env.SCRIPTED_ACP_ACTION_RESULT_PATH;
 const actionOrdinaryMarker = process.env.SCRIPTED_ACP_ACTION_ORDINARY_MARKER;
 const executionPromptMarker = process.env.SCRIPTED_ACP_EXECUTION_PROMPT_MARKER;
 const executionPromptText = process.env.SCRIPTED_ACP_EXECUTION_PROMPT_TEXT;
@@ -804,6 +805,17 @@ const runActionOperation = async (options: {
     name: mutationName,
   });
   validateActionDuplicate(result, duplicateResult);
+  if (actionResultPath !== undefined) {
+    await writeFile(
+      actionResultPath,
+      JSON.stringify({
+        actionName: mutationName,
+        duplicate: duplicateResult.structuredContent,
+        first: result.structuredContent,
+      }),
+      { mode: 0o600 }
+    );
+  }
   await rememberExecutionId(options.sessionId, result.structuredContent);
   await options.notify({
     rawOutput: {

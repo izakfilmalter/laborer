@@ -315,6 +315,83 @@ describe("issue #245 bounded effective ACP metadata", () => {
       )
   );
 
+  it.effect(
+    "fingerprints effective OpenCode configuration inherited by a nested bound project",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-245-inherited-config-"
+          );
+          const project = join(root, "packages", "nested-project");
+          const inheritedSkill = join(root, ".opencode", "skills", "shared");
+          const home = join(project, "isolated-home");
+          yield* Effect.promise(() =>
+            Promise.all([
+              mkdir(home, { mode: 0o700, recursive: true }),
+              mkdir(inheritedSkill, { mode: 0o700, recursive: true }),
+            ])
+          );
+          yield* Effect.promise(() =>
+            Promise.all([
+              writeFile(
+                join(root, "opencode.json"),
+                JSON.stringify({ agent: "inherited-agent" }),
+                { mode: 0o600 }
+              ),
+              writeFile(join(inheritedSkill, "SKILL.md"), "inherited skill", {
+                mode: 0o600,
+              }),
+            ])
+          );
+          const repository = yield* makeAcpAuthorityRepository({
+            keyPath: join(project, "authority.key"),
+            statePath: join(project, "authority.json"),
+            trustedRoot: project,
+          });
+          const first = yield* inventoryAcpConfigSources({
+            environment: { HOME: home },
+            projectRoot: project,
+            repository,
+          });
+          assert.deepStrictEqual(
+            first.categories.map(({ category }) => category),
+            ["config", "skill"]
+          );
+
+          yield* Effect.promise(() =>
+            writeFile(
+              join(inheritedSkill, "SKILL.md"),
+              "changed inherited skill",
+              {
+                mode: 0o600,
+              }
+            )
+          );
+          const changed = yield* inventoryAcpConfigSources({
+            environment: { HOME: home },
+            projectRoot: project,
+            repository,
+          });
+          assert.notStrictEqual(changed.digest, first.digest);
+
+          const disabled = yield* inventoryAcpConfigSources({
+            environment: {
+              HOME: home,
+              OPENCODE_CONFIG: "",
+              OPENCODE_CONFIG_DIR: "",
+              OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+              XDG_CONFIG_HOME: "",
+              XDG_DATA_HOME: "",
+            },
+            projectRoot: project,
+            repository,
+          });
+          assert.deepStrictEqual(disabled.categories, []);
+        })
+      )
+  );
+
   it.effect("rejects oversized and symlinked OpenCode config sources", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -19,11 +19,13 @@ import {
   prepareAcpAgentContextSources,
   userProfilePath,
 } from "../src/acp-conversation-prototype/agent-context.ts";
+import { DealWithBugActionResult } from "../src/action-catalog.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
 import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
+import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
 import { normalizedEvent } from "../src/prototype/scenario.ts";
 import { PrototypeStore } from "../src/prototype/store.ts";
@@ -56,6 +58,7 @@ import {
   type SlackWorkspaceStartupAdapter,
   startSlackWorkspaceDirectory,
 } from "../src/slack/workspace-startup.ts";
+import { isProcessRunning } from "./support/process-state.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const fakeOpenCodePath = resolve(
@@ -67,8 +70,7 @@ const scriptedPeerPath = resolve(
   "tests/fixtures/scripted-acp-peer.ts"
 );
 const EXPECTED_MARKDOWN = "**Streaming** from ACP\n\n- complete\n- unchanged";
-const EXPECTED_BLOCKED_NOTICE =
-  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
+const EXPECTED_BLOCKED_NOTICE = RECOVERY_NOTICE_TEXT.blocked;
 // Process-backed integration tests share the host with concurrent Sandcastle gates.
 // Observation polls bound how long a scene waits for durable side effects
 // to appear. Scenes now run concurrently within the file, so a single
@@ -79,6 +81,12 @@ const OBSERVATION_TIMEOUT_MILLIS = 30_000;
 const SessionMethod = Schema.Struct({
   method: Schema.Literals(["session/new", "session/resume"]),
   params: Schema.Record(Schema.String, Schema.Unknown),
+});
+
+const BugActionInvocationResults = Schema.Struct({
+  actionName: Schema.Literal("deal-with-bug"),
+  duplicate: DealWithBugActionResult,
+  first: DealWithBugActionResult,
 });
 
 const FakeLaunch = Schema.Struct({
@@ -139,15 +147,7 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
   const pid = Number(yield* Effect.promise(() => readFile(pidPath, "utf8")));
   const deadline = Date.now() + OBSERVATION_TIMEOUT_MILLIS;
   while (Date.now() < deadline) {
-    const exited = yield* Effect.sync(() => {
-      try {
-        process.kill(pid, 0);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-    if (exited) {
+    if (!isProcessRunning(pid)) {
       return;
     }
     yield* Effect.sleep("10 millis");
@@ -157,14 +157,7 @@ const waitForProcessExit = Effect.fnUntraced(function* (pidPath: string) {
 
 const processIsRunning = Effect.fnUntraced(function* (pidPath: string) {
   const pid = Number(yield* Effect.promise(() => readFile(pidPath, "utf8")));
-  return yield* Effect.sync(() => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  return isProcessRunning(pid);
 });
 
 const waitForMessageCount = Effect.fnUntraced(function* (
@@ -355,6 +348,7 @@ const PROCESS_ENVIRONMENT_NAMES = [
   "SCRIPTED_ACP_AGENT_VERSION",
   "SCRIPTED_ACP_ACTION_NAME",
   "SCRIPTED_ACP_ACTION_OPERATION_JSON",
+  "SCRIPTED_ACP_ACTION_RESULT_PATH",
   "SCRIPTED_ACP_ACTION_EXPECT_FAILURE",
   "SCRIPTED_ACP_DURABLE_SESSIONS_PATH",
   "SCRIPTED_ACP_EFFECTIVE_CONFIG_JSON",
@@ -635,7 +629,8 @@ interface StartedWorkspaceSpec {
 
 const makeStartedDirectoryAdapter = (
   specs: readonly StartedWorkspaceSpec[],
-  implementationAcquisitions: { count: number }
+  implementationAcquisitions: { count: number },
+  options: { readonly clusterBacked?: boolean } = {}
 ): SlackWorkspaceStartupAdapter<WebClient, SlackGatewayShape> => {
   const byToken = new Map(specs.map((spec) => [spec.token, spec]));
   const byClient = new Map<WebClient, StartedWorkspaceSpec>();
@@ -665,6 +660,16 @@ const makeStartedDirectoryAdapter = (
       }
       return makeCapturingSlack(spec.messages, spec.context);
     },
+    ...(options.clusterBacked === true
+      ? {
+          makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>
+            makeNodeRootDurableRuntime({
+              databasePath: paths.runtimeDatabase,
+              ...(legacyWorkspaceId === undefined ? {} : { legacyWorkspaceId }),
+              rootIdentity: laborer.root,
+            }),
+        }
+      : {}),
     makeRunner: (runtime) => {
       const spec = byClient.get(runtime.client);
       if (spec === undefined) {
@@ -977,7 +982,49 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
 // those waits. The suite timeout replaces the 5s default, which these
 // multi-child scenes exceed under concurrent scheduling; explicit
 // per-scene timeouts still take precedence.
-describe.concurrent("issue #244 opt-in production ACP composition", () => {
+describe.concurrent("issues #244-#257 production ACP acceptance", () => {
+  it.effect(
+    "fails a non-reference-coding binding with a typed composition error",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-244-incompatible-composition-"
+          );
+          const paths = yield* prepareSlackRuntimePaths(
+            root,
+            "T244INCOMPATIBLE"
+          );
+          const failure = yield* Effect.flip(
+            makeProductionAcpSlackWorkspaceRuntime({
+              client: makeFixtureSlackClient(),
+              gateway: makeCapturingSlack([]),
+              identity: {
+                botId: "B244INCOMPATIBLE",
+                botUserId: "U244LABORER",
+                teamId: "T244INCOMPATIBLE",
+              },
+              laborer: {
+                config: {
+                  workHandler: {
+                    args: [],
+                    command: "unused",
+                    environment: [],
+                  },
+                },
+                root,
+              },
+              paths,
+            })
+          );
+
+          assert.ok(failure instanceof AcpWorkspaceStartupError);
+          assert.strictEqual(failure.reason, "acp-composition-incompatible");
+          assert.strictEqual(failure.workspaceId, "T244INCOMPATIBLE");
+        })
+      )
+  );
+
   it.live(
     "runs the credential-free Socket Mode to generated Action MCP to terminal ACP scene once",
     () =>
@@ -1028,7 +1075,8 @@ describe.concurrent("issue #244 opt-in production ACP composition", () => {
           const routes = yield* startSlackWorkspaceDirectory({
             adapter: makeStartedDirectoryAdapter(
               [spec],
-              implementationAcquisitions
+              implementationAcquisitions,
+              { clusterBacked: true }
             ),
             config: {
               appToken: Redacted.make(["x", "app", "-246-action"].join("")),
@@ -1120,6 +1168,26 @@ describe.concurrent("issue #244 opt-in production ACP composition", () => {
           assert.strictEqual(state.actionOperations.length, 1);
           assert.strictEqual(state.executionPromptOperations.length, 1);
           assert.strictEqual(state.executions.length, 1);
+          const runtimeDatabase = new DatabaseSync(paths.runtimeDatabase, {
+            readOnly: true,
+          });
+          try {
+            const durableConversationEvents = runtimeDatabase
+              .prepare(
+                `SELECT status
+                 FROM laborer_conversation_events
+                 ORDER BY sequence`
+              )
+              .all() as unknown as readonly { readonly status: string }[];
+            assert.ok(durableConversationEvents.length >= 2);
+            assert.ok(
+              durableConversationEvents.every(
+                ({ status }) => status === "completed"
+              )
+            );
+          } finally {
+            runtimeDatabase.close();
+          }
           const terminalEvents =
             state.executions[0]?.events.filter(
               ({ source }) => source === "action-terminal"
@@ -1498,11 +1566,13 @@ describe.concurrent("issue #244 opt-in production ACP composition", () => {
             prompt: "PRIVATE BUG PROMPT MUST NOT REACH SLACK 248",
             worktreeName: "full-bug-action-248",
           };
+          const actionResultPath = join(controls, "bug-action-results.json");
           const spec: StartedWorkspaceSpec = {
             artifactCalls,
             environment: scriptedEnvironment(processPaths, {
               SCRIPTED_ACP_ACTION_NAME: "deal-with-bug",
               SCRIPTED_ACP_ACTION_OPERATION_JSON: JSON.stringify(actionInput),
+              SCRIPTED_ACP_ACTION_RESULT_PATH: actionResultPath,
               SCRIPTED_ACP_SCENARIO: "action",
             }),
             health: [],
@@ -1581,6 +1651,31 @@ describe.concurrent("issue #244 opt-in production ACP composition", () => {
           );
           assert.strictEqual(state.executions.length, 1);
           assert.strictEqual(state.executions[0]?.actionName, "deal-with-bug");
+          const actionResults = yield* Schema.decodeUnknownEffect(
+            BugActionInvocationResults,
+            { onExcessProperty: "error" }
+          )(
+            JSON.parse(
+              yield* Effect.promise(() => readFile(actionResultPath, "utf8"))
+            )
+          );
+          assert.strictEqual(actionResults.actionName, "deal-with-bug");
+          assert.strictEqual(actionResults.first.actionName, "deal-with-bug");
+          assert.strictEqual(actionResults.first.deduplicated, false);
+          assert.strictEqual(actionResults.first.status, "running");
+          assert.strictEqual(
+            actionResults.duplicate.actionName,
+            "deal-with-bug"
+          );
+          assert.strictEqual(actionResults.duplicate.deduplicated, true);
+          assert.ok(
+            actionResults.duplicate.status === "running" ||
+              actionResults.duplicate.status === "completed"
+          );
+          assert.strictEqual(
+            actionResults.duplicate.executionId,
+            actionResults.first.executionId
+          );
           assert.strictEqual(
             state.executions[0]?.events.filter(
               ({ source, status }) =>

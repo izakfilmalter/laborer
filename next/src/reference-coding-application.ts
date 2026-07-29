@@ -64,7 +64,12 @@ import type {
   ConversationAdoptionHistoryGateway,
   ConversationAdoptionHistorySnapshot,
 } from "./slack/conversation-adoption-history.ts";
-import { unavailableConversationAdoptionHistoryGateway } from "./slack/conversation-adoption-history.ts";
+import {
+  CONVERSATION_ADOPTION_HISTORY_MAX_BYTES,
+  CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES,
+  CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS,
+  unavailableConversationAdoptionHistoryGateway,
+} from "./slack/conversation-adoption-history.ts";
 
 export const ReferenceCodingActionName = ActionHandlerKey;
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
@@ -645,6 +650,21 @@ interface ReferenceCodingApplicationOptions {
   readonly now?: () => number;
   readonly repository?: ReferenceCodingApplicationRepository;
   readonly testHooks?: {
+    readonly afterExecutionAllocated?: (execution: {
+      readonly executionId: string;
+      readonly implementationSessionId: string | null;
+      readonly promptId: string | null;
+    }) => Promise<void>;
+    readonly afterExecutionEventAccepted?: (event: {
+      readonly eventId: string;
+      readonly executionId: string;
+      readonly recordKind: "event" | "recovery-failure" | "response";
+    }) => Promise<void>;
+    readonly afterImplementationResponseStaged?: (response: {
+      readonly eventId: string;
+      readonly executionId: string;
+      readonly responseId: string;
+    }) => Promise<void>;
     readonly afterCancellationFlightStarted?: (claim: {
       readonly executionId: string;
       readonly owner: boolean;
@@ -652,6 +672,10 @@ interface ReferenceCodingApplicationOptions {
     readonly afterImplementationPromptSubmitting?: (attempt: {
       readonly executionId: string;
       readonly promptId: string;
+    }) => Promise<void>;
+    readonly afterWorktreeCreated?: (worktree: {
+      readonly executionId: string;
+      readonly workingDirectory: string;
     }) => Promise<void>;
     readonly beforeCancellationClaim?: (executionId: string) => Promise<void>;
   };
@@ -3059,6 +3083,69 @@ export const makeReferenceCodingApplication = Effect.fn(
     Deferred.Deferred<SafeExecutionSnapshot, HandlerFailure>
   >();
 
+  const afterExecutionAllocated = (allocation: {
+    readonly execution: ConversationExecution;
+    readonly status: ExecutionAllocationStatus;
+  }) =>
+    allocation.status !== "allocated" ||
+    options.testHooks?.afterExecutionAllocated === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterExecutionAllocated?.({
+              executionId: allocation.execution.executionId,
+              implementationSessionId:
+                allocation.execution.implementationSessionId,
+              promptId: allocation.execution.activePromptId,
+            }) ?? Promise.resolve()
+        );
+
+  const afterExecutionEventAccepted = (
+    eventId: string,
+    executionId: string,
+    recordKind: "event" | "recovery-failure" | "response"
+  ) =>
+    options.testHooks?.afterExecutionEventAccepted === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterExecutionEventAccepted?.({
+              eventId,
+              executionId,
+              recordKind,
+            }) ?? Promise.resolve()
+        );
+
+  const afterImplementationResponseStaged = (
+    eventId: string,
+    executionId: string,
+    responseId: string
+  ) =>
+    options.testHooks?.afterImplementationResponseStaged === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterImplementationResponseStaged?.({
+              eventId,
+              executionId,
+              responseId,
+            }) ?? Promise.resolve()
+        );
+
+  const afterWorktreeCreated = (
+    executionId: string,
+    workingDirectory: string
+  ) =>
+    options.testHooks?.afterWorktreeCreated === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterWorktreeCreated?.({
+              executionId,
+              workingDirectory,
+            }) ?? Promise.resolve()
+        );
+
   const modifyApplicationState = <A>(
     update: (
       state: ReferenceCodingApplicationState
@@ -3455,6 +3542,7 @@ export const makeReferenceCodingApplication = Effect.fn(
   )(function* (
     adoptionId: string,
     diagnosticCode:
+      | "history-digest-changed-before-seed"
       | "seed-admission-ambiguous"
       | "session-creation-outcome-ambiguous" = "session-creation-outcome-ambiguous"
   ) {
@@ -3561,25 +3649,41 @@ export const makeReferenceCodingApplication = Effect.fn(
         throw new Error("Conversation adoption disappeared");
       }
       const timestamp = now();
+      const historyDigestChanged =
+        current.historyDigest !== null &&
+        current.historyDigest !== snapshot.digest;
       const diagnosticCodes = [
         ...current.historyDiagnosticCodes,
         ...snapshot.diagnosticCodes,
-        ...(current.historyDigest !== null &&
-        current.historyDigest !== snapshot.digest
+        ...(historyDigestChanged
           ? (["history-digest-changed-before-seed"] as const)
           : []),
       ];
+      const historyEvidence = historyDigestChanged
+        ? {
+            historyBytes: current.historyBytes,
+            historyDegradation: current.historyDegradation,
+            historyDigest: current.historyDigest,
+            historyFirstSlackTs: current.historyFirstSlackTs,
+            historyLastSlackTs: current.historyLastSlackTs,
+            historyMessageCount: current.historyMessageCount,
+            historyRequestCount: current.historyRequestCount,
+            historyTruncation: current.historyTruncation,
+          }
+        : {
+            historyBytes: snapshot.bytes,
+            historyDegradation: snapshot.degradation,
+            historyDigest: snapshot.digest,
+            historyFirstSlackTs: snapshot.firstSlackTs,
+            historyLastSlackTs: snapshot.lastSlackTs,
+            historyMessageCount: snapshot.messageCount,
+            historyRequestCount: snapshot.requestCount,
+            historyTruncation: snapshot.truncation,
+          };
       const updated = PersistedConversationAdoption.make({
         ...current,
-        historyBytes: snapshot.bytes,
-        historyDegradation: snapshot.degradation,
+        ...historyEvidence,
         historyDiagnosticCodes: [...new Set(diagnosticCodes)],
-        historyDigest: snapshot.digest,
-        historyFirstSlackTs: snapshot.firstSlackTs,
-        historyLastSlackTs: snapshot.lastSlackTs,
-        historyMessageCount: snapshot.messageCount,
-        historyRequestCount: snapshot.requestCount,
-        historyTruncation: snapshot.truncation,
         updatedAt: timestamp,
       });
       return [
@@ -3592,6 +3696,59 @@ export const makeReferenceCodingApplication = Effect.fn(
         }),
       ];
     }, true);
+
+  const conversationAdoptionHistorySnapshotIsValid = (
+    snapshot: ConversationAdoptionHistorySnapshot
+  ): boolean => {
+    if (
+      typeof snapshot.rendered !== "string" ||
+      !Array.isArray(snapshot.diagnosticCodes) ||
+      typeof snapshot.truncation !== "object" ||
+      snapshot.truncation === null
+    ) {
+      return false;
+    }
+    const validDiagnostics = new Set([
+      "cursor-cycle",
+      "page-limit",
+      "request-limit",
+      "slack-permanent",
+      "slack-transient-exhausted",
+      "time-limit",
+    ]);
+    const diagnosticCodes = [...new Set(snapshot.diagnosticCodes)];
+    const renderedBytes = Buffer.byteLength(snapshot.rendered, "utf8");
+    const renderedDigest = createHash("sha256")
+      .update(snapshot.rendered, "utf8")
+      .digest("base64url");
+    return (
+      (snapshot.degradation === "complete" ||
+        snapshot.degradation === "partial" ||
+        snapshot.degradation === "unavailable") &&
+      diagnosticCodes.length === snapshot.diagnosticCodes.length &&
+      diagnosticCodes.every((code) => validDiagnostics.has(code)) &&
+      (snapshot.firstSlackTs === null ||
+        (typeof snapshot.firstSlackTs === "string" &&
+          snapshot.firstSlackTs.length > 0)) &&
+      (snapshot.lastSlackTs === null ||
+        (typeof snapshot.lastSlackTs === "string" &&
+          snapshot.lastSlackTs.length > 0)) &&
+      typeof snapshot.truncation.age === "boolean" &&
+      typeof snapshot.truncation.bytes === "boolean" &&
+      typeof snapshot.truncation.count === "boolean" &&
+      Number.isInteger(snapshot.bytes) &&
+      snapshot.bytes >= 0 &&
+      snapshot.bytes === renderedBytes &&
+      renderedBytes <= CONVERSATION_ADOPTION_HISTORY_MAX_BYTES &&
+      Number.isInteger(snapshot.messageCount) &&
+      snapshot.messageCount >= 0 &&
+      snapshot.messageCount <= CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES &&
+      Number.isInteger(snapshot.requestCount) &&
+      snapshot.requestCount >= 0 &&
+      snapshot.requestCount <= CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS &&
+      snapshot.digest === renderedDigest
+    );
+  };
 
   const markConversationAdoptionSeedUnresolved = (
     adoptionId: string,
@@ -3662,7 +3819,26 @@ export const makeReferenceCodingApplication = Effect.fn(
       rootTs: initial.rootTs,
       workspaceId: initial.workspaceId,
     });
-    yield* persistConversationAdoptionHistory(initial.adoptionId, snapshot);
+    if (!conversationAdoptionHistorySnapshotIsValid(snapshot)) {
+      return yield* HandlerFailure.make({
+        category: "protocol",
+        safeDetail: "Conversation adoption history snapshot is invalid",
+      });
+    }
+    const persisted = yield* persistConversationAdoptionHistory(
+      initial.adoptionId,
+      snapshot
+    );
+    if (
+      persisted.historyDiagnosticCodes.includes(
+        "history-digest-changed-before-seed"
+      )
+    ) {
+      return yield* markConversationAdoptionUnresolved(
+        initial.adoptionId,
+        "history-digest-changed-before-seed"
+      );
+    }
     return {
       _tag: "Continue",
       history: `${initial.executionSnapshotRendered ?? ""}${snapshot.rendered}`,
@@ -5225,6 +5401,21 @@ export const makeReferenceCodingApplication = Effect.fn(
     );
   };
 
+  const conversationAwaitsAdoptionLinearization = (
+    state: ReferenceCodingApplicationState,
+    conversationId: string
+  ): boolean =>
+    conversationAdoptionEnabled &&
+    state.conversations.some(
+      (conversation) =>
+        conversation.conversationId === conversationId &&
+        conversation.origin === "legacy" &&
+        conversation.agentSessionBinding === null
+    ) &&
+    !state.conversationAdoptions.some(
+      (adoption) => adoption.conversationId === conversationId
+    );
+
   const applicationEventIsPreAdoptionExecutionEvidence = (
     state: ReferenceCodingApplicationState,
     event: ApplicationEvent
@@ -5328,6 +5519,11 @@ export const makeReferenceCodingApplication = Effect.fn(
         })
       )
     );
+    yield* afterExecutionEventAccepted(
+      externalEvent.eventId,
+      execution.executionId,
+      item.recordKind
+    );
     yield* modifyApplicationState((current) => [
       undefined,
       ReferenceCodingApplicationState.make({
@@ -5383,6 +5579,9 @@ export const makeReferenceCodingApplication = Effect.fn(
       return;
     }
     const state = yield* Ref.get(applicationState);
+    if (conversationAwaitsAdoptionLinearization(state, conversationId)) {
+      return;
+    }
     const pending = state.executionEventOutbox
       .filter(
         (item) =>
@@ -5997,96 +6196,115 @@ export const makeReferenceCodingApplication = Effect.fn(
   const acceptImplementationResponse = (
     execution: ConversationExecution,
     acceptEvent: AcceptApplicationEvent
-  ): AcceptImplementationAgentResponse =>
-    Effect.fn("ReferenceCodingApplication.acceptImplementationResponse")(
-      function* (response) {
-        const eventId = `${execution.executionId}:response:${response.responseId}`;
-        const stateBeforeAcceptance = yield* Ref.get(applicationState);
-        const persistedBeforeAcceptance = stateBeforeAcceptance.executions.find(
-          (candidate) => candidate.executionId === execution.executionId
-        );
-        const existingBeforeAcceptance =
-          persistedBeforeAcceptance?.responses.find(
-            (candidate) => candidate.responseId === response.responseId
-          );
-        const isExactPersistedResponse =
-          existingBeforeAcceptance?.eventId === eventId &&
-          existingBeforeAcceptance.text === response.text;
-        if (
-          !isExactPersistedResponse &&
-          (response.responseId.trim().length === 0 ||
-            response.responseId.length > MAX_IMPLEMENTATION_ID_LENGTH ||
-            response.text.trim().length === 0 ||
-            response.text.length > MAX_IMPLEMENTATION_RESPONSE_LENGTH)
-        ) {
-          return yield* HandlerFailure.make({
-            category: "protocol",
-            safeDetail: "implementation response is invalid",
-          });
-        }
-        const staged = yield* updatePersistedExecution(
-          execution.executionId,
-          (persisted) => {
-            if (
-              persisted.status === "cancelling" ||
-              persisted.status === "cancelled"
-            ) {
-              return persisted;
-            }
-            const existing = persisted.responses.find(
-              (candidate) => candidate.responseId === response.responseId
-            );
-            if (existing !== undefined) {
-              return persisted;
-            }
-            const candidate = PersistedExecution.make({
-              ...persisted,
-              responses: EffectArray.append(
-                persisted.responses,
-                PersistedImplementationResponse.make({
-                  eventId,
-                  responseId: response.responseId,
-                  status: "staged",
-                  text: response.text,
-                })
-              ),
-            });
-            return persisted.responses.length >=
-              MAX_IMPLEMENTATION_RESPONSES_PER_EXECUTION ||
-              Buffer.byteLength(JSON.stringify(candidate), "utf8") >
-                MAX_EXECUTION_RECORD_BYTES
-              ? persisted
-              : candidate;
-          }
-        );
-        const persistedResponse = staged?.responses.find(
+  ): AcceptImplementationAgentResponse => {
+    const acceptNonemptyResponse = Effect.fn(
+      "ReferenceCodingApplication.acceptImplementationResponse"
+    )(function* (response: ImplementationAgentResponse) {
+      const eventId = `${execution.executionId}:response:${response.responseId}`;
+      const stateBeforeAcceptance = yield* Ref.get(applicationState);
+      const persistedBeforeAcceptance = stateBeforeAcceptance.executions.find(
+        (candidate) => candidate.executionId === execution.executionId
+      );
+      const existingBeforeAcceptance =
+        persistedBeforeAcceptance?.responses.find(
           (candidate) => candidate.responseId === response.responseId
         );
-        if (staged?.status === "cancelling" || staged?.status === "cancelled") {
-          return;
-        }
-        if (
-          persistedResponse === undefined ||
-          persistedResponse.eventId !== eventId ||
-          persistedResponse.text !== response.text
-        ) {
-          return yield* HandlerFailure.make({
-            category: "protocol",
-            safeDetail: "implementation response identity conflicts",
-          });
-        }
-        if (
-          persistedResponse.status === "enqueued" ||
-          persistedResponse.status === "delivered"
-        ) {
-          return;
-        }
-        yield* flushConversationExecutionOutbox(
-          execution.conversationId,
-          acceptEvent
-        );
+      const isExactPersistedResponse =
+        existingBeforeAcceptance?.eventId === eventId &&
+        existingBeforeAcceptance.text === response.text;
+      if (
+        !isExactPersistedResponse &&
+        (response.responseId.trim().length === 0 ||
+          response.responseId.length > MAX_IMPLEMENTATION_ID_LENGTH ||
+          response.text.length > MAX_IMPLEMENTATION_RESPONSE_LENGTH)
+      ) {
+        return yield* HandlerFailure.make({
+          category: "protocol",
+          safeDetail: "implementation response is invalid",
+        });
       }
-    );
+      const staged = yield* updatePersistedExecution(
+        execution.executionId,
+        (persisted) => {
+          if (
+            persisted.status === "cancelling" ||
+            persisted.status === "cancelled" ||
+            persisted.status === "failed"
+          ) {
+            return persisted;
+          }
+          const existing = persisted.responses.find(
+            (candidate) => candidate.responseId === response.responseId
+          );
+          if (existing !== undefined) {
+            return persisted;
+          }
+          const candidate = PersistedExecution.make({
+            ...persisted,
+            responses: EffectArray.append(
+              persisted.responses,
+              PersistedImplementationResponse.make({
+                eventId,
+                responseId: response.responseId,
+                status: "staged",
+                text: response.text,
+              })
+            ),
+          });
+          return persisted.responses.length >=
+            MAX_IMPLEMENTATION_RESPONSES_PER_EXECUTION ||
+            Buffer.byteLength(JSON.stringify(candidate), "utf8") >
+              MAX_EXECUTION_RECORD_BYTES
+            ? persisted
+            : candidate;
+        }
+      );
+      const persistedResponse = staged?.responses.find(
+        (candidate) => candidate.responseId === response.responseId
+      );
+      if (
+        staged?.status === "cancelling" ||
+        staged?.status === "cancelled" ||
+        staged?.status === "failed"
+      ) {
+        return;
+      }
+      if (
+        persistedResponse === undefined ||
+        persistedResponse.eventId !== eventId ||
+        persistedResponse.text !== response.text
+      ) {
+        return yield* HandlerFailure.make({
+          category: "protocol",
+          safeDetail: "implementation response identity conflicts",
+        });
+      }
+      yield* afterImplementationResponseStaged(
+        eventId,
+        execution.executionId,
+        response.responseId
+      );
+      if (
+        persistedResponse.status === "enqueued" ||
+        persistedResponse.status === "delivered"
+      ) {
+        return;
+      }
+      yield* flushConversationExecutionOutbox(
+        execution.conversationId,
+        acceptEvent
+      );
+    });
+    return (response) =>
+      // Implementation adapters may observe protocol message boundaries that
+      // contain no user-visible content. They are not Conversation events and
+      // must not prevent a later meaningful response from being accepted.
+      // Check the bound before trimming so even ignored input stays bounded.
+      response.text.length <= MAX_IMPLEMENTATION_RESPONSE_LENGTH &&
+      response.text.trim().length === 0
+        ? Effect.void
+        : acceptNonemptyResponse(response);
+  };
 
   const recoverWorktree = Effect.fn(
     "ReferenceCodingApplication.recoverWorktree"
@@ -6378,8 +6596,24 @@ export const makeReferenceCodingApplication = Effect.fn(
           : candidate
       )
     );
-    yield* Ref.update(executionRuntimes, (current) =>
-      current.filter((runtime) => runtime.executionId !== terminal.executionId)
+    const detachedRuntimes = yield* Ref.modify(
+      executionRuntimes,
+      (current) =>
+        [
+          EffectArray.filter(
+            current,
+            (runtime) => runtime.executionId === terminal.executionId
+          ),
+          EffectArray.filter(
+            current,
+            (runtime) => runtime.executionId !== terminal.executionId
+          ),
+        ] as const
+    );
+    yield* Effect.forEach(
+      detachedRuntimes,
+      (runtime) => FiberSet.clear(runtime.runs),
+      { discard: true }
     );
     yield* flushConversationExecutionOutbox(
       terminal.conversationId,
@@ -6763,9 +6997,16 @@ export const makeReferenceCodingApplication = Effect.fn(
       workingDirectory = validation.success;
     } else if (worktreeInspection.status === "available") {
       workingDirectory = worktreeInspection.resource.workingDirectory;
+    } else if (worktreeInspection.status === "recoverable") {
+      yield* markWorktreeAttempt(persisted.executionId, "recoverable");
+      yield* markExecutionAttachment(
+        persisted.executionId,
+        "recoverable",
+        "worktree-recoverable"
+      );
+      return;
     } else if (
       worktreeInspection.status === "missing" ||
-      worktreeInspection.status === "recoverable" ||
       worktreeInspection.status === "conflicting"
     ) {
       return yield* failExecutionRecovery(
@@ -7017,6 +7258,7 @@ export const makeReferenceCodingApplication = Effect.fn(
       trustedInvocation
     );
     const execution = allocated.execution;
+    yield* afterExecutionAllocated(allocated);
     if (allocated.status === "duplicate") {
       return {
         deduplicated: true,
@@ -7053,6 +7295,10 @@ export const makeReferenceCodingApplication = Effect.fn(
     } else {
       worktree = worktreeCreation.success;
     }
+    yield* afterWorktreeCreated(
+      execution.executionId,
+      worktree.workingDirectory
+    );
     const implementationReady = yield* updatePersistedExecution(
       execution.executionId,
       (persisted) =>
@@ -7334,9 +7580,19 @@ export const makeReferenceCodingApplication = Effect.fn(
       if (validation._tag === "Failure") {
         return yield* unavailableExecutionControl();
       }
+    } else if (worktreeInspection.status === "recoverable") {
+      yield* markWorktreeAttempt(
+        revalidationExecution.executionId,
+        "recoverable"
+      );
+      yield* markExecutionAttachment(
+        revalidationExecution.executionId,
+        "recoverable",
+        "worktree-recoverable"
+      );
+      return yield* unavailableExecutionControl();
     } else if (
       worktreeInspection.status === "missing" ||
-      worktreeInspection.status === "recoverable" ||
       worktreeInspection.status === "conflicting"
     ) {
       yield* failExecutionRecovery(
@@ -7347,6 +7603,15 @@ export const makeReferenceCodingApplication = Effect.fn(
       );
       return yield* unavailableExecutionControl();
     } else if (worktreeInspection.status === "ambiguous") {
+      yield* markWorktreeAttempt(
+        revalidationExecution.executionId,
+        "unresolved"
+      );
+      yield* markExecutionAttachment(
+        revalidationExecution.executionId,
+        "unresolved",
+        `worktree-${worktreeInspection.evidence}`
+      );
       return yield* unavailableExecutionControl();
     }
     const lastPrompt = revalidationExecution.prompts.at(-1);
@@ -7368,7 +7633,6 @@ export const makeReferenceCodingApplication = Effect.fn(
       const sessionInspection = yield* sessionInspectionEffect;
       if (
         sessionInspection.status === "missing" ||
-        sessionInspection.status === "recoverable" ||
         sessionInspection.status === "conflicting" ||
         (sessionInspection.status === "available" &&
           sessionInspection.resource.sessionId !==
@@ -7387,10 +7651,28 @@ export const makeReferenceCodingApplication = Effect.fn(
         );
         return yield* unavailableExecutionControl();
       }
+      if (sessionInspection.status === "recoverable") {
+        yield* markExecutionAttachment(
+          revalidationExecution.executionId,
+          "recoverable",
+          "implementation-session-recoverable"
+        );
+        return yield* unavailableExecutionControl();
+      }
       if (sessionInspection.status === "ambiguous") {
+        yield* markExecutionAttachment(
+          revalidationExecution.executionId,
+          "unresolved",
+          `implementation-session-${sessionInspection.evidence}`
+        );
         return yield* unavailableExecutionControl();
       }
     }
+    yield* markExecutionAttachment(
+      revalidationExecution.executionId,
+      "attached",
+      null
+    );
     const allocation = yield* modifyApplicationState<ExecutionPromptAllocation>(
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: One atomic transition validates every idempotency, ownership, status, and capacity invariant before publishing a follow-up.
       (state) => {

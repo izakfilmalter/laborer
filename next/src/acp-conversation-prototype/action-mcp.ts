@@ -427,6 +427,8 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   readonly testHooks?: {
     readonly beforeInvokeLeaseValidation?: () => Promise<void>;
     readonly beforeObservationPersist?: () => Promise<void>;
+    readonly beforeRunInvocation?: () => Promise<void>;
+    readonly currentTimeMillis?: () => number;
     readonly maxInFlightOperations?: number;
     readonly maxWaitersPerOperation?: number;
     readonly maxWaitersPerWorkspace?: number;
@@ -456,6 +458,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     options.testHooks?.maxWaitersPerWorkspace,
     MAX_ACTION_WAITERS_PER_WORKSPACE
   );
+  const currentTimeMillis = options.testHooks?.currentTimeMillis ?? Date.now;
   const bootstrap = randomBytes(32).toString("base64url");
   yield* Effect.tryPromise({
     try: async () => {
@@ -570,6 +573,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       capability.recordId === binding.capabilityRecordId &&
       capability.state === binding.capabilityState &&
       capability.expiresAt === binding.expiresAt &&
+      capability.expiresAt > currentTimeMillis() &&
       capability.fullToolIdentity === binding.fullToolIdentity &&
       capability.inputHash === binding.inputHash &&
       capability.toolCallId === binding.toolCallId
@@ -694,7 +698,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       "action-capability-record",
       `${plaintextToken}\0${operationId}`
     );
-    const issuedAt = Date.now();
+    const issuedAt = currentTimeMillis();
     const fullToolIdentity = actionPermission(serverName, options_.actionName);
     const capability: LiveCapability = {
       actionName: options_.actionName,
@@ -865,12 +869,21 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     capability: LiveCapability,
     runInvocation: Effect.Effect<BoundedActionResult, HandlerFailure>
   ) {
+    if (options.testHooks?.beforeRunInvocation !== undefined) {
+      yield* Effect.tryPromise({
+        try: options.testHooks.beforeRunInvocation,
+        catch: () => bridgeFailure("Action invocation attribution failed"),
+      });
+    }
+    const remainingMillis = capability.expiresAt - currentTimeMillis();
+    if (remainingMillis <= 0) {
+      return yield* bridgeFailure("Action invocation attribution is invalid");
+    }
     const claim = yield* claimSingleFlight(capability);
     if (claim.role === "waiter") {
       return yield* attachToInFlightOperation(claim.entry);
     }
     const { entry } = claim;
-    const remainingMillis = Math.max(1, capability.expiresAt - Date.now());
     return yield* Effect.uninterruptibleMask((restore) =>
       restore(
         runInvocation.pipe(
@@ -1001,7 +1014,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
           capability.actionName === request.actionName &&
           capability.actionServerGeneration === request.generation &&
           capability.inputHash === request.inputHash &&
-          capability.expiresAt > Date.now()
+          capability.expiresAt > currentTimeMillis()
       );
     };
     const correlationDeadline = Date.now() + ACTION_CORRELATION_WAIT_MILLIS;
@@ -1023,10 +1036,26 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     if (unconsumed.length === 1) {
       return unconsumed[0] as LiveCapability;
     }
-    if (unconsumed.length > 1 || matches.length !== 1) {
+    if (unconsumed.length > 1 || matches.length === 0) {
       return yield* bridgeFailure("Action invocation correlation is ambiguous");
     }
-    const capability = matches[0];
+    /**
+     * A model may issue the same generated control more than once in one turn.
+     * Each observed tool call has its own capability, but an exact retry carries
+     * only tool name and input across the MCP child boundary. Once every matching
+     * capability is consumed they are intentionally equivalent: the active lease,
+     * generation, tool, input hash, and Laborer-issued operation identity match.
+     * Select the newest capability so the durable operation can return its
+     * existing result instead of turning a safe duplicate into ambiguity.
+     */
+    const operationId = matches[0]?.operationId;
+    if (
+      operationId === undefined ||
+      matches.some((capability) => capability.operationId !== operationId)
+    ) {
+      return yield* bridgeFailure("Action invocation correlation is ambiguous");
+    }
+    const capability = matches.at(-1);
     return yield* capability === undefined
       ? bridgeFailure("Action invocation is unavailable")
       : Effect.succeed(capability);
@@ -1552,7 +1581,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       lease === null ||
       !capabilityMatchesLease(capability, lease) ||
       capability.state !== "pending" ||
-      capability.expiresAt <= Date.now() ||
+      capability.expiresAt <= currentTimeMillis() ||
       request.sessionId !== lease.scope.sessionId ||
       request.toolCall.status !== "pending" ||
       request.toolCall.kind !== "other"

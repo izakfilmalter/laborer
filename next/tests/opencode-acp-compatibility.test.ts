@@ -50,6 +50,25 @@ const modelMessages = (
   });
 };
 
+const streamedAgentText = (
+  updates: readonly {
+    readonly sessionId: string;
+    readonly update: {
+      readonly content?: unknown;
+      readonly sessionUpdate: string;
+    };
+  }[],
+  sessionId: string
+): string =>
+  updates
+    .filter(
+      (notification) =>
+        notification.sessionId === sessionId &&
+        notification.update.sessionUpdate === "agent_message_chunk"
+    )
+    .map((notification) => contentText(notification.update.content))
+    .join("");
+
 describe("issue #243 real OpenCode ACP compatibility", () => {
   it("exercises the pinned local CLI without credentials and resumes durably in a fresh process", async () => {
     const root = await mkdtemp(
@@ -104,6 +123,10 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
         );
         observedStopReasons.add(ordinary.stopReason);
         assert.strictEqual(ordinary.stopReason, "end_turn");
+        assert.strictEqual(
+          streamedAgentText(firstProcess.updates, durableSessionId),
+          "ordinary ACP answer"
+        );
 
         provider.enqueue(
           {

@@ -327,10 +327,19 @@ export const conversationCapabilitiesForRootRuntime = (options: {
                   capabilityFailure("Execution inspection failed")
                 )
               );
+            const actionName = receipt.execution.actionName;
+            if (
+              actionName !== "create-feature" &&
+              actionName !== "deal-with-bug"
+            ) {
+              return yield* capabilityFailure(
+                "Execution inspection returned an unknown Action"
+              );
+            }
             return {
               executions: [
                 {
-                  actionName: receipt.execution.actionName,
+                  actionName,
                   canCancel: receipt.execution.canCancel,
                   canPrompt: receipt.execution.canFollowUp,
                   executionId: receipt.execution.executionId,
@@ -410,10 +419,19 @@ export const conversationCapabilitiesForRootRuntime = (options: {
                   capabilityFailure("Execution cancellation failed")
                 )
               );
+            const actionName = receipt.execution.actionName;
+            if (
+              actionName !== "create-feature" &&
+              actionName !== "deal-with-bug"
+            ) {
+              return yield* capabilityFailure(
+                "Execution cancellation returned an unknown Action"
+              );
+            }
             return {
               deduplicated: receipt.deduplicated,
               execution: {
-                actionName: receipt.execution.actionName,
+                actionName,
                 canCancel: false as const,
                 canPrompt: false as const,
                 executionId: receipt.execution.executionId,

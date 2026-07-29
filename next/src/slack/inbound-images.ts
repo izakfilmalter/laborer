@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, lstat, open, readFile, rm } from "node:fs/promises";
+import { link, open, rm } from "node:fs/promises";
 import { basename, relative, resolve } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
@@ -10,6 +10,7 @@ import {
 import {
   assertNoSymlinkPathComponents,
   ensureOwnerOnlyDirectoryTree,
+  openRegularFileNoFollow,
 } from "../prototype/path-safety.ts";
 import { SlackBoundaryError } from "./errors.ts";
 import type { ResolveSlackInboundImages } from "./normalize.ts";
@@ -19,12 +20,15 @@ export const MAX_IMAGE_BYTES = 768 * 1024;
 export const MAX_AGGREGATE_IMAGE_BYTES = 1024 * 1024;
 const MAX_REDIRECTS = 2;
 const DOWNLOAD_TIMEOUT_MILLIS = 10_000;
-const SUPPORTED_MIME_TYPES = new Set([
+const SUPPORTED_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
-]);
+] as const;
+type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
+const isSupportedMimeType = (value: string): value is SupportedMimeType =>
+  SUPPORTED_MIME_TYPES.some((candidate) => candidate === value);
 const STABLE_DOWNLOAD_FAILURES = new Set([
   "content-length-mismatch",
   "content-type-mismatch",
@@ -44,13 +48,6 @@ interface SlackFileMetadata {
   readonly url: string;
 }
 
-interface SlackFilesClient {
-  readonly files: {
-    readonly info: (request: { readonly file: string }) => Promise<unknown>;
-  };
-  readonly token?: string;
-}
-
 export interface SlackInboundImageResolverOptions {
   readonly client: Pick<WebClient, "files"> & { readonly token?: string };
   readonly fetch?: typeof fetch;
@@ -59,6 +56,14 @@ export interface SlackInboundImageResolverOptions {
 
 const boundaryFailure = (reason: string): SlackBoundaryError =>
   SlackBoundaryError.make({ boundary: "slack-files-api", reason });
+
+const errnoCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  typeof cause.code === "string"
+    ? cause.code
+    : undefined;
 
 const downloadFailureReason = (cause: unknown): string => {
   if (
@@ -108,6 +113,7 @@ const bytesMatchMimeType = (bytes: Uint8Array, mimeType: string): boolean => {
 const slackDownloadHostIsAllowed = (url: URL): boolean =>
   url.protocol === "https:" &&
   (url.hostname === "files.slack.com" ||
+    url.hostname === "files-origin.slack.com" ||
     url.hostname === "slack-files.com" ||
     url.hostname.endsWith(".slack-files.com"));
 
@@ -263,29 +269,51 @@ const stageImage = async (options: {
     "stage-inbound-image-directory"
   );
   const verifyExistingTarget = async (): Promise<void> => {
-    const existing = await lstat(target);
-    if (
-      !existing.isFile() ||
-      existing.isSymbolicLink() ||
-      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
-      (existing.mode & 0o077) !== 0 ||
-      (typeof process.getuid === "function" &&
-        existing.uid !== process.getuid())
-    ) {
-      throw new Error("unsafe-existing-image");
-    }
-    const existingBytes = await readFile(target);
-    if (
-      existingBytes.byteLength !== options.bytes.byteLength ||
-      createHash("sha256").update(existingBytes).digest("hex") !== contentDigest
-    ) {
-      throw new Error("conflicting-existing-image");
+    const file = await openRegularFileNoFollow(
+      target,
+      "verify-existing-inbound-image"
+    );
+    try {
+      const existing = await file.stat();
+      if (
+        existing.size !== options.bytes.byteLength ||
+        // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+        (existing.mode & 0o077) !== 0 ||
+        (typeof process.getuid === "function" &&
+          existing.uid !== process.getuid())
+      ) {
+        throw new Error("unsafe-existing-image");
+      }
+      const existingBytes = new Uint8Array(options.bytes.byteLength + 1);
+      let offset = 0;
+      while (offset < existingBytes.byteLength) {
+        const read = await file.read(
+          existingBytes,
+          offset,
+          existingBytes.byteLength - offset,
+          offset
+        );
+        if (read.bytesRead === 0) {
+          break;
+        }
+        offset += read.bytesRead;
+      }
+      if (
+        offset !== options.bytes.byteLength ||
+        createHash("sha256")
+          .update(existingBytes.subarray(0, offset))
+          .digest("hex") !== contentDigest
+      ) {
+        throw new Error("conflicting-existing-image");
+      }
+    } finally {
+      await file.close();
     }
   };
   try {
     await verifyExistingTarget();
   } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (errnoCode(cause) !== "ENOENT") {
       throw cause;
     }
     const temporary = resolve(
@@ -294,19 +322,28 @@ const stageImage = async (options: {
     );
     const file = await open(temporary, "wx", 0o600);
     try {
-      await file.writeFile(options.bytes);
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-    try {
-      await link(temporary, target);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw cause;
+      try {
+        await file.writeFile(options.bytes);
+        await file.sync();
+      } finally {
+        await file.close();
       }
-      await verifyExistingTarget();
+      try {
+        await link(temporary, target);
+      } catch (cause) {
+        if (errnoCode(cause) !== "EEXIST") {
+          throw cause;
+        }
+        await verifyExistingTarget();
+      }
+      const directoryHandle = await open(directory, "r");
+      try {
+        await directoryHandle.sync();
+      } finally {
+        await directoryHandle.close();
+      }
     } finally {
+      await file.close().catch(() => undefined);
       await rm(temporary, { force: true });
     }
   }
@@ -316,7 +353,7 @@ const stageImage = async (options: {
 export const makeSlackInboundImageResolver = (
   options: SlackInboundImageResolverOptions
 ): ResolveSlackInboundImages => {
-  const client = options.client as SlackFilesClient;
+  const client = options.client;
   const fetchImplementation = options.fetch ?? fetch;
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: all per-message count, metadata, byte, download, and publication bounds fail closed in this adapter boundary
   const resolveImages = Effect.fn("SlackInboundImages.resolve")(function* (
@@ -328,6 +365,7 @@ export const makeSlackInboundImageResolver = (
     if (typeof client.token !== "string" || client.token.length === 0) {
       return yield* boundaryFailure("missing-files-authorization");
     }
+    const token = client.token;
     let aggregateBytes = 0;
     const deadline = Date.now() + DOWNLOAD_TIMEOUT_MILLIS;
     const resolved: NormalizedImageInputType[] = [];
@@ -340,14 +378,20 @@ export const makeSlackInboundImageResolver = (
       if (metadata === null) {
         return yield* boundaryFailure("invalid-file-metadata");
       }
-      if (!SUPPORTED_MIME_TYPES.has(metadata.mimetype)) {
+      if (!isSupportedMimeType(metadata.mimetype)) {
         return yield* boundaryFailure("unsupported-image-type");
       }
       if (metadata.size > MAX_IMAGE_BYTES) {
         return yield* boundaryFailure("image-byte-limit");
       }
       aggregateBytes += metadata.size;
-      if (aggregateBytes > MAX_AGGREGATE_IMAGE_BYTES) {
+      if (
+        aggregateBytes >
+        Math.min(
+          MAX_AGGREGATE_IMAGE_BYTES,
+          request.maxAggregateBytes ?? MAX_AGGREGATE_IMAGE_BYTES
+        )
+      ) {
         return yield* boundaryFailure("aggregate-image-byte-limit");
       }
       const parsedUrl = yield* Effect.try({
@@ -363,7 +407,7 @@ export const makeSlackInboundImageResolver = (
             deadline,
             fetch: fetchImplementation,
             metadata,
-            token: client.token as string,
+            token,
           }),
         catch: (cause) => boundaryFailure(downloadFailureReason(cause)),
       });
@@ -387,7 +431,7 @@ export const makeSlackInboundImageResolver = (
               "utf8"
             )
             .digest("hex"),
-          mimeType: metadata.mimetype as NormalizedImageInputType["mimeType"],
+          mimeType: metadata.mimetype,
           slackFileId: candidate.id,
         })
       );

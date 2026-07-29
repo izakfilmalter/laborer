@@ -9,6 +9,7 @@ import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
 import { SlackBoundaryError } from "../slack/errors.ts";
 import {
+  MAX_AGGREGATE_IMAGE_BYTES,
   MAX_IMAGES_PER_MESSAGE,
   makeSlackInboundImageResolver,
 } from "../slack/inbound-images.ts";
@@ -284,6 +285,21 @@ const finalizeContext = (
     : sorted;
 };
 
+const imageCandidatesFromFiles = (
+  files: unknown
+): readonly { readonly id: string }[] =>
+  (Array.isArray(files) ? files : []).flatMap((file) =>
+    typeof file === "object" &&
+    file !== null &&
+    "id" in file &&
+    typeof file.id === "string" &&
+    "mimetype" in file &&
+    typeof file.mimetype === "string" &&
+    file.mimetype.toLowerCase().startsWith("image/")
+      ? [{ id: file.id }]
+      : []
+  );
+
 const normalizeReplyPage = Effect.fnUntraced(function* (
   messages: readonly Record<string, unknown>[],
   request: ActivationContextRequest,
@@ -300,16 +316,7 @@ const normalizeReplyPage = Effect.fnUntraced(function* (
   );
   const normalized = yield* Effect.forEach(eligible, (message) =>
     Effect.gen(function* () {
-      const candidates = (
-        Array.isArray(message.files) ? message.files : []
-      ).flatMap((file) =>
-        typeof file === "object" &&
-        file !== null &&
-        "id" in file &&
-        typeof file.id === "string"
-          ? [{ id: file.id }]
-          : []
-      );
+      const candidates = imageCandidatesFromFiles(message.files);
       const images =
         candidates.length === 0 || resolveImages === undefined
           ? []
@@ -380,15 +387,7 @@ export const makeSlackGateway = (options: {
     channelId: string,
     imageResolver: ResolveSlackInboundImages | undefined = resolveInboundImages
   ) {
-    const files = Array.isArray(message.files) ? message.files : [];
-    const candidates = files.flatMap((file) =>
-      typeof file === "object" &&
-      file !== null &&
-      "id" in file &&
-      typeof file.id === "string"
-        ? [{ id: file.id }]
-        : []
-    );
+    const candidates = imageCandidatesFromFiles(message.files);
     const slackTs = typeof message.ts === "string" ? message.ts : "";
     const images =
       candidates.length === 0 || imageResolver === undefined
@@ -426,6 +425,7 @@ export const makeSlackGateway = (options: {
       return undefined;
     }
     let remainingImages = MAX_IMAGES_PER_MESSAGE;
+    let remainingBytes = MAX_AGGREGATE_IMAGE_BYTES;
     const resolve: ResolveSlackInboundImages = (request) => {
       if (request.candidates.length > remainingImages) {
         remainingImages = 0;
@@ -435,7 +435,20 @@ export const makeSlackGateway = (options: {
         });
       }
       remainingImages -= request.candidates.length;
-      return resolveInboundImages(request);
+      return resolveInboundImages({
+        ...request,
+        maxAggregateBytes: remainingBytes,
+      }).pipe(
+        Effect.tap((images) =>
+          Effect.sync(() => {
+            remainingBytes -= images.reduce(
+              (total, image) =>
+                "failureReason" in image ? total : total + image.byteLength,
+              0
+            );
+          })
+        )
+      );
     };
     return resolve;
   };

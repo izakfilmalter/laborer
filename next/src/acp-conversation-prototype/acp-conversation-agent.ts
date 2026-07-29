@@ -1334,15 +1334,30 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
           ) {
             throw new Error("image-content-invalid");
           }
-          const content = await handle.readFile();
+          const content = new Uint8Array(image.byteLength + 1);
+          let offset = 0;
+          while (offset < content.byteLength) {
+            const read = await handle.read(
+              content,
+              offset,
+              content.byteLength - offset,
+              offset
+            );
+            if (read.bytesRead === 0) {
+              break;
+            }
+            offset += read.bytesRead;
+          }
           if (
-            content.byteLength !== image.byteLength ||
-            createHash("sha256").update(content).digest("hex") !==
+            offset !== image.byteLength ||
+            createHash("sha256")
+              .update(content.subarray(0, offset))
+              .digest("hex") !==
               image.contentDigest
           ) {
             throw new Error("image-digest-mismatch");
           }
-          return content;
+          return content.subarray(0, offset);
         } finally {
           await handle.close();
         }
@@ -1366,7 +1381,7 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
       remainingText = "";
     }
     promptBlocks.push({
-      data: bytes.toString("base64"),
+      data: Buffer.from(bytes).toString("base64"),
       mimeType: image.mimeType,
       type: "image",
       uri: null,

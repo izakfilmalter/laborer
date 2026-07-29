@@ -43,6 +43,7 @@ export interface SlackInboundImageCandidate {
 export type ResolveSlackInboundImages = (request: {
   readonly candidates: readonly SlackInboundImageCandidate[];
   readonly channelId: string;
+  readonly maxAggregateBytes?: number;
   readonly messageTs: string;
 }) => Effect.Effect<readonly NormalizedImage[], SlackBoundaryError>;
 
@@ -57,7 +58,10 @@ const imageCandidatesFor = (
       value !== null &&
       "id" in value &&
       typeof value.id === "string" &&
-      value.id.trim().length > 0
+      value.id.trim().length > 0 &&
+      "mimetype" in value &&
+      typeof value.mimetype === "string" &&
+      value.mimetype.toLowerCase().startsWith("image/")
     ) {
       candidates.push({ id: value.id });
     }
@@ -238,7 +242,11 @@ export const normalizeSlackEvent = (
     const text =
       recordKind === "message" ? (authored.text ?? raw.text ?? null) : null;
     const imageCandidates =
-      recordKind === "message" ? imageCandidatesFor(authored, raw) : [];
+      recordKind === "message" &&
+      author.kind !== "laborer" &&
+      channelKind !== "direct"
+        ? imageCandidatesFor(authored, raw)
+        : [];
     const images = yield* resolveImagesForEvent({
       candidates: imageCandidates,
       channelId,

@@ -111,7 +111,13 @@ describe("inbound Slack images", () => {
             event: {
               channel: "CWORK",
               channel_type: "channel",
-              files: [{ id: "FIMAGE", url_private: "must-not-survive" }],
+              files: [
+                {
+                  id: "FIMAGE",
+                  mimetype: "image/png",
+                  url_private: "must-not-survive",
+                },
+              ],
               subtype: "file_share",
               ts: "1.0",
               type: "message",
@@ -139,7 +145,7 @@ describe("inbound Slack images", () => {
             event: {
               channel: "CWORK",
               channel_type: "channel",
-              files: [{ id: "FIMAGE" }],
+              files: [{ id: "FIMAGE", mimetype: "image/png" }],
               subtype: "file_share",
               thread_ts: "1.0",
               ts: "2.0",
@@ -167,6 +173,38 @@ describe("inbound Slack images", () => {
           "unsupported-image-type"
         );
       })
+  );
+
+  it.effect("ignores attached non-image files without resolving them", () =>
+    Effect.gen(function* () {
+      let resolutionCount = 0;
+      const normalized = yield* normalizeSlackEvent(
+        {
+          event: {
+            channel: "CWORK",
+            channel_type: "channel",
+            files: [{ id: "FPDF", mimetype: "application/pdf" }],
+            text: "<@ULABORER> use the notes",
+            ts: "1.0",
+            type: "app_mention",
+            user: "UHUMAN",
+          },
+          event_id: "EvNonImage",
+          team_id: identity.teamId,
+          type: "event_callback",
+        },
+        identity,
+        {
+          resolveImages: () => {
+            resolutionCount += 1;
+            return Effect.succeed([]);
+          },
+        }
+      );
+
+      assert.strictEqual(resolutionCount, 0);
+      assert.deepStrictEqual(normalized?.images, []);
+    })
   );
 
   it.effect("fails closed on count, type, and download-origin violations", () =>
@@ -230,6 +268,97 @@ describe("inbound Slack images", () => {
         unsupported._tag === "Failure" ? unsupported.failure.reason : null,
         "unsupported-image-type"
       );
+
+      metadata.current = {
+        ...metadata.current,
+        mimetype: "image/png",
+        url_private_download:
+          "https://files.slack.com/files-pri/TLABORER-FIMAGE/image.png",
+      };
+      const aggregate = yield* Effect.result(
+        resolver({
+          candidates: [{ id: "FIMAGE" }],
+          channelId: "CWORK",
+          maxAggregateBytes: png.byteLength - 1,
+          messageTs: "1.0",
+        })
+      );
+      assert.strictEqual(
+        aggregate._tag === "Failure" ? aggregate.failure.reason : null,
+        "aggregate-image-byte-limit"
+      );
+    })
+  );
+
+  it.effect("forwards authorization only across allowlisted redirects", () =>
+    Effect.gen(function* () {
+      const storageRoot = yield* makeTempDirectoryScoped(
+        "laborer-inbound-image-redirect-"
+      );
+      const requests: string[] = [];
+      let redirectTarget =
+        "https://files-origin.slack.com/files-pri/TLABORER-FIMAGE/image.png";
+      const resolver = makeSlackInboundImageResolver({
+        client: {
+          files: {
+            info: () =>
+              Promise.resolve({
+                file: {
+                  id: "FIMAGE",
+                  mimetype: "image/png",
+                  size: png.byteLength,
+                  url_private_download:
+                    "https://files.slack.com/files-pri/TLABORER-FIMAGE/image.png",
+                },
+              }),
+          },
+          token: "test-bot-token",
+        } as never,
+        fetch: ((input, init) => {
+          requests.push(
+            `${String(input)} ${new Headers(init?.headers).get("authorization")}`
+          );
+          return Promise.resolve(
+            requests.length === 1 || requests.length === 3
+              ? new Response(null, {
+                  headers: { location: redirectTarget },
+                  status: 302,
+                })
+              : new Response(png, {
+                  headers: {
+                    "content-length": String(png.byteLength),
+                    "content-type": "image/png",
+                  },
+                })
+          );
+        }) as typeof fetch,
+        storageRoot,
+      });
+
+      const allowed = yield* Effect.result(
+        resolver({
+          candidates: [{ id: "FIMAGE" }],
+          channelId: "CWORK",
+          messageTs: "1.0",
+        })
+      );
+      assert.strictEqual(allowed._tag, "Success");
+      assert.strictEqual(requests.length, 2);
+
+      redirectTarget = "https://attacker.example/image.png";
+      const rejected = yield* Effect.result(
+        resolver({
+          candidates: [{ id: "FIMAGE" }],
+          channelId: "CWORK",
+          messageTs: "2.0",
+        })
+      );
+      assert.strictEqual(
+        rejected._tag === "Failure" ? rejected.failure.reason : null,
+        "untrusted-download-origin"
+      );
+      assert.strictEqual(requests.length, 3);
+      assert.isFalse(requests.some((request) => request.includes("attacker")));
     })
   );
 

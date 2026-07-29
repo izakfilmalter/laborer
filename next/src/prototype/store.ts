@@ -3865,6 +3865,10 @@ const validateMessage = (
   if (classification === "context" && message.isActivation) {
     return storeFailure("validate", "context-message-is-activation");
   }
+  const images = message.images ?? [];
+  if (new Set(images.map((image) => image.id)).size !== images.length) {
+    return storeFailure("validate", "duplicate-image-input-id");
+  }
   return null;
 };
 
@@ -4029,7 +4033,9 @@ const messagesEqual = (
       message.classification === candidate.classification &&
       message.isActivation === candidate.isActivation &&
       message.slackTs === candidate.slackTs &&
-      message.text === candidate.text
+      message.text === candidate.text &&
+      JSON.stringify(message.images ?? []) ===
+        JSON.stringify(candidate.images ?? [])
     );
   });
 

@@ -1,13 +1,21 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
+import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
 import {
+  canonicalThreadId,
   ReadyNormalizedImageInput,
   stableMessageId,
 } from "../src/prototype/domain.ts";
-import { normalizeSlackHistoryMessage } from "../src/prototype/emulated-slack.ts";
-import { makeSlackImageInputHydrator } from "../src/slack/image-input.ts";
+import {
+  makeSlackGateway,
+  normalizeSlackHistoryMessage,
+} from "../src/prototype/emulated-slack.ts";
+import {
+  makeSlackImageInputHydrator,
+  type SlackImageInputHydrator,
+} from "../src/slack/image-input.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const PNG = Uint8Array.from([
@@ -162,5 +170,157 @@ describe("canonical-parent image hydration", () => {
           }
         })
       )
+  );
+
+  it.effect(
+    "bounds a response body that stalls after authenticated fetch",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-image-timeout-"
+          );
+          const storageRoot = resolve(directory, "work-threads");
+          yield* Effect.promise(() => mkdir(storageRoot, { mode: 0o700 }));
+          let cancelled = false;
+          const hydrator = makeSlackImageInputHydrator({
+            client: fileClient(),
+            downloadTimeoutMillis: 20,
+            fetch: () =>
+              Promise.resolve(
+                new Response(
+                  new ReadableStream<Uint8Array>({
+                    cancel: () => {
+                      cancelled = true;
+                    },
+                  }),
+                  { headers: { "content-type": "image/png" } }
+                )
+              ),
+            storageRoot,
+          });
+
+          const images = yield* hydrator.hydrate({
+            files: [{ id: "F301", mimetype: "image/png" }],
+            messageId: "message-timeout",
+          });
+
+          assert.equal(images[0]?._tag, "Failed");
+          if (images[0]?._tag === "Failed") {
+            assert.equal(images[0].reason, "download-timeout");
+          }
+          assert.isTrue(cancelled);
+        })
+      )
+  );
+
+  it.effect(
+    "fails closed for malformed file references and truncated downloads",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-image-invalid-"
+          );
+          const storageRoot = resolve(directory, "work-threads");
+          yield* Effect.promise(() => mkdir(storageRoot, { mode: 0o700 }));
+          const hydrator = makeSlackImageInputHydrator({
+            client: fileClient(),
+            fetch: () =>
+              Promise.resolve(
+                new Response(PNG, {
+                  headers: {
+                    "content-length": String(PNG.byteLength + 1),
+                    "content-type": "image/png",
+                  },
+                })
+              ),
+            storageRoot,
+          });
+
+          const malformed = yield* hydrator.hydrate({
+            files: [{ mimetype: "image/png" }],
+            messageId: "message-malformed",
+          });
+          const truncated = yield* hydrator.hydrate({
+            files: [{ id: "F301", mimetype: "image/png" }],
+            messageId: "message-truncated",
+          });
+
+          assert.equal(malformed[0]?._tag, "Failed");
+          if (malformed[0]?._tag === "Failed") {
+            assert.equal(malformed[0].reason, "metadata-unavailable");
+          }
+          assert.equal(truncated[0]?._tag, "Failed");
+          if (truncated[0]?._tag === "Failed") {
+            assert.equal(truncated[0].reason, "invalid-response");
+          }
+        })
+      )
+  );
+
+  it.effect(
+    "hydrates only the canonical parent during reply Activation context",
+    () =>
+      Effect.gen(function* () {
+        const hydratedMessageIds: string[] = [];
+        const imageInputHydrator: SlackImageInputHydrator = {
+          hydrate: ({ messageId }) => {
+            hydratedMessageIds.push(messageId);
+            return Effect.succeed([]);
+          },
+        };
+        const gateway = makeSlackGateway({
+          botClient: {
+            conversations: {
+              replies: async () => ({
+                messages: [
+                  {
+                    files: [{ id: "FROOT", mimetype: "image/png" }],
+                    text: "canonical parent",
+                    ts: "301.0",
+                    user: "U301",
+                  },
+                  {
+                    files: [{ id: "FREPLY", mimetype: "image/png" }],
+                    text: "earlier reply",
+                    thread_ts: "301.0",
+                    ts: "301.1",
+                    user: "U301",
+                  },
+                  {
+                    text: "<@U301LABORER> activate",
+                    thread_ts: "301.0",
+                    ts: "301.2",
+                    user: "U301",
+                  },
+                ],
+              }),
+            },
+          } as unknown as WebClient,
+          botId: "B301LABORER",
+          botUserId: "U301LABORER",
+          imageInputHydrator,
+          pageSize: 100,
+          workspaceId: "T301",
+        });
+
+        const context = yield* gateway.readActivationContext({
+          activationTs: "301.2",
+          channelId: "C301",
+          isReplyActivation: true,
+          retryAtMillis: null,
+          rootTs: "301.0",
+          threadId: canonicalThreadId("C301", "301.0", "T301"),
+        });
+
+        assert.deepEqual(
+          context.map((message) => message.slackTs),
+          ["301.0", "301.1"]
+        );
+        assert.deepEqual(hydratedMessageIds, [
+          stableMessageId("C301", "301.0", "T301"),
+        ]);
+      })
   );
 });

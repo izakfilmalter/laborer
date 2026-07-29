@@ -1,13 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { Effect, Schema } from "effect";
 import {
@@ -19,6 +12,8 @@ import {
 const MAX_IMAGE_BYTES = 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MILLIS = 10_000;
 const MAX_REDIRECTS = 3;
+const CONTENT_LENGTH_PATTERN = /^\d+$/;
+const PRIVATE_READ_FLAGS = fsConstants.O_RDONLY + fsConstants.O_NOFOLLOW;
 const SUPPORTED_MIME_TYPES = new Set([
   "image/gif",
   "image/jpeg",
@@ -43,7 +38,7 @@ const SlackFileInfo = Schema.Struct({
     url_private_download: Schema.optional(Schema.String),
     url_private: Schema.optional(Schema.String),
   }),
-  ok: Schema.optional(Schema.Boolean),
+  ok: Schema.Literal(true),
 });
 
 export interface SlackImageInputHydrator {
@@ -60,6 +55,7 @@ export interface SlackImageInputHydratorOptions {
     };
     readonly token?: string;
   };
+  readonly downloadTimeoutMillis?: number;
   readonly fetch?: ImageFetch;
   readonly storageRoot: string;
 }
@@ -86,12 +82,62 @@ const contentType = (response: Response): string =>
     ?.trim()
     .toLowerCase() ?? "";
 
+const isOwnedPrivateEntry = (metadata: {
+  readonly mode: number;
+  readonly uid: number;
+}): boolean =>
+  metadata.mode % 0o100 === 0 &&
+  (typeof process.getuid !== "function" || metadata.uid === process.getuid());
+
+const readExactFile = async (
+  path: string,
+  expectedBytes: number
+): Promise<Uint8Array> => {
+  const handle = await open(path, PRIVATE_READ_FLAGS);
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      metadata.size !== expectedBytes ||
+      !isOwnedPrivateEntry(metadata)
+    ) {
+      throw new Error("storage-failed");
+    }
+    const bytes = new Uint8Array(expectedBytes + 1);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        offset
+      );
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+    if (offset !== expectedBytes) {
+      throw new Error("storage-failed");
+    }
+    return bytes.subarray(0, expectedBytes);
+  } finally {
+    await handle.close();
+  }
+};
+
 const boundedResponseBytes = async (
-  response: Response
+  response: Response,
+  aborted: Promise<never>
 ): Promise<Uint8Array> => {
   const declared = response.headers.get("content-length");
-  if (declared !== null && Number(declared) > MAX_IMAGE_BYTES) {
-    throw new Error("size-exceeded");
+  if (declared !== null) {
+    if (!CONTENT_LENGTH_PATTERN.test(declared)) {
+      throw new Error("invalid-response");
+    }
+    if (Number(declared) > MAX_IMAGE_BYTES) {
+      throw new Error("size-exceeded");
+    }
   }
   if (response.body === null) {
     throw new Error("invalid-response");
@@ -101,7 +147,7 @@ const boundedResponseBytes = async (
   let length = 0;
   try {
     while (true) {
-      const next = await reader.read();
+      const next = await Promise.race([reader.read(), aborted]);
       if (next.done) {
         break;
       }
@@ -112,6 +158,10 @@ const boundedResponseBytes = async (
       chunks.push(next.value);
     }
   } finally {
+    await Promise.race([
+      reader.cancel().catch(() => undefined),
+      Promise.resolve(undefined),
+    ]);
     reader.releaseLock();
   }
   if (declared !== null && Number(declared) !== length) {
@@ -130,12 +180,10 @@ const authenticatedDownload = async (options: {
   readonly fetch: ImageFetch;
   readonly token: string;
   readonly url: string;
+  readonly timeoutMillis: number;
 }): Promise<{ readonly bytes: Uint8Array; readonly mimeType: string }> => {
   const cancellation = new AbortController();
-  const timeout = setTimeout(
-    () => cancellation.abort(),
-    DOWNLOAD_TIMEOUT_MILLIS
-  );
+  const timeout = setTimeout(() => cancellation.abort(), options.timeoutMillis);
   try {
     let current: URL;
     try {
@@ -174,7 +222,7 @@ const authenticatedDownload = async (options: {
         throw new Error("invalid-response");
       }
       return {
-        bytes: await boundedResponseBytes(response),
+        bytes: await boundedResponseBytes(response, aborted),
         mimeType: contentType(response),
       };
     }
@@ -198,9 +246,12 @@ const stageImage = async (options: {
   const directory = resolve(canonicalRoot, "image-inputs");
   await mkdir(directory, { mode: 0o700, recursive: true });
   const canonicalDirectory = await realpath(directory);
+  const directoryMetadata = await lstat(canonicalDirectory);
   if (
-    canonicalDirectory !== canonicalRoot &&
-    !canonicalDirectory.startsWith(`${canonicalRoot}${sep}`)
+    (canonicalDirectory !== canonicalRoot &&
+      !canonicalDirectory.startsWith(`${canonicalRoot}${sep}`)) ||
+    !directoryMetadata.isDirectory() ||
+    !isOwnedPrivateEntry(directoryMetadata)
   ) {
     throw new Error("storage-failed");
   }
@@ -215,7 +266,7 @@ const stageImage = async (options: {
       throw new Error("storage-failed");
     }
     const existingDigest = createHash("sha256")
-      .update(await readFile(target))
+      .update(await readExactFile(target, options.bytes.byteLength))
       .digest("base64url");
     if (existingDigest !== options.digest) {
       throw new Error("storage-failed");
@@ -279,7 +330,14 @@ export const makeSlackImageInputHydrator = (
           files
         );
       } catch {
-        return [];
+        return Array.isArray(files) && files.length > 0
+          ? [
+              failed(
+                stableInputId(messageId, "invalid-file-reference"),
+                "metadata-unavailable"
+              ),
+            ]
+          : [];
       }
       if (decoded.length === 0) {
         return [];
@@ -321,6 +379,12 @@ export const makeSlackImageInputHydrator = (
         if (!SUPPORTED_MIME_TYPES.has(expectedMime)) {
           return [failed(id, "unsupported-mime")];
         }
+        if (
+          file.size !== undefined &&
+          (!Number.isSafeInteger(file.size) || file.size < 0)
+        ) {
+          return [failed(id, "metadata-unavailable")];
+        }
         if ((file.size ?? 0) > MAX_IMAGE_BYTES) {
           return [failed(id, "size-exceeded")];
         }
@@ -331,6 +395,8 @@ export const makeSlackImageInputHydrator = (
         const downloaded = await authenticatedDownload({
           fetch: options.fetch ?? ((input, init) => fetch(input, init)),
           token: options.client.token,
+          timeoutMillis:
+            options.downloadTimeoutMillis ?? DOWNLOAD_TIMEOUT_MILLIS,
           url,
         });
         if (downloaded.mimeType !== expectedMime) {

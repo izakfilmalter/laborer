@@ -1,7 +1,8 @@
 /** Opt-in ACP stable-v1 conversation-agent proof for issues #234 and #236. */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
@@ -1222,6 +1223,15 @@ const requiredImageFailure = (): HandlerFailure =>
     safeDetail: "Required image input is unavailable",
   });
 
+const PRIVATE_IMAGE_READ_FLAGS = fsConstants.O_RDONLY + fsConstants.O_NOFOLLOW;
+
+const isOwnedPrivateImage = (metadata: {
+  readonly mode: number;
+  readonly uid: number;
+}): boolean =>
+  metadata.mode % 0o100 === 0 &&
+  (typeof process.getuid !== "function" || metadata.uid === process.getuid());
+
 const readStagedImage = Effect.fn("AcpConversationAgent.readStagedImage")(
   function* (
     image: Extract<
@@ -1245,25 +1255,47 @@ const readStagedImage = Effect.fn("AcpConversationAgent.readStagedImage")(
         ) {
           throw new Error("image path escaped storage root");
         }
-        const metadata = await lstat(candidate);
-        if (
-          !metadata.isFile() ||
-          metadata.isSymbolicLink() ||
-          metadata.size !== image.byteLength ||
-          metadata.size > 1024 * 1024
-        ) {
-          throw new Error("image file identity changed");
-        }
         const canonicalFile = await realpath(candidate);
         if (!canonicalFile.startsWith(`${canonicalRoot}${sep}`)) {
           throw new Error("image path escaped storage root");
         }
-        const bytes = await readFile(canonicalFile);
-        const digest = createHash("sha256").update(bytes).digest("base64url");
-        if (digest !== image.contentDigest) {
-          throw new Error("image digest changed");
+        const handle = await open(canonicalFile, PRIVATE_IMAGE_READ_FLAGS);
+        try {
+          const metadata = await handle.stat();
+          if (
+            !metadata.isFile() ||
+            metadata.size !== image.byteLength ||
+            metadata.size > 1024 * 1024 ||
+            !isOwnedPrivateImage(metadata)
+          ) {
+            throw new Error("image file identity changed");
+          }
+          const bounded = new Uint8Array(image.byteLength + 1);
+          let offset = 0;
+          while (offset < bounded.byteLength) {
+            const { bytesRead } = await handle.read(
+              bounded,
+              offset,
+              bounded.byteLength - offset,
+              offset
+            );
+            if (bytesRead === 0) {
+              break;
+            }
+            offset += bytesRead;
+          }
+          if (offset !== image.byteLength) {
+            throw new Error("image file identity changed");
+          }
+          const bytes = bounded.subarray(0, image.byteLength);
+          const digest = createHash("sha256").update(bytes).digest("base64url");
+          if (digest !== image.contentDigest) {
+            throw new Error("image digest changed");
+          }
+          return Buffer.from(bytes).toString("base64");
+        } finally {
+          await handle.close();
         }
-        return bytes.toString("base64");
       },
       catch: requiredImageFailure,
     });

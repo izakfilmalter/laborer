@@ -15,12 +15,8 @@ import {
 import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
 import type { SlackImageInputHydrator } from "../slack/image-input.ts";
-import {
-  FailedNormalizedImageInput,
-  type NormalizedImageInput,
-  NormalizedMessage,
-  stableMessageId,
-} from "./domain.ts";
+import type { NormalizedImageInput } from "./domain.ts";
+import { NormalizedMessage, stableMessageId } from "./domain.ts";
 import { ContextReadError, DeliveryError, EmulatorError } from "./errors.ts";
 import type {
   ActivationAcknowledgerShape,
@@ -295,24 +291,27 @@ const normalizeHistoryMessage = Effect.fnUntraced(function* (options: {
   readonly message: Record<string, unknown>;
   readonly workspaceId?: string;
 }) {
-  const eligible = normalizeSlackHistoryMessage({
-    ...options,
-    images: [
-      FailedNormalizedImageInput.make({
-        id: "image:eligibility-check",
-        reason: "metadata-unavailable",
-      }),
-    ],
-  });
-  if (eligible === null) {
+  const { message } = options;
+  const slackTs = typeof message.ts === "string" ? message.ts : null;
+  const subtype = typeof message.subtype === "string" ? message.subtype : null;
+  const botId = typeof message.bot_id === "string" ? message.bot_id : null;
+  const userId = typeof message.user === "string" ? message.user : null;
+  if (
+    slackTs === null ||
+    (subtype !== null &&
+      subtype !== "bot_message" &&
+      subtype !== "file_share") ||
+    botId === options.botId ||
+    userId === options.botUserId ||
+    (userId === null && botId === null)
+  ) {
     return null;
   }
-  const slackTs =
-    typeof options.message.ts === "string" ? options.message.ts : null;
-  const messageId =
-    slackTs === null
-      ? "invalid-message"
-      : stableMessageId(options.channelId, slackTs, options.workspaceId);
+  const messageId = stableMessageId(
+    options.channelId,
+    slackTs,
+    options.workspaceId
+  );
   const images =
     options.imageInputHydrator === undefined
       ? []
@@ -342,7 +341,9 @@ const normalizeReplyPage = Effect.fnUntraced(function* (
       botId,
       botUserId,
       channelId: request.channelId,
-      ...(imageInputHydrator === undefined ? {} : { imageInputHydrator }),
+      ...(imageInputHydrator === undefined || message.ts !== request.rootTs
+        ? {}
+        : { imageInputHydrator }),
       message,
       ...(workspaceId === undefined ? {} : { workspaceId }),
     })
@@ -416,9 +417,6 @@ export const makeSlackGateway = (options: {
           botId: options.botId ?? BOT_ID,
           botUserId: options.botUserId ?? BOT_USER_ID,
           channelId: request.channelId,
-          ...(options.imageInputHydrator === undefined
-            ? {}
-            : { imageInputHydrator: options.imageInputHydrator }),
           message: message as Record<string, unknown>,
           ...(options.workspaceId === undefined
             ? {}

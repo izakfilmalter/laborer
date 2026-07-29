@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -41,6 +42,7 @@ import type {
   SlackDaemonConfig,
   SlackRuntimeIdentity,
 } from "../src/slack/config.ts";
+import { makeSlackInboundImageResolver } from "../src/slack/inbound-images.ts";
 import { acquireRunnerLock } from "../src/slack/runner-lock.ts";
 import {
   prepareSlackRuntimePaths,
@@ -367,8 +369,10 @@ const PROCESS_ENVIRONMENT_NAMES = [
   "SCRIPTED_ACP_EXIT_AFTER_PROMPT_RECEIVED",
   "SCRIPTED_ACP_EXIT_AFTER_PROMPT_RECEIVED_MARKER_PATH",
   "SCRIPTED_ACP_LIFECYCLE_LOG_PATH",
+  "SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY",
   "SCRIPTED_ACP_PID_PATH",
   "SCRIPTED_ACP_PROMPT_JSONL_PATH",
+  "SCRIPTED_ACP_PROMPT_CONTENT_JSONL_PATH",
   "SCRIPTED_ACP_PUBLIC_OUTPUT_LABEL",
   "SCRIPTED_ACP_PERMISSION_RAW_INPUT_JSON",
   "SCRIPTED_ACP_PERMISSION_RESULT_PATH",
@@ -918,7 +922,9 @@ const waitForAuthoritySettlement = Effect.fnUntraced(function* (path: string) {
 });
 
 const makeProductionHarness = Effect.fnUntraced(function* (options: {
+  readonly context?: readonly NormalizedMessage[];
   readonly environment: NodeJS.ProcessEnv;
+  readonly gateway?: SlackGatewayShape;
   readonly health: AcpWorkspaceHealth[];
   readonly messages: CapturedSlackMessage[];
   readonly paths: SlackRuntimePaths;
@@ -934,7 +940,9 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
   const workspace = yield* makeProductionAcpSlackWorkspaceRuntime(
     {
       client: makeFixtureSlackClient(),
-      gateway: makeCapturingSlack(options.messages),
+      gateway:
+        options.gateway ??
+        makeCapturingSlack(options.messages, options.context),
       identity: {
         botId: "B244LABORER",
         botUserId: "U244LABORER",
@@ -983,6 +991,139 @@ const makeProductionHarness = Effect.fnUntraced(function* (options: {
 // multi-child scenes exceed under concurrent scheduling; explicit
 // per-scene timeouts still take precedence.
 describe.concurrent("issues #244-#257 production ACP acceptance", () => {
+  it.live(
+    "delivers a durable canonical-parent image before reply Activation text",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped("laborer-301-image-");
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-301-image-controls-"
+          );
+          const paths = yield* prepareSlackRuntimePaths(root, "T301IMAGE");
+          const processPaths = scriptedProcessPaths(controls, "image");
+          const contentPath = join(controls, "image-content.jsonl");
+          yield* Effect.promise(() =>
+            writeFile(processPaths.release, "release", { mode: 0o600 })
+          );
+          const bytes = Buffer.from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+          ]);
+          const digest = createHash("sha256").update(bytes).digest("hex");
+          const authorizationHeaders: string[] = [];
+          const imageClient = {
+            files: {
+              info: async () => ({
+                file: {
+                  id: "F301",
+                  mimetype: "image/png",
+                  size: bytes.byteLength,
+                  url_private_download:
+                    "https://files.slack.com/files-pri/T301-F301/task.png",
+                },
+                ok: true,
+              }),
+            },
+            token: ["xox", "b-301-private-test-token"].join(""),
+          };
+          const resolveImages = makeSlackInboundImageResolver({
+            client: imageClient as unknown as WebClient,
+            fetch: ((_input, init) => {
+              authorizationHeaders.push(
+                new Headers(init?.headers).get("authorization") ?? ""
+              );
+              return Promise.resolve(
+                new Response(bytes, {
+                  headers: {
+                    "content-length": String(bytes.byteLength),
+                    "content-type": "image/png",
+                  },
+                })
+              );
+            }) as typeof fetch,
+            storageRoot: dirname(paths.runnerState),
+          });
+          const [image] = yield* resolveImages({
+            candidates: [{ id: "F301" }],
+            channelId: "C301",
+            messageTs: "301.0",
+          });
+          assert.isDefined(image);
+          const context = [
+            NormalizedMessage.make({
+              authorKind: "human",
+              authorSlackId: "U301HUMAN",
+              classification: "context",
+              id: stableMessageId("C301", "301.0", "T301IMAGE"),
+              images: image === undefined ? [] : [image],
+              isActivation: false,
+              slackTs: "301.0",
+              text: "",
+            }),
+          ];
+          const messages: CapturedSlackMessage[] = [];
+          const production = yield* makeProductionHarness({
+            context,
+            environment: scriptedEnvironment(processPaths, {
+              SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY: "1",
+              SCRIPTED_ACP_PROMPT_CONTENT_JSONL_PATH: contentPath,
+            }),
+            health: [],
+            implementationCounters: {
+              implementationAcquisitions: 0,
+              implementationPrompts: 0,
+            },
+            messages,
+            paths,
+            root,
+            workspaceId: "T301IMAGE",
+            worktreeCalls: { count: 0 },
+          });
+
+          yield* production.harness.runner.inject(
+            normalizedEvent({
+              authorSlackId: "U301HUMAN",
+              channelId: "C301",
+              eventId: "event:301:activation",
+              messageTs: "301.1",
+              text: "<@U244LABORER> do the thing",
+              threadTs: "301.0",
+              workspaceId: "T301IMAGE",
+            })
+          );
+
+          const blocks = JSON.parse(
+            (yield* Effect.promise(() => readFile(contentPath, "utf8"))).trim()
+          ) as readonly {
+            readonly data?: string;
+            readonly text?: string;
+            readonly type: string;
+          }[];
+          const imageIndex = blocks.findIndex(
+            (block) => block.type === "image"
+          );
+          const activationIndex = blocks.findIndex((block) =>
+            block.text?.includes("do the thing")
+          );
+          assert.isAtLeast(imageIndex, 0);
+          assert.isAbove(activationIndex, imageIndex);
+          assert.equal(blocks[imageIndex]?.data, bytes.toString("base64"));
+          assert.equal(messages.length, 1);
+          assert.equal(messages[0]?.rootTs, "301.0");
+          assert.deepEqual(authorizationHeaders, [
+            `Bearer ${["xox", "b-301-private-test-token"].join("")}`,
+          ]);
+          const durable = JSON.stringify(
+            yield* production.harness.store.snapshot
+          );
+          assert.include(durable, digest);
+          assert.notInclude(durable, "files.slack.com");
+          assert.notInclude(durable, ["xox", "b-"].join(""));
+        })
+      ),
+    60_000
+  );
+
   it.effect(
     "fails a non-reference-coding binding with a typed composition error",
     () =>

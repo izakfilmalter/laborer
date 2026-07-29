@@ -1,7 +1,10 @@
 import {
   ChevronRight,
   CircleCheck,
+  CircleDashed,
   CircleDot,
+  CircleDotDashed,
+  CircleSlash,
   LoaderCircle,
   type LucideIcon,
   PlugZap,
@@ -201,6 +204,7 @@ type RunningStatus = Extract<
 
 type WorkspaceBinding = RunningStatus["workspaces"][number];
 type WorkThread = WorkspaceBinding["threads"][number];
+type PendingExecution = WorkThread["executions"][number];
 
 interface BindingCounts {
   readonly pending: number;
@@ -480,6 +484,165 @@ const useNow = (intervalMs: number | null): number => {
   return now;
 };
 
+// Lifecycle is the only Execution detail this surface may show, so each state
+// carries its own mark and tone rather than collapsing into one "pending" row
+// that hides what the delegated work is actually doing. The label stays the
+// primary signal; the icon is redundant reinforcement, never the sole cue.
+const executionPresentation: Record<
+  PendingExecution["lifecycle"],
+  {
+    readonly icon: LucideIcon;
+    readonly iconClassName: string;
+    readonly labelClassName: string;
+    // Display order only: urgency first, then the longest-waiting work. This is
+    // presentation, not policy; work-thread activity stays daemon-owned.
+    readonly rank: number;
+    readonly title: string;
+  }
+> = {
+  "recovery-blocked": {
+    icon: TriangleAlert,
+    iconClassName: "text-danger",
+    labelClassName: "font-medium text-danger",
+    rank: 0,
+    title: "Recovery blocked",
+  },
+  running: {
+    icon: CircleDot,
+    iconClassName: "animate-pulse text-success motion-reduce:animate-none",
+    labelClassName: "text-muted-foreground",
+    rank: 1,
+    title: "Running",
+  },
+  "implementation-ready": {
+    icon: CircleDotDashed,
+    iconClassName: "text-success",
+    labelClassName: "text-muted-foreground",
+    rank: 2,
+    title: "Implementation ready",
+  },
+  starting: {
+    icon: LoaderCircle,
+    iconClassName:
+      "animate-spin text-muted-foreground motion-reduce:animate-none",
+    labelClassName: "text-muted-foreground",
+    rank: 3,
+    title: "Starting",
+  },
+  allocated: {
+    icon: CircleDashed,
+    iconClassName: "text-muted-foreground",
+    labelClassName: "text-muted-foreground",
+    rank: 4,
+    title: "Allocated",
+  },
+  cancelling: {
+    icon: CircleSlash,
+    iconClassName: "text-muted-foreground",
+    labelClassName: "text-muted-foreground",
+    rank: 5,
+    title: "Cancelling",
+  },
+};
+
+// Deterministic in both live pushes and reconnect snapshots, so a row never
+// appears to move on its own between renders of the same projection.
+const orderedExecutions = (
+  executions: readonly PendingExecution[]
+): readonly PendingExecution[] =>
+  [...executions].sort(
+    (left, right) =>
+      executionPresentation[left.lifecycle].rank -
+        executionPresentation[right.lifecycle].rank ||
+      (left.startedAtUnixMs ?? Number.POSITIVE_INFINITY) -
+        (right.startedAtUnixMs ?? Number.POSITIVE_INFINITY) ||
+      left.id.localeCompare(right.id)
+  );
+
+const PendingExecutionRow = ({
+  execution,
+  nowUnixMs,
+}: {
+  readonly execution: PendingExecution;
+  readonly nowUnixMs: number;
+}) => {
+  const presentation = executionPresentation[execution.lifecycle];
+  const Icon = presentation.icon;
+  const started =
+    execution.startedAtUnixMs === null
+      ? null
+      : new Date(execution.startedAtUnixMs);
+  const age =
+    execution.startedAtUnixMs === null
+      ? null
+      : stateAge(nowUnixMs - execution.startedAtUnixMs);
+  return (
+    <li className="flex items-start gap-2 py-1 pr-3">
+      <Icon
+        aria-hidden="true"
+        className={`mt-0.5 size-3 shrink-0 ${presentation.iconClassName}`}
+      />
+      <span className="min-w-0 flex-1">
+        <span
+          className="block truncate font-mono text-[11px] leading-4"
+          title={execution.actionName}
+        >
+          {execution.actionName}
+        </span>
+        <span
+          className={`block text-[11px] leading-4 ${presentation.labelClassName}`}
+        >
+          {presentation.title}
+        </span>
+      </span>
+      {started === null || age === null ? (
+        <span className="shrink-0 text-[11px] text-muted-foreground leading-4">
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">{`${presentation.title}, start time unavailable`}</span>
+        </span>
+      ) : (
+        // Elapsed time is measured from when the Execution was accepted, not
+        // from when it entered its current lifecycle, so the wording says how
+        // long it has been outstanding rather than claiming time in state.
+        <time
+          className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
+          dateTime={started.toISOString()}
+          title={`Pending since ${started.toLocaleString()}`}
+        >
+          <span aria-hidden="true">{age.compact}</span>
+          <span className="sr-only">{`${presentation.title}, pending for ${age.spoken}`}</span>
+        </time>
+      )}
+    </li>
+  );
+};
+
+// Executions hang off their work thread on a rail aligned to the thread icon so
+// the ownership is readable at a glance and never reparents visually.
+const PendingExecutionList = ({
+  nowUnixMs,
+  thread,
+}: {
+  readonly nowUnixMs: number;
+  readonly thread: WorkThread;
+}) => {
+  const executions = orderedExecutions(thread.executions);
+  return (
+    <ul
+      aria-label={`Pending Executions for ${thread.label}`}
+      className="mb-1.5 ml-[1.1875rem] border-border border-l pl-4"
+    >
+      {executions.map((execution) => (
+        <PendingExecutionRow
+          execution={execution}
+          key={execution.id}
+          nowUnixMs={nowUnixMs}
+        />
+      ))}
+    </ul>
+  );
+};
+
 const WorkThreadRow = ({
   nowUnixMs,
   thread,
@@ -493,26 +656,31 @@ const WorkThreadRow = ({
   const age = stateAge(nowUnixMs - thread.stateChangedAtUnixMs);
   return (
     <li
-      className={`flex items-center gap-2.5 border-border border-t px-3 py-2 first:border-t-0 ${presentation.rowClassName}`}
+      className={`border-border border-t first:border-t-0 ${presentation.rowClassName}`}
     >
-      <Icon
-        aria-hidden="true"
-        className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
-      />
-      <span
-        className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
-        title={thread.label}
-      >
-        {thread.label}
-      </span>
-      <time
-        className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
-        dateTime={changed.toISOString()}
-        title={changed.toLocaleString()}
-      >
-        <span aria-hidden="true">{age.compact}</span>
-        <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
-      </time>
+      <div className="flex items-center gap-2.5 px-3 py-2">
+        <Icon
+          aria-hidden="true"
+          className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
+        />
+        <span
+          className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
+          title={thread.label}
+        >
+          {thread.label}
+        </span>
+        <time
+          className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
+          dateTime={changed.toISOString()}
+          title={changed.toLocaleString()}
+        >
+          <span aria-hidden="true">{age.compact}</span>
+          <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
+        </time>
+      </div>
+      {thread.executions.length === 0 ? null : (
+        <PendingExecutionList nowUnixMs={nowUnixMs} thread={thread} />
+      )}
     </li>
   );
 };

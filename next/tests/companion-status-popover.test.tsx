@@ -297,6 +297,7 @@ describe("companion status popover", () => {
               threads: [
                 {
                   activity: "needs-attention",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1000.000001",
                   label: "C123 · 1000.000001",
                   stateChangedAtUnixMs: now - 5 * 60_000,
@@ -304,6 +305,40 @@ describe("companion status popover", () => {
                 },
                 {
                   activity: "in-progress",
+                  executions: [
+                    {
+                      actionName: "fixture/allocate",
+                      id: "execution:allocated",
+                      lifecycle: "allocated",
+                      startedAtUnixMs: now - 2 * 60_000,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                    {
+                      actionName: "fixture/start",
+                      id: "execution:starting",
+                      lifecycle: "starting",
+                      startedAtUnixMs: now - 3 * 60_000,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                    {
+                      actionName: "fixture/prepare",
+                      id: "execution:ready",
+                      lifecycle: "implementation-ready",
+                      startedAtUnixMs: now - 4 * 60_000,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                    {
+                      actionName: "fixture/run",
+                      id: "execution:running",
+                      lifecycle: "running",
+                      startedAtUnixMs: now - 5 * 60_000,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                  ],
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 30_000,
@@ -311,6 +346,7 @@ describe("companion status popover", () => {
                 },
                 {
                   activity: "dormant",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1002.000001",
                   label: "C123 · 1002.000001",
                   stateChangedAtUnixMs: now - 3 * 3_600_000,
@@ -334,7 +370,150 @@ describe("companion status popover", () => {
     expect(screen.getByText("C123 · 1000.000001")).toBeTruthy();
     expect(screen.getByText("C123 · 1001.000001")).toBeTruthy();
     expect(screen.getByText("C123 · 1002.000001")).toBeTruthy();
+    expect(
+      screen.getByRole("list", {
+        name: "Pending Executions for C123 · 1001.000001",
+      })
+    ).toBeTruthy();
+    expect(screen.getByText("fixture/allocate")).toBeTruthy();
+    expect(screen.getByText("Allocated")).toBeTruthy();
+    expect(screen.getByText("Starting")).toBeTruthy();
+    expect(screen.getByText("Implementation ready")).toBeTruthy();
+    expect(screen.getByText("Running")).toBeTruthy();
     expect(document.body.textContent).not.toContain("prompt");
+  });
+
+  it("shows every bounded pending Execution in deterministic urgency order", () => {
+    const now = Date.now();
+    const execution = (
+      index: number,
+      lifecycle:
+        | "allocated"
+        | "cancelling"
+        | "implementation-ready"
+        | "recovery-blocked"
+        | "running"
+        | "starting",
+      ageMinutes: number
+    ) => ({
+      actionName: `fixture/action-${index}`,
+      id: `execution:${index}`,
+      lifecycle,
+      startedAtUnixMs: now - ageMinutes * 60_000,
+      workThreadId: "workspace:TFIRST:C123:1001.000001",
+      workspaceId: "TFIRST",
+    });
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "needs-attention",
+                  executions: [
+                    execution(1, "allocated", 1),
+                    execution(2, "running", 2),
+                    execution(3, "recovery-blocked", 3),
+                    execution(4, "running", 9),
+                    execution(5, "starting", 4),
+                    execution(6, "implementation-ready", 5),
+                    execution(7, "cancelling", 6),
+                  ],
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: now - 60_000,
+                  workspaceId: "TFIRST",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    const rows = screen.getByRole("list", {
+      name: "Pending Executions for C123 · 1001.000001",
+    }).children;
+    expect(
+      [...rows].map(
+        (row) => row.querySelector("[title^='fixture/']")?.textContent ?? null
+      )
+    ).toEqual([
+      "fixture/action-3",
+      "fixture/action-4",
+      "fixture/action-2",
+      "fixture/action-6",
+      "fixture/action-5",
+      "fixture/action-1",
+      "fixture/action-7",
+    ]);
+  });
+
+  it("reads each pending Execution's lifecycle out with how long it has been outstanding", () => {
+    const now = Date.now();
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "in-progress",
+                  executions: [
+                    {
+                      actionName: "fixture/run",
+                      id: "execution:running",
+                      lifecycle: "running",
+                      startedAtUnixMs: now - 2 * 3_600_000,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                    {
+                      actionName: "fixture/queue",
+                      id: "execution:allocated",
+                      lifecycle: "allocated",
+                      startedAtUnixMs: null,
+                      workThreadId: "workspace:TFIRST:C123:1001.000001",
+                      workspaceId: "TFIRST",
+                    },
+                  ],
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: now - 60_000,
+                  workspaceId: "TFIRST",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByText("Running, pending for 2 hours")).toBeTruthy();
+    expect(screen.getByText("Allocated, start time unavailable")).toBeTruthy();
   });
 
   it("reports time in state relatively and reads it out with its activity", () => {
@@ -358,6 +537,7 @@ describe("companion status popover", () => {
               threads: [
                 {
                   activity: "in-progress",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 5 * 60_000,
@@ -365,6 +545,7 @@ describe("companion status popover", () => {
                 },
                 {
                   activity: "dormant",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1002.000001",
                   label: "C123 · 1002.000001",
                   stateChangedAtUnixMs: now - 20_000,
@@ -411,6 +592,7 @@ describe("companion status popover", () => {
               threads: [
                 {
                   activity: "needs-attention",
+                  executions: [],
                   id: "workspace:TBLOCKED:C123:1000.000001",
                   label: "C123 · 1000.000001",
                   stateChangedAtUnixMs: Date.now() - 60_000,
@@ -456,6 +638,7 @@ describe("companion status popover", () => {
               threads: [
                 {
                   activity: "in-progress",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: Date.now(),
@@ -511,12 +694,13 @@ describe("companion status popover", () => {
 
   it("opens recent work only when no live thread is competing for attention", () => {
     const recentThread = {
-      activity: "dormant",
+      activity: "dormant" as const,
+      executions: [],
       id: "workspace:TFIRST:C123:1002.000001",
       label: "C123 · 1002.000001",
       stateChangedAtUnixMs: Date.now() - 3 * 3_600_000,
       workspaceId: "TFIRST",
-    } as const;
+    };
     const quiet = render(
       <StatusPopover
         quit={() => undefined}
@@ -562,6 +746,7 @@ describe("companion status popover", () => {
               threads: [
                 {
                   activity: "in-progress",
+                  executions: [],
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: Date.now(),

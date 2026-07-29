@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ApplicationEventState,
   EventId,
   HandlerOutcomeState,
   NormalizedMessage,
@@ -72,6 +73,7 @@ const observed = (
 ): WorkThreadActivityObservation => ({
   activity,
   evidenceAtUnixMs,
+  executions: [],
   id,
   label: `Thread ${id}`,
   workspaceId: "TFIRST",
@@ -130,15 +132,40 @@ describe("work-thread activity projection", () => {
         outbox: [outbound("ordinary-settled", "delivered")],
       }),
       thread("execution-running"),
-      thread("execution-blocked")
+      thread("execution-blocked"),
+      thread("terminal-event-awaiting-response", {
+        applicationEvents: [
+          ApplicationEventState.make({
+            blocked: null,
+            eventId: "execution-event:terminal",
+            outcome: null,
+            payload: {
+              privateResult: "implementation response must not be projected",
+            },
+            source: "execution",
+            status: "pending",
+          }),
+        ],
+      })
     );
 
     expect(
       observePrototypeWorkThreads(snapshot, "TFIRST", [
-        { conversationId: "execution-running", status: "running" },
         {
+          actionName: "fixture/run",
+          conversationId: "execution-running",
+          executionId: "execution:running",
+          lifecycle: "running",
+          startedAtUnixMs: 900,
+          workspaceId: "TFIRST",
+        },
+        {
+          actionName: "fixture/blocked",
           conversationId: "execution-blocked",
-          status: "needs-attention",
+          executionId: "execution:blocked",
+          lifecycle: "recovery-blocked",
+          startedAtUnixMs: 800,
+          workspaceId: "TFIRST",
         },
       ]).map(({ activity, id, label }) => ({ activity, id, label }))
     ).toEqual([
@@ -170,10 +197,18 @@ describe("work-thread activity projection", () => {
         id: "execution-blocked",
         label: "C123 · 1000.000001",
       },
+      {
+        activity: "in-progress",
+        id: "terminal-event-awaiting-response",
+        label: "C123 · 1000.000001",
+      },
     ]);
     expect(
       JSON.stringify(observePrototypeWorkThreads(snapshot, "TFIRST"))
     ).not.toContain(message.text);
+    expect(
+      JSON.stringify(observePrototypeWorkThreads(snapshot, "TFIRST"))
+    ).not.toContain("implementation response");
   });
 
   it("projects queued and running work ahead of dormant work", () => {
@@ -190,6 +225,81 @@ describe("work-thread activity projection", () => {
       expect.objectContaining({ activity: "in-progress", id: "queued" }),
       expect.objectContaining({ activity: "dormant", id: "settled" }),
     ]);
+  });
+
+  it("nests bounded pending Executions only beneath their durable owner", () => {
+    const snapshot = state(thread("owner"), thread("other"));
+    const executions = [
+      {
+        actionName: "fixture/build",
+        conversationId: "owner",
+        executionId: "execution:stable",
+        lifecycle: "allocated",
+        startedAtUnixMs: 1500,
+        workspaceId: "TFIRST",
+      },
+    ] as const;
+
+    const observations = observePrototypeWorkThreads(
+      snapshot,
+      "TFIRST",
+      executions
+    );
+    expect(observations[0]?.executions).toEqual([
+      {
+        actionName: "fixture/build",
+        id: "execution:stable",
+        lifecycle: "allocated",
+        startedAtUnixMs: 1500,
+        workThreadId: "owner",
+        workspaceId: "TFIRST",
+      },
+    ]);
+    expect(observations[1]?.executions).toEqual([]);
+    const ownerObservation = observations[0];
+    const otherObservation = observations[1];
+    if (ownerObservation === undefined || otherObservation === undefined) {
+      throw new Error("expected both work-thread observations");
+    }
+
+    const projection = makeWorkThreadActivityProjection({ now: () => 2000 });
+    projection.observe("TFIRST", observations);
+    projection.observe("TFIRST", observations);
+    expect(projection.snapshot("TFIRST")[0]?.executions).toEqual(
+      observations[0]?.executions
+    );
+    expect(() =>
+      projection.observe("TFIRST", [
+        {
+          ...otherObservation,
+          executions: ownerObservation.executions.map((execution) => ({
+            ...execution,
+            workThreadId: "other",
+          })),
+        },
+      ])
+    ).toThrow("pending Execution ownership is inconsistent");
+
+    projection.observe(
+      "TFIRST",
+      observations.map((observation) => ({ ...observation, executions: [] }))
+    );
+    expect(
+      projection
+        .snapshot("TFIRST")
+        .flatMap((observation) => observation.executions)
+    ).toEqual([]);
+
+    expect(() =>
+      observePrototypeWorkThreads(snapshot, "TFIRST", [
+        { ...executions[0], workspaceId: "TSECOND" },
+      ])
+    ).toThrow("pending Execution ownership is inconsistent");
+    expect(() =>
+      observePrototypeWorkThreads(snapshot, "TFIRST", [
+        { ...executions[0], conversationId: "missing" },
+      ])
+    ).toThrow("pending Execution ownership is inconsistent");
   });
 
   it("keeps delivery and Conversation blockers visible above ordinary progress", () => {

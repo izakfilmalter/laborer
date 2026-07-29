@@ -71,6 +71,15 @@ describe("operator status protocol", () => {
             label: "TFIRST",
             readiness: "ready",
             teamId: "TFIRST",
+            threads: [
+              {
+                activity: "in-progress",
+                id: "workspace:TFIRST:C123:1000.000001",
+                label: "C123 · 1000.000001",
+                stateChangedAtUnixMs: 4000,
+                workspaceId: "TFIRST",
+              },
+            ],
           },
         ],
       })
@@ -78,6 +87,7 @@ describe("operator status protocol", () => {
 
     expect(snapshot.daemon.version).toBe("0.1.0");
     expect(snapshot.sequence).toBe(3);
+    expect(snapshot.workspaces[0]?.threads[0]?.activity).toBe("in-progress");
     expect(() =>
       decodeOperatorSnapshot(
         JSON.stringify({
@@ -102,6 +112,24 @@ describe("operator status protocol", () => {
         })
       )
     ).toThrowError(OperatorProtocolError);
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          workspaces: [
+            {
+              ...snapshot.workspaces[0],
+              threads: [
+                {
+                  ...snapshot.workspaces[0]?.threads[0],
+                  label: "private prompt or /Users/operator/secret",
+                },
+              ],
+            },
+          ],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
     expect(() => decodeOperatorSnapshot("not-json")).toThrowError(
       OperatorProtocolError
     );
@@ -116,6 +144,7 @@ describe("operator status protocol", () => {
               label: "TFIRST",
               readiness: "ready",
               teamId: "TFIRST",
+              threads: [],
             },
           ],
         })
@@ -182,6 +211,37 @@ describe("operator status protocol", () => {
       "x".repeat(MAX_OPERATOR_RECORD_BYTES + 1)
     );
     expect(response).toBe("");
+  });
+
+  it("rejects a failed projection without taking down the status server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-projection-"));
+    const paths = operatorStatusPaths(root);
+    let projectionAvailable = false;
+    const server = await startOperatorStatusServer({
+      paths,
+      projection: () => {
+        if (!projectionAvailable) {
+          throw new Error("projection unavailable");
+        }
+        return { receiver: "connected", workspaces: [] };
+      },
+      tickIntervalMs: 60_000,
+      version: "0.1.0-test",
+    });
+    servers.push(server);
+    const token = await readFile(paths.token, "utf8");
+    const request = JSON.stringify({
+      kind: "subscribe",
+      protocolVersion: OPERATOR_PROTOCOL_VERSION,
+      token,
+    });
+
+    expect(await readFirstRecord(paths.socket, request)).toBe("");
+    projectionAvailable = true;
+    expect(
+      decodeOperatorSnapshot(await readFirstRecord(paths.socket, request))
+        .daemon.receiver
+    ).toBe("connected");
   });
 
   it("fails closed when the status directory is not owner-only", async () => {

@@ -84,6 +84,7 @@ describe("operator status client", () => {
             label: "TFIRST",
             readiness: "ready",
             teamId: "TFIRST",
+            threads: [],
           },
         ],
       }),
@@ -106,6 +107,7 @@ describe("operator status client", () => {
           label: "TFIRST",
           readiness: "ready",
           teamId: "TFIRST",
+          threads: [],
         },
       ],
     });
@@ -127,6 +129,7 @@ describe("operator status client", () => {
             label: "TSECOND",
             readiness: "setup-incomplete",
             teamId: "TSECOND",
+            threads: [],
           },
         ],
       }),
@@ -141,6 +144,7 @@ describe("operator status client", () => {
         expect.objectContaining({
           id: "slack:TSECOND",
           readiness: "setup-incomplete",
+          threads: [],
         }),
       ],
     });

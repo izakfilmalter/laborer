@@ -3,6 +3,10 @@ import {
   type OperatorWorkspaceBinding,
 } from "../operator-status/protocol.ts";
 import type { SlackDaemonConfig, SlackInstallationConfig } from "./config.ts";
+import {
+  makeWorkThreadActivityProjection,
+  type WorkThreadActivityObservation,
+} from "./work-thread-activity-projection.ts";
 import type { SlackWorkspacePreflightReport } from "./workspace-startup.ts";
 
 export interface WorkspaceBindingProjectionSnapshot {
@@ -28,6 +32,7 @@ const initialBinding = (
       label: `Workspace binding ${installation.bindingIndex + 1}`,
       readiness: "unknown",
       teamId: null,
+      threads: [],
     };
   }
   return {
@@ -42,6 +47,7 @@ const initialBinding = (
         : teamId,
     readiness: "pending",
     teamId,
+    threads: [],
   };
 };
 
@@ -91,6 +97,7 @@ export const makeWorkspaceBindingProjection = (config: SlackDaemonConfig) => {
   }
   let receiver: WorkspaceBindingProjectionSnapshot["receiver"] = "connecting";
   const workspaces = config.installations.map(initialBinding);
+  const workThreadActivity = makeWorkThreadActivityProjection();
 
   return {
     markReceiverConnected: (): void => {
@@ -117,11 +124,25 @@ export const makeWorkspaceBindingProjection = (config: SlackDaemonConfig) => {
         label: teamId === null ? current.label : teamId,
         readiness: readinessForReport(report),
         teamId,
+        threads:
+          teamId === null ? [] : [...workThreadActivity.snapshot(teamId)],
       };
+    },
+    observeWorkThreads: (
+      workspaceId: string,
+      threads: readonly WorkThreadActivityObservation[]
+    ): void => {
+      workThreadActivity.observe(workspaceId, threads);
     },
     snapshot: (): WorkspaceBindingProjectionSnapshot => ({
       receiver,
-      workspaces: workspaces.map((workspace) => ({ ...workspace })),
+      workspaces: workspaces.map((workspace) => ({
+        ...workspace,
+        threads:
+          workspace.teamId === null
+            ? []
+            : [...workThreadActivity.snapshot(workspace.teamId)],
+      })),
     }),
   };
 };

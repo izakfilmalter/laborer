@@ -23,6 +23,54 @@ describe("companion renderer boundary", () => {
         workspaces: [],
       })
     ).toBe(false);
+    const visibleThread = {
+      activity: "in-progress",
+      id: "workspace:TFIRST:C123:1000.000001",
+      label: "C123 · 1000.000001",
+      stateChangedAtUnixMs: 1000,
+      workspaceId: "TFIRST",
+    };
+    expect(
+      isOperatorStatusView({
+        receiver: "connected",
+        state: "running",
+        uptimeSeconds: 42,
+        version: "0.1.0",
+        workspaces: [
+          {
+            detail: null,
+            id: "slack:TFIRST",
+            label: "TFIRST",
+            readiness: "ready",
+            teamId: "TFIRST",
+            threads: [visibleThread],
+          },
+        ],
+      })
+    ).toBe(true);
+    expect(
+      isOperatorStatusView({
+        receiver: "connected",
+        state: "running",
+        uptimeSeconds: 42,
+        version: "0.1.0",
+        workspaces: [
+          {
+            detail: null,
+            id: "slack:TFIRST",
+            label: "TFIRST",
+            readiness: "ready",
+            teamId: "TFIRST",
+            threads: [
+              {
+                ...visibleThread,
+                label: "prompt, command, or /private/path",
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
     expect(
       isOperatorStatusView({
         receiver: "connected",
@@ -35,6 +83,7 @@ describe("companion renderer boundary", () => {
           label: "TFIRST",
           readiness: "ready",
           teamId: "TFIRST",
+          threads: [],
         })),
       })
     ).toBe(false);
@@ -51,6 +100,7 @@ describe("companion renderer boundary", () => {
             label: `Workspace binding ${"1".repeat(65)}`,
             readiness: "unknown",
             teamId: null,
+            threads: [],
           },
         ],
       })
@@ -85,6 +135,7 @@ describe("companion renderer boundary", () => {
             label: "TFIRST",
             readiness: "unavailable",
             teamId: "TFIRST",
+            threads: [],
           },
         ],
       })

@@ -16,6 +16,7 @@ import type { NormalizedInboundEvent } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SocketModeAdapterError } from "./errors.ts";
 import { normalizeSlackEvent } from "./normalize.ts";
+import type { WorkThreadActivityObservation } from "./work-thread-activity-projection.ts";
 
 export interface SlackEventEnvelope {
   readonly ack: (response?: Readonly<Record<string, unknown>>) => Promise<void>;
@@ -51,6 +52,11 @@ export interface SlackEventInjector {
     event: NormalizedInboundEvent
   ) => Effect.Effect<unknown, unknown, never>;
   readonly quiesce?: Effect.Effect<void, unknown, never>;
+  readonly workThreadActivity?: Effect.Effect<
+    readonly WorkThreadActivityObservation[],
+    unknown,
+    never
+  >;
 }
 
 export const SETUP_INCOMPLETE_REPLY =

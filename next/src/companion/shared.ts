@@ -41,12 +41,57 @@ const bindingDetails = [
 const bindingIdPattern = /^binding:\d+$/;
 const bindingLabelPattern = /^Workspace binding [1-9]\d*$/;
 const teamIdPattern = /^T[A-Z0-9]+$/;
+const threadIdPattern =
+  /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
+const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+
+const isWorkThread = (value: unknown, teamId: unknown): boolean => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !exactKeys(value, [
+      "activity",
+      "id",
+      "label",
+      "stateChangedAtUnixMs",
+      "workspaceId",
+    ])
+  ) {
+    return false;
+  }
+  const thread = value as Record<string, unknown>;
+  return (
+    ["in-progress", "needs-attention", "dormant"].includes(
+      String(thread.activity)
+    ) &&
+    typeof thread.id === "string" &&
+    thread.id.length > 0 &&
+    thread.id.length <= 256 &&
+    threadIdPattern.test(thread.id) &&
+    typeof thread.label === "string" &&
+    thread.label.length > 0 &&
+    thread.label.length <= 80 &&
+    threadLabelPattern.test(thread.label) &&
+    Number.isSafeInteger(thread.stateChangedAtUnixMs) &&
+    Number(thread.stateChangedAtUnixMs) >= 0 &&
+    Number(thread.stateChangedAtUnixMs) <= 8_640_000_000_000_000 &&
+    typeof teamId === "string" &&
+    thread.workspaceId === teamId
+  );
+};
 
 const isWorkspaceBinding = (value: unknown): boolean => {
   if (
     typeof value !== "object" ||
     value === null ||
-    !exactKeys(value, ["detail", "id", "label", "readiness", "teamId"])
+    !exactKeys(value, [
+      "detail",
+      "id",
+      "label",
+      "readiness",
+      "teamId",
+      "threads",
+    ])
   ) {
     return false;
   }
@@ -76,7 +121,24 @@ const isWorkspaceBinding = (value: unknown): boolean => {
     typeof binding.id !== "string" ||
     binding.id.length > 64 ||
     typeof binding.label !== "string" ||
-    binding.label.length > 64
+    binding.label.length > 64 ||
+    !Array.isArray(binding.threads) ||
+    binding.threads.length > 512 ||
+    !binding.threads.every((thread) => isWorkThread(thread, binding.teamId)) ||
+    new Set(
+      binding.threads.map((thread) =>
+        typeof thread === "object" && thread !== null && "id" in thread
+          ? thread.id
+          : null
+      )
+    ).size !== binding.threads.length ||
+    binding.threads.filter(
+      (thread) =>
+        typeof thread === "object" &&
+        thread !== null &&
+        "activity" in thread &&
+        thread.activity === "dormant"
+    ).length > 4
   ) {
     return false;
   }
@@ -122,6 +184,17 @@ export const isOperatorStatusView = (
       Array.isArray(candidate.workspaces) &&
       candidate.workspaces.length <= 64 &&
       candidate.workspaces.every(isWorkspaceBinding) &&
+      candidate.workspaces.reduce(
+        (count, workspace) =>
+          count +
+          (typeof workspace === "object" &&
+          workspace !== null &&
+          "threads" in workspace &&
+          Array.isArray(workspace.threads)
+            ? workspace.threads.length
+            : 0),
+        0
+      ) <= 512 &&
       new Set(
         candidate.workspaces.map((workspace) =>
           typeof workspace === "object" &&

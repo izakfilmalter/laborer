@@ -1844,6 +1844,15 @@ export interface RootDurableRuntimeShape {
   readonly inspectExecution: (
     request: InspectExecutionRequest
   ) => Effect.Effect<ExecutionControlReceipt, DurableRuntimeError>;
+  readonly nonterminalExecutionActivity?: (
+    workspaceId: string
+  ) => Effect.Effect<
+    readonly {
+      readonly conversationId: string;
+      readonly status: "needs-attention" | "queued" | "running";
+    }[],
+    DurableRuntimeError
+  >;
   readonly pendingEvents: (
     conversationId: string,
     workspaceId: string,
@@ -2809,6 +2818,29 @@ const makeRuntimeService = Effect.gen(function* () {
     }
   });
 
+  const nonterminalExecutionActivity = Effect.fn(
+    "RootDurableRuntime.nonterminalExecutionActivity"
+  )(function* (workspaceId: string) {
+    const validatedWorkspaceId = yield* Schema.decodeUnknownEffect(
+      RuntimeWorkspaceId
+    )(workspaceId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
+    const rows = yield* sql<{
+      readonly conversationId: string;
+      readonly status: "needs-attention" | "queued" | "running";
+    }>`
+      SELECT conversation_id AS conversationId, status
+      FROM laborer_executions
+      WHERE workspace_id = ${validatedWorkspaceId}
+        AND status IN ('queued', 'running', 'needs-attention')
+      ORDER BY execution_id
+      LIMIT 513
+    `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+    if (rows.length > 512) {
+      return yield* runtimeError("storage-failure");
+    }
+    return rows;
+  });
+
   return {
     acknowledgeEvent,
     actions: catalog,
@@ -2817,6 +2849,7 @@ const makeRuntimeService = Effect.gen(function* () {
     followUpExecution: (request) => mutateExecution("follow-up", request),
     getExecution,
     inspectExecution,
+    nonterminalExecutionActivity,
     pendingEvents,
     attachConversationClient: (compatibility, workspaceId, handler) =>
       Effect.gen(function* () {

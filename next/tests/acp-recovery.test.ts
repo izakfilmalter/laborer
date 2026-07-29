@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Ref } from "effect";
 import { Application, ConversationBlocked } from "../src/application.ts";
@@ -6,31 +9,157 @@ import {
   LABORER_SLACK_ID,
   normalizedEvent,
 } from "../src/prototype/scenario.ts";
+import {
+  inspectAcpRecoveryHealthOffline,
+  inspectAcpRecoveryOffline,
+} from "../src/slack/acp-recovery.ts";
+import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
+
+const BLOCKED_NOTICE_PATTERN =
+  /Paused — operator decision needed.*abandon.*explicitly retry/s;
+const ABANDONED_NOTICE_PATTERN = /Recovered.*safe replacement session/s;
+const RETRY_NOTICE_PATTERN = /Retry confirmed.*duplicate side effects/s;
 
 describe("issue #253 ambiguous ACP recovery", () => {
+  it("returns bounded opaque correlations across the recovery boundary", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "laborer-253-inspection-"));
+    try {
+      const paths = await Effect.runPromise(
+        prepareSlackRuntimePaths(root, "T253")
+      );
+      const conversationId = "workspace:T253:C253:1.0";
+      const attemptId = "attempt-private-253";
+      const promptId = "prompt-private-253";
+      await Promise.all([
+        writeFile(paths.acpAuthorityKey, "authority-key-253"),
+        writeFile(
+          paths.acpActionAuthorityState,
+          JSON.stringify({ records: [] })
+        ),
+        writeFile(paths.acpAuthorityState, JSON.stringify({ records: [] })),
+        writeFile(paths.acpPermissionUiOutbox, JSON.stringify({ entries: [] })),
+        writeFile(
+          paths.acpProcessState,
+          JSON.stringify({ activeGeneration: 12, health: "ready" })
+        ),
+        writeFile(
+          paths.applicationState,
+          JSON.stringify({
+            conversations: [
+              {
+                agentSessionBinding: { sessionId: "session-private-253" },
+                conversationId,
+                prompts: [
+                  {
+                    attempts: [
+                      {
+                        attemptId,
+                        bindingGeneration: 9,
+                        processGeneration: 11,
+                        recoveryClass: "unresolved",
+                      },
+                    ],
+                    ownerId: "turn-private-253",
+                    ownerKind: "participant-turn",
+                    promptId,
+                  },
+                ],
+              },
+            ],
+            executions: [
+              {
+                attachment: { state: "unresolved" },
+                conversationId,
+                executionId: "execution-private-253",
+                status: "running",
+              },
+            ],
+            recoveryDecisions: [],
+          })
+        ),
+        writeFile(
+          paths.runnerState,
+          JSON.stringify({
+            conversationStreams: [
+              {
+                id: "stream-private-253",
+                lifecycle: "unresolved",
+                ownerId: "turn-private-253",
+                ownerKind: "participant-turn",
+              },
+            ],
+            threads: [
+              {
+                applicationEvents: [],
+                applicationInputQueue: [],
+                id: conversationId,
+                turns: [{ id: "turn-private-253", status: "blocked" }],
+              },
+            ],
+          })
+        ),
+      ]);
+
+      const inspection = await inspectAcpRecoveryOffline({
+        attemptId,
+        paths,
+        workspaceId: "T253",
+      });
+      assert.strictEqual(inspection.correlations.bindingGeneration, 9);
+      assert.strictEqual(inspection.correlations.processGeneration, 11);
+      assert.lengthOf(inspection.correlations.executionDigests, 1);
+      assert.lengthOf(inspection.correlations.streamDigests, 1);
+      assert.strictEqual(inspection.evidence.execution.count, 1);
+      assert.strictEqual(inspection.evidence.execution.nonterminalCount, 1);
+      assert.strictEqual(inspection.evidence.execution.unresolvedCount, 1);
+      const health = await inspectAcpRecoveryHealthOffline({
+        paths,
+        workspaceId: "T253",
+      });
+      assert.strictEqual(health.counts.executionUncertain, 2);
+      assert.include(health.reasonCodes, "execution-outcome-uncertain");
+      const serialized = JSON.stringify(inspection);
+      for (const privateIdentity of [
+        conversationId,
+        "session-private-253",
+        "execution-private-253",
+        "stream-private-253",
+        "turn-private-253",
+      ]) {
+        assert.notInclude(serialized, privateIdentity);
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it.effect(
     "blocks the durable owner and releases FIFO work only after abandon",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const calls = yield* Ref.make<readonly string[]>([]);
+          const recoveryDecisionIds = yield* Ref.make<readonly string[]>([]);
           const application = Application.of({
             decideConversationRecovery: (request) =>
-              Effect.succeed({
-                acknowledgeDuplicateSideEffects:
-                  request.acknowledgeDuplicateSideEffects,
-                attemptId: request.attemptId,
-                conversationId: request.conversationId,
-                decisionId: request.decisionId,
-                duplicate: false,
-                kind: request.kind,
-                ownerId: request.ownerId,
-                ownerKind: request.ownerKind,
-                promptId: request.promptId,
-                replacementAttemptId: null,
-                sessionDisposition: "replaced" as const,
-                workspaceId: request.workspaceId,
-              }),
+              Ref.modify(recoveryDecisionIds, (decisionIds) => [
+                {
+                  acknowledgeDuplicateSideEffects:
+                    request.acknowledgeDuplicateSideEffects,
+                  attemptId: request.attemptId,
+                  conversationId: request.conversationId,
+                  decisionId: request.decisionId,
+                  duplicate: decisionIds.includes(request.decisionId),
+                  kind: request.kind,
+                  ownerId: request.ownerId,
+                  ownerKind: request.ownerKind,
+                  promptId: request.promptId,
+                  replacementAttemptId: null,
+                  sessionDisposition: "replaced" as const,
+                  workspaceId: request.workspaceId,
+                },
+                [...decisionIds, request.decisionId],
+              ]),
             handle: (event) =>
               Effect.gen(function* () {
                 const ownerId =
@@ -97,11 +226,16 @@ describe("issue #253 ambiguous ACP recovery", () => {
           const before = (yield* harness.store.snapshot).threads[0];
           assert.strictEqual(before?.turns[0]?.status, "blocked");
           assert.strictEqual(before?.applicationInputQueue.length, 1);
+          assert.match(
+            before?.outbox.find((item) => item.id.includes("recovery:blocked"))
+              ?.text ?? "",
+            BLOCKED_NOTICE_PATTERN
+          );
           assert.deepStrictEqual(yield* Ref.get(calls), [blocked.ownerId]);
 
           const decide = harness.runner.decideConversationRecovery;
           assert.ok(decide !== undefined);
-          yield* decide({
+          const request = {
             acknowledgeDuplicateSideEffects: false,
             actorUid: process.getuid?.() ?? 0,
             attemptId: blocked.attemptId,
@@ -115,7 +249,11 @@ describe("issue #253 ambiguous ACP recovery", () => {
             promptId: blocked.promptId,
             timestamp: 200,
             workspaceId: blocked.workspaceId,
-          });
+          } as const;
+          const firstDecision = yield* decide(request);
+          const duplicateDecision = yield* decide(request);
+          assert.isFalse(firstDecision.duplicate);
+          assert.isTrue(duplicateDecision.duplicate);
           const after = (yield* harness.store.snapshot).threads[0];
           assert.deepStrictEqual(
             after?.turns.map((turn) => turn.status),
@@ -136,6 +274,11 @@ describe("issue #253 ambiguous ACP recovery", () => {
             after?.outbox.filter((item) => item.id.includes("recovery:abandon"))
               .length,
             1
+          );
+          assert.match(
+            after?.outbox.find((item) => item.id.includes("recovery:abandon"))
+              ?.text ?? "",
+            ABANDONED_NOTICE_PATTERN
           );
         })
       )
@@ -264,6 +407,11 @@ describe("issue #253 ambiguous ACP recovery", () => {
             thread?.outbox.filter((item) => item.id.includes("recovery:retry"))
               .length,
             1
+          );
+          assert.match(
+            thread?.outbox.find((item) => item.id.includes("recovery:retry"))
+              ?.text ?? "",
+            RETRY_NOTICE_PATTERN
           );
         })
       )

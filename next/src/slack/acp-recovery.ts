@@ -15,6 +15,7 @@ import {
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
 
 const MAX_INSPECTION_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_CORRELATED_IDENTITIES = 64;
 const MAX_SOCKET_REQUEST_BYTES = 16 * 1024;
 
 export class AcpRecoveryError extends Schema.TaggedErrorClass<AcpRecoveryError>()(
@@ -43,6 +44,16 @@ interface ReadRevision extends FileRevision {
 export interface AcpRecoveryInspection {
   readonly attemptDigest: string;
   readonly consistency: "consistent" | "incomplete" | "revision-changed";
+  readonly correlations: {
+    readonly agentSessionDigest: string | null;
+    readonly bindingGeneration: number | null;
+    readonly conversationDigest: string;
+    readonly executionDigests: readonly string[];
+    readonly ownerDigest: string;
+    readonly processGeneration: number;
+    readonly promptDigest: string;
+    readonly streamDigests: readonly string[];
+  };
   readonly evidence: {
     readonly action: {
       readonly capabilityCount: number;
@@ -55,6 +66,11 @@ export interface AcpRecoveryInspection {
     readonly authority: {
       readonly pendingCount: number;
       readonly terminalCount: number;
+    };
+    readonly execution: {
+      readonly count: number;
+      readonly nonterminalCount: number;
+      readonly unresolvedCount: number;
     };
     readonly process: {
       readonly generation: number | null;
@@ -240,6 +256,21 @@ const uncertainStatus = (value: unknown): boolean =>
     statusOf(value).includes(marker)
   );
 
+const executionIsUnresolved = (value: unknown): boolean => {
+  const execution = safeRecord(value);
+  if (
+    uncertainStatus(execution) ||
+    statusOf(execution.attachment) === "unresolved" ||
+    execution.recoveryFailure != null
+  ) {
+    return true;
+  }
+  return safeArray(execution.prompts).some((promptValue) => {
+    const prompt = safeRecord(promptValue);
+    return uncertainStatus(prompt) || uncertainStatus(prompt.attempt);
+  });
+};
+
 const runnerHealthCounts = (runner: unknown) => {
   const state = safeRecord(runner);
   const threads = safeArray(state.threads).map(safeRecord);
@@ -276,7 +307,7 @@ const applicationHealthCounts = (application: unknown) => {
       (item) => safeRecord(item).status !== "settled"
     ).length,
     executionUncertain:
-      executions.filter(uncertainStatus).length +
+      executions.filter(executionIsUnresolved).length +
       attempts.filter(uncertainStatus).length,
   };
 };
@@ -499,6 +530,14 @@ const inspectSnapshot = async (options: {
   const correlatedActionRecords = actionRecords.filter(
     (record) => safeRecord(record).promptDigest === promptDigest
   );
+  const sessionBinding = safeRecord(match.conversation.agentSessionBinding);
+  const sessionId = sessionBinding.sessionId;
+  const correlatedExecutions = safeArray(application.executions)
+    .map(safeRecord)
+    .filter(
+      (execution) =>
+        execution.conversationId === match.conversation.conversationId
+    );
   const processState = safeRecord(revisions.process?.value);
   const allStable = Object.values(revisions).every(
     (revision) => revision.stable
@@ -513,6 +552,34 @@ const inspectSnapshot = async (options: {
   return {
     attemptDigest: digestId("attempt", options.attemptId),
     consistency,
+    correlations: {
+      agentSessionDigest:
+        typeof sessionId === "string"
+          ? digestId("agent-session", sessionId)
+          : null,
+      bindingGeneration:
+        typeof match.attempt.bindingGeneration === "number"
+          ? match.attempt.bindingGeneration
+          : null,
+      conversationDigest: digestId(
+        "conversation",
+        String(match.conversation.conversationId ?? "")
+      ),
+      executionDigests: correlatedExecutions
+        .slice(0, MAX_CORRELATED_IDENTITIES)
+        .map((execution) =>
+          digestId("execution", String(execution.executionId ?? ""))
+        ),
+      ownerDigest: digestId("owner", String(ownerId ?? "")),
+      processGeneration:
+        typeof match.attempt.processGeneration === "number"
+          ? match.attempt.processGeneration
+          : 0,
+      promptDigest,
+      streamDigests: correlatedStreams
+        .slice(0, MAX_CORRELATED_IDENTITIES)
+        .map((stream) => digestId("stream", String(stream.id ?? ""))),
+    },
     evidence: {
       action: {
         capabilityCount: countByState(
@@ -539,6 +606,16 @@ const inspectSnapshot = async (options: {
           correlatedAuthorityRecords,
           (record) => record.state !== "pending"
         ),
+      },
+      execution: {
+        count: correlatedExecutions.length,
+        nonterminalCount: correlatedExecutions.filter(
+          (execution) =>
+            typeof execution.status === "string" &&
+            !["cancelled", "completed", "failed"].includes(execution.status)
+        ).length,
+        unresolvedCount: correlatedExecutions.filter(executionIsUnresolved)
+          .length,
       },
       process: {
         generation:

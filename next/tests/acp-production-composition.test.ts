@@ -67,7 +67,7 @@ const scriptedPeerPath = resolve(
 );
 const EXPECTED_MARKDOWN = "**Streaming** from ACP\n\n- complete\n- unchanged";
 const EXPECTED_BLOCKED_NOTICE =
-  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
+  "*Paused — operator decision needed.* An earlier agent turn has an uncertain external outcome, so later work is safely queued. An operator can either abandon that attempt and continue in a replacement session, or explicitly retry after acknowledging that external side effects may be duplicated. Use the local recovery CLI to inspect and resolve it.";
 const OBSERVATION_TIMEOUT_MILLIS = 5000;
 
 const SessionMethod = Schema.Struct({

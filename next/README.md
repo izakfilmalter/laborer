@@ -238,8 +238,16 @@ which proves the prompt was not submitted. For ambiguous or otherwise
 non-pending running turns, recovery
 resumes or safely rebinds the ACP session to reconcile process health, emits no
 prompt or public output, and returns a conservative failure so the Application
-keeps the turn running rather than claiming model completion. Issue #253 will
-add operator resolution and explicit blocking for this ambiguous state. On
+keeps the turn running rather than claiming model completion. Issue #253 keeps
+that owner durably blocked with later participant, permission, and Execution
+events queued behind it. The owner-only local recovery service can list and
+inspect bounded opaque correlations across the workspace, Conversation, turn,
+ACP process and binding generations, Agent session, Actions, Executions, and
+Slack streams. An audited operator decision either abandons into a replacement
+session or allocates a fresh retry attempt only after duplicate-side-effect risk
+is explicitly acknowledged; duplicate decisions are idempotent and conflicts
+fail closed. Slack receives a sanitized paused notice with both choices and a
+sanitized recovery confirmation, never prompt contents or private evidence. On
 restart, stable ACP v1
 `session/resume` receives the original cwd and a freshly readiness-verified copy
 of the exact workspace memory MCP configuration; `session/load` and transcript

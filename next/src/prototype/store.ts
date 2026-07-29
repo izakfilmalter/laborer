@@ -1726,11 +1726,11 @@ const GENERIC_TURN_FAILURE_NOTICE =
   "This conversation turn could not be completed. Please try again.";
 
 const BLOCKED_NOTICE =
-  "This conversation is paused because an earlier agent turn has an uncertain external outcome. An operator must resolve it before later work can continue.";
+  "*Paused — operator decision needed.* An earlier agent turn has an uncertain external outcome, so later work is safely queued. An operator can either abandon that attempt and continue in a replacement session, or explicitly retry after acknowledging that external side effects may be duplicated. Use the local recovery CLI to inspect and resolve it.";
 const ABANDONED_NOTICE =
-  "The uncertain agent turn was abandoned by an operator. Later conversation work can now continue.";
+  "*Recovered.* An operator abandoned the uncertain agent turn. Laborer moved to a safe replacement session, and queued conversation work can now continue.";
 const RETRY_NOTICE =
-  "An operator acknowledged possible duplicate side effects and retried the uncertain agent turn in a replacement session.";
+  "*Retry confirmed.* An operator acknowledged possible duplicate side effects and retried the uncertain agent turn in a replacement session. Queued conversation work will continue after it finishes.";
 
 const recoveryNoticeId = (
   ownerKind: ConversationStreamOwnerKind,

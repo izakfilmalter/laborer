@@ -6116,7 +6116,8 @@ export const makeReferenceCodingApplication = Effect.fn(
         (persisted) => {
           if (
             persisted.status === "cancelling" ||
-            persisted.status === "cancelled"
+            persisted.status === "cancelled" ||
+            persisted.status === "failed"
           ) {
             return persisted;
           }
@@ -6149,7 +6150,11 @@ export const makeReferenceCodingApplication = Effect.fn(
       const persistedResponse = staged?.responses.find(
         (candidate) => candidate.responseId === response.responseId
       );
-      if (staged?.status === "cancelling" || staged?.status === "cancelled") {
+      if (
+        staged?.status === "cancelling" ||
+        staged?.status === "cancelled" ||
+        staged?.status === "failed"
+      ) {
         return;
       }
       if (
@@ -6479,8 +6484,24 @@ export const makeReferenceCodingApplication = Effect.fn(
           : candidate
       )
     );
-    yield* Ref.update(executionRuntimes, (current) =>
-      current.filter((runtime) => runtime.executionId !== terminal.executionId)
+    const detachedRuntimes = yield* Ref.modify(
+      executionRuntimes,
+      (current) =>
+        [
+          EffectArray.filter(
+            current,
+            (runtime) => runtime.executionId === terminal.executionId
+          ),
+          EffectArray.filter(
+            current,
+            (runtime) => runtime.executionId !== terminal.executionId
+          ),
+        ] as const
+    );
+    yield* Effect.forEach(
+      detachedRuntimes,
+      (runtime) => FiberSet.clear(runtime.runs),
+      { discard: true }
     );
     yield* flushConversationExecutionOutbox(
       terminal.conversationId,

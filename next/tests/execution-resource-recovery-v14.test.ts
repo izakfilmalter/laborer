@@ -15,6 +15,7 @@ import {
 } from "../src/prototype/scenario.ts";
 import { makeFileStoreLayer } from "../src/prototype/store.ts";
 import {
+  type AcceptImplementationAgentResponse,
   ImplementationAgent,
   makeFileApplicationRepository,
   makeInMemoryApplicationRepository,
@@ -676,6 +677,10 @@ describe("Execution resource recovery v14", () => {
         const repository = yield* makeInMemoryApplicationRepository();
         const conversationId = ThreadId.make("workspace:T254:C254:4.0");
         const accepted = yield* Ref.make<readonly ExternalInputEvent[]>([]);
+        const interrupted = yield* Ref.make(false);
+        let acceptImplementationResponse:
+          | AcceptImplementationAgentResponse
+          | undefined;
         let turn = 0;
         const application = yield* makeReferenceCodingApplication({
           conversationAgent: {
@@ -707,12 +712,20 @@ describe("Execution resource recovery v14", () => {
           },
           implementationAgent: ImplementationAgent.of({
             inspect: (request) => exactSession(request.implementationSessionId),
-            start: (request) =>
+            start: (request, acceptResponse) =>
               Effect.succeed({
-                completion: Effect.never,
+                completion: Effect.never.pipe(
+                  Effect.onInterrupt(() => Ref.set(interrupted, true))
+                ),
                 resume: () => Effect.die(new Error("must not resume")),
                 sessionId: request.implementationSessionId,
-              }),
+              }).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    acceptImplementationResponse = acceptResponse;
+                  })
+                )
+              ),
           }),
           repository,
           worktreeManager: WorktreeManager.of({
@@ -754,6 +767,15 @@ describe("Execution resource recovery v14", () => {
         const execution = (yield* repository.load).executions[0];
         assert.strictEqual(execution?.status, "failed");
         assert.strictEqual(execution?.recoveryFailure?.reason, "missing");
+        assert.strictEqual((yield* Ref.get(accepted)).length, 1);
+        assert.strictEqual(yield* Ref.get(interrupted), true);
+        assert.ok(acceptImplementationResponse);
+        yield* acceptImplementationResponse({
+          responseId: "late-after-resource-loss",
+          text: "raw adapter error from /tmp/resource-254",
+        });
+        const afterLateResponse = (yield* repository.load).executions[0];
+        assert.deepStrictEqual(afterLateResponse?.responses, []);
         assert.strictEqual((yield* Ref.get(accepted)).length, 1);
       })
     )

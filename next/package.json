@@ -24,6 +24,8 @@
     "dev:slack": "node --env-file-if-exists=.env.local src/development-daemon/dev.ts",
     "start:acp-canary": "node --env-file-if-exists=.env.local src/acp-conversation-prototype/live.ts",
     "start:slack": "node --env-file-if-exists=.env.local src/slack/live.ts",
+    "slack:oauth-callback:start": "node scripts/slack-oauth-callback.mjs start",
+    "slack:oauth-callback:stop": "node scripts/slack-oauth-callback.mjs stop",
     "slack:funnel": "bun run src/slack-funnel.ts",
     "slack:funnel:off": "bun run src/slack-funnel.ts off",
     "slack:funnel:on": "bun run src/slack-funnel.ts on",

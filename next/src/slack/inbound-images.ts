@@ -399,6 +399,21 @@ export const cleanupInboundImageStorage = (options: {
         throw cause;
       }
       await assertNoSymlinkPathComponents(directory, "cleanup-inbound-images");
+      const directoryHandle = await open(directory, "r");
+      try {
+        const metadata = await directoryHandle.stat();
+        if (
+          !metadata.isDirectory() ||
+          // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+          (metadata.mode & 0o077) !== 0 ||
+          (typeof process.getuid === "function" &&
+            metadata.uid !== process.getuid())
+        ) {
+          throw new Error("unsafe-image-cleanup-directory");
+        }
+      } finally {
+        await directoryHandle.close();
+      }
       const now = options.now ?? Date.now();
       const retentionMillis =
         options.retentionMillis ?? INBOUND_IMAGE_RETENTION_MILLIS;

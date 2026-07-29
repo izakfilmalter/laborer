@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber } from "effect";
@@ -696,6 +703,29 @@ describe("inbound Slack images", () => {
             )
           )
         );
+
+        yield* Effect.promise(() => chmod(directory, 0o770));
+        const unsafeDirectory = yield* Effect.result(
+          cleanupInboundImageStorage({
+            liveContentPaths: new Set(),
+            now: 10_000,
+            retentionMillis: 1,
+            storageRoot,
+          })
+        );
+        assert.strictEqual(
+          unsafeDirectory._tag === "Failure"
+            ? unsafeDirectory.failure.reason
+            : null,
+          "image-cleanup-failed"
+        );
+        assert.deepStrictEqual(
+          new Uint8Array(
+            yield* Effect.promise(() => readFile(resolve(directory, liveName)))
+          ),
+          png
+        );
+        yield* Effect.promise(() => chmod(directory, 0o700));
 
         const outside = resolve(storageRoot, "outside.png");
         const unsafeName = `${"c".repeat(64)}.png`;

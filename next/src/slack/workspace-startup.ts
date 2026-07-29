@@ -50,6 +50,7 @@ export interface SlackWorkspaceStartupAdapter<Client, Gateway> {
     readonly client: Client;
     readonly identity: SlackRuntimeIdentity;
     readonly namespaceWorkspace: boolean;
+    readonly paths?: SlackRuntimePaths;
   }) => Gateway;
   readonly makeRootRuntime?: (
     root: PreparedSlackWorkspaceRoot & { readonly legacyWorkspaceId?: string }
@@ -385,6 +386,9 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
       client,
       identity,
       namespaceWorkspace: config.namespaceWorkspace,
+      ...(prepared?._tag === "Success"
+        ? { paths: prepared.success.paths }
+        : {}),
     });
     const unavailableInstallation: SlackWorkspaceInstallation = {
       identity,

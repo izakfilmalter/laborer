@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
+  type ContentBlock,
   client,
   type InitializeResponse,
   type McpServer,
@@ -48,7 +49,10 @@ export interface OpenCodeAcpHarness {
     mcpServers?: readonly McpServer[]
   ) => Promise<{ readonly sessionId: string }>;
   readonly permissionRequests: readonly RequestPermissionRequest[];
-  readonly prompt: (sessionId: string, text: string) => Promise<PromptResponse>;
+  readonly prompt: (
+    sessionId: string,
+    content: string | ContentBlock[]
+  ) => Promise<PromptResponse>;
   readonly resumeSession: (sessionId: string) => Promise<void>;
   readonly updates: readonly SessionNotification[];
 }
@@ -96,10 +100,11 @@ export const makeOpenCodeCompatibilityConfig = (
       id: "compatibility",
       models: {
         "compatibility-model": {
-          attachment: false,
+          attachment: true,
           cost: { input: 0, output: 0 },
           id: "compatibility-model",
           limit: { context: 100_000, output: 10_000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
           name: "ACP Compatibility Model",
           options: {},
           reasoning: false,
@@ -303,13 +308,16 @@ export const startOpenCodeAcpHarness = async (
         "session/new"
       ),
     permissionRequests,
-    prompt: (sessionId, text) =>
+    prompt: (sessionId, content) =>
       request(
         connection.agent.request(methods.agent.session.prompt, {
-          prompt: [{ text, type: "text" }],
+          prompt:
+            typeof content === "string"
+              ? [{ text: content, type: "text" }]
+              : content,
           sessionId,
         }),
-        `session/prompt (${text})`
+        "session/prompt"
       ),
     resumeSession: async (sessionId) => {
       await request(

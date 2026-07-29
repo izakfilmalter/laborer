@@ -680,6 +680,11 @@ fails closed rather than risking a second owner.
 No automated test opens a Slack connection. Tests inject a fake Socket Mode
 client and continue to use Emulate for official `WebClient` HTTP behavior.
 
+Inbound Slack images require the manifest's `files:read` bot scope. Existing
+workspace installations must be reauthorized after updating the manifest;
+without reauthorization, Laborer fails the required image input explicitly
+rather than submitting a text-only Conversation prompt.
+
 ## What this prototype genuinely proves
 
 - An activation is persisted as unassigned normalized input before context or

@@ -24,6 +24,50 @@ export const ChannelKind = Schema.Literals(["public", "private", "direct"]);
 export type ChannelKind = typeof ChannelKind.Type;
 export const AuthorKind = Schema.Literals(["human", "externalBot", "laborer"]);
 export type AuthorKind = typeof AuthorKind.Type;
+
+export const NormalizedImageFailureReason = Schema.Literals([
+  "download-timeout",
+  "image-count-exceeded",
+  "invalid-response",
+  "metadata-unavailable",
+  "mime-mismatch",
+  "size-exceeded",
+  "storage-failed",
+  "unsupported-mime",
+  "unsafe-download-url",
+]);
+export type NormalizedImageFailureReason =
+  typeof NormalizedImageFailureReason.Type;
+
+export class ReadyNormalizedImageInput extends Schema.TaggedClass<ReadyNormalizedImageInput>()(
+  "Ready",
+  {
+    byteLength: Schema.Int,
+    contentDigest: Schema.NonEmptyString,
+    id: Schema.NonEmptyString,
+    mimeType: Schema.Literals([
+      "image/gif",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ]),
+    storagePath: Schema.NonEmptyString,
+  }
+) {}
+
+export class FailedNormalizedImageInput extends Schema.TaggedClass<FailedNormalizedImageInput>()(
+  "Failed",
+  {
+    id: Schema.NonEmptyString,
+    reason: NormalizedImageFailureReason,
+  }
+) {}
+
+export const NormalizedImageInput = Schema.Union([
+  ReadyNormalizedImageInput,
+  FailedNormalizedImageInput,
+]);
+export type NormalizedImageInput = typeof NormalizedImageInput.Type;
 export const InboundRecordKind = Schema.Literals([
   "message",
   "message_changed",
@@ -55,6 +99,9 @@ export class NormalizedMessage extends Schema.Class<NormalizedMessage>(
   authorSlackId: Schema.String,
   classification: Schema.Literals(["context", "input"]),
   id: MessageId,
+  images: Schema.optional(Schema.Array(NormalizedImageInput)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([]))
+  ),
   isActivation: Schema.Boolean,
   slackTs: Schema.String,
   text: Schema.String,

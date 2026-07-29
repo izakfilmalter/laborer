@@ -18,6 +18,7 @@ import { LABORER_VERSION } from "../version.ts";
 import { makeAcpSlackWorkspaceRunner } from "./acp-workspace-runner.ts";
 import type { SlackDaemonConfig } from "./config.ts";
 import { authenticateSlackBot } from "./identity.ts";
+import { makeSlackImageInputHydrator } from "./image-input.ts";
 import { makeSlackNativeStreamCapability } from "./native-stream.ts";
 import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
@@ -83,7 +84,7 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
           logger: silentSocketLogger,
           ...slackWebApiRequestPolicy,
         }),
-      makeGateway: ({ client, identity, namespaceWorkspace }) =>
+      makeGateway: ({ client, identity, namespaceWorkspace, paths }) =>
         makeSlackGateway({
           botClient: client,
           botId: identity.botId,
@@ -94,6 +95,14 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
             client: client.chat,
             recipientTeamId: identity.teamId,
           }),
+          ...(paths === undefined
+            ? {}
+            : {
+                imageInputHydrator: makeSlackImageInputHydrator({
+                  client,
+                  storageRoot: paths.workThreads,
+                }),
+              }),
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),

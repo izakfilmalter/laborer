@@ -1,11 +1,13 @@
 /** Opt-in ACP stable-v1 conversation-agent proof for issues #234 and #236. */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { open, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   type ActiveSessionMessage,
+  type ContentBlock,
   client,
   type McpServerStdio,
   methods,
@@ -160,6 +162,7 @@ export interface AcpConversationAgentOptions {
   /** Skip #240's eager probe; durable new/resume requests verify memory directly. */
   readonly durableSessionMode?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly imageInputStorageRoot?: string;
   readonly inboundLimits?: {
     readonly maxLineBytes?: number;
     readonly maxProcessBytes?: number;
@@ -428,10 +431,11 @@ interface RoutedAcpSession {
   readonly effectiveMetadata: SignedAcpEffectiveMetadata | null;
   nextUpdate(): Promise<ActiveSessionMessage>;
   prompt(
-    input: string,
+    input: ContentBlock[],
     options: { readonly cancellationSignal: AbortSignal }
   ): Promise<PromptResponse>;
   readonly sessionId: string;
+  readonly supportsImages: boolean;
 }
 
 interface ManagedSession {
@@ -1212,16 +1216,155 @@ const settlePromptProtocolFailure = Effect.fn(
   return yield* terminalStopFailure("protocol_failed");
 });
 
+const requiredImageFailure = (): HandlerFailure =>
+  HandlerFailure.make({
+    category: "protocol",
+    noticeStyle: "generic",
+    safeDetail: "Required image input is unavailable",
+  });
+
+const PRIVATE_IMAGE_READ_FLAGS = fsConstants.O_RDONLY + fsConstants.O_NOFOLLOW;
+
+const isOwnedPrivateImage = (metadata: {
+  readonly mode: number;
+  readonly uid: number;
+}): boolean =>
+  metadata.mode % 0o100 === 0 &&
+  (typeof process.getuid !== "function" || metadata.uid === process.getuid());
+
+const readStagedImage = Effect.fn("AcpConversationAgent.readStagedImage")(
+  function* (
+    image: Extract<
+      NonNullable<
+        ConversationAgentRequest["messages"][number]["images"]
+      >[number],
+      { readonly _tag: "Ready" }
+    >,
+    storageRoot: string
+  ) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        if (isAbsolute(image.storagePath)) {
+          throw new Error("absolute image path");
+        }
+        const canonicalRoot = await realpath(storageRoot);
+        const candidate = resolve(canonicalRoot, image.storagePath);
+        if (
+          candidate === canonicalRoot ||
+          !candidate.startsWith(`${canonicalRoot}${sep}`)
+        ) {
+          throw new Error("image path escaped storage root");
+        }
+        const canonicalFile = await realpath(candidate);
+        if (!canonicalFile.startsWith(`${canonicalRoot}${sep}`)) {
+          throw new Error("image path escaped storage root");
+        }
+        const handle = await open(canonicalFile, PRIVATE_IMAGE_READ_FLAGS);
+        try {
+          const metadata = await handle.stat();
+          if (
+            !metadata.isFile() ||
+            metadata.size !== image.byteLength ||
+            metadata.size > 1024 * 1024 ||
+            !isOwnedPrivateImage(metadata)
+          ) {
+            throw new Error("image file identity changed");
+          }
+          const bounded = new Uint8Array(image.byteLength + 1);
+          let offset = 0;
+          while (offset < bounded.byteLength) {
+            const { bytesRead } = await handle.read(
+              bounded,
+              offset,
+              bounded.byteLength - offset,
+              offset
+            );
+            if (bytesRead === 0) {
+              break;
+            }
+            offset += bytesRead;
+          }
+          if (offset !== image.byteLength) {
+            throw new Error("image file identity changed");
+          }
+          const bytes = bounded.subarray(0, image.byteLength);
+          const digest = createHash("sha256").update(bytes).digest("base64url");
+          if (digest !== image.contentDigest) {
+            throw new Error("image digest changed");
+          }
+          return Buffer.from(bytes).toString("base64");
+        } finally {
+          await handle.close();
+        }
+      },
+      catch: requiredImageFailure,
+    });
+  }
+);
+
+const preparePromptContent = Effect.fn(
+  "AcpConversationAgent.preparePromptContent"
+)(function* (
+  input: string,
+  request: ConversationAgentRequest,
+  session: RoutedAcpSession,
+  storageRoot: string | undefined
+) {
+  const images = [...request.context, ...request.messages].flatMap(
+    (message) => message.images ?? []
+  );
+  if (images.length === 0) {
+    return [{ text: input, type: "text" }] satisfies ContentBlock[];
+  }
+  if (
+    storageRoot === undefined ||
+    !session.supportsImages ||
+    images.some((image) => image._tag === "Failed")
+  ) {
+    return yield* requiredImageFailure();
+  }
+  const blocks: ContentBlock[] = [];
+  let remainder = input;
+  for (const image of images) {
+    if (image._tag !== "Ready") {
+      return yield* requiredImageFailure();
+    }
+    const marker = `<laborer-image-input id="${image.id}"/>`;
+    const markerIndex = remainder.indexOf(marker);
+    if (markerIndex < 0) {
+      return yield* requiredImageFailure();
+    }
+    const before = remainder.slice(0, markerIndex);
+    if (before.length > 0) {
+      blocks.push({ text: before, type: "text" });
+    }
+    blocks.push({
+      data: yield* readStagedImage(image, storageRoot),
+      mimeType: image.mimeType,
+      type: "image",
+    });
+    remainder = remainder.slice(markerIndex + marker.length);
+  }
+  if (remainder.length > 0) {
+    blocks.push({ text: remainder, type: "text" });
+  }
+  if (textEncoder.encode(JSON.stringify(blocks)).byteLength > 2 * 1024 * 1024) {
+    return yield* requiredImageFailure();
+  }
+  return blocks;
+});
+
 const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   session: RoutedAcpSession,
   request: ConversationAgentRequest,
   requiredInput: string,
   agentContext: AcpAgentContextSources | undefined,
+  imageInputStorageRoot: string | undefined,
   needsInitialContext: boolean,
   participantLookup: SlackParticipantLookupShape | undefined,
   participantIds: readonly string[],
   startPrompt: (
-    input: string,
+    input: ContentBlock[],
     introducedParticipantIds: readonly string[]
   ) => Effect.Effect<ActivePrompt, AcpConversationFailure | HandlerFailure>,
   publishMessage: PublishConversationAgentMessage,
@@ -1256,8 +1399,14 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
     input = rendered.prompt;
     submittedParticipantIds = rendered.introducedParticipantIds;
   }
+  const content = yield* preparePromptContent(
+    input,
+    request,
+    session,
+    imageInputStorageRoot
+  );
   return yield* Effect.acquireUseRelease(
-    startPrompt(input, submittedParticipantIds),
+    startPrompt(content, submittedParticipantIds),
     (prompt) =>
       Effect.gen(function* () {
         const consumeUpdates = Effect.gen(function* () {
@@ -1744,7 +1893,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                       }),
                   [PROMPT_EPOCH_META_KEY]: marker,
                 },
-                prompt: [{ text: input, type: "text" }],
+                prompt: input,
                 sessionId,
               },
               {
@@ -1800,6 +1949,8 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             return completion;
           },
           sessionId,
+          supportsImages:
+            initialized.agentCapabilities?.promptCapabilities?.image === true,
         };
       };
 
@@ -3198,7 +3349,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       const submitOwnedPrompt = (
         request: ConversationAgentRequest,
         managed: ManagedSession,
-        input: string,
+        input: ContentBlock[],
         introducedParticipantIds: readonly string[],
         attemptId: string | null,
         attemptStore: ConversationPromptAttemptStore | undefined,
@@ -3269,7 +3420,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       const startOwnedPrompt = (
         request: ConversationAgentRequest,
         managed: ManagedSession,
-        input: string,
+        input: ContentBlock[],
         introducedParticipantIds: readonly string[]
       ): Effect.Effect<
         ActivePrompt,
@@ -3398,6 +3549,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 request,
                 requiredInput,
                 options.agentContext,
+                options.imageInputStorageRoot,
                 managed.needsInitialContext,
                 options.participantLookup,
                 participantIds,

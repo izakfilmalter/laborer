@@ -801,8 +801,18 @@ export const loadAcpSlackParticipantContexts = Effect.fn(
   );
 });
 
-const renderMessage = (message: NormalizedMessage): string =>
-  `<slack-message author-kind="${xmlEscapeAttribute(message.authorKind)}" author-slack-id="${xmlEscapeAttribute(message.authorSlackId)}" classification="${xmlEscapeAttribute(message.classification)}" id="${xmlEscapeAttribute(message.id)}" is-activation="${String(message.isActivation)}" slack-ts="${xmlEscapeAttribute(message.slackTs)}">${xmlEscapeContent(message.text)}</slack-message>`;
+const renderMessage = (message: NormalizedMessage): string => {
+  const images = pipe(
+    message.images ?? [],
+    EffectArray.map((image) =>
+      image._tag === "Ready"
+        ? `<laborer-image-input id="${xmlEscapeAttribute(image.id)}"/>`
+        : `<laborer-image-input-failed id="${xmlEscapeAttribute(image.id)}" reason="${image.reason}"/>`
+    ),
+    EffectArray.join("")
+  );
+  return `<slack-message author-kind="${xmlEscapeAttribute(message.authorKind)}" author-slack-id="${xmlEscapeAttribute(message.authorSlackId)}" classification="${xmlEscapeAttribute(message.classification)}" id="${xmlEscapeAttribute(message.id)}" is-activation="${String(message.isActivation)}" slack-ts="${xmlEscapeAttribute(message.slackTs)}">${xmlEscapeContent(message.text)}${images}</slack-message>`;
+};
 
 const renderAttributedInput = (request: ConversationAgentRequest): string => {
   const messages = EffectArray.appendAll(request.context, request.messages);

@@ -98,6 +98,10 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
       try {
         const initialized = await firstProcess.initialize();
         assert.strictEqual(initialized.protocolVersion, PROTOCOL_VERSION);
+        assert.strictEqual(
+          initialized.agentCapabilities?.promptCapabilities?.image,
+          true
+        );
         const session = await firstProcess.newSession([
           {
             args: [MCP_FIXTURE_PATH],
@@ -127,6 +131,29 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           streamedAgentText(firstProcess.updates, durableSessionId),
           "ordinary ACP answer"
         );
+
+        const imageData =
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+        const imageRequestIndex = provider.requests.length;
+        provider.enqueue({
+          finishReason: "stop",
+          kind: "text",
+          textChunks: ["visual input accepted"],
+        });
+        assert.strictEqual(
+          (
+            await firstProcess.prompt(durableSessionId, [
+              { text: "inspect this tiny image", type: "text" },
+              { data: imageData, mimeType: "image/png", type: "image" },
+            ])
+          ).stopReason,
+          "end_turn"
+        );
+        const imageProviderRequest = JSON.stringify(
+          provider.requests[imageRequestIndex]?.body
+        );
+        assert.include(imageProviderRequest, "image/png");
+        assert.include(imageProviderRequest, imageData);
 
         provider.enqueue(
           {

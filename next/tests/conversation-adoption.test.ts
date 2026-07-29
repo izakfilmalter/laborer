@@ -60,16 +60,20 @@ const acceptEvent = () =>
     scheduling: "Scheduled" as const,
   });
 
+const historyRendered =
+  '<conversation-adoption-history trust="untrusted-reference-only"><slack-message author-kind="human" author-slack-id="U-OLD" slack-ts="255.000001">old current history</slack-message></conversation-adoption-history>';
+
 const historySnapshot: ConversationAdoptionHistorySnapshot = {
-  bytes: 321,
+  bytes: Buffer.byteLength(historyRendered, "utf8"),
   degradation: "complete",
   diagnosticCodes: [],
-  digest: "history-digest-255",
+  digest: createHash("sha256")
+    .update(historyRendered, "utf8")
+    .digest("base64url"),
   firstSlackTs: "255.000001",
   lastSlackTs: "255.000001",
   messageCount: 1,
-  rendered:
-    '<conversation-adoption-history trust="untrusted-reference-only"><slack-message author-kind="human" author-slack-id="U-OLD" slack-ts="255.000001">old current history</slack-message></conversation-adoption-history>',
+  rendered: historyRendered,
   requestCount: 1,
   truncation: { age: false, bytes: false, count: false },
 };
@@ -606,10 +610,71 @@ describe("issue #255 Conversation adoption", () => {
           readFile(path, "utf8")
         );
         assert.ok(!persistedText.includes("old current history"));
-        assert.ok(persistedText.includes("history-digest-255"));
+        assert.ok(persistedText.includes(historySnapshot.digest));
 
         yield* runTurn(application, 2);
         assert.strictEqual(requests.length, 1);
+      })
+    )
+  );
+
+  it.live("rejects malformed history snapshots before ACP side effects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changedRendered = historySnapshot.rendered.replace(
+          "old current history",
+          "different history with a stale digest"
+        );
+        const oversizedRendered = "x".repeat(256 * 1024 + 1);
+        const malformedSnapshots: readonly ConversationAdoptionHistorySnapshot[] =
+          [
+            {
+              ...historySnapshot,
+              bytes: Buffer.byteLength(changedRendered, "utf8"),
+              rendered: changedRendered,
+            },
+            {
+              ...historySnapshot,
+              bytes: Buffer.byteLength(oversizedRendered, "utf8"),
+              digest: createHash("sha256")
+                .update(oversizedRendered, "utf8")
+                .digest("base64url"),
+              rendered: oversizedRendered,
+            },
+          ];
+
+        for (const [index, snapshot] of malformedSnapshots.entries()) {
+          const root = yield* makeTempDirectoryScoped(
+            `laborer-255-invalid-history-${index}-`
+          );
+          const path = join(root, "application.json");
+          yield* createLegacyV14Conversation(path, root);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          let agentCalls = 0;
+          const application = yield* makeApplication(
+            repository,
+            {
+              handle: () =>
+                Effect.sync(() => {
+                  agentCalls += 1;
+                  return [];
+                }),
+            },
+            snapshot
+          );
+
+          const failure = yield* Effect.flip(runTurn(application, 2));
+          assert.ok(failure instanceof HandlerFailure);
+          assert.strictEqual(
+            failure.safeDetail,
+            "Conversation adoption history snapshot is invalid"
+          );
+          assert.strictEqual(agentCalls, 0);
+          const adoption = (yield* repository.load).conversationAdoptions[0];
+          assert.strictEqual(adoption?.status, "staged");
+          assert.strictEqual(adoption?.historyDigest, null);
+          assert.strictEqual(adoption?.sessionCreationAttemptedAt, null);
+        }
       })
     )
   );
@@ -716,13 +781,17 @@ describe("issue #255 Conversation adoption", () => {
             "session_created"
           );
 
+          const changedRendered = historySnapshot.rendered.replace(
+            "old current history",
+            "edited after session creation"
+          );
           const changedHistory = {
             ...historySnapshot,
-            digest: "changed-history-digest-255",
-            rendered: historySnapshot.rendered.replace(
-              "old current history",
-              "edited after session creation"
-            ),
+            bytes: Buffer.byteLength(changedRendered, "utf8"),
+            digest: createHash("sha256")
+              .update(changedRendered, "utf8")
+              .digest("base64url"),
+            rendered: changedRendered,
           };
           let restartCalls = 0;
           const restartedRepository = yield* makeFileApplicationRepository(

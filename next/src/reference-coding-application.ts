@@ -64,7 +64,12 @@ import type {
   ConversationAdoptionHistoryGateway,
   ConversationAdoptionHistorySnapshot,
 } from "./slack/conversation-adoption-history.ts";
-import { unavailableConversationAdoptionHistoryGateway } from "./slack/conversation-adoption-history.ts";
+import {
+  CONVERSATION_ADOPTION_HISTORY_MAX_BYTES,
+  CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES,
+  CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS,
+  unavailableConversationAdoptionHistoryGateway,
+} from "./slack/conversation-adoption-history.ts";
 
 export const ReferenceCodingActionName = ActionHandlerKey;
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
@@ -3692,6 +3697,59 @@ export const makeReferenceCodingApplication = Effect.fn(
       ];
     }, true);
 
+  const conversationAdoptionHistorySnapshotIsValid = (
+    snapshot: ConversationAdoptionHistorySnapshot
+  ): boolean => {
+    if (
+      typeof snapshot.rendered !== "string" ||
+      !Array.isArray(snapshot.diagnosticCodes) ||
+      typeof snapshot.truncation !== "object" ||
+      snapshot.truncation === null
+    ) {
+      return false;
+    }
+    const validDiagnostics = new Set([
+      "cursor-cycle",
+      "page-limit",
+      "request-limit",
+      "slack-permanent",
+      "slack-transient-exhausted",
+      "time-limit",
+    ]);
+    const diagnosticCodes = [...new Set(snapshot.diagnosticCodes)];
+    const renderedBytes = Buffer.byteLength(snapshot.rendered, "utf8");
+    const renderedDigest = createHash("sha256")
+      .update(snapshot.rendered, "utf8")
+      .digest("base64url");
+    return (
+      (snapshot.degradation === "complete" ||
+        snapshot.degradation === "partial" ||
+        snapshot.degradation === "unavailable") &&
+      diagnosticCodes.length === snapshot.diagnosticCodes.length &&
+      diagnosticCodes.every((code) => validDiagnostics.has(code)) &&
+      (snapshot.firstSlackTs === null ||
+        (typeof snapshot.firstSlackTs === "string" &&
+          snapshot.firstSlackTs.length > 0)) &&
+      (snapshot.lastSlackTs === null ||
+        (typeof snapshot.lastSlackTs === "string" &&
+          snapshot.lastSlackTs.length > 0)) &&
+      typeof snapshot.truncation.age === "boolean" &&
+      typeof snapshot.truncation.bytes === "boolean" &&
+      typeof snapshot.truncation.count === "boolean" &&
+      Number.isInteger(snapshot.bytes) &&
+      snapshot.bytes >= 0 &&
+      snapshot.bytes === renderedBytes &&
+      renderedBytes <= CONVERSATION_ADOPTION_HISTORY_MAX_BYTES &&
+      Number.isInteger(snapshot.messageCount) &&
+      snapshot.messageCount >= 0 &&
+      snapshot.messageCount <= CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES &&
+      Number.isInteger(snapshot.requestCount) &&
+      snapshot.requestCount >= 0 &&
+      snapshot.requestCount <= CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS &&
+      snapshot.digest === renderedDigest
+    );
+  };
+
   const markConversationAdoptionSeedUnresolved = (
     adoptionId: string,
     attemptId: string
@@ -3761,6 +3819,12 @@ export const makeReferenceCodingApplication = Effect.fn(
       rootTs: initial.rootTs,
       workspaceId: initial.workspaceId,
     });
+    if (!conversationAdoptionHistorySnapshotIsValid(snapshot)) {
+      return yield* HandlerFailure.make({
+        category: "protocol",
+        safeDetail: "Conversation adoption history snapshot is invalid",
+      });
+    }
     const persisted = yield* persistConversationAdoptionHistory(
       initial.adoptionId,
       snapshot

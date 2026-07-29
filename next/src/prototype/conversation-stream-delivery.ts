@@ -702,7 +702,7 @@ export const makeConversationStreamDelivery = Effect.fn(
           const stream = yield* findStream(streamId);
           if (
             stream === null ||
-            stream.lifecycle !== "open" ||
+            streamIsTerminal(stream) ||
             stream.flushDeadlineMillis === null ||
             stream.confirmedOffset >= codePointLength(stream.cumulativeText)
           ) {

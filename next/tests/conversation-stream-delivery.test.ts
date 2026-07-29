@@ -1525,7 +1525,7 @@ describe("durable Conversation stream delivery", () => {
   );
 
   it.effect(
-    "does not strand a tiny delta published while a scheduled flush releases ownership",
+    "does not strand a finalizing tiny delta while a scheduled flush releases ownership",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1606,6 +1606,10 @@ describe("durable Conversation stream delivery", () => {
           yield* TestClock.adjust("1 second");
           yield* Deferred.await(scheduledDriveFinished);
           assert.deepStrictEqual(calls, ["post:A", "update:Ab"]);
+          yield* store.requestConversationStreamFinalization({
+            ...owner,
+            terminalReason: "completed",
+          });
           yield* publisher.publish(
             ApplicationConversationMessageChunk.make({
               messageId: "assistant-message",
@@ -1619,6 +1623,12 @@ describe("durable Conversation stream delivery", () => {
           yield* Deferred.await(scheduledDriveRedriven);
 
           assert.deepStrictEqual(calls, ["post:A", "update:Ab", "update:Abc"]);
+          const state = yield* store.snapshot;
+          assert.strictEqual(state.conversationStreams.length, 0);
+          assert.strictEqual(
+            state.conversationStreamTombstones[0]?.lifecycle,
+            "stopped"
+          );
         })
       )
   );

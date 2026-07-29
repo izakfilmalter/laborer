@@ -64,6 +64,14 @@ export interface ReferenceCodingWorkspaceApplicationDependencies {
   readonly observeImplementationAgent?: (
     implementationAgent: ImplementationAgentShape
   ) => void;
+  readonly rootRuntimeCapabilities?: {
+    readonly actionsFor: (
+      conversationId: string
+    ) => readonly import("../reference-coding-application.ts").ConversationAction[];
+    readonly controlsFor: (
+      conversationId: string
+    ) => readonly import("../reference-coding-application.ts").ConversationExecutionControl[];
+  };
 }
 
 interface ReferenceCodingWorkspaceInfrastructure {
@@ -293,6 +301,11 @@ export const makeReferenceCodingWorkspaceApplicationWithConversationAgent =
         conversationAgent,
         implementationAgent,
         repository: infrastructure.repository,
+        ...(dependencies.rootRuntimeCapabilities === undefined
+          ? {}
+          : {
+              rootRuntimeCapabilities: dependencies.rootRuntimeCapabilities,
+            }),
         worktreeManager: infrastructure.worktreeManager,
       });
     }

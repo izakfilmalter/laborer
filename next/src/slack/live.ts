@@ -7,6 +7,7 @@ import {
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
 import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
+import { makeReferenceCodingRootApplication } from "../durable-runtime/reference-coding-application.ts";
 import {
   operatorStatusPaths,
   startOperatorStatusServer,
@@ -80,10 +81,27 @@ const program = Effect.gen(function* () {
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
       makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>
-        makeNodeRootDurableRuntime({
-          databasePath: paths.runtimeDatabase,
-          ...(legacyWorkspaceId === undefined ? {} : { legacyWorkspaceId }),
-          rootIdentity: laborer.root,
+        Effect.gen(function* () {
+          const applicationConfig = laborer.config.application;
+          if (applicationConfig === undefined) {
+            return yield* Effect.die(
+              new Error(
+                "Cluster runtime requires a registered user application"
+              )
+            );
+          }
+          const application = yield* makeReferenceCodingRootApplication({
+            config: applicationConfig,
+            environment: process.env,
+            paths,
+            root: laborer.root,
+          });
+          return yield* makeNodeRootDurableRuntime({
+            application,
+            databasePath: paths.runtimeDatabase,
+            ...(legacyWorkspaceId === undefined ? {} : { legacyWorkspaceId }),
+            rootIdentity: laborer.root,
+          });
         }),
       makeRunner: makeAcpSlackWorkspaceRunner,
       makeSetupIncompleteResponder: (gateway) => (request) =>

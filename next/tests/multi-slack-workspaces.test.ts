@@ -140,8 +140,11 @@ const noContextGateway: SlackGatewayShape = {
   readActivationContext: () => Effect.succeed([]),
 };
 
+const emptyRootApplication = defineApplication({ actions: [] });
+
 const fakeRootRuntime = (): RootDurableRuntimeShape => ({
   acknowledgeEvent: () => Effect.void,
+  actions: emptyRootApplication.actions,
   attachConversationClient: () =>
     Effect.acquireRelease(Effect.void, () => Effect.void),
   cancelExecution: () => Effect.die("unused fixture Execution cancellation"),

@@ -207,6 +207,64 @@ describe("issue #252 ACP process supervisor", () => {
       )
   );
 
+  it.effect(
+    "retains the prompt stop phase after the interrupted caller settles",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped("acp-prompt-phase-");
+          const repository = yield* makeAcpProcessStateRepository({
+            path: join(root, "acp-process-state.json"),
+            trustedRoot: root,
+          });
+          const promptStarted = yield* Deferred.make<void>();
+          const promptFailed = yield* Deferred.make<never, HandlerFailure>();
+          const generations: AcpGenerationContext[] = [];
+          const supervisor = yield* makeAcpConversationProcessSupervisor({
+            jitter: () => 0,
+            makeGeneration: (context) =>
+              Effect.sync(() => {
+                generations.push(context);
+                context.observeHealth({
+                  generation: context.generation,
+                  status: "ready",
+                });
+                return {
+                  handle: () =>
+                    Effect.gen(function* () {
+                      yield* Deferred.succeed(promptStarted, undefined);
+                      return yield* Deferred.await(promptFailed);
+                    }),
+                } satisfies ConversationAgentShape;
+              }),
+            repository,
+            workspaceId: "workspace-a",
+          });
+          const interrupted = yield* Effect.forkChild(
+            Effect.result(supervisor.agent.handle(request("conversation-a")))
+          );
+          yield* Deferred.await(promptStarted);
+
+          generations[0]?.observeExit({ code: 37, signal: null });
+          generations[0]?.observeHealth({ generation: 1, status: "closed" });
+          yield* Deferred.fail(
+            promptFailed,
+            HandlerFailure.make({
+              category: "exit",
+              safeDetail: "generation one was lost",
+            })
+          );
+          yield* Fiber.join(interrupted);
+          yield* TestClock.adjust("1 millis");
+          yield* waitFor(() => generations.length === 2);
+
+          const state = yield* repository.load;
+          assert.strictEqual(state.lastStop?.generation, 1);
+          assert.strictEqual(state.lastStop?.phase, "prompt");
+        })
+      )
+  );
+
   it.effect("fails construction closed when its supervisor fiber defects", () =>
     Effect.scoped(
       Effect.gen(function* () {

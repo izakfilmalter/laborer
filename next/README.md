@@ -1,18 +1,8 @@
-# Slack-to-handler tracer bullet and classifier/worker conversation
+# Slack-native Laborer
 
 > **THROWAWAY LOGIC PROTOTYPE for issue #204.** This is a local vertical proof,
 > not the production Runner. Every file under `src/prototype/` exists only for
 > this tracer.
->
-> **THROWAWAY HANDLER PROTOTYPE for issue #207.** The tracked
-> `laborer.json` and `src/handlers/classifier-worker-prototype.sh` prove a
-> user-owned classifier-to-worker conversation through the generic process
-> seam. The Runner remains unaware of OpenCode, classification, and agents.
->
-> **THROWAWAY INITIALIZER PROTOTYPE for issue #205.** An optional configured
-> process can select one durable working directory before a new work thread's
-> first handler invocation. The tracked initializer creates a sibling Git
-> worktree; Git and worktree policy remain user-owned process behavior.
 >
 > **THROWAWAY ACP STREAMING PROTOTYPE for issues #234 and #236.** The isolated
 > `acp-conversation-prototype` composition uses official stable-v1 ACP over
@@ -275,9 +265,9 @@ bun run start:acp-canary
 
 The explicit command defaults to `opencode acp`, with the configured
 `LABORER_ROOT` (or this `next` directory) as both process cwd and ACP session
-working context. It initializes ACP once, creates one in-memory ACP session per
-accepted Slack work thread, reuses that session for follow-up turns while the
-canary lives, and streams each public ACP message through Slack's native
+working context. It initializes ACP once and uses the same durable Conversation
+session lifecycle as production, including resume and explicit unresolved
+recovery boundaries. It streams each public ACP message through Slack's native
 `chat.startStream`, `chat.appendStream`, and `chat.stopStream` methods. Appends
 carry only new ACP text. Both native streaming and the post/update fallback
 limit one logical public message to Slack's documented 12,000-character
@@ -470,19 +460,14 @@ child that remains unreaped after KILL as a cleanup defect. The common
 unexpected-exit path is fixture-tested; synthetic injection of Node's rarer
 post-spawn ChildProcess `error` event remains a low residual test gap.
 
-## Run the live issue #207 configured-handler prototype
+## Configure a custom process handler
 
-With an explicit workspace registry, `start:slack` initializes bindings
-concurrently. Each binding reads its bound `<root>/laborer.json` before that
-binding's `auth.test`, so one slow root does not delay another workspace. The
-daemon uses one app-wide Socket Mode connection and one Web API client per
-authenticated workspace installation. Without a workspace registry it retains
-the fail-closed one-workspace startup order: resolve the root, validate
-`laborer.json`, and acquire the exclusive root lock before `auth.test` or Socket
-Mode. The root is `LABORER_ROOT` when that variable is set and otherwise this
-`next` directory. The tracked configuration selects the throwaway issue #207
-Bash handler. It requires `jq` and an authenticated `opencode` executable on
-`PATH`.
+The normal `start:slack` path selects the ACP-backed `reference-coding`
+application from the tracked `laborer.json`. A user may instead configure an
+arbitrary local program through the generic `workHandler` seam. That program is
+not a built-in Conversation runtime: it owns its own workflow, dependencies,
+state, and protocol output, while the Runner continues to own ingestion,
+ordering, supervision, and delivery.
 
 `workHandler.command` is required and nonblank; `workHandler.args` is an
 optional string array. `workHandler.environment` is an optional array of
@@ -506,12 +491,8 @@ Laborer persists that directory and starts the first and every later handler
 process there. Existing durable threads are never retroactively initialized.
 An interrupted initializer is replayed and therefore must be idempotent.
 
-The tracked initializer derives one branch from the opaque work-thread ID,
-creates or reuses `<repository>.worktrees/thread-<identity>` from the source
-checkout's current `HEAD`, and copies only `next/.env.local` to the same relative
-location with mode `0600`. It performs no cleanup. This intentionally makes the
-local values in `next/.env.local` available inside the worktree; configure a
-different initializer if that trust boundary is inappropriate.
+Initializer policy is user-owned. Laborer neither requires Git nor chooses a
+branch, worktree, or copied files for a custom process handler.
 
 ### Provision the app manually
 
@@ -579,8 +560,8 @@ different initializer if that trust boundary is inappropriate.
    `src/slack/live.ts` directly with Bun creates a connection that drops at its
    first health check.
 
-8. In an invited channel, post a new nonblank bug report or feature request,
-   then reply in its thread. On the
+8. In an invited channel, post a new nonblank request mentioning Laborer, then
+   reply in its thread. On the
    first turn Laborer schedules an `:hourglass_flowing_sand:` acknowledgement
    without blocking the handler and removes it after the turn finishes or
    fails. A transient reaction outage never blocks accepted handler work:
@@ -592,15 +573,9 @@ different initializer if that trust boundary is inappropriate.
    reaction is also durable and retried independently; permanent reaction
    failures remain observable without changing the successful turn outcome.
    Failed turns and turns with blocked or abandoned public replies are never
-   marked complete. The tracked initializer first creates the thread's sibling
-   worktree. The handler then
-   runs a classifier there and deterministically selects either the
-   `laborer-bug-to-pr` or `laborer-feature-to-pr` skill for a coding worker. The
-   classifier and coding worker use the user's default OpenCode agent and
-   configuration; the handler does not override plugins, tools, permissions,
-   or approval policy. Later
-   replies resume the persisted coding session without reclassification. Press
-   Ctrl-C to disconnect cleanly.
+   marked complete. The ACP Conversation session uses the bound root as its
+   working directory and resumes on later turns. Press Ctrl-C to disconnect
+   cleanly.
 
 Conversation agent and model selection come only from the user's OpenCode
 configuration. Optional implementation-only selection lives under
@@ -647,29 +622,14 @@ when the machine intentionally hosts another Funnel.
 
 See [`docs/slack-local-secrets.md`](../docs/slack-local-secrets.md) for the
 Keychain service names and the multi-workspace launch command. Slack credentials
-must not be stored in `.env.local` because the reference initializer copies that
-file into agent worktrees.
-
-The handler removes both Slack token variables from every OpenCode child, sends the
-bounded (2 MiB) prompt through non-TTY stdin rather than argv, keeps stdout
-protocol-only, fatally decodes JSONL and export UTF-8 before JSON parsing, and
-caps each OpenCode invocation at 1,280 KiB and 256 events.
-One atomically replaced `opencode-stderr.log` per work thread retains at most
-the latest 64 KiB, so diagnostics cannot accumulate without bound. A durable
-staged mutation record is written before the first classifier, initial worker,
-and every resumed worker mutation. A completed classifier result and completed
-worker output/session are persisted before reply finalization; a started window that lacks a
-recoverable session is reported as explicitly unresolved instead of silently
-rerun. Resumed-session recovery accepts only a full terminal assistant with a
-finite completion time and no abort/error. Public reply records, including
-their trailing newline, remain limited
-to 1 MiB.
+must not be stored in `.env.local`.
 
 Live state is stored in ignored `next/.laborer-runtime/`. Its state and
 work-thread directories are forced to owner-only permissions, and the atomic
 filesystem snapshot fails closed if it is corrupt or unwritable. Delete or
-inspect this directory only while the Runner is stopped. Legacy startup acquires
-its root-derived exclusive loopback TCP lease before any Slack network call.
+inspect this directory only while the Runner is stopped. Configured
+process-handler startup acquires its root-derived exclusive loopback TCP lease
+before any Slack network call.
 Explicit multi-workspace startup acquires each lease after that binding's local
 preparation and `auth.test`, before snapshot loading or Runner construction;
 the app-wide Socket Mode receiver may already be connected while a binding
@@ -711,17 +671,8 @@ client and continue to use Emulate for official `WebClient` HTTP behavior.
   sees the same first-turn envelope, and must return exactly one validated
   `initialized` record. Its canonical directory is persisted once per new
   thread and becomes the current working directory for initial and resumed
-  handler turns. Legacy threads remain explicitly uninitialized, while an
-  interrupted setup replays with stable identities. The tracked example
-  idempotently creates a real sibling Git worktree and copies only
-  `next/.env.local`; it does not clean worktrees up.
-- The issue #207 user-owned Bash handler stages every external mutation,
-  classifies only the first turn, maps that classification to the
-  `laborer-bug-to-pr` or `laborer-feature-to-pr` skill, and resumes the selected
-  coding worker's persisted OpenCode session on later turns. Its prompt adapts
-  the legacy workspace planner's untrusted-Slack-context boundary to the
-  already-bound Laborer thread. Per-turn persisted replies make handler replay idempotent
-  without teaching the Runner about classification, skills, or agents.
+  handler turns. Pre-initializer threads remain explicitly uninitialized, while
+  an interrupted setup replays with stable identities.
 - `replyId` replay with identical text is idempotent; conflicting text is a
   terminal protocol outcome. Valid replies survive malformed output or nonzero
   exit and precede the sanitized operational notice.

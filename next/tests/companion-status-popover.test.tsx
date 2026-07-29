@@ -6,13 +6,29 @@ import { StatusPopover } from "../src/companion/renderer/status-popover.tsx";
 
 afterEach(cleanup);
 
+const emptyBindingsPattern = /No workspace bindings are configured\./;
+
 describe("companion status popover", () => {
   it("presents live daemon identity and uptime with an accessible hierarchy", () => {
     render(
       <StatusPopover
         quit={() => undefined}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 3723, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 3723,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+            },
+          ],
+        }}
       />
     );
 
@@ -23,6 +39,11 @@ describe("companion status popover", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "ready for Slack work"
     );
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "TFIRST" })).toBeTruthy();
+    expect(
+      screen.getByText("Connected and listening for Slack work.")
+    ).toBeTruthy();
   });
 
   it("offers an explicit retry in unavailable and incompatible states", () => {
@@ -86,7 +107,13 @@ describe("companion status popover", () => {
       <StatusPopover
         quit={() => undefined}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [],
+        }}
       />
     );
     expect(screen.getByRole("status").textContent).toContain("Daemon running");
@@ -112,7 +139,13 @@ describe("companion status popover", () => {
       <StatusPopover
         quit={quit}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [],
+        }}
       />
     );
 
@@ -127,5 +160,137 @@ describe("companion status popover", () => {
       />
     );
     expect(screen.getByRole("button", { name: "Quit" })).toBeTruthy();
+  });
+
+  it("does not present a connected receiver with incomplete bindings as wholly ready", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+            },
+            {
+              detail: "setup-required",
+              id: "slack:TSECOND",
+              label: "TSECOND",
+              readiness: "setup-incomplete",
+              teamId: "TSECOND",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Workspace attention required"
+    );
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("0 pending")).toBeTruthy();
+    expect(screen.getByText("1 unavailable")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Configure this workspace binding locally, then restart the daemon."
+      )
+    ).toBeTruthy();
+  });
+
+  it("keeps every workspace group visible and independently labelled", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TREADY",
+              label: "TREADY",
+              readiness: "ready",
+              teamId: "TREADY",
+            },
+            {
+              detail: null,
+              id: "slack:TPENDING",
+              label: "TPENDING",
+              readiness: "pending",
+              teamId: "TPENDING",
+            },
+            {
+              detail: "root-unavailable",
+              id: "slack:TBROKEN",
+              label: "TBROKEN",
+              readiness: "unavailable",
+              teamId: "TBROKEN",
+            },
+            {
+              detail: "configuration-invalid",
+              id: "binding:3",
+              label: "Workspace binding 4",
+              readiness: "unknown",
+              teamId: null,
+            },
+          ],
+        }}
+      />
+    );
+
+    const groups = screen.getAllByRole("listitem");
+    expect(groups).toHaveLength(4);
+    expect(groups.map((group) => group.textContent?.slice(0, 6))).toEqual([
+      "TBROKE",
+      "Worksp",
+      "TPENDI",
+      "TREADY",
+    ]);
+    expect(screen.getByText("Ready")).toBeTruthy();
+    expect(screen.getByText("Starting")).toBeTruthy();
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.getByText("Status unknown")).toBeTruthy();
+    expect(
+      screen.getByText("Connected and listening for Slack work.")
+    ).toBeTruthy();
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("1 pending")).toBeTruthy();
+    expect(screen.getByText("2 unavailable")).toBeTruthy();
+  });
+
+  it("explains the empty workspace surface without exposing configuration", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [],
+        }}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Slack workspaces" })
+    ).toBeTruthy();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.getByText(emptyBindingsPattern)).toBeTruthy();
+    expect(screen.queryByText("0 connected")).toBeNull();
+    expect(document.body.textContent).not.toContain("laborer.json");
+    expect(document.body.textContent).not.toContain("/");
   });
 });

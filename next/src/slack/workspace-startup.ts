@@ -71,6 +71,7 @@ export interface SlackWorkspacePreflightReport {
     | "config-incompatible"
     | "quarantined"
     | "circuit-open";
+  readonly teamId?: string;
 }
 
 type ObserveSlackWorkspacePreflight = (
@@ -370,6 +371,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-identity-mismatch",
         status: "setup-incomplete",
+        teamId: identity.teamId,
       });
       return;
     }
@@ -404,6 +406,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-root-missing",
         status: "setup-incomplete",
+        teamId: identity.teamId,
       });
       return;
     }
@@ -417,10 +420,10 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         identity.teamId,
         unavailableInstallation
       );
-      yield* reportPreflight(
-        options.observePreflight,
-        unavailablePreparedReport(config.bindingIndex, prepared)
-      );
+      yield* reportPreflight(options.observePreflight, {
+        ...unavailablePreparedReport(config.bindingIndex, prepared),
+        teamId: identity.teamId,
+      });
       return;
     }
     const hasLock =
@@ -441,6 +444,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-root-lock-unavailable",
         status: "setup-incomplete",
+        teamId: identity.teamId,
       });
       return;
     }
@@ -461,6 +465,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "root-runtime-unavailable",
         status: "quarantined",
+        teamId: identity.teamId,
       });
       return;
     }
@@ -508,6 +513,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "acp-runner-quarantined",
         status: "quarantined",
+        teamId: identity.teamId,
       });
       return;
     }
@@ -527,6 +533,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
           ? "acp-workspace-ready"
           : `acp-workspace-${preflightStatus}`,
       status: preflightStatus,
+      teamId: identity.teamId,
     });
     yield* options.routes.settleReady(config.bindingIndex, {
       ...unavailableInstallation,
@@ -603,6 +610,7 @@ const startLegacyWorkspaceDirectory = <Client, Gateway>(options: {
   readonly config: SlackInstallationConfig;
   readonly environment: NodeJS.ProcessEnv;
   readonly locks: RootLockDirectory;
+  readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly prepareRoot: PrepareSlackWorkspaceRoot;
   readonly routes: SlackWorkspaceRouteDirectory;
   readonly rootRuntimes: RootRuntimeDirectory;
@@ -640,6 +648,9 @@ const startLegacyWorkspaceDirectory = <Client, Gateway>(options: {
       locks: options.locks,
       prepared: Result.succeed(prepared),
       legacyWorkspaceId: authenticated[1].teamId,
+      ...(options.observePreflight === undefined
+        ? {}
+        : { observePreflight: options.observePreflight }),
       rootLockAcquired: true,
       rootRuntimes: options.rootRuntimes,
       routes: options.routes,
@@ -683,6 +694,9 @@ export const startSlackWorkspaceDirectory = <Client, Gateway>(options: {
         config: legacyConfig,
         environment,
         locks,
+        ...(options.observePreflight === undefined
+          ? {}
+          : { observePreflight: options.observePreflight }),
         prepareRoot,
         rootRuntimes,
         routes,

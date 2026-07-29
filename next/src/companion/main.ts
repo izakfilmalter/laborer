@@ -99,6 +99,24 @@ const trayPresentation: Record<
   },
 };
 
+const trayPresentationFor = (
+  status: CompanionStatusView
+): { readonly icon: Electron.NativeImage; readonly tooltip: string } => {
+  if (status.state !== "running") {
+    return trayPresentation[status.state];
+  }
+  if (
+    status.receiver !== "connected" ||
+    status.workspaces.some((workspace) => workspace.readiness !== "ready")
+  ) {
+    return {
+      icon: trayIcons.attention,
+      tooltip: "Laborer — workspace binding not ready",
+    };
+  }
+  return trayPresentation.running;
+};
+
 const runtimeRoot =
   process.env.LABORER_RUNTIME_ROOT ??
   resolve(process.env.LABORER_ROOT ?? process.cwd(), ".laborer-runtime");
@@ -127,9 +145,10 @@ const serviceStatusState = (
   | "service-version-mismatch" => `service-${state}`;
 
 const publishStatus = (status: CompanionStatusView): void => {
-  if (status.state !== latestStatus.state && tray !== null) {
-    tray.setImage(trayPresentation[status.state].icon);
-    tray.setToolTip(trayPresentation[status.state].tooltip);
+  if (tray !== null) {
+    const presentation = trayPresentationFor(status);
+    tray.setImage(presentation.icon);
+    tray.setToolTip(presentation.tooltip);
   }
   latestStatus = status;
   if (popover !== null && !popover.isDestroyed()) {
@@ -273,8 +292,9 @@ if (app.requestSingleInstanceLock()) {
         app.dock?.hide();
       }
       popover = createPopover();
-      tray = new Tray(trayPresentation[latestStatus.state].icon);
-      tray.setToolTip(trayPresentation[latestStatus.state].tooltip);
+      const initialTrayPresentation = trayPresentationFor(latestStatus);
+      tray = new Tray(initialTrayPresentation.icon);
+      tray.setToolTip(initialTrayPresentation.tooltip);
       tray.on("click", togglePopover);
       tray.on("right-click", () => {
         Menu.buildFromTemplate([

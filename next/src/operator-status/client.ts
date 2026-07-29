@@ -6,6 +6,7 @@ import {
   MAX_OPERATOR_RECORD_BYTES,
   OPERATOR_PROTOCOL_VERSION,
   OperatorProtocolError,
+  type OperatorWorkspaceBinding,
 } from "./protocol.ts";
 import type { OperatorStatusPaths } from "./server.ts";
 
@@ -16,9 +17,11 @@ export type OperatorStatusView =
       readonly version: null;
     }
   | {
+      readonly receiver: "connected" | "connecting";
       readonly state: "running";
       readonly uptimeSeconds: number;
       readonly version: string;
+      readonly workspaces: readonly OperatorWorkspaceBinding[];
     }
   | {
       readonly state: "incompatible" | "unavailable" | "version-mismatch";
@@ -355,12 +358,14 @@ export class OperatorStatusClient {
           renewSnapshotDeadline();
           this.#connectedOnce = true;
           this.#setView({
+            receiver: snapshot.daemon.receiver,
             state: "running",
             uptimeSeconds: Math.floor(
               (snapshot.observedAtUnixMs - snapshot.daemon.startedAtUnixMs) /
                 1000
             ),
             version: snapshot.daemon.version,
+            workspaces: snapshot.workspaces,
           });
         } catch (error) {
           fail(failureStateForSnapshotError(error));

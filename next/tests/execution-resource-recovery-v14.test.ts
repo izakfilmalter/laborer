@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Ref } from "effect";
 import {
@@ -7,13 +8,21 @@ import {
 import { ExternalInputEvent } from "../src/application.ts";
 import { ThreadId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
+import { makePrototypeHarness } from "../src/prototype/runtime.ts";
+import {
+  LABORER_SLACK_ID,
+  normalizedEvent,
+} from "../src/prototype/scenario.ts";
+import { makeFileStoreLayer } from "../src/prototype/store.ts";
 import {
   ImplementationAgent,
+  makeFileApplicationRepository,
   makeInMemoryApplicationRepository,
   makeReferenceCodingApplication,
   type ReferenceCodingApplicationRepository,
   WorktreeManager,
 } from "../src/reference-coding-application.ts";
+import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const UNTRUSTED_REFERENCE_PATTERN = /trust="untrusted-reference-only"/;
 const PRIVATE_RECOVERY_DETAIL_PATTERN =
@@ -748,5 +757,386 @@ describe("Execution resource recovery v14", () => {
         assert.strictEqual((yield* Ref.get(accepted)).length, 1);
       })
     )
+  );
+
+  it.effect(
+    "keeps a recoverable worktree nonterminal when a follow-up revalidates it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repository = yield* makeInMemoryApplicationRepository();
+          const conversationId = ThreadId.make(
+            "workspace:T254:C254:recoverable-worktree"
+          );
+          const accepted = yield* Ref.make<readonly ExternalInputEvent[]>([]);
+          const creates = yield* Ref.make(0);
+          let turn = 0;
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent: {
+              handle: (request) => {
+                turn += 1;
+                if (turn === 1) {
+                  const action = request.actions.find(
+                    (candidate) => candidate.name === "create-feature"
+                  );
+                  assert.ok(action);
+                  return action
+                    .invoke({
+                      prompt: "Create recoverable work.",
+                      worktreeName: "recoverable-follow-up",
+                    })
+                    .pipe(Effect.as([] as const));
+                }
+                const prompt = request.executionControls.find(
+                  (candidate) => candidate.name === "prompt-execution"
+                );
+                assert.ok(prompt);
+                return Effect.result(
+                  prompt.invoke({
+                    executionId: request.executions[0]?.executionId,
+                    prompt: "Continue once recovery completes.",
+                  })
+                ).pipe(Effect.as([] as const));
+              },
+            },
+            implementationAgent: ImplementationAgent.of({
+              inspect: (request) =>
+                exactSession(request.implementationSessionId),
+              start: (request) =>
+                Effect.succeed({
+                  completion: Effect.never,
+                  resume: () => Effect.void,
+                  sessionId: request.implementationSessionId,
+                }),
+            }),
+            repository,
+            worktreeManager: WorktreeManager.of({
+              create: () =>
+                Ref.update(creates, (count) => count + 1).pipe(
+                  Effect.as({ workingDirectory: "/tmp/recoverable-follow-up" })
+                ),
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive",
+                  evidence: "definitively-absent",
+                  status: "recoverable",
+                }),
+            }),
+          });
+          const accept = (event: ExternalInputEvent) =>
+            Ref.update(accepted, (events) => [...events, event]).pipe(
+              Effect.andThen(acceptedEvent(event))
+            );
+          yield* application.handle(
+            ExternalInputEvent.make({
+              conversationId,
+              eventId: "event:start-recoverable-follow-up",
+              payload: {},
+              source: "test",
+            }),
+            publishNothing,
+            accept
+          );
+          yield* application.handle(
+            ExternalInputEvent.make({
+              conversationId,
+              eventId: "event:request-recoverable-follow-up",
+              payload: {},
+              source: "test",
+            }),
+            publishNothing,
+            accept
+          );
+
+          const execution = (yield* repository.load).executions[0];
+          assert.strictEqual(execution?.status, "running");
+          assert.strictEqual(execution?.recoveryFailure, null);
+          assert.strictEqual(execution?.attachment?.state, "recoverable");
+          assert.strictEqual(yield* Ref.get(creates), 1);
+          assert.deepStrictEqual(yield* Ref.get(accepted), []);
+        })
+      )
+  );
+
+  it.effect(
+    "keeps a recoverable implementation session nonterminal on follow-up",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repository = yield* makeInMemoryApplicationRepository();
+          const conversationId = ThreadId.make(
+            "workspace:T254:C254:recoverable-session"
+          );
+          yield* startExecution(
+            repository,
+            conversationId,
+            "/tmp/recoverable-session"
+          );
+          const accepted = yield* Ref.make<readonly ExternalInputEvent[]>([]);
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent: {
+              handle: (request) => {
+                const prompt = request.executionControls.find(
+                  (candidate) => candidate.name === "prompt-execution"
+                );
+                assert.ok(prompt);
+                return Effect.result(
+                  prompt.invoke({
+                    executionId: request.executions[0]?.executionId,
+                    prompt: "Continue after session recovery.",
+                  })
+                ).pipe(Effect.as([] as const));
+              },
+            },
+            implementationAgent: ImplementationAgent.of({
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive",
+                  evidence: "definitively-absent",
+                  status: "recoverable",
+                }),
+              start: () => Effect.die(new Error("must not replace session")),
+            }),
+            repository,
+            worktreeManager: WorktreeManager.of({
+              create: () => Effect.die(new Error("must not recreate worktree")),
+              inspect: () => exactWorktree("/tmp/recoverable-session"),
+            }),
+          });
+          yield* application.handle(
+            ExternalInputEvent.make({
+              conversationId,
+              eventId: "event:recoverable-session-follow-up",
+              payload: {},
+              source: "test",
+            }),
+            publishNothing,
+            (event) =>
+              Ref.update(accepted, (events) => [...events, event]).pipe(
+                Effect.andThen(acceptedEvent(event))
+              )
+          );
+
+          const execution = (yield* repository.load).executions[0];
+          assert.strictEqual(execution?.status, "running");
+          assert.strictEqual(execution?.recoveryFailure, null);
+          assert.strictEqual(execution?.attachment?.state, "recoverable");
+          assert.deepStrictEqual(yield* Ref.get(accepted), []);
+        })
+      )
+  );
+
+  it.effect("reports a persisted branch collision as conflicting once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repository = yield* makeInMemoryApplicationRepository();
+        const conversationId = ThreadId.make(
+          "workspace:T254:C254:branch-collision"
+        );
+        yield* startExecution(
+          repository,
+          conversationId,
+          "/tmp/branch-collision"
+        );
+        const accepted = yield* Ref.make<readonly ExternalInputEvent[]>([]);
+        const application = yield* makeReferenceCodingApplication({
+          conversationAgent: { handle: () => Effect.succeed([]) },
+          implementationAgent: ImplementationAgent.of({
+            inspect: () => Effect.die(new Error("must not inspect session")),
+            start: () => Effect.die(new Error("must not replace session")),
+          }),
+          repository,
+          worktreeManager: WorktreeManager.of({
+            create: () => Effect.die(new Error("must not adopt collision")),
+            inspect: () =>
+              Effect.succeed({
+                certainty: "definitive",
+                evidence: "identity-conflict",
+                status: "conflicting",
+              }),
+          }),
+        });
+        const accept = (event: ExternalInputEvent) =>
+          Ref.update(accepted, (events) => [...events, event]).pipe(
+            Effect.andThen(acceptedEvent(event))
+          );
+        yield* application.recover?.(accept) ?? Effect.void;
+        yield* application.recover?.(accept) ?? Effect.void;
+
+        const execution = (yield* repository.load).executions[0];
+        assert.strictEqual(execution?.status, "failed");
+        assert.strictEqual(execution?.recoveryFailure?.reason, "conflicting");
+        assert.strictEqual(execution?.recoveryFailure?.resource, "worktree");
+        assert.strictEqual((yield* Ref.get(accepted)).length, 1);
+      })
+    )
+  );
+
+  it.effect(
+    "keeps an ambiguous provider inspection private and nonterminal",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repository = yield* makeInMemoryApplicationRepository();
+          const conversationId = ThreadId.make(
+            "workspace:T254:C254:provider-ambiguous"
+          );
+          yield* startExecution(
+            repository,
+            conversationId,
+            "/tmp/provider-ambiguous"
+          );
+          const accepted = yield* Ref.make<readonly ExternalInputEvent[]>([]);
+          const application = yield* makeReferenceCodingApplication({
+            conversationAgent: { handle: () => Effect.succeed([]) },
+            implementationAgent: ImplementationAgent.of({
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "unknown",
+                  evidence: "provider-inspection-failed",
+                  status: "ambiguous",
+                }),
+              start: () => Effect.die(new Error("must not replace session")),
+            }),
+            repository,
+            worktreeManager: WorktreeManager.of({
+              create: () => Effect.die(new Error("must not recreate worktree")),
+              inspect: () => exactWorktree("/tmp/provider-ambiguous"),
+            }),
+          });
+          yield* application.recover?.((event) =>
+            Ref.update(accepted, (events) => [...events, event]).pipe(
+              Effect.andThen(acceptedEvent(event))
+            )
+          ) ?? Effect.void;
+
+          const execution = (yield* repository.load).executions[0];
+          assert.strictEqual(execution?.status, "running");
+          assert.strictEqual(execution?.recoveryFailure, null);
+          assert.strictEqual(execution?.attachment?.state, "unresolved");
+          assert.deepStrictEqual(yield* Ref.get(accepted), []);
+        })
+      )
+  );
+
+  it.effect(
+    "publishes one sanitized Conversation-authored Slack message after resource loss",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-execution-recovery-slack-"
+          );
+          const applicationPath = join(root, "application.json");
+          const runnerPath = join(root, "runner.json");
+          const delivered = yield* Ref.make<readonly string[]>([]);
+          let worktreeIsPresent = true;
+          const makeHarness = Effect.gen(function* () {
+            const repository = yield* makeFileApplicationRepository(
+              applicationPath,
+              root
+            );
+            const application = yield* makeReferenceCodingApplication({
+              conversationAgent: {
+                handle: (request) => {
+                  if (request.source === "execution-recovery") {
+                    assert.match(request.input, UNTRUSTED_REFERENCE_PATTERN);
+                    assert.strictEqual(
+                      PRIVATE_RECOVERY_DETAIL_PATTERN.test(request.input),
+                      false
+                    );
+                    return Effect.succeed([
+                      {
+                        replyId: `${request.turnId}:recovery`,
+                        text: "The coding execution stopped because a required resource is no longer available.",
+                      },
+                    ]);
+                  }
+                  const action = request.actions.find(
+                    (candidate) => candidate.name === "create-feature"
+                  );
+                  assert.ok(action);
+                  return action
+                    .invoke({
+                      prompt: "Create work that will lose its worktree.",
+                      worktreeName: "slack-resource-loss",
+                    })
+                    .pipe(Effect.as([] as const));
+                },
+              },
+              implementationAgent: ImplementationAgent.of({
+                inspect: (request) =>
+                  exactSession(request.implementationSessionId),
+                start: (request) =>
+                  Effect.succeed({
+                    completion: Effect.never,
+                    resume: () => Effect.void,
+                    sessionId: request.implementationSessionId,
+                  }),
+              }),
+              repository,
+              worktreeManager: WorktreeManager.of({
+                create: () =>
+                  Effect.succeed({ workingDirectory: "/tmp/resource-254" }),
+                inspect: () =>
+                  worktreeIsPresent
+                    ? exactWorktree("/tmp/resource-254")
+                    : Effect.succeed({
+                        certainty: "definitive" as const,
+                        evidence: "definitively-absent" as const,
+                        status: "missing" as const,
+                      }),
+              }),
+            });
+            return yield* makePrototypeHarness({
+              application,
+              laborerSlackId: LABORER_SLACK_ID,
+              slack: {
+                postThreadMessage: (request) =>
+                  Ref.update(delivered, (messages) => [
+                    ...messages,
+                    request.text,
+                  ]).pipe(Effect.as({ ts: "recovery-message" })),
+                readActivationContext: () => Effect.succeed([]),
+              },
+              storeLayer: makeFileStoreLayer(
+                LABORER_SLACK_ID,
+                runnerPath,
+                root
+              ),
+            });
+          });
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeHarness;
+              yield* harness.runner.inject(
+                normalizedEvent({
+                  authorSlackId: "U254HUMAN",
+                  channelId: "C254RECOVERY",
+                  eventId: "event:254:slack-start",
+                  messageTs: "254.1",
+                  text: `<@${LABORER_SLACK_ID}> start durable work`,
+                })
+              );
+            })
+          );
+          worktreeIsPresent = false;
+          for (let restart = 0; restart < 2; restart += 1) {
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const harness = yield* makeHarness;
+                yield* harness.runner.drain(
+                  ThreadId.make("C254RECOVERY:254.1")
+                );
+              })
+            );
+          }
+
+          assert.deepStrictEqual(yield* Ref.get(delivered), [
+            "The coding execution stopped because a required resource is no longer available.",
+          ]);
+        })
+      )
   );
 });

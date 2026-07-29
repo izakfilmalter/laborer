@@ -6864,9 +6864,16 @@ export const makeReferenceCodingApplication = Effect.fn(
       workingDirectory = validation.success;
     } else if (worktreeInspection.status === "available") {
       workingDirectory = worktreeInspection.resource.workingDirectory;
+    } else if (worktreeInspection.status === "recoverable") {
+      yield* markWorktreeAttempt(persisted.executionId, "recoverable");
+      yield* markExecutionAttachment(
+        persisted.executionId,
+        "recoverable",
+        "worktree-recoverable"
+      );
+      return;
     } else if (
       worktreeInspection.status === "missing" ||
-      worktreeInspection.status === "recoverable" ||
       worktreeInspection.status === "conflicting"
     ) {
       return yield* failExecutionRecovery(
@@ -7440,9 +7447,19 @@ export const makeReferenceCodingApplication = Effect.fn(
       if (validation._tag === "Failure") {
         return yield* unavailableExecutionControl();
       }
+    } else if (worktreeInspection.status === "recoverable") {
+      yield* markWorktreeAttempt(
+        revalidationExecution.executionId,
+        "recoverable"
+      );
+      yield* markExecutionAttachment(
+        revalidationExecution.executionId,
+        "recoverable",
+        "worktree-recoverable"
+      );
+      return yield* unavailableExecutionControl();
     } else if (
       worktreeInspection.status === "missing" ||
-      worktreeInspection.status === "recoverable" ||
       worktreeInspection.status === "conflicting"
     ) {
       yield* failExecutionRecovery(
@@ -7453,6 +7470,15 @@ export const makeReferenceCodingApplication = Effect.fn(
       );
       return yield* unavailableExecutionControl();
     } else if (worktreeInspection.status === "ambiguous") {
+      yield* markWorktreeAttempt(
+        revalidationExecution.executionId,
+        "unresolved"
+      );
+      yield* markExecutionAttachment(
+        revalidationExecution.executionId,
+        "unresolved",
+        `worktree-${worktreeInspection.evidence}`
+      );
       return yield* unavailableExecutionControl();
     }
     const lastPrompt = revalidationExecution.prompts.at(-1);
@@ -7474,7 +7500,6 @@ export const makeReferenceCodingApplication = Effect.fn(
       const sessionInspection = yield* sessionInspectionEffect;
       if (
         sessionInspection.status === "missing" ||
-        sessionInspection.status === "recoverable" ||
         sessionInspection.status === "conflicting" ||
         (sessionInspection.status === "available" &&
           sessionInspection.resource.sessionId !==
@@ -7493,10 +7518,28 @@ export const makeReferenceCodingApplication = Effect.fn(
         );
         return yield* unavailableExecutionControl();
       }
+      if (sessionInspection.status === "recoverable") {
+        yield* markExecutionAttachment(
+          revalidationExecution.executionId,
+          "recoverable",
+          "implementation-session-recoverable"
+        );
+        return yield* unavailableExecutionControl();
+      }
       if (sessionInspection.status === "ambiguous") {
+        yield* markExecutionAttachment(
+          revalidationExecution.executionId,
+          "unresolved",
+          `implementation-session-${sessionInspection.evidence}`
+        );
         return yield* unavailableExecutionControl();
       }
     }
+    yield* markExecutionAttachment(
+      revalidationExecution.executionId,
+      "attached",
+      null
+    );
     const allocation = yield* modifyApplicationState<ExecutionPromptAllocation>(
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: One atomic transition validates every idempotency, ownership, status, and capacity invariant before publishing a follow-up.
       (state) => {

@@ -645,6 +645,21 @@ interface ReferenceCodingApplicationOptions {
   readonly now?: () => number;
   readonly repository?: ReferenceCodingApplicationRepository;
   readonly testHooks?: {
+    readonly afterExecutionAllocated?: (execution: {
+      readonly executionId: string;
+      readonly implementationSessionId: string | null;
+      readonly promptId: string | null;
+    }) => Promise<void>;
+    readonly afterExecutionEventAccepted?: (event: {
+      readonly eventId: string;
+      readonly executionId: string;
+      readonly recordKind: "event" | "recovery-failure" | "response";
+    }) => Promise<void>;
+    readonly afterImplementationResponseStaged?: (response: {
+      readonly eventId: string;
+      readonly executionId: string;
+      readonly responseId: string;
+    }) => Promise<void>;
     readonly afterCancellationFlightStarted?: (claim: {
       readonly executionId: string;
       readonly owner: boolean;
@@ -652,6 +667,10 @@ interface ReferenceCodingApplicationOptions {
     readonly afterImplementationPromptSubmitting?: (attempt: {
       readonly executionId: string;
       readonly promptId: string;
+    }) => Promise<void>;
+    readonly afterWorktreeCreated?: (worktree: {
+      readonly executionId: string;
+      readonly workingDirectory: string;
     }) => Promise<void>;
     readonly beforeCancellationClaim?: (executionId: string) => Promise<void>;
   };
@@ -3059,6 +3078,69 @@ export const makeReferenceCodingApplication = Effect.fn(
     Deferred.Deferred<SafeExecutionSnapshot, HandlerFailure>
   >();
 
+  const afterExecutionAllocated = (allocation: {
+    readonly execution: ConversationExecution;
+    readonly status: ExecutionAllocationStatus;
+  }) =>
+    allocation.status !== "allocated" ||
+    options.testHooks?.afterExecutionAllocated === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterExecutionAllocated?.({
+              executionId: allocation.execution.executionId,
+              implementationSessionId:
+                allocation.execution.implementationSessionId,
+              promptId: allocation.execution.activePromptId,
+            }) ?? Promise.resolve()
+        );
+
+  const afterExecutionEventAccepted = (
+    eventId: string,
+    executionId: string,
+    recordKind: "event" | "recovery-failure" | "response"
+  ) =>
+    options.testHooks?.afterExecutionEventAccepted === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterExecutionEventAccepted?.({
+              eventId,
+              executionId,
+              recordKind,
+            }) ?? Promise.resolve()
+        );
+
+  const afterImplementationResponseStaged = (
+    eventId: string,
+    executionId: string,
+    responseId: string
+  ) =>
+    options.testHooks?.afterImplementationResponseStaged === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterImplementationResponseStaged?.({
+              eventId,
+              executionId,
+              responseId,
+            }) ?? Promise.resolve()
+        );
+
+  const afterWorktreeCreated = (
+    executionId: string,
+    workingDirectory: string
+  ) =>
+    options.testHooks?.afterWorktreeCreated === undefined
+      ? Effect.void
+      : Effect.promise(
+          () =>
+            options.testHooks?.afterWorktreeCreated?.({
+              executionId,
+              workingDirectory,
+            }) ?? Promise.resolve()
+        );
+
   const modifyApplicationState = <A>(
     update: (
       state: ReferenceCodingApplicationState
@@ -5328,6 +5410,11 @@ export const makeReferenceCodingApplication = Effect.fn(
         })
       )
     );
+    yield* afterExecutionEventAccepted(
+      externalEvent.eventId,
+      execution.executionId,
+      item.recordKind
+    );
     yield* modifyApplicationState((current) => [
       undefined,
       ReferenceCodingApplicationState.make({
@@ -6075,6 +6162,11 @@ export const makeReferenceCodingApplication = Effect.fn(
           safeDetail: "implementation response identity conflicts",
         });
       }
+      yield* afterImplementationResponseStaged(
+        eventId,
+        execution.executionId,
+        response.responseId
+      );
       if (
         persistedResponse.status === "enqueued" ||
         persistedResponse.status === "delivered"
@@ -7026,6 +7118,7 @@ export const makeReferenceCodingApplication = Effect.fn(
       trustedInvocation
     );
     const execution = allocated.execution;
+    yield* afterExecutionAllocated(allocated);
     if (allocated.status === "duplicate") {
       return {
         deduplicated: true,
@@ -7062,6 +7155,10 @@ export const makeReferenceCodingApplication = Effect.fn(
     } else {
       worktree = worktreeCreation.success;
     }
+    yield* afterWorktreeCreated(
+      execution.executionId,
+      worktree.workingDirectory
+    );
     const implementationReady = yield* updatePersistedExecution(
       execution.executionId,
       (persisted) =>

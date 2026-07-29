@@ -44,6 +44,51 @@ const teamIdPattern = /^T[A-Z0-9]+$/;
 const threadIdPattern =
   /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
 const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
+
+const isPendingExecution = (
+  value: unknown,
+  teamId: unknown,
+  threadId: unknown
+): boolean => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !exactKeys(value, [
+      "actionName",
+      "id",
+      "lifecycle",
+      "startedAtUnixMs",
+      "workThreadId",
+      "workspaceId",
+    ])
+  ) {
+    return false;
+  }
+  const execution = value as Record<string, unknown>;
+  return (
+    typeof execution.actionName === "string" &&
+    execution.actionName.length <= 96 &&
+    actionNamePattern.test(execution.actionName) &&
+    typeof execution.id === "string" &&
+    execution.id.length > 0 &&
+    execution.id.length <= 160 &&
+    [
+      "allocated",
+      "starting",
+      "implementation-ready",
+      "running",
+      "cancelling",
+      "recovery-blocked",
+    ].includes(String(execution.lifecycle)) &&
+    (execution.startedAtUnixMs === null ||
+      (Number.isSafeInteger(execution.startedAtUnixMs) &&
+        Number(execution.startedAtUnixMs) >= 0 &&
+        Number(execution.startedAtUnixMs) <= 8_640_000_000_000_000)) &&
+    execution.workspaceId === teamId &&
+    execution.workThreadId === threadId
+  );
+};
 
 const isWorkThread = (value: unknown, teamId: unknown): boolean => {
   if (
@@ -51,6 +96,7 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
     value === null ||
     !exactKeys(value, [
       "activity",
+      "executions",
       "id",
       "label",
       "stateChangedAtUnixMs",
@@ -64,6 +110,18 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
     ["in-progress", "needs-attention", "dormant"].includes(
       String(thread.activity)
     ) &&
+    Array.isArray(thread.executions) &&
+    thread.executions.length <= 512 &&
+    thread.executions.every((execution) =>
+      isPendingExecution(execution, teamId, thread.id)
+    ) &&
+    new Set(
+      thread.executions.map((execution) =>
+        typeof execution === "object" && execution !== null && "id" in execution
+          ? execution.id
+          : null
+      )
+    ).size === thread.executions.length &&
     typeof thread.id === "string" &&
     thread.id.length > 0 &&
     thread.id.length <= 256 &&
@@ -158,6 +216,29 @@ const isWorkspaceBinding = (value: unknown): boolean => {
   );
 };
 
+const projectedExecutionIds = (workspaces: unknown[]): unknown[] =>
+  workspaces.flatMap((workspace) =>
+    typeof workspace === "object" &&
+    workspace !== null &&
+    "threads" in workspace &&
+    Array.isArray(workspace.threads)
+      ? workspace.threads.flatMap((thread) =>
+          typeof thread === "object" &&
+          thread !== null &&
+          "executions" in thread &&
+          Array.isArray(thread.executions)
+            ? (thread.executions as unknown[]).map((execution) =>
+                typeof execution === "object" &&
+                execution !== null &&
+                "id" in execution
+                  ? execution.id
+                  : null
+              )
+            : []
+        )
+      : []
+  );
+
 export const isOperatorStatusView = (
   value: unknown
 ): value is CompanionStatusView => {
@@ -195,6 +276,29 @@ export const isOperatorStatusView = (
             : 0),
         0
       ) <= 512 &&
+      candidate.workspaces.reduce(
+        (count, workspace) =>
+          count +
+          (typeof workspace === "object" &&
+          workspace !== null &&
+          "threads" in workspace &&
+          Array.isArray(workspace.threads)
+            ? (workspace.threads as unknown[]).reduce<number>(
+                (threadCount, thread) =>
+                  threadCount +
+                  (typeof thread === "object" &&
+                  thread !== null &&
+                  "executions" in thread &&
+                  Array.isArray(thread.executions)
+                    ? thread.executions.length
+                    : 0),
+                0
+              )
+            : 0),
+        0
+      ) <= 512 &&
+      new Set(projectedExecutionIds(candidate.workspaces)).size ===
+        projectedExecutionIds(candidate.workspaces).length &&
       new Set(
         candidate.workspaces.map((workspace) =>
           typeof workspace === "object" &&

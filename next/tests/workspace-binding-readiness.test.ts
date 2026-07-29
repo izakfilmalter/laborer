@@ -216,6 +216,7 @@ describe("workspace-binding operator projection", () => {
       {
         activity: "in-progress",
         evidenceAtUnixMs: 1000,
+        executions: [],
         id: "workspace:TFIRST:C123:1000.000001",
         label: "C123 · 1000.000001",
         workspaceId: "TFIRST",
@@ -225,6 +226,7 @@ describe("workspace-binding operator projection", () => {
       {
         activity: "needs-attention",
         evidenceAtUnixMs: 2000,
+        executions: [],
         id: "workspace:TUNKNOWN:C123:1000.000001",
         label: "C123 · 1000.000001",
         workspaceId: "TUNKNOWN",

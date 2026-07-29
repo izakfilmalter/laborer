@@ -1,9 +1,10 @@
 import { z } from "zod";
 
-export const OPERATOR_PROTOCOL_VERSION = 3 as const;
+export const OPERATOR_PROTOCOL_VERSION = 4 as const;
 export const MAX_OPERATOR_RECORD_BYTES = 256 * 1024;
 export const MAX_OPERATOR_WORKSPACE_BINDINGS = 64;
 export const MAX_OPERATOR_WORK_THREADS = 512;
+export const MAX_OPERATOR_PENDING_EXECUTIONS = 512;
 const MAX_JAVASCRIPT_DATE_MILLIS = 8_640_000_000_000_000;
 
 const boundedVersion = z.string().trim().min(1).max(64);
@@ -14,10 +15,41 @@ const teamIdPattern = /^T[A-Z0-9]+$/;
 const threadIdPattern =
   /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
 const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
+
+export const OperatorPendingExecutionSchema = z
+  .object({
+    actionName: z.string().min(1).max(96).regex(actionNamePattern),
+    id: z.string().min(1).max(160),
+    lifecycle: z.enum([
+      "allocated",
+      "starting",
+      "implementation-ready",
+      "running",
+      "cancelling",
+      "recovery-blocked",
+    ]),
+    startedAtUnixMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(MAX_JAVASCRIPT_DATE_MILLIS)
+      .nullable(),
+    workThreadId: z.string().min(1).max(256).regex(threadIdPattern),
+    workspaceId: boundedIdentity,
+  })
+  .strict();
+
+export type OperatorPendingExecution = z.infer<
+  typeof OperatorPendingExecutionSchema
+>;
 
 export const OperatorWorkThreadSchema = z
   .object({
     activity: z.enum(["in-progress", "needs-attention", "dormant"]),
+    executions: z
+      .array(OperatorPendingExecutionSchema)
+      .max(MAX_OPERATOR_PENDING_EXECUTIONS),
     id: z.string().min(1).max(256).regex(threadIdPattern),
     label: z.string().min(1).max(80).regex(threadLabelPattern),
     stateChangedAtUnixMs: z
@@ -27,7 +59,18 @@ export const OperatorWorkThreadSchema = z
       .max(MAX_JAVASCRIPT_DATE_MILLIS),
     workspaceId: boundedIdentity,
   })
-  .strict();
+  .strict()
+  .refine(
+    (thread) =>
+      thread.executions.every(
+        (execution) =>
+          execution.workspaceId === thread.workspaceId &&
+          execution.workThreadId === thread.id
+      ) &&
+      new Set(thread.executions.map((execution) => execution.id)).size ===
+        thread.executions.length,
+    "pending Execution ownership is inconsistent"
+  );
 
 export type OperatorWorkThread = z.infer<typeof OperatorWorkThreadSchema>;
 
@@ -137,9 +180,36 @@ export const OperatorSnapshotSchema = z
   )
   .refine(
     (snapshot) =>
+      snapshot.workspaces.reduce(
+        (count, workspace) =>
+          count +
+          workspace.threads.reduce(
+            (threadCount, thread) => threadCount + thread.executions.length,
+            0
+          ),
+        0
+      ) <= MAX_OPERATOR_PENDING_EXECUTIONS,
+    "too many pending Executions"
+  )
+  .refine((snapshot) => {
+    const executionIds = snapshot.workspaces.flatMap((workspace) =>
+      workspace.threads.flatMap((thread) =>
+        thread.executions.map((execution) => execution.id)
+      )
+    );
+    return new Set(executionIds).size === executionIds.length;
+  }, "pending Execution identities are duplicated")
+  .refine(
+    (snapshot) =>
       snapshot.workspaces.every((workspace) =>
         workspace.threads.every(
-          (thread) => thread.stateChangedAtUnixMs <= snapshot.observedAtUnixMs
+          (thread) =>
+            thread.stateChangedAtUnixMs <= snapshot.observedAtUnixMs &&
+            thread.executions.every(
+              (execution) =>
+                execution.startedAtUnixMs === null ||
+                execution.startedAtUnixMs <= snapshot.observedAtUnixMs
+            )
         )
       ),
     "work-thread observation is in the future"

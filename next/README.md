@@ -123,7 +123,10 @@ each configured workspace binding's authoritative pending, ready,
 setup-incomplete, unavailable, or unknown state. It keeps healthy workspace
 groups visible beside isolated failures, shows bounded connected, pending, and
 unavailable counts, and groups work threads beneath their owning workspace as
-needs attention, in progress, or recent. Explicit durable blockers take
+needs attention, in progress, or recent. Nonterminal Action Executions are
+nested beneath their owning work thread with stable identity, safe Action name,
+bounded lifecycle, and elapsed time; terminal history and private implementation
+detail stay out of the ordinary projection. Explicit durable blockers take
 precedence over queued or running work; settled delivery makes a thread dormant,
 and only the four most recently dormant threads remain visible per workspace.
 Rows expose canonical identity-derived labels and relative time in state, never

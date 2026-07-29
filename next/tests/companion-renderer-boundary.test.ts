@@ -25,6 +25,16 @@ describe("companion renderer boundary", () => {
     ).toBe(false);
     const visibleThread = {
       activity: "in-progress",
+      executions: [
+        {
+          actionName: "fixture/build",
+          id: "execution:stable",
+          lifecycle: "allocated",
+          startedAtUnixMs: 900,
+          workThreadId: "workspace:TFIRST:C123:1000.000001",
+          workspaceId: "TFIRST",
+        },
+      ],
       id: "workspace:TFIRST:C123:1000.000001",
       label: "C123 · 1000.000001",
       stateChangedAtUnixMs: 1000,
@@ -48,6 +58,34 @@ describe("companion renderer boundary", () => {
         ],
       })
     ).toBe(true);
+    expect(
+      isOperatorStatusView({
+        receiver: "connected",
+        state: "running",
+        uptimeSeconds: 42,
+        version: "0.1.0",
+        workspaces: [
+          {
+            detail: null,
+            id: "slack:TFIRST",
+            label: "TFIRST",
+            readiness: "ready",
+            teamId: "TFIRST",
+            threads: [
+              {
+                ...visibleThread,
+                executions: [
+                  {
+                    ...visibleThread.executions[0],
+                    actionName: "prompt or /private/path",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
     expect(
       isOperatorStatusView({
         receiver: "connected",

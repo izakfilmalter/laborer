@@ -74,6 +74,16 @@ describe("operator status protocol", () => {
             threads: [
               {
                 activity: "in-progress",
+                executions: [
+                  {
+                    actionName: "fixture/build",
+                    id: "execution:stable",
+                    lifecycle: "running",
+                    startedAtUnixMs: 3000,
+                    workThreadId: "workspace:TFIRST:C123:1000.000001",
+                    workspaceId: "TFIRST",
+                  },
+                ],
                 id: "workspace:TFIRST:C123:1000.000001",
                 label: "C123 · 1000.000001",
                 stateChangedAtUnixMs: 4000,
@@ -88,6 +98,9 @@ describe("operator status protocol", () => {
     expect(snapshot.daemon.version).toBe("0.1.0");
     expect(snapshot.sequence).toBe(3);
     expect(snapshot.workspaces[0]?.threads[0]?.activity).toBe("in-progress");
+    expect(snapshot.workspaces[0]?.threads[0]?.executions[0]?.actionName).toBe(
+      "fixture/build"
+    );
     expect(() =>
       decodeOperatorSnapshot(
         JSON.stringify({
@@ -101,6 +114,29 @@ describe("operator status protocol", () => {
           protocolVersion: OPERATOR_PROTOCOL_VERSION + 1,
           sequence: 1,
           workspaces: [],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          workspaces: [
+            {
+              ...snapshot.workspaces[0],
+              threads: [
+                {
+                  ...snapshot.workspaces[0]?.threads[0],
+                  executions: [
+                    {
+                      ...snapshot.workspaces[0]?.threads[0]?.executions[0],
+                      actionName: "private prompt or /Users/operator/secret",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
         })
       )
     ).toThrowError(OperatorProtocolError);

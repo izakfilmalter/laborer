@@ -201,6 +201,7 @@ type RunningStatus = Extract<
 
 type WorkspaceBinding = RunningStatus["workspaces"][number];
 type WorkThread = WorkspaceBinding["threads"][number];
+type PendingExecution = WorkThread["executions"][number];
 
 interface BindingCounts {
   readonly pending: number;
@@ -480,6 +481,68 @@ const useNow = (intervalMs: number | null): number => {
   return now;
 };
 
+const executionLifecycleLabel: Record<PendingExecution["lifecycle"], string> = {
+  allocated: "Allocated",
+  cancelling: "Cancelling",
+  "implementation-ready": "Implementation ready",
+  "recovery-blocked": "Recovery blocked",
+  running: "Running",
+  starting: "Starting",
+};
+
+const PendingExecutionRow = ({
+  execution,
+  nowUnixMs,
+}: {
+  readonly execution: PendingExecution;
+  readonly nowUnixMs: number;
+}) => {
+  const started =
+    execution.startedAtUnixMs === null
+      ? null
+      : new Date(execution.startedAtUnixMs);
+  const age =
+    execution.startedAtUnixMs === null
+      ? null
+      : stateAge(nowUnixMs - execution.startedAtUnixMs);
+  const blocked = execution.lifecycle === "recovery-blocked";
+  return (
+    <li className="flex items-center gap-2 border-border/70 border-t px-3 py-1.5 pl-9">
+      <span
+        aria-hidden="true"
+        className={`size-1.5 shrink-0 rounded-full ${blocked ? "bg-danger" : "bg-success"}`}
+      />
+      <span className="min-w-0 flex-1">
+        <span
+          className="block truncate font-medium text-xs leading-4"
+          title={execution.actionName}
+        >
+          {execution.actionName}
+        </span>
+        <span
+          className={`block text-[11px] leading-4 ${blocked ? "text-danger" : "text-muted-foreground"}`}
+        >
+          {executionLifecycleLabel[execution.lifecycle]}
+        </span>
+      </span>
+      {started === null || age === null ? (
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          Start unknown
+        </span>
+      ) : (
+        <time
+          className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+          dateTime={started.toISOString()}
+          title={started.toLocaleString()}
+        >
+          <span aria-hidden="true">{age.compact}</span>
+          <span className="sr-only">{`Running for ${age.spoken}`}</span>
+        </time>
+      )}
+    </li>
+  );
+};
+
 const WorkThreadRow = ({
   nowUnixMs,
   thread,
@@ -493,26 +556,39 @@ const WorkThreadRow = ({
   const age = stateAge(nowUnixMs - thread.stateChangedAtUnixMs);
   return (
     <li
-      className={`flex items-center gap-2.5 border-border border-t px-3 py-2 first:border-t-0 ${presentation.rowClassName}`}
+      className={`border-border border-t first:border-t-0 ${presentation.rowClassName}`}
     >
-      <Icon
-        aria-hidden="true"
-        className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
-      />
-      <span
-        className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
-        title={thread.label}
-      >
-        {thread.label}
-      </span>
-      <time
-        className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
-        dateTime={changed.toISOString()}
-        title={changed.toLocaleString()}
-      >
-        <span aria-hidden="true">{age.compact}</span>
-        <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
-      </time>
+      <div className="flex items-center gap-2.5 px-3 py-2">
+        <Icon
+          aria-hidden="true"
+          className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
+        />
+        <span
+          className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
+          title={thread.label}
+        >
+          {thread.label}
+        </span>
+        <time
+          className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
+          dateTime={changed.toISOString()}
+          title={changed.toLocaleString()}
+        >
+          <span aria-hidden="true">{age.compact}</span>
+          <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
+        </time>
+      </div>
+      {thread.executions.length === 0 ? null : (
+        <ul aria-label={`Pending Executions for ${thread.label}`}>
+          {thread.executions.map((execution) => (
+            <PendingExecutionRow
+              execution={execution}
+              key={execution.id}
+              nowUnixMs={nowUnixMs}
+            />
+          ))}
+        </ul>
+      )}
     </li>
   );
 };

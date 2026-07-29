@@ -241,6 +241,132 @@ describe("legacy durable state import", () => {
     )
   );
 
+  it.effect(
+    "imports a schema-v1 runner snapshot from before Conversation streams existed",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-pre-stream-legacy-import-"
+          );
+          const runtimeRoot = join(root, ".laborer-runtime");
+          const workspaceRoot = join(
+            runtimeRoot,
+            "slack-workspaces",
+            "T-PRE-STREAM"
+          );
+          yield* Effect.promise(() =>
+            mkdir(workspaceRoot, { mode: 0o700, recursive: true })
+          );
+          yield* Effect.promise(() =>
+            writeFile(
+              join(workspaceRoot, "runner-state.json"),
+              JSON.stringify({
+                acknowledgements: [],
+                completionReactions: [],
+                ignoredInbound: [],
+                schemaVersion: 1,
+                seenEventIds: [],
+                threads: [],
+              }),
+              { mode: 0o600 }
+            )
+          );
+          const databasePath = join(runtimeRoot, "runtime.sqlite");
+
+          yield* makeNodeRootDurableRuntime({
+            databasePath,
+            rootIdentity: root,
+          });
+
+          const sqlContext = yield* Layer.build(
+            makeSqliteLayer({ filename: databasePath })
+          );
+          yield* Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            const receipts = yield* sql<{
+              readonly diagnosticCode: string | null;
+              readonly sourceCount: number;
+              readonly status: string;
+            }>`
+              SELECT status, source_count AS sourceCount,
+                diagnostic_code AS diagnosticCode
+              FROM laborer_migration_ledger
+            `;
+            assert.deepStrictEqual(receipts, [
+              {
+                diagnosticCode: null,
+                sourceCount: 1,
+                status: "completed",
+              },
+            ]);
+            const streams = yield* sql<{ readonly count: number }>`
+              SELECT COUNT(*) AS count
+              FROM laborer_imported_durable_records
+              WHERE domain = 'stream'
+            `;
+            assert.strictEqual(streams[0]?.count, 0);
+          }).pipe(Effect.provide(sqlContext));
+        })
+      )
+  );
+
+  it.effect("rejects a malformed present Conversation streams field", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDirectoryScoped(
+          "laborer-malformed-streams-legacy-import-"
+        );
+        const runtimeRoot = join(root, ".laborer-runtime");
+        yield* Effect.promise(() =>
+          mkdir(runtimeRoot, { mode: 0o700, recursive: true })
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(runtimeRoot, "runner-state.json"),
+            JSON.stringify({
+              acknowledgements: [],
+              completionReactions: [],
+              conversationStreams: "corrupt",
+              ignoredInbound: [],
+              schemaVersion: 1,
+              seenEventIds: [],
+              threads: [],
+            }),
+            { mode: 0o600 }
+          )
+        );
+        const databasePath = join(runtimeRoot, "runtime.sqlite");
+
+        const result = yield* Effect.exit(
+          makeNodeRootDurableRuntime({
+            databasePath,
+            legacyWorkspaceId: "T-MALFORMED-STREAMS",
+            rootIdentity: root,
+          })
+        );
+
+        assert.ok(Exit.isFailure(result));
+        const sqlContext = yield* Layer.build(
+          makeSqliteLayer({ filename: databasePath })
+        );
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const ledger = yield* sql<{
+            readonly diagnosticCode: string;
+            readonly status: string;
+          }>`
+            SELECT status, diagnostic_code AS diagnosticCode
+            FROM laborer_migration_ledger
+          `;
+          assert.deepStrictEqual(ledger, [
+            { diagnosticCode: "invalid-source", status: "incompatible" },
+          ]);
+        }).pipe(Effect.provide(sqlContext));
+      })
+    )
+  );
+
   it.effect("fails closed and records an incompatible corrupt source", () =>
     Effect.scoped(
       Effect.gen(function* () {

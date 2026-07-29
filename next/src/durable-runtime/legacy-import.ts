@@ -107,6 +107,16 @@ const arrayField = (
   return Array.isArray(field) ? field : [];
 };
 
+const validateOptionalArrayField = (
+  value: Record<string, unknown>,
+  key: string
+): void => {
+  const field = value[key];
+  if (field !== undefined && !Array.isArray(field)) {
+    throw importError("invalid-source");
+  }
+};
+
 const validatePersistedPaths = (
   value: unknown,
   depth = 0,
@@ -154,7 +164,6 @@ const validateSourceShape = (source: LegacySource): void => {
     for (const key of [
       "acknowledgements",
       "completionReactions",
-      "conversationStreams",
       "seenEventIds",
       "threads",
     ]) {
@@ -162,6 +171,7 @@ const validateSourceShape = (source: LegacySource): void => {
         throw importError("invalid-source");
       }
     }
+    validateOptionalArrayField(source.payload, "conversationStreams");
   }
   if (source.name === "application-state.json") {
     for (const key of [

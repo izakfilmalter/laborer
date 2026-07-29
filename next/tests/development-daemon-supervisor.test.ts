@@ -42,6 +42,33 @@ const factoryFor = (
   );
 
 describe("development Daemon supervisor", () => {
+  it.effect("stops an initial generation that cannot activate", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const events: string[] = [];
+        const factory = yield* factoryFor([
+          generation({
+            activate: DaemonGenerationError.make({
+              reason: "activation-failed",
+            }),
+            id: "daemon-1",
+            observe: (event) => events.push(event),
+          }),
+        ]);
+
+        const result = yield* Effect.result(
+          makeDevelopmentDaemonSupervisor(factory)
+        );
+
+        assert.strictEqual(result._tag, "Failure");
+        assert.deepStrictEqual(events, [
+          "daemon-1:activate",
+          "daemon-1:stop",
+        ]);
+      })
+    )
+  );
+
   it.effect("publishes the monotonic global drain-and-swap lifecycle", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -174,6 +201,44 @@ describe("development Daemon supervisor", () => {
         assert.strictEqual((yield* supervisor.status).active?.phase, "Active");
       })
     )
+  );
+
+  it.effect("cleans up a candidate when reload is interrupted", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const freshnessStarted = yield* Deferred.make<void>();
+      const candidate = {
+        ...generation({
+          id: "daemon-2",
+          observe: (event) => events.push(event),
+        }),
+        fresh: Deferred.succeed(freshnessStarted, undefined).pipe(
+          Effect.andThen(Effect.never)
+        ),
+      } satisfies PreparedDaemonGeneration;
+      const factory = yield* factoryFor([
+        generation({
+          id: "daemon-1",
+          observe: (event) => events.push(event),
+        }),
+        candidate,
+      ]);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const supervisor = yield* makeDevelopmentDaemonSupervisor(factory);
+          const reload = yield* supervisor.reload.pipe(
+            Effect.forkScoped({ startImmediately: true })
+          );
+          yield* Deferred.await(freshnessStarted);
+          yield* Fiber.interrupt(reload);
+        })
+      );
+
+      assert.ok(events.includes("daemon-2:stop"));
+      assert.ok(events.includes("daemon-1:stop"));
+      assert.ok(!events.includes("daemon-1:drain"));
+    })
   );
 
   it.effect(

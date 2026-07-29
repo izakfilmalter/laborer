@@ -23,6 +23,10 @@ export interface DaemonGenerationFactory {
   ) => Effect.Effect<PreparedDaemonGeneration, DaemonGenerationError>;
 }
 
+const stopForFinalization = (
+  generation: PreparedDaemonGeneration
+): Effect.Effect<void> => Effect.exit(generation.stop).pipe(Effect.asVoid);
+
 export type ReloadOutcome =
   | { readonly _tag: "Activated"; readonly generationId: string }
   | {
@@ -129,7 +133,9 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
   Scope.Scope
 > {
   const initial = yield* factory.prepare("daemon-1");
-  yield* initial.activate;
+  yield* initial.activate.pipe(
+    Effect.onError(() => stopForFinalization(initial))
+  );
   const state = yield* Ref.make<SupervisorState>({
     active: {
       generationId: initial.id,
@@ -154,10 +160,12 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
   yield* Effect.addFinalizer(() =>
     Ref.get(state).pipe(
       Effect.flatMap((current) =>
-        Effect.all(
-          [current.candidateHandle?.stop, current.activeHandle?.stop].filter(
-            (stop): stop is Effect.Effect<void> => stop !== undefined
+        Effect.forEach(
+          [current.candidateHandle, current.activeHandle].filter(
+            (generation): generation is PreparedDaemonGeneration =>
+              generation !== null
           ),
+          stopForFinalization,
           { concurrency: 1, discard: true }
         )
       )
@@ -176,7 +184,20 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
         ...current,
         nextGeneration: current.nextGeneration + 1,
       }));
-      const preparation = yield* Effect.result(factory.prepare(generationId));
+      const preparation = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const result = yield* Effect.result(
+            restore(factory.prepare(generationId))
+          );
+          if (result._tag === "Success") {
+            yield* Ref.update(state, (current) => ({
+              ...current,
+              candidateHandle: result.success,
+            }));
+          }
+          return result;
+        })
+      );
       if (preparation._tag === "Failure") {
         return {
           _tag: "PreparationRejected" as const,
@@ -187,6 +208,10 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
       const candidate = preparation.success;
       if (candidate.fresh !== undefined && !(yield* candidate.fresh)) {
         yield* candidate.stop;
+        yield* Ref.update(state, (current) => ({
+          ...current,
+          candidateHandle: null,
+        }));
         return {
           _tag: "PreparationRejected" as const,
           generationId,
@@ -282,6 +307,7 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
         activated._tag === "Success" &&
         candidate.readyBindings < blue.readyBindings;
       if (activated._tag === "Success" && !workspaceRegression) {
+        yield* blue.stop;
         yield* Ref.update(state, (current) =>
           appendTransition(
             {
@@ -298,7 +324,6 @@ export const makeDevelopmentDaemonSupervisor = Effect.fn(
             { generationId: candidate.id, phase: "Active", reason: null }
           )
         );
-        yield* blue.stop;
         return { _tag: "Activated" as const, generationId: candidate.id };
       }
 

@@ -48,9 +48,16 @@ const program = Effect.scoped(
         Effect.gen(function* () {
           while (handledVersion < requestedVersion) {
             handledVersion = requestedVersion;
+            const reloadStartedAt = performance.now();
             const outcome = yield* supervisor.reload;
+            const durationMillis = Math.max(
+              0,
+              Math.round(performance.now() - reloadStartedAt)
+            );
+            const reason =
+              "reason" in outcome ? ` reason=${outcome.reason}` : "";
             yield* Console.log(
-              `[dev:slack] ${outcome._tag} generation=${outcome.generationId}`
+              `[dev:slack] ${outcome._tag} generation=${outcome.generationId} durationMillis=${durationMillis}${reason}`
             );
           }
         }).pipe(

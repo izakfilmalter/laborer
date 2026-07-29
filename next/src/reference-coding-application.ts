@@ -3537,6 +3537,7 @@ export const makeReferenceCodingApplication = Effect.fn(
   )(function* (
     adoptionId: string,
     diagnosticCode:
+      | "history-digest-changed-before-seed"
       | "seed-admission-ambiguous"
       | "session-creation-outcome-ambiguous" = "session-creation-outcome-ambiguous"
   ) {
@@ -3643,25 +3644,41 @@ export const makeReferenceCodingApplication = Effect.fn(
         throw new Error("Conversation adoption disappeared");
       }
       const timestamp = now();
+      const historyDigestChanged =
+        current.historyDigest !== null &&
+        current.historyDigest !== snapshot.digest;
       const diagnosticCodes = [
         ...current.historyDiagnosticCodes,
         ...snapshot.diagnosticCodes,
-        ...(current.historyDigest !== null &&
-        current.historyDigest !== snapshot.digest
+        ...(historyDigestChanged
           ? (["history-digest-changed-before-seed"] as const)
           : []),
       ];
+      const historyEvidence = historyDigestChanged
+        ? {
+            historyBytes: current.historyBytes,
+            historyDegradation: current.historyDegradation,
+            historyDigest: current.historyDigest,
+            historyFirstSlackTs: current.historyFirstSlackTs,
+            historyLastSlackTs: current.historyLastSlackTs,
+            historyMessageCount: current.historyMessageCount,
+            historyRequestCount: current.historyRequestCount,
+            historyTruncation: current.historyTruncation,
+          }
+        : {
+            historyBytes: snapshot.bytes,
+            historyDegradation: snapshot.degradation,
+            historyDigest: snapshot.digest,
+            historyFirstSlackTs: snapshot.firstSlackTs,
+            historyLastSlackTs: snapshot.lastSlackTs,
+            historyMessageCount: snapshot.messageCount,
+            historyRequestCount: snapshot.requestCount,
+            historyTruncation: snapshot.truncation,
+          };
       const updated = PersistedConversationAdoption.make({
         ...current,
-        historyBytes: snapshot.bytes,
-        historyDegradation: snapshot.degradation,
+        ...historyEvidence,
         historyDiagnosticCodes: [...new Set(diagnosticCodes)],
-        historyDigest: snapshot.digest,
-        historyFirstSlackTs: snapshot.firstSlackTs,
-        historyLastSlackTs: snapshot.lastSlackTs,
-        historyMessageCount: snapshot.messageCount,
-        historyRequestCount: snapshot.requestCount,
-        historyTruncation: snapshot.truncation,
         updatedAt: timestamp,
       });
       return [
@@ -3744,7 +3761,20 @@ export const makeReferenceCodingApplication = Effect.fn(
       rootTs: initial.rootTs,
       workspaceId: initial.workspaceId,
     });
-    yield* persistConversationAdoptionHistory(initial.adoptionId, snapshot);
+    const persisted = yield* persistConversationAdoptionHistory(
+      initial.adoptionId,
+      snapshot
+    );
+    if (
+      persisted.historyDiagnosticCodes.includes(
+        "history-digest-changed-before-seed"
+      )
+    ) {
+      return yield* markConversationAdoptionUnresolved(
+        initial.adoptionId,
+        "history-digest-changed-before-seed"
+      );
+    }
     return {
       _tag: "Continue",
       history: `${initial.executionSnapshotRendered ?? ""}${snapshot.rendered}`,

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import {
   type ApplicationPublicOutput,
   type ApplicationShape,
@@ -76,7 +76,9 @@ const historySnapshot: ConversationAdoptionHistorySnapshot = {
 
 const makeApplication = (
   repository: ReferenceCodingApplicationRepository,
-  conversationAgent: ConversationAgentShape
+  conversationAgent: ConversationAgentShape,
+  adoptionHistory: ConversationAdoptionHistorySnapshot = historySnapshot,
+  historyReadStatus: "session_created" | "staged" = "staged"
 ) =>
   makeReferenceCodingApplication({
     conversationAdoptionHistory: {
@@ -87,7 +89,7 @@ const makeApplication = (
             Effect.sync(() => {
               assert.strictEqual(
                 state.conversationAdoptions[0]?.status,
-                "staged"
+                historyReadStatus
               );
               assert.strictEqual(
                 state.conversationAdoptions[0]?.cutoffSlackTs,
@@ -95,7 +97,7 @@ const makeApplication = (
               );
             })
           ),
-          Effect.as(historySnapshot)
+          Effect.as(adoptionHistory)
         ),
     },
     conversationAgent,
@@ -659,6 +661,107 @@ describe("issue #255 Conversation adoption", () => {
           const restartFailure = yield* Effect.flip(runTurn(restarted, 2));
           assert.ok(restartFailure instanceof ConversationBlocked);
           assert.strictEqual(calls, 1);
+        })
+      )
+  );
+
+  it.live(
+    "blocks restart when Slack history changes after the fresh session is durably created",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-255-history-change-"
+          );
+          const path = join(root, "application.json");
+          yield* createLegacyV14Conversation(path, root);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const sessionCreated = yield* Deferred.make<void>();
+          const interrupted = yield* makeApplication(repository, {
+            handle: (request) =>
+              Effect.gen(function* () {
+                const bindingStore = request.sessionBindingStore;
+                if (
+                  bindingStore === undefined ||
+                  bindingStore.beginSessionCreation === undefined
+                ) {
+                  return yield* HandlerFailure.make({
+                    category: "protocol",
+                    safeDetail: "adoption store unavailable",
+                  });
+                }
+                yield* bindingStore.beginSessionCreation();
+                yield* bindingStore.replace(null, {
+                  ambiguousPromptId: null,
+                  cwd: "/tmp/laborer-255-history-change",
+                  cwdIdentity: "device:inode",
+                  effectiveMetadata: null,
+                  effectiveMetadataFingerprint: null,
+                  initializationPhase: "pending",
+                  introducedParticipantIds: [],
+                  lastAttachedProcessGeneration: 1,
+                  pendingParticipantIds: [],
+                  requiresReplacement: false,
+                  sessionId: "fresh-acp-session-before-history-change",
+                });
+                yield* Deferred.succeed(sessionCreated, undefined);
+                return yield* Effect.never;
+              }),
+          });
+          const firstRun = yield* Effect.forkChild(runTurn(interrupted, 2));
+          yield* Deferred.await(sessionCreated);
+          yield* Fiber.interrupt(firstRun);
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]?.status,
+            "session_created"
+          );
+
+          const changedHistory = {
+            ...historySnapshot,
+            digest: "changed-history-digest-255",
+            rendered: historySnapshot.rendered.replace(
+              "old current history",
+              "edited after session creation"
+            ),
+          };
+          let restartCalls = 0;
+          const restartedRepository = yield* makeFileApplicationRepository(
+            path,
+            root
+          );
+          const restarted = yield* makeApplication(
+            restartedRepository,
+            {
+              handle: () =>
+                Effect.sync(() => {
+                  restartCalls += 1;
+                  return [];
+                }),
+              recover: () =>
+                Effect.sync(() => {
+                  restartCalls += 1;
+                  return [];
+                }),
+            },
+            changedHistory,
+            "session_created"
+          );
+          const failure = yield* Effect.flip(runTurn(restarted, 2));
+          assert.ok(failure instanceof ConversationBlocked);
+          assert.strictEqual(restartCalls, 0);
+          const adoption = (yield* restartedRepository.load)
+            .conversationAdoptions[0];
+          assert.strictEqual(adoption?.status, "unresolved");
+          assert.strictEqual(
+            adoption?.unresolvedDiagnosticCode,
+            "history-digest-changed-before-seed"
+          );
+          assert.strictEqual(adoption?.historyDigest, historySnapshot.digest);
+          assert.ok(
+            adoption?.historyDiagnosticCodes.includes(
+              "history-digest-changed-before-seed"
+            )
+          );
         })
       )
   );

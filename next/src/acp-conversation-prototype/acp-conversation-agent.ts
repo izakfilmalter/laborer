@@ -1352,8 +1352,7 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
             offset !== image.byteLength ||
             createHash("sha256")
               .update(content.subarray(0, offset))
-              .digest("hex") !==
-              image.contentDigest
+              .digest("hex") !== image.contentDigest
           ) {
             throw new Error("image-digest-mismatch");
           }

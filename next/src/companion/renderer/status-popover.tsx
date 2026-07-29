@@ -1,12 +1,13 @@
 import {
+  ChevronRight,
   CircleCheck,
   CircleDot,
-  Clock3,
   LoaderCircle,
   type LucideIcon,
   PlugZap,
   TriangleAlert,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { CompanionStatusView } from "../shared.ts";
 import { Button } from "./components/ui/button.tsx";
 
@@ -220,10 +221,26 @@ const bindingCounts = (
   ).length,
 });
 
+const countThreads = (
+  workspaces: RunningStatus["workspaces"],
+  activity: WorkThread["activity"]
+): number =>
+  workspaces.reduce(
+    (count, workspace) =>
+      count +
+      workspace.threads.filter((thread) => thread.activity === activity).length,
+    0
+  );
+
+const plural = (count: number, noun: string): string =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 const runningPresentation = (
   status: RunningStatus
 ): (typeof statusPresentation)["running"] => {
   const { pending, unavailable } = bindingCounts(status.workspaces);
+  const blockedThreads = countThreads(status.workspaces, "needs-attention");
+  const activeThreads = countThreads(status.workspaces, "in-progress");
   if (status.receiver === "connecting") {
     return {
       ...statusPresentation.running,
@@ -247,6 +264,16 @@ const runningPresentation = (
       tone: "danger",
     };
   }
+  if (blockedThreads > 0) {
+    return {
+      ...statusPresentation.running,
+      description: `Laborer is running while ${plural(blockedThreads, "work thread")} cannot progress without you.`,
+      icon: TriangleAlert,
+      indicator: "Attention",
+      title: "Work needs attention",
+      tone: "danger",
+    };
+  }
   if (pending > 0) {
     return {
       ...statusPresentation.running,
@@ -257,6 +284,17 @@ const runningPresentation = (
       pending: true,
       title: "Workspaces starting…",
       tone: "warning",
+    };
+  }
+  if (activeThreads > 0) {
+    return {
+      ...statusPresentation.running,
+      description: `Laborer still owes progress on ${plural(activeThreads, "work thread")}.`,
+      icon: LoaderCircle,
+      indicator: "Working",
+      pending: true,
+      title: "Work in progress",
+      tone: "success",
     };
   }
   return statusPresentation.running;
@@ -330,6 +368,18 @@ const bindingRank: Record<WorkspaceBinding["readiness"], number> = {
   unknown: 0,
 };
 
+// Actionable work outranks ordinary activity within an equally healthy binding.
+const workspaceActivityRank = (workspace: WorkspaceBinding): number => {
+  if (
+    workspace.threads.some((thread) => thread.activity === "needs-attention")
+  ) {
+    return 0;
+  }
+  return workspace.threads.some((thread) => thread.activity === "in-progress")
+    ? 1
+    : 2;
+};
+
 // Workspaces that need operator action come first so the actionable bindings
 // stay visible without scrolling the popover.
 const orderedBindings = (
@@ -340,99 +390,235 @@ const orderedBindings = (
     .sort(
       (left, right) =>
         bindingRank[left.workspace.readiness] -
-          bindingRank[right.workspace.readiness] || left.index - right.index
+          bindingRank[right.workspace.readiness] ||
+        workspaceActivityRank(left.workspace) -
+          workspaceActivityRank(right.workspace) ||
+        left.index - right.index
     )
     .map((entry) => entry.workspace);
 
-const activityTitle: Record<WorkThread["activity"], string> = {
-  "in-progress": "In progress",
-  "needs-attention": "Needs attention",
-  dormant: "Recent",
+// Row composition, ordering, title treatment, density, and the recent-section
+// disclosure below are tracer hypotheses meant to be revised after operator use.
+const activityPresentation: Record<
+  WorkThread["activity"],
+  {
+    readonly icon: LucideIcon;
+    readonly iconClassName: string;
+    readonly labelClassName: string;
+    readonly rowClassName: string;
+    readonly title: string;
+    readonly tone: StatusTone;
+  }
+> = {
+  "in-progress": {
+    icon: CircleDot,
+    iconClassName: "animate-pulse text-warning motion-reduce:animate-none",
+    labelClassName: "text-foreground",
+    rowClassName: "",
+    title: "In progress",
+    tone: "warning",
+  },
+  "needs-attention": {
+    icon: TriangleAlert,
+    iconClassName: "text-danger",
+    labelClassName: "text-foreground",
+    rowClassName: "bg-danger/5",
+    title: "Needs attention",
+    tone: "danger",
+  },
+  dormant: {
+    icon: CircleCheck,
+    iconClassName: "text-muted-foreground",
+    labelClassName: "text-muted-foreground",
+    rowClassName: "",
+    title: "Recent",
+    tone: "neutral",
+  },
 };
 
-const activityTone: Record<WorkThread["activity"], StatusTone> = {
-  "in-progress": "warning",
-  "needs-attention": "danger",
-  dormant: "neutral",
+const MAX_DISPLAY_DAYS = 99;
+const STATE_AGE_TICK_MS = 30_000;
+
+// Time in state is what an operator scans, so it stays relative and compact
+// while the accessible name and tooltip keep the exact moment available.
+const stateAge = (
+  elapsedMs: number
+): { readonly compact: string; readonly spoken: string } => {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  if (seconds < 60) {
+    return { compact: "now", spoken: "less than a minute" };
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return { compact: `${minutes}m`, spoken: plural(minutes, "minute") };
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return { compact: `${hours}h`, spoken: plural(hours, "hour") };
+  }
+  const days = Math.floor(hours / 24);
+  return days > MAX_DISPLAY_DAYS
+    ? {
+        compact: `${MAX_DISPLAY_DAYS}d+`,
+        spoken: `more than ${MAX_DISPLAY_DAYS} days`,
+      }
+    : { compact: `${days}d`, spoken: plural(days, "day") };
 };
 
-const WorkThreadRow = ({ thread }: { readonly thread: WorkThread }) => {
-  const tone = activityTone[thread.activity];
+const useNow = (intervalMs: number | null): number => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (intervalMs === null) {
+      return;
+    }
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+};
+
+const WorkThreadRow = ({
+  nowUnixMs,
+  thread,
+}: {
+  readonly nowUnixMs: number;
+  readonly thread: WorkThread;
+}) => {
+  const presentation = activityPresentation[thread.activity];
+  const Icon = presentation.icon;
   const changed = new Date(thread.stateChangedAtUnixMs);
+  const age = stateAge(nowUnixMs - thread.stateChangedAtUnixMs);
   return (
-    <li className="flex items-start gap-2.5 border-border border-t px-3 py-2.5 first:border-t-0">
-      {thread.activity === "dormant" ? (
-        <Clock3
-          aria-hidden="true"
-          className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-        />
-      ) : (
-        <CircleDot
-          aria-hidden="true"
-          className={`mt-0.5 size-3.5 shrink-0 ${tone === "danger" ? "text-danger" : "text-warning"}`}
-        />
-      )}
-      <div className="min-w-0 flex-1">
-        <p
-          className="truncate font-medium text-xs leading-4"
-          title={thread.label}
-        >
-          {thread.label}
-        </p>
-        <time
-          className="mt-0.5 block text-[11px] text-muted-foreground leading-4"
-          dateTime={changed.toISOString()}
-          title={changed.toLocaleString()}
-        >
-          Status changed{" "}
-          {changed.toLocaleTimeString([], {
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-        </time>
-      </div>
-      <span
-        className={`mt-0.5 size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${thread.activity === "in-progress" ? "animate-pulse motion-reduce:animate-none" : ""}`}
+    <li
+      className={`flex items-center gap-2.5 border-border border-t px-3 py-2 first:border-t-0 ${presentation.rowClassName}`}
+    >
+      <Icon
+        aria-hidden="true"
+        className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
       />
+      <span
+        className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
+        title={thread.label}
+      >
+        {thread.label}
+      </span>
+      <time
+        className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
+        dateTime={changed.toISOString()}
+        title={changed.toLocaleString()}
+      >
+        <span aria-hidden="true">{age.compact}</span>
+        <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
+      </time>
     </li>
   );
 };
 
-const WorkThreadSections = ({
+const sectionHeadingClassName =
+  "flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wide";
+
+const WorkThreadSection = ({
+  activity,
+  headingId,
+  nowUnixMs,
   threads,
 }: {
-  readonly threads: WorkspaceBinding["threads"];
+  readonly activity: WorkThread["activity"];
+  readonly headingId: string;
+  readonly nowUnixMs: number;
+  readonly threads: readonly WorkThread[];
+}) => {
+  const presentation = activityPresentation[activity];
+  const rows = (
+    <ul aria-labelledby={headingId}>
+      {threads.map((thread) => (
+        <WorkThreadRow key={thread.id} nowUnixMs={nowUnixMs} thread={thread} />
+      ))}
+    </ul>
+  );
+  const count = (
+    <span aria-hidden="true" className="tabular-nums opacity-70">
+      {threads.length}
+    </span>
+  );
+  const headingLabel = `${presentation.title}, ${plural(threads.length, "work thread")}`;
+  // Settled work is the least actionable, so it stays one disclosure away
+  // while in-progress and needs-attention rows keep the top of the card.
+  if (activity === "dormant") {
+    return (
+      <details className="group">
+        <summary className="list-none rounded-none bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+          <h4
+            aria-label={headingLabel}
+            className={`${sectionHeadingClassName} cursor-default px-3 py-1.5 text-muted-foreground`}
+            id={headingId}
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className="-ml-1 size-3 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+            />
+            {presentation.title}
+            {count}
+          </h4>
+        </summary>
+        {rows}
+      </details>
+    );
+  }
+  return (
+    <section aria-labelledby={headingId}>
+      <h4
+        aria-label={headingLabel}
+        className={`${sectionHeadingClassName} px-3 py-1.5 ${
+          presentation.tone === "danger"
+            ? "bg-danger/10 text-danger"
+            : "bg-muted/40 text-muted-foreground"
+        }`}
+        id={headingId}
+      >
+        {presentation.title}
+        {count}
+      </h4>
+      {rows}
+    </section>
+  );
+};
+
+const WorkThreadSections = ({
+  nowUnixMs,
+  workspace,
+}: {
+  readonly nowUnixMs: number;
+  readonly workspace: WorkspaceBinding;
 }) => {
   const sections = (["needs-attention", "in-progress", "dormant"] as const).map(
     (activity) => ({
       activity,
-      threads: threads.filter((thread) => thread.activity === activity),
+      threads: workspace.threads.filter(
+        (thread) => thread.activity === activity
+      ),
     })
   );
-  if (threads.length === 0) {
-    return (
+  if (workspace.threads.length === 0) {
+    // A binding that is not ready explains itself above; an empty thread list
+    // there would read as a second, misleading state.
+    return workspace.readiness === "ready" ? (
       <p className="border-border border-t px-3 py-3 text-muted-foreground text-xs leading-5">
         No active or recent work threads.
       </p>
-    );
+    ) : null;
   }
   return (
     <div className="border-border border-t">
-      {sections.map(({ activity, threads: sectionThreads }) =>
-        sectionThreads.length === 0 ? null : (
-          <section key={activity}>
-            <h4 className="bg-muted/40 px-3 py-1.5 font-semibold text-[10px] text-muted-foreground uppercase tracking-wide">
-              {activityTitle[activity]}{" "}
-              <span className="ml-1.5 tabular-nums">
-                {sectionThreads.length}
-              </span>
-            </h4>
-            <ul>
-              {sectionThreads.map((thread) => (
-                <WorkThreadRow key={thread.id} thread={thread} />
-              ))}
-            </ul>
-          </section>
+      {sections.map(({ activity, threads }) =>
+        threads.length === 0 ? null : (
+          <WorkThreadSection
+            activity={activity}
+            headingId={`${workspace.id}-${activity}`}
+            key={activity}
+            nowUnixMs={nowUnixMs}
+            threads={threads}
+          />
         )
       )}
     </div>
@@ -440,8 +626,10 @@ const WorkThreadSections = ({
 };
 
 const WorkspaceBindingCard = ({
+  nowUnixMs,
   workspace,
 }: {
+  readonly nowUnixMs: number;
   readonly workspace: WorkspaceBinding;
 }) => {
   const tone = bindingTone[workspace.readiness];
@@ -469,7 +657,7 @@ const WorkspaceBindingCard = ({
           {bindingBody(workspace)}
         </p>
       </div>
-      <WorkThreadSections threads={workspace.threads} />
+      <WorkThreadSections nowUnixMs={nowUnixMs} workspace={workspace} />
     </article>
   );
 };
@@ -516,9 +704,12 @@ export const StatusPopover = ({
     status.state === "running"
       ? runningPresentation(status)
       : statusPresentation[status.state];
-  const counts = bindingCounts(
-    status.state === "running" ? status.workspaces : []
+  const workspaces = status.state === "running" ? status.workspaces : [];
+  const counts = bindingCounts(workspaces);
+  const hasThreads = workspaces.some(
+    (workspace) => workspace.threads.length > 0
   );
+  const nowUnixMs = useNow(hasThreads ? STATE_AGE_TICK_MS : null);
   const Icon = presentation.icon;
 
   return (
@@ -642,7 +833,10 @@ export const StatusPopover = ({
                 <ul className="mt-2 space-y-2">
                   {orderedBindings(status.workspaces).map((workspace) => (
                     <li key={workspace.id}>
-                      <WorkspaceBindingCard workspace={workspace} />
+                      <WorkspaceBindingCard
+                        nowUnixMs={nowUnixMs}
+                        workspace={workspace}
+                      />
                     </li>
                   ))}
                 </ul>

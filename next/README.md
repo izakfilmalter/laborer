@@ -126,8 +126,12 @@ unavailable counts, and groups work threads beneath their owning workspace as
 needs attention, in progress, or recent. Explicit durable blockers take
 precedence over queued or running work; settled delivery makes a thread dormant,
 and only the four most recently dormant threads remain visible per workspace.
-Rows expose canonical identity-derived labels and state-change times, never
-prompts, agent messages, commands, paths, or raw diagnostics. The companion
+Rows expose canonical identity-derived labels and relative time in state, never
+prompts, agent messages, commands, paths, or raw diagnostics. Blocked work
+raises the daemon summary and sorts its workspace first, needs-attention and
+in-progress sections stay open, and recent work sits behind one disclosure.
+Row composition, ordering, titles, density, and that disclosure remain tracer
+hypotheses to revise after operator use. The companion
 offers an explicit retry only when the daemon is unavailable or its protocol
 version is incompatible; connecting and reconnecting states retry on their own.
 Quitting it does not signal or stop the daemon. Both commands default

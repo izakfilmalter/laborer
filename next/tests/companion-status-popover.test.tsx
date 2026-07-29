@@ -277,6 +277,7 @@ describe("companion status popover", () => {
   });
 
   it("groups actionable, ongoing, and recent threads beneath their owning workspace", () => {
+    const now = Date.now();
     render(
       <StatusPopover
         quit={() => undefined}
@@ -298,21 +299,21 @@ describe("companion status popover", () => {
                   activity: "needs-attention",
                   id: "workspace:TFIRST:C123:1000.000001",
                   label: "C123 · 1000.000001",
-                  stateChangedAtUnixMs: 3000,
+                  stateChangedAtUnixMs: now - 5 * 60_000,
                   workspaceId: "TFIRST",
                 },
                 {
                   activity: "in-progress",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
-                  stateChangedAtUnixMs: 2000,
+                  stateChangedAtUnixMs: now - 30_000,
                   workspaceId: "TFIRST",
                 },
                 {
                   activity: "dormant",
                   id: "workspace:TFIRST:C123:1002.000001",
                   label: "C123 · 1002.000001",
-                  stateChangedAtUnixMs: 1000,
+                  stateChangedAtUnixMs: now - 3 * 3_600_000,
                   workspaceId: "TFIRST",
                 },
               ],
@@ -322,15 +323,190 @@ describe("companion status popover", () => {
       />
     );
 
+    const sections = screen.getAllByRole("heading", { level: 4 });
     expect(
-      screen.getByRole("heading", { name: "Needs attention 1" })
-    ).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "In progress 1" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Recent 1" })).toBeTruthy();
+      sections.map((section) => section.getAttribute("aria-label"))
+    ).toEqual([
+      "Needs attention, 1 work thread",
+      "In progress, 1 work thread",
+      "Recent, 1 work thread",
+    ]);
     expect(screen.getByText("C123 · 1000.000001")).toBeTruthy();
     expect(screen.getByText("C123 · 1001.000001")).toBeTruthy();
     expect(screen.getByText("C123 · 1002.000001")).toBeTruthy();
     expect(document.body.textContent).not.toContain("prompt");
+  });
+
+  it("reports time in state relatively and reads it out with its activity", () => {
+    const now = Date.now();
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "in-progress",
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: now - 5 * 60_000,
+                  workspaceId: "TFIRST",
+                },
+                {
+                  activity: "dormant",
+                  id: "workspace:TFIRST:C123:1002.000001",
+                  label: "C123 · 1002.000001",
+                  stateChangedAtUnixMs: now - 20_000,
+                  workspaceId: "TFIRST",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByText("5m")).toBeTruthy();
+    expect(screen.getByText("In progress for 5 minutes")).toBeTruthy();
+    expect(screen.getByText("now")).toBeTruthy();
+    expect(screen.getByText("Recent for less than a minute")).toBeTruthy();
+  });
+
+  it("raises blocked work into the summary and orders its workspace first", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TQUIET",
+              label: "TQUIET",
+              readiness: "ready",
+              teamId: "TQUIET",
+              threads: [],
+            },
+            {
+              detail: null,
+              id: "slack:TBLOCKED",
+              label: "TBLOCKED",
+              readiness: "ready",
+              teamId: "TBLOCKED",
+              threads: [
+                {
+                  activity: "needs-attention",
+                  id: "workspace:TBLOCKED:C123:1000.000001",
+                  label: "C123 · 1000.000001",
+                  stateChangedAtUnixMs: Date.now() - 60_000,
+                  workspaceId: "TBLOCKED",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Work needs attention"
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "1 work thread cannot progress without you"
+    );
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent)
+    ).toEqual(["TBLOCKED", "TQUIET"]);
+  });
+
+  it("reports ongoing work without implying that anything is wrong", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+              threads: [
+                {
+                  activity: "in-progress",
+                  id: "workspace:TFIRST:C123:1001.000001",
+                  label: "C123 · 1001.000001",
+                  stateChangedAtUnixMs: Date.now(),
+                  workspaceId: "TFIRST",
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Work in progress"
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "still owes progress on 1 work thread"
+    );
+    expect(screen.queryByText("No active or recent work threads.")).toBeNull();
+  });
+
+  it("keeps the empty thread state out of workspaces that are not ready", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: "setup-required",
+              id: "slack:TSETUP",
+              label: "TSETUP",
+              readiness: "setup-incomplete",
+              teamId: "TSETUP",
+              threads: [],
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.queryByText("No active or recent work threads.")).toBeNull();
+    expect(
+      screen.getByText(
+        "Configure this workspace binding locally, then restart the daemon."
+      )
+    ).toBeTruthy();
   });
 
   it("explains the empty workspace surface without exposing configuration", () => {

@@ -13,7 +13,10 @@ import {
   openRegularFileNoFollow,
 } from "../prototype/path-safety.ts";
 import { SlackBoundaryError } from "./errors.ts";
-import type { ResolveSlackInboundImages } from "./normalize.ts";
+import type {
+  ResolveSlackInboundImages,
+  SlackInboundImageCandidate,
+} from "./normalize.ts";
 
 export const MAX_IMAGES_PER_MESSAGE = 4;
 export const MAX_IMAGE_BYTES = 768 * 1024;
@@ -46,6 +49,13 @@ interface SlackFileMetadata {
   readonly mimetype: string;
   readonly size: number;
   readonly url: string;
+}
+
+interface DownloadedSlackImage {
+  readonly bytes: Uint8Array;
+  readonly candidate: SlackInboundImageCandidate;
+  readonly index: number;
+  readonly mimeType: SupportedMimeType;
 }
 
 export interface SlackInboundImageResolverOptions {
@@ -368,7 +378,7 @@ export const makeSlackInboundImageResolver = (
     const token = client.token;
     let aggregateBytes = 0;
     const deadline = Date.now() + DOWNLOAD_TIMEOUT_MILLIS;
-    const resolved: NormalizedImageInputType[] = [];
+    const downloaded: DownloadedSlackImage[] = [];
     for (const [index, candidate] of request.candidates.entries()) {
       const response = yield* Effect.tryPromise({
         try: () => client.files.info({ file: candidate.id }),
@@ -411,11 +421,20 @@ export const makeSlackInboundImageResolver = (
           }),
         catch: (cause) => boundaryFailure(downloadFailureReason(cause)),
       });
+      downloaded.push({
+        bytes,
+        candidate,
+        index,
+        mimeType: metadata.mimetype,
+      });
+    }
+    const resolved: NormalizedImageInputType[] = [];
+    for (const { bytes, candidate, index, mimeType } of downloaded) {
       const staged = yield* Effect.tryPromise({
         try: () =>
           stageImage({
             bytes,
-            mimeType: metadata.mimetype,
+            mimeType,
             storageRoot: options.storageRoot,
           }),
         catch: () => boundaryFailure("image-staging-failed"),
@@ -431,7 +450,7 @@ export const makeSlackInboundImageResolver = (
               "utf8"
             )
             .digest("hex"),
-          mimeType: metadata.mimetype,
+          mimeType,
           slackFileId: candidate.id,
         })
       );

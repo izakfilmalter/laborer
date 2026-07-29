@@ -534,6 +534,66 @@ describe("inbound Slack images", () => {
     })
   );
 
+  it.effect("does not stage partial input when a later download fails", () =>
+    Effect.gen(function* () {
+      const storageRoot = yield* makeTempDirectoryScoped(
+        "laborer-inbound-image-partial-"
+      );
+      const firstDigest = createHash("sha256").update(png).digest("hex");
+      const resolver = makeSlackInboundImageResolver({
+        client: {
+          files: {
+            info: ({ file }: { readonly file: string }) =>
+              Promise.resolve({
+                file: {
+                  id: file,
+                  mimetype: "image/png",
+                  size: png.byteLength,
+                  url_private_download: `https://files.slack.com/files-pri/TLABORER-${file}/image.png`,
+                },
+              }),
+          },
+          token: "test-bot-token",
+        } as never,
+        fetch: ((input) =>
+          Promise.resolve(
+            new Response(
+              String(input).includes("FSECOND") ? new Uint8Array(8) : png,
+              {
+              headers: {
+                "content-length": String(png.byteLength),
+                "content-type": "image/png",
+              },
+              }
+            )
+          )) as typeof fetch,
+        storageRoot,
+      });
+
+      const result = yield* Effect.result(
+        resolver({
+          candidates: [{ id: "FFIRST" }, { id: "FSECOND" }],
+          channelId: "CWORK",
+          messageTs: "1.0",
+        })
+      );
+      const firstWasStaged = yield* Effect.promise(() =>
+        readFile(
+          resolve(storageRoot, "inbound-images", `${firstDigest}.png`)
+        ).then(
+          () => true,
+          () => false
+        )
+      );
+
+      assert.strictEqual(
+        result._tag === "Failure" ? result.failure.reason : null,
+        "image-signature-mismatch"
+      );
+      assert.isFalse(firstWasStaged);
+    })
+  );
+
   it("marks adopted image history unavailable instead of claiming text-only understanding", () => {
     const adopted = normalizeConversationAdoptionHistoryMessage({
       botId: identity.botId,

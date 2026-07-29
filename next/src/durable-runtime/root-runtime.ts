@@ -1086,6 +1086,7 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
             Effect.asVoid
           ),
         rootIdentity: payload.rootIdentity,
+        workspaceId: payload.workspaceId,
       };
       const decodedInput = yield* decodeStoredJson(payload.encodedInput).pipe(
         Effect.orDie
@@ -1820,6 +1821,7 @@ export interface RootDurableRuntimeShape {
     conversationId: string,
     workspaceId: string
   ) => Effect.Effect<void, DurableRuntimeError>;
+  readonly actions: RegisteredActionCatalog;
   readonly attachConversationClient: (
     compatibility: ConversationClientCompatibility,
     workspaceId: string,
@@ -2809,6 +2811,7 @@ const makeRuntimeService = Effect.gen(function* () {
 
   return {
     acknowledgeEvent,
+    actions: catalog,
     cancelExecution: (request) => mutateExecution("cancel", request),
     checkConversationClientCompatibility,
     followUpExecution: (request) => mutateExecution("follow-up", request),

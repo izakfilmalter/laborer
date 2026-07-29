@@ -6,6 +6,16 @@ runtime, the process supervisor, native Slack stream projection,
 Action/Execution MCP, interactive permissions, adoption, and recovery. There is
 no alternate production receiver or runtime selector.
 
+Each canonical Laborer root loads one user application, validates its generated
+Action registration, and owns one `runtime.sqlite` plus one SQL-backed Effect
+Cluster `SingleRunner`. Shared-root workspace bindings are clients of that owner
+and retain separate Conversation and Execution partitions. Laborer owns its
+versioned domain tables; Effect owns its private Cluster journal tables. New
+accepted Conversation and Execution work is not written to a second scheduling
+runtime. Compatible pre-cutover state is imported once before readiness;
+ambiguous or incompatible migration and unavailable Action revisions fail
+closed without a legacy fallback.
+
 ## Automated verification
 
 - Require the final Sandcastle code-review agent to run

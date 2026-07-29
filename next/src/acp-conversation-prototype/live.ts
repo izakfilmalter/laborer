@@ -9,6 +9,7 @@ import {
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
 import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
+import { makeReferenceCodingRootApplication } from "../durable-runtime/reference-coding-application.ts";
 import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
 import { makeSlackGateway } from "../prototype/emulated-slack.ts";
 import { makeAcpSlackWorkspaceRunner } from "../slack/acp-workspace-runner.ts";
@@ -69,7 +70,20 @@ const program = Effect.gen(function* () {
     laborer.root,
     `acp-canary:${identity.teamId}`
   );
+  const applicationConfig = laborer.config.application;
+  if (applicationConfig === undefined) {
+    return yield* Effect.die(
+      new Error("ACP canary requires a registered user application")
+    );
+  }
+  const application = yield* makeReferenceCodingRootApplication({
+    config: applicationConfig,
+    environment: process.env,
+    paths,
+    root: laborer.root,
+  });
   const rootRuntime = yield* makeNodeRootDurableRuntime({
+    application,
     // The normal daemon intentionally shares one root-wide Cluster database.
     // The diagnostic canary may run beside it, so keep the canary's Cluster
     // state inside the already isolated `acp-canary:<team>` namespace too.

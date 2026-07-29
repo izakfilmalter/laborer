@@ -31,12 +31,14 @@
 > streaming plus one Action/Execution scene.
 >
 > **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
-> the normal workspace registry, root lock, durable Runner and file Application
-> state, Git and implementation-agent adapters, and native Slack streaming, but
-> injects the durable ACP Conversation adapter. Each authenticated workspace
-> owns one scoped ACP child and isolated workspace state. Incompatible startup
-> quarantines only that binding. There is no legacy Conversation fallback and
-> no dual publication or alternate production entrypoint.
+> the normal workspace registry, root lock, native Slack streaming, and one
+> SQLite- and Effect Cluster-backed runtime per canonical Laborer root. The
+> reference coding application registers its Actions through the same generic
+> user-application API as any other catalog; Laborer core does not dispatch on
+> their names. Each authenticated workspace owns one scoped ACP child and an
+> isolated Conversation partition. Incompatible startup quarantines only that
+> binding. There is no legacy runtime fallback, dual publication, or alternate
+> production entrypoint.
 >
 > **THROWAWAY BIDIRECTIONAL COMMUNICATION POC for issues #266–#268.** The
 > OpenCode implementation adapter observes completed, nonblank assistant
@@ -78,6 +80,33 @@ To run the production lifecycle, use:
 ```sh
 bun run start:slack
 ```
+
+`start:slack` first loads the user application for each canonical Laborer root,
+validates its bounded Action catalog, opens that root's
+`.laborer-runtime/runtime.sqlite`, applies the explicit Laborer migrations, and
+starts one SQL-backed Effect Cluster `SingleRunner`. Workspace bindings that
+share a canonical root share this owner while retaining workspace-partitioned
+Conversations and Executions; distinct roots have distinct databases and
+runtimes. SQLite is the canonical store for new Cluster Conversation and
+Execution acceptance, workflow correlation, controls, events, and their outbox.
+Effect owns its private journal tables, which Laborer never queries directly.
+
+The shipped `reference-coding` application is an example user registration. Its
+`create-feature` and `deal-with-bug` definitions use ordinary input/result
+schemas and execution Effects; the generic runtime sees only registered names,
+revisions, fingerprints, annotations, controls, and codecs. Action acceptance
+returns a stable Execution immediately. Implementation progress and terminal
+results enter the durable private event stream and wake only the owning
+Conversation; workers cannot publish to Slack. A host restart replays completed
+Cluster activities, while unfinished non-idempotent implementation work fails
+closed for attention rather than being relaunched blindly.
+
+Startup performs the one-time, restart-safe import of compatible pre-Cluster
+state before advertising readiness. Import conflicts, corrupt state, an
+unavailable registration revision, or SQLite/Cluster recovery failure quarantine
+the affected root; accepted work never silently falls back to a superseded
+runtime. Stop with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before
+starting another receiver.
 
 The daemon also owns a bounded, authenticated local status stream under its
 owner-only `.laborer-runtime` directory. To open the macOS menu-bar companion

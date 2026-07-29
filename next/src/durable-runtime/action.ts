@@ -58,6 +58,7 @@ export interface RegisteredActionContext {
     payload: unknown
   ) => Effect.Effect<void, unknown>;
   readonly rootIdentity: string;
+  readonly workspaceId?: string;
 }
 
 export interface RegisteredActionControlContext {

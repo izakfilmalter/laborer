@@ -36,7 +36,7 @@ import {
 } from "./action.ts";
 import { importExistingDurableState } from "./legacy-import.ts";
 
-const RUNTIME_SCHEMA_VERSION = 5;
+const RUNTIME_SCHEMA_VERSION = 6;
 export const RUNTIME_MAX_CONCURRENT_EXECUTIONS = 8;
 export const RUNTIME_PAYLOAD_MAX_BYTES = 64 * 1024;
 const RUNTIME_EXECUTION_EVENT_PAYLOAD_MAX_BYTES = 48 * 1024;
@@ -1277,6 +1277,7 @@ const initializeLaborerTables = Effect.gen(function* () {
           input_hash TEXT NOT NULL,
           input_json TEXT NOT NULL,
           status TEXT NOT NULL,
+          accepted_at_unix_ms INTEGER NOT NULL,
           result_json TEXT,
           failure_category TEXT,
           workspace_id TEXT NOT NULL,
@@ -1414,6 +1415,12 @@ const initializeLaborerTables = Effect.gen(function* () {
         yield* sql`
           CREATE INDEX laborer_execution_controls_order
           ON laborer_execution_controls (execution_id, sequence)
+        `;
+      }
+      if (Option.isSome(version) && version.value < 6) {
+        yield* sql`
+          ALTER TABLE laborer_executions
+          ADD COLUMN accepted_at_unix_ms INTEGER
         `;
       }
       yield* sql`
@@ -1751,6 +1758,7 @@ const validateRootRegistration = Effect.gen(function* () {
 });
 
 interface StoredExecutionRow {
+  readonly acceptedAtUnixMs: number | null;
   readonly actionFingerprint: string;
   readonly actionName: string;
   readonly actionRevision: string;
@@ -1784,6 +1792,7 @@ const executionSelect = `
     action_name AS actionName,
     action_revision AS actionRevision,
     action_fingerprint AS actionFingerprint,
+    accepted_at_unix_ms AS acceptedAtUnixMs,
     catalog_fingerprint AS catalogFingerprint,
     input_hash AS inputHash,
     input_json AS inputJson,
@@ -1848,8 +1857,16 @@ export interface RootDurableRuntimeShape {
     workspaceId: string
   ) => Effect.Effect<
     readonly {
+      readonly actionName: string;
       readonly conversationId: string;
-      readonly status: "needs-attention" | "queued" | "running";
+      readonly executionId: string;
+      readonly lifecycle:
+        | "allocated"
+        | "cancelling"
+        | "recovery-blocked"
+        | "running";
+      readonly startedAtUnixMs: number | null;
+      readonly workspaceId: string;
     }[],
     DurableRuntimeError
   >;
@@ -2546,12 +2563,12 @@ const makeRuntimeService = Effect.gen(function* () {
                 INSERT OR IGNORE INTO laborer_executions (
                   execution_id, invocation_id, conversation_id, action_name,
                   action_revision, action_fingerprint, catalog_fingerprint,
-                  input_hash, input_json, status, workspace_id
+                  input_hash, input_json, status, accepted_at_unix_ms, workspace_id
                 ) VALUES (
                   ${executionId}, ${validatedRequest.invocationId},
                   ${validatedRequest.conversationId}, ${action.name}, ${action.revision},
                   ${action.fingerprint}, ${catalog.fingerprint}, ${inputHash},
-                  ${encodedInput}, 'queued', ${validatedRequest.workspaceId}
+                  ${encodedInput}, 'queued', ${Date.now()}, ${validatedRequest.workspaceId}
                 )
               `;
                 const rows = yield* sql.unsafe<StoredExecutionRow>(
@@ -2825,20 +2842,55 @@ const makeRuntimeService = Effect.gen(function* () {
       RuntimeWorkspaceId
     )(workspaceId).pipe(Effect.mapError(() => runtimeError("invalid-payload")));
     const rows = yield* sql<{
+      readonly acceptedAtUnixMs: number | null;
+      readonly actionName: string;
       readonly conversationId: string;
-      readonly status: "needs-attention" | "queued" | "running";
+      readonly executionId: string;
+      readonly status: "cancelling" | "needs-attention" | "queued" | "running";
+      readonly workspaceId: string;
     }>`
-      SELECT conversation_id AS conversationId, status
+      SELECT execution_id AS executionId, action_name AS actionName,
+        conversation_id AS conversationId, workspace_id AS workspaceId,
+        accepted_at_unix_ms AS acceptedAtUnixMs, status
       FROM laborer_executions
       WHERE workspace_id = ${validatedWorkspaceId}
-        AND status IN ('queued', 'running', 'needs-attention')
-      ORDER BY execution_id
+        AND status IN ('queued', 'running', 'cancelling', 'needs-attention')
+      ORDER BY accepted_at_unix_ms, execution_id
       LIMIT 513
     `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
     if (rows.length > 512) {
       return yield* runtimeError("storage-failure");
     }
-    return rows;
+    if (
+      rows.some(
+        (row) =>
+          row.workspaceId !== validatedWorkspaceId ||
+          (row.acceptedAtUnixMs !== null &&
+            (!Number.isSafeInteger(row.acceptedAtUnixMs) ||
+              row.acceptedAtUnixMs < 0))
+      )
+    ) {
+      return yield* runtimeError("storage-failure");
+    }
+    const lifecycleForStatus = (
+      status: (typeof rows)[number]["status"]
+    ): "allocated" | "cancelling" | "recovery-blocked" | "running" => {
+      if (status === "queued") {
+        return "allocated";
+      }
+      if (status === "needs-attention") {
+        return "recovery-blocked";
+      }
+      return status;
+    };
+    return rows.map((row) => ({
+      actionName: row.actionName,
+      conversationId: row.conversationId,
+      executionId: row.executionId,
+      lifecycle: lifecycleForStatus(row.status),
+      startedAtUnixMs: row.acceptedAtUnixMs,
+      workspaceId: row.workspaceId,
+    }));
   });
 
   return {

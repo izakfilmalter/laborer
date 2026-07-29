@@ -1579,6 +1579,43 @@ describe("multi-workspace Slack daemon", () => {
                   yield* Effect.sleep("10 millis");
                 }
               }
+              assert.ok(firstRuntime.nonterminalExecutionActivity);
+              assert.ok(secondRuntime.nonterminalExecutionActivity);
+              const firstPending =
+                yield* firstRuntime.nonterminalExecutionActivity(
+                  firstIdentity.teamId
+                );
+              const secondPending =
+                yield* secondRuntime.nonterminalExecutionActivity(
+                  secondIdentity.teamId
+                );
+              assert.deepStrictEqual(
+                firstPending.map(
+                  ({ actionName, conversationId, lifecycle, workspaceId }) => ({
+                    actionName,
+                    conversationId,
+                    lifecycle,
+                    workspaceId,
+                  })
+                ),
+                [
+                  {
+                    actionName: sharedAction.name,
+                    conversationId: sharedConversation,
+                    lifecycle: "running",
+                    workspaceId: firstIdentity.teamId,
+                  },
+                ]
+              );
+              assert.deepStrictEqual(
+                secondPending.map(({ executionId }) => executionId),
+                [secondExecution.executionId]
+              );
+              assert.ok(Number.isSafeInteger(firstPending[0]?.startedAtUnixMs));
+              assert.notStrictEqual(
+                firstPending[0]?.executionId,
+                secondPending[0]?.executionId
+              );
               const foreignInspection = yield* Effect.flip(
                 secondRuntime.inspectExecution({
                   controlId: "inspect:foreign",
@@ -1681,6 +1718,18 @@ describe("multi-workspace Slack daemon", () => {
                 }
                 assert.strictEqual(status, terminalStatus);
               }
+              assert.deepStrictEqual(
+                yield* firstRuntime.nonterminalExecutionActivity(
+                  firstIdentity.teamId
+                ),
+                []
+              );
+              assert.deepStrictEqual(
+                yield* secondRuntime.nonterminalExecutionActivity(
+                  secondIdentity.teamId
+                ),
+                []
+              );
               assert.deepStrictEqual(observedControls, [
                 `follow-up:${firstIdentity.teamId}:keep the first workspace moving`,
                 `cancel:${secondIdentity.teamId}`,

@@ -5,6 +5,7 @@ export type WorkThreadActivity = "in-progress" | "needs-attention" | "dormant";
 export interface WorkThreadActivityObservation {
   readonly activity: WorkThreadActivity;
   readonly evidenceAtUnixMs: number;
+  readonly executions: readonly PendingExecutionObservation[];
   readonly id: string;
   readonly label: string;
   readonly workspaceId: string;
@@ -12,6 +13,7 @@ export interface WorkThreadActivityObservation {
 
 export interface ProjectedWorkThread {
   readonly activity: WorkThreadActivity;
+  readonly executions: ProjectedPendingExecution[];
   readonly id: string;
   readonly label: string;
   readonly stateChangedAtUnixMs: number;
@@ -19,9 +21,30 @@ export interface ProjectedWorkThread {
 }
 
 export interface ExecutionActivityObservation {
+  readonly actionName: string;
   readonly conversationId: string;
-  readonly status: "needs-attention" | "queued" | "running";
+  readonly executionId: string;
+  readonly lifecycle:
+    | "allocated"
+    | "cancelling"
+    | "implementation-ready"
+    | "recovery-blocked"
+    | "running"
+    | "starting";
+  readonly startedAtUnixMs: number | null;
+  readonly workspaceId: string;
 }
+
+export interface PendingExecutionObservation {
+  readonly actionName: string;
+  readonly id: string;
+  readonly lifecycle: ExecutionActivityObservation["lifecycle"];
+  readonly startedAtUnixMs: number | null;
+  readonly workspaceId: string;
+  readonly workThreadId: string;
+}
+
+export type ProjectedPendingExecution = PendingExecutionObservation;
 
 const MAX_DISPLAY_LABEL_LENGTH = 80;
 const MAX_RECENT_DORMANT_THREADS = 4;
@@ -102,7 +125,7 @@ const activityForThread = (
     streams.some((stream) => stream.lifecycle === "unresolved") ||
     tombstones.some((stream) => stream.lifecycle === "unresolved") ||
     threadExecutions.some(
-      (execution) => execution.status === "needs-attention"
+      (execution) => execution.lifecycle === "recovery-blocked"
     );
   if (blocked) {
     return "needs-attention";
@@ -129,8 +152,7 @@ const activityForThread = (
         stream.lifecycle === "open" || stream.lifecycle === "finalizing"
     ) ||
     threadExecutions.some(
-      (execution) =>
-        execution.status === "queued" || execution.status === "running"
+      (execution) => execution.lifecycle !== "recovery-blocked"
     );
   return inProgress ? "in-progress" : "dormant";
 };
@@ -146,11 +168,33 @@ export const observePrototypeWorkThreads = (
   if (threads.length > MAX_PROJECTED_WORK_THREADS) {
     throw new Error("too many work threads for operator projection");
   }
+  const threadIds = new Set<string>(threads.map((thread) => thread.id));
+  if (
+    executions.some(
+      (execution) =>
+        execution.workspaceId !== workspaceId ||
+        !threadIds.has(execution.conversationId)
+    ) ||
+    new Set(executions.map((execution) => execution.executionId)).size !==
+      executions.length
+  ) {
+    throw new Error("pending Execution ownership is inconsistent");
+  }
   return threads.map((thread) => ({
     activity: activityForThread(state, thread, executions),
     evidenceAtUnixMs: evidenceTime(state, thread),
     id: thread.id,
     label: threadLabel(thread),
+    executions: executions
+      .filter((execution) => execution.conversationId === thread.id)
+      .map((execution) => ({
+        actionName: execution.actionName,
+        id: execution.executionId,
+        lifecycle: execution.lifecycle,
+        startedAtUnixMs: execution.startedAtUnixMs,
+        workThreadId: thread.id,
+        workspaceId,
+      })),
     workspaceId,
   }));
 };
@@ -159,6 +203,70 @@ const activityRank: Record<WorkThreadActivity, number> = {
   "needs-attention": 0,
   "in-progress": 1,
   dormant: 2,
+};
+
+const hasConsistentExecutionOwnership = (
+  observations: readonly WorkThreadActivityObservation[],
+  previous: ReadonlyMap<string, ProjectedWorkThread>,
+  workspaceId: string
+): boolean => {
+  const previousExecutionOwners = new Map(
+    [...previous.values()].flatMap((thread) =>
+      thread.executions.map((execution) => [execution.id, thread.id] as const)
+    )
+  );
+  const observedExecutionIds = observations.flatMap((observation) =>
+    observation.executions.map((execution) => execution.id)
+  );
+  return (
+    new Set(observedExecutionIds).size === observedExecutionIds.length &&
+    observations.every((observation) =>
+      observation.executions.every(
+        (execution) =>
+          execution.workspaceId === workspaceId &&
+          execution.workThreadId === observation.id &&
+          (!previousExecutionOwners.has(execution.id) ||
+            previousExecutionOwners.get(execution.id) === observation.id)
+      )
+    )
+  );
+};
+
+const projectWorkThread = (
+  observation: WorkThreadActivityObservation,
+  existing: ProjectedWorkThread | undefined,
+  observedAtUnixMs: number,
+  workspaceId: string
+): ProjectedWorkThread => {
+  const changed =
+    existing === undefined || existing.activity !== observation.activity;
+  const laterDormancyEvidence =
+    existing?.activity === "dormant" &&
+    observation.activity === "dormant" &&
+    observation.evidenceAtUnixMs > existing.stateChangedAtUnixMs;
+  let stateChangedAtUnixMs = existing?.stateChangedAtUnixMs ?? observedAtUnixMs;
+  if (changed) {
+    stateChangedAtUnixMs =
+      existing === undefined
+        ? Math.min(
+            observation.evidenceAtUnixMs || observedAtUnixMs,
+            observedAtUnixMs
+          )
+        : observedAtUnixMs;
+  } else if (laterDormancyEvidence) {
+    stateChangedAtUnixMs = Math.min(
+      observation.evidenceAtUnixMs,
+      observedAtUnixMs
+    );
+  }
+  return {
+    activity: observation.activity,
+    executions: [...observation.executions],
+    id: observation.id,
+    label: observation.label,
+    stateChangedAtUnixMs,
+    workspaceId,
+  };
 };
 
 export const makeWorkThreadActivityProjection = (
@@ -173,42 +281,28 @@ export const makeWorkThreadActivityProjection = (
       observations: readonly WorkThreadActivityObservation[]
     ): void => {
       const observedAtUnixMs = now();
-      const previous = byWorkspace.get(workspaceId) ?? new Map();
+      const previous =
+        byWorkspace.get(workspaceId) ?? new Map<string, ProjectedWorkThread>();
       const next = new Map<string, ProjectedWorkThread>();
+      if (
+        !hasConsistentExecutionOwnership(observations, previous, workspaceId)
+      ) {
+        throw new Error("pending Execution ownership is inconsistent");
+      }
       for (const observation of observations) {
         if (observation.workspaceId !== workspaceId) {
           continue;
         }
         const existing = previous.get(observation.id);
-        const changed =
-          existing === undefined || existing.activity !== observation.activity;
-        const laterDormancyEvidence =
-          existing?.activity === "dormant" &&
-          observation.activity === "dormant" &&
-          observation.evidenceAtUnixMs > existing.stateChangedAtUnixMs;
-        let stateChangedAtUnixMs =
-          existing?.stateChangedAtUnixMs ?? observedAtUnixMs;
-        if (changed) {
-          stateChangedAtUnixMs =
-            existing === undefined
-              ? Math.min(
-                  observation.evidenceAtUnixMs || observedAtUnixMs,
-                  observedAtUnixMs
-                )
-              : observedAtUnixMs;
-        } else if (laterDormancyEvidence) {
-          stateChangedAtUnixMs = Math.min(
-            observation.evidenceAtUnixMs,
-            observedAtUnixMs
-          );
-        }
-        next.set(observation.id, {
-          activity: observation.activity,
-          id: observation.id,
-          label: observation.label,
-          stateChangedAtUnixMs,
-          workspaceId,
-        });
+        next.set(
+          observation.id,
+          projectWorkThread(
+            observation,
+            existing,
+            observedAtUnixMs,
+            workspaceId
+          )
+        );
       }
       byWorkspace.set(workspaceId, next);
     },

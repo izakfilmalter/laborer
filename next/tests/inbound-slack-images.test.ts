@@ -560,10 +560,10 @@ describe("inbound Slack images", () => {
             new Response(
               String(input).includes("FSECOND") ? new Uint8Array(8) : png,
               {
-              headers: {
-                "content-length": String(png.byteLength),
-                "content-type": "image/png",
-              },
+                headers: {
+                  "content-length": String(png.byteLength),
+                  "content-type": "image/png",
+                },
               }
             )
           )) as typeof fetch,

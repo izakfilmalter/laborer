@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   decodeOperatorSnapshot,
   MAX_OPERATOR_RECORD_BYTES,
+  OPERATOR_PROTOCOL_VERSION,
   OperatorProtocolError,
 } from "../src/operator-status/protocol.ts";
 import {
@@ -55,13 +56,23 @@ describe("operator status protocol", () => {
     const snapshot = decodeOperatorSnapshot(
       JSON.stringify({
         daemon: {
+          receiver: "connected",
           startedAtUnixMs: 1000,
           version: "0.1.0",
         },
         kind: "snapshot",
         observedAtUnixMs: 4500,
-        protocolVersion: 1,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION,
         sequence: 3,
+        workspaces: [
+          {
+            detail: null,
+            id: "slack:TFIRST",
+            label: "TFIRST",
+            readiness: "ready",
+            teamId: "TFIRST",
+          },
+        ],
       })
     );
 
@@ -70,17 +81,38 @@ describe("operator status protocol", () => {
     expect(() =>
       decodeOperatorSnapshot(
         JSON.stringify({
-          daemon: { startedAtUnixMs: 0, version: "0.1.0" },
+          daemon: {
+            receiver: "connected",
+            startedAtUnixMs: 0,
+            version: "0.1.0",
+          },
           kind: "snapshot",
           observedAtUnixMs: 1,
-          protocolVersion: 2,
+          protocolVersion: OPERATOR_PROTOCOL_VERSION + 1,
           sequence: 1,
+          workspaces: [],
         })
       )
     ).toThrowError(OperatorProtocolError);
     expect(() => decodeOperatorSnapshot("not-json")).toThrowError(
       OperatorProtocolError
     );
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          workspaces: [
+            {
+              detail: "runtime-unavailable",
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+            },
+          ],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
     expect(() =>
       decodeOperatorSnapshot("x".repeat(MAX_OPERATOR_RECORD_BYTES + 1))
     ).toThrowError(OperatorProtocolError);
@@ -106,19 +138,21 @@ describe("operator status protocol", () => {
       paths.socket,
       JSON.stringify({
         kind: "subscribe",
-        protocolVersion: 1,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION,
         token,
       })
     );
     const snapshot = decodeOperatorSnapshot(source);
     expect(snapshot.daemon.version).toBe("0.1.0-test");
+    expect(snapshot.daemon.receiver).toBe("connecting");
+    expect(snapshot.workspaces).toEqual([]);
     expect(snapshot.observedAtUnixMs - snapshot.daemon.startedAtUnixMs).toBe(0);
 
     const unauthenticated = await readFirstRecord(
       paths.socket,
       JSON.stringify({
         kind: "subscribe",
-        protocolVersion: 1,
+        protocolVersion: OPERATOR_PROTOCOL_VERSION,
         token: "0".repeat(64),
       })
     );

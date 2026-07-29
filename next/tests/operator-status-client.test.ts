@@ -75,6 +75,18 @@ describe("operator status client", () => {
     let server = await startOperatorStatusServer({
       now: () => 5000,
       paths,
+      projection: () => ({
+        receiver: "connected",
+        workspaces: [
+          {
+            detail: null,
+            id: "slack:TFIRST",
+            label: "TFIRST",
+            readiness: "ready",
+            teamId: "TFIRST",
+          },
+        ],
+      }),
       tickIntervalMs: 60_000,
       version: "1.2.3",
     });
@@ -83,9 +95,19 @@ describe("operator status client", () => {
 
     const running = await waitForState(client, "running");
     expect(running).toEqual({
+      receiver: "connected",
       state: "running",
       uptimeSeconds: 0,
       version: "1.2.3",
+      workspaces: [
+        {
+          detail: null,
+          id: "slack:TFIRST",
+          label: "TFIRST",
+          readiness: "ready",
+          teamId: "TFIRST",
+        },
+      ],
     });
 
     await server.close();
@@ -96,6 +118,18 @@ describe("operator status client", () => {
     server = await startOperatorStatusServer({
       now: () => 9000,
       paths,
+      projection: () => ({
+        receiver: "connected",
+        workspaces: [
+          {
+            detail: "setup-required",
+            id: "slack:TSECOND",
+            label: "TSECOND",
+            readiness: "setup-incomplete",
+            teamId: "TSECOND",
+          },
+        ],
+      }),
       tickIntervalMs: 60_000,
       version: "1.2.4",
     });
@@ -103,6 +137,12 @@ describe("operator status client", () => {
     client.reconnect();
     expect(await waitForState(client, "running")).toMatchObject({
       version: "1.2.4",
+      workspaces: [
+        expect.objectContaining({
+          id: "slack:TSECOND",
+          readiness: "setup-incomplete",
+        }),
+      ],
     });
   });
 
@@ -138,11 +178,16 @@ describe("operator status client", () => {
     await writeFile(paths.token, token, { mode: 0o600 });
     const snapshots = Array.from({ length: 40 }, (_, index) =>
       JSON.stringify({
-        daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+        daemon: {
+          receiver: "connected",
+          startedAtUnixMs: 1000,
+          version: "1.0.0",
+        },
         kind: "snapshot",
         observedAtUnixMs: 2000 + index,
         protocolVersion: OPERATOR_PROTOCOL_VERSION,
         sequence: index + 1,
+        workspaces: [],
       })
     ).join("\n");
     expect(Buffer.byteLength(snapshots, "utf8")).toBeGreaterThan(4096);
@@ -182,11 +227,16 @@ describe("operator status client", () => {
     });
     const snapshot = (sequence: number, observedAtUnixMs: number): string =>
       JSON.stringify({
-        daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+        daemon: {
+          receiver: "connected",
+          startedAtUnixMs: 1000,
+          version: "1.0.0",
+        },
         kind: "snapshot",
         observedAtUnixMs,
         protocolVersion: OPERATOR_PROTOCOL_VERSION,
         sequence,
+        workspaces: [],
       });
     const connections = new Set<Socket>();
     const server = createServer((socket) => {
@@ -223,9 +273,11 @@ describe("operator status client", () => {
       });
       publishNext();
       expect(await updated).toEqual({
+        receiver: "connected",
         state: "running",
         uptimeSeconds: 3,
         version: "1.0.0",
+        workspaces: [],
       });
     } finally {
       for (const connection of connections) {
@@ -254,11 +306,16 @@ describe("operator status client", () => {
       socket.once("data", () => {
         socket.write(
           `${JSON.stringify({
-            daemon: { startedAtUnixMs: 1000, version: "1.0.0" },
+            daemon: {
+              receiver: "connected",
+              startedAtUnixMs: 1000,
+              version: "1.0.0",
+            },
             kind: "snapshot",
             observedAtUnixMs: 2000,
             protocolVersion: OPERATOR_PROTOCOL_VERSION,
             sequence: 1,
+            workspaces: [],
           })}\n`
         );
         activity.add(setInterval(() => socket.write(" "), 10));
@@ -295,11 +352,16 @@ describe("operator status client", () => {
     {
       expectedState: "incompatible" as const,
       record: JSON.stringify({
-        daemon: { startedAtUnixMs: 1000, version: "2.0.0" },
+        daemon: {
+          receiver: "connected",
+          startedAtUnixMs: 1000,
+          version: "2.0.0",
+        },
         kind: "snapshot",
         observedAtUnixMs: 2000,
         protocolVersion: OPERATOR_PROTOCOL_VERSION + 1,
         sequence: 1,
+        workspaces: [],
       }),
     },
     { expectedState: "unavailable" as const, record: "not-json" },

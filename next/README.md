@@ -118,10 +118,15 @@ bun run companion:dev
 
 The companion has no Dock icon; click its menu-bar item to toggle the status
 popover, and dismiss it with Escape or by clicking away. The popover reports
-daemon availability, version, and uptime, and offers an explicit retry only when
-the daemon is unavailable or its protocol version is incompatible; connecting
-and reconnecting states retry on their own. Quitting it does not signal or stop
-the daemon. Both commands default
+daemon availability, version, uptime, app-wide Slack receiver connectivity, and
+each configured workspace binding's authoritative pending, ready,
+setup-incomplete, unavailable, or unknown state. It keeps healthy workspace
+groups visible beside isolated failures, shows bounded connected, pending, and
+unavailable counts, and exposes only sanitized setup guidance rather than roots,
+environment names, credentials, or provider diagnostics. It offers an explicit
+retry only when the daemon is unavailable or its protocol version is
+incompatible; connecting and reconnecting states retry on their own. Quitting it
+does not signal or stop the daemon. Both commands default
 to this package's `.laborer-runtime`; set `LABORER_RUNTIME_ROOT` for the
 companion when the daemon endpoint is rooted elsewhere.
 

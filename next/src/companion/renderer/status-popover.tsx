@@ -191,6 +191,118 @@ const dotTone: Record<StatusTone, string> = {
   warning: "bg-warning",
 };
 
+type RunningStatus = Extract<
+  CompanionStatusView,
+  { readonly state: "running" }
+>;
+
+const runningPresentation = (
+  status: RunningStatus
+): (typeof statusPresentation)["running"] => {
+  const pending = status.workspaces.filter(
+    (workspace) => workspace.readiness === "pending"
+  ).length;
+  const unavailable =
+    status.workspaces.length -
+    pending -
+    status.workspaces.filter((workspace) => workspace.readiness === "ready")
+      .length;
+  if (status.receiver === "connecting") {
+    return {
+      ...statusPresentation.running,
+      description:
+        "The daemon is available while the Slack receiver finishes connecting.",
+      icon: LoaderCircle,
+      indicator: "Connecting",
+      pending: true,
+      title: "Slack receiver connecting…",
+      tone: "warning",
+    };
+  }
+  if (unavailable > 0) {
+    return {
+      ...statusPresentation.running,
+      description:
+        "The Slack receiver is connected, but one or more workspace bindings need action.",
+      icon: TriangleAlert,
+      indicator: "Attention",
+      title: "Workspace setup required",
+      tone: "danger",
+    };
+  }
+  if (pending > 0) {
+    return {
+      ...statusPresentation.running,
+      description:
+        "The Slack receiver is connected while workspace bindings finish starting.",
+      icon: LoaderCircle,
+      indicator: "Starting",
+      pending: true,
+      title: "Workspaces starting…",
+      tone: "warning",
+    };
+  }
+  return statusPresentation.running;
+};
+
+const bindingGuidance: Record<
+  RunningStatus["workspaces"][number]["readiness"],
+  string
+> = {
+  pending: "Starting now. No action is needed.",
+  ready: "Ready for Slack work.",
+  "setup-incomplete":
+    "Configure this workspace binding locally, then restart the daemon.",
+  unavailable: "Review this workspace's local setup, then restart the daemon.",
+  unknown: "Restart the daemon. If this persists, review the workspace setup.",
+};
+
+const bindingDetailGuidance: Record<
+  NonNullable<RunningStatus["workspaces"][number]["detail"]>,
+  string
+> = {
+  "authentication-unavailable":
+    "Verify this workspace's local Slack credentials, then restart the daemon.",
+  "configuration-invalid":
+    "Correct this workspace's local configuration, then restart the daemon.",
+  "health-unavailable":
+    "Restart the daemon. If this persists, review this workspace's local setup.",
+  "identity-mismatch":
+    "The authenticated Slack workspace does not match this binding. Correct it, then restart.",
+  "ownership-unavailable":
+    "The configured Laborer root is already in use. Stop its other owner, then restart.",
+  "root-unavailable":
+    "Make the configured Laborer root available, then restart the daemon.",
+  "runtime-unavailable":
+    "The local workspace runtime could not start. Review its setup, then restart.",
+  "setup-required":
+    "Configure this workspace binding locally, then restart the daemon.",
+  "startup-stopped":
+    "Workspace startup stopped unexpectedly. Restart the daemon to try again.",
+};
+
+const bindingTone: Record<
+  RunningStatus["workspaces"][number]["readiness"],
+  StatusTone
+> = {
+  pending: "warning",
+  ready: "success",
+  "setup-incomplete": "danger",
+  unavailable: "danger",
+  unknown: "warning",
+};
+
+const bindingTitle: Record<
+  RunningStatus["workspaces"][number]["readiness"],
+  string
+> = {
+  pending: "Starting",
+  ready: "Ready",
+  "setup-incomplete": "Setup required",
+  unavailable: "Unavailable",
+  unknown: "Status unknown",
+};
+
 export const StatusPopover = ({
   quit,
   reconnect,
@@ -200,7 +312,10 @@ export const StatusPopover = ({
   readonly reconnect: () => void;
   readonly status: CompanionStatusView;
 }) => {
-  const presentation = statusPresentation[status.state];
+  const presentation =
+    status.state === "running"
+      ? runningPresentation(status)
+      : statusPresentation[status.state];
   const Icon = presentation.icon;
 
   return (
@@ -274,6 +389,103 @@ export const StatusPopover = ({
               </dd>
             </div>
           </dl>
+        ) : null}
+
+        {status.state === "running" ? (
+          <>
+            <section
+              aria-labelledby="binding-summary-heading"
+              className="mt-3 grid grid-cols-3 gap-2"
+            >
+              <h2 className="sr-only" id="binding-summary-heading">
+                Workspace binding summary
+              </h2>
+              {[
+                {
+                  label: "connected",
+                  value: status.workspaces.filter(
+                    (workspace) => workspace.readiness === "ready"
+                  ).length,
+                },
+                {
+                  label: "pending",
+                  value: status.workspaces.filter(
+                    (workspace) => workspace.readiness === "pending"
+                  ).length,
+                },
+                {
+                  label: "unavailable",
+                  value: status.workspaces.filter(
+                    (workspace) =>
+                      workspace.readiness !== "ready" &&
+                      workspace.readiness !== "pending"
+                  ).length,
+                },
+              ].map((count) => (
+                <div
+                  className="rounded-lg border border-border bg-surface px-2 py-2 text-center"
+                  key={count.label}
+                >
+                  <span className="block font-semibold text-sm">
+                    {count.value}
+                  </span>
+                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">
+                    {count.label}
+                  </span>
+                  <span className="sr-only">{`${count.value} ${count.label}`}</span>
+                </div>
+              ))}
+            </section>
+
+            <section
+              aria-labelledby="workspace-bindings-heading"
+              className="mt-5"
+            >
+              <h2
+                className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wide"
+                id="workspace-bindings-heading"
+              >
+                Slack workspaces
+              </h2>
+              {status.workspaces.length === 0 ? (
+                <p className="mt-2 rounded-xl border border-border bg-surface p-3 text-muted-foreground text-xs">
+                  No workspace bindings are configured.
+                </p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {status.workspaces.map((workspace) => (
+                    <article
+                      className="rounded-xl border border-border bg-surface p-3"
+                      key={workspace.id}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate font-semibold text-sm">
+                            {workspace.label}
+                          </h3>
+                          <p className="mt-1 text-muted-foreground text-xs leading-5">
+                            {workspace.detail === null
+                              ? bindingGuidance[workspace.readiness]
+                              : bindingDetailGuidance[workspace.detail]}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-1 font-medium text-[10px] ${badgeTone[bindingTone[workspace.readiness]]}`}
+                        >
+                          {bindingTitle[workspace.readiness]}
+                        </span>
+                      </div>
+                      {workspace.readiness === "ready" ? (
+                        <p className="mt-3 border-border border-t pt-3 text-muted-foreground text-xs">
+                          No visible work in this workspace.
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
         ) : null}
 
         {presentation.action !== null && presentation.guidance !== null ? (

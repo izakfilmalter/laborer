@@ -9,6 +9,7 @@ import {
   OPERATOR_PROTOCOL_VERSION,
   type OperatorSnapshot,
   type OperatorSubscribe,
+  type OperatorWorkspaceBinding,
 } from "./protocol.ts";
 
 const MAX_OPERATOR_CLIENTS = 16;
@@ -249,6 +250,10 @@ const removeOwnedSocket = async (
 export const startOperatorStatusServer = async (options: {
   readonly now?: () => number;
   readonly paths: OperatorStatusPaths;
+  readonly projection?: () => {
+    readonly receiver: "connected" | "connecting";
+    readonly workspaces: readonly OperatorWorkspaceBinding[];
+  };
   readonly tickIntervalMs?: number;
   readonly version: string;
 }): Promise<OperatorStatusServer> => {
@@ -268,18 +273,28 @@ export const startOperatorStatusServer = async (options: {
 
   const snapshot = (): OperatorSnapshot => {
     sequence += 1;
+    const projection = options.projection?.() ?? {
+      receiver: "connecting" as const,
+      workspaces: [],
+    };
     return {
-      daemon: { startedAtUnixMs, version: options.version },
+      daemon: {
+        receiver: projection.receiver,
+        startedAtUnixMs,
+        version: options.version,
+      },
       kind: "snapshot",
       observedAtUnixMs: Math.max(startedAtUnixMs, now()),
       protocolVersion: OPERATOR_PROTOCOL_VERSION,
       sequence,
+      workspaces: [...projection.workspaces],
     };
   };
   const publish = (socket: Socket): void => {
     if (!socket.destroyed) {
       const record = `${JSON.stringify(snapshot())}\n`;
       if (
+        Buffer.byteLength(record, "utf8") > MAX_OPERATOR_RECORD_BYTES ||
         socket.writableLength + Buffer.byteLength(record, "utf8") >
           MAX_OPERATOR_RECORD_BYTES * 2 ||
         !socket.write(record)

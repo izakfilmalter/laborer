@@ -1,14 +1,70 @@
 import { z } from "zod";
 
-export const OPERATOR_PROTOCOL_VERSION = 1 as const;
-export const MAX_OPERATOR_RECORD_BYTES = 4096;
+export const OPERATOR_PROTOCOL_VERSION = 2 as const;
+export const MAX_OPERATOR_RECORD_BYTES = 32 * 1024;
+export const MAX_OPERATOR_WORKSPACE_BINDINGS = 64;
 
 const boundedVersion = z.string().trim().min(1).max(64);
+const boundedIdentity = z.string().min(1).max(64);
+const bindingIdPattern = /^binding:\d+$/;
+const bindingLabelPattern = /^Workspace binding [1-9]\d*$/;
+const teamIdPattern = /^T[A-Z0-9]+$/;
+
+export const OperatorBindingDetailSchema = z.enum([
+  "authentication-unavailable",
+  "configuration-invalid",
+  "health-unavailable",
+  "identity-mismatch",
+  "ownership-unavailable",
+  "root-unavailable",
+  "runtime-unavailable",
+  "setup-required",
+  "startup-stopped",
+]);
+
+export const OperatorWorkspaceBindingSchema = z
+  .object({
+    detail: OperatorBindingDetailSchema.nullable(),
+    id: boundedIdentity,
+    label: boundedIdentity,
+    readiness: z.enum([
+      "pending",
+      "ready",
+      "setup-incomplete",
+      "unavailable",
+      "unknown",
+    ]),
+    teamId: boundedIdentity.nullable(),
+  })
+  .strict()
+  .refine(
+    (binding) =>
+      binding.teamId === null
+        ? bindingIdPattern.test(binding.id) &&
+          bindingLabelPattern.test(binding.label)
+        : (binding.id === `slack:${binding.teamId}` ||
+            bindingIdPattern.test(binding.id)) &&
+          binding.label === binding.teamId &&
+          teamIdPattern.test(binding.teamId),
+    "workspace identity is inconsistent"
+  )
+  .refine(
+    (binding) =>
+      binding.readiness === "ready" || binding.readiness === "pending"
+        ? binding.detail === null
+        : binding.detail !== null,
+    "workspace readiness detail is inconsistent"
+  );
+
+export type OperatorWorkspaceBinding = z.infer<
+  typeof OperatorWorkspaceBindingSchema
+>;
 
 const OperatorSnapshotSchema = z
   .object({
     daemon: z
       .object({
+        receiver: z.enum(["connecting", "connected"]),
         startedAtUnixMs: z.number().int().nonnegative(),
         version: boundedVersion,
       })
@@ -17,6 +73,9 @@ const OperatorSnapshotSchema = z
     observedAtUnixMs: z.number().int().nonnegative(),
     protocolVersion: z.literal(OPERATOR_PROTOCOL_VERSION),
     sequence: z.number().int().positive(),
+    workspaces: z
+      .array(OperatorWorkspaceBindingSchema)
+      .max(MAX_OPERATOR_WORKSPACE_BINDINGS),
   })
   .strict()
   .refine(

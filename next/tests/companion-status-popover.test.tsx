@@ -12,7 +12,21 @@ describe("companion status popover", () => {
       <StatusPopover
         quit={() => undefined}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 3723, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 3723,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+            },
+          ],
+        }}
       />
     );
 
@@ -23,6 +37,9 @@ describe("companion status popover", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "ready for Slack work"
     );
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "TFIRST" })).toBeTruthy();
+    expect(screen.getByText("No visible work in this workspace.")).toBeTruthy();
   });
 
   it("offers an explicit retry in unavailable and incompatible states", () => {
@@ -86,7 +103,13 @@ describe("companion status popover", () => {
       <StatusPopover
         quit={() => undefined}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [],
+        }}
       />
     );
     expect(screen.getByRole("status").textContent).toContain("Daemon running");
@@ -112,7 +135,13 @@ describe("companion status popover", () => {
       <StatusPopover
         quit={quit}
         reconnect={() => undefined}
-        status={{ state: "running", uptimeSeconds: 45, version: "0.1.0" }}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [],
+        }}
       />
     );
 
@@ -127,5 +156,48 @@ describe("companion status popover", () => {
       />
     );
     expect(screen.getByRole("button", { name: "Quit" })).toBeTruthy();
+  });
+
+  it("does not present a connected receiver with incomplete bindings as wholly ready", () => {
+    render(
+      <StatusPopover
+        quit={() => undefined}
+        reconnect={() => undefined}
+        status={{
+          receiver: "connected",
+          state: "running",
+          uptimeSeconds: 45,
+          version: "0.1.0",
+          workspaces: [
+            {
+              detail: null,
+              id: "slack:TFIRST",
+              label: "TFIRST",
+              readiness: "ready",
+              teamId: "TFIRST",
+            },
+            {
+              detail: "setup-required",
+              id: "slack:TSECOND",
+              label: "TSECOND",
+              readiness: "setup-incomplete",
+              teamId: "TSECOND",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Workspace setup required"
+    );
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("0 pending")).toBeTruthy();
+    expect(screen.getByText("1 unavailable")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Configure this workspace binding locally, then restart the daemon."
+      )
+    ).toBeTruthy();
   });
 });

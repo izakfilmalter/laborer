@@ -22,6 +22,7 @@ import { makeSlackNativeStreamCapability } from "./native-stream.ts";
 import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
 import { slackWebApiRequestPolicy } from "./web-api-request-policy.ts";
+import { makeWorkspaceBindingProjection } from "./workspace-binding-projection.ts";
 import { startSlackWorkspaceDirectory } from "./workspace-startup.ts";
 
 export const LIVE_SLACK_PROJECT_ROOT = fileURLToPath(
@@ -51,10 +52,12 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
   options: { readonly awaitWorkspacePreflight?: boolean } = {}
 ): Effect.fn.Return<LiveSlackClientGeneration, unknown, Scope.Scope> {
   const daemonRuntime = yield* prepareSlackRuntimePaths(projectRoot);
+  const operatorProjection = makeWorkspaceBindingProjection(config);
   yield* Effect.acquireRelease(
     Effect.tryPromise(() =>
       startOperatorStatusServer({
         paths: operatorStatusPaths(daemonRuntime.root),
+        projection: operatorProjection.snapshot,
         version: LABORER_VERSION,
       })
     ),
@@ -123,17 +126,18 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
     },
     config,
     environment: process.env,
-    ...(options.awaitWorkspacePreflight === true &&
-    config.startupMode !== "legacy"
-      ? {
-          observePreflight: (report) => {
-            settledBindings.add(report.bindingIndex);
-            if (settledBindings.size === config.installations.length) {
-              settlePreflight?.();
-            }
-          },
+    observePreflight: (report) => {
+      operatorProjection.observe(report);
+      if (
+        options.awaitWorkspacePreflight === true &&
+        config.startupMode !== "legacy"
+      ) {
+        settledBindings.add(report.bindingIndex);
+        if (settledBindings.size === config.installations.length) {
+          settlePreflight?.();
         }
-      : {}),
+      }
+    },
   });
   yield* Effect.promise(() => preflightSettled);
   const socketClient = new SocketModeClient({
@@ -141,6 +145,7 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
     logger: silentSocketLogger,
   });
   yield* startSocketModeAdapter({ client: socketClient, routeDirectory });
+  operatorProjection.markReceiverConnected();
   return {
     quiesce: routeDirectory.snapshot.pipe(
       Effect.flatMap((installations) =>

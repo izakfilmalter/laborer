@@ -25,7 +25,6 @@ import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
 import type { RootDurableRuntimeShape } from "../src/durable-runtime/root-runtime.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
-import { makeSlackGateway } from "../src/prototype/emulated-slack.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
@@ -43,7 +42,7 @@ import type {
   SlackDaemonConfig,
   SlackRuntimeIdentity,
 } from "../src/slack/config.ts";
-import { makeSlackImageInputHydrator } from "../src/slack/image-input.ts";
+import { makeSlackInboundImageResolver } from "../src/slack/inbound-images.ts";
 import { acquireRunnerLock } from "../src/slack/runner-lock.ts";
 import {
   prepareSlackRuntimePaths,
@@ -1010,7 +1009,7 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
           const bytes = Buffer.from([
             137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
           ]);
-          const digest = createHash("sha256").update(bytes).digest("base64url");
+          const digest = createHash("sha256").update(bytes).digest("hex");
           const authorizationHeaders: string[] = [];
           const imageClient = {
             files: {
@@ -1027,9 +1026,9 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
             },
             token: ["xox", "b-301-private-test-token"].join(""),
           };
-          const imageHydrator = makeSlackImageInputHydrator({
-            client: imageClient,
-            fetch: (_input, init) => {
+          const resolveImages = makeSlackInboundImageResolver({
+            client: imageClient as unknown as WebClient,
+            fetch: ((_input, init) => {
               authorizationHeaders.push(
                 new Headers(init?.headers).get("authorization") ?? ""
               );
@@ -1041,47 +1040,34 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
                   },
                 })
               );
-            },
-            storageRoot: paths.workThreads,
+            }) as typeof fetch,
+            storageRoot: dirname(paths.runnerState),
           });
+          const [image] = yield* resolveImages({
+            candidates: [{ id: "F301" }],
+            channelId: "C301",
+            messageTs: "301.0",
+          });
+          assert.isDefined(image);
+          const context = [
+            NormalizedMessage.make({
+              authorKind: "human",
+              authorSlackId: "U301HUMAN",
+              classification: "context",
+              id: stableMessageId("C301", "301.0", "T301IMAGE"),
+              images: image === undefined ? [] : [image],
+              isActivation: false,
+              slackTs: "301.0",
+              text: "",
+            }),
+          ];
           const messages: CapturedSlackMessage[] = [];
-          const captured = makeCapturingSlack(messages);
-          const history = makeSlackGateway({
-            botClient: {
-              conversations: {
-                replies: async () => ({
-                  messages: [
-                    {
-                      files: [{ id: "F301", mimetype: "image/png" }],
-                      text: "",
-                      ts: "301.0",
-                      user: "U301HUMAN",
-                    },
-                    {
-                      text: "<@U244LABORER> do the thing",
-                      thread_ts: "301.0",
-                      ts: "301.1",
-                      user: "U301HUMAN",
-                    },
-                  ],
-                }),
-              },
-            } as unknown as WebClient,
-            botId: "B244LABORER",
-            botUserId: "U244LABORER",
-            imageInputHydrator: imageHydrator,
-            pageSize: 100,
-            workspaceId: "T301IMAGE",
-          });
           const production = yield* makeProductionHarness({
+            context,
             environment: scriptedEnvironment(processPaths, {
               SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY: "1",
               SCRIPTED_ACP_PROMPT_CONTENT_JSONL_PATH: contentPath,
             }),
-            gateway: {
-              ...captured,
-              readActivationContext: history.readActivationContext,
-            },
             health: [],
             implementationCounters: {
               implementationAcquisitions: 0,

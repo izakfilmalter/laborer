@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type Logger as SocketLogger,
@@ -18,7 +19,6 @@ import { LABORER_VERSION } from "../version.ts";
 import { makeAcpSlackWorkspaceRunner } from "./acp-workspace-runner.ts";
 import type { SlackDaemonConfig } from "./config.ts";
 import { authenticateSlackBot } from "./identity.ts";
-import { makeSlackImageInputHydrator } from "./image-input.ts";
 import { makeSlackNativeStreamCapability } from "./native-stream.ts";
 import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
@@ -84,7 +84,14 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
           logger: silentSocketLogger,
           ...slackWebApiRequestPolicy,
         }),
-      makeGateway: ({ client, identity, namespaceWorkspace, paths }) =>
+      inboundImageResolverFor: (gateway) => gateway.resolveInboundImages,
+      makeGateway: ({
+        client,
+        enableInboundImages,
+        identity,
+        namespaceWorkspace,
+        paths,
+      }) =>
         makeSlackGateway({
           botClient: client,
           botId: identity.botId,
@@ -95,15 +102,10 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
             client: client.chat,
             recipientTeamId: identity.teamId,
           }),
-          ...(paths === undefined
-            ? {}
-            : {
-                imageInputHydrator: makeSlackImageInputHydrator({
-                  client,
-                  storageRoot: paths.workThreads,
-                }),
-              }),
           pageSize: 100,
+          ...(enableInboundImages === true && paths !== undefined
+            ? { storageRoot: dirname(paths.runnerState) }
+            : {}),
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),
       makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>

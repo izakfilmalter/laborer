@@ -31,6 +31,7 @@ import {
   ParticipantInputEvent,
   toPublicReplyProtocolRecord,
 } from "../application.ts";
+import type { ResolveSlackInboundImages } from "../slack/normalize.ts";
 import {
   type ConversationStreamDeliveryPolicy,
   makeConversationStreamDelivery,
@@ -95,6 +96,7 @@ export interface SlackGatewayShape {
     readonly import("./domain.ts").NormalizedMessage[],
     ContextReadError
   >;
+  readonly resolveInboundImages?: ResolveSlackInboundImages;
   readonly updateThreadMessage?: (request: {
     readonly channelId: string;
     readonly messageTs: string;

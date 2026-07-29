@@ -51,7 +51,7 @@ export interface OpenCodeAcpHarness {
   readonly permissionRequests: readonly RequestPermissionRequest[];
   readonly prompt: (
     sessionId: string,
-    content: string | ContentBlock[]
+    content: string | readonly ContentBlock[]
   ) => Promise<PromptResponse>;
   readonly resumeSession: (sessionId: string) => Promise<void>;
   readonly updates: readonly SessionNotification[];
@@ -314,10 +314,10 @@ export const startOpenCodeAcpHarness = async (
           prompt:
             typeof content === "string"
               ? [{ text: content, type: "text" }]
-              : content,
+              : [...content],
           sessionId,
         }),
-        "session/prompt"
+        `session/prompt (${typeof content === "string" ? content : "content blocks"})`
       ),
     resumeSession: async (sessionId) => {
       await request(

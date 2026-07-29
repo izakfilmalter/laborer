@@ -32,6 +32,8 @@ const promptLogPath = process.env.SCRIPTED_ACP_PROMPT_LOG_PATH;
 const promptJsonlPath = process.env.SCRIPTED_ACP_PROMPT_JSONL_PATH;
 const promptContentJsonlPath =
   process.env.SCRIPTED_ACP_PROMPT_CONTENT_JSONL_PATH;
+const imagePromptCapability =
+  process.env.SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY === "1";
 const sessionRequestJsonlPath =
   process.env.SCRIPTED_ACP_SESSION_REQUEST_JSONL_PATH;
 const sessionMethodJsonlPath =
@@ -55,8 +57,6 @@ const disablePromptMarker =
   process.env.SCRIPTED_ACP_DISABLE_PROMPT_MARKER === "1";
 const disablePromptEpochCapability =
   process.env.SCRIPTED_ACP_DISABLE_PROMPT_EPOCH_CAPABILITY === "1";
-const imagePromptCapability =
-  process.env.SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY === "1";
 const useOpenCodeMessageIds =
   process.env.SCRIPTED_ACP_USE_OPENCODE_MESSAGE_IDS === "1";
 const scriptedAgentName =
@@ -1412,9 +1412,7 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
           ? { _meta: { "laborer.dev/prompt-epoch/v1": true } }
           : {}),
         loadSession: false,
-        ...(imagePromptCapability
-          ? { promptCapabilities: { image: true } }
-          : {}),
+        promptCapabilities: { image: imagePromptCapability },
         sessionCapabilities: {
           close: {},
           ...(scriptedAgentName === "OpenCode" ? { list: {} } : {}),

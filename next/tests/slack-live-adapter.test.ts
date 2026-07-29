@@ -192,6 +192,7 @@ describe("live Slack normalization", () => {
             channelId: "CWORK",
             channelKind: "public",
             eventId: EventId.make("EvActivation"),
+            images: [],
             messageTs: "1.0",
             recordKind: "message",
             text: "<@ULABORER> run",

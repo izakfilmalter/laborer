@@ -8,6 +8,7 @@ import type {
 import { SlackStartupError } from "./errors.ts";
 import type { LoadedLaborerConfig } from "./laborer-config.ts";
 import { loadLaborerConfig } from "./laborer-config.ts";
+import type { ResolveSlackInboundImages } from "./normalize.ts";
 import { acquireRunnerLock } from "./runner-lock.ts";
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
 import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
@@ -45,9 +46,13 @@ export interface SlackWorkspaceStartupAdapter<Client, Gateway> {
   readonly authenticate: (
     client: Client
   ) => Effect.Effect<SlackRuntimeIdentity, unknown, never>;
+  readonly inboundImageResolverFor?: (
+    gateway: Gateway
+  ) => ResolveSlackInboundImages | undefined;
   readonly makeClient: (botToken: string) => Client;
   readonly makeGateway: (options: {
     readonly client: Client;
+    readonly enableInboundImages?: boolean;
     readonly identity: SlackRuntimeIdentity;
     readonly namespaceWorkspace: boolean;
     readonly paths?: SlackRuntimePaths;
@@ -384,17 +389,24 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
     }
     const gateway = options.adapter.makeGateway({
       client,
+      ...(prepared?._tag === "Success" &&
+      prepared.success.laborer.config.application !== undefined
+        ? { enableInboundImages: true }
+        : {}),
       identity,
       namespaceWorkspace: config.namespaceWorkspace,
       ...(prepared?._tag === "Success"
         ? { paths: prepared.success.paths }
         : {}),
     });
+    const resolveInboundImages =
+      options.adapter.inboundImageResolverFor?.(gateway);
     const unavailableInstallation: SlackWorkspaceInstallation = {
       identity,
       namespaceWorkspace: config.namespaceWorkspace,
       postSetupIncomplete:
         options.adapter.makeSetupIncompleteResponder(gateway),
+      ...(resolveInboundImages === undefined ? {} : { resolveInboundImages }),
     };
     if (config.root === undefined) {
       yield* Effect.logError("Slack workspace has no configured local root", {

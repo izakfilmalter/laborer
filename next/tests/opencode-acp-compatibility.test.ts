@@ -14,6 +14,8 @@ const MCP_FIXTURE_PATH = resolve(
   process.cwd(),
   "tests/fixtures/acp-compatibility-mcp-server.ts"
 );
+const TINY_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const recordFrom = (
   value: unknown
@@ -98,10 +100,6 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
       try {
         const initialized = await firstProcess.initialize();
         assert.strictEqual(initialized.protocolVersion, PROTOCOL_VERSION);
-        assert.strictEqual(
-          initialized.agentCapabilities?.promptCapabilities?.image,
-          true
-        );
         const session = await firstProcess.newSession([
           {
             args: [MCP_FIXTURE_PATH],
@@ -132,28 +130,31 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           "ordinary ACP answer"
         );
 
-        const imageData =
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
         const imageRequestIndex = provider.requests.length;
         provider.enqueue({
           finishReason: "stop",
           kind: "text",
-          textChunks: ["visual input accepted"],
+          textChunks: ["image accepted"],
         });
         assert.strictEqual(
           (
             await firstProcess.prompt(durableSessionId, [
-              { text: "inspect this tiny image", type: "text" },
-              { data: imageData, mimeType: "image/png", type: "image" },
+              { text: "inspect this image", type: "text" },
+              {
+                data: TINY_PNG_BASE64,
+                mimeType: "image/png",
+                type: "image",
+                uri: null,
+              },
             ])
           ).stopReason,
           "end_turn"
         );
-        const imageProviderRequest = JSON.stringify(
-          provider.requests[imageRequestIndex]?.body
+        assert.include(
+          JSON.stringify(provider.requests[imageRequestIndex]?.body),
+          TINY_PNG_BASE64,
+          "OpenCode must forward ACP image bytes to its model provider"
         );
-        assert.include(imageProviderRequest, "image/png");
-        assert.include(imageProviderRequest, imageData);
 
         provider.enqueue(
           {

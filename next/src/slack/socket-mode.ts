@@ -15,6 +15,7 @@ import type {
 import type { NormalizedInboundEvent } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SocketModeAdapterError } from "./errors.ts";
+import type { ResolveSlackInboundImages } from "./normalize.ts";
 import { normalizeSlackEvent } from "./normalize.ts";
 import type { WorkThreadActivityObservation } from "./work-thread-activity-projection.ts";
 
@@ -74,6 +75,7 @@ export interface SlackWorkspaceInstallation {
     readonly rootTs: string;
     readonly text: string;
   }) => Effect.Effect<void, unknown, never>;
+  readonly resolveInboundImages?: ResolveSlackInboundImages;
   readonly runner?: SlackEventInjector;
 }
 
@@ -520,6 +522,9 @@ const processForInstallation = (
 ): Effect.Effect<void, unknown> =>
   normalizeSlackEvent(body, installation.identity, {
     namespaceWorkspace: installation.namespaceWorkspace,
+    ...(installation.resolveInboundImages === undefined
+      ? {}
+      : { resolveImages: installation.resolveInboundImages }),
   }).pipe(
     Effect.flatMap((event) => {
       if (event === null) {

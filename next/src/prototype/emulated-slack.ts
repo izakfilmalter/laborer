@@ -4,19 +4,21 @@
  */
 import { createServer } from "node:net";
 import { type FetchFunction, WebClient } from "@slack/web-api";
-import {
-  Effect,
-  Array as EffectArray,
-  Order,
-  pipe,
-  Result,
-  type Scope,
-} from "effect";
+import { Effect, Array as EffectArray, Order, pipe, type Scope } from "effect";
 import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
-import type { SlackImageInputHydrator } from "../slack/image-input.ts";
-import type { NormalizedImageInput } from "./domain.ts";
-import { NormalizedMessage, stableMessageId } from "./domain.ts";
+import { SlackBoundaryError } from "../slack/errors.ts";
+import {
+  MAX_AGGREGATE_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
+  makeSlackInboundImageResolver,
+} from "../slack/inbound-images.ts";
+import type { ResolveSlackInboundImages } from "../slack/normalize.ts";
+import {
+  NormalizedMessage,
+  stableMessageId,
+  UnavailableNormalizedImageInput,
+} from "./domain.ts";
 import { ContextReadError, DeliveryError, EmulatorError } from "./errors.ts";
 import type {
   ActivationAcknowledgerShape,
@@ -221,13 +223,12 @@ export const normalizeSlackHistoryMessage = (options: {
   readonly botUserId: string;
   readonly channelId: string;
   readonly message: Record<string, unknown>;
-  readonly images?: readonly NormalizedImageInput[];
+  readonly images?: readonly import("./domain.ts").NormalizedImage[];
   readonly workspaceId?: string;
 }): NormalizedMessage | null => {
   const { message } = options;
   const slackTs = typeof message.ts === "string" ? message.ts : null;
-  const text = typeof message.text === "string" ? message.text : "";
-  const images = options.images ?? [];
+  const text = typeof message.text === "string" ? message.text : null;
   const subtype = typeof message.subtype === "string" ? message.subtype : null;
   const botId = typeof message.bot_id === "string" ? message.bot_id : null;
   const userId = typeof message.user === "string" ? message.user : null;
@@ -235,7 +236,8 @@ export const normalizeSlackHistoryMessage = (options: {
     subtype === null || subtype === "bot_message" || subtype === "file_share";
   if (
     slackTs === null ||
-    (text.trim().length === 0 && images.length === 0) ||
+    ((text === null || text.trim().length === 0) &&
+      (options.images?.length ?? 0) === 0) ||
     !supportedSubtype ||
     botId === options.botId ||
     userId === options.botUserId
@@ -249,13 +251,13 @@ export const normalizeSlackHistoryMessage = (options: {
   }
   return NormalizedMessage.make({
     id: stableMessageId(options.channelId, slackTs, options.workspaceId),
-    images,
     classification: "context",
     isActivation: false,
+    images: options.images ?? [],
     authorKind: isBot ? "externalBot" : "human",
     authorSlackId,
     slackTs,
-    text,
+    text: text ?? "",
   });
 };
 
@@ -283,44 +285,20 @@ const finalizeContext = (
     : sorted;
 };
 
-const normalizeHistoryMessage = Effect.fnUntraced(function* (options: {
-  readonly botId: string;
-  readonly botUserId: string;
-  readonly channelId: string;
-  readonly imageInputHydrator?: SlackImageInputHydrator;
-  readonly message: Record<string, unknown>;
-  readonly workspaceId?: string;
-}) {
-  const { message } = options;
-  const slackTs = typeof message.ts === "string" ? message.ts : null;
-  const subtype = typeof message.subtype === "string" ? message.subtype : null;
-  const botId = typeof message.bot_id === "string" ? message.bot_id : null;
-  const userId = typeof message.user === "string" ? message.user : null;
-  if (
-    slackTs === null ||
-    (subtype !== null &&
-      subtype !== "bot_message" &&
-      subtype !== "file_share") ||
-    botId === options.botId ||
-    userId === options.botUserId ||
-    (userId === null && botId === null)
-  ) {
-    return null;
-  }
-  const messageId = stableMessageId(
-    options.channelId,
-    slackTs,
-    options.workspaceId
+const imageCandidatesFromFiles = (
+  files: unknown
+): readonly { readonly id: string }[] =>
+  (Array.isArray(files) ? files : []).flatMap((file) =>
+    typeof file === "object" &&
+    file !== null &&
+    "id" in file &&
+    typeof file.id === "string" &&
+    "mimetype" in file &&
+    typeof file.mimetype === "string" &&
+    file.mimetype.toLowerCase().startsWith("image/")
+      ? [{ id: file.id }]
+      : []
   );
-  const images =
-    options.imageInputHydrator === undefined
-      ? []
-      : yield* options.imageInputHydrator.hydrate({
-          files: options.message.files,
-          messageId,
-        });
-  return normalizeSlackHistoryMessage({ ...options, images });
-});
 
 const normalizeReplyPage = Effect.fnUntraced(function* (
   messages: readonly Record<string, unknown>[],
@@ -328,7 +306,7 @@ const normalizeReplyPage = Effect.fnUntraced(function* (
   botId: string,
   botUserId: string,
   workspaceId?: string,
-  imageInputHydrator?: SlackImageInputHydrator
+  resolveImages?: ResolveSlackInboundImages
 ) {
   const eligible = pipe(
     messages,
@@ -337,23 +315,39 @@ const normalizeReplyPage = Effect.fnUntraced(function* (
     )
   );
   const normalized = yield* Effect.forEach(eligible, (message) =>
-    normalizeHistoryMessage({
-      botId,
-      botUserId,
-      channelId: request.channelId,
-      ...(imageInputHydrator === undefined || message.ts !== request.rootTs
-        ? {}
-        : { imageInputHydrator }),
-      message,
-      ...(workspaceId === undefined ? {} : { workspaceId }),
+    Effect.gen(function* () {
+      const candidates = imageCandidatesFromFiles(message.files);
+      const images =
+        candidates.length === 0 || resolveImages === undefined
+          ? []
+          : yield* resolveImages({
+              candidates,
+              channelId: request.channelId,
+              messageTs: typeof message.ts === "string" ? message.ts : "",
+            }).pipe(
+              Effect.catch((failure) =>
+                Effect.succeed(
+                  candidates.map((candidate, index) =>
+                    UnavailableNormalizedImageInput.make({
+                      failureReason: failure.reason,
+                      id: `${request.channelId}:${String(message.ts ?? "")}:${index}:${candidate.id}`,
+                      slackFileId: candidate.id,
+                    })
+                  )
+                )
+              )
+            );
+      return normalizeSlackHistoryMessage({
+        botId,
+        botUserId,
+        channelId: request.channelId,
+        images,
+        message,
+        ...(workspaceId === undefined ? {} : { workspaceId }),
+      });
     })
   );
-  return pipe(
-    normalized,
-    EffectArray.filterMap((message) =>
-      message === null ? Result.failVoid : Result.succeed(message)
-    )
-  );
+  return normalized.filter((message) => message !== null);
 });
 
 const nextPageCursor = (
@@ -378,15 +372,93 @@ export const makeSlackGateway = (options: {
   readonly conversationStreamDeliveryPolicy?: import("./conversation-stream-delivery.ts").ConversationStreamDeliveryPolicy;
   readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly pageSize: number;
-  readonly imageInputHydrator?: SlackImageInputHydrator;
+  readonly storageRoot?: string;
   readonly workspaceId?: string;
 }): SlackGatewayShape => {
+  const resolveInboundImages: ResolveSlackInboundImages | undefined =
+    options.storageRoot === undefined
+      ? undefined
+      : makeSlackInboundImageResolver({
+          client: options.botClient,
+          storageRoot: options.storageRoot,
+        });
+  const normalizeHistoryMessage = Effect.fnUntraced(function* (
+    message: Record<string, unknown>,
+    channelId: string,
+    imageResolver: ResolveSlackInboundImages | undefined = resolveInboundImages
+  ) {
+    const candidates = imageCandidatesFromFiles(message.files);
+    const slackTs = typeof message.ts === "string" ? message.ts : "";
+    const images =
+      candidates.length === 0 || imageResolver === undefined
+        ? []
+        : yield* imageResolver({
+            candidates,
+            channelId,
+            messageTs: slackTs,
+          }).pipe(
+            Effect.catch((failure) =>
+              Effect.succeed(
+                candidates.map((candidate, index) =>
+                  UnavailableNormalizedImageInput.make({
+                    failureReason: failure.reason,
+                    id: `${channelId}:${slackTs}:${index}:${candidate.id}`,
+                    slackFileId: candidate.id,
+                  })
+                )
+              )
+            )
+          );
+    return normalizeSlackHistoryMessage({
+      botId: options.botId ?? BOT_ID,
+      botUserId: options.botUserId ?? BOT_USER_ID,
+      channelId,
+      images,
+      message,
+      ...(options.workspaceId === undefined
+        ? {}
+        : { workspaceId: options.workspaceId }),
+    });
+  });
+  const makeBoundedContextImageResolver = () => {
+    if (resolveInboundImages === undefined) {
+      return undefined;
+    }
+    let remainingImages = MAX_IMAGES_PER_MESSAGE;
+    let remainingBytes = MAX_AGGREGATE_IMAGE_BYTES;
+    const resolve: ResolveSlackInboundImages = (request) => {
+      if (request.candidates.length > remainingImages) {
+        remainingImages = 0;
+        return SlackBoundaryError.make({
+          boundary: "slack-files-api",
+          reason: "image-count-limit",
+        });
+      }
+      remainingImages -= request.candidates.length;
+      return resolveInboundImages({
+        ...request,
+        maxAggregateBytes: remainingBytes,
+      }).pipe(
+        Effect.tap((images) =>
+          Effect.sync(() => {
+            remainingBytes -= images.reduce(
+              (total, image) =>
+                "failureReason" in image ? total : total + image.byteLength,
+              0
+            );
+          })
+        )
+      );
+    };
+    return resolve;
+  };
   const readRootContext = Effect.fnUntraced(function* (
     request: ActivationContextRequest
   ) {
     let cursor: string | undefined;
     let collected: NormalizedMessage[] = [];
     const seenCursors: string[] = [];
+    const contextImageResolver = makeBoundedContextImageResolver();
     do {
       const response = yield* Effect.tryPromise({
         try: () =>
@@ -404,31 +476,22 @@ export const makeSlackGateway = (options: {
           });
         },
       });
-      const eligible = pipe(
-        response.messages ?? [],
-        EffectArray.filter(
-          (message) =>
-            message.thread_ts === undefined &&
-            Number(message.ts) < Number(request.activationTs)
-        )
-      );
-      const normalizedCandidates = yield* Effect.forEach(eligible, (message) =>
-        normalizeHistoryMessage({
-          botId: options.botId ?? BOT_ID,
-          botUserId: options.botUserId ?? BOT_USER_ID,
-          channelId: request.channelId,
-          message: message as Record<string, unknown>,
-          ...(options.workspaceId === undefined
-            ? {}
-            : { workspaceId: options.workspaceId }),
-        })
-      );
-      const normalized = pipe(
-        normalizedCandidates,
-        EffectArray.filterMap((message) =>
-          message === null ? Result.failVoid : Result.succeed(message)
-        )
-      );
+      const normalized = (yield* Effect.forEach(
+        pipe(
+          response.messages ?? [],
+          EffectArray.filter(
+            (message) =>
+              message.thread_ts === undefined &&
+              Number(message.ts) < Number(request.activationTs)
+          )
+        ),
+        (message) =>
+          normalizeHistoryMessage(
+            message as Record<string, unknown>,
+            request.channelId,
+            contextImageResolver
+          )
+      )).filter((message) => message !== null);
       collected = EffectArray.appendAll(collected, normalized);
       const bounded = finalizeContext(collected, "root");
       if (bounded.length === ROOT_CONTEXT_MESSAGE_LIMIT) {
@@ -450,6 +513,7 @@ export const makeSlackGateway = (options: {
     const seenCursors: string[] = [];
     let reachedActivation = false;
     let reachedRoot = false;
+    const contextImageResolver = makeBoundedContextImageResolver();
     do {
       const response = yield* Effect.tryPromise({
         try: () =>
@@ -486,7 +550,7 @@ export const makeSlackGateway = (options: {
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
         options.workspaceId,
-        options.imageInputHydrator
+        contextImageResolver
       );
       collected = EffectArray.appendAll(collected, normalized);
       cursor = nextPageCursor(
@@ -521,7 +585,7 @@ export const makeSlackGateway = (options: {
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
         options.workspaceId,
-        options.imageInputHydrator
+        contextImageResolver
       );
     }
     return finalizeContext(collected, "reply");
@@ -537,6 +601,7 @@ export const makeSlackGateway = (options: {
     ...(options.nativeStreaming === undefined
       ? {}
       : { nativeStreaming: options.nativeStreaming }),
+    ...(resolveInboundImages === undefined ? {} : { resolveInboundImages }),
     readActivationContext: (request) =>
       request.isReplyActivation
         ? readReplyContext(request)

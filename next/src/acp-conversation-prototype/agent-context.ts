@@ -805,9 +805,9 @@ const renderMessage = (message: NormalizedMessage): string => {
   const images = pipe(
     message.images ?? [],
     EffectArray.map((image) =>
-      image._tag === "Ready"
-        ? `<laborer-image-input id="${xmlEscapeAttribute(image.id)}"/>`
-        : `<laborer-image-input-failed id="${xmlEscapeAttribute(image.id)}" reason="${image.reason}"/>`
+      "failureReason" in image
+        ? `<slack-image id="${xmlEscapeAttribute(image.id)}" unavailable="true" />`
+        : `<slack-image id="${xmlEscapeAttribute(image.id)}" mime-type="${xmlEscapeAttribute(image.mimeType)}" />`
     ),
     EffectArray.join("")
   );

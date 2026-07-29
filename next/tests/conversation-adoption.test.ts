@@ -248,26 +248,50 @@ const writeV15State = Effect.fnUntraced(function* (
   executions: readonly ReturnType<typeof persistedExecution>[]
 ) {
   const first = executions[0];
+  const firstResponse = first?.responses[0];
+  const firstEvent = first?.events[0];
   const executionEventOutbox =
-    first === undefined
+    first === undefined ||
+    firstResponse === undefined ||
+    firstEvent === undefined
       ? []
       : [
           {
-            contentHash: "pre-linearization-content-hash",
+            contentHash: createHash("sha256")
+              .update("laborer-execution-response-content-v1\0", "utf8")
+              .update(
+                JSON.stringify({
+                  eventId: firstResponse.eventId,
+                  responseId: firstResponse.responseId,
+                  text: firstResponse.text,
+                }),
+                "utf8"
+              )
+              .digest("base64url"),
             conversationId: CONVERSATION_ID,
             executionId: first.executionId,
             outboxId: "pre-linearization-outbox-id",
-            recordId: first.responses[0]?.responseId,
+            recordId: firstResponse.responseId,
             recordKind: "response",
             sequence: 1,
             status: "staged",
           },
           {
-            contentHash: "pre-linearization-event-content-hash",
+            contentHash: createHash("sha256")
+              .update("laborer-execution-event-content-v1\0", "utf8")
+              .update(
+                JSON.stringify({
+                  eventId: firstEvent.eventId,
+                  payload: firstEvent.payload,
+                  source: firstEvent.source,
+                }),
+                "utf8"
+              )
+              .digest("base64url"),
             conversationId: CONVERSATION_ID,
             executionId: first.executionId,
             outboxId: "pre-linearization-event-outbox-id",
-            recordId: first.events[0]?.eventId,
+            recordId: firstEvent.eventId,
             recordKind: "event",
             sequence: 2,
             status: "staged",
@@ -968,6 +992,96 @@ describe("issue #255 Conversation adoption", () => {
             );
             assert.strictEqual(requests.length, 1);
           }
+        })
+      )
+  );
+
+  it.live(
+    "keeps recovered live-Execution evidence behind the adoption linearization point",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-256-recovery-linearization-"
+          );
+          const path = join(root, "application.json");
+          const execution = persistedExecution(
+            "execution-recovery-linearization",
+            "running"
+          );
+          yield* writeV15State(path, [execution]);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const requests: ConversationAgentRequest[] = [];
+          const application = yield* makeReferenceCodingApplication({
+            conversationAdoptionHistory: {
+              read: () => Effect.succeed(historySnapshot),
+            },
+            conversationAgent: adoptingAgent(requests),
+            implementationAgent: {
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    sessionId: execution.implementationSessionId,
+                  },
+                  status: "available" as const,
+                }),
+              recover: () =>
+                Effect.succeed({
+                  completion: Effect.never,
+                  resume: () => Effect.void,
+                  sessionId: execution.implementationSessionId,
+                }),
+              start: () =>
+                Effect.die(new Error("recovery must not start a replacement")),
+            },
+            now: () => 255_000,
+            repository,
+            worktreeManager: {
+              create: () =>
+                Effect.die(new Error("recovery must not create a worktree")),
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    workingDirectory: execution.workingDirectory,
+                  },
+                  status: "available" as const,
+                }),
+            },
+          });
+          const acceptedBeforeAdoption: ExternalInputEvent[] = [];
+          yield* application.recover?.((event) =>
+            Effect.sync(() => {
+              acceptedBeforeAdoption.push(event);
+              return {
+                decision: { _tag: "Accepted" as const, eventId: event.eventId },
+                scheduling: "Scheduled" as const,
+              };
+            })
+          ) ?? Effect.void;
+
+          assert.deepStrictEqual(acceptedBeforeAdoption, []);
+          assert.deepStrictEqual(
+            (yield* repository.load).executionEventOutbox.map(
+              (item) => item.status
+            ),
+            ["staged", "staged"]
+          );
+
+          yield* runTurn(application, 2);
+          assert.strictEqual(requests.length, 1);
+          assert.ok(
+            !(requests[0]?.adoptionHistory ?? "").includes(
+              "private implementation output"
+            )
+          );
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]?.status,
+            "adopted"
+          );
         })
       )
   );

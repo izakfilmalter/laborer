@@ -93,8 +93,8 @@ flight when the daemon stopped remains unresolved because Slack provides no
 exactly-once key for these methods.
 
 Existing pre-ACP Conversations are adopted through a versioned migration ledger on
-their first ACP-handled participant turn, provided they have no ACP binding or
-live Execution. Laborer durably fixes the triggering-message cutoff before a
+their first ACP-handled participant turn, provided they have no ACP binding.
+Laborer durably fixes the triggering-message cutoff before a
 dedicated `conversations.replies` read, then retains the newest chronological
 suffix up to 90 days, 200 messages, and 256 KiB including trust and degradation
 markers. The snapshot uses current visible Slack text, excludes the triggering
@@ -111,6 +111,14 @@ different current-history digest before the seed is admitted, it preserves the
 first bounded snapshot evidence and becomes explicitly unresolved rather than
 silently changing the seed. Later participant and Execution events remain in the
 Runner FIFO until adoption is terminal.
+Live Executions keep their existing identity, owner, lifecycle, worktree, branch,
+implementation session, prompt queue, responses, and recovery evidence. Adoption
+adds a bounded, redacted, untrusted-reference snapshot of the owning
+Conversation's Executions to the seed; it does not copy implementation prompts or
+responses into public context. Startup holds pre-linearization Execution outbox
+evidence for a legacy Conversation until the participant-triggered adoption fixes
+its watermark. New Execution evidence then queues behind that point and targets
+only the adopted ACP binding.
 
 ACP tool permissions are fail-closed and one-shot. Laborer posts only a safe
 category, the authorized Slack actor, and **Allow once** or **Reject** controls;

@@ -5401,6 +5401,21 @@ export const makeReferenceCodingApplication = Effect.fn(
     );
   };
 
+  const conversationAwaitsAdoptionLinearization = (
+    state: ReferenceCodingApplicationState,
+    conversationId: string
+  ): boolean =>
+    conversationAdoptionEnabled &&
+    state.conversations.some(
+      (conversation) =>
+        conversation.conversationId === conversationId &&
+        conversation.origin === "legacy" &&
+        conversation.agentSessionBinding === null
+    ) &&
+    !state.conversationAdoptions.some(
+      (adoption) => adoption.conversationId === conversationId
+    );
+
   const applicationEventIsPreAdoptionExecutionEvidence = (
     state: ReferenceCodingApplicationState,
     event: ApplicationEvent
@@ -5564,6 +5579,9 @@ export const makeReferenceCodingApplication = Effect.fn(
       return;
     }
     const state = yield* Ref.get(applicationState);
+    if (conversationAwaitsAdoptionLinearization(state, conversationId)) {
+      return;
+    }
     const pending = state.executionEventOutbox
       .filter(
         (item) =>

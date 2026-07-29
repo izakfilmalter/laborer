@@ -14,6 +14,7 @@ oauth_config:
       - channels:history
       - groups:history
       - chat:write
+      - files:read
       - reactions:write
       - users:read
 settings:

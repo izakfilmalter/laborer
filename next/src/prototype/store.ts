@@ -4,7 +4,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { type FileHandle, open, rename, rm } from "node:fs/promises";
-import { dirname, isAbsolute, normalize } from "node:path";
+import { dirname, isAbsolute, normalize, sep } from "node:path";
 import {
   Context,
   Effect,
@@ -2043,6 +2043,7 @@ const acceptTransition = (
 
   const message = NormalizedMessage.make({
     id: messageId,
+    images: [],
     classification: "input",
     isActivation,
     authorKind: event.authorKind,
@@ -3192,7 +3193,12 @@ const makeStore = Effect.fnUntraced(function* (
           undefined,
           WorkThreadState.make({
             ...thread,
-            context,
+            context: context.map((message) =>
+              NormalizedMessage.make({
+                ...message,
+                images: message.images ?? [],
+              })
+            ),
             contextAttempts: thread.contextAttempts + 1,
             contextIsPartial: isPartial,
             contextRetryAtMillis: null,
@@ -3858,6 +3864,26 @@ const validateMessage = (
   if (classification === "context" && message.isActivation) {
     return storeFailure("validate", "context-message-is-activation");
   }
+  const images = message.images ?? [];
+  if (new Set(images.map((image) => image.id)).size !== images.length) {
+    return storeFailure("validate", "duplicate-image-input-id");
+  }
+  for (const image of images) {
+    if (image._tag !== "Ready") {
+      continue;
+    }
+    if (
+      !Number.isInteger(image.byteLength) ||
+      image.byteLength <= 0 ||
+      image.byteLength > 1024 * 1024 ||
+      isAbsolute(image.storagePath) ||
+      normalize(image.storagePath) !== image.storagePath ||
+      image.storagePath.startsWith(`..${sep}`) ||
+      image.storagePath === ".."
+    ) {
+      return storeFailure("validate", "invalid-image-input-reference");
+    }
+  }
   return null;
 };
 
@@ -4022,7 +4048,9 @@ const messagesEqual = (
       message.classification === candidate.classification &&
       message.isActivation === candidate.isActivation &&
       message.slackTs === candidate.slackTs &&
-      message.text === candidate.text
+      message.text === candidate.text &&
+      JSON.stringify(message.images ?? []) ===
+        JSON.stringify(candidate.images ?? [])
     );
   });
 

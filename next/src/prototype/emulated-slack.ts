@@ -14,7 +14,13 @@ import {
 } from "effect";
 import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
-import { NormalizedMessage, stableMessageId } from "./domain.ts";
+import type { SlackImageInputHydrator } from "../slack/image-input.ts";
+import {
+  FailedNormalizedImageInput,
+  type NormalizedImageInput,
+  NormalizedMessage,
+  stableMessageId,
+} from "./domain.ts";
 import { ContextReadError, DeliveryError, EmulatorError } from "./errors.ts";
 import type {
   ActivationAcknowledgerShape,
@@ -219,11 +225,13 @@ export const normalizeSlackHistoryMessage = (options: {
   readonly botUserId: string;
   readonly channelId: string;
   readonly message: Record<string, unknown>;
+  readonly images?: readonly NormalizedImageInput[];
   readonly workspaceId?: string;
 }): NormalizedMessage | null => {
   const { message } = options;
   const slackTs = typeof message.ts === "string" ? message.ts : null;
-  const text = typeof message.text === "string" ? message.text : null;
+  const text = typeof message.text === "string" ? message.text : "";
+  const images = options.images ?? [];
   const subtype = typeof message.subtype === "string" ? message.subtype : null;
   const botId = typeof message.bot_id === "string" ? message.bot_id : null;
   const userId = typeof message.user === "string" ? message.user : null;
@@ -231,8 +239,7 @@ export const normalizeSlackHistoryMessage = (options: {
     subtype === null || subtype === "bot_message" || subtype === "file_share";
   if (
     slackTs === null ||
-    text === null ||
-    text.trim().length === 0 ||
+    (text.trim().length === 0 && images.length === 0) ||
     !supportedSubtype ||
     botId === options.botId ||
     userId === options.botUserId
@@ -246,6 +253,7 @@ export const normalizeSlackHistoryMessage = (options: {
   }
   return NormalizedMessage.make({
     id: stableMessageId(options.channelId, slackTs, options.workspaceId),
+    images,
     classification: "context",
     isActivation: false,
     authorKind: isBot ? "externalBot" : "human",
@@ -279,29 +287,73 @@ const finalizeContext = (
     : sorted;
 };
 
-const normalizeReplyPage = (
+const normalizeHistoryMessage = Effect.fnUntraced(function* (options: {
+  readonly botId: string;
+  readonly botUserId: string;
+  readonly channelId: string;
+  readonly imageInputHydrator?: SlackImageInputHydrator;
+  readonly message: Record<string, unknown>;
+  readonly workspaceId?: string;
+}) {
+  const eligible = normalizeSlackHistoryMessage({
+    ...options,
+    images: [
+      FailedNormalizedImageInput.make({
+        id: "image:eligibility-check",
+        reason: "metadata-unavailable",
+      }),
+    ],
+  });
+  if (eligible === null) {
+    return null;
+  }
+  const slackTs =
+    typeof options.message.ts === "string" ? options.message.ts : null;
+  const messageId =
+    slackTs === null
+      ? "invalid-message"
+      : stableMessageId(options.channelId, slackTs, options.workspaceId);
+  const images =
+    options.imageInputHydrator === undefined
+      ? []
+      : yield* options.imageInputHydrator.hydrate({
+          files: options.message.files,
+          messageId,
+        });
+  return normalizeSlackHistoryMessage({ ...options, images });
+});
+
+const normalizeReplyPage = Effect.fnUntraced(function* (
   messages: readonly Record<string, unknown>[],
   request: ActivationContextRequest,
   botId: string,
   botUserId: string,
-  workspaceId?: string
-): NormalizedMessage[] =>
-  pipe(
+  workspaceId?: string,
+  imageInputHydrator?: SlackImageInputHydrator
+) {
+  const eligible = pipe(
     messages,
     EffectArray.filter(
       (message) => Number(message.ts) < Number(request.activationTs)
-    ),
-    EffectArray.filterMap((message) => {
-      const result = normalizeSlackHistoryMessage({
-        botId,
-        botUserId,
-        channelId: request.channelId,
-        message,
-        ...(workspaceId === undefined ? {} : { workspaceId }),
-      });
-      return result === null ? Result.failVoid : Result.succeed(result);
+    )
+  );
+  const normalized = yield* Effect.forEach(eligible, (message) =>
+    normalizeHistoryMessage({
+      botId,
+      botUserId,
+      channelId: request.channelId,
+      ...(imageInputHydrator === undefined ? {} : { imageInputHydrator }),
+      message,
+      ...(workspaceId === undefined ? {} : { workspaceId }),
     })
   );
+  return pipe(
+    normalized,
+    EffectArray.filterMap((message) =>
+      message === null ? Result.failVoid : Result.succeed(message)
+    )
+  );
+});
 
 const nextPageCursor = (
   next: string | undefined,
@@ -325,6 +377,7 @@ export const makeSlackGateway = (options: {
   readonly conversationStreamDeliveryPolicy?: import("./conversation-stream-delivery.ts").ConversationStreamDeliveryPolicy;
   readonly nativeStreaming?: SlackNativeStreamCapability;
   readonly pageSize: number;
+  readonly imageInputHydrator?: SlackImageInputHydrator;
   readonly workspaceId?: string;
 }): SlackGatewayShape => {
   const readRootContext = Effect.fnUntraced(function* (
@@ -350,25 +403,33 @@ export const makeSlackGateway = (options: {
           });
         },
       });
-      const normalized = pipe(
+      const eligible = pipe(
         response.messages ?? [],
         EffectArray.filter(
           (message) =>
             message.thread_ts === undefined &&
             Number(message.ts) < Number(request.activationTs)
-        ),
-        EffectArray.filterMap((message) => {
-          const result = normalizeSlackHistoryMessage({
-            botId: options.botId ?? BOT_ID,
-            botUserId: options.botUserId ?? BOT_USER_ID,
-            channelId: request.channelId,
-            message: message as Record<string, unknown>,
-            ...(options.workspaceId === undefined
-              ? {}
-              : { workspaceId: options.workspaceId }),
-          });
-          return result === null ? Result.failVoid : Result.succeed(result);
+        )
+      );
+      const normalizedCandidates = yield* Effect.forEach(eligible, (message) =>
+        normalizeHistoryMessage({
+          botId: options.botId ?? BOT_ID,
+          botUserId: options.botUserId ?? BOT_USER_ID,
+          channelId: request.channelId,
+          ...(options.imageInputHydrator === undefined
+            ? {}
+            : { imageInputHydrator: options.imageInputHydrator }),
+          message: message as Record<string, unknown>,
+          ...(options.workspaceId === undefined
+            ? {}
+            : { workspaceId: options.workspaceId }),
         })
+      );
+      const normalized = pipe(
+        normalizedCandidates,
+        EffectArray.filterMap((message) =>
+          message === null ? Result.failVoid : Result.succeed(message)
+        )
       );
       collected = EffectArray.appendAll(collected, normalized);
       const bounded = finalizeContext(collected, "root");
@@ -421,12 +482,13 @@ export const makeSlackGateway = (options: {
           response.messages ?? [],
           (message) => message.ts === request.rootTs
         );
-      const normalized = normalizeReplyPage(
+      const normalized = yield* normalizeReplyPage(
         (response.messages ?? []) as Record<string, unknown>[],
         request,
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
-        options.workspaceId
+        options.workspaceId,
+        options.imageInputHydrator
       );
       collected = EffectArray.appendAll(collected, normalized);
       cursor = nextPageCursor(
@@ -455,12 +517,13 @@ export const makeSlackGateway = (options: {
           });
         },
       });
-      collected = normalizeReplyPage(
+      collected = yield* normalizeReplyPage(
         (fallback.messages ?? []) as Record<string, unknown>[],
         request,
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
-        options.workspaceId
+        options.workspaceId,
+        options.imageInputHydrator
       );
     }
     return finalizeContext(collected, "reply");

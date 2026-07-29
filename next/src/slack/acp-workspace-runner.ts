@@ -138,6 +138,7 @@ type ProductionProcessOverrides = Partial<
     | "cwd"
     | "durableSessionMode"
     | "environment"
+    | "imageInputStorageRoot"
     | "laborerSlackId"
     | "memoryMcpServer"
     | "participantLookup"
@@ -340,6 +341,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
           cwd: options.root,
           durableSessionMode: true,
           environment: childEnvironment,
+          imageInputStorageRoot: options.paths.workThreads,
           laborerSlackId: options.laborerSlackId,
           memoryMcpServer,
           participantLookup:

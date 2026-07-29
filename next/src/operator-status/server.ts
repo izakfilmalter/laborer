@@ -8,6 +8,7 @@ import {
   MAX_OPERATOR_RECORD_BYTES,
   OPERATOR_PROTOCOL_VERSION,
   type OperatorSnapshot,
+  OperatorSnapshotSchema,
   type OperatorSubscribe,
   type OperatorWorkspaceBinding,
 } from "./protocol.ts";
@@ -277,7 +278,7 @@ export const startOperatorStatusServer = async (options: {
       receiver: "connecting" as const,
       workspaces: [],
     };
-    return {
+    return OperatorSnapshotSchema.parse({
       daemon: {
         receiver: projection.receiver,
         startedAtUnixMs,
@@ -288,11 +289,19 @@ export const startOperatorStatusServer = async (options: {
       protocolVersion: OPERATOR_PROTOCOL_VERSION,
       sequence,
       workspaces: [...projection.workspaces],
-    };
+    });
   };
   const publish = (socket: Socket): void => {
     if (!socket.destroyed) {
-      const record = `${JSON.stringify(snapshot())}\n`;
+      let record: string;
+      try {
+        record = `${JSON.stringify(snapshot())}\n`;
+      } catch {
+        // A projection is a local protocol boundary. Reject an invalid or
+        // unavailable projection for this client without taking down the daemon.
+        socket.destroy();
+        return;
+      }
       if (
         Buffer.byteLength(record, "utf8") > MAX_OPERATOR_RECORD_BYTES ||
         socket.writableLength + Buffer.byteLength(record, "utf8") >

@@ -213,6 +213,37 @@ describe("operator status protocol", () => {
     expect(response).toBe("");
   });
 
+  it("rejects a failed projection without taking down the status server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-projection-"));
+    const paths = operatorStatusPaths(root);
+    let projectionAvailable = false;
+    const server = await startOperatorStatusServer({
+      paths,
+      projection: () => {
+        if (!projectionAvailable) {
+          throw new Error("projection unavailable");
+        }
+        return { receiver: "connected", workspaces: [] };
+      },
+      tickIntervalMs: 60_000,
+      version: "0.1.0-test",
+    });
+    servers.push(server);
+    const token = await readFile(paths.token, "utf8");
+    const request = JSON.stringify({
+      kind: "subscribe",
+      protocolVersion: OPERATOR_PROTOCOL_VERSION,
+      token,
+    });
+
+    expect(await readFirstRecord(paths.socket, request)).toBe("");
+    projectionAvailable = true;
+    expect(
+      decodeOperatorSnapshot(await readFirstRecord(paths.socket, request))
+        .daemon.receiver
+    ).toBe("connected");
+  });
+
   it("fails closed when the status directory is not owner-only", async () => {
     const root = await mkdtemp(join(tmpdir(), "laborer-operator-scope-"));
     const paths = operatorStatusPaths(root);

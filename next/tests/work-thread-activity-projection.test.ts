@@ -210,6 +210,37 @@ describe("work-thread activity projection", () => {
     ]);
   });
 
+  it("does not hide an older blocked outbox head behind a large pending suffix", () => {
+    const blocked = OutboundItem.make({
+      deliveryAttempts: 1,
+      id: "outbound:blocked-head",
+      kind: "operational_notice",
+      lastErrorCategory: "permanent",
+      replyId: null,
+      retryAtMillis: null,
+      slackTs: null,
+      status: "blocked",
+      text: "sanitized notice",
+      turnId: TurnId.make("turn-blocked-head"),
+    });
+    const pending = Array.from({ length: 1024 }, (_, index) =>
+      OutboundItem.make({
+        ...blocked,
+        id: `outbound:pending-${index}`,
+        lastErrorCategory: null,
+        status: "pending",
+        turnId: TurnId.make(`turn-pending-${index}`),
+      })
+    );
+
+    expect(
+      observePrototypeWorkThreads(
+        state(thread("blocked-head", { outbox: [blocked, ...pending] })),
+        "TFIRST"
+      )[0]?.activity
+    ).toBe("needs-attention");
+  });
+
   it("moves delivered replies and settled handler failures to dormancy", () => {
     let now = 5000;
     const projection = makeWorkThreadActivityProjection({ now: () => now });

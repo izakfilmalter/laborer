@@ -473,6 +473,7 @@ const useNow = (intervalMs: number | null): number => {
     if (intervalMs === null) {
       return;
     }
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(timer);
   }, [intervalMs]);

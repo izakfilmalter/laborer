@@ -99,7 +99,7 @@ export type OperatorWorkspaceBinding = z.infer<
   typeof OperatorWorkspaceBindingSchema
 >;
 
-const OperatorSnapshotSchema = z
+export const OperatorSnapshotSchema = z
   .object({
     daemon: z
       .object({

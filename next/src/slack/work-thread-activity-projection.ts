@@ -26,11 +26,11 @@ export interface ExecutionActivityObservation {
 const MAX_DISPLAY_LABEL_LENGTH = 80;
 const MAX_RECENT_DORMANT_THREADS = 4;
 const MAX_PROJECTED_WORK_THREADS = 512;
-const MAX_RECENT_ACTIVITY_RECORDS = 1024;
+const MAX_RECENT_EVIDENCE_RECORDS = 1024;
 const CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]+$/;
 const SLACK_TIMESTAMP_PATTERN = /^\d{1,16}(?:\.\d{1,9})?$/;
 const recent = <A>(values: readonly A[]): readonly A[] =>
-  values.slice(-MAX_RECENT_ACTIVITY_RECORDS);
+  values.slice(-MAX_RECENT_EVIDENCE_RECORDS);
 const threadLabel = (thread: WorkThreadState): string =>
   `${CHANNEL_ID_PATTERN.test(thread.channelId) ? thread.channelId : "Slack"} · ${SLACK_TIMESTAMP_PATTERN.test(thread.rootTs) ? thread.rootTs : "0"}`.slice(
     0,
@@ -95,13 +95,10 @@ const activityForThread = (
   const tombstones = state.conversationStreamTombstones.filter(
     (stream) => stream.threadId === thread.id
   );
-  const recentOutbox = recent(thread.outbox);
-  const recentTurns = recent(thread.turns);
-  const recentApplicationEvents = recent(thread.applicationEvents);
   const blocked =
-    recentOutbox.some((item) => item.status === "blocked") ||
-    recentTurns.some((turn) => turn.status === "blocked") ||
-    recentApplicationEvents.some((event) => event.status === "blocked") ||
+    thread.outbox.some((item) => item.status === "blocked") ||
+    thread.turns.some((turn) => turn.status === "blocked") ||
+    thread.applicationEvents.some((event) => event.status === "blocked") ||
     streams.some((stream) => stream.lifecycle === "unresolved") ||
     tombstones.some((stream) => stream.lifecycle === "unresolved") ||
     threadExecutions.some(
@@ -115,16 +112,16 @@ const activityForThread = (
     thread.initializationStatus === "pending" ||
     thread.unassigned.length > 0 ||
     thread.applicationInputQueue.length > 0 ||
-    recentTurns.some(
+    thread.turns.some(
       (turn) => turn.status === "running" || turn.status === "awaiting_delivery"
     ) ||
-    recentApplicationEvents.some(
+    thread.applicationEvents.some(
       (event) =>
         event.status === "pending" ||
         event.status === "running" ||
         event.status === "awaiting_delivery"
     ) ||
-    recentOutbox.some(
+    thread.outbox.some(
       (item) => item.status === "pending" || item.status === "delivering"
     ) ||
     streams.some(

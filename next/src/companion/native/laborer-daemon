@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+CONTENTS="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+DAEMON="$CONTENTS/Resources/daemon"
+
+export NODE_ENV=production
+exec "$DAEMON/bin/node" "$DAEMON/app/src/slack/live.ts"

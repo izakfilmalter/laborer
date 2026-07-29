@@ -21,7 +21,7 @@ export type OperatorStatusView =
       readonly version: string;
     }
   | {
-      readonly state: "incompatible" | "unavailable";
+      readonly state: "incompatible" | "unavailable" | "version-mismatch";
       readonly uptimeSeconds: null;
       readonly version: null;
     };
@@ -33,6 +33,37 @@ const initialView: OperatorStatusView = {
   state: "connecting",
   uptimeSeconds: null,
   version: null,
+};
+
+class DaemonVersionMismatchError extends Error {}
+
+const failureStateForSnapshotError = (
+  error: unknown
+): "incompatible" | "unavailable" | "version-mismatch" => {
+  if (error instanceof DaemonVersionMismatchError) {
+    return "version-mismatch";
+  }
+  if (
+    error instanceof OperatorProtocolError &&
+    error.reason === "incompatible"
+  ) {
+    return "incompatible";
+  }
+  return "unavailable";
+};
+
+const decodeCompatibleSnapshot = (
+  source: string,
+  expectedDaemonVersion: string | undefined
+) => {
+  const snapshot = decodeOperatorSnapshot(source);
+  if (
+    expectedDaemonVersion !== undefined &&
+    snapshot.daemon.version !== expectedDaemonVersion
+  ) {
+    throw new DaemonVersionMismatchError();
+  }
+  return snapshot;
 };
 
 const assertOwnerOnlyDirectory = async (path: string): Promise<void> => {
@@ -92,6 +123,7 @@ const readOwnerToken = async (path: string): Promise<string> => {
 };
 
 export class OperatorStatusClient {
+  readonly #expectedDaemonVersion: string | undefined;
   readonly #listeners = new Set<OperatorStatusListener>();
   readonly #paths: OperatorStatusPaths;
   readonly #reconnectDelayMs: number;
@@ -104,10 +136,12 @@ export class OperatorStatusClient {
   #view: OperatorStatusView = initialView;
 
   constructor(options: {
+    readonly expectedDaemonVersion?: string;
     readonly paths: OperatorStatusPaths;
     readonly reconnectDelayMs?: number;
     readonly snapshotTimeoutMs?: number;
   }) {
+    this.#expectedDaemonVersion = options.expectedDaemonVersion;
     this.#paths = options.paths;
     this.#reconnectDelayMs = options.reconnectDelayMs ?? 1000;
     this.#snapshotTimeoutMs = options.snapshotTimeoutMs ?? 3000;
@@ -242,7 +276,9 @@ export class OperatorStatusClient {
         snapshotDeadline = null;
       }
     };
-    const fail = (state: "incompatible" | "unavailable"): void => {
+    const fail = (
+      state: "incompatible" | "unavailable" | "version-mismatch"
+    ): void => {
       if (settled || !isCurrentConnection()) {
         clearSnapshotDeadline();
         socket.destroy();
@@ -262,7 +298,7 @@ export class OperatorStatusClient {
         uptimeSeconds: null,
         version: null,
       });
-      if (state !== "incompatible") {
+      if (state === "unavailable") {
         this.#scheduleReconnect();
       }
     };
@@ -304,7 +340,10 @@ export class OperatorStatusClient {
         source = Buffer.alloc(0);
         remaining = remaining.subarray(newline + 1);
         try {
-          const snapshot = decodeOperatorSnapshot(record);
+          const snapshot = decodeCompatibleSnapshot(
+            record,
+            this.#expectedDaemonVersion
+          );
           if (snapshot.sequence <= lastSequence) {
             fail("unavailable");
             return;
@@ -324,12 +363,7 @@ export class OperatorStatusClient {
             version: snapshot.daemon.version,
           });
         } catch (error) {
-          fail(
-            error instanceof OperatorProtocolError &&
-              error.reason === "incompatible"
-              ? "incompatible"
-              : "unavailable"
-          );
+          fail(failureStateForSnapshotError(error));
           return;
         }
         newline = remaining.indexOf(0x0a);

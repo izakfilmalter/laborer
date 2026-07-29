@@ -126,6 +126,21 @@ the daemon. Both commands default
 to this package's `.laborer-runtime`; set `LABORER_RUNTIME_ROOT` for the
 companion when the daemon endpoint is rooted elsewhere.
 
+For the independent macOS 13+ service preview, package and open the complete
+application bundle instead. The companion registers its separate daemon with
+Service Management and reports approval and installation compatibility without
+claiming daemon health from registration alone:
+
+```sh
+bun run companion:package:macos
+open "release/macos-$(node -p 'process.arch')/Laborer.app"
+```
+
+Quitting or crashing the packaged companion leaves launchd and active Laborer
+work running. Architecture-specific Apple Silicon and Intel packaging, launch
+environment requirements, clean uninstall, and the opt-in macOS acceptance are
+documented in [`docs/macos-launch-agent.md`](docs/macos-launch-agent.md).
+
 The ACP child receives only required runtime variables and application
 environment names explicitly opted into by `laborer.json`; Slack, workspace
 registry, and Laborer bridge or memory authority variables are removed. Project

@@ -9,15 +9,19 @@ import {
   nativeTheme,
   Tray,
 } from "electron";
-import {
-  OperatorStatusClient,
-  type OperatorStatusView,
-} from "../operator-status/client.ts";
+import { OperatorStatusClient } from "../operator-status/client.ts";
 import { operatorStatusPaths } from "../operator-status/server.ts";
+import { LABORER_VERSION } from "../version.ts";
+import {
+  makeBundledServiceManagementRunner,
+  reconcileLaunchAgent,
+  type ServiceReconciliationState,
+} from "./service-management.ts";
 import {
   COMPANION_QUIT_CHANNEL,
   COMPANION_RECONNECT_CHANNEL,
   COMPANION_STATUS_CHANNEL,
+  type CompanionStatusView,
 } from "./shared.ts";
 
 const dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -44,7 +48,7 @@ const trayIcons = {
 } as const;
 
 const trayPresentation: Record<
-  OperatorStatusView["state"],
+  CompanionStatusView["state"],
   { readonly icon: Electron.NativeImage; readonly tooltip: string }
 > = {
   connecting: { icon: trayIcons.nominal, tooltip: "Laborer — connecting…" },
@@ -56,27 +60,117 @@ const trayPresentation: Record<
     icon: trayIcons.attention,
     tooltip: "Laborer — reconnecting…",
   },
+  "service-already-registered": {
+    icon: trayIcons.nominal,
+    tooltip: "Laborer — reconnecting to registered daemon…",
+  },
+  "service-denied": {
+    icon: trayIcons.attention,
+    tooltip: "Laborer — service permission denied",
+  },
+  "service-registering": {
+    icon: trayIcons.nominal,
+    tooltip: "Laborer — registering daemon…",
+  },
+  "service-registered": {
+    icon: trayIcons.nominal,
+    tooltip: "Laborer — daemon registered",
+  },
+  "service-requires-approval": {
+    icon: trayIcons.attention,
+    tooltip: "Laborer — service approval required",
+  },
+  "service-unavailable": {
+    icon: trayIcons.attention,
+    tooltip: "Laborer — service unavailable",
+  },
+  "service-version-mismatch": {
+    icon: trayIcons.attention,
+    tooltip: "Laborer — installation mismatch",
+  },
   running: { icon: trayIcons.nominal, tooltip: "Laborer — daemon running" },
   unavailable: {
     icon: trayIcons.attention,
     tooltip: "Laborer — daemon unavailable",
   },
+  "version-mismatch": {
+    icon: trayIcons.attention,
+    tooltip: "Laborer — daemon executable mismatch",
+  },
 };
 
 const runtimeRoot =
   process.env.LABORER_RUNTIME_ROOT ??
-  resolve(process.cwd(), ".laborer-runtime");
+  resolve(process.env.LABORER_ROOT ?? process.cwd(), ".laborer-runtime");
 const statusClient = new OperatorStatusClient({
+  expectedDaemonVersion: LABORER_VERSION,
   paths: operatorStatusPaths(runtimeRoot),
 });
-let latestStatus: OperatorStatusView = {
-  state: "connecting",
+let latestStatus: CompanionStatusView = {
+  state: app.isPackaged ? "service-registering" : "connecting",
   uptimeSeconds: null,
   version: null,
 };
 let popover: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let serviceReconciliation: Promise<void> | null = null;
+
+const serviceStatusState = (
+  state: ServiceReconciliationState
+):
+  | "service-already-registered"
+  | "service-denied"
+  | "service-registered"
+  | "service-requires-approval"
+  | "service-unavailable"
+  | "service-version-mismatch" => `service-${state}`;
+
+const publishStatus = (status: CompanionStatusView): void => {
+  if (status.state !== latestStatus.state && tray !== null) {
+    tray.setImage(trayPresentation[status.state].icon);
+    tray.setToolTip(trayPresentation[status.state].tooltip);
+  }
+  latestStatus = status;
+  if (popover !== null && !popover.isDestroyed()) {
+    popover.webContents.send(COMPANION_STATUS_CHANNEL, status);
+  }
+};
+
+const reconcileService = (): Promise<void> => {
+  if (!app.isPackaged) {
+    statusClient.reconnect();
+    return Promise.resolve();
+  }
+  if (serviceReconciliation !== null) {
+    return serviceReconciliation;
+  }
+  publishStatus({
+    state: "service-registering",
+    uptimeSeconds: null,
+    version: null,
+  });
+  serviceReconciliation = reconcileLaunchAgent(
+    makeBundledServiceManagementRunner(
+      resolve(process.resourcesPath, "service-management")
+    )
+  )
+    .then((state) => {
+      publishStatus({
+        state: serviceStatusState(state),
+        uptimeSeconds: null,
+        version: null,
+      });
+      if (state === "already-registered" || state === "registered") {
+        statusClient.start();
+        return;
+      }
+    })
+    .finally(() => {
+      serviceReconciliation = null;
+    });
+  return serviceReconciliation;
+};
 
 const positionPopover = (): void => {
   if (popover === null || tray === null) {
@@ -193,21 +287,12 @@ if (app.requestSingleInstanceLock()) {
       ipcMain.on(COMPANION_STATUS_CHANNEL, (event) => {
         event.sender.send(COMPANION_STATUS_CHANNEL, latestStatus);
       });
-      ipcMain.handle(COMPANION_RECONNECT_CHANNEL, () =>
-        statusClient.reconnect()
-      );
+      ipcMain.handle(COMPANION_RECONNECT_CHANNEL, () => reconcileService());
       ipcMain.handle(COMPANION_QUIT_CHANNEL, () => app.quit());
       statusClient.subscribe((status) => {
-        if (status.state !== latestStatus.state && tray !== null) {
-          tray.setImage(trayPresentation[status.state].icon);
-          tray.setToolTip(trayPresentation[status.state].tooltip);
-        }
-        latestStatus = status;
-        if (popover !== null && !popover.isDestroyed()) {
-          popover.webContents.send(COMPANION_STATUS_CHANNEL, status);
-        }
+        publishStatus(status);
       });
-      statusClient.start();
+      return reconcileService();
     })
     .catch(() => app.quit());
 } else {

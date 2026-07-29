@@ -325,6 +325,26 @@ describe("operator status client", () => {
     }
   });
 
+  it("fails closed when the daemon executable version is unsupported", async () => {
+    const root = await mkdtemp(join(tmpdir(), "laborer-operator-version-"));
+    const paths = operatorStatusPaths(root);
+    const server = await startOperatorStatusServer({
+      paths,
+      tickIntervalMs: 60_000,
+      version: "0.0.0-older",
+    });
+    servers.push(server);
+    const client = new OperatorStatusClient({
+      expectedDaemonVersion: "0.1.0",
+      paths,
+      reconnectDelayMs: 60_000,
+    });
+    clients.push(client);
+    client.start();
+
+    await waitForState(client, "version-mismatch");
+  });
+
   it("never sends authentication material through an unsafe status directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "laborer-operator-unsafe-"));
     const paths = operatorStatusPaths(root);

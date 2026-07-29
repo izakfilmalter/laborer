@@ -1,5 +1,20 @@
 import type { OperatorStatusView } from "../operator-status/client.ts";
 
+export type CompanionStatusView =
+  | OperatorStatusView
+  | {
+      readonly state:
+        | "service-denied"
+        | "service-already-registered"
+        | "service-registered"
+        | "service-registering"
+        | "service-requires-approval"
+        | "service-unavailable"
+        | "service-version-mismatch";
+      readonly uptimeSeconds: null;
+      readonly version: null;
+    };
+
 export const COMPANION_STATUS_CHANNEL = "companion:status";
 export const COMPANION_RECONNECT_CHANNEL = "companion:reconnect";
 export const COMPANION_QUIT_CHANNEL = "companion:quit";
@@ -14,7 +29,7 @@ const exactKeys = (value: object, expected: readonly string[]): boolean => {
 
 export const isOperatorStatusView = (
   value: unknown
-): value is OperatorStatusView => {
+): value is CompanionStatusView => {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -34,9 +49,20 @@ export const isOperatorStatusView = (
     );
   }
   return (
-    ["connecting", "reconnecting", "unavailable", "incompatible"].includes(
-      String(candidate.state)
-    ) &&
+    [
+      "connecting",
+      "incompatible",
+      "reconnecting",
+      "service-denied",
+      "service-already-registered",
+      "service-registered",
+      "service-registering",
+      "service-requires-approval",
+      "service-unavailable",
+      "service-version-mismatch",
+      "unavailable",
+      "version-mismatch",
+    ].includes(String(candidate.state)) &&
     candidate.version === null &&
     candidate.uptimeSeconds === null
   );
@@ -46,6 +72,6 @@ export interface LaborerCompanionBridge {
   readonly quit: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
   readonly subscribeStatus: (
-    listener: (view: OperatorStatusView) => void
+    listener: (view: CompanionStatusView) => void
   ) => () => void;
 }

@@ -34,5 +34,20 @@ describe("companion renderer boundary", () => {
         version: "0.1.0",
       })
     ).toBe(false);
+    expect(
+      isOperatorStatusView({
+        state: "service-requires-approval",
+        uptimeSeconds: null,
+        version: null,
+      })
+    ).toBe(true);
+    expect(
+      isOperatorStatusView({
+        diagnostics: "private service error",
+        state: "service-denied",
+        uptimeSeconds: null,
+        version: null,
+      })
+    ).toBe(false);
   });
 });

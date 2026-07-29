@@ -25,6 +25,7 @@ import { slackWebApiRequestPolicy } from "./web-api-request-policy.ts";
 import { startSlackWorkspaceDirectory } from "./workspace-startup.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const DEFAULT_LABORER_ROOT = process.env.LABORER_ROOT ?? PROJECT_ROOT;
 
 const silentSocketLogger: SocketLogger = {
   debug: () => undefined,
@@ -47,8 +48,10 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 });
 
 const program = Effect.gen(function* () {
-  const config = yield* loadSlackDaemonConfig({ defaultRoot: PROJECT_ROOT });
-  const daemonRuntime = yield* prepareSlackRuntimePaths(PROJECT_ROOT);
+  const config = yield* loadSlackDaemonConfig({
+    defaultRoot: DEFAULT_LABORER_ROOT,
+  });
+  const daemonRuntime = yield* prepareSlackRuntimePaths(DEFAULT_LABORER_ROOT);
   yield* Effect.acquireRelease(
     Effect.tryPromise(() =>
       startOperatorStatusServer({

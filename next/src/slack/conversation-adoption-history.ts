@@ -1,7 +1,21 @@
 import { createHash } from "node:crypto";
 import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
+import {
+  type NormalizedImage,
+  UnavailableNormalizedImageInput,
+} from "../prototype/domain.ts";
 import { classifySlackError } from "./error-classification.ts";
+import { SlackBoundaryError } from "./errors.ts";
+import {
+  INBOUND_IMAGE_SET_TIMEOUT_MILLIS,
+  MAX_AGGREGATE_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
+} from "./inbound-images.ts";
+import type {
+  ResolveSlackInboundImages,
+  SlackInboundImageCandidate,
+} from "./normalize.ts";
 
 export const CONVERSATION_ADOPTION_HISTORY_MAX_AGE_DAYS = 90;
 export const CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES = 200;
@@ -26,6 +40,7 @@ export type ConversationAdoptionHistoryAuthorKind =
 export interface ConversationAdoptionHistoryMessage {
   readonly authorKind: ConversationAdoptionHistoryAuthorKind;
   readonly authorSlackId: string;
+  readonly images: readonly NormalizedImage[];
   readonly imageUnavailable?: true;
   readonly messageId: string;
   readonly slackTs: string;
@@ -52,6 +67,7 @@ export interface ConversationAdoptionHistorySnapshot {
   readonly diagnosticCodes: readonly ConversationAdoptionHistoryDiagnosticCode[];
   readonly digest: string;
   readonly firstSlackTs: string | null;
+  readonly images: readonly NormalizedImage[];
   readonly lastSlackTs: string | null;
   readonly messageCount: number;
   readonly rendered: string;
@@ -98,6 +114,7 @@ export interface SlackConversationAdoptionHistoryOptions {
   readonly now?: () => number;
   readonly pageSize?: number;
   readonly requestTimeoutMillis?: number;
+  readonly resolveImages?: ResolveSlackInboundImages;
   readonly transientRetries?: number;
   readonly workspaceId: string;
 }
@@ -171,6 +188,21 @@ const supportedSubtype = (subtype: string | null): boolean =>
   subtype === "file_share" ||
   subtype === "thread_broadcast";
 
+const imageCandidatesFor = (
+  message: Record<string, unknown>
+): readonly SlackInboundImageCandidate[] =>
+  (Array.isArray(message.files) ? message.files : []).flatMap((file) =>
+    typeof file === "object" &&
+    file !== null &&
+    "id" in file &&
+    typeof file.id === "string" &&
+    (!("mimetype" in file) ||
+      (typeof file.mimetype === "string" &&
+        file.mimetype.toLowerCase().startsWith("image/")))
+      ? [{ id: file.id }]
+      : []
+  );
+
 export const normalizeConversationAdoptionHistoryMessage = (options: {
   readonly botId: string;
   readonly botUserId: string;
@@ -182,15 +214,8 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
     typeof options.message.ts === "string" ? options.message.ts : null;
   const text =
     typeof options.message.text === "string" ? options.message.text : null;
-  const imageUnavailable =
-    Array.isArray(options.message.files) &&
-    options.message.files.some(
-      (file) =>
-        typeof file === "object" &&
-        file !== null &&
-        "id" in file &&
-        typeof file.id === "string"
-    );
+  const imageCandidates = imageCandidatesFor(options.message);
+  const imageUnavailable = imageCandidates.length > 0;
   const subtype =
     typeof options.message.subtype === "string"
       ? options.message.subtype
@@ -229,6 +254,13 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
   return {
     authorKind,
     authorSlackId,
+    images: imageCandidates.map((candidate, index) =>
+      UnavailableNormalizedImageInput.make({
+        failureReason: "adoption-history-not-hydrated",
+        id: `${options.channelId}:${slackTs}:${index}:${candidate.id}`,
+        slackFileId: candidate.id,
+      })
+    ),
     messageId: stableHistoryMessageId({
       channelId: options.channelId,
       slackTs,
@@ -241,7 +273,13 @@ export const normalizeConversationAdoptionHistoryMessage = (options: {
 };
 
 const renderMessage = (message: ConversationAdoptionHistoryMessage): string =>
-  `<slack-message author-kind="${xmlEscape(message.authorKind, true)}" author-slack-id="${xmlEscape(message.authorSlackId, true)}" id="${xmlEscape(message.messageId, true)}" slack-ts="${xmlEscape(message.slackTs, true)}">${xmlEscape(message.text)}${message.imageUnavailable === true ? '<slack-image unavailable="true" reason="adoption-history-not-hydrated" />' : ""}</slack-message>`;
+  `<slack-message author-kind="${xmlEscape(message.authorKind, true)}" author-slack-id="${xmlEscape(message.authorSlackId, true)}" id="${xmlEscape(message.messageId, true)}" slack-ts="${xmlEscape(message.slackTs, true)}">${xmlEscape(message.text)}${message.images
+    .map((image) =>
+      "failureReason" in image
+        ? `<slack-image id="${xmlEscape(image.id, true)}" unavailable="true" reason="${xmlEscape(image.failureReason, true)}" />`
+        : `<slack-image id="${xmlEscape(image.id, true)}" mime-type="${xmlEscape(image.mimeType, true)}" />`
+    )
+    .join("")}</slack-message>`;
 
 const renderHistory = (options: {
   readonly degradation: ConversationAdoptionHistorySnapshot["degradation"];
@@ -311,6 +349,7 @@ const boundedSnapshot = (options: {
           .update(rendered, "utf8")
           .digest("base64url"),
         firstSlackTs: retained[0]?.slackTs ?? null,
+        images: retained.flatMap((message) => message.images),
         lastSlackTs: retained.at(-1)?.slackTs ?? null,
         messageCount: retained.length,
         rendered,
@@ -407,6 +446,7 @@ export const makeSlackConversationAdoptionHistoryGateway = (
       const deadline = now() + requestTimeoutMillis;
       const diagnostics: ConversationAdoptionHistoryDiagnosticCode[] = [];
       const byTimestamp = new Map<string, ConversationAdoptionHistoryMessage>();
+      const rawByTimestamp = new Map<string, Record<string, unknown>>();
       const seenCursors = new Set<string>();
       let cursor: string | undefined;
       let page = 0;
@@ -495,6 +535,7 @@ export const makeSlackConversationAdoptionHistoryGateway = (
             continue;
           }
           byTimestamp.set(message.slackTs, message);
+          rawByTimestamp.set(message.slackTs, rawMessage);
         }
         const nextCursor = response.response_metadata?.next_cursor;
         if (nextCursor === undefined || nextCursor.length === 0) {
@@ -513,7 +554,7 @@ export const makeSlackConversationAdoptionHistoryGateway = (
         diagnostics.push("page-limit");
         complete = false;
       }
-      const messages = [...byTimestamp.values()].sort((left, right) => {
+      let messages = [...byTimestamp.values()].sort((left, right) => {
         const leftTs = timestampMicros(left.slackTs) ?? 0n;
         const rightTs = timestampMicros(right.slackTs) ?? 0n;
         if (leftTs < rightTs) {
@@ -521,6 +562,121 @@ export const makeSlackConversationAdoptionHistoryGateway = (
         }
         return leftTs > rightTs ? 1 : 0;
       });
+      const hydrationStart = Math.max(
+        0,
+        messages.length - CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES
+      );
+      const hydrationPrefix = messages.slice(0, hydrationStart);
+      const relevantMessages = messages.slice(hydrationStart);
+      const candidateCount = relevantMessages.reduce(
+        (total, message) =>
+          total +
+          imageCandidatesFor(rawByTimestamp.get(message.slackTs) ?? {}).length,
+        0
+      );
+      if (candidateCount > MAX_IMAGES_PER_MESSAGE) {
+        messages = [
+          ...hydrationPrefix,
+          ...relevantMessages.map((message) => ({
+            ...message,
+            images: message.images.map((image) =>
+              UnavailableNormalizedImageInput.make({
+                failureReason: "image-count-limit",
+                id: image.id,
+                slackFileId: image.slackFileId,
+              })
+            ),
+          })),
+        ];
+      } else if (options.resolveImages !== undefined) {
+        let remainingBytes = MAX_AGGREGATE_IMAGE_BYTES;
+        const hydrated: ConversationAdoptionHistoryMessage[] = [];
+        for (const message of relevantMessages) {
+          const candidates = imageCandidatesFor(
+            rawByTimestamp.get(message.slackTs) ?? {}
+          );
+          if (candidates.length === 0) {
+            hydrated.push(message);
+            continue;
+          }
+          try {
+            const resolution = await Effect.runPromise(
+              Effect.result(
+                options
+                  .resolveImages({
+                    candidates,
+                    channelId: request.channelId,
+                    maxAggregateBytes: remainingBytes,
+                    messageTs: message.slackTs,
+                  })
+                  .pipe(
+                    Effect.timeoutOrElse({
+                      duration: Math.max(
+                        1,
+                        Math.min(
+                          deadline - now(),
+                          INBOUND_IMAGE_SET_TIMEOUT_MILLIS
+                        )
+                      ),
+                      orElse: () =>
+                        SlackBoundaryError.make({
+                          boundary: "slack-files-api",
+                          reason: "download-timeout",
+                        }),
+                    })
+                  )
+              )
+            );
+            if (resolution._tag === "Failure") {
+              hydrated.push({
+                ...message,
+                imageUnavailable: true,
+                images: candidates.map((candidate, index) =>
+                  UnavailableNormalizedImageInput.make({
+                    failureReason: resolution.failure.reason,
+                    id: `${request.channelId}:${message.slackTs}:${index}:${candidate.id}`,
+                    slackFileId: candidate.id,
+                  })
+                ),
+              });
+              continue;
+            }
+            const images = resolution.success;
+            remainingBytes -= images.reduce(
+              (total, image) =>
+                "failureReason" in image ? total : total + image.byteLength,
+              0
+            );
+            hydrated.push({
+              ...message,
+              ...(images.some((image) => "failureReason" in image)
+                ? { imageUnavailable: true as const }
+                : {}),
+              images,
+            });
+          } catch (cause) {
+            const reason =
+              typeof cause === "object" &&
+              cause !== null &&
+              "reason" in cause &&
+              typeof cause.reason === "string"
+                ? cause.reason
+                : "image-hydration-failed";
+            hydrated.push({
+              ...message,
+              imageUnavailable: true,
+              images: candidates.map((candidate, index) =>
+                UnavailableNormalizedImageInput.make({
+                  failureReason: reason,
+                  id: `${request.channelId}:${message.slackTs}:${index}:${candidate.id}`,
+                  slackFileId: candidate.id,
+                })
+              ),
+            });
+          }
+        }
+        messages = [...hydrationPrefix, ...hydrated];
+      }
       let degradation: ConversationAdoptionHistorySnapshot["degradation"] =
         "complete";
       if (!complete) {

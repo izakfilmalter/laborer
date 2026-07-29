@@ -699,6 +699,16 @@ workspace installations must be reauthorized after updating the manifest;
 without reauthorization, Laborer fails the required image input explicitly
 rather than submitting a text-only Conversation prompt.
 
+Hydrated image bytes are content-addressed below the owning Runner's
+`inbound-images/` directory. Startup retains every image referenced by
+unassigned input, a nonterminal Turn, or a Turn with recoverable outbound
+delivery. Once no such durable reference remains, content is reclaimable after
+a seven-day interruption grace period. Cleanup inventories and validates the
+whole owner-only directory before unlinking in stable name order; unknown
+entries, symlinks, ambiguous ownership, or unsafe permissions fail closed.
+An interrupted pass is idempotently resumed at the next startup. Durable
+Runner state is never rewritten by image cleanup.
+
 ## What this prototype genuinely proves
 
 - An activation is persisted as unassigned normalized input before context or

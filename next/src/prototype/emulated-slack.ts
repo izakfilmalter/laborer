@@ -9,6 +9,7 @@ import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
 import { SlackBoundaryError } from "../slack/errors.ts";
 import {
+  INBOUND_IMAGE_SET_TIMEOUT_MILLIS,
   MAX_AGGREGATE_IMAGE_BYTES,
   MAX_IMAGES_PER_MESSAGE,
   makeSlackInboundImageResolver,
@@ -426,6 +427,7 @@ export const makeSlackGateway = (options: {
     }
     let remainingImages = MAX_IMAGES_PER_MESSAGE;
     let remainingBytes = MAX_AGGREGATE_IMAGE_BYTES;
+    const deadline = Date.now() + INBOUND_IMAGE_SET_TIMEOUT_MILLIS;
     const resolve: ResolveSlackInboundImages = (request) => {
       if (request.candidates.length > remainingImages) {
         remainingImages = 0;
@@ -439,6 +441,14 @@ export const makeSlackGateway = (options: {
         ...request,
         maxAggregateBytes: remainingBytes,
       }).pipe(
+        Effect.timeoutOrElse({
+          duration: Math.max(1, deadline - Date.now()),
+          orElse: () =>
+            SlackBoundaryError.make({
+              boundary: "slack-files-api",
+              reason: "download-timeout",
+            }),
+        }),
         Effect.tap((images) =>
           Effect.sync(() => {
             remainingBytes -= images.reduce(

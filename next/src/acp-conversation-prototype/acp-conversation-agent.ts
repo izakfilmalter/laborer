@@ -72,7 +72,8 @@ import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts"
 
 const MAX_PROMPT_BYTES = 256 * 1024;
 const MAX_PROMPT_IMAGES = 4;
-const MAX_PROMPT_IMAGE_BYTES = 1024 * 1024;
+// Keep decoded bytes below 768 KiB so base64 remains within 1 MiB before JSON.
+const MAX_PROMPT_IMAGE_BYTES = 768 * 1024;
 const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024;
 const MAX_PUBLIC_MESSAGES = 32;
 const CHILD_EXIT_GRACE_MILLIS = 2000;
@@ -1270,9 +1271,12 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
     input = rendered.prompt;
     submittedParticipantIds = rendered.introducedParticipantIds;
   }
-  const images = [...request.context, ...request.messages].flatMap(
-    (message) => message.images ?? []
-  );
+  const images = [
+    ...(request.adoptionImages ?? []),
+    ...[...request.context, ...request.messages].flatMap(
+      (message) => message.images ?? []
+    ),
+  ];
   if (images.some((image) => "failureReason" in image)) {
     return yield* imageInputFailure(
       "required image input is unavailable; re-upload a supported image and try again"

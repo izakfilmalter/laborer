@@ -41,11 +41,12 @@ import { applicationThroughRootConversationRuntime } from "../durable-runtime/co
 import { conversationCapabilitiesForRootRuntime } from "../durable-runtime/reference-coding-application.ts";
 import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
+import type { NormalizedMessage, PrototypeState } from "../prototype/domain.ts";
 import {
   makeSlackActivationAcknowledger,
   makeSlackCompletionReactor,
 } from "../prototype/emulated-slack.ts";
-import type { HandlerFailure, StoreError } from "../prototype/errors.ts";
+import { HandlerFailure, type StoreError } from "../prototype/errors.ts";
 import type {
   PrototypeHarness,
   SlackGatewayShape,
@@ -61,6 +62,10 @@ import {
 } from "./acp-recovery.ts";
 import { makeSlackConversationAdoptionHistoryGateway } from "./conversation-adoption-history.ts";
 import { environmentForAcpConversation } from "./handler-environment.ts";
+import {
+  cleanupInboundImageStorage,
+  makeSlackInboundImageResolver,
+} from "./inbound-images.ts";
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
 import { observePrototypeWorkThreads } from "./work-thread-activity-projection.ts";
 import {
@@ -85,6 +90,42 @@ export interface AcpWorkspaceHealth
   readonly status: AcpConversationProcessHealth["status"];
   readonly workspaceId: string;
 }
+
+const liveInboundImagePaths = (state: PrototypeState): ReadonlySet<string> => {
+  const paths = new Set<string>();
+  const retainMessages = (messages: readonly NormalizedMessage[]): void => {
+    for (const message of messages) {
+      for (const image of message.images ?? []) {
+        if (!("failureReason" in image)) {
+          paths.add(image.contentPath);
+        }
+      }
+    }
+  };
+  for (const thread of state.threads) {
+    retainMessages(thread.unassigned);
+    const recoverableDeliveryTurns = new Set(
+      thread.outbox
+        .filter(
+          (item) => item.status !== "delivered" && item.status !== "abandoned"
+        )
+        .map((item) => item.turnId)
+    );
+    for (const turn of thread.turns) {
+      if (
+        (turn.status !== "completed" && turn.status !== "failed") ||
+        recoverableDeliveryTurns.has(turn.id)
+      ) {
+        retainMessages(turn.context);
+        retainMessages(turn.messages);
+      }
+    }
+    if (thread.turns.length === 0 && thread.contextStatus === "ready") {
+      retainMessages(thread.context);
+    }
+  }
+  return paths;
+};
 
 const supervisorHealthForProcessStatus = (
   status: AcpConversationProcessHealth["status"]
@@ -394,6 +435,10 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
             botId: options.laborerBotId ?? "",
             botUserId: options.laborerSlackId,
             client: options.client,
+            resolveImages: makeSlackInboundImageResolver({
+              client: options.client,
+              storageRoot: dirname(options.paths.runnerState),
+            }),
             workspaceId: options.workspaceId,
           }),
         ...(options.rootRuntime === undefined ||
@@ -488,6 +533,18 @@ export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
         { initializeNewThreads: false }
       ),
   });
+  const runnerSnapshot = yield* harness.store.snapshot;
+  yield* cleanupInboundImageStorage({
+    liveContentPaths: liveInboundImagePaths(runnerSnapshot),
+    storageRoot: dirname(options.paths.runnerState),
+  }).pipe(
+    Effect.mapError(() =>
+      HandlerFailure.make({
+        category: "protocol",
+        safeDetail: "Inbound image retention cleanup failed",
+      })
+    )
+  );
   return { ...workspace, harness };
 });
 

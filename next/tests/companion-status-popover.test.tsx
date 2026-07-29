@@ -39,9 +39,11 @@ describe("companion status popover", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "ready for Slack work"
     );
-    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("1 ready")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "TFIRST" })).toBeTruthy();
-    expect(screen.getByText("No visible work in this workspace.")).toBeTruthy();
+    expect(
+      screen.getByText("Connected and listening for Slack work.")
+    ).toBeTruthy();
   });
 
   it("offers an explicit retry in unavailable and incompatible states", () => {
@@ -193,9 +195,9 @@ describe("companion status popover", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "Workspace setup required"
     );
-    expect(screen.getByText("1 connected")).toBeTruthy();
-    expect(screen.getByText("0 pending")).toBeTruthy();
-    expect(screen.getByText("1 unavailable")).toBeTruthy();
+    expect(screen.getByText("1 ready")).toBeTruthy();
+    expect(screen.getByText("0 starting")).toBeTruthy();
+    expect(screen.getByText("1 needs action")).toBeTruthy();
     expect(
       screen.getByText(
         "Configure this workspace binding locally, then restart the daemon."
@@ -250,19 +252,21 @@ describe("companion status popover", () => {
     const groups = screen.getAllByRole("listitem");
     expect(groups).toHaveLength(4);
     expect(groups.map((group) => group.textContent?.slice(0, 6))).toEqual([
-      "TREADY",
-      "TPENDI",
       "TBROKE",
       "Worksp",
+      "TPENDI",
+      "TREADY",
     ]);
     expect(screen.getByText("Ready")).toBeTruthy();
     expect(screen.getByText("Starting")).toBeTruthy();
     expect(screen.getByText("Unavailable")).toBeTruthy();
     expect(screen.getByText("Status unknown")).toBeTruthy();
-    expect(screen.getByText("No visible work in this workspace.")).toBeTruthy();
-    expect(screen.getByText("1 connected")).toBeTruthy();
-    expect(screen.getByText("1 pending")).toBeTruthy();
-    expect(screen.getByText("2 unavailable")).toBeTruthy();
+    expect(
+      screen.getByText("Connected and listening for Slack work.")
+    ).toBeTruthy();
+    expect(screen.getByText("1 ready")).toBeTruthy();
+    expect(screen.getByText("1 starting")).toBeTruthy();
+    expect(screen.getByText("2 needs action")).toBeTruthy();
   });
 
   it("explains the empty workspace surface without exposing configuration", () => {
@@ -285,7 +289,7 @@ describe("companion status popover", () => {
     ).toBeTruthy();
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
     expect(screen.getByText(emptyBindingsPattern)).toBeTruthy();
-    expect(screen.getByText("0 connected")).toBeTruthy();
+    expect(screen.queryByText("0 ready")).toBeNull();
     expect(document.body.textContent).not.toContain("laborer.json");
     expect(document.body.textContent).not.toContain("/");
   });

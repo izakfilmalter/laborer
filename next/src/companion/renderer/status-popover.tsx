@@ -199,28 +199,28 @@ type RunningStatus = Extract<
 type WorkspaceBinding = RunningStatus["workspaces"][number];
 
 interface BindingCounts {
-  readonly connected: number;
+  readonly needsAction: number;
   readonly pending: number;
-  readonly unavailable: number;
+  readonly ready: number;
 }
 
 const bindingCounts = (
   workspaces: RunningStatus["workspaces"]
 ): BindingCounts => ({
-  connected: workspaces.filter((workspace) => workspace.readiness === "ready")
-    .length,
-  pending: workspaces.filter((workspace) => workspace.readiness === "pending")
-    .length,
-  unavailable: workspaces.filter(
+  needsAction: workspaces.filter(
     (workspace) =>
       workspace.readiness !== "ready" && workspace.readiness !== "pending"
   ).length,
+  pending: workspaces.filter((workspace) => workspace.readiness === "pending")
+    .length,
+  ready: workspaces.filter((workspace) => workspace.readiness === "ready")
+    .length,
 });
 
 const runningPresentation = (
   status: RunningStatus
 ): (typeof statusPresentation)["running"] => {
-  const { pending, unavailable } = bindingCounts(status.workspaces);
+  const { needsAction, pending } = bindingCounts(status.workspaces);
   if (status.receiver === "connecting") {
     return {
       ...statusPresentation.running,
@@ -233,11 +233,11 @@ const runningPresentation = (
       tone: "warning",
     };
   }
-  if (unavailable > 0) {
+  if (needsAction > 0) {
     return {
       ...statusPresentation.running,
       description:
-        "The Slack receiver is connected, but one or more workspace bindings need action.",
+        "The Slack receiver is connected, but one or more workspace bindings needs action.",
       icon: TriangleAlert,
       indicator: "Attention",
       title: "Workspace setup required",
@@ -312,12 +312,34 @@ const bindingTitle: Record<WorkspaceBinding["readiness"], string> = {
 
 const bindingBody = (workspace: WorkspaceBinding): string => {
   if (workspace.readiness === "ready") {
-    return "No visible work in this workspace.";
+    return "Connected and listening for Slack work.";
   }
   return workspace.detail === null
     ? bindingGuidance[workspace.readiness]
     : bindingDetailGuidance[workspace.detail];
 };
+
+const bindingRank: Record<WorkspaceBinding["readiness"], number> = {
+  pending: 1,
+  ready: 2,
+  "setup-incomplete": 0,
+  unavailable: 0,
+  unknown: 0,
+};
+
+// Workspaces that need operator action come first so the actionable bindings
+// stay visible without scrolling the popover.
+const orderedBindings = (
+  workspaces: RunningStatus["workspaces"]
+): readonly WorkspaceBinding[] =>
+  workspaces
+    .map((workspace, index) => ({ index, workspace }))
+    .sort(
+      (left, right) =>
+        bindingRank[left.workspace.readiness] -
+          bindingRank[right.workspace.readiness] || left.index - right.index
+    )
+    .map((entry) => entry.workspace);
 
 const WorkspaceBindingCard = ({
   workspace,
@@ -471,32 +493,34 @@ export const StatusPopover = ({
               </div>
             </dl>
 
-            <section
-              aria-labelledby="binding-summary-heading"
-              className="mt-2 flex flex-wrap items-center gap-1.5"
-            >
-              <h2 className="sr-only" id="binding-summary-heading">
-                Workspace binding summary
-              </h2>
-              <BindingCountChip
-                label="connected"
-                pending={false}
-                tone="success"
-                value={counts.connected}
-              />
-              <BindingCountChip
-                label="pending"
-                pending={true}
-                tone="warning"
-                value={counts.pending}
-              />
-              <BindingCountChip
-                label="unavailable"
-                pending={false}
-                tone="danger"
-                value={counts.unavailable}
-              />
-            </section>
+            {status.workspaces.length > 0 ? (
+              <section
+                aria-labelledby="binding-summary-heading"
+                className="mt-2 flex flex-wrap items-center gap-1.5"
+              >
+                <h2 className="sr-only" id="binding-summary-heading">
+                  Workspace binding summary
+                </h2>
+                <BindingCountChip
+                  label="ready"
+                  pending={false}
+                  tone="success"
+                  value={counts.ready}
+                />
+                <BindingCountChip
+                  label="starting"
+                  pending={true}
+                  tone="warning"
+                  value={counts.pending}
+                />
+                <BindingCountChip
+                  label="needs action"
+                  pending={false}
+                  tone="danger"
+                  value={counts.needsAction}
+                />
+              </section>
+            ) : null}
 
             <section
               aria-labelledby="workspace-bindings-heading"
@@ -515,7 +539,7 @@ export const StatusPopover = ({
                 </p>
               ) : (
                 <ul className="mt-2 space-y-2">
-                  {status.workspaces.map((workspace) => (
+                  {orderedBindings(status.workspaces).map((workspace) => (
                     <li key={workspace.id}>
                       <WorkspaceBindingCard workspace={workspace} />
                     </li>

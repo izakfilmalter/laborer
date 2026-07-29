@@ -29,11 +29,12 @@ Commands
   list     List attempts that are blocked awaiting an operator decision.
   inspect  Show bounded, opaque correlated evidence for one blocked attempt.
   abandon  Drop the uncertain attempt and continue in a replacement agent session.
-  retry    Rerun the uncertain attempt in a replacement agent session.
+  retry    Rerun the uncertain attempt in a replacement agent session. This is
+           the only command that can duplicate external side effects.
 
 Options
-  --workspace <slack-team-id>  Required by inspect, abandon, and retry.
-                               health and list cover every workspace when omitted.
+  --workspace <slack-team-id>  Required by inspect, abandon, and retry. Omit it
+                               to run health or list across every workspace.
   --attempt <attempt-id>       Required by inspect, abandon, and retry.
   --decision-id <id>           Required by abandon and retry. Replaying the same
                                ID is idempotent; a different decision for the
@@ -45,18 +46,24 @@ Options
   --help, -h                   Show this help.
 
 Output
-  Every command prints one JSON line on stdout: {"ok":true,"result":...} or
-  {"ok":false,"error":"<code>"}. Human-readable text goes to stderr.
+  Every command prints exactly one JSON line on stdout:
+    {"ok":true,"result":...}     the command was accepted
+    {"ok":false,"error":"..."}   the command was rejected or unavailable
+  Usage errors additionally print an explanation and this help on stderr.
   Exit codes: 0 accepted, 2 usage, 3 rejected, 4 runtime unavailable.
 
 Resolving a paused work thread
-  1. bun run --cwd next recovery list
-  2. bun run --cwd next recovery inspect --workspace <team> --attempt <attempt>
-  3. bun run --cwd next recovery abandon --workspace <team> --attempt <attempt> \\
-       --decision-id <unique-id>
-     or, accepting duplicate external side effects,
-     bun run --cwd next recovery retry --workspace <team> --attempt <attempt> \\
-       --decision-id <unique-id> --acknowledge-duplicate-side-effects
+  1. Find the blocked attempts:
+       bun run --cwd next recovery list
+  2. Review the bounded evidence for one of them:
+       bun run --cwd next recovery inspect --workspace <team> --attempt <attempt>
+  3. Record one decision under a new unique --decision-id:
+       bun run --cwd next recovery abandon --workspace <team> --attempt <attempt> \\
+         --decision-id <unique-id>
+     Choose retry instead only when duplicated external side effects are
+     acceptable:
+       bun run --cwd next recovery retry --workspace <team> --attempt <attempt> \\
+         --decision-id <unique-id> --acknowledge-duplicate-side-effects
 
 Slack shows only the sanitized paused notice and the sanitized outcome; the
 work thread resumes on its own once one decision is recorded.

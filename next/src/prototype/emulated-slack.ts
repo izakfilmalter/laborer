@@ -7,7 +7,11 @@ import { type FetchFunction, WebClient } from "@slack/web-api";
 import { Effect, Array as EffectArray, Order, pipe, type Scope } from "effect";
 import { createEmulator, type Emulator } from "emulate";
 import { classifySlackError } from "../slack/error-classification.ts";
-import { makeSlackInboundImageResolver } from "../slack/inbound-images.ts";
+import { SlackBoundaryError } from "../slack/errors.ts";
+import {
+  MAX_IMAGES_PER_MESSAGE,
+  makeSlackInboundImageResolver,
+} from "../slack/inbound-images.ts";
 import type { ResolveSlackInboundImages } from "../slack/normalize.ts";
 import {
   NormalizedMessage,
@@ -373,7 +377,8 @@ export const makeSlackGateway = (options: {
         });
   const normalizeHistoryMessage = Effect.fnUntraced(function* (
     message: Record<string, unknown>,
-    channelId: string
+    channelId: string,
+    imageResolver: ResolveSlackInboundImages | undefined = resolveInboundImages
   ) {
     const files = Array.isArray(message.files) ? message.files : [];
     const candidates = files.flatMap((file) =>
@@ -386,9 +391,9 @@ export const makeSlackGateway = (options: {
     );
     const slackTs = typeof message.ts === "string" ? message.ts : "";
     const images =
-      candidates.length === 0 || resolveInboundImages === undefined
+      candidates.length === 0 || imageResolver === undefined
         ? []
-        : yield* resolveInboundImages({
+        : yield* imageResolver({
             candidates,
             channelId,
             messageTs: slackTs,
@@ -416,12 +421,31 @@ export const makeSlackGateway = (options: {
         : { workspaceId: options.workspaceId }),
     });
   });
+  const makeBoundedContextImageResolver = () => {
+    if (resolveInboundImages === undefined) {
+      return undefined;
+    }
+    let remainingImages = MAX_IMAGES_PER_MESSAGE;
+    const resolve: ResolveSlackInboundImages = (request) => {
+      if (request.candidates.length > remainingImages) {
+        remainingImages = 0;
+        return SlackBoundaryError.make({
+          boundary: "slack-files-api",
+          reason: "image-count-limit",
+        });
+      }
+      remainingImages -= request.candidates.length;
+      return resolveInboundImages(request);
+    };
+    return resolve;
+  };
   const readRootContext = Effect.fnUntraced(function* (
     request: ActivationContextRequest
   ) {
     let cursor: string | undefined;
     let collected: NormalizedMessage[] = [];
     const seenCursors: string[] = [];
+    const contextImageResolver = makeBoundedContextImageResolver();
     do {
       const response = yield* Effect.tryPromise({
         try: () =>
@@ -451,7 +475,8 @@ export const makeSlackGateway = (options: {
         (message) =>
           normalizeHistoryMessage(
             message as Record<string, unknown>,
-            request.channelId
+            request.channelId,
+            contextImageResolver
           )
       )).filter((message) => message !== null);
       collected = EffectArray.appendAll(collected, normalized);
@@ -475,6 +500,7 @@ export const makeSlackGateway = (options: {
     const seenCursors: string[] = [];
     let reachedActivation = false;
     let reachedRoot = false;
+    const contextImageResolver = makeBoundedContextImageResolver();
     do {
       const response = yield* Effect.tryPromise({
         try: () =>
@@ -511,7 +537,7 @@ export const makeSlackGateway = (options: {
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
         options.workspaceId,
-        resolveInboundImages
+        contextImageResolver
       );
       collected = EffectArray.appendAll(collected, normalized);
       cursor = nextPageCursor(
@@ -546,7 +572,7 @@ export const makeSlackGateway = (options: {
         options.botId ?? BOT_ID,
         options.botUserId ?? BOT_USER_ID,
         options.workspaceId,
-        resolveInboundImages
+        contextImageResolver
       );
     }
     return finalizeContext(collected, "reply");

@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type Logger as SocketLogger,
@@ -103,7 +104,7 @@ export const acquireLiveSlackClientGeneration = Effect.fn(
           }),
           pageSize: 100,
           ...(enableInboundImages === true && paths !== undefined
-            ? { storageRoot: paths.root }
+            ? { storageRoot: dirname(paths.runnerState) }
             : {}),
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
         }),

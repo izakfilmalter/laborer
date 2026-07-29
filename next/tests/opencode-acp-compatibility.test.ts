@@ -14,6 +14,8 @@ const MCP_FIXTURE_PATH = resolve(
   process.cwd(),
   "tests/fixtures/acp-compatibility-mcp-server.ts"
 );
+const TINY_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const recordFrom = (
   value: unknown
@@ -126,6 +128,32 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
         assert.strictEqual(
           streamedAgentText(firstProcess.updates, durableSessionId),
           "ordinary ACP answer"
+        );
+
+        const imageRequestIndex = provider.requests.length;
+        provider.enqueue({
+          finishReason: "stop",
+          kind: "text",
+          textChunks: ["image accepted"],
+        });
+        assert.strictEqual(
+          (
+            await firstProcess.prompt(durableSessionId, [
+              { text: "inspect this image", type: "text" },
+              {
+                data: TINY_PNG_BASE64,
+                mimeType: "image/png",
+                type: "image",
+                uri: null,
+              },
+            ])
+          ).stopReason,
+          "end_turn"
+        );
+        assert.include(
+          JSON.stringify(provider.requests[imageRequestIndex]?.body),
+          TINY_PNG_BASE64,
+          "OpenCode must forward ACP image bytes to its model provider"
         );
 
         provider.enqueue(

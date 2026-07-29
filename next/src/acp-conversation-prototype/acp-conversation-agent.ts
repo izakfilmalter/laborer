@@ -1,7 +1,7 @@
 /** Opt-in ACP stable-v1 conversation-agent proof for issues #234 and #236. */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
@@ -18,7 +18,10 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Clock, Effect, Exit, Schema, Scope, Semaphore } from "effect";
 import { HandlerFailure } from "../prototype/errors.ts";
-import { assertNoSymlinkPathComponents } from "../prototype/path-safety.ts";
+import {
+  assertNoSymlinkPathComponents,
+  openRegularFileNoFollow,
+} from "../prototype/path-safety.ts";
 import {
   type ProcessTerminationOutcome,
   processSupervisorProxyPath,
@@ -1298,13 +1301,17 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
         : "the selected Conversation agent does not support image input"
     );
   }
+  const root =
+    imageStorageRoot === undefined ? undefined : resolve(imageStorageRoot);
   const promptBlocks: ContentBlock[] = [];
   let remainingText = input;
   for (const image of images) {
     if ("failureReason" in image) {
       return yield* imageInputFailure("required image input is unavailable");
     }
-    const root = resolve(imageStorageRoot as string);
+    if (root === undefined) {
+      return yield* imageInputFailure("image storage is unavailable");
+    }
     const path = resolve(root, image.contentPath);
     if (path !== root && !path.startsWith(`${root}${sep}`)) {
       return yield* imageInputFailure("accepted image storage is invalid");
@@ -1312,18 +1319,33 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
     const bytes = yield* Effect.tryPromise({
       try: async () => {
         await assertNoSymlinkPathComponents(path, "read-inbound-image");
-        const metadata = await stat(path);
-        if (!metadata.isFile() || metadata.size !== image.byteLength) {
-          throw new Error("image-content-invalid");
+        const handle = await openRegularFileNoFollow(
+          path,
+          "read-inbound-image"
+        );
+        try {
+          const metadata = await handle.stat();
+          if (
+            metadata.size !== image.byteLength ||
+            // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+            (metadata.mode & 0o077) !== 0 ||
+            (typeof process.getuid === "function" &&
+              metadata.uid !== process.getuid())
+          ) {
+            throw new Error("image-content-invalid");
+          }
+          const content = await handle.readFile();
+          if (
+            content.byteLength !== image.byteLength ||
+            createHash("sha256").update(content).digest("hex") !==
+              image.contentDigest
+          ) {
+            throw new Error("image-digest-mismatch");
+          }
+          return content;
+        } finally {
+          await handle.close();
         }
-        const content = await readFile(path);
-        if (
-          createHash("sha256").update(content).digest("hex") !==
-          image.contentDigest
-        ) {
-          throw new Error("image-digest-mismatch");
-        }
-        return content;
       },
       catch: () =>
         imageInputFailure(

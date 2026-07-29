@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, open, readFile, rename, rm } from "node:fs/promises";
+import { link, lstat, open, readFile, rm } from "node:fs/promises";
 import { basename, relative, resolve } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
@@ -170,6 +170,7 @@ const downloadImage = async (options: {
     });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
+      await response.body?.cancel();
       if (location === null || redirects === MAX_REDIRECTS) {
         throw new Error("redirect-limit");
       }
@@ -177,6 +178,7 @@ const downloadImage = async (options: {
       continue;
     }
     if (!response.ok || response.body === null) {
+      await response.body?.cancel();
       throw new Error("download-failed");
     }
     const responseMime = response.headers
@@ -185,6 +187,7 @@ const downloadImage = async (options: {
       ?.trim()
       .toLowerCase();
     if (responseMime !== options.metadata.mimetype) {
+      await response.body.cancel();
       throw new Error("content-type-mismatch");
     }
     const contentLength = response.headers.get("content-length");
@@ -192,22 +195,30 @@ const downloadImage = async (options: {
       contentLength !== null &&
       Number(contentLength) !== options.metadata.size
     ) {
+      await response.body.cancel();
       throw new Error("content-length-mismatch");
     }
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let bytes = 0;
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) {
-        break;
+    let fullyRead = false;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          fullyRead = true;
+          break;
+        }
+        bytes += chunk.value.byteLength;
+        if (bytes > MAX_IMAGE_BYTES || bytes > options.metadata.size) {
+          throw new Error("image-too-large");
+        }
+        chunks.push(chunk.value);
       }
-      bytes += chunk.value.byteLength;
-      if (bytes > MAX_IMAGE_BYTES || bytes > options.metadata.size) {
-        await reader.cancel();
-        throw new Error("image-too-large");
+    } finally {
+      if (!fullyRead) {
+        await reader.cancel().catch(() => undefined);
       }
-      chunks.push(chunk.value);
     }
     if (bytes !== options.metadata.size) {
       throw new Error("truncated-download");
@@ -251,12 +262,13 @@ const stageImage = async (options: {
     directory,
     "stage-inbound-image-directory"
   );
-  try {
+  const verifyExistingTarget = async (): Promise<void> => {
     const existing = await lstat(target);
     if (
       !existing.isFile() ||
       existing.isSymbolicLink() ||
-      existing.mode % 0o100 !== 0 ||
+      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+      (existing.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" &&
         existing.uid !== process.getuid())
     ) {
@@ -269,6 +281,9 @@ const stageImage = async (options: {
     ) {
       throw new Error("conflicting-existing-image");
     }
+  };
+  try {
+    await verifyExistingTarget();
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
       throw cause;
@@ -285,7 +300,12 @@ const stageImage = async (options: {
       await file.close();
     }
     try {
-      await rename(temporary, target);
+      await link(temporary, target);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw cause;
+      }
+      await verifyExistingTarget();
     } finally {
       await rm(temporary, { force: true });
     }
@@ -299,7 +319,9 @@ export const makeSlackInboundImageResolver = (
   const client = options.client as SlackFilesClient;
   const fetchImplementation = options.fetch ?? fetch;
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: all per-message count, metadata, byte, download, and publication bounds fail closed in this adapter boundary
-  return Effect.fn("SlackInboundImages.resolve")(function* (request) {
+  const resolveImages = Effect.fn("SlackInboundImages.resolve")(function* (
+    request: Parameters<ResolveSlackInboundImages>[0]
+  ) {
     if (request.candidates.length > MAX_IMAGES_PER_MESSAGE) {
       return yield* boundaryFailure("image-count-limit");
     }
@@ -372,4 +394,11 @@ export const makeSlackInboundImageResolver = (
     }
     return resolved;
   });
+  return (request) =>
+    resolveImages(request).pipe(
+      Effect.timeoutOrElse({
+        duration: DOWNLOAD_TIMEOUT_MILLIS,
+        orElse: () => boundaryFailure("download-timeout"),
+      })
+    );
 };

@@ -339,7 +339,8 @@ describe("inbound Slack images", () => {
           const storageRoot =
             yield* makeTempDirectoryScoped("laborer-acp-image-");
           const imageDirectory = resolve(storageRoot, "inbound-images");
-          const imagePath = resolve(imageDirectory, "pixel.png");
+          const imageDigest = createHash("sha256").update(png).digest("hex");
+          const imagePath = resolve(imageDirectory, `${imageDigest}.png`);
           const promptPath = resolve(storageRoot, "prompt-content.jsonl");
           const readyPath = resolve(storageRoot, "prompt-ready");
           const releasePath = resolve(storageRoot, "prompt-release");
@@ -350,8 +351,8 @@ describe("inbound Slack images", () => {
           });
           const image = NormalizedImageInput.make({
             byteLength: png.byteLength,
-            contentDigest: createHash("sha256").update(png).digest("hex"),
-            contentPath: "inbound-images/pixel.png",
+            contentDigest: imageDigest,
+            contentPath: `inbound-images/${imageDigest}.png`,
             id: "acp-image",
             mimeType: "image/png",
             slackFileId: "FACP",

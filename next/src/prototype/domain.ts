@@ -38,7 +38,9 @@ export class NormalizedImageInput extends Schema.Class<NormalizedImageInput>(
 )({
   byteLength: Schema.Int.check(Schema.isGreaterThan(0)),
   contentDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
-  contentPath: Schema.String.check(Schema.isPattern(/^inbound-images\//)),
+  contentPath: Schema.String.check(
+    Schema.isPattern(/^inbound-images\/[a-f0-9]{64}\.(?:gif|jpg|png|webp)$/)
+  ),
   id: Schema.String.check(Schema.isPattern(/\S/)),
   mimeType: Schema.Literals([
     "image/gif",

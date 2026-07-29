@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
 import {
   EventId,
@@ -175,6 +175,123 @@ describe("inbound Slack images", () => {
       })
   );
 
+  it.effect(
+    "preserves a direct Activation caption and queues an image-only follow-up",
+    () =>
+      Effect.gen(function* () {
+        const activationImage = NormalizedImageInput.make({
+          byteLength: png.byteLength,
+          contentDigest: "c".repeat(64),
+          contentPath: `inbound-images/${"c".repeat(64)}.png`,
+          id: "activation-image",
+          mimeType: "image/png",
+          slackFileId: "FACTIVATION",
+        });
+        const followupImage = NormalizedImageInput.make({
+          ...activationImage,
+          contentDigest: "d".repeat(64),
+          contentPath: `inbound-images/${"d".repeat(64)}.png`,
+          id: "followup-image",
+          slackFileId: "FFOLLOWUP",
+        });
+        const resolveImages = ({
+          candidates,
+        }: {
+          readonly candidates: readonly { readonly id: string }[];
+        }) =>
+          Effect.succeed(
+            candidates.map(({ id }) =>
+              id === "FACTIVATION" ? activationImage : followupImage
+            )
+          );
+        const caption = "  <@ULABORER> inspect this\n*carefully*  ";
+        const activation = yield* normalizeSlackEvent(
+          {
+            event: {
+              channel: "CWORK",
+              channel_type: "channel",
+              files: [{ id: "FACTIVATION", mimetype: "image/png" }],
+              text: caption,
+              ts: "1.0",
+              type: "app_mention",
+              user: "UHUMAN",
+            },
+            event_id: "EvDirectImageActivation",
+            team_id: identity.teamId,
+            type: "event_callback",
+          },
+          identity,
+          { resolveImages }
+        );
+        const followup = yield* normalizeSlackEvent(
+          {
+            event: {
+              channel: "CWORK",
+              channel_type: "channel",
+              files: [{ id: "FFOLLOWUP", mimetype: "image/png" }],
+              subtype: "file_share",
+              thread_ts: "1.0",
+              ts: "2.0",
+              type: "message",
+              user: "UHUMAN",
+            },
+            event_id: "EvQueuedImageFollowup",
+            team_id: identity.teamId,
+            type: "event_callback",
+          },
+          identity,
+          { resolveImages }
+        );
+        assert.ok(activation !== null && followup !== null);
+        if (activation === null || followup === null) {
+          return;
+        }
+
+        const firstTurnStarted = yield* Deferred.make<void>();
+        const releaseFirstTurn = yield* Deferred.make<void>();
+        const turns: import("../src/prototype/domain.ts").ClaimedTurn[] = [];
+        const harness = yield* makePrototypeHarness({
+          handler: {
+            invoke: (turn) =>
+              Effect.gen(function* () {
+                turns.push(turn);
+                if (turns.length === 1) {
+                  yield* Deferred.succeed(firstTurnStarted, undefined);
+                  yield* Deferred.await(releaseFirstTurn);
+                }
+              }),
+          },
+          laborerSlackId: identity.botUserId,
+          slack: {
+            postThreadMessage: () => Effect.succeed({ ts: "unused" }),
+            readActivationContext: () => Effect.succeed([]),
+          },
+        });
+        const activationFiber = yield* Effect.forkChild(
+          harness.runner.inject(activation)
+        );
+        yield* Deferred.await(firstTurnStarted);
+
+        const accepted = yield* harness.runner.accept(followup);
+        const duplicate = yield* harness.runner.accept(followup);
+        assert.strictEqual(accepted.decision._tag, "Accepted");
+        assert.strictEqual(accepted.scheduling, "Scheduled");
+        assert.strictEqual(duplicate.decision._tag, "Ignored");
+        assert.strictEqual(turns.length, 1);
+
+        yield* Deferred.succeed(releaseFirstTurn, undefined);
+        yield* Fiber.join(activationFiber);
+
+        assert.strictEqual(turns.length, 2);
+        assert.strictEqual(turns[0]?.messages[0]?.text, caption);
+        assert.deepStrictEqual(turns[0]?.messages[0]?.images, [
+          activationImage,
+        ]);
+        assert.strictEqual(turns[1]?.messages[0]?.text, "");
+        assert.deepStrictEqual(turns[1]?.messages[0]?.images, [followupImage]);
+      })
+  );
+
   it.effect("ignores attached non-image files without resolving them", () =>
     Effect.gen(function* () {
       let resolutionCount = 0;
@@ -205,6 +322,61 @@ describe("inbound Slack images", () => {
       assert.strictEqual(resolutionCount, 0);
       assert.deepStrictEqual(normalized?.images, []);
     })
+  );
+
+  it.effect(
+    "keeps unrelated textless Slack rich content classified as blank",
+    () =>
+      Effect.gen(function* () {
+        let resolutionCount = 0;
+        const normalized = yield* normalizeSlackEvent(
+          {
+            event: {
+              blocks: [
+                {
+                  elements: [{ type: "rich_text_section" }],
+                  type: "rich_text",
+                },
+              ],
+              channel: "CWORK",
+              channel_type: "channel",
+              ts: "1.0",
+              type: "message",
+              user: "UHUMAN",
+            },
+            event_id: "EvTextlessRichContent",
+            team_id: identity.teamId,
+            type: "event_callback",
+          },
+          identity,
+          {
+            resolveImages: () => {
+              resolutionCount += 1;
+              return Effect.succeed([]);
+            },
+          }
+        );
+        assert.ok(normalized !== null);
+        if (normalized === null) {
+          return;
+        }
+        const harness = yield* makePrototypeHarness({
+          handler: { invoke: () => Effect.void },
+          laborerSlackId: identity.botUserId,
+          slack: {
+            postThreadMessage: () => Effect.succeed({ ts: "unused" }),
+            readActivationContext: () => Effect.succeed([]),
+          },
+        });
+
+        const decision = yield* harness.runner.inject(normalized);
+
+        assert.strictEqual(decision._tag, "Ignored");
+        if (decision._tag === "Ignored") {
+          assert.strictEqual(decision.reason, "blank");
+        }
+        assert.strictEqual(resolutionCount, 0);
+      })
   );
 
   it.effect("fails closed on count, type, and download-origin violations", () =>

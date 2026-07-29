@@ -43,6 +43,7 @@ import type {
   SlackRuntimeIdentity,
 } from "../src/slack/config.ts";
 import { makeSlackInboundImageResolver } from "../src/slack/inbound-images.ts";
+import { normalizeSlackEvent } from "../src/slack/normalize.ts";
 import { acquireRunnerLock } from "../src/slack/runner-lock.ts";
 import {
   prepareSlackRuntimePaths,
@@ -1119,6 +1120,161 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
           assert.include(durable, digest);
           assert.notInclude(durable, "files.slack.com");
           assert.notInclude(durable, ["xox", "b-"].join(""));
+        })
+      ),
+    60_000
+  );
+
+  it.live(
+    "delivers direct Activation and image-only follow-up input in order",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped("laborer-302-image-");
+          const controls = yield* makeTempDirectoryScoped(
+            "laborer-302-image-controls-"
+          );
+          const workspaceId = "T302IMAGE";
+          const channelId = "C302IMAGE";
+          const paths = yield* prepareSlackRuntimePaths(root, workspaceId);
+          const processPaths = scriptedProcessPaths(controls, "direct-images");
+          const contentPath = join(controls, "direct-image-content.jsonl");
+          const bytes = Buffer.from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+          ]);
+          const imageClient = {
+            files: {
+              info: async ({ file }: { readonly file: string }) => ({
+                file: {
+                  id: file,
+                  mimetype: "image/png",
+                  size: bytes.byteLength,
+                  url_private_download: `https://files.slack.com/files-pri/${workspaceId}-${file}/task.png`,
+                },
+                ok: true,
+              }),
+            },
+            token: ["xox", "b-302-private-test-token"].join(""),
+          };
+          const resolveImages = makeSlackInboundImageResolver({
+            client: imageClient as unknown as WebClient,
+            fetch: (() =>
+              Promise.resolve(
+                new Response(bytes, {
+                  headers: {
+                    "content-length": String(bytes.byteLength),
+                    "content-type": "image/png",
+                  },
+                })
+              )) as unknown as typeof fetch,
+            storageRoot: dirname(paths.runnerState),
+          });
+          const identity = {
+            botId: "B302LABORER",
+            botUserId: "U244LABORER",
+            teamId: workspaceId,
+          };
+          const caption =
+            "  <@U244LABORER> inspect this screenshot\n*carefully*  ";
+          const activation = yield* normalizeSlackEvent(
+            {
+              event: {
+                channel: channelId,
+                channel_type: "channel",
+                files: [{ id: "F302ACTIVATION", mimetype: "image/png" }],
+                text: caption,
+                ts: "302.1",
+                type: "app_mention",
+                user: "U302HUMAN",
+              },
+              event_id: "event:302:activation",
+              team_id: workspaceId,
+              type: "event_callback",
+            },
+            identity,
+            { namespaceWorkspace: true, resolveImages }
+          );
+          const followup = yield* normalizeSlackEvent(
+            {
+              event: {
+                channel: channelId,
+                channel_type: "channel",
+                files: [{ id: "F302FOLLOWUP", mimetype: "image/png" }],
+                subtype: "file_share",
+                thread_ts: "302.1",
+                ts: "302.2",
+                type: "message",
+                user: "U302HUMAN",
+              },
+              event_id: "event:302:followup",
+              team_id: workspaceId,
+              type: "event_callback",
+            },
+            identity,
+            { namespaceWorkspace: true, resolveImages }
+          );
+          assert.ok(activation !== null && followup !== null);
+          if (activation === null || followup === null) {
+            return;
+          }
+          const messages: CapturedSlackMessage[] = [];
+          const production = yield* makeProductionHarness({
+            environment: scriptedEnvironment(processPaths, {
+              SCRIPTED_ACP_IMAGE_PROMPT_CAPABILITY: "1",
+              SCRIPTED_ACP_PROMPT_CONTENT_JSONL_PATH: contentPath,
+            }),
+            health: [],
+            implementationCounters: {
+              implementationAcquisitions: 0,
+              implementationPrompts: 0,
+            },
+            messages,
+            paths,
+            root,
+            workspaceId,
+            worktreeCalls: { count: 0 },
+          });
+
+          const activationFiber = yield* Effect.forkChild(
+            production.harness.runner.inject(activation)
+          );
+          yield* waitForFile(processPaths.ready);
+          const accepted = yield* production.harness.runner.accept(followup);
+          const duplicate = yield* production.harness.runner.accept(followup);
+          const queuedPrompts = yield* readJsonLines(contentPath);
+          assert.strictEqual(accepted.decision._tag, "Accepted");
+          assert.strictEqual(queuedPrompts.length, 1);
+          yield* Effect.promise(() =>
+            writeFile(processPaths.release, "release", { mode: 0o600 })
+          );
+          yield* Fiber.join(activationFiber);
+
+          const prompts = (yield* readJsonLines(
+            contentPath
+          )) as readonly (readonly {
+            readonly data?: string;
+            readonly text?: string;
+            readonly type: string;
+          }[])[];
+          assert.strictEqual(prompts.length, 2);
+          assert.include(
+            prompts[0]?.find((block) => block.type === "text")?.text ?? "",
+            "  &lt;@U244LABORER&gt; inspect this screenshot\n*carefully*  "
+          );
+          assert.strictEqual(
+            prompts[0]?.find((block) => block.type === "image")?.data,
+            bytes.toString("base64")
+          );
+          assert.strictEqual(
+            prompts[1]?.find((block) => block.type === "image")?.data,
+            bytes.toString("base64")
+          );
+          assert.strictEqual(duplicate.decision._tag, "Ignored");
+          assert.strictEqual(messages.length, 2);
+          assert.deepStrictEqual(
+            messages.map(({ rootTs }) => rootTs),
+            ["302.1", "302.1"]
+          );
         })
       ),
     60_000

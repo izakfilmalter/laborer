@@ -5,6 +5,9 @@ import {
   LIVE_SLACK_PROJECT_ROOT,
 } from "./live-generation.ts";
 
+const DEFAULT_LABORER_ROOT =
+  process.env.LABORER_ROOT ?? LIVE_SLACK_PROJECT_ROOT;
+
 const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
   const stop = () => resume(Effect.void);
   process.once("SIGINT", stop);
@@ -17,9 +20,9 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 
 const program = Effect.gen(function* () {
   const config = yield* loadSlackDaemonConfig({
-    defaultRoot: LIVE_SLACK_PROJECT_ROOT,
+    defaultRoot: DEFAULT_LABORER_ROOT,
   });
-  yield* acquireLiveSlackClientGeneration(config);
+  yield* acquireLiveSlackClientGeneration(config, DEFAULT_LABORER_ROOT);
   yield* Console.log("LIVE SLACK LABORER — durable ACP Conversations enabled.");
   yield* waitForShutdownSignal;
   yield* Console.log("Slack Laborer stopped cleanly.");

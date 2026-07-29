@@ -5,7 +5,7 @@ import {
   PlugZap,
   TriangleAlert,
 } from "lucide-react";
-import type { OperatorStatusView } from "../../operator-status/client.ts";
+import type { CompanionStatusView } from "../shared.ts";
 import { Button } from "./components/ui/button.tsx";
 
 type StatusTone = "danger" | "neutral" | "success" | "warning";
@@ -27,7 +27,7 @@ const formatUptime = (seconds: number): string => {
 };
 
 const statusPresentation: Record<
-  OperatorStatusView["state"],
+  CompanionStatusView["state"],
   {
     readonly action: string | null;
     readonly description: string;
@@ -69,6 +69,80 @@ const statusPresentation: Record<
     title: "Reconnecting…",
     tone: "warning",
   },
+  "service-already-registered": {
+    action: null,
+    description:
+      "The login service is already registered. Reconnecting to its daemon.",
+    guidance: null,
+    icon: LoaderCircle,
+    indicator: "Registered",
+    pending: true,
+    title: "Adopting existing service…",
+    tone: "neutral",
+  },
+  "service-denied": {
+    action: "Try registration again",
+    description: "macOS denied Laborer permission to run its login service.",
+    guidance:
+      "Allow Laborer in System Settings › General › Login Items, then retry.",
+    icon: TriangleAlert,
+    indicator: "Denied",
+    pending: false,
+    title: "Service permission denied",
+    tone: "danger",
+  },
+  "service-registering": {
+    action: null,
+    description: "Registering the independent Laborer daemon with macOS.",
+    guidance: null,
+    icon: LoaderCircle,
+    indicator: "Registering",
+    pending: true,
+    title: "Setting up daemon…",
+    tone: "neutral",
+  },
+  "service-registered": {
+    action: null,
+    description: "The login service was registered. Waiting for its daemon.",
+    guidance: null,
+    icon: LoaderCircle,
+    indicator: "Registered",
+    pending: true,
+    title: "Daemon registered…",
+    tone: "neutral",
+  },
+  "service-requires-approval": {
+    action: "Check approval",
+    description: "macOS is waiting for approval before it can run Laborer.",
+    guidance:
+      "Allow Laborer in System Settings › General › Login Items, then check again.",
+    icon: TriangleAlert,
+    indicator: "Approval",
+    pending: false,
+    title: "Approval required",
+    tone: "warning",
+  },
+  "service-unavailable": {
+    action: "Try again",
+    description: "Laborer cannot use macOS Service Management.",
+    guidance: "Use the packaged macOS 13 or newer application, then retry.",
+    icon: PlugZap,
+    indicator: "Unavailable",
+    pending: false,
+    title: "Service unavailable",
+    tone: "danger",
+  },
+  "service-version-mismatch": {
+    action: "Check again",
+    description: "The companion and bundled daemon executable do not match.",
+    guidance:
+      "Reinstall one complete Laborer application bundle before retrying.",
+    icon: TriangleAlert,
+    indicator: "Mismatch",
+    pending: false,
+    title: "Installation mismatch",
+    tone: "danger",
+  },
   running: {
     action: null,
     description: "Laborer is connected and ready for Slack work.",
@@ -88,6 +162,18 @@ const statusPresentation: Record<
     pending: false,
     title: "Daemon unavailable",
     tone: "warning",
+  },
+  "version-mismatch": {
+    action: "Check again",
+    description:
+      "The registered daemon executable does not match this companion.",
+    guidance:
+      "Unregister the old service and reinstall one complete Laborer bundle.",
+    icon: TriangleAlert,
+    indicator: "Mismatch",
+    pending: false,
+    title: "Daemon version mismatch",
+    tone: "danger",
   },
 };
 
@@ -112,7 +198,7 @@ export const StatusPopover = ({
 }: {
   readonly quit: () => void;
   readonly reconnect: () => void;
-  readonly status: OperatorStatusView;
+  readonly status: CompanionStatusView;
 }) => {
   const presentation = statusPresentation[status.state];
   const Icon = presentation.icon;

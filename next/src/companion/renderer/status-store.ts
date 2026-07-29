@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
-import type { OperatorStatusView } from "../../operator-status/client.ts";
+import type { CompanionStatusView } from "../shared.ts";
 
-let currentStatus: OperatorStatusView = {
+let currentStatus: CompanionStatusView = {
   state: "connecting",
   uptimeSeconds: null,
   version: null,
@@ -21,7 +21,7 @@ export const initializeStatusStore = (): void => {
   });
 };
 
-export const useOperatorStatus = (): OperatorStatusView =>
+export const useOperatorStatus = (): CompanionStatusView =>
   useSyncExternalStore(
     (listener) => {
       listeners.add(listener);

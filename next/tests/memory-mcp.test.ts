@@ -4708,6 +4708,17 @@ describe("issue #240 memory MCP", () => {
                   userId: "U240ISOLATED",
                 });
                 assert.notStrictEqual(profile.isError, true);
+                const attemptedNamespaceOverride = await client.callTool({
+                  arguments: {
+                    operation: "add",
+                    storageRoot: second.configRoot,
+                    target: "workspace",
+                    text: "fixed authority ignores model namespace selectors",
+                    workspaceId: second.workspaceId,
+                  },
+                  name: LABORER_MEMORY_MCP_TOOL_NAME,
+                });
+                assert.notStrictEqual(attemptedNamespaceOverride.isError, true);
               }
             )
           );
@@ -4716,6 +4727,11 @@ describe("issue #240 memory MCP", () => {
           );
           assert.match(firstContent, CONCURRENT_FIRST_PATTERN);
           assert.match(firstContent, CONCURRENT_SECOND_PATTERN);
+          assert.ok(
+            firstContent.includes(
+              "fixed authority ignores model namespace selectors"
+            )
+          );
           assert.strictEqual(
             yield* Effect.promise(() =>
               readFile(second.workspaceMemoryPath, "utf8")

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun", "vite/client", "vitest/globals"]
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "src/companion/renderer/**/*",
+    "tests/**/*.tsx"
+  ],
+  "exclude": []
+}

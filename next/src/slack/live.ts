@@ -6,12 +6,19 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
+import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
+import {
+  operatorStatusPaths,
+  startOperatorStatusServer,
+} from "../operator-status/server.ts";
 import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
 import { makeSlackGateway } from "../prototype/emulated-slack.ts";
+import { LABORER_VERSION } from "../version.ts";
 import { makeAcpSlackWorkspaceRunner } from "./acp-workspace-runner.ts";
 import { loadSlackDaemonConfig } from "./config.ts";
 import { authenticateSlackBot } from "./identity.ts";
 import { makeSlackNativeStreamCapability } from "./native-stream.ts";
+import { prepareSlackRuntimePaths } from "./runtime-paths.ts";
 import { startSocketModeAdapter } from "./socket-mode.ts";
 import { slackWebApiRequestPolicy } from "./web-api-request-policy.ts";
 import { startSlackWorkspaceDirectory } from "./workspace-startup.ts";
@@ -40,6 +47,16 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 
 const program = Effect.gen(function* () {
   const config = yield* loadSlackDaemonConfig({ defaultRoot: PROJECT_ROOT });
+  const daemonRuntime = yield* prepareSlackRuntimePaths(PROJECT_ROOT);
+  yield* Effect.acquireRelease(
+    Effect.tryPromise(() =>
+      startOperatorStatusServer({
+        paths: operatorStatusPaths(daemonRuntime.root),
+        version: LABORER_VERSION,
+      })
+    ),
+    (server) => Effect.promise(() => server.close()).pipe(Effect.orDie)
+  );
   const routeDirectory = yield* startSlackWorkspaceDirectory({
     adapter: {
       authenticate: authenticateSlackBot,
@@ -61,6 +78,12 @@ const program = Effect.gen(function* () {
           }),
           pageSize: 100,
           ...(namespaceWorkspace ? { workspaceId: identity.teamId } : {}),
+        }),
+      makeRootRuntime: ({ laborer, legacyWorkspaceId, paths }) =>
+        makeNodeRootDurableRuntime({
+          databasePath: paths.runtimeDatabase,
+          ...(legacyWorkspaceId === undefined ? {} : { legacyWorkspaceId }),
+          rootIdentity: laborer.root,
         }),
       makeRunner: makeAcpSlackWorkspaceRunner,
       makeSetupIncompleteResponder: (gateway) => (request) =>

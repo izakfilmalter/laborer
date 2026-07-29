@@ -97,6 +97,7 @@ const PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS = 5000;
 const PROMPT_EPOCH_POST_RESPONSE_GRACE_MILLIS = 2000;
 const NEWLINE_BYTE = 0x0a;
 const MAX_PROCESS_SUPERVISOR_REPORT_BYTES = 1024;
+const SILENT_CONVERSATION_REPLY_TOKEN = "NO_REPLY";
 const textEncoder = new TextEncoder();
 
 class AcpConversationFailure extends Schema.TaggedErrorClass<AcpConversationFailure>()(
@@ -1057,6 +1058,73 @@ const publicTextChunk = (
   return { messageId: update.messageId, text: update.content.text };
 };
 
+type SilentConversationReplyPhase =
+  | "leading-whitespace"
+  | "token"
+  | "trailing-whitespace"
+  | "diverged";
+
+interface SilentConversationReplyState {
+  matchedTokenCodeUnits: number;
+  phase: SilentConversationReplyPhase;
+}
+
+const ECMASCRIPT_WHITESPACE_CODE_UNIT = /^\s$/u;
+
+const makeSilentConversationReplyState = (): SilentConversationReplyState => ({
+  matchedTokenCodeUnits: 0,
+  phase: "leading-whitespace",
+});
+
+const advanceSilentConversationReplyState = (
+  state: SilentConversationReplyState,
+  text: string
+): boolean => {
+  if (state.phase === "diverged") {
+    return false;
+  }
+  for (let index = 0; index < text.length; index += 1) {
+    const codeUnit = text.charAt(index);
+    if (state.phase === "leading-whitespace") {
+      if (ECMASCRIPT_WHITESPACE_CODE_UNIT.test(codeUnit)) {
+        continue;
+      }
+      if (codeUnit !== SILENT_CONVERSATION_REPLY_TOKEN.charAt(0)) {
+        state.phase = "diverged";
+        return false;
+      }
+      state.matchedTokenCodeUnits = 1;
+      state.phase = "token";
+      continue;
+    }
+    if (state.phase === "token") {
+      if (
+        codeUnit !==
+        SILENT_CONVERSATION_REPLY_TOKEN.charAt(state.matchedTokenCodeUnits)
+      ) {
+        state.phase = "diverged";
+        return false;
+      }
+      state.matchedTokenCodeUnits += 1;
+      if (
+        state.matchedTokenCodeUnits === SILENT_CONVERSATION_REPLY_TOKEN.length
+      ) {
+        state.phase = "trailing-whitespace";
+      }
+      continue;
+    }
+    if (!ECMASCRIPT_WHITESPACE_CODE_UNIT.test(codeUnit)) {
+      state.phase = "diverged";
+      return false;
+    }
+  }
+  return true;
+};
+
+const isSilentConversationReply = (
+  state: SilentConversationReplyState
+): boolean => state.phase === "trailing-whitespace";
+
 const newHumanParticipantIds = (
   request: ConversationAgentRequest,
   introducedParticipantIds: ReadonlySet<string>,
@@ -1108,7 +1176,8 @@ const settlePromptStop = Effect.fn("AcpConversationAgent.settlePromptStop")(
   function* (
     prompt: ActivePrompt,
     stopReason: PromptResponse["stopReason"],
-    publicOutputObserved: boolean
+    publicOutputObserved: boolean,
+    privateSilentCompletionObserved = false
   ) {
     yield* Effect.tryPromise({
       try: () => prompt.completion,
@@ -1126,7 +1195,7 @@ const settlePromptStop = Effect.fn("AcpConversationAgent.settlePromptStop")(
     yield* prompt.completeTerminal(outcome);
     prompt.terminal.current = true;
     const boundedCompletion =
-      publicOutputObserved &&
+      (publicOutputObserved || privateSilentCompletionObserved) &&
       (outcome === "max_tokens" || outcome === "max_turn_requests");
     if (outcome !== "end_turn" && !boundedCompletion) {
       return yield* terminalStopFailure(outcome);
@@ -1191,37 +1260,21 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
     startPrompt(input, submittedParticipantIds),
     (prompt) =>
       Effect.gen(function* () {
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Protocol routing, output bounds, and terminal ordering form one auditable prompt state machine.
         const consumeUpdates = Effect.gen(function* () {
           let outputBytes = 0;
           let publicOutputObserved = false;
+          const silentReplyState = makeSilentConversationReplyState();
+          let terminalUpdateObserved = false;
           const messageIds = new Set<string>();
           const fallbackMessageId = `${request.promptId}:message`;
-          while (true) {
-            const message = yield* Effect.tryPromise({
-              try: (signal) => nextSessionUpdate(session, signal),
-              catch: promptUpdateFailure,
-            });
-            if (message.kind === "stop") {
-              return yield* settlePromptStop(
-                prompt,
-                message.stopReason,
-                publicOutputObserved
-              );
-            }
-            const chunk = publicTextChunk(message.update);
-            if (chunk === null) {
-              continue;
-            }
-            const messageId = chunk.messageId ?? fallbackMessageId;
-            messageIds.add(messageId);
-            outputBytes += textEncoder.encode(chunk.text).byteLength;
-            if (
-              messageIds.size > MAX_PUBLIC_MESSAGES ||
-              outputBytes > MAX_PUBLIC_OUTPUT_BYTES
-            ) {
-              return yield* failure("prompt");
-            }
+          const heldChunks: {
+            readonly messageId: string;
+            readonly text: string;
+          }[] = [];
+          const publishChunk = Effect.fnUntraced(function* (chunk: {
+            readonly messageId: string;
+            readonly text: string;
+          }) {
             if (
               prompt.attemptId !== null &&
               prompt.attemptStore !== undefined
@@ -1231,11 +1284,71 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
               );
             }
             publicOutputObserved = true;
-            yield* publishMessage({
-              messageId,
-              text: chunk.text,
-            });
-          }
+            yield* publishMessage(chunk);
+          });
+          const flushHeldChunks = Effect.fnUntraced(function* () {
+            const chunks = heldChunks.splice(0);
+            yield* Effect.forEach(chunks, publishChunk, { discard: true });
+          });
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Protocol routing, silent-token buffering, output bounds, and terminal ordering form one auditable prompt state machine.
+          const consumeMessages = Effect.gen(function* () {
+            while (true) {
+              const message = yield* Effect.tryPromise({
+                try: (signal) => nextSessionUpdate(session, signal),
+                catch: promptUpdateFailure,
+              });
+              if (message.kind === "stop") {
+                terminalUpdateObserved = true;
+                const privateSilentCompletionObserved =
+                  isSilentConversationReply(silentReplyState);
+                if (!privateSilentCompletionObserved) {
+                  yield* flushHeldChunks();
+                }
+                return yield* settlePromptStop(
+                  prompt,
+                  message.stopReason,
+                  publicOutputObserved,
+                  privateSilentCompletionObserved
+                );
+              }
+              const chunk = publicTextChunk(message.update);
+              if (chunk === null) {
+                continue;
+              }
+              const messageId = chunk.messageId ?? fallbackMessageId;
+              messageIds.add(messageId);
+              outputBytes += textEncoder.encode(chunk.text).byteLength;
+              if (
+                messageIds.size > MAX_PUBLIC_MESSAGES ||
+                outputBytes > MAX_PUBLIC_OUTPUT_BYTES
+              ) {
+                return yield* failure("prompt");
+              }
+              const publicChunk = { messageId, text: chunk.text };
+              if (silentReplyState.phase !== "diverged") {
+                heldChunks.push(publicChunk);
+                if (
+                  advanceSilentConversationReplyState(
+                    silentReplyState,
+                    chunk.text
+                  )
+                ) {
+                  continue;
+                }
+                yield* flushHeldChunks();
+                continue;
+              }
+              yield* publishChunk(publicChunk);
+            }
+          }).pipe(
+            Effect.onExit(() =>
+              terminalUpdateObserved &&
+              isSilentConversationReply(silentReplyState)
+                ? Effect.void
+                : flushHeldChunks()
+            )
+          );
+          return yield* consumeMessages;
         }).pipe(
           Effect.catchTags({
             AcpPromptProtocolRejected: () =>

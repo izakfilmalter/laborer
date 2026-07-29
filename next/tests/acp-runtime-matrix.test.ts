@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS,
@@ -17,6 +17,7 @@ const CHECKOUT_PATTERN = /uses: actions\/checkout@v4/g;
 const COMPATIBILITY_FAILURE_PATTERN = /OpenCode ACP compatibility check failed/;
 const LOAD_SESSION_PATTERN = /agentCapabilities\.loadSession/;
 const FROZEN_INSTALL_PATTERN = /bun install --frozen-lockfile/;
+const CURRENT_PATH_PATTERN = /- "current\/\*\*"/;
 
 const supportedInitialization = {
   agentCapabilities: {
@@ -92,16 +93,21 @@ describe("issue #243 ACP runtime matrix", () => {
     );
   });
 
-  it("keeps CI credentials and OpenCode tools least-privileged", async () => {
-    const workflow = await readFile(
-      new URL("../../.github/workflows/ci.yml", import.meta.url),
-      "utf8"
-    );
-    assert.match(workflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN);
+  it("leaves next verification to Sandcastle and keeps current CI least-privileged", async () => {
+    const [currentWorkflow, workflowFiles] = await Promise.all([
+      readFile(
+        new URL("../../.github/workflows/current-ci.yml", import.meta.url),
+        "utf8"
+      ),
+      readdir(new URL("../../.github/workflows/", import.meta.url)),
+    ]);
+    assert.ok(!workflowFiles.includes("ci.yml"));
+    assert.match(currentWorkflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN);
     assert.strictEqual(
-      workflow.match(PERSISTED_CREDENTIALS_PATTERN)?.length,
-      workflow.match(CHECKOUT_PATTERN)?.length
+      currentWorkflow.match(PERSISTED_CREDENTIALS_PATTERN)?.length,
+      currentWorkflow.match(CHECKOUT_PATTERN)?.length
     );
+    assert.match(currentWorkflow, CURRENT_PATH_PATTERN);
     assert.deepStrictEqual(OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY, {
       "*": "deny",
       compat_record: "ask",

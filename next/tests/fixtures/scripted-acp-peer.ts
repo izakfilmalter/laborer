@@ -59,12 +59,32 @@ const scriptedAgentName =
   process.env.SCRIPTED_ACP_AGENT_NAME ?? "laborer-scripted-acp-peer";
 const scriptedAgentVersion = process.env.SCRIPTED_ACP_AGENT_VERSION ?? "1.0.0";
 const publicOutputLabel = process.env.SCRIPTED_ACP_PUBLIC_OUTPUT_LABEL;
+const publicOutputChunks = (() => {
+  const source = process.env.SCRIPTED_ACP_PUBLIC_OUTPUT_CHUNKS_JSON;
+  if (source === undefined) {
+    return null;
+  }
+  const parsed: unknown = JSON.parse(source);
+  if (
+    !(
+      Array.isArray(parsed) &&
+      parsed.every((chunk) => typeof chunk === "string")
+    )
+  ) {
+    throw new Error("scripted ACP public output chunks must be strings");
+  }
+  return parsed;
+})();
+const pauseAfterPublicOutputChunk = Number.parseInt(
+  process.env.SCRIPTED_ACP_PAUSE_AFTER_PUBLIC_OUTPUT_CHUNK ?? "0",
+  10
+);
 const sessionIdPrefix =
   process.env.SCRIPTED_ACP_SESSION_ID_PREFIX ?? "acp-session-secret-234";
 const initialPublicOutput = publicOutputLabel ?? "**Streaming** from ACP";
 const completedPublicOutput =
   publicOutputLabel === undefined ? "\n\n- complete\n- unchanged" : " complete";
-const textlessStopReasonFor = (
+const scriptedStopReasonFor = (
   candidate: string | undefined
 ):
   | "cancelled"
@@ -86,9 +106,12 @@ const textlessStopReasonFor = (
   }
   return null;
 };
-const textlessStopReason = textlessStopReasonFor(
+const textlessStopReason = scriptedStopReasonFor(
   process.env.SCRIPTED_ACP_TEXTLESS_STOP_REASON
 );
+const publicOutputStopReason =
+  scriptedStopReasonFor(process.env.SCRIPTED_ACP_PUBLIC_OUTPUT_STOP_REASON) ??
+  "end_turn";
 const cancelAfterPublicChunk =
   process.env.SCRIPTED_ACP_CANCEL_AFTER_PUBLIC_CHUNK === "1";
 const exitAfterPromptReceived =
@@ -1671,6 +1694,25 @@ const app = agent({ name: "laborer-scripted-acp-peer" })
             cancellation,
             notify
           );
+        }
+        if (publicOutputChunks !== null) {
+          for (const [index, text] of publicOutputChunks.entries()) {
+            await notify({
+              content: { text, type: "text" },
+              messageId: currentAgentMessageId,
+              sessionUpdate: "agent_message_chunk",
+            });
+            if (index + 1 === pauseAfterPublicOutputChunk) {
+              await writeFile(readyPath, "pending", { mode: 0o600 });
+              if (!(await waitForRelease(cancellation.signal))) {
+                return { stopReason: "cancelled" };
+              }
+            }
+          }
+          return {
+            stopReason:
+              publicOutputStopReason as import("@agentclientprotocol/sdk").PromptResponse["stopReason"],
+          };
         }
         const fallbackStopReason = fallbackStopReasonFor(scenario);
         if (fallbackStopReason !== null) {

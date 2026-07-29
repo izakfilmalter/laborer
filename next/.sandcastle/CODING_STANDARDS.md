@@ -38,6 +38,7 @@ The reviewer agents load this file during Sandcastle review.
 - Descendants of one specification accumulate on `sandcastle/spec-<root-id>` and one shared draft PR. Exact PR-body markers record implemented-but-unmerged leaves so later iterations can continue safely.
 - Descendant issues remain open while their shared PR is unmerged. After the reviewed PR merges, the runner closes descendants from the leaves upward and closes the root last.
 - Agents commit but never push, merge, poll CI, or invoke nested review workflows. The runner owns those operations.
-- The runner performs modifying review and final verification before the first push.
+- The runner refreshes its base and reads prompts through its detached `.sandcastle/base` worktree so concurrent Git work cannot redirect integration onto the operator's checkout.
+- Builders and UI agents use targeted checks while iterating. The final code-review agent runs `bun run --cwd next check`, distinguishes scoped failures from unrelated infrastructure or flakes, and reports its evidence. The runner trusts that review and does not rerun checks.
 - PRs use `Closes #<issue>` and preserve GitHub as the integration surface.
 - Failed checks are repaired on the same branch and PR.

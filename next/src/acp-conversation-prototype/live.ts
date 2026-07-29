@@ -7,6 +7,7 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
+import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
 import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
 import { makeSlackGateway } from "../prototype/emulated-slack.ts";
 import { makeAcpSlackWorkspaceRunner } from "../slack/acp-workspace-runner.ts";
@@ -67,12 +68,17 @@ const program = Effect.gen(function* () {
     laborer.root,
     `acp-canary:${identity.teamId}`
   );
+  const rootRuntime = yield* makeNodeRootDurableRuntime({
+    databasePath: paths.runtimeDatabase,
+    rootIdentity: laborer.root,
+  });
   const runner = yield* makeAcpSlackWorkspaceRunner({
     client: botClient,
     gateway,
     identity,
     laborer,
     paths,
+    rootRuntime,
   });
   const socketClient = new SocketModeClient({
     appToken: Redacted.value(config.appToken),

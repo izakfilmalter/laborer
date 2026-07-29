@@ -110,7 +110,10 @@ The user alone determines what a conversation agent may do and which capabilitie
 _Avoid_: Routing-only agent, restricted conversation agent, read-only conversation agent
 
 **Conversation-agent message**:
-Markdown authored by a conversation agent for the people in a work thread. Laborer streams each message directly to Slack as it is produced and does not require the agent to wrap it in a structured reply record. Content already delivered remains visible if the agent later fails.
+Substantive Markdown authored by a conversation agent for the people in a work thread. Laborer streams each substantive message directly to Slack as it is produced and does not require the agent to wrap it in a structured reply record. Content already delivered remains visible if the agent later fails. A private silent completion is not a Conversation-agent message.
+
+**Private silent completion**:
+A Conversation response whose complete text is the exact case-sensitive token `NO_REPLY` with only surrounding ECMAScript whitespace. It is semantic completion output but is neither a Conversation-agent message nor public Slack output, and Laborer does not mark durable public output as observed for it. A substantive response that merely contains `NO_REPLY`, uses different casing, or includes any other non-whitespace text retains direct Conversation-agent message streaming semantics.
 
 **Implementation agent**:
 An agent that performs the work of an Execution on behalf of a conversation agent. It may exchange Execution updates and Execution follow-ups with the conversation agent, but it does not author public Slack messages directly.

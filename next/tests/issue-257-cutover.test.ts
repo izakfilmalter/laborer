@@ -187,9 +187,11 @@ describe("issue #257 ACP production cutover", () => {
       ),
       readFile(new URL("../slack-app-manifest.yaml", import.meta.url), "utf8"),
     ]);
+    assert.ok(canary.includes("makeNodeRootDurableRuntime"));
     assert.ok(canary.includes("makeAcpSlackWorkspaceRunner"));
     assert.ok(canary.includes("slackConversationStreamDeliveryPolicy"));
     assert.ok(canary.includes("acp-canary:"));
+    assert.ok(canary.includes("rootRuntime"));
     assert.ok(!canary.includes("makeAcpConversationCanary"));
     assert.ok(manifest.includes("interactivity:\n    is_enabled: true"));
   });

@@ -12,6 +12,6 @@ The all-around builder already owns architecture and plumbing. Touch those areas
 
 {{VERIFICATION_POLICY}}
 
-Run narrow checks when practical. Do not run live canaries, invoke review workflows, launch subagents, push, merge, poll CI, or run `bun install` unless dependencies changed.
+Run narrow checks when practical; the dedicated code-review phase owns the final comprehensive check. Do not run live canaries, invoke review workflows, launch subagents, push, merge, poll CI, or run `bun install` unless dependencies changed.
 
 Commit changes with a concise `SANDCASTLE:` message. If no UI change is needed, make no commit. When complete, output `<promise>COMPLETE</promise>`.

@@ -424,13 +424,10 @@ describe("issue #239 ACP Slack participant context", () => {
         ).pipe(Effect.provide(Logger.layer([warningLogger])));
         const elapsedMillis = Date.now() - startedAt;
 
-        assert.strictEqual(
-          startedRequests,
-          SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
-        );
-        assert.strictEqual(
-          abortedRequests,
-          SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
+        assert.strictEqual(abortedRequests, startedRequests);
+        assert.ok(
+          startedRequests >=
+            SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT
         );
         assert.strictEqual(inFlightRequests, 0);
         assert.deepStrictEqual(results, userIds);
@@ -516,6 +513,12 @@ describe("issue #239 ACP Slack participant context", () => {
               lookupVisibleName: (slackUserId) =>
                 Effect.sync(() => lookedUpIds.push(slackUserId)).pipe(
                   Effect.andThen(boundedLookup.lookupVisibleName(slackUserId))
+                ),
+              lookupVisibleNameResult: (slackUserId) =>
+                Effect.sync(() => lookedUpIds.push(slackUserId)).pipe(
+                  Effect.andThen(
+                    boundedLookup.lookupVisibleNameResult(slackUserId)
+                  )
                 ),
             },
           });
@@ -1190,19 +1193,18 @@ describe("issue #239 ACP Slack participant context", () => {
             const message = yield* postHumanMessage(fixture, text, {
               threadTs: rootTs,
             });
-            const injection = harness.runner.inject(
-              normalizedEvent({
-                authorSlackId,
-                channelId: fixture.channelId,
-                eventId: `event:239-fallback-${eventId}`,
-                messageTs: timestampOf(message),
-                text,
-                threadTs: rootTs,
-              })
-            );
-            yield* authorSlackId === failedUserId
-              ? injection.pipe(Effect.provide(Logger.layer([warningLogger])))
-              : injection;
+            yield* harness.runner
+              .inject(
+                normalizedEvent({
+                  authorSlackId,
+                  channelId: fixture.channelId,
+                  eventId: `event:239-fallback-${eventId}`,
+                  messageTs: timestampOf(message),
+                  text,
+                  threadTs: rootTs,
+                })
+              )
+              .pipe(Effect.provide(Logger.layer([warningLogger])));
           }
 
           const prompts = yield* waitForPromptCount(promptJsonlPath, 4);

@@ -26,8 +26,9 @@
 > delivered stream is not yet guaranteed.
 >
 > **DEDICATED LIVE ACP CANARY.** `start:acp-canary` composes the production ACP
-> runtime under isolated credentials and state. It is a manual gate and must
-> prove native streaming plus one Action/Execution scene.
+> adapter through an isolated SQLite- and Cluster-backed root runtime under
+> dedicated credentials and state. It is a manual gate and must prove native
+> streaming plus one Action/Execution scene.
 >
 > **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
 > the normal workspace registry, root lock, durable Runner and file Application
@@ -36,6 +37,18 @@
 > owns one scoped ACP child and isolated workspace state. Incompatible startup
 > quarantines only that binding. There is no legacy Conversation fallback and
 > no dual publication or alternate production entrypoint.
+>
+> **THROWAWAY BIDIRECTIONAL COMMUNICATION POC for issues #266–#268.** The
+> OpenCode implementation adapter observes completed, nonblank assistant
+> messages for the exact active implementation prompt while it remains
+> nonterminal. Each bounded, provider-ordered message uses the existing durable
+> Execution-response path to wake the owning Conversation; implementation text
+> remains escaped untrusted data and never publishes directly to Slack. A final
+> observation after terminal wait closes the completion race, while explicit
+> Execution lifecycle events remain independent and authoritative. An awakened
+> Conversation can use `prompt-execution` to send its interpreted follow-up into
+> that same owned Execution, implementation session, and working directory;
+> subsequent assistant messages traverse the same ordered private update path.
 
 ## Run it
 
@@ -66,6 +79,24 @@ To run the production lifecycle, use:
 bun run start:slack
 ```
 
+The daemon also owns a bounded, authenticated local status stream under its
+owner-only `.laborer-runtime` directory. To open the macOS menu-bar companion
+against that separately running daemon, use one development command in another
+terminal:
+
+```sh
+bun run companion:dev
+```
+
+The companion has no Dock icon; click its menu-bar item to toggle the status
+popover, and dismiss it with Escape or by clicking away. The popover reports
+daemon availability, version, and uptime, and offers an explicit retry only when
+the daemon is unavailable or its protocol version is incompatible; connecting
+and reconnecting states retry on their own. Quitting it does not signal or stop
+the daemon. Both commands default
+to this package's `.laborer-runtime`; set `LABORER_RUNTIME_ROOT` for the
+companion when the daemon endpoint is rooted elsewhere.
+
 The ACP child receives only required runtime variables and application
 environment names explicitly opted into by `laborer.json`; Slack, workspace
 registry, and Laborer bridge or memory authority variables are removed. Project
@@ -92,8 +123,17 @@ operations from the same workspace-scoped state. A native request that was in
 flight when the daemon stopped remains unresolved because Slack provides no
 exactly-once key for these methods.
 
-Existing pre-ACP Conversations are adopted through a versioned migration ledger on
-their first ACP-handled participant turn, provided they have no ACP binding.
+A Conversation response whose complete text is the exact case-sensitive token
+`NO_REPLY` with only surrounding ECMAScript whitespace completes without
+publishing a Slack message. The ACP adapter incrementally holds only chunks that
+could still form that exact token, flushes them in order as soon as they diverge,
+and does not record suppressed text as observed public output. The token still
+counts as semantic output for bounded `max_tokens` and `max_turn_requests`
+completion. Text that merely contains or ends with the token remains visible;
+transport output and message bounds still include held text.
+
+Existing pre-ACP Conversations are adopted through a versioned migration ledger
+on their first ACP-handled participant turn, provided they have no ACP binding.
 Laborer durably fixes the triggering-message cutoff before a
 dedicated `conversations.replies` read, then retains the newest chronological
 suffix up to 90 days, 200 messages, and 256 KiB including trust and degradation
@@ -174,9 +214,10 @@ manual live-acceptance gate, and rollback policy are in
 ## Run the production-runtime OpenCode ACP canary later
 
 This Slack-connected live step is deliberately **not** part of automated
-acceptance. The canary uses the production ACP supervisor, Action/Execution MCP,
-permission interactions, durable native stream projection, adoption, and
-recovery under dedicated Slack credentials and the isolated
+acceptance. The canary uses the production ACP supervisor, SQLite- and
+Cluster-backed Conversation runtime, Action/Execution MCP, permission
+interactions, durable native stream projection, adoption, and recovery under
+dedicated Slack credentials and the isolated
 `acp-canary:<team>` runtime namespace. It has no legacy Conversation path.
 
 For a later human smoke test, create and install a **separate Slack app** for the

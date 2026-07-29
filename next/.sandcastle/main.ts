@@ -10,10 +10,21 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import {
-  assertAcceptedHeadIsCurrent,
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
+  assertRecordedRecoveryLineage,
+  classifyBranchRecovery,
 } from "./agent-completion/index.ts";
+import {
+  attemptHostStep,
+  canReuseCompletedHead,
+  hostCheckoutProblem,
+  mergePullRequestArgs,
+  refreshDetachedBase,
+  reviewedHeadNeedsPush,
+  runnerBaseReuseProblem,
+  shellQuote,
+} from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
 import {
   type ExistingPullRequest,
@@ -21,6 +32,7 @@ import {
   type RunnableIssue,
   scheduleIssueGraph,
 } from "./issue-graph-scheduler/index.ts";
+import { waitForExpectedPrHead } from "./pr-head-observation/index.ts";
 import {
   appendSpecProgress,
   assertPullRequestTargets,
@@ -54,39 +66,6 @@ const plannedIssueSchema = z
   });
 
 const planSchema = z.object({ issues: z.array(plannedIssueSchema) });
-const prCheckSchema = z.object({
-  bucket: z.enum(["cancel", "fail", "pass", "pending", "skipping"]),
-  link: z.string().url().optional(),
-  name: z.string().min(1).optional(),
-  workflow: z.string().min(1).optional(),
-});
-const gitHubCheckSchema = z.object({
-  conclusion: z
-    .enum([
-      "ACTION_REQUIRED",
-      "CANCELLED",
-      "FAILURE",
-      "NEUTRAL",
-      "SKIPPED",
-      "STALE",
-      "STARTUP_FAILURE",
-      "SUCCESS",
-      "TIMED_OUT",
-    ])
-    .nullable()
-    .optional(),
-  detailsUrl: z.string().url().nullable().optional(),
-  name: z.string().min(1).optional(),
-  status: z.enum([
-    "COMPLETED",
-    "IN_PROGRESS",
-    "PENDING",
-    "QUEUED",
-    "REQUESTED",
-    "WAITING",
-  ]),
-  workflowName: z.string().min(1).optional(),
-});
 const prStatusSchema = z.object({
   headRefOid: z.string().regex(/^[0-9a-f]{40,64}$/),
   isDraft: z.boolean(),
@@ -121,17 +100,9 @@ const MAX_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
   "SANDCASTLE_MAX_REPAIR_ATTEMPTS",
   3
 );
-const MAX_LOCAL_GATE_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
-  "SANDCASTLE_MAX_LOCAL_GATE_REPAIR_ATTEMPTS",
-  2
-);
-const CHECK_POLL_INTERVAL_MS = positiveIntegerEnv(
-  "SANDCASTLE_CHECK_POLL_INTERVAL_MS",
+const GITHUB_POLL_INTERVAL_MS = positiveIntegerEnv(
+  "SANDCASTLE_GITHUB_POLL_INTERVAL_MS",
   30_000
-);
-const CHECK_TIMEOUT_MS = positiveIntegerEnv(
-  "SANDCASTLE_CHECK_TIMEOUT_MS",
-  20 * 60_000
 );
 const HOST_COMMAND_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_HOST_COMMAND_TIMEOUT_MS",
@@ -145,21 +116,27 @@ const AGENT_RUN_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_AGENT_RUN_TIMEOUT_MS",
   4 * 60 * 60_000
 );
+const AGENT_IDLE_TIMEOUT_SECONDS = positiveIntegerEnv(
+  "SANDCASTLE_AGENT_IDLE_TIMEOUT_SECONDS",
+  30 * 60
+);
+const PR_HEAD_OBSERVATION_TIMEOUT_MS = positiveIntegerEnv(
+  "SANDCASTLE_PR_HEAD_OBSERVATION_TIMEOUT_MS",
+  2 * 60_000
+);
 const MERGE_TIMEOUT_MS = positiveIntegerEnv(
   "SANDCASTLE_MERGE_TIMEOUT_MS",
   20 * 60_000
 );
 const AUTO_MERGE_PRS = process.env.SANDCASTLE_AUTO_MERGE !== "false";
 const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
-const REPAIR_FAILED_CHECKS =
-  process.env.SANDCASTLE_REPAIR_FAILED_CHECKS !== "false";
 const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
 const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
 const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
-const FULL_GATE = "bun run --cwd next check";
 const REPO_ROOT = "..";
+const RUNNER_BASE_WORKTREE = resolve(REPO_ROOT, ".sandcastle/base");
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
 const HOST_OPENCODE_AUTH = resolve(
   homedir(),
@@ -171,7 +148,8 @@ const HOST_OPENCODE_ACCOUNT = resolve(
 );
 const VERIFICATION_POLICY = [
   "Run deterministic offline checks only.",
-  "Use targeted commands while iterating and `bun run --cwd next check` for the comprehensive gate.",
+  "Agents own verification; the runner will not rerun checks.",
+  "Run checks appropriate to your phase and use scoped evidence to distinguish product failures from unrelated flaky or infrastructure failures.",
   "Never run live Slack or ACP canaries unless an issue explicitly requires a manual credentialed smoke test.",
 ].join(" ");
 
@@ -216,14 +194,15 @@ const issueGraphSource = new GitHubCliIssueGraphSource(
   BASE_BRANCH
 );
 
-assertHostReady();
+const hostReady = prepareHost();
 
-for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
   console.log(
     `\n=== Sandcastle iteration ${iteration}/${MAX_ITERATIONS} ===\n`
   );
-  refreshBaseBranch();
-  syncPlannerBranchToBase();
+  if (!prepareIteration(iteration)) {
+    break;
+  }
   const readyIssueNumbers =
     issueGraphSource.listOpenIssueNumbers("ready-for-agent");
   const schedule = scheduleIssueGraph(issueGraphSource, readyIssueNumbers);
@@ -279,18 +258,23 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       console.log(`  #${issue.id}: ${issue.title} -> ${issue.branch}`);
     }
 
-    const buildResults = await Promise.allSettled(
+    const workResults = await Promise.allSettled(
       plannedIssues.map(async (issue) => {
         const releaseSlot = await acquireSlot();
         try {
-          return { commits: await buildIssue(issue), issue };
+          await buildIssue(issue);
+          if (issue.kind === "spec-leaf") {
+            await publishSpecProgress(issue);
+            return { issue };
+          }
+          return { issue, prUrl: publishIssuePr(issue) };
         } finally {
           releaseSlot();
         }
       })
     );
 
-    for (const [index, result] of buildResults.entries()) {
+    for (const [index, result] of workResults.entries()) {
       const issue = plannedIssues[index];
       if (!issue) {
         continue;
@@ -300,16 +284,26 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         console.error(`  Issue #${issue.id} failed: ${String(result.reason)}`);
         continue;
       }
+      madeProgress = true;
+    }
+
+    for (const result of workResults) {
+      if (
+        result.status === "rejected" ||
+        result.value.issue.kind === "spec-leaf"
+      ) {
+        continue;
+      }
       try {
-        if (issue.kind === "spec-leaf") {
-          publishSpecProgress(issue);
-        } else {
-          await publishAndMaybeMergeStandalone(issue);
-        }
-        madeProgress = true;
+        await publishAndMaybeMergeStandalone(
+          result.value.issue,
+          result.value.prUrl
+        );
       } catch (error) {
         process.exitCode = 1;
-        console.error(`  Publishing #${issue.id} failed: ${String(error)}`);
+        console.error(
+          `  Preparing #${result.value.issue.id} failed: ${String(error)}`
+        );
       }
     }
   }
@@ -356,11 +350,12 @@ async function classifyRunnableIssues(
     agent: allAroundAgent(),
     branchStrategy: { type: "branch", branch: "sandcastle/planner" },
     cwd: REPO_ROOT,
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
     maxIterations: 1,
     name: "planner",
     output: Output.object({ tag: "plan", schema: planSchema }),
     promptArgs: { CANDIDATES_JSON: JSON.stringify(candidates, null, 2) },
-    promptFile: ".sandcastle/plan-prompt.md",
+    promptFile: runnerPromptFile("plan-prompt.md"),
     sandbox: sandboxProvider(),
     signal: agentRunSignal(),
   });
@@ -435,7 +430,7 @@ function logWaitingIssueRoots(
   }
 }
 
-function publishSpecProgress(issue: PlannedIssue) {
+async function publishSpecProgress(issue: PlannedIssue) {
   const beforePush = issueGraphSource.pullRequest(issue.branch);
   if (beforePush !== undefined) {
     assertOpenDraftSpecPullRequest(beforePush, issue);
@@ -449,8 +444,13 @@ function publishSpecProgress(issue: PlannedIssue) {
     );
   }
 
-  pushIssueBranch(issue.branch);
   const acceptedHead = localBranchHead(issue.branch);
+  if (recordedCompletion(issue) !== acceptedHead) {
+    throw new Error(
+      `Refusing to publish #${issue.id}: local head does not match its completed head.`
+    );
+  }
+  pushIssueBranch(issue.branch, acceptedHead);
   let current = issueGraphSource.pullRequest(issue.branch);
   if (current === undefined) {
     const body = createSpecPullRequestBody(
@@ -479,11 +479,14 @@ function publishSpecProgress(issue: PlannedIssue) {
     );
   }
   assertOpenDraftSpecPullRequest(current, issue);
-  assertPrHead(current.url, acceptedHead);
-  const body = appendSpecProgress(
-    current.body,
-    issue.root.number,
-    Number(issue.id),
+  await waitForPrHead(current.url, acceptedHead);
+  const body = recordReviewedHead(
+    appendSpecProgress(
+      current.body,
+      issue.root.number,
+      Number(issue.id),
+      acceptedHead
+    ),
     acceptedHead
   );
   if (body !== current.body) {
@@ -495,13 +498,16 @@ function publishSpecProgress(issue: PlannedIssue) {
     throw new Error(`Shared PR disappeared while recording #${issue.id}.`);
   }
   assertOpenDraftSpecPullRequest(confirmed, issue);
-  assertPrHead(confirmed.url, acceptedHead);
+  await waitForPrHead(confirmed.url, acceptedHead);
   if (
     !confirmed.body.includes(
       implementationMarker(Number(issue.id), acceptedHead)
-    )
+    ) ||
+    reviewedHeadFromBody(confirmed.body) !== acceptedHead
   ) {
-    throw new Error(`Shared PR did not retain the marker for #${issue.id}.`);
+    throw new Error(
+      `Shared PR did not retain the implementation and reviewed-head markers for #${issue.id}.`
+    );
   }
   deleteRecordedCompletion(issue);
   console.log(`  Recorded #${issue.id} on shared draft PR ${confirmed.url}`);
@@ -626,7 +632,7 @@ async function mergePreparedPullRequest(
     if (status.state === "CLOSED") {
       throw new Error(`${prUrl} closed without merge.`);
     }
-    await sleep(CHECK_POLL_INTERVAL_MS);
+    await sleep(GITHUB_POLL_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for ${prUrl} to merge.`);
 }
@@ -713,43 +719,76 @@ async function buildIssue(issue: PlannedIssue) {
     const acceptedHead =
       issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
     const startingHead = worktreeHead(sandbox.worktreePath);
-    if (startingHead !== acceptedHead) {
-      if (recordedCompletion(issue) !== startingHead) {
-        assertAcceptedHeadIsCurrent(acceptedHead, startingHead);
-      }
-      assertCommitIsDescendant(
-        sandbox.worktreePath,
-        acceptedHead,
-        startingHead
+    const recovery = classifyBranchRecovery({
+      acceptedHead,
+      completedHead: recordedCompletion(issue),
+      currentHead: startingHead,
+      gatePassedHead: recordedGatePassed(issue),
+      gatePendingHead: recordedGatePending(issue),
+      implementationHead: recordedImplementation(issue),
+      progressHead: recordedProgress(issue),
+      reviewedHead: recordedReviewed(issue),
+      uiReviewedHead: recordedUiReview(issue),
+    });
+    if (recovery !== "build") {
+      assertRecordedRecoveryLineage(
+        issue.latestImplementedHead,
+        startingHead,
+        (ancestor, descendant) =>
+          commitIsAncestor(sandbox.worktreePath, ancestor, descendant)
       );
-      return [];
+      if (recovery === "publish") {
+        return [];
+      }
+      let resumedCommits: Array<{ sha: string }> = [];
+      if (recovery === "complete") {
+        // The exact head completed agent-owned review before interruption.
+      } else if (recovery === "ui") {
+        resumedCommits = await runUiImplementation(issue, sandbox);
+        resumedCommits.push(...(await runReview(issue, sandbox)));
+      } else {
+        resumedCommits = await runReview(
+          issue,
+          sandbox,
+          true,
+          recovery === "code-review"
+        );
+      }
+      const completedHead = worktreeHead(sandbox.worktreePath);
+      assertNewWorkAfterAcceptedHead(
+        acceptedHead,
+        completedHead,
+        `Issue #${issue.id}`
+      );
+      recordCompletion(issue, completedHead);
+      deleteRecordedStages(issue);
+      return resumedCommits;
     }
     const commits: Array<{ sha: string }> = [];
     const implementation = await sandbox.run({
       agent: allAroundAgent(),
-      maxIterations: 100,
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+      maxIterations: 3,
       name: `all-around-builder-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
-      promptFile: ".sandcastle/implement-prompt.md",
+      promptFile: runnerPromptFile("implement-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(implementation, `implementation for #${issue.id}`);
+    assertWorktreeClean(
+      sandbox.worktreePath,
+      `after implementation for #${issue.id}`
+    );
     commits.push(...implementation.commits);
 
     if (issue.needsUi) {
-      const ui = await sandbox.run({
-        agent: uiAgent(),
-        maxIterations: 20,
-        name: `ui-builder-${issue.id}`,
-        promptArgs: issuePromptArgs(issue),
-        promptFile: ".sandcastle/ui-prompt.md",
-        signal: agentRunSignal(),
-      });
-      assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
-      commits.push(...ui.commits);
+      recordImplementation(issue, worktreeHead(sandbox.worktreePath));
+      commits.push(...(await runUiImplementation(issue, sandbox)));
+    } else {
+      recordProgress(issue, worktreeHead(sandbox.worktreePath));
     }
 
-    commits.push(...(await runReviewAndVerification(issue, sandbox)));
+    commits.push(...(await runReview(issue, sandbox)));
     const completedHead = worktreeHead(sandbox.worktreePath);
     assertNewWorkAfterAcceptedHead(
       acceptedHead,
@@ -757,6 +796,7 @@ async function buildIssue(issue: PlannedIssue) {
       `Issue #${issue.id}`
     );
     recordCompletion(issue, completedHead);
+    deleteRecordedStages(issue);
     return commits;
   } finally {
     await sandbox.close();
@@ -765,6 +805,35 @@ async function buildIssue(issue: PlannedIssue) {
 
 function completionRef(issue: PlannedIssue) {
   return `refs/sandcastle/completed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function progressRef(issue: PlannedIssue) {
+  return `refs/sandcastle/progress/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function implementationRef(issue: PlannedIssue) {
+  return `refs/sandcastle/implemented/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function uiReviewRef(issue: PlannedIssue) {
+  return `refs/sandcastle/ui-reviewed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function reviewedRef(issue: PlannedIssue) {
+  return `refs/sandcastle/reviewed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+// Read old runner-gate checkpoints only long enough to migrate interrupted work.
+function gatePendingRef(issue: PlannedIssue) {
+  return `refs/sandcastle/gate-pending/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function gatePassedRef(issue: PlannedIssue) {
+  return `refs/sandcastle/gate-passed/${issue.kind}/${issue.root.number}/${issue.id}`;
+}
+
+function repairRef(issue: PlannedIssue) {
+  return `refs/sandcastle/repaired/${issue.kind}/${issue.root.number}/${issue.id}`;
 }
 
 function recordedCompletion(issue: PlannedIssue) {
@@ -781,25 +850,127 @@ function recordCompletion(issue: PlannedIssue, completedHead: string) {
   runFile("git", ["update-ref", completionRef(issue), completedHead]);
 }
 
+function recordedProgress(issue: PlannedIssue) {
+  const output = tryFile("git", [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    progressRef(issue),
+  ]).trim();
+  return output || undefined;
+}
+
+function recordProgress(issue: PlannedIssue, progressHead: string) {
+  runFile("git", ["update-ref", progressRef(issue), progressHead]);
+}
+
+function deleteRecordedProgress(issue: PlannedIssue) {
+  if (recordedProgress(issue) !== undefined) {
+    runFile("git", ["update-ref", "-d", progressRef(issue)]);
+  }
+}
+
+function recordedStageRef(ref: string) {
+  const output = tryFile("git", [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    ref,
+  ]).trim();
+  return output || undefined;
+}
+
+function recordedImplementation(issue: PlannedIssue) {
+  return recordedStageRef(implementationRef(issue));
+}
+
+function recordedUiReview(issue: PlannedIssue) {
+  return recordedStageRef(uiReviewRef(issue));
+}
+
+function recordedReviewed(issue: PlannedIssue) {
+  return recordedStageRef(reviewedRef(issue));
+}
+
+function recordedGatePending(issue: PlannedIssue) {
+  return recordedStageRef(gatePendingRef(issue));
+}
+
+function recordedGatePassed(issue: PlannedIssue) {
+  return recordedStageRef(gatePassedRef(issue));
+}
+
+function recordImplementation(issue: PlannedIssue, head: string) {
+  runFile("git", ["update-ref", implementationRef(issue), head]);
+}
+
+function recordUiReview(issue: PlannedIssue, head: string) {
+  runFile("git", ["update-ref", uiReviewRef(issue), head]);
+}
+
+function recordReviewedCheckpoint(issue: PlannedIssue, head: string) {
+  updateRefsAtomically([
+    [progressRef(issue), head],
+    [reviewedRef(issue), head],
+  ]);
+}
+
+function updateRefsAtomically(
+  entries: ReadonlyArray<readonly [string, string]>
+) {
+  runFileWithInput(
+    "git",
+    ["update-ref", "--stdin"],
+    [
+      "start",
+      ...entries.map(([ref, head]) => `update ${ref} ${head}`),
+      "prepare",
+      "commit",
+      "",
+    ].join("\n")
+  );
+}
+
+function deleteRecordedStage(ref: string) {
+  if (recordedStageRef(ref) !== undefined) {
+    runFile("git", ["update-ref", "-d", ref]);
+  }
+}
+
+function deleteRecordedStages(issue: PlannedIssue) {
+  deleteRecordedProgress(issue);
+  deleteRecordedStage(implementationRef(issue));
+  deleteRecordedStage(uiReviewRef(issue));
+  deleteRecordedStage(reviewedRef(issue));
+  deleteRecordedStage(gatePendingRef(issue));
+  deleteRecordedStage(gatePassedRef(issue));
+  deleteRecordedStage(repairRef(issue));
+}
+
 function deleteRecordedCompletion(issue: PlannedIssue) {
   if (recordedCompletion(issue) !== undefined) {
     runFile("git", ["update-ref", "-d", completionRef(issue)]);
   }
 }
 
-function assertCommitIsDescendant(
+function commitIsAncestor(
   worktreePath: string,
-  acceptedHead: string,
-  completedHead: string
+  ancestor: string,
+  descendant: string
 ) {
-  runFile("git", [
-    "-C",
-    worktreePath,
-    "merge-base",
-    "--is-ancestor",
-    acceptedHead,
-    completedHead,
-  ]);
+  try {
+    runFile("git", [
+      "-C",
+      worktreePath,
+      "merge-base",
+      "--is-ancestor",
+      ancestor,
+      descendant,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function createIssueSandbox(issue: PlannedIssue) {
@@ -837,22 +1008,25 @@ function prepareLocalIssueBranch(branch: string) {
     "origin",
     branch,
   ]);
-  if (!remote.trim()) {
-    return;
+  if (remote.trim()) {
+    runFile("git", [
+      "fetch",
+      "--no-tags",
+      "origin",
+      `refs/heads/${branch}:refs/remotes/origin/${branch}`,
+    ]);
   }
-  runFile("git", [
-    "fetch",
-    "--no-tags",
-    "origin",
-    `refs/heads/${branch}:refs/remotes/origin/${branch}`,
-  ]);
   const local = tryFile("git", [
     "show-ref",
     "--verify",
     `refs/heads/${branch}`,
   ]);
   if (!local.trim()) {
-    runFile("git", ["branch", branch, `origin/${branch}`]);
+    runFile("git", [
+      "branch",
+      branch,
+      remote.trim() ? `origin/${branch}` : runnerBaseHead(),
+    ]);
   }
 }
 
@@ -884,106 +1058,127 @@ function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
   ]);
 }
 
-async function runReviewAndVerification(issue: PlannedIssue, sandbox: Sandbox) {
+async function runUiImplementation(issue: PlannedIssue, sandbox: Sandbox) {
+  const ui = await sandbox.run({
+    agent: uiAgent(),
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+    maxIterations: 2,
+    name: `ui-builder-${issue.id}`,
+    promptArgs: issuePromptArgs(issue),
+    promptFile: runnerPromptFile("ui-prompt.md"),
+    signal: agentRunSignal(),
+  });
+  assertAgentCompleted(ui, `UI implementation for #${issue.id}`);
+  assertWorktreeClean(
+    sandbox.worktreePath,
+    `after UI implementation for #${issue.id}`
+  );
+  recordProgress(issue, worktreeHead(sandbox.worktreePath));
+  deleteRecordedStage(implementationRef(issue));
+  return ui.commits;
+}
+
+async function runReview(
+  issue: PlannedIssue,
+  sandbox: Sandbox,
+  trackBuildProgress = true,
+  skipUiReview = false
+) {
+  const commits = await runModifyingReview(
+    issue,
+    sandbox,
+    trackBuildProgress,
+    skipUiReview
+  );
+  if (trackBuildProgress) {
+    const reviewedHead = worktreeHead(sandbox.worktreePath);
+    recordReviewedCheckpoint(issue, reviewedHead);
+    deleteRecordedStage(uiReviewRef(issue));
+  }
+  return commits;
+}
+
+function runRecoverableReview(issue: PlannedIssue, sandbox: Sandbox) {
+  const currentHead = worktreeHead(sandbox.worktreePath);
+  if (
+    recordedReviewed(issue) === currentHead ||
+    recordedGatePassed(issue) === currentHead
+  ) {
+    return [];
+  }
+  return runReview(
+    issue,
+    sandbox,
+    true,
+    recordedUiReview(issue) === currentHead
+  );
+}
+
+async function runModifyingReview(
+  issue: PlannedIssue,
+  sandbox: Sandbox,
+  trackBuildProgress: boolean,
+  skipUiReview: boolean
+) {
   const commits: Array<{ sha: string }> = [];
-  if (issue.needsUi) {
+  if (issue.needsUi && !skipUiReview) {
     const uiReview = await sandbox.run({
       agent: uiAgent(),
-      maxIterations: 3,
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+      maxIterations: 1,
       name: `pre-publish-ui-review-${issue.id}`,
       promptArgs: issuePromptArgs(issue),
-      promptFile: ".sandcastle/ui-review-prompt.md",
+      promptFile: runnerPromptFile("ui-review-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(uiReview, `UI review for #${issue.id}`);
+    assertWorktreeClean(
+      sandbox.worktreePath,
+      `after UI review for #${issue.id}`
+    );
     commits.push(...uiReview.commits);
+    if (trackBuildProgress) {
+      recordUiReview(issue, worktreeHead(sandbox.worktreePath));
+    }
   }
 
   const review = await sandbox.run({
     agent: allAroundAgent(),
-    maxIterations: 3,
+    idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+    maxIterations: 1,
     name: `pre-publish-code-review-${issue.id}`,
     promptArgs: issuePromptArgs(issue),
-    promptFile: ".sandcastle/review-prompt.md",
+    promptFile: runnerPromptFile("review-prompt.md"),
     signal: agentRunSignal(),
   });
   assertAgentCompleted(review, `code review for #${issue.id}`);
+  assertWorktreeClean(
+    sandbox.worktreePath,
+    `after code review for #${issue.id}`
+  );
   commits.push(...review.commits);
-
-  const verify = await sandbox.run({
-    agent: allAroundAgent(),
-    maxIterations: 30,
-    name: `verify-fixer-${issue.id}`,
-    promptArgs: {
-      ...issuePromptArgs(issue),
-      GATE_CONTEXT: "No prior runner-enforced gate failure.",
-    },
-    promptFile: ".sandcastle/verify-fix-prompt.md",
-    signal: agentRunSignal(),
-  });
-  assertAgentCompleted(verify, `verification for #${issue.id}`);
-  commits.push(...verify.commits);
-  commits.push(...(await enforceLocalGate(issue, sandbox)));
   return commits;
-}
-
-async function enforceLocalGate(issue: PlannedIssue, sandbox: Sandbox) {
-  const commits: Array<{ sha: string }> = [];
-  for (let attempt = 0; ; attempt++) {
-    assertWorktreeClean(
-      sandbox.worktreePath,
-      `before the gate for #${issue.id}`
-    );
-    const result = await sandbox.exec(boundedSandboxCommand(FULL_GATE), {
-      onLine: (line) => console.log(`  ${line}`),
-    });
-    if (result.exitCode === 0) {
-      assertWorktreeClean(
-        sandbox.worktreePath,
-        `after the gate for #${issue.id}`
-      );
-      return commits;
-    }
-    if (attempt >= MAX_LOCAL_GATE_REPAIR_ATTEMPTS) {
-      throw new Error(
-        `Local gate failed for #${issue.id} with exit code ${result.exitCode}.`
-      );
-    }
-    const repair = await sandbox.run({
-      agent: allAroundAgent(),
-      maxIterations: 30,
-      name: `local-gate-repair-${issue.id}-${attempt + 1}`,
-      promptArgs: {
-        ...issuePromptArgs(issue),
-        GATE_CONTEXT: `The runner-enforced ${FULL_GATE} command failed with exit code ${result.exitCode}.`,
-      },
-      promptFile: ".sandcastle/verify-fix-prompt.md",
-      signal: agentRunSignal(),
-    });
-    assertAgentCompleted(repair, `local gate repair for #${issue.id}`);
-    commits.push(...repair.commits);
-  }
 }
 
 async function reviewPublishedBranch(issue: PlannedIssue, prUrl: string) {
   console.log(`  Reviewing current PR head: ${prUrl}`);
   const sandbox = await createIssueSandbox(issue);
-  let commits: Array<{ sha: string }> = [];
   let reviewedLocalHead: string;
   try {
-    commits = await runReviewAndVerification(issue, sandbox);
+    await runRecoverableReview(issue, sandbox);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
   }
-  if (commits.length > 0) {
-    pushIssueBranch(issue.branch);
+  if (reviewedHeadNeedsPush(requiredPrHead(prUrl), reviewedLocalHead)) {
+    pushIssueBranch(issue.branch, reviewedLocalHead);
   }
   if (!reviewIsComplete(prUrl)) {
     runFile("gh", ["pr", "comment", prUrl, "--body", REVIEW_MARKER]);
   }
-  assertPrHead(prUrl, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
   recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
   return reviewedLocalHead;
 }
 
@@ -998,67 +1193,32 @@ async function preparePrForMerge(
   if (status.state === "MERGED" || status.mergedAt) {
     throw new Error(`Cannot prepare an already merged PR: ${prUrl}`);
   }
-  let reviewedHead = await reviewPublishedBranch(issue, prUrl);
-  if (!REPAIR_FAILED_CHECKS) {
-    const result = await waitForChecks(prUrl);
-    return result.status === "completed" && checksArePassing(result.checks)
-      ? assertReviewedHead(prUrl, reviewedHead)
-      : undefined;
+  const pullRequest = issueGraphSource.pullRequest(issue.branch);
+  if (pullRequest === undefined || pullRequest.url !== prUrl) {
+    throw new Error(`Could not bind ${prUrl} to branch ${issue.branch}.`);
   }
-
-  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS + 1; attempt++) {
-    const result = await waitForChecks(prUrl);
-    if (result.status === "merged") {
-      return assertReviewedHead(prUrl, reviewedHead);
-    }
-    if (result.status !== "completed") {
-      return undefined;
-    }
-    const failed = result.checks.filter(isFailingCheck);
-    if (failed.length === 0) {
-      return checksArePassing(result.checks)
-        ? assertReviewedHead(prUrl, reviewedHead)
-        : undefined;
-    }
-    if (attempt > MAX_REPAIR_ATTEMPTS) {
-      return undefined;
-    }
-    reviewedHead = await repairFailedChecks(issue, prUrl, failed, attempt);
+  assertPullRequestTargets(pullRequest, BASE_BRANCH, issue.branch);
+  const durableReviewedHead = reviewedHeadFromBody(pullRequest.body);
+  if (durableReviewedHead === status.headRefOid) {
+    console.log(
+      `  Reusing reviewed PR head ${status.headRefOid.slice(0, 12)}.`
+    );
+    const reviewedHead = assertReviewedHead(prUrl, durableReviewedHead);
+    deleteRecordedStages(issue);
+    return reviewedHead;
   }
-  return undefined;
-}
-
-async function repairFailedChecks(
-  issue: PlannedIssue,
-  prUrl: string,
-  checks: PrCheck[],
-  attempt: number
-) {
-  const sandbox = await createIssueSandbox(issue);
-  let reviewedLocalHead: string;
-  try {
-    const repair = await sandbox.run({
-      agent: allAroundAgent(),
-      maxIterations: 30,
-      name: `pr-check-repair-${issue.id}-${attempt}`,
-      promptArgs: {
-        ...issuePromptArgs(issue),
-        FAILED_CHECKS_JSON: JSON.stringify(checks, null, 2),
-        PR_URL: prUrl,
-      },
-      promptFile: ".sandcastle/pr-check-repair-prompt.md",
-      signal: agentRunSignal(),
-    });
-    assertAgentCompleted(repair, `PR check repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox);
-    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
-  } finally {
-    await sandbox.close();
+  const completedHead = recordedCompletion(issue);
+  if (canReuseCompletedHead(completedHead, status.headRefOid)) {
+    console.log(
+      `  Reusing pre-publish review and gate for ${status.headRefOid.slice(0, 12)}.`
+    );
+    recordPullRequestReviewedHead(issue, prUrl, status.headRefOid);
+    const reviewedHead = assertReviewedHead(prUrl, status.headRefOid);
+    deleteRecordedStages(issue);
+    return reviewedHead;
   }
-  pushIssueBranch(issue.branch);
-  assertPrHead(prUrl, reviewedLocalHead);
-  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
-  return reviewedLocalHead;
+  const reviewedHead = await reviewPublishedBranch(issue, prUrl);
+  return assertReviewedHead(prUrl, reviewedHead);
 }
 
 function recordPullRequestReviewedHead(
@@ -1112,13 +1272,38 @@ async function ensureBranchUpToDate(issue: PlannedIssue, prUrl: string) {
       if (attempt > MAX_REPAIR_ATTEMPTS) {
         return false;
       }
-      runFile("gh", ["pr", "update-branch", prUrl]);
-      await sleep(CHECK_POLL_INTERVAL_MS);
+      await updateBehindBranch(issue, prUrl);
       continue;
     }
     return true;
   }
   return false;
+}
+
+async function updateBehindBranch(issue: PlannedIssue, prUrl: string) {
+  const sandbox = await createIssueSandbox(issue);
+  let reviewedLocalHead: string;
+  try {
+    const baseRef = `origin/${BASE_BRANCH}`;
+    const merge = await sandbox.exec(
+      boundedSandboxCommand(
+        `git fetch --no-tags origin ${shellQuote(BASE_BRANCH)} && git merge --no-edit ${shellQuote(baseRef)}`
+      ),
+      { onLine: (line) => console.log(`  ${line}`) }
+    );
+    if (merge.exitCode !== 0) {
+      await sandbox.exec(boundedSandboxCommand("git merge --abort"));
+      throw new Error(`Could not update ${issue.branch} from ${BASE_BRANCH}.`);
+    }
+    await runRecoverableReview(issue, sandbox);
+    reviewedLocalHead = worktreeHead(sandbox.worktreePath);
+  } finally {
+    await sandbox.close();
+  }
+  pushIssueBranch(issue.branch, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
 }
 
 async function repairConflict(
@@ -1131,29 +1316,47 @@ async function repairConflict(
   try {
     const repair = await sandbox.run({
       agent: allAroundAgent(),
-      maxIterations: 30,
+      idleTimeoutSeconds: AGENT_IDLE_TIMEOUT_SECONDS,
+      maxIterations: 1,
       name: `pr-conflict-repair-${issue.id}-${attempt}`,
       promptArgs: {
         ...issuePromptArgs(issue),
         BASE_BRANCH,
         PR_URL: prUrl,
       },
-      promptFile: ".sandcastle/pr-conflict-repair-prompt.md",
+      promptFile: runnerPromptFile("pr-conflict-repair-prompt.md"),
       signal: agentRunSignal(),
     });
     assertAgentCompleted(repair, `conflict repair for #${issue.id}`);
-    await runReviewAndVerification(issue, sandbox);
+    assertWorktreeClean(
+      sandbox.worktreePath,
+      `after conflict repair for #${issue.id}`
+    );
+    await runRecoverableReview(issue, sandbox);
     reviewedLocalHead = worktreeHead(sandbox.worktreePath);
   } finally {
     await sandbox.close();
   }
-  pushIssueBranch(issue.branch);
-  assertPrHead(prUrl, reviewedLocalHead);
+  pushIssueBranch(issue.branch, reviewedLocalHead);
+  await waitForPrHead(prUrl, reviewedLocalHead);
+  recordPullRequestReviewedHead(issue, prUrl, reviewedLocalHead);
+  deleteRecordedStages(issue);
   return reviewedLocalHead;
 }
 
 function publishIssuePr(issue: PlannedIssue) {
-  pushIssueBranch(issue.branch);
+  const completedHead = recordedCompletion(issue);
+  if (completedHead === undefined) {
+    throw new Error(
+      `Refusing to publish #${issue.id} without a completed head.`
+    );
+  }
+  if (localBranchHead(issue.branch) !== completedHead) {
+    throw new Error(
+      `Refusing to publish #${issue.id}: local head does not match its completed head.`
+    );
+  }
+  pushIssueBranch(issue.branch, completedHead);
   const existing = findIssuePr(issue);
   if (existing) {
     return existing;
@@ -1179,8 +1382,16 @@ function publishIssuePr(issue: PlannedIssue) {
   ]).trim();
 }
 
-function pushIssueBranch(branch: string) {
-  runFile("git", ["push", "--set-upstream", "origin", branch]);
+function pushIssueBranch(branch: string, expectedHead: string) {
+  if (localBranchHead(branch) !== expectedHead) {
+    throw new Error(`Refusing to push moved branch ${branch}.`);
+  }
+  runFile("git", [
+    "push",
+    "--set-upstream",
+    "origin",
+    `${expectedHead}:refs/heads/${branch}`,
+  ]);
 }
 
 function findIssuePr(issue: PlannedIssue) {
@@ -1211,65 +1422,8 @@ function reviewIsComplete(prUrl: string) {
 }
 
 function mergePr(prUrl: string, headSha: string) {
-  runFile("gh", [
-    "pr",
-    "merge",
-    prUrl,
-    "--squash",
-    "--delete-branch",
-    "--match-head-commit",
-    headSha,
-  ]);
+  runFile("gh", mergePullRequestArgs(prUrl, headSha));
   console.log(`  Merged ${prUrl}`);
-}
-
-async function waitForChecks(prUrl: string): Promise<CheckResult> {
-  const deadline = Date.now() + CHECK_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (prIsMerged(prUrl)) {
-      return { checks: [], status: "merged" };
-    }
-    const checks = getPrChecks(prUrl);
-    if (checks.length > 0 && !checks.some(isPendingCheck)) {
-      return { checks, status: "completed" };
-    }
-    console.log(`  Waiting for checks on ${prUrl}...`);
-    await sleep(CHECK_POLL_INTERVAL_MS);
-  }
-  return { checks: [], status: "timed-out" };
-}
-
-function getPrChecks(prUrl: string): PrCheck[] {
-  const json = tryFile("gh", [
-    "pr",
-    "checks",
-    prUrl,
-    "--json",
-    "bucket,link,name,workflow",
-  ]);
-  if (json.trim()) {
-    return z.array(prCheckSchema).parse(JSON.parse(json));
-  }
-
-  const fallback = tryFile("gh", [
-    "pr",
-    "view",
-    prUrl,
-    "--json",
-    "statusCheckRollup",
-  ]);
-  if (!fallback.trim()) {
-    return [];
-  }
-  const value = z
-    .object({ statusCheckRollup: z.array(gitHubCheckSchema).optional() })
-    .parse(JSON.parse(fallback));
-  return (value.statusCheckRollup ?? []).map((check) => ({
-    bucket: checkBucket(check),
-    ...(check.detailsUrl ? { link: check.detailsUrl } : undefined),
-    ...(check.name ? { name: check.name } : undefined),
-    ...(check.workflowName ? { workflow: check.workflowName } : undefined),
-  }));
 }
 
 function getPrStatus(prUrl: string) {
@@ -1300,6 +1454,18 @@ function assertPrHead(prUrl: string, expectedHead: string) {
   }
 }
 
+async function waitForPrHead(prUrl: string, expectedHead: string) {
+  await waitForExpectedPrHead({
+    expectedHead,
+    now: Date.now,
+    pause: async () => {
+      await sleep(1000);
+    },
+    readHead: () => requiredPrHead(prUrl),
+    timeoutMs: PR_HEAD_OBSERVATION_TIMEOUT_MS,
+  });
+}
+
 function localBranchHead(branch: string) {
   return runFile("git", ["rev-parse", branch]).trim();
 }
@@ -1312,42 +1478,6 @@ function assertReviewedHead(prUrl: string, reviewedHead: string) {
     );
   }
   return reviewedHead;
-}
-
-function checkBucket(check: GitHubCheck) {
-  if (check.conclusion === "SUCCESS") {
-    return "pass";
-  }
-  if (check.conclusion === "NEUTRAL" || check.conclusion === "SKIPPED") {
-    return "skipping";
-  }
-  if (check.conclusion === "CANCELLED") {
-    return "cancel";
-  }
-  if (check.status === "COMPLETED") {
-    return "fail";
-  }
-  return "pending";
-}
-
-function prIsMerged(prUrl: string) {
-  const status = getPrStatus(prUrl);
-  return status.state === "MERGED" || Boolean(status.mergedAt);
-}
-
-function checksArePassing(checks: PrCheck[]) {
-  return (
-    checks.length > 0 &&
-    checks.every((check) => !(isFailingCheck(check) || isPendingCheck(check)))
-  );
-}
-
-function isFailingCheck(check: PrCheck) {
-  return check.bucket === "fail" || check.bucket === "cancel";
-}
-
-function isPendingCheck(check: PrCheck) {
-  return check.bucket === "pending";
 }
 
 function issuePromptArgs(issue: PlannedIssue) {
@@ -1367,14 +1497,8 @@ function issuePromptArgs(issue: PlannedIssue) {
 }
 
 function assertHostReady() {
-  if (currentBranch() !== BASE_BRANCH) {
-    throw new Error(
-      `Run Sandcastle from ${BASE_BRANCH}; current branch is ${currentBranch()}.`
-    );
-  }
-  if (runFile("git", ["status", "--porcelain"]).trim()) {
-    throw new Error("Commit or stash host changes before running Sandcastle.");
-  }
+  assertHostCheckoutReady();
+  prepareRunnerBaseWorktree();
   runFile("docker", ["image", "inspect", SANDBOX_IMAGE_NAME]);
   runFile("gh", ["auth", "status"]);
   requiredEnv("SANDCASTLE_AGENT_GH_TOKEN");
@@ -1383,20 +1507,126 @@ function assertHostReady() {
   assertFileExists(HOST_OPENCODE_ACCOUNT);
 }
 
+function assertHostCheckoutReady() {
+  const problem = hostCheckoutProblem(
+    BASE_BRANCH,
+    currentBranch(),
+    runFile("git", ["status", "--porcelain"])
+  );
+  if (problem !== undefined) {
+    throw new Error(problem);
+  }
+}
+
+function prepareHost() {
+  return runExpectedHostStep("during startup", assertHostReady);
+}
+
+function prepareIteration(iteration: number) {
+  return runExpectedHostStep(`before iteration ${iteration}`, () => {
+    refreshBaseBranch();
+    syncPlannerBranchToBase();
+  });
+}
+
+function runExpectedHostStep(context: string, operation: () => void) {
+  const result = attemptHostStep(operation);
+  if (result.ok) {
+    return true;
+  }
+  process.exitCode = 1;
+  console.error(`Sandcastle stopped safely ${context}: ${result.message}`);
+  return false;
+}
+
 function refreshBaseBranch() {
-  runFile("git", ["fetch", "origin", BASE_BRANCH]);
-  runFile("git", ["pull", "--ff-only", "origin", BASE_BRANCH]);
+  assertWorktreeClean(RUNNER_BASE_WORKTREE, "before base refresh");
+  refreshDetachedBase(BASE_BRANCH, (args) => {
+    runFile("git", ["-C", RUNNER_BASE_WORKTREE, ...args]);
+  });
+}
+
+function prepareRunnerBaseWorktree() {
+  if (existsSync(RUNNER_BASE_WORKTREE)) {
+    const worktreeRoot = runFile("git", [
+      "-C",
+      RUNNER_BASE_WORKTREE,
+      "rev-parse",
+      "--show-toplevel",
+    ]).trim();
+    if (resolve(worktreeRoot) !== RUNNER_BASE_WORKTREE) {
+      throw new Error(
+        `Runner base path is not its own Git worktree: ${RUNNER_BASE_WORKTREE}`
+      );
+    }
+    const runnerHead = worktreeHead(RUNNER_BASE_WORKTREE);
+    const localBaseHead = localBranchHead(BASE_BRANCH);
+    const reuseProblem = runnerBaseReuseProblem(
+      gitCommonDirectory(),
+      gitCommonDirectory(RUNNER_BASE_WORKTREE),
+      tryFile("git", [
+        "-C",
+        RUNNER_BASE_WORKTREE,
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "HEAD",
+      ]).trim(),
+      commitIsAncestor(RUNNER_BASE_WORKTREE, runnerHead, localBaseHead) ||
+        commitIsAncestor(RUNNER_BASE_WORKTREE, localBaseHead, runnerHead)
+    );
+    if (reuseProblem !== undefined) {
+      throw new Error(reuseProblem);
+    }
+    assertWorktreeClean(RUNNER_BASE_WORKTREE, "before runner startup");
+    runFile("git", [
+      "-C",
+      RUNNER_BASE_WORKTREE,
+      "merge",
+      "--ff-only",
+      localBaseHead,
+    ]);
+    return;
+  }
+  mkdirSync(resolve(REPO_ROOT, ".sandcastle"), { recursive: true });
+  runFile("git", [
+    "worktree",
+    "add",
+    "--detach",
+    RUNNER_BASE_WORKTREE,
+    BASE_BRANCH,
+  ]);
+}
+
+function runnerBaseHead() {
+  return worktreeHead(RUNNER_BASE_WORKTREE);
+}
+
+function runnerPromptFile(name: string) {
+  return resolve(RUNNER_BASE_WORKTREE, "next/.sandcastle", name);
+}
+
+function gitCommonDirectory(worktreePath?: string) {
+  return resolve(
+    runFile("git", [
+      ...(worktreePath === undefined ? [] : ["-C", worktreePath]),
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]).trim()
+  );
 }
 
 function syncPlannerBranchToBase() {
   const branch = "sandcastle/planner";
+  const baseHead = runnerBaseHead();
   const worktreePath = resolve(
     REPO_ROOT,
     ".sandcastle/worktrees/sandcastle-planner"
   );
   if (existsSync(worktreePath)) {
     assertWorktreeClean(worktreePath, "before planner synchronization");
-    runFile("git", ["-C", worktreePath, "merge", "--ff-only", BASE_BRANCH]);
+    runFile("git", ["-C", worktreePath, "merge", "--ff-only", baseHead]);
     return;
   }
 
@@ -1406,10 +1636,11 @@ function syncPlannerBranchToBase() {
     `refs/heads/${branch}`,
   ]);
   if (!local.trim()) {
+    runFile("git", ["branch", branch, baseHead]);
     return;
   }
-  runFile("git", ["merge-base", "--is-ancestor", branch, BASE_BRANCH]);
-  runFile("git", ["branch", "-f", branch, BASE_BRANCH]);
+  runFile("git", ["merge-base", "--is-ancestor", branch, baseHead]);
+  runFile("git", ["branch", "-f", branch, baseHead]);
 }
 
 function assertWorktreeClean(worktreePath: string, context: string) {
@@ -1429,7 +1660,12 @@ function worktreeHead(worktreePath: string) {
 }
 
 function baseBranchHead(worktreePath: string) {
-  return runFile("git", ["-C", worktreePath, "rev-parse", BASE_BRANCH]).trim();
+  return runFile("git", [
+    "-C",
+    worktreePath,
+    "rev-parse",
+    runnerBaseHead(),
+  ]).trim();
 }
 
 function currentBranch() {
@@ -1455,6 +1691,15 @@ function runFile(command: string, args: string[]) {
   return execFileSync(command, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: HOST_COMMAND_TIMEOUT_MS,
+  });
+}
+
+function runFileWithInput(command: string, args: string[], input: string) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
     timeout: HOST_COMMAND_TIMEOUT_MS,
   });
 }
@@ -1489,7 +1734,7 @@ function boundedSandboxCommand(command: string) {
     `${SANDBOX_COMMAND_TIMEOUT_SECONDS}s`,
     "sh",
     "-c",
-    JSON.stringify(command),
+    shellQuote(command),
   ].join(" ");
 }
 
@@ -1545,10 +1790,3 @@ function nonNegativeIntegerEnv(name: string, fallback: number) {
 function sleep(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
-type CheckResult =
-  | { checks: PrCheck[]; status: "completed" | "merged" }
-  | { checks: []; status: "timed-out" };
-
-type PrCheck = z.infer<typeof prCheckSchema>;
-type GitHubCheck = z.infer<typeof gitHubCheckSchema>;

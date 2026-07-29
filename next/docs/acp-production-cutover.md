@@ -1,24 +1,29 @@
 # ACP production cutover gate and rollback
 
 `bun run start:slack` is the only authoritative production receiver. It uses
-durable ACP Conversations, the process supervisor, native Slack stream
-projection, Action/Execution MCP, interactive permissions, adoption, and
-recovery. There is no alternate production receiver or runtime selector.
+durable ACP Conversations through the root-scoped SQLite and Effect Cluster
+runtime, the process supervisor, native Slack stream projection,
+Action/Execution MCP, interactive permissions, adoption, and recovery. There is
+no alternate production receiver or runtime selector.
 
-## Automated gate
+## Automated verification
 
-- Require the complete **Next / CI** job to be green.
+- Require the final Sandcastle code-review agent to run
+  `bun run --cwd next check` on its final reviewed PR head and report any
+  demonstrably unrelated flaky or infrastructure failure. The runner trusts
+  that agent-owned evidence and does not rerun the suite.
 - Confirm `recovery health` reports every binding as `ready`; investigate bounded
   reason codes for setup/config incompatibility, quarantine, circuit opening,
   blocked prompts, uncertain Action/Execution outcomes, stream uncertainty, or
   outbox backlog.
 - Confirm the normal receiver is the ACP composition and the diagnostic ACP
-  canary is not running with production Slack credentials.
+  canary uses its isolated Cluster database and is not running with production
+  Slack credentials.
 
 ## Manual credentialed gate
 
-This gate cannot run in credential-free CI and must not be reported as
-automated.
+This gate cannot run in Sandcastle's credential-free automated verification and
+must not be reported as automated.
 
 1. Install the manifest as a dedicated canary Slack app with Socket Mode and
    interactivity enabled; use isolated canary app/bot credentials.

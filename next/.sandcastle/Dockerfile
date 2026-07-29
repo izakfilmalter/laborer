@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y \
   curl \
   git \
   jq \
+  tini \
   unzip \
   && rm -rf /var/lib/apt/lists/*
 
@@ -39,4 +40,4 @@ RUN mkdir -p \
 
 USER ${AGENT_UID}:${AGENT_GID}
 WORKDIR /home/agent
-ENTRYPOINT ["sleep", "infinity"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "sleep", "infinity"]

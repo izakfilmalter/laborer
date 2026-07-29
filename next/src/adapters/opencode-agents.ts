@@ -3,7 +3,14 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { Scope } from "effect";
-import { Effect, Array as EffectArray, Option, pipe, Semaphore } from "effect";
+import {
+  Effect,
+  Array as EffectArray,
+  Fiber,
+  Option,
+  pipe,
+  Semaphore,
+} from "effect";
 import { HandlerFailure } from "../prototype/errors.ts";
 import type {
   AcceptImplementationAgentResponse,
@@ -196,6 +203,8 @@ const MAX_IMPLEMENTATION_RESPONSE_LENGTH = 16_384;
 const MAX_IMPLEMENTATION_RESPONSES = 64;
 const MAX_PROMPT_LENGTH = 65_536;
 const MAX_SERVER_STARTUP_OUTPUT_LENGTH = 65_536;
+const DEFAULT_IMPLEMENTATION_OBSERVATION_POLL_INTERVAL_MILLIS = 1000;
+const MAX_IMPLEMENTATION_OBSERVATION_DURATION_MILLIS = 4 * 60 * 60 * 1000;
 const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 5 * 60 * 1000;
 const DEFAULT_WAIT_POLL_DURATION_MILLIS = 4 * 60 * 60 * 1000;
 const DEFAULT_WAIT_POLL_MAX_ATTEMPTS =
@@ -1057,6 +1066,7 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
 
 export interface OpenCodeImplementationAgentOptions {
   readonly client: OpenCodeSessionClient;
+  readonly observationPollIntervalMs?: number;
 }
 
 const ensureSession = (
@@ -1119,7 +1129,8 @@ const acceptImplementationMessages = (
   messages: readonly OpenCodeSessionMessage[],
   promptId: string,
   acceptResponse: AcceptImplementationAgentResponse,
-  requirePersistedPrompt: boolean
+  requirePersistedPrompt: boolean,
+  acceptedResponses: Map<string, string>
 ): Effect.Effect<void, HandlerFailure> => {
   const messagesAfterPersistedPrompt = messagesAfterPrompt(messages, promptId);
   if (messagesAfterPersistedPrompt === null && requirePersistedPrompt) {
@@ -1128,8 +1139,11 @@ const acceptImplementationMessages = (
     );
   }
   const responses = EffectArray.filter(
-    messagesAfterPersistedPrompt ?? messages,
-    (message) => message.role === "assistant" && message.text.trim().length > 0
+    messagesAfterPersistedPrompt ?? [],
+    (message) =>
+      message.role === "assistant" &&
+      message.status === "completed" &&
+      message.text.trim().length > 0
   );
   const exceedsLimit =
     responses.length > MAX_IMPLEMENTATION_RESPONSES ||
@@ -1142,12 +1156,83 @@ const acceptImplementationMessages = (
       protocolFailure("OpenCode Implementation response exceeded the limit")
     );
   }
-  return Effect.forEach(
-    responses,
-    (message) => acceptResponse({ responseId: message.id, text: message.text }),
-    { discard: true }
-  );
+  const observedResponses = new Map(acceptedResponses);
+  for (const message of responses) {
+    const observedText = observedResponses.get(message.id);
+    if (observedText !== undefined) {
+      if (observedText !== message.text) {
+        return Effect.fail(
+          protocolFailure("OpenCode Implementation response identity conflicts")
+        );
+      }
+      continue;
+    }
+    if (observedResponses.size >= MAX_IMPLEMENTATION_RESPONSES) {
+      return Effect.fail(
+        protocolFailure("OpenCode Implementation response exceeded the limit")
+      );
+    }
+    observedResponses.set(message.id, message.text);
+  }
+  return Effect.gen(function* () {
+    for (const message of responses) {
+      if (acceptedResponses.has(message.id)) {
+        continue;
+      }
+      yield* acceptResponse({ responseId: message.id, text: message.text });
+      acceptedResponses.set(message.id, message.text);
+    }
+  });
 };
+
+const observeImplementationPrompt = Effect.fn(
+  "OpenCodeImplementationAgent.observePrompt"
+)(function* (
+  client: OpenCodeSessionClient,
+  identity: OpenCodeSessionIdentity,
+  promptId: string,
+  acceptResponse: AcceptImplementationAgentResponse,
+  pollIntervalMs: number
+) {
+  const wait = yield* Effect.forkChild(client.wait({ ...identity, promptId }), {
+    startImmediately: true,
+  });
+  const acceptedResponses = new Map<string, string>();
+  const maxObservations =
+    Math.floor(
+      MAX_IMPLEMENTATION_OBSERVATION_DURATION_MILLIS / pollIntervalMs
+    ) + 1;
+  for (let observation = 1; observation <= maxObservations; observation += 1) {
+    yield* acceptImplementationMessages(
+      yield* client.readMessages({ ...identity, promptId }),
+      promptId,
+      acceptResponse,
+      false,
+      acceptedResponses
+    );
+    const waitExit = wait.pollUnsafe();
+    if (waitExit !== undefined) {
+      yield* acceptImplementationMessages(
+        yield* client.readMessages({ ...identity, promptId }),
+        promptId,
+        acceptResponse,
+        true,
+        acceptedResponses
+      );
+      yield* Fiber.join(wait);
+      return;
+    }
+    if (observation < maxObservations) {
+      yield* Effect.raceFirst(
+        Effect.sleep(`${pollIntervalMs} millis`),
+        Fiber.await(wait).pipe(Effect.asVoid)
+      );
+    }
+  }
+  return yield* protocolFailure(
+    "OpenCode Implementation response observation timed out"
+  );
+});
 
 const runImplementationPrompt = Effect.fn("OpenCodeImplementationAgent.run")(
   function* (
@@ -1155,19 +1240,20 @@ const runImplementationPrompt = Effect.fn("OpenCodeImplementationAgent.run")(
     identity: OpenCodeSessionIdentity,
     promptId: string,
     text: string,
-    acceptResponse: AcceptImplementationAgentResponse
+    acceptResponse: AcceptImplementationAgentResponse,
+    pollIntervalMs: number
   ) {
     yield* client.submitPrompt({
       ...identity,
       promptId,
       text: yield* boundedPrompt(text),
     });
-    yield* client.wait({ ...identity, promptId });
-    yield* acceptImplementationMessages(
-      yield* client.readMessages({ ...identity, promptId }),
+    yield* observeImplementationPrompt(
+      client,
+      identity,
       promptId,
       acceptResponse,
-      true
+      pollIntervalMs
     );
   }
 );
@@ -1178,30 +1264,36 @@ const completeAdmittedImplementationPrompt = Effect.fn(
   client: OpenCodeSessionClient,
   identity: OpenCodeSessionIdentity,
   promptId: string,
-  acceptResponse: AcceptImplementationAgentResponse
+  acceptResponse: AcceptImplementationAgentResponse,
+  pollIntervalMs: number
 ) {
-  yield* client.wait({ ...identity, promptId });
-  yield* acceptImplementationMessages(
-    yield* client.readMessages({ ...identity, promptId }),
+  yield* observeImplementationPrompt(
+    client,
+    identity,
     promptId,
     acceptResponse,
-    true
+    pollIntervalMs
   );
 });
 
 const implementationSession = (
   options: OpenCodeImplementationAgentOptions,
   identity: OpenCodeSessionIdentity,
+  conversationId: string,
   executionId: string,
   initialPromptId: string,
   completion: Effect.Effect<void, HandlerFailure>
 ): ImplementationAgentSession => {
   const serial = Semaphore.makeUnsafe(1);
+  const pollIntervalMs =
+    options.observationPollIntervalMs ??
+    DEFAULT_IMPLEMENTATION_OBSERVATION_POLL_INTERVAL_MILLIS;
   let activePromptId = initialPromptId;
   return {
     completion: serial.withPermit(completion),
     control: (controlRequest) => {
       if (
+        controlRequest.conversationId !== conversationId ||
         controlRequest.executionId !== executionId ||
         controlRequest.implementationSessionId !== identity.sessionId ||
         controlRequest.workingDirectory !== identity.workingDirectory
@@ -1217,6 +1309,8 @@ const implementationSession = (
     },
     resume: (resumeRequest, resumeAcceptResponse) => {
       if (
+        resumeRequest.conversationId !== conversationId ||
+        resumeRequest.executionId !== executionId ||
         resumeRequest.implementationSessionId !== identity.sessionId ||
         resumeRequest.workingDirectory !== identity.workingDirectory ||
         resumeRequest.promptId === undefined
@@ -1240,7 +1334,8 @@ const implementationSession = (
             identity,
             promptId,
             implementationFollowUpWorkflow(resumeRequest),
-            resumeAcceptResponse
+            resumeAcceptResponse,
+            pollIntervalMs
           );
         })
       );
@@ -1251,134 +1346,148 @@ const implementationSession = (
 
 export const makeOpenCodeImplementationAgent = (
   options: OpenCodeImplementationAgentOptions
-): ImplementationAgentShape => ({
-  inspect: Effect.fn("OpenCodeImplementationAgent.inspect")(function* (
-    request: ImplementationAgentInspectionRequest
-  ) {
-    const identity: OpenCodeSessionIdentity = {
-      sessionId: request.implementationSessionId,
-      workingDirectory: request.workingDirectory,
-    };
-    const inspection: Effect.Effect<OpenCodeSessionInspection> =
-      options.client.inspectSession?.(identity) ??
-      options.client.sessionExists(identity).pipe(
-        Effect.map(
-          (exists): OpenCodeSessionInspection => ({
-            status: exists ? "available" : "missing",
-          })
-        ),
-        Effect.catch(() => Effect.succeed({ status: "ambiguous" as const }))
-      );
-    const inspected = yield* inspection;
-    switch (inspected.status) {
-      case "available":
-        return {
-          certainty: "definitive",
-          evidence: "exact-owned-resource",
-          resource: { sessionId: identity.sessionId },
-          status: "available",
-        } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
-      case "missing":
-        if (request.creationState === "unknown") {
+): ImplementationAgentShape => {
+  const pollIntervalMs =
+    options.observationPollIntervalMs ??
+    DEFAULT_IMPLEMENTATION_OBSERVATION_POLL_INTERVAL_MILLIS;
+  if (!(Number.isSafeInteger(pollIntervalMs) && pollIntervalMs >= 1)) {
+    throw new Error(
+      "Implementation observation poll interval must be a positive integer"
+    );
+  }
+  return {
+    inspect: Effect.fn("OpenCodeImplementationAgent.inspect")(function* (
+      request: ImplementationAgentInspectionRequest
+    ) {
+      const identity: OpenCodeSessionIdentity = {
+        sessionId: request.implementationSessionId,
+        workingDirectory: request.workingDirectory,
+      };
+      const inspection: Effect.Effect<OpenCodeSessionInspection> =
+        options.client.inspectSession?.(identity) ??
+        options.client.sessionExists(identity).pipe(
+          Effect.map(
+            (exists): OpenCodeSessionInspection => ({
+              status: exists ? "available" : "missing",
+            })
+          ),
+          Effect.catch(() => Effect.succeed({ status: "ambiguous" as const }))
+        );
+      const inspected = yield* inspection;
+      switch (inspected.status) {
+        case "available":
+          return {
+            certainty: "definitive",
+            evidence: "exact-owned-resource",
+            resource: { sessionId: identity.sessionId },
+            status: "available",
+          } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
+        case "missing":
+          if (request.creationState === "unknown") {
+            return {
+              certainty: "unknown",
+              evidence: "inspection-unavailable",
+              status: "ambiguous",
+            } satisfies ResourceInspectionOutcome<{
+              readonly sessionId: string;
+            }>;
+          }
+          return {
+            certainty: "definitive",
+            evidence: "definitively-absent",
+            status:
+              request.creationState === "staged" ? "recoverable" : "missing",
+          } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
+        case "conflicting":
+          return {
+            certainty: "definitive",
+            evidence: "identity-conflict",
+            status: "conflicting",
+          } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
+        case "malformed":
           return {
             certainty: "unknown",
-            evidence: "inspection-unavailable",
+            evidence: "malformed-inspection",
             status: "ambiguous",
-          } satisfies ResourceInspectionOutcome<{
-            readonly sessionId: string;
-          }>;
+          } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
+        default:
+          return {
+            certainty: "unknown",
+            evidence: "provider-inspection-failed",
+            status: "ambiguous",
+          } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
+      }
+    }),
+    start: Effect.fn("OpenCodeImplementationAgent.start")(
+      function* (request, acceptResponse) {
+        const identity: OpenCodeSessionIdentity = {
+          sessionId: request.implementationSessionId,
+          workingDirectory: request.workingDirectory,
+        };
+        yield* ensureSession(options.client, identity);
+        yield* options.client.submitPrompt({
+          ...identity,
+          promptId: request.promptId,
+          text: yield* boundedPrompt(implementationWorkflow(request)),
+        });
+        return implementationSession(
+          options,
+          identity,
+          request.conversationId,
+          request.executionId,
+          request.promptId,
+          completeAdmittedImplementationPrompt(
+            options.client,
+            identity,
+            request.promptId,
+            acceptResponse,
+            pollIntervalMs
+          )
+        );
+      }
+    ),
+    recover: Effect.fn("OpenCodeImplementationAgent.recover")(
+      function* (request, acceptResponse) {
+        const identity: OpenCodeSessionIdentity = {
+          sessionId: request.implementationSessionId,
+          workingDirectory: request.workingDirectory,
+        };
+        const exists = yield* options.client.sessionExists(identity);
+        if (!exists) {
+          return yield* protocolFailure(
+            "OpenCode Implementation session is unavailable"
+          );
         }
-        return {
-          certainty: "definitive",
-          evidence: "definitively-absent",
-          status:
-            request.creationState === "staged" ? "recoverable" : "missing",
-        } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
-      case "conflicting":
-        return {
-          certainty: "definitive",
-          evidence: "identity-conflict",
-          status: "conflicting",
-        } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
-      case "malformed":
-        return {
-          certainty: "unknown",
-          evidence: "malformed-inspection",
-          status: "ambiguous",
-        } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
-      default:
-        return {
-          certainty: "unknown",
-          evidence: "provider-inspection-failed",
-          status: "ambiguous",
-        } satisfies ResourceInspectionOutcome<{ readonly sessionId: string }>;
-    }
-  }),
-  start: Effect.fn("OpenCodeImplementationAgent.start")(
-    function* (request, acceptResponse) {
-      const identity: OpenCodeSessionIdentity = {
-        sessionId: request.implementationSessionId,
-        workingDirectory: request.workingDirectory,
-      };
-      yield* ensureSession(options.client, identity);
-      yield* options.client.submitPrompt({
-        ...identity,
-        promptId: request.promptId,
-        text: yield* boundedPrompt(implementationWorkflow(request)),
-      });
-      return implementationSession(
-        options,
-        identity,
-        request.executionId,
-        request.promptId,
-        completeAdmittedImplementationPrompt(
-          options.client,
+        if (options.client.prepareSessionForReuse === undefined) {
+          return yield* protocolFailure(
+            "OpenCode legacy permission inspection is unavailable"
+          );
+        }
+        yield* options.client.prepareSessionForReuse(identity);
+        yield* options.client.submitPrompt({
+          ...identity,
+          promptId: request.promptId,
+          text: yield* boundedPrompt(
+            request.promptKind === "initial"
+              ? implementationWorkflow(request)
+              : implementationFollowUpWorkflow(request)
+          ),
+        });
+        return implementationSession(
+          options,
           identity,
+          request.conversationId,
+          request.executionId,
           request.promptId,
-          acceptResponse
-        )
-      );
-    }
-  ),
-  recover: Effect.fn("OpenCodeImplementationAgent.recover")(
-    function* (request, acceptResponse) {
-      const identity: OpenCodeSessionIdentity = {
-        sessionId: request.implementationSessionId,
-        workingDirectory: request.workingDirectory,
-      };
-      const exists = yield* options.client.sessionExists(identity);
-      if (!exists) {
-        return yield* protocolFailure(
-          "OpenCode Implementation session is unavailable"
+          completeAdmittedImplementationPrompt(
+            options.client,
+            identity,
+            request.promptId,
+            acceptResponse,
+            pollIntervalMs
+          )
         );
       }
-      if (options.client.prepareSessionForReuse === undefined) {
-        return yield* protocolFailure(
-          "OpenCode legacy permission inspection is unavailable"
-        );
-      }
-      yield* options.client.prepareSessionForReuse(identity);
-      yield* options.client.submitPrompt({
-        ...identity,
-        promptId: request.promptId,
-        text: yield* boundedPrompt(
-          request.promptKind === "initial"
-            ? implementationWorkflow(request)
-            : implementationFollowUpWorkflow(request)
-        ),
-      });
-      return implementationSession(
-        options,
-        identity,
-        request.executionId,
-        request.promptId,
-        completeAdmittedImplementationPrompt(
-          options.client,
-          identity,
-          request.promptId,
-          acceptResponse
-        )
-      );
-    }
-  ),
-});
+    ),
+  };
+};

@@ -50,6 +50,7 @@ export interface SlackEventInjector {
   readonly inject: (
     event: NormalizedInboundEvent
   ) => Effect.Effect<unknown, unknown, never>;
+  readonly quiesce?: Effect.Effect<void, unknown, never>;
 }
 
 export const SETUP_INCOMPLETE_REPLY =

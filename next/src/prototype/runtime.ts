@@ -5,6 +5,7 @@
 import {
   Clock,
   Context,
+  Deferred,
   Effect,
   Array as EffectArray,
   Exit,
@@ -222,6 +223,11 @@ export interface Runner {
     readonly threads: number;
   }>;
   readonly persistenceHealth: Effect.Effect<StorePersistenceHealth>;
+  /**
+   * Atomically closes generation-bound scheduling admission and waits for all
+   * drivers admitted before closure. Durable acceptance remains available.
+   */
+  readonly quiesce: Effect.Effect<void, RunnerError>;
   readonly retryBlocked: (
     threadId: ThreadId
   ) => Effect.Effect<void, RunnerError>;
@@ -232,7 +238,7 @@ export interface Runner {
 
 export interface DurableAcceptance {
   readonly decision: InboundDecision;
-  readonly scheduling: "AlreadyDurable" | "Scheduled";
+  readonly scheduling: "AlreadyDurable" | "Deferred" | "Scheduled";
 }
 
 export class PrototypeRunner extends Context.Service<PrototypeRunner, Runner>()(
@@ -254,6 +260,8 @@ interface ActiveThreadDriver {
 
 interface ThreadDriverRegistry {
   readonly active: readonly ActiveThreadDriver[];
+  readonly admissionOpen: boolean;
+  readonly directDrivers: number;
   readonly nextDriverId: number;
 }
 
@@ -262,6 +270,7 @@ type ThreadDriverCompletion =
   | { readonly _tag: "Stop"; readonly acknowledgementIds: readonly string[] };
 
 type ThreadDriverRegistration =
+  | { readonly _tag: "Deferred" }
   | { readonly _tag: "Signaled" }
   | { readonly _tag: "Started"; readonly driverId: number };
 
@@ -342,8 +351,11 @@ const runnerLayer = Layer.effect(
     const threadSemaphores = yield* Ref.make<readonly ThreadSemaphore[]>([]);
     const threadDrivers = yield* Ref.make<ThreadDriverRegistry>({
       active: [],
+      admissionOpen: true,
+      directDrivers: 0,
       nextDriverId: 0,
     });
+    const quiesced = yield* Deferred.make<void>();
     const startupRecoveryBarrierOpen = yield* Ref.make(false);
     const acknowledgementSemaphores = yield* Ref.make<
       readonly AcknowledgementSemaphore[]
@@ -1250,6 +1262,14 @@ const runnerLayer = Layer.effect(
           continue;
         }
         yield* requestAcknowledgementCleanups(completion.acknowledgementIds);
+        const registry = yield* Ref.get(threadDrivers);
+        if (
+          !registry.admissionOpen &&
+          registry.active.length === 0 &&
+          registry.directDrivers === 0
+        ) {
+          yield* Deferred.succeed(quiesced, undefined);
+        }
         return;
       }
     });
@@ -1257,13 +1277,19 @@ const runnerLayer = Layer.effect(
     const signalThreadDriver: (
       threadId: ThreadId,
       acknowledgementId: string | null
-    ) => Effect.Effect<"AlreadyDurable" | "Scheduled"> = Effect.fnUntraced(
-      function* (threadId: ThreadId, acknowledgementId: string | null) {
+    ) => Effect.Effect<"AlreadyDurable" | "Deferred" | "Scheduled"> =
+      Effect.fnUntraced(function* (
+        threadId: ThreadId,
+        acknowledgementId: string | null
+      ) {
         const registration = yield* Ref.modify(
           threadDrivers,
           (
             registry
           ): readonly [ThreadDriverRegistration, ThreadDriverRegistry] => {
+            if (!registry.admissionOpen) {
+              return [{ _tag: "Deferred" } as const, registry];
+            }
             const existing = pipe(
               registry.active,
               EffectArray.findFirst((entry) => entry.threadId === threadId),
@@ -1304,6 +1330,7 @@ const runnerLayer = Layer.effect(
             return [
               { _tag: "Started" as const, driverId },
               {
+                ...registry,
                 active: EffectArray.append(registry.active, {
                   acknowledgementIds:
                     acknowledgementId === null ? [] : [acknowledgementId],
@@ -1316,6 +1343,12 @@ const runnerLayer = Layer.effect(
             ] as const;
           }
         );
+        if (registration._tag === "Deferred") {
+          return "Deferred" as const;
+        }
+        if (acknowledgementId !== null) {
+          yield* startAcknowledgementDriver(acknowledgementId);
+        }
         if (registration._tag === "Signaled") {
           return "AlreadyDurable" as const;
         }
@@ -1324,8 +1357,72 @@ const runnerLayer = Layer.effect(
           Effect.forkIn(reactionDriverScope)
         );
         return "Scheduled" as const;
+      });
+
+    const quiesce = Effect.gen(function* () {
+      const idle = yield* Ref.modify(
+        threadDrivers,
+        (registry): readonly [boolean, ThreadDriverRegistry] => [
+          registry.active.length === 0 && registry.directDrivers === 0,
+          registry.admissionOpen
+            ? { ...registry, admissionOpen: false }
+            : registry,
+        ]
+      );
+      if (idle) {
+        yield* Deferred.succeed(quiesced, undefined);
       }
-    );
+      yield* Deferred.await(quiesced);
+    });
+
+    const runIfAdmitted = <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      deferred: A
+    ): Effect.Effect<A, E, R> =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const admitted = yield* Ref.modify(
+            threadDrivers,
+            (registry): readonly [boolean, ThreadDriverRegistry] =>
+              registry.admissionOpen
+                ? [
+                    true,
+                    {
+                      ...registry,
+                      directDrivers: registry.directDrivers + 1,
+                    },
+                  ]
+                : [false, registry]
+          );
+          if (!admitted) {
+            return deferred;
+          }
+          return yield* restore(effect).pipe(
+            Effect.ensuring(
+              Effect.gen(function* () {
+                const idle = yield* Ref.modify(
+                  threadDrivers,
+                  (registry): readonly [boolean, ThreadDriverRegistry] => {
+                    const updated = {
+                      ...registry,
+                      directDrivers: registry.directDrivers - 1,
+                    };
+                    return [
+                      !updated.admissionOpen &&
+                        updated.active.length === 0 &&
+                        updated.directDrivers === 0,
+                      updated,
+                    ];
+                  }
+                );
+                if (idle) {
+                  yield* Deferred.succeed(quiesced, undefined);
+                }
+              })
+            )
+          );
+        })
+      );
 
     const acceptApplicationEvent: AcceptApplicationEvent = Effect.fn(
       "PrototypeRunner.acceptApplicationEvent"
@@ -1541,9 +1638,6 @@ const runnerLayer = Layer.effect(
       input: unknown
     ) {
       const accepted = yield* acceptInbound(input);
-      if (accepted.isAcceptedActivation) {
-        yield* startAcknowledgementDriver(accepted.acknowledgementId);
-      }
       if (accepted.threadId === null) {
         return {
           decision: accepted.decision,
@@ -1564,7 +1658,7 @@ const runnerLayer = Layer.effect(
       input: unknown
     ) {
       const accepted = yield* acceptInbound(input);
-      yield* continueAcceptedInbound(accepted);
+      yield* runIfAdmitted(continueAcceptedInbound(accepted), undefined);
       return accepted.decision;
     });
 
@@ -1592,7 +1686,12 @@ const runnerLayer = Layer.effect(
                 workspaceId: decision.workspaceId,
               })
               .pipe(
-                Effect.andThen(serializedDrive(decision.conversationId)),
+                Effect.andThen(
+                  runIfAdmitted(
+                    serializedDrive(decision.conversationId),
+                    undefined
+                  )
+                ),
                 Effect.as(decision)
               )
           )
@@ -1642,16 +1741,22 @@ const runnerLayer = Layer.effect(
         })
       ),
       persistenceHealth: store.persistenceHealth,
-      drain: serializedDrive,
+      quiesce,
+      drain: (threadId) => runIfAdmitted(serializedDrive(threadId), undefined),
       retryBlocked: (threadId) =>
         store
           .retryBlocked(threadId)
-          .pipe(Effect.andThen(serializedDrive(threadId))),
-      retryInterrupted: serializedDrive,
+          .pipe(
+            Effect.andThen(runIfAdmitted(serializedDrive(threadId), undefined))
+          ),
+      retryInterrupted: (threadId) =>
+        runIfAdmitted(serializedDrive(threadId), undefined),
       abandonBlocked: (threadId) =>
         store
           .abandonBlocked(threadId)
-          .pipe(Effect.andThen(serializedDrive(threadId))),
+          .pipe(
+            Effect.andThen(runIfAdmitted(serializedDrive(threadId), undefined))
+          ),
     });
     return runner;
   })

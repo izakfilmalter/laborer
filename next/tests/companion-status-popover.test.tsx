@@ -462,7 +462,7 @@ describe("companion status popover", () => {
     expect(screen.queryByText("fixture/action-1")).toBeNull();
   });
 
-  it("reads each pending Execution's lifecycle out with its elapsed time", () => {
+  it("reads each pending Execution's lifecycle out with how long it has been outstanding", () => {
     const now = Date.now();
     render(
       <StatusPopover
@@ -513,7 +513,7 @@ describe("companion status popover", () => {
       />
     );
 
-    expect(screen.getByText("Running for 2 hours")).toBeTruthy();
+    expect(screen.getByText("Running, pending for 2 hours")).toBeTruthy();
     expect(screen.getByText("Allocated, not started yet")).toBeTruthy();
     expect(screen.queryByText("2 more pending Executions")).toBeNull();
   });

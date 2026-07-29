@@ -605,13 +605,16 @@ const PendingExecutionRow = ({
           <span className="sr-only">{`${presentation.title}, not started yet`}</span>
         </span>
       ) : (
+        // Elapsed time is measured from when the Execution was accepted, not
+        // from when it entered its current lifecycle, so the wording says how
+        // long it has been outstanding rather than claiming time in state.
         <time
           className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
           dateTime={started.toISOString()}
-          title={started.toLocaleString()}
+          title={`Pending since ${started.toLocaleString()}`}
         >
           <span aria-hidden="true">{age.compact}</span>
-          <span className="sr-only">{`${presentation.title} for ${age.spoken}`}</span>
+          <span className="sr-only">{`${presentation.title}, pending for ${age.spoken}`}</span>
         </time>
       )}
     </li>
@@ -643,7 +646,9 @@ const PendingExecutionList = ({
         />
       ))}
       {hidden === 0 ? null : (
-        <li className="py-1 pr-3 text-[11px] text-muted-foreground leading-4">
+        // Indented to the row labels above, not the marks, so the overflow
+        // count reads as a continuation of the list rather than a new row.
+        <li className="py-1 pr-3 pl-5 text-[11px] text-muted-foreground leading-4">
           {plural(hidden, "more pending Execution")}
         </li>
       )}

@@ -1,4 +1,5 @@
 /** Dedicated live canary using the production ACP workspace runtime. */
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type Logger as SocketLogger,
@@ -69,7 +70,10 @@ const program = Effect.gen(function* () {
     `acp-canary:${identity.teamId}`
   );
   const rootRuntime = yield* makeNodeRootDurableRuntime({
-    databasePath: paths.runtimeDatabase,
+    // The normal daemon intentionally shares one root-wide Cluster database.
+    // The diagnostic canary may run beside it, so keep the canary's Cluster
+    // state inside the already isolated `acp-canary:<team>` namespace too.
+    databasePath: resolve(dirname(paths.applicationState), "runtime.sqlite"),
     rootIdentity: laborer.root,
   });
   const runner = yield* makeAcpSlackWorkspaceRunner({

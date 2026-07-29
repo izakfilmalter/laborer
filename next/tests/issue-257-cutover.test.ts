@@ -7,6 +7,9 @@ import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
+const isolatedCanaryDatabasePattern =
+  /databasePath:\s*resolve\(dirname\(paths\.applicationState\),\s*"runtime\.sqlite"\)/;
+
 describe("issue #257 ACP production cutover", () => {
   it.effect(
     "rejects removed Conversation configuration with a bounded migration diagnostic",
@@ -192,6 +195,8 @@ describe("issue #257 ACP production cutover", () => {
     assert.ok(canary.includes("slackConversationStreamDeliveryPolicy"));
     assert.ok(canary.includes("acp-canary:"));
     assert.ok(canary.includes("rootRuntime"));
+    assert.match(canary, isolatedCanaryDatabasePattern);
+    assert.ok(!canary.includes("databasePath: paths.runtimeDatabase"));
     assert.ok(!canary.includes("makeAcpConversationCanary"));
     assert.ok(manifest.includes("interactivity:\n    is_enabled: true"));
   });

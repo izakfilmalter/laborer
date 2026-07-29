@@ -4,6 +4,10 @@ import ServiceManagement
 private let protocolVersion = 1
 private let serviceVersion = "__LABORER_VERSION__"
 private let launchAgentPlist = "com.laborer.daemon.plist"
+// SMAppServiceErrorAuthorizationFailure in the macOS 13 ServiceManagement API.
+// The older kSMErrorAuthorizationFailure constant belongs to the legacy API
+// and has a different numeric value.
+private let authorizationFailureErrorCode = 5
 
 private enum NativeState: String {
     case denied
@@ -64,7 +68,7 @@ private struct LaborerServiceManagement {
                 writeResponse(currentState(service))
             } catch let error as NSError {
                 if error.domain == SMAppServiceErrorDomain &&
-                    error.code == Int(kSMErrorAuthorizationFailure) {
+                    error.code == authorizationFailureErrorCode {
                     writeResponse(.denied)
                 } else {
                     let state = currentState(service)

@@ -15,6 +15,18 @@ esac
 app="release/macos-$artifact_arch/Laborer.app"
 helper="$app/Contents/Resources/service-management"
 label="com.laborer.daemon"
+companion_pid=""
+service_enabled=0
+
+cleanup() {
+  if [ -n "$companion_pid" ]; then
+    kill "$companion_pid" >/dev/null 2>&1 || true
+  fi
+  if [ "$service_enabled" = "1" ]; then
+    "$helper" unregister >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
 
 bun run companion:package:macos
 open "$app"
@@ -38,6 +50,7 @@ while [ "$attempt" -lt 30 ]; do
 done
 
 launchctl print "gui/$UID/$label" >/dev/null
+service_enabled=1
 daemon_command="$app/Contents/Resources/daemon/app/src/slack/live.ts"
 daemon_pid="$(pgrep -f "$daemon_command" | head -n 1)"
 companion_pid="$(pgrep -f "$app/Contents/MacOS/Laborer" | head -n 1)"
@@ -46,12 +59,15 @@ test -n "$companion_pid"
 
 # A companion crash must not terminate or replace the launchd-owned daemon.
 kill -9 "$companion_pid"
+companion_pid=""
 sleep 2
 kill -0 "$daemon_pid"
 
 # Reopening adopts the existing service rather than starting another daemon.
 open "$app"
 sleep 2
+companion_pid="$(pgrep -f "$app/Contents/MacOS/Laborer" | head -n 1)"
+test -n "$companion_pid"
 test "$(pgrep -f "$daemon_command" | wc -l | tr -d ' ')" = "1"
 
 # SIGTERM enters the daemon's scoped shutdown; KeepAlive then makes launchd,
@@ -71,7 +87,10 @@ test -n "$replacement_pid"
 test "$replacement_pid" != "$daemon_pid"
 launchctl print "gui/$UID/$label" >/dev/null
 
+kill "$companion_pid"
+companion_pid=""
 "$helper" unregister >/dev/null
+service_enabled=0
 attempt=0
 while [ "$attempt" -lt 10 ] && launchctl print "gui/$UID/$label" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
@@ -82,4 +101,5 @@ if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
   exit 1
 fi
 
+trap - EXIT INT TERM
 printf '%s\n' 'macOS LaunchAgent acceptance passed.'

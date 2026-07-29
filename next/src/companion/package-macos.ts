@@ -87,7 +87,8 @@ const packageMacosApplication = async (): Promise<void> => {
     packageRoot,
     "node_modules/electron/dist/Electron.app"
   );
-  await access(electronApplication);
+  const node = await nodeExecutable();
+  await Promise.all([access(electronApplication), access(node)]);
   await rm(outputRoot, { force: true, recursive: true });
   await mkdir(outputRoot, { recursive: true });
   await cp(electronApplication, application, { recursive: true });
@@ -135,7 +136,6 @@ const packageMacosApplication = async (): Promise<void> => {
       copyFile(resolve(packageRoot, name), resolve(packagedDaemon, "app", name))
     )
   );
-  const node = await nodeExecutable();
   await copyFile(
     node,
     resolve(contents, macosPackageLayout.nodeRuntime.replace("Contents/", ""))

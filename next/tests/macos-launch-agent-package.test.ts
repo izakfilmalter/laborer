@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LABORER_LAUNCH_AGENT_LABEL,
@@ -32,5 +34,18 @@ describe("macOS LaunchAgent package contract", () => {
     expect(macosPackageLayout.nodeRuntime).toBe(
       "Contents/Resources/daemon/bin/node"
     );
+  });
+
+  it("maps authorization denial with the SMAppService error code", async () => {
+    const helperSource = await readFile(
+      resolve(
+        import.meta.dirname,
+        "../src/companion/native/service-management.swift"
+      ),
+      "utf8"
+    );
+
+    expect(helperSource).toContain("authorizationFailureErrorCode = 5");
+    expect(helperSource).not.toContain("Int(kSMErrorAuthorizationFailure)");
   });
 });

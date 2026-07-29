@@ -5043,12 +5043,17 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
 
   it.effect("cuts the single normal receiver over to production ACP", () =>
     Effect.gen(function* () {
-      const [packageSource, liveSource] = yield* Effect.promise(() =>
-        Promise.all([
-          readFile(join(process.cwd(), "package.json"), "utf8"),
-          readFile(join(process.cwd(), "src/slack/live.ts"), "utf8"),
-        ])
-      );
+      const [packageSource, liveGenerationSource, liveSource] =
+        yield* Effect.promise(() =>
+          Promise.all([
+            readFile(join(process.cwd(), "package.json"), "utf8"),
+            readFile(
+              join(process.cwd(), "src/slack/live-generation.ts"),
+              "utf8"
+            ),
+            readFile(join(process.cwd(), "src/slack/live.ts"), "utf8"),
+          ])
+        );
       const packageJson = JSON.parse(packageSource) as {
         readonly scripts: Readonly<Record<string, string>>;
       };
@@ -5057,12 +5062,19 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
         "node --env-file-if-exists=.env.local src/slack/live.ts"
       );
       assert.ok(!("start:slack:acp" in packageJson.scripts));
-      assert.ok(liveSource.includes("makeAcpSlackWorkspaceRunner"));
-      assert.ok(liveSource.includes("makeSlackNativeStreamCapability"));
-      assert.ok(liveSource.includes("slackConversationStreamDeliveryPolicy"));
-      assert.ok(!liveSource.includes("makeSlackWorkspaceRunner"));
+      assert.ok(liveSource.includes("acquireLiveSlackClientGeneration"));
+      assert.ok(liveGenerationSource.includes("makeAcpSlackWorkspaceRunner"));
       assert.ok(
-        !liveSource.includes("makeReferenceCodingWorkspaceApplication")
+        liveGenerationSource.includes("makeSlackNativeStreamCapability")
+      );
+      assert.ok(
+        liveGenerationSource.includes("slackConversationStreamDeliveryPolicy")
+      );
+      assert.ok(!liveGenerationSource.includes("makeSlackWorkspaceRunner"));
+      assert.ok(
+        !liveGenerationSource.includes(
+          "makeReferenceCodingWorkspaceApplication"
+        )
       );
     })
   );

@@ -383,7 +383,7 @@ describe("companion status popover", () => {
     expect(document.body.textContent).not.toContain("prompt");
   });
 
-  it("orders pending Executions by urgency and bounds a long queue", () => {
+  it("shows every bounded pending Execution in deterministic urgency order", () => {
     const now = Date.now();
     const execution = (
       index: number,
@@ -456,10 +456,9 @@ describe("companion status popover", () => {
       "fixture/action-2",
       "fixture/action-6",
       "fixture/action-5",
-      null,
+      "fixture/action-1",
+      "fixture/action-7",
     ]);
-    expect(screen.getByText("2 more pending Executions")).toBeTruthy();
-    expect(screen.queryByText("fixture/action-1")).toBeNull();
   });
 
   it("reads each pending Execution's lifecycle out with how long it has been outstanding", () => {
@@ -514,8 +513,7 @@ describe("companion status popover", () => {
     );
 
     expect(screen.getByText("Running, pending for 2 hours")).toBeTruthy();
-    expect(screen.getByText("Allocated, not started yet")).toBeTruthy();
-    expect(screen.queryByText("2 more pending Executions")).toBeNull();
+    expect(screen.getByText("Allocated, start time unavailable")).toBeTruthy();
   });
 
   it("reports time in state relatively and reads it out with its activity", () => {

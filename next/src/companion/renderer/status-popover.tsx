@@ -545,10 +545,6 @@ const executionPresentation: Record<
   },
 };
 
-// The popover is a glance surface, so a thread with a long queue shows its most
-// telling rows and counts the rest instead of pushing other threads offscreen.
-const MAX_VISIBLE_EXECUTIONS = 5;
-
 // Deterministic in both live pushes and reconnect snapshots, so a row never
 // appears to move on its own between renders of the same projection.
 const orderedExecutions = (
@@ -602,7 +598,7 @@ const PendingExecutionRow = ({
       {started === null || age === null ? (
         <span className="shrink-0 text-[11px] text-muted-foreground leading-4">
           <span aria-hidden="true">—</span>
-          <span className="sr-only">{`${presentation.title}, not started yet`}</span>
+          <span className="sr-only">{`${presentation.title}, start time unavailable`}</span>
         </span>
       ) : (
         // Elapsed time is measured from when the Execution was accepted, not
@@ -631,27 +627,18 @@ const PendingExecutionList = ({
   readonly thread: WorkThread;
 }) => {
   const executions = orderedExecutions(thread.executions);
-  const visible = executions.slice(0, MAX_VISIBLE_EXECUTIONS);
-  const hidden = executions.length - visible.length;
   return (
     <ul
       aria-label={`Pending Executions for ${thread.label}`}
       className="mb-1.5 ml-[1.1875rem] border-border border-l pl-4"
     >
-      {visible.map((execution) => (
+      {executions.map((execution) => (
         <PendingExecutionRow
           execution={execution}
           key={execution.id}
           nowUnixMs={nowUnixMs}
         />
       ))}
-      {hidden === 0 ? null : (
-        // Indented to the row labels above, not the marks, so the overflow
-        // count reads as a continuation of the list rather than a new row.
-        <li className="py-1 pr-3 pl-5 text-[11px] text-muted-foreground leading-4">
-          {plural(hidden, "more pending Execution")}
-        </li>
-      )}
     </ul>
   );
 };

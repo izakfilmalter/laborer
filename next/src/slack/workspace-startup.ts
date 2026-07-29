@@ -610,6 +610,7 @@ const startLegacyWorkspaceDirectory = <Client, Gateway>(options: {
   readonly config: SlackInstallationConfig;
   readonly environment: NodeJS.ProcessEnv;
   readonly locks: RootLockDirectory;
+  readonly observePreflight?: ObserveSlackWorkspacePreflight;
   readonly prepareRoot: PrepareSlackWorkspaceRoot;
   readonly routes: SlackWorkspaceRouteDirectory;
   readonly rootRuntimes: RootRuntimeDirectory;
@@ -647,6 +648,9 @@ const startLegacyWorkspaceDirectory = <Client, Gateway>(options: {
       locks: options.locks,
       prepared: Result.succeed(prepared),
       legacyWorkspaceId: authenticated[1].teamId,
+      ...(options.observePreflight === undefined
+        ? {}
+        : { observePreflight: options.observePreflight }),
       rootLockAcquired: true,
       rootRuntimes: options.rootRuntimes,
       routes: options.routes,
@@ -690,6 +694,9 @@ export const startSlackWorkspaceDirectory = <Client, Gateway>(options: {
         config: legacyConfig,
         environment,
         locks,
+        ...(options.observePreflight === undefined
+          ? {}
+          : { observePreflight: options.observePreflight }),
         prepareRoot,
         rootRuntimes,
         routes,

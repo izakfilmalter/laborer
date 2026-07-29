@@ -199,28 +199,28 @@ type RunningStatus = Extract<
 type WorkspaceBinding = RunningStatus["workspaces"][number];
 
 interface BindingCounts {
-  readonly needsAction: number;
   readonly pending: number;
   readonly ready: number;
+  readonly unavailable: number;
 }
 
 const bindingCounts = (
   workspaces: RunningStatus["workspaces"]
 ): BindingCounts => ({
-  needsAction: workspaces.filter(
-    (workspace) =>
-      workspace.readiness !== "ready" && workspace.readiness !== "pending"
-  ).length,
   pending: workspaces.filter((workspace) => workspace.readiness === "pending")
     .length,
   ready: workspaces.filter((workspace) => workspace.readiness === "ready")
     .length,
+  unavailable: workspaces.filter(
+    (workspace) =>
+      workspace.readiness !== "ready" && workspace.readiness !== "pending"
+  ).length,
 });
 
 const runningPresentation = (
   status: RunningStatus
 ): (typeof statusPresentation)["running"] => {
-  const { needsAction, pending } = bindingCounts(status.workspaces);
+  const { pending, unavailable } = bindingCounts(status.workspaces);
   if (status.receiver === "connecting") {
     return {
       ...statusPresentation.running,
@@ -233,14 +233,14 @@ const runningPresentation = (
       tone: "warning",
     };
   }
-  if (needsAction > 0) {
+  if (unavailable > 0) {
     return {
       ...statusPresentation.running,
       description:
-        "The Slack receiver is connected, but one or more workspace bindings needs action.",
+        "The Slack receiver is connected, but one or more workspace bindings need action.",
       icon: TriangleAlert,
       indicator: "Attention",
-      title: "Workspace setup required",
+      title: "Workspace attention required",
       tone: "danger",
     };
   }
@@ -502,22 +502,22 @@ export const StatusPopover = ({
                   Workspace binding summary
                 </h2>
                 <BindingCountChip
-                  label="ready"
+                  label="connected"
                   pending={false}
                   tone="success"
                   value={counts.ready}
                 />
                 <BindingCountChip
-                  label="starting"
+                  label="pending"
                   pending={true}
                   tone="warning"
                   value={counts.pending}
                 />
                 <BindingCountChip
-                  label="needs action"
+                  label="unavailable"
                   pending={false}
                   tone="danger"
-                  value={counts.needsAction}
+                  value={counts.unavailable}
                 />
               </section>
             ) : null}

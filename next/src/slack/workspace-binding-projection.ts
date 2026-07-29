@@ -10,8 +10,10 @@ export interface WorkspaceBindingProjectionSnapshot {
   readonly workspaces: readonly OperatorWorkspaceBinding[];
 }
 
+const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
+
 const safeTeamId = (teamId: string | undefined): string | null =>
-  teamId !== undefined && teamId.length > 0 && teamId.length <= 58
+  teamId !== undefined && teamId.length <= 58 && TEAM_ID_PATTERN.test(teamId)
     ? teamId
     : null;
 

@@ -39,7 +39,7 @@ describe("companion status popover", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "ready for Slack work"
     );
-    expect(screen.getByText("1 ready")).toBeTruthy();
+    expect(screen.getByText("1 connected")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "TFIRST" })).toBeTruthy();
     expect(
       screen.getByText("Connected and listening for Slack work.")
@@ -193,11 +193,11 @@ describe("companion status popover", () => {
     );
 
     expect(screen.getByRole("status").textContent).toContain(
-      "Workspace setup required"
+      "Workspace attention required"
     );
-    expect(screen.getByText("1 ready")).toBeTruthy();
-    expect(screen.getByText("0 starting")).toBeTruthy();
-    expect(screen.getByText("1 needs action")).toBeTruthy();
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("0 pending")).toBeTruthy();
+    expect(screen.getByText("1 unavailable")).toBeTruthy();
     expect(
       screen.getByText(
         "Configure this workspace binding locally, then restart the daemon."
@@ -264,9 +264,9 @@ describe("companion status popover", () => {
     expect(
       screen.getByText("Connected and listening for Slack work.")
     ).toBeTruthy();
-    expect(screen.getByText("1 ready")).toBeTruthy();
-    expect(screen.getByText("1 starting")).toBeTruthy();
-    expect(screen.getByText("2 needs action")).toBeTruthy();
+    expect(screen.getByText("1 connected")).toBeTruthy();
+    expect(screen.getByText("1 pending")).toBeTruthy();
+    expect(screen.getByText("2 unavailable")).toBeTruthy();
   });
 
   it("explains the empty workspace surface without exposing configuration", () => {
@@ -289,7 +289,7 @@ describe("companion status popover", () => {
     ).toBeTruthy();
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
     expect(screen.getByText(emptyBindingsPattern)).toBeTruthy();
-    expect(screen.queryByText("0 ready")).toBeNull();
+    expect(screen.queryByText("0 connected")).toBeNull();
     expect(document.body.textContent).not.toContain("laborer.json");
     expect(document.body.textContent).not.toContain("/");
   });

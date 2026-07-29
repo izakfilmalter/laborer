@@ -162,4 +162,46 @@ describe("workspace-binding operator projection", () => {
 
     expect(projection.snapshot()).toEqual(before);
   });
+
+  it("keeps malformed authenticated identities out of the operator boundary", () => {
+    const legacyConfig = config(["first"]);
+    const sourceInstallation = legacyConfig.installations[0];
+    if (sourceInstallation === undefined) {
+      throw new Error("missing fixture installation");
+    }
+    const projection = makeWorkspaceBindingProjection({
+      ...legacyConfig,
+      installations: [
+        {
+          bindingIndex: sourceInstallation.bindingIndex,
+          botToken: sourceInstallation.botToken,
+          botTokenEnvironment: sourceInstallation.botTokenEnvironment,
+          namespaceWorkspace: false,
+          ...(sourceInstallation.root === undefined
+            ? {}
+            : { root: sourceInstallation.root }),
+          tokenIsValid: sourceInstallation.tokenIsValid,
+          validation: sourceInstallation.validation,
+        },
+      ],
+      startupMode: "legacy",
+    });
+
+    projection.observe({
+      bindingIndex: 0,
+      reasonCode: "acp-workspace-ready",
+      status: "ready",
+      teamId: "../../private-root",
+    });
+
+    expect(projection.snapshot().workspaces).toEqual([
+      {
+        detail: null,
+        id: "binding:0",
+        label: "Workspace binding 1",
+        readiness: "ready",
+        teamId: null,
+      },
+    ]);
+  });
 });

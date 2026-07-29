@@ -504,6 +504,7 @@ describe("multi-workspace Slack daemon", () => {
             environment,
           });
           const order: string[] = [];
+          const preflightReports: string[] = [];
           const authenticationObserved = yield* Deferred.make<void>();
           const baseAdapter = makeTestStartupAdapter({
             gatewayTeams: [],
@@ -532,6 +533,11 @@ describe("multi-workspace Slack daemon", () => {
             },
             config,
             environment,
+            observePreflight: (report) => {
+              preflightReports.push(
+                `${report.teamId}:${report.status}:${report.reasonCode}`
+              );
+            },
             prepareRoot: (binding, currentEnvironment) =>
               Effect.sync(() => order.push("prepare")).pipe(
                 Effect.andThen(
@@ -552,6 +558,9 @@ describe("multi-workspace Slack daemon", () => {
             "lock",
             "authenticate",
             "socket",
+          ]);
+          assert.deepStrictEqual(preflightReports, [
+            "TFIRST:ready:acp-workspace-ready",
           ]);
         })
       )

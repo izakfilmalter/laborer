@@ -61,9 +61,7 @@ const isWorkspaceBinding = (value: unknown): boolean => {
         "unknown",
       ].includes(String(binding.readiness)) &&
       (binding.detail === null ||
-        bindingDetails.includes(
-          binding.detail as (typeof bindingDetails)[number]
-        ))
+        bindingDetails.some((detail) => detail === binding.detail))
     )
   ) {
     return false;
@@ -74,7 +72,12 @@ const isWorkspaceBinding = (value: unknown): boolean => {
   ) {
     return false;
   }
-  if (typeof binding.id !== "string" || typeof binding.label !== "string") {
+  if (
+    typeof binding.id !== "string" ||
+    binding.id.length > 64 ||
+    typeof binding.label !== "string" ||
+    binding.label.length > 64
+  ) {
     return false;
   }
   if (binding.teamId === null) {
@@ -118,7 +121,16 @@ export const isOperatorStatusView = (
       candidate.uptimeSeconds >= 0 &&
       Array.isArray(candidate.workspaces) &&
       candidate.workspaces.length <= 64 &&
-      candidate.workspaces.every(isWorkspaceBinding)
+      candidate.workspaces.every(isWorkspaceBinding) &&
+      new Set(
+        candidate.workspaces.map((workspace) =>
+          typeof workspace === "object" &&
+          workspace !== null &&
+          "id" in workspace
+            ? workspace.id
+            : null
+        )
+      ).size === candidate.workspaces.length
     );
   }
   return (

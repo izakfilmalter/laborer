@@ -25,6 +25,38 @@ describe("companion renderer boundary", () => {
     ).toBe(false);
     expect(
       isOperatorStatusView({
+        receiver: "connected",
+        state: "running",
+        uptimeSeconds: 42,
+        version: "0.1.0",
+        workspaces: Array.from({ length: 2 }, () => ({
+          detail: null,
+          id: "slack:TFIRST",
+          label: "TFIRST",
+          readiness: "ready",
+          teamId: "TFIRST",
+        })),
+      })
+    ).toBe(false);
+    expect(
+      isOperatorStatusView({
+        receiver: "connected",
+        state: "running",
+        uptimeSeconds: 42,
+        version: "0.1.0",
+        workspaces: [
+          {
+            detail: "configuration-invalid",
+            id: `binding:${"1".repeat(65)}`,
+            label: `Workspace binding ${"1".repeat(65)}`,
+            readiness: "unknown",
+            teamId: null,
+          },
+        ],
+      })
+    ).toBe(false);
+    expect(
+      isOperatorStatusView({
         diagnostics: "connection refused at a private path",
         state: "unavailable",
         uptimeSeconds: null,

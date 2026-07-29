@@ -81,6 +81,12 @@ const OperatorSnapshotSchema = z
   .refine(
     (snapshot) => snapshot.observedAtUnixMs >= snapshot.daemon.startedAtUnixMs,
     "observation predates daemon start"
+  )
+  .refine(
+    (snapshot) =>
+      new Set(snapshot.workspaces.map((workspace) => workspace.id)).size ===
+      snapshot.workspaces.length,
+    "workspace identities are duplicated"
   );
 
 export type OperatorSnapshot = z.infer<typeof OperatorSnapshotSchema>;

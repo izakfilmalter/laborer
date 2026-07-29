@@ -94,6 +94,14 @@ describe("operator status protocol", () => {
         })
       )
     ).toThrowError(OperatorProtocolError);
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          workspaces: [snapshot.workspaces[0], snapshot.workspaces[0]],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
     expect(() => decodeOperatorSnapshot("not-json")).toThrowError(
       OperatorProtocolError
     );

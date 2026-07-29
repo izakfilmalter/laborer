@@ -48,4 +48,19 @@ describe("macOS LaunchAgent package contract", () => {
     expect(helperSource).toContain("authorizationFailureErrorCode = 5");
     expect(helperSource).not.toContain("Int(kSMErrorAuthorizationFailure)");
   });
+
+  it("reports the authoritative service state after a registration race", async () => {
+    const helperSource = await readFile(
+      resolve(
+        import.meta.dirname,
+        "../src/companion/native/service-management.swift"
+      ),
+      "utf8"
+    );
+
+    expect(helperSource).toContain("writeResponse(currentState(service))");
+    expect(helperSource).not.toContain(
+      "state == .requiresApproval ? state : .notFound"
+    );
+  });
 });

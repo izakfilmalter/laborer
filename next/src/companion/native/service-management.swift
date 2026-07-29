@@ -71,8 +71,12 @@ private struct LaborerServiceManagement {
                     error.code == authorizationFailureErrorCode {
                     writeResponse(.denied)
                 } else {
-                    let state = currentState(service)
-                    writeResponse(state == .requiresApproval ? state : .notFound)
+                    // Registration can race another instance or complete even
+                    // when the call reports an error. The service's observed
+                    // state is more authoritative than the failed operation;
+                    // the companion still treats every non-enabled state as
+                    // unavailable or requiring approval rather than health.
+                    writeResponse(currentState(service))
                 }
             }
         case "unregister":

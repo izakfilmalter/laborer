@@ -18,6 +18,7 @@ import {
 } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import {
+  type AcceptImplementationAgentResponse,
   type ConversationAgentRequest,
   type ConversationAgentShape,
   type ConversationPromptAttemptOutcome,
@@ -1082,6 +1083,144 @@ describe("issue #255 Conversation adoption", () => {
             (yield* repository.load).conversationAdoptions[0]?.status,
             "adopted"
           );
+        })
+      )
+  );
+
+  it.live(
+    "queues an implementation response arriving after linearization for the adopted ACP binding",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            "laborer-256-response-during-adoption-"
+          );
+          const path = join(root, "application.json");
+          const execution = persistedExecution(
+            "execution-response-during-adoption",
+            "running"
+          );
+          yield* writeV15State(path, [execution]);
+          const repository = yield* makeFileApplicationRepository(path, root);
+          const historyReadStarted = yield* Deferred.make<void>();
+          const releaseHistoryRead = yield* Deferred.make<void>();
+          let acceptResponse: AcceptImplementationAgentResponse | undefined;
+          const requests: ConversationAgentRequest[] = [];
+          const adoptionAgent = adoptingAgent(requests);
+          const application = yield* makeReferenceCodingApplication({
+            conversationAdoptionHistory: {
+              read: () =>
+                Deferred.succeed(historyReadStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseHistoryRead)),
+                  Effect.as(historySnapshot)
+                ),
+            },
+            conversationAgent: {
+              handle: (request, publish) =>
+                request.adoptionHistory === undefined
+                  ? Effect.sync(() => {
+                      requests.push(request);
+                      return [];
+                    })
+                  : adoptionAgent.handle(request, publish),
+            },
+            implementationAgent: {
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    sessionId: execution.implementationSessionId,
+                  },
+                  status: "available" as const,
+                }),
+              recover: (_request, accept) => {
+                acceptResponse = accept;
+                return Effect.succeed({
+                  completion: Effect.never,
+                  resume: () => Effect.void,
+                  sessionId: execution.implementationSessionId,
+                });
+              },
+              start: () =>
+                Effect.die(new Error("recovery must not start a replacement")),
+            },
+            now: () => 255_000,
+            repository,
+            worktreeManager: {
+              create: () =>
+                Effect.die(new Error("recovery must not create a worktree")),
+              inspect: () =>
+                Effect.succeed({
+                  certainty: "definitive" as const,
+                  evidence: "exact-owned-resource" as const,
+                  resource: {
+                    workingDirectory: execution.workingDirectory,
+                  },
+                  status: "available" as const,
+                }),
+            },
+          });
+          const accepted: ExternalInputEvent[] = [];
+          const acceptDuringAdoption = (event: ExternalInputEvent) =>
+            Effect.sync(() => {
+              accepted.push(event);
+              return {
+                decision: { _tag: "Accepted" as const, eventId: event.eventId },
+                scheduling: "Scheduled" as const,
+              };
+            });
+          yield* application.recover?.(acceptDuringAdoption) ?? Effect.void;
+          assert.ok(acceptResponse !== undefined);
+
+          const adoption = yield* Effect.forkChild(
+            application.handle(
+              participantEvent(2),
+              () => Effect.void,
+              acceptDuringAdoption
+            )
+          );
+          yield* Deferred.await(historyReadStarted);
+          assert.strictEqual(
+            (yield* repository.load).conversationAdoptions[0]
+              ?.executionEventOutboxHighWatermark,
+            2
+          );
+
+          yield* acceptResponse({
+            responseId: "response-during-adoption",
+            text: "implementation response during adoption",
+          });
+          assert.deepStrictEqual(
+            accepted.map((event) => event.eventId),
+            [
+              "execution-response-during-adoption:response:response-during-adoption",
+            ]
+          );
+          yield* Deferred.succeed(releaseHistoryRead, undefined);
+          yield* Fiber.join(adoption);
+
+          const queued = accepted[0];
+          assert.ok(queued !== undefined);
+          yield* application.handle(queued, () => Effect.void, acceptEvent);
+          assert.strictEqual(requests.length, 2);
+          assert.strictEqual(requests[1]?.source, "implementation-agent");
+          assert.ok(
+            requests[1]?.input.includes(
+              "implementation response during adoption"
+            )
+          );
+          const adoptedBindingStore = requests[1]?.sessionBindingStore;
+          assert.ok(adoptedBindingStore !== undefined);
+          assert.strictEqual(
+            (yield* adoptedBindingStore.load)?.sessionId,
+            "fresh-acp-session-255"
+          );
+          const response =
+            (yield* repository.load).executions[0]?.responses.find(
+              (candidate) => candidate.responseId === "response-during-adoption"
+            );
+          assert.strictEqual(response?.status, "delivered");
         })
       )
   );

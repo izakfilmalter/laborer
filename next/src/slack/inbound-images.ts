@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, open, rm } from "node:fs/promises";
+import { link, open, readdir, rm, unlink } from "node:fs/promises";
 import { basename, relative, resolve } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { Effect } from "effect";
@@ -20,9 +20,12 @@ import type {
 
 export const MAX_IMAGES_PER_MESSAGE = 4;
 export const MAX_IMAGE_BYTES = 768 * 1024;
-export const MAX_AGGREGATE_IMAGE_BYTES = 1024 * 1024;
+// 768 KiB decoded expands to at most 1 MiB of base64 before JSON framing.
+export const MAX_AGGREGATE_IMAGE_BYTES = 768 * 1024;
+export const MAX_CONCURRENT_IMAGE_DOWNLOADS = 2;
 const MAX_REDIRECTS = 2;
-const DOWNLOAD_TIMEOUT_MILLIS = 10_000;
+export const INBOUND_IMAGE_SET_TIMEOUT_MILLIS = 10_000;
+export const INBOUND_IMAGE_RETENTION_MILLIS = 7 * 24 * 60 * 60 * 1000;
 const SUPPORTED_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
@@ -43,6 +46,9 @@ const STABLE_DOWNLOAD_FAILURES = new Set([
   "truncated-download",
   "untrusted-download-origin",
 ]);
+const STAGED_IMAGE_NAME_PATTERN = /^[a-f0-9]{64}\.(?:gif|jpg|png|webp)$/;
+const INTERRUPTED_STAGE_NAME_PATTERN =
+  /^\.[a-f0-9]{64}\.(?:gif|jpg|png|webp)\.[0-9a-f-]{36}$/;
 
 interface SlackFileMetadata {
   readonly id: string;
@@ -360,12 +366,90 @@ const stageImage = async (options: {
   return { contentDigest, contentPath: relative(options.storageRoot, target) };
 };
 
+export interface InboundImageCleanupReport {
+  readonly removed: number;
+  readonly retained: number;
+}
+
+/**
+ * Reclaims content-addressed images only after they have been unreferenced for
+ * the retention window. Callers must derive `liveContentPaths` from the
+ * validated durable Runner snapshot; an unavailable/corrupt snapshot must
+ * skip cleanup rather than supplying an empty set. The inventory is fully
+ * validated before unlinking, so unsafe ownership, permissions, names, or
+ * symlinks fail closed. An interrupted unlink pass is safe to repeat.
+ */
+export const cleanupInboundImageStorage = (options: {
+  readonly liveContentPaths: ReadonlySet<string>;
+  readonly now?: number;
+  readonly retentionMillis?: number;
+  readonly storageRoot: string;
+}): Effect.Effect<InboundImageCleanupReport, SlackBoundaryError> =>
+  Effect.tryPromise({
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one fail-closed inventory validates every path before the separate deterministic unlink pass
+    try: async () => {
+      const directory = resolve(options.storageRoot, "inbound-images");
+      let names: string[];
+      try {
+        names = await readdir(directory);
+      } catch (cause) {
+        if (errnoCode(cause) === "ENOENT") {
+          return { removed: 0, retained: 0 };
+        }
+        throw cause;
+      }
+      await assertNoSymlinkPathComponents(directory, "cleanup-inbound-images");
+      const now = options.now ?? Date.now();
+      const retentionMillis =
+        options.retentionMillis ?? INBOUND_IMAGE_RETENTION_MILLIS;
+      const removable: string[] = [];
+      let retained = 0;
+      for (const name of names.sort()) {
+        const published = STAGED_IMAGE_NAME_PATTERN.test(name);
+        if (!(published || INTERRUPTED_STAGE_NAME_PATTERN.test(name))) {
+          throw new Error("unsafe-image-cleanup-entry");
+        }
+        const path = resolve(directory, name);
+        const handle = await openRegularFileNoFollow(
+          path,
+          "cleanup-inbound-image"
+        );
+        try {
+          const metadata = await handle.stat();
+          if (
+            // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
+            (metadata.mode & 0o077) !== 0 ||
+            (typeof process.getuid === "function" &&
+              metadata.uid !== process.getuid())
+          ) {
+            throw new Error("unsafe-image-cleanup-entry");
+          }
+          const contentPath = `inbound-images/${name}`;
+          if (
+            (published && options.liveContentPaths.has(contentPath)) ||
+            now - metadata.mtimeMs < retentionMillis
+          ) {
+            retained += 1;
+          } else {
+            removable.push(path);
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+      for (const path of removable) {
+        await unlink(path);
+      }
+      return { removed: removable.length, retained };
+    },
+    catch: () => boundaryFailure("image-cleanup-failed"),
+  });
+
 export const makeSlackInboundImageResolver = (
   options: SlackInboundImageResolverOptions
 ): ResolveSlackInboundImages => {
   const client = options.client;
   const fetchImplementation = options.fetch ?? fetch;
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: all per-message count, metadata, byte, download, and publication bounds fail closed in this adapter boundary
   const resolveImages = Effect.fn("SlackInboundImages.resolve")(function* (
     request: Parameters<ResolveSlackInboundImages>[0]
   ) {
@@ -376,58 +460,68 @@ export const makeSlackInboundImageResolver = (
       return yield* boundaryFailure("missing-files-authorization");
     }
     const token = client.token;
-    let aggregateBytes = 0;
-    const deadline = Date.now() + DOWNLOAD_TIMEOUT_MILLIS;
-    const downloaded: DownloadedSlackImage[] = [];
-    for (const [index, candidate] of request.candidates.entries()) {
-      const response = yield* Effect.tryPromise({
-        try: () => client.files.info({ file: candidate.id }),
-        catch: () => boundaryFailure("file-metadata-unavailable"),
-      });
-      const metadata = metadataFrom(response, candidate.id);
-      if (metadata === null) {
-        return yield* boundaryFailure("invalid-file-metadata");
-      }
-      if (!isSupportedMimeType(metadata.mimetype)) {
-        return yield* boundaryFailure("unsupported-image-type");
-      }
-      if (metadata.size > MAX_IMAGE_BYTES) {
-        return yield* boundaryFailure("image-byte-limit");
-      }
-      aggregateBytes += metadata.size;
-      if (
-        aggregateBytes >
-        Math.min(
-          MAX_AGGREGATE_IMAGE_BYTES,
-          request.maxAggregateBytes ?? MAX_AGGREGATE_IMAGE_BYTES
-        )
-      ) {
-        return yield* boundaryFailure("aggregate-image-byte-limit");
-      }
-      const parsedUrl = yield* Effect.try({
-        try: () => new URL(metadata.url),
-        catch: () => boundaryFailure("invalid-download-url"),
-      });
-      if (!slackDownloadHostIsAllowed(parsedUrl)) {
-        return yield* boundaryFailure("untrusted-download-origin");
-      }
-      const bytes = yield* Effect.tryPromise({
-        try: () =>
-          downloadImage({
-            deadline,
-            fetch: fetchImplementation,
-            metadata,
-            token,
-          }),
-        catch: (cause) => boundaryFailure(downloadFailureReason(cause)),
-      });
-      downloaded.push({
-        bytes,
-        candidate,
-        index,
-        mimeType: metadata.mimetype,
-      });
+    const deadline = Date.now() + INBOUND_IMAGE_SET_TIMEOUT_MILLIS;
+    const metadataEntries = yield* Effect.forEach(
+      request.candidates,
+      (candidate, index) =>
+        Effect.gen(function* () {
+          const response = yield* Effect.tryPromise({
+            try: () => client.files.info({ file: candidate.id }),
+            catch: () => boundaryFailure("file-metadata-unavailable"),
+          });
+          const metadata = metadataFrom(response, candidate.id);
+          if (metadata === null) {
+            return yield* boundaryFailure("invalid-file-metadata");
+          }
+          if (!isSupportedMimeType(metadata.mimetype)) {
+            return yield* boundaryFailure("unsupported-image-type");
+          }
+          if (metadata.size > MAX_IMAGE_BYTES) {
+            return yield* boundaryFailure("image-byte-limit");
+          }
+          const parsedUrl = yield* Effect.try({
+            try: () => new URL(metadata.url),
+            catch: () => boundaryFailure("invalid-download-url"),
+          });
+          if (!slackDownloadHostIsAllowed(parsedUrl)) {
+            return yield* boundaryFailure("untrusted-download-origin");
+          }
+          return { candidate, index, metadata };
+        }),
+      { concurrency: MAX_CONCURRENT_IMAGE_DOWNLOADS }
+    );
+    const aggregateBytes = metadataEntries.reduce(
+      (total, { metadata }) => total + metadata.size,
+      0
+    );
+    if (
+      aggregateBytes >
+      Math.min(
+        MAX_AGGREGATE_IMAGE_BYTES,
+        request.maxAggregateBytes ?? MAX_AGGREGATE_IMAGE_BYTES
+      )
+    ) {
+      return yield* boundaryFailure("aggregate-image-byte-limit");
     }
+    const downloaded = yield* Effect.forEach(
+      metadataEntries,
+      ({ candidate, index, metadata }) =>
+        Effect.tryPromise({
+          try: async (): Promise<DownloadedSlackImage> => ({
+            bytes: await downloadImage({
+              deadline,
+              fetch: fetchImplementation,
+              metadata,
+              token,
+            }),
+            candidate,
+            index,
+            mimeType: metadata.mimetype as SupportedMimeType,
+          }),
+          catch: (cause) => boundaryFailure(downloadFailureReason(cause)),
+        }),
+      { concurrency: MAX_CONCURRENT_IMAGE_DOWNLOADS }
+    );
     const resolved: NormalizedImageInputType[] = [];
     for (const { bytes, candidate, index, mimeType } of downloaded) {
       const staged = yield* Effect.tryPromise({
@@ -460,7 +554,7 @@ export const makeSlackInboundImageResolver = (
   return (request) =>
     resolveImages(request).pipe(
       Effect.timeoutOrElse({
-        duration: DOWNLOAD_TIMEOUT_MILLIS,
+        duration: INBOUND_IMAGE_SET_TIMEOUT_MILLIS,
         orElse: () => boundaryFailure("download-timeout"),
       })
     );

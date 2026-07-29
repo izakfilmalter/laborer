@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber } from "effect";
@@ -16,7 +16,10 @@ import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import { SlackRuntimeIdentity } from "../src/slack/config.ts";
 import { normalizeConversationAdoptionHistoryMessage } from "../src/slack/conversation-adoption-history.ts";
 import { SlackBoundaryError } from "../src/slack/errors.ts";
-import { makeSlackInboundImageResolver } from "../src/slack/inbound-images.ts";
+import {
+  cleanupInboundImageStorage,
+  makeSlackInboundImageResolver,
+} from "../src/slack/inbound-images.ts";
 import { normalizeSlackEvent } from "../src/slack/normalize.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
@@ -592,6 +595,133 @@ describe("inbound Slack images", () => {
       );
       assert.isFalse(firstWasStaged);
     })
+  );
+
+  it.effect(
+    "bounds concurrent image retrieval while preserving candidate order",
+    () =>
+      Effect.gen(function* () {
+        const storageRoot = yield* makeTempDirectoryScoped(
+          "laborer-inbound-image-concurrency-"
+        );
+        let active = 0;
+        let maximumActive = 0;
+        const resolver = makeSlackInboundImageResolver({
+          client: {
+            files: {
+              info: ({ file }: { readonly file: string }) =>
+                Promise.resolve({
+                  file: {
+                    id: file,
+                    mimetype: "image/png",
+                    size: png.byteLength,
+                    url_private_download: `https://files.slack.com/${file}.png`,
+                  },
+                }),
+            },
+            token: "test-bot-token",
+          } as never,
+          fetch: (async () => {
+            active += 1;
+            maximumActive = Math.max(maximumActive, active);
+            await new Promise((resolvePromise) =>
+              setTimeout(resolvePromise, 10)
+            );
+            active -= 1;
+            return new Response(png, {
+              headers: {
+                "content-length": String(png.byteLength),
+                "content-type": "image/png",
+              },
+            });
+          }) as unknown as typeof fetch,
+          storageRoot,
+        });
+
+        const images = yield* resolver({
+          candidates: ["F1", "F2", "F3", "F4"].map((id) => ({ id })),
+          channelId: "CWORK",
+          messageTs: "1.0",
+        });
+
+        assert.strictEqual(maximumActive, 2);
+        assert.deepStrictEqual(
+          images.map((image) => image.slackFileId),
+          ["F1", "F2", "F3", "F4"]
+        );
+      })
+  );
+
+  it.effect(
+    "retains live images, reclaims expired unreferenced content, and fails closed on symlinks",
+    () =>
+      Effect.gen(function* () {
+        const storageRoot = yield* makeTempDirectoryScoped(
+          "laborer-inbound-image-cleanup-"
+        );
+        const directory = resolve(storageRoot, "inbound-images");
+        const liveName = `${"a".repeat(64)}.png`;
+        const staleName = `${"b".repeat(64)}.png`;
+        const interruptedName = `.${"d".repeat(64)}.png.00000000-0000-4000-8000-000000000000`;
+        yield* Effect.promise(async () => {
+          await mkdir(directory, { mode: 0o700 });
+          await writeFile(resolve(directory, liveName), png, { mode: 0o600 });
+          await writeFile(resolve(directory, staleName), png, { mode: 0o600 });
+          await writeFile(resolve(directory, interruptedName), png, {
+            mode: 0o600,
+          });
+          await utimes(resolve(directory, liveName), 1, 1);
+          await utimes(resolve(directory, staleName), 1, 1);
+          await utimes(resolve(directory, interruptedName), 1, 1);
+        });
+
+        const report = yield* cleanupInboundImageStorage({
+          liveContentPaths: new Set([`inbound-images/${liveName}`]),
+          now: 10_000,
+          retentionMillis: 1,
+          storageRoot,
+        });
+        assert.deepStrictEqual(report, { removed: 2, retained: 1 });
+        assert.deepStrictEqual(
+          new Uint8Array(
+            yield* Effect.promise(() => readFile(resolve(directory, liveName)))
+          ),
+          png
+        );
+        assert.isFalse(
+          yield* Effect.promise(() =>
+            readFile(resolve(directory, staleName)).then(
+              () => true,
+              () => false
+            )
+          )
+        );
+
+        const outside = resolve(storageRoot, "outside.png");
+        const unsafeName = `${"c".repeat(64)}.png`;
+        yield* Effect.promise(async () => {
+          await writeFile(outside, png, { mode: 0o600 });
+          await symlink(outside, resolve(directory, unsafeName));
+        });
+        const unsafe = yield* Effect.result(
+          cleanupInboundImageStorage({
+            liveContentPaths: new Set(),
+            now: 10_000,
+            retentionMillis: 1,
+            storageRoot,
+          })
+        );
+        assert.strictEqual(
+          unsafe._tag === "Failure" ? unsafe.failure.reason : null,
+          "image-cleanup-failed"
+        );
+        assert.deepStrictEqual(
+          new Uint8Array(
+            yield* Effect.promise(() => readFile(resolve(directory, liveName)))
+          ),
+          png
+        );
+      })
   );
 
   it("marks adopted image history unavailable instead of claiming text-only understanding", () => {

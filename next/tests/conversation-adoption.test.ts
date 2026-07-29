@@ -12,6 +12,7 @@ import {
 } from "../src/application.ts";
 import {
   MessageId,
+  NormalizedImageInput,
   NormalizedMessage,
   ThreadId,
   TurnId,
@@ -72,6 +73,7 @@ const historySnapshot: ConversationAdoptionHistorySnapshot = {
     .update(historyRendered, "utf8")
     .digest("base64url"),
   firstSlackTs: "255.000001",
+  images: [],
   lastSlackTs: "255.000001",
   messageCount: 1,
   rendered: historyRendered,
@@ -639,6 +641,52 @@ describe("issue #255 Conversation adoption", () => {
 
         yield* runTurn(application, 2);
         assert.strictEqual(requests.length, 1);
+      })
+    )
+  );
+
+  it.live("carries hydrated adopted images into the fresh seed request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDirectoryScoped("laborer-303-adopt-image-");
+        const path = join(root, "application.json");
+        yield* createLegacyV14Conversation(path, root);
+        const repository = yield* makeFileApplicationRepository(path, root);
+        const image = NormalizedImageInput.make({
+          byteLength: 8,
+          contentDigest: "d".repeat(64),
+          contentPath: `inbound-images/${"d".repeat(64)}.png`,
+          id: "adopted-image",
+          mimeType: "image/png",
+          slackFileId: "F-ADOPTED",
+        });
+        const rendered = historyRendered.replace(
+          "</slack-message>",
+          '<slack-image id="adopted-image" mime-type="image/png" /></slack-message>'
+        );
+        const snapshot: ConversationAdoptionHistorySnapshot = {
+          ...historySnapshot,
+          bytes: Buffer.byteLength(rendered, "utf8"),
+          digest: createHash("sha256")
+            .update(rendered, "utf8")
+            .digest("base64url"),
+          images: [image],
+          rendered,
+        };
+        const requests: ConversationAgentRequest[] = [];
+        const application = yield* makeApplication(
+          repository,
+          adoptingAgent(requests),
+          snapshot
+        );
+
+        yield* runTurn(application, 2);
+
+        assert.deepStrictEqual(requests[0]?.adoptionImages, [image]);
+        assert.strictEqual(requests[0]?.context.length, 0);
+        assert.ok(
+          (requests[0]?.adoptionHistory ?? "").includes("adopted-image")
+        );
       })
     )
   );

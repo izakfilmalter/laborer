@@ -53,7 +53,11 @@ import {
   SafeExecutionSnapshot,
 } from "./execution-control-catalog.ts";
 import { withApplicationFileLock } from "./prototype/application-file-lock.ts";
-import { type NormalizedMessage, ThreadId } from "./prototype/domain.ts";
+import {
+  NormalizedImage,
+  type NormalizedMessage,
+  ThreadId,
+} from "./prototype/domain.ts";
 import { HandlerFailure } from "./prototype/errors.ts";
 import {
   assertSafeFilePath,
@@ -71,6 +75,10 @@ import {
   CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS,
   unavailableConversationAdoptionHistoryGateway,
 } from "./slack/conversation-adoption-history.ts";
+import {
+  MAX_AGGREGATE_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
+} from "./slack/inbound-images.ts";
 
 export const ReferenceCodingActionName = ActionHandlerKey;
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
@@ -428,6 +436,7 @@ export type PublishConversationAgentMessage = (
 export interface ConversationAgentRequest {
   readonly actions: readonly ConversationAction[];
   readonly adoptionHistory?: string;
+  readonly adoptionImages?: readonly NormalizedImage[];
   readonly context: readonly NormalizedMessage[];
   readonly conversationId: string;
   readonly conversationSessionId: string;
@@ -3755,7 +3764,17 @@ export const makeReferenceCodingApplication = Effect.fn(
       Number.isInteger(snapshot.requestCount) &&
       snapshot.requestCount >= 0 &&
       snapshot.requestCount <= CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS &&
-      snapshot.digest === renderedDigest
+      snapshot.digest === renderedDigest &&
+      Array.isArray(snapshot.images) &&
+      snapshot.images.length <= MAX_IMAGES_PER_MESSAGE &&
+      snapshot.images.every(Schema.is(NormalizedImage)) &&
+      new Set(snapshot.images.map((image) => image.id)).size ===
+        snapshot.images.length &&
+      snapshot.images.reduce(
+        (total, image) =>
+          "failureReason" in image ? total : total + image.byteLength,
+        0
+      ) <= MAX_AGGREGATE_IMAGE_BYTES
     );
   };
 
@@ -3786,7 +3805,11 @@ export const makeReferenceCodingApplication = Effect.fn(
     }, true);
 
   type PreparedConversationAdoption =
-    | { readonly _tag: "Continue"; readonly history: string }
+    | {
+        readonly _tag: "Continue";
+        readonly history: string;
+        readonly images: readonly NormalizedImage[];
+      }
     | { readonly _tag: "Finalized" }
     | { readonly _tag: "NotAdopting" };
 
@@ -3851,6 +3874,7 @@ export const makeReferenceCodingApplication = Effect.fn(
     return {
       _tag: "Continue",
       history: `${initial.executionSnapshotRendered ?? ""}${snapshot.rendered}`,
+      images: snapshot.images,
     };
   });
 
@@ -9631,7 +9655,10 @@ export const makeReferenceCodingApplication = Effect.fn(
           acceptEvent
         ),
       ...(preparedAdoption._tag === "Continue"
-        ? { adoptionHistory: preparedAdoption.history }
+        ? {
+            adoptionHistory: preparedAdoption.history,
+            adoptionImages: preparedAdoption.images,
+          }
         : {}),
       context: requestContext,
       conversationId: event.conversationId,

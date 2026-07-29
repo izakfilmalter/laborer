@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
+  NormalizedImageInput,
+  UnavailableNormalizedImageInput,
+} from "../src/prototype/domain.ts";
+import {
   CONVERSATION_ADOPTION_HISTORY_MAX_BYTES,
   CONVERSATION_ADOPTION_HISTORY_MAX_MESSAGES,
   makeSlackConversationAdoptionHistoryGateway,
@@ -52,6 +56,16 @@ const readHistory = (gateway: ReturnType<typeof gatewayFor>["gateway"]) =>
     cutoffSlackTs: "2000000000.000100",
     rootTs: "1999999999.000001",
     workspaceId: "T-ADOPT",
+  });
+
+const adoptedImage = (fileId: string, index: number) =>
+  NormalizedImageInput.make({
+    byteLength: 8,
+    contentDigest: String(index + 1).repeat(64),
+    contentPath: `inbound-images/${String(index + 1).repeat(64)}.png`,
+    id: `adopted-image-${index}`,
+    mimeType: "image/png",
+    slackFileId: fileId,
   });
 
 describe("conversation adoption Slack history", () => {
@@ -222,5 +236,72 @@ describe("conversation adoption Slack history", () => {
       assert.strictEqual(snapshot.degradation, "unavailable");
       assert.strictEqual(requests.length, 0);
     })
+  );
+
+  it.effect(
+    "hydrates adopted images in chronological Slack order and records bounded failures",
+    () =>
+      Effect.gen(function* () {
+        const calls: string[][] = [];
+        const gateway = makeSlackConversationAdoptionHistoryGateway({
+          botId: "B-LABORER",
+          botUserId: "U-LABORER",
+          client: {
+            conversations: {
+              replies: async () => ({
+                messages: [
+                  {
+                    files: [
+                      { id: "F-ONE", mimetype: "image/png" },
+                      { id: "F-TWO", mimetype: "image/png" },
+                    ],
+                    subtype: "file_share",
+                    text: "first caption",
+                    ts: "1999999999.000010",
+                    user: "U-ONE",
+                  },
+                  {
+                    files: [{ id: "F-THREE", mimetype: "image/png" }],
+                    subtype: "file_share",
+                    ts: "1999999999.000020",
+                    user: "U-TWO",
+                  },
+                ],
+              }),
+            },
+          },
+          resolveImages: (request) => {
+            calls.push(request.candidates.map(({ id }) => id));
+            return request.messageTs.endsWith("20")
+              ? Effect.succeed([
+                  UnavailableNormalizedImageInput.make({
+                    failureReason: "download-timeout",
+                    id: "adopted-image-2",
+                    slackFileId: "F-THREE",
+                  }),
+                ])
+              : Effect.succeed(
+                  request.candidates.map(({ id }, index) =>
+                    adoptedImage(id, index)
+                  )
+                );
+          },
+          workspaceId: "T-ADOPT",
+        });
+
+        const snapshot = yield* readHistory(gateway);
+
+        assert.deepStrictEqual(calls, [["F-ONE", "F-TWO"], ["F-THREE"]]);
+        assert.deepStrictEqual(
+          snapshot.images.map((image) => image.slackFileId),
+          ["F-ONE", "F-TWO", "F-THREE"]
+        );
+        assert.ok(snapshot.rendered.indexOf("first caption") >= 0);
+        assert.ok(
+          snapshot.rendered.indexOf("adopted-image-0") <
+            snapshot.rendered.indexOf("adopted-image-1")
+        );
+        assert.ok(snapshot.rendered.includes('reason="download-timeout"'));
+      })
   );
 });

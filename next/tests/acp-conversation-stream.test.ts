@@ -9,6 +9,7 @@ import {
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
 import { terminateSupervisedProcess } from "../src/prototype/process-supervisor.ts";
+import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -35,8 +36,7 @@ const fakeOpenCodePath = resolve(
 );
 const EXPECTED_PARTIAL = "**Streaming** from ACP";
 const EXPECTED_COMPLETE = `${EXPECTED_PARTIAL}\n\n- complete\n- unchanged`;
-const EXPECTED_BLOCKED_NOTICE =
-  "*Paused — operator decision needed.* An earlier agent turn has an uncertain external outcome, so later work is safely queued. An operator can either abandon that attempt and continue in a replacement session, or explicitly retry after acknowledging that external side effects may be duplicated. Use the local recovery CLI to inspect and resolve it.";
+const EXPECTED_BLOCKED_NOTICE = RECOVERY_NOTICE_TEXT.blocked;
 const EXPECTED_SEMANTIC_MESSAGES = [
   "**First** message",
   "Second message",

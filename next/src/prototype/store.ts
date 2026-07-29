@@ -79,6 +79,10 @@ import {
   retainTrustedDirectory,
   verifyRetainedDirectory,
 } from "./path-safety.ts";
+import {
+  type RecoveryNoticeKind,
+  recoveryNoticeText,
+} from "./recovery-notice.ts";
 
 export interface ActivationContextRequest {
   readonly activationTs: string;
@@ -1725,17 +1729,10 @@ const applicationEventFailureNoticeId = (eventId: string): string =>
 const GENERIC_TURN_FAILURE_NOTICE =
   "This conversation turn could not be completed. Please try again.";
 
-const BLOCKED_NOTICE =
-  "*Paused — operator decision needed.* An earlier agent turn has an uncertain external outcome, so later work is safely queued. An operator can either abandon that attempt and continue in a replacement session, or explicitly retry after acknowledging that external side effects may be duplicated. Use the local recovery CLI to inspect and resolve it.";
-const ABANDONED_NOTICE =
-  "*Recovered.* An operator abandoned the uncertain agent turn. Laborer moved to a safe replacement session, and queued conversation work can now continue.";
-const RETRY_NOTICE =
-  "*Retry confirmed.* An operator acknowledged possible duplicate side effects and retried the uncertain agent turn in a replacement session. Queued conversation work will continue after it finishes.";
-
 const recoveryNoticeId = (
   ownerKind: ConversationStreamOwnerKind,
   ownerId: string,
-  kind: "abandon" | "blocked" | "retry",
+  kind: RecoveryNoticeKind,
   correlationId: string
 ): string => {
   const correlationDigest = createHash("sha256")
@@ -1743,13 +1740,6 @@ const recoveryNoticeId = (
     .update(correlationId, "utf8")
     .digest("base64url");
   return `notice:${ownerTurnId(ownerKind, ownerId)}:recovery:${kind}:${correlationDigest}`;
-};
-
-const recoveryNoticeText = (kind: "abandon" | "blocked" | "retry"): string => {
-  if (kind === "blocked") {
-    return BLOCKED_NOTICE;
-  }
-  return kind === "abandon" ? ABANDONED_NOTICE : RETRY_NOTICE;
 };
 
 const ownerTurnId = (
@@ -1764,7 +1754,7 @@ const appendRecoveryNotice = (
   thread: WorkThreadState,
   ownerKind: ConversationStreamOwnerKind,
   ownerId: string,
-  kind: "abandon" | "blocked" | "retry",
+  kind: RecoveryNoticeKind,
   correlationId: string
 ): readonly OutboundItem[] => {
   const id = recoveryNoticeId(ownerKind, ownerId, kind, correlationId);

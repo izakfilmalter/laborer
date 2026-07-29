@@ -246,8 +246,12 @@ ACP process and binding generations, Agent session, Actions, Executions, and
 Slack streams. An audited operator decision either abandons into a replacement
 session or allocates a fresh retry attempt only after duplicate-side-effect risk
 is explicitly acknowledged; duplicate decisions are idempotent and conflicts
-fail closed. Slack receives a sanitized paused notice with both choices and a
-sanitized recovery confirmation, never prompt contents or private evidence. On
+fail closed. Slack receives one sanitized paused notice that names the pause,
+what stays queued, and both operator choices, followed by one sanitized resumed
+notice naming the decision that was taken; that copy lives in
+`src/prototype/recovery-notice.ts` and never carries prompt contents,
+identifiers, or private evidence. `bun run --cwd next recovery --help` documents
+the matching operator flow. On
 restart, stable ACP v1
 `session/resume` receives the original cwd and a freshly readiness-verified copy
 of the exact workspace memory MCP configuration; `session/load` and transcript

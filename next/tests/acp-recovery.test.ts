@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Ref } from "effect";
 import { Application, ConversationBlocked } from "../src/application.ts";
+import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -13,14 +14,33 @@ import {
   inspectAcpRecoveryHealthOffline,
   inspectAcpRecoveryOffline,
 } from "../src/slack/acp-recovery.ts";
+import { slackCodePointLength } from "../src/slack/message-bounds.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 
 const BLOCKED_NOTICE_PATTERN =
-  /Paused — operator decision needed.*abandon.*explicitly retry/s;
-const ABANDONED_NOTICE_PATTERN = /Recovered.*safe replacement session/s;
-const RETRY_NOTICE_PATTERN = /Retry confirmed.*duplicate side effects/s;
+  /^\*Paused — an operator decision is needed\.\*\n.*\n• \*Abandon\* — .*\n• \*Retry\* — .*duplicate.*\n/s;
+const ABANDONED_NOTICE_PATTERN =
+  /^\*Resumed — the uncertain attempt was abandoned\.\*\n.*replacement agent session/s;
+const RETRY_NOTICE_PATTERN =
+  /^\*Resumed — the uncertain attempt was retried\.\*\n.*duplicated.*replacement agent session/s;
+const UNSAFE_NOTICE_PATTERN = /attempt-|prompt-|session-|decision-|\/|--|<@/;
 
 describe("issue #253 ambiguous ACP recovery", () => {
+  it("presents both operator choices and a sanitized outcome in Slack", () => {
+    assert.match(RECOVERY_NOTICE_TEXT.blocked, BLOCKED_NOTICE_PATTERN);
+    assert.match(RECOVERY_NOTICE_TEXT.abandon, ABANDONED_NOTICE_PATTERN);
+    assert.match(RECOVERY_NOTICE_TEXT.retry, RETRY_NOTICE_PATTERN);
+    assert.include(RECOVERY_NOTICE_TEXT.blocked, "queued in order");
+    for (const notice of Object.values(RECOVERY_NOTICE_TEXT)) {
+      assert.isBelow(slackCodePointLength(notice), 1000);
+      assert.notMatch(
+        notice,
+        UNSAFE_NOTICE_PATTERN,
+        "recovery notices stay sanitized and free of identifiers, paths, and flags"
+      );
+    }
+  });
+
   it("returns bounded opaque correlations across the recovery boundary", async () => {
     const root = await mkdtemp(resolve(tmpdir(), "laborer-253-inspection-"));
     try {

@@ -22,6 +22,7 @@ import { DealWithBugActionResult } from "../src/action-catalog.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { NormalizedMessage, stableMessageId } from "../src/prototype/domain.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
+import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
 import { normalizedEvent } from "../src/prototype/scenario.ts";
 import { PrototypeStore } from "../src/prototype/store.ts";
@@ -66,8 +67,7 @@ const scriptedPeerPath = resolve(
   "tests/fixtures/scripted-acp-peer.ts"
 );
 const EXPECTED_MARKDOWN = "**Streaming** from ACP\n\n- complete\n- unchanged";
-const EXPECTED_BLOCKED_NOTICE =
-  "*Paused — operator decision needed.* An earlier agent turn has an uncertain external outcome, so later work is safely queued. An operator can either abandon that attempt and continue in a replacement session, or explicitly retry after acknowledging that external side effects may be duplicated. Use the local recovery CLI to inspect and resolve it.";
+const EXPECTED_BLOCKED_NOTICE = RECOVERY_NOTICE_TEXT.blocked;
 const OBSERVATION_TIMEOUT_MILLIS = 5000;
 
 const SessionMethod = Schema.Struct({

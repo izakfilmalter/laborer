@@ -74,6 +74,7 @@ describe("private Action MCP bridge", () => {
             yield* Ref.make<ConversationExecutionControl | null>(null);
           const executionIdRef = yield* Ref.make<string | null>(null);
           const resumes = yield* Ref.make(0);
+          const cancellationOperationIds: string[] = [];
           const finishInitial = yield* Deferred.make<void>();
           const application = yield* makeReferenceCodingApplication({
             conversationAgent: {
@@ -151,6 +152,29 @@ describe("private Action MCP bridge", () => {
             statePath: join(root, "authority.json"),
             trustedRoot: root,
           });
+          const cancelControl: ConversationExecutionControl = {
+            description: "Cancel an owned Execution",
+            invoke: (_input, trustedInvocation) => {
+              assert.ok(trustedInvocation);
+              const deduplicated = cancellationOperationIds.includes(
+                trustedInvocation.operationId
+              );
+              cancellationOperationIds.push(trustedInvocation.operationId);
+              return Effect.succeed({
+                deduplicated,
+                execution: {
+                  actionName: "create-feature",
+                  canCancel: false,
+                  canPrompt: false,
+                  executionId: "execution-control-duplicate-249",
+                  status: "cancelled",
+                  worktreeName: "preserved-control-worktree",
+                },
+                schemaVersion: 1,
+              } as never);
+            },
+            name: "cancel-execution",
+          };
           const bridge = yield* makeLaborerActionMcpBridge({
             authorityRepository: authority,
             bootstrapPath: join(root, "bootstrap"),
@@ -189,7 +213,7 @@ describe("private Action MCP bridge", () => {
           const closeTurn = yield* bridge.activateTurn({
             actionServerGeneration: registration.actionServerGeneration,
             actions: [],
-            controls: [control, inspect],
+            controls: [control, inspect, cancelControl],
             scope: {
               bindingGeneration: 1,
               channelId: "C247",
@@ -252,6 +276,65 @@ describe("private Action MCP bridge", () => {
             Buffer.byteLength(JSON.stringify(inspected.structuredContent)) <
               64 * 1024
           );
+          const cancelInput = {
+            executionId: "execution-control-duplicate-249",
+          };
+          const cancelPermission = `${bridge.serverName}_cancel-execution`;
+          for (const cancelToolCallId of [
+            "cancel-call-249-first",
+            "cancel-call-249-second",
+          ]) {
+            bridge.observeToolCall({
+              sessionId,
+              update: {
+                kind: "other",
+                name: cancelPermission,
+                rawInput: cancelInput,
+                sessionUpdate: "tool_call",
+                status: "pending",
+                title: cancelPermission,
+                toolCallId: cancelToolCallId,
+              },
+            });
+            assert.strictEqual(
+              (yield* bridge.tryAuthorizePermission(
+                allowRequest({
+                  input: cancelInput,
+                  permission: cancelPermission,
+                  sessionId,
+                  toolCallId: cancelToolCallId,
+                })
+              ))?.outcome.outcome,
+              "selected"
+            );
+            const result = yield* Effect.promise(() =>
+              client.callTool({
+                arguments: cancelInput,
+                name: "cancel-execution",
+              })
+            );
+            assert.strictEqual(result.isError, undefined);
+          }
+          const cancellationRetry = yield* Effect.promise(() =>
+            client.callTool({
+              arguments: cancelInput,
+              name: "cancel-execution",
+            })
+          );
+          assert.deepStrictEqual(cancellationRetry.structuredContent, {
+            deduplicated: true,
+            execution: {
+              actionName: "create-feature",
+              canCancel: false,
+              canPrompt: false,
+              executionId: "execution-control-duplicate-249",
+              status: "cancelled",
+              worktreeName: "preserved-control-worktree",
+            },
+            schemaVersion: 1,
+          });
+          assert.strictEqual(cancellationOperationIds.length, 3);
+          assert.strictEqual(new Set(cancellationOperationIds).size, 1);
           bridge.observeToolCall({
             sessionId,
             update: {

@@ -1036,10 +1036,26 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     if (unconsumed.length === 1) {
       return unconsumed[0] as LiveCapability;
     }
-    if (unconsumed.length > 1 || matches.length !== 1) {
+    if (unconsumed.length > 1 || matches.length === 0) {
       return yield* bridgeFailure("Action invocation correlation is ambiguous");
     }
-    const capability = matches[0];
+    /**
+     * A model may issue the same generated control more than once in one turn.
+     * Each observed tool call has its own capability, but an exact retry carries
+     * only tool name and input across the MCP child boundary. Once every matching
+     * capability is consumed they are intentionally equivalent: the active lease,
+     * generation, tool, input hash, and Laborer-issued operation identity match.
+     * Select the newest capability so the durable operation can return its
+     * existing result instead of turning a safe duplicate into ambiguity.
+     */
+    const operationId = matches[0]?.operationId;
+    if (
+      operationId === undefined ||
+      matches.some((capability) => capability.operationId !== operationId)
+    ) {
+      return yield* bridgeFailure("Action invocation correlation is ambiguous");
+    }
+    const capability = matches.at(-1);
     return yield* capability === undefined
       ? bridgeFailure("Action invocation is unavailable")
       : Effect.succeed(capability);

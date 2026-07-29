@@ -58,7 +58,7 @@ export type ApplicationEventDecision =
 
 export interface ApplicationEventAcceptance {
   readonly decision: ApplicationEventDecision;
-  readonly scheduling: "AlreadyDurable" | "Scheduled";
+  readonly scheduling: "AlreadyDurable" | "Deferred" | "Scheduled";
 }
 
 export type AcceptApplicationEvent = (

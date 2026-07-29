@@ -81,6 +81,15 @@ To run the production lifecycle, use:
 bun run start:slack
 ```
 
+For development-time daemon-client replacement, use `bun run dev:slack`.
+Source edits prepare and typecheck a fresh Daemon generation while the current
+generation remains Active. A validated candidate globally quiesces the current
+Slack/ACP clients before taking ownership; preparation failures leave the
+current generation untouched, and activation failures receive one rollback
+attempt. Production `start:slack` does not use the watcher or reload supervisor.
+Cluster-host, Action-registration, dependency, environment, package, Node, and
+supervisor edits require restarting `dev:slack`.
+
 `start:slack` first loads the user application for each canonical Laborer root,
 validates its bounded Action catalog, opens that root's
 `.laborer-runtime/runtime.sqlite`, applies the explicit Laborer migrations, and

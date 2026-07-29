@@ -40,16 +40,19 @@ describe("issue #278 primary Cluster cutover", () => {
   });
 
   it("registers the user application in the normal Slack root runtime", async () => {
-    const [live, runner] = await Promise.all([
-      readFile(new URL("../src/slack/live.ts", import.meta.url), "utf8"),
+    const [liveGeneration, runner] = await Promise.all([
+      readFile(
+        new URL("../src/slack/live-generation.ts", import.meta.url),
+        "utf8"
+      ),
       readFile(
         new URL("../src/slack/acp-workspace-runner.ts", import.meta.url),
         "utf8"
       ),
     ]);
 
-    assert.include(live, "makeReferenceCodingRootApplication");
-    assert.include(live, "application,");
+    assert.include(liveGeneration, "makeReferenceCodingRootApplication");
+    assert.include(liveGeneration, "application,");
     assert.notInclude(runner, "CONVERSATION_ONLY_ACTION_CATALOG_FINGERPRINT");
     assert.include(runner, "options.rootRuntime.actions.fingerprint");
   });

@@ -908,6 +908,7 @@ describe("Socket Mode resource and delivery boundary", () => {
             threads: 0,
           }),
           persistenceHealth: Effect.succeed({ _tag: "Healthy" }),
+          quiesce: Effect.void,
         };
         yield* Effect.scoped(
           Effect.gen(function* () {

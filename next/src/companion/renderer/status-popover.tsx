@@ -196,17 +196,31 @@ type RunningStatus = Extract<
   { readonly state: "running" }
 >;
 
+type WorkspaceBinding = RunningStatus["workspaces"][number];
+
+interface BindingCounts {
+  readonly connected: number;
+  readonly pending: number;
+  readonly unavailable: number;
+}
+
+const bindingCounts = (
+  workspaces: RunningStatus["workspaces"]
+): BindingCounts => ({
+  connected: workspaces.filter((workspace) => workspace.readiness === "ready")
+    .length,
+  pending: workspaces.filter((workspace) => workspace.readiness === "pending")
+    .length,
+  unavailable: workspaces.filter(
+    (workspace) =>
+      workspace.readiness !== "ready" && workspace.readiness !== "pending"
+  ).length,
+});
+
 const runningPresentation = (
   status: RunningStatus
 ): (typeof statusPresentation)["running"] => {
-  const pending = status.workspaces.filter(
-    (workspace) => workspace.readiness === "pending"
-  ).length;
-  const unavailable =
-    status.workspaces.length -
-    pending -
-    status.workspaces.filter((workspace) => workspace.readiness === "ready")
-      .length;
+  const { pending, unavailable } = bindingCounts(status.workspaces);
   if (status.receiver === "connecting") {
     return {
       ...statusPresentation.running,
@@ -246,11 +260,10 @@ const runningPresentation = (
 };
 
 const bindingGuidance: Record<
-  RunningStatus["workspaces"][number]["readiness"],
+  Exclude<WorkspaceBinding["readiness"], "ready">,
   string
 > = {
   pending: "Starting now. No action is needed.",
-  ready: "Ready for Slack work.",
   "setup-incomplete":
     "Configure this workspace binding locally, then restart the daemon.",
   unavailable: "Review this workspace's local setup, then restart the daemon.",
@@ -258,7 +271,7 @@ const bindingGuidance: Record<
 };
 
 const bindingDetailGuidance: Record<
-  NonNullable<RunningStatus["workspaces"][number]["detail"]>,
+  NonNullable<WorkspaceBinding["detail"]>,
   string
 > = {
   "authentication-unavailable":
@@ -281,10 +294,7 @@ const bindingDetailGuidance: Record<
     "Workspace startup stopped unexpectedly. Restart the daemon to try again.",
 };
 
-const bindingTone: Record<
-  RunningStatus["workspaces"][number]["readiness"],
-  StatusTone
-> = {
+const bindingTone: Record<WorkspaceBinding["readiness"], StatusTone> = {
   pending: "warning",
   ready: "success",
   "setup-incomplete": "danger",
@@ -292,16 +302,83 @@ const bindingTone: Record<
   unknown: "warning",
 };
 
-const bindingTitle: Record<
-  RunningStatus["workspaces"][number]["readiness"],
-  string
-> = {
+const bindingTitle: Record<WorkspaceBinding["readiness"], string> = {
   pending: "Starting",
   ready: "Ready",
   "setup-incomplete": "Setup required",
   unavailable: "Unavailable",
   unknown: "Status unknown",
 };
+
+const bindingBody = (workspace: WorkspaceBinding): string => {
+  if (workspace.readiness === "ready") {
+    return "No visible work in this workspace.";
+  }
+  return workspace.detail === null
+    ? bindingGuidance[workspace.readiness]
+    : bindingDetailGuidance[workspace.detail];
+};
+
+const WorkspaceBindingCard = ({
+  workspace,
+}: {
+  readonly workspace: WorkspaceBinding;
+}) => {
+  const tone = bindingTone[workspace.readiness];
+  return (
+    <article className="rounded-xl border border-border bg-surface p-3">
+      <div className="flex items-start justify-between gap-2">
+        <h3
+          className={`min-w-0 flex-1 truncate font-semibold text-sm leading-5 ${workspace.teamId === null ? "" : "font-mono"}`}
+          title={workspace.label}
+        >
+          {workspace.label}
+        </h3>
+        <span
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-[11px] leading-5 ${badgeTone[tone]}`}
+        >
+          <span
+            aria-hidden="true"
+            className={`size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${workspace.readiness === "pending" ? "animate-pulse motion-reduce:animate-none" : ""}`}
+          />
+          {bindingTitle[workspace.readiness]}
+        </span>
+      </div>
+      <p className="mt-1.5 text-muted-foreground text-xs leading-5">
+        {bindingBody(workspace)}
+      </p>
+    </article>
+  );
+};
+
+const BindingCountChip = ({
+  label,
+  pending,
+  tone,
+  value,
+}: {
+  readonly label: string;
+  readonly pending: boolean;
+  readonly tone: StatusTone;
+  readonly value: number;
+}) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 text-[11px] leading-4">
+    <span
+      aria-hidden="true"
+      className={`size-1.5 shrink-0 rounded-full ${value === 0 ? "bg-muted-foreground/40" : dotTone[tone]} ${pending && value > 0 ? "animate-pulse motion-reduce:animate-none" : ""}`}
+    />
+    <span
+      aria-hidden="true"
+      className={`font-semibold tabular-nums ${value === 0 ? "text-muted-foreground" : "text-foreground"}`}
+    >
+      {value}
+    </span>
+    <span aria-hidden="true" className="text-muted-foreground">
+      {label}
+    </span>
+    <span className="sr-only">{`${value} ${label}`}</span>
+  </span>
+);
 
 export const StatusPopover = ({
   quit,
@@ -316,6 +393,9 @@ export const StatusPopover = ({
     status.state === "running"
       ? runningPresentation(status)
       : statusPresentation[status.state];
+  const counts = bindingCounts(
+    status.state === "running" ? status.workspaces : []
+  );
   const Icon = presentation.icon;
 
   return (
@@ -368,73 +448,54 @@ export const StatusPopover = ({
         </div>
 
         {status.state === "running" ? (
-          <dl className="mt-5 grid grid-cols-2 gap-2">
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                Version
-              </dt>
-              <dd
-                className="mt-1 select-text truncate font-mono text-sm"
-                title={status.version}
-              >
-                {status.version}
-              </dd>
-            </div>
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                Uptime
-              </dt>
-              <dd className="mt-1 select-text truncate font-medium text-sm">
-                {formatUptime(status.uptimeSeconds)}
-              </dd>
-            </div>
-          </dl>
-        ) : null}
-
-        {status.state === "running" ? (
           <>
+            <dl className="mt-4 flex overflow-hidden rounded-xl border border-border bg-surface">
+              <div className="min-w-0 flex-1 px-3 py-2">
+                <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                  Version
+                </dt>
+                <dd
+                  className="mt-0.5 select-text truncate font-mono text-sm"
+                  title={status.version}
+                >
+                  {status.version}
+                </dd>
+              </div>
+              <div className="min-w-0 flex-1 border-border border-l px-3 py-2">
+                <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                  Uptime
+                </dt>
+                <dd className="mt-0.5 select-text truncate font-medium text-sm">
+                  {formatUptime(status.uptimeSeconds)}
+                </dd>
+              </div>
+            </dl>
+
             <section
               aria-labelledby="binding-summary-heading"
-              className="mt-3 grid grid-cols-3 gap-2"
+              className="mt-2 flex flex-wrap items-center gap-1.5"
             >
               <h2 className="sr-only" id="binding-summary-heading">
                 Workspace binding summary
               </h2>
-              {[
-                {
-                  label: "connected",
-                  value: status.workspaces.filter(
-                    (workspace) => workspace.readiness === "ready"
-                  ).length,
-                },
-                {
-                  label: "pending",
-                  value: status.workspaces.filter(
-                    (workspace) => workspace.readiness === "pending"
-                  ).length,
-                },
-                {
-                  label: "unavailable",
-                  value: status.workspaces.filter(
-                    (workspace) =>
-                      workspace.readiness !== "ready" &&
-                      workspace.readiness !== "pending"
-                  ).length,
-                },
-              ].map((count) => (
-                <div
-                  className="rounded-lg border border-border bg-surface px-2 py-2 text-center"
-                  key={count.label}
-                >
-                  <span className="block font-semibold text-sm">
-                    {count.value}
-                  </span>
-                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">
-                    {count.label}
-                  </span>
-                  <span className="sr-only">{`${count.value} ${count.label}`}</span>
-                </div>
-              ))}
+              <BindingCountChip
+                label="connected"
+                pending={false}
+                tone="success"
+                value={counts.connected}
+              />
+              <BindingCountChip
+                label="pending"
+                pending={true}
+                tone="warning"
+                value={counts.pending}
+              />
+              <BindingCountChip
+                label="unavailable"
+                pending={false}
+                tone="danger"
+                value={counts.unavailable}
+              />
             </section>
 
             <section
@@ -448,41 +509,18 @@ export const StatusPopover = ({
                 Slack workspaces
               </h2>
               {status.workspaces.length === 0 ? (
-                <p className="mt-2 rounded-xl border border-border bg-surface p-3 text-muted-foreground text-xs">
-                  No workspace bindings are configured.
+                <p className="mt-2 rounded-xl border border-border border-dashed bg-surface p-3 text-muted-foreground text-xs leading-5">
+                  No workspace bindings are configured. Bind a Slack workspace
+                  to this daemon to see its readiness here.
                 </p>
               ) : (
-                <div className="mt-2 space-y-2">
+                <ul className="mt-2 space-y-2">
                   {status.workspaces.map((workspace) => (
-                    <article
-                      className="rounded-xl border border-border bg-surface p-3"
-                      key={workspace.id}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="truncate font-semibold text-sm">
-                            {workspace.label}
-                          </h3>
-                          <p className="mt-1 text-muted-foreground text-xs leading-5">
-                            {workspace.detail === null
-                              ? bindingGuidance[workspace.readiness]
-                              : bindingDetailGuidance[workspace.detail]}
-                          </p>
-                        </div>
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-1 font-medium text-[10px] ${badgeTone[bindingTone[workspace.readiness]]}`}
-                        >
-                          {bindingTitle[workspace.readiness]}
-                        </span>
-                      </div>
-                      {workspace.readiness === "ready" ? (
-                        <p className="mt-3 border-border border-t pt-3 text-muted-foreground text-xs">
-                          No visible work in this workspace.
-                        </p>
-                      ) : null}
-                    </article>
+                    <li key={workspace.id}>
+                      <WorkspaceBindingCard workspace={workspace} />
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </section>
           </>

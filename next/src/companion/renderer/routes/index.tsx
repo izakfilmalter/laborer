@@ -10,6 +10,7 @@ const StatusRoute = () => {
       reconnect={() =>
         window.laborerCompanion.reconnect().catch(() => undefined)
       }
+      reportContentHeight={window.laborerCompanion.setContentHeight}
       status={status}
     />
   );

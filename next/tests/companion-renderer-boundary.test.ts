@@ -35,6 +35,7 @@ describe("companion renderer boundary", () => {
           workspaceId: "TFIRST",
         },
       ],
+      excerpt: "Build the companion status view",
       id: "workspace:TFIRST:C123:1000.000001",
       label: "C123 · 1000.000001",
       stateChangedAtUnixMs: 1000,

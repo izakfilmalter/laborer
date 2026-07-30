@@ -59,12 +59,14 @@ describe("workspace-binding operator projection", () => {
       reasonCode: "workspace-root-missing",
       status: "setup-incomplete",
       teamId: "TSECOND",
+      workspaceName: "Steeple",
     });
     projection.observe({
       bindingIndex: 0,
       reasonCode: "acp-workspace-ready",
       status: "ready",
       teamId: "TFIRST",
+      workspaceName: "Freckle HQ",
     });
     projection.markReceiverConnected();
 
@@ -74,7 +76,7 @@ describe("workspace-binding operator projection", () => {
         {
           detail: null,
           id: "slack:TFIRST",
-          label: "TFIRST",
+          label: "Freckle HQ",
           readiness: "ready",
           teamId: "TFIRST",
           threads: [],
@@ -82,7 +84,7 @@ describe("workspace-binding operator projection", () => {
         {
           detail: "setup-required",
           id: "slack:TSECOND",
-          label: "TSECOND",
+          label: "Steeple",
           readiness: "setup-incomplete",
           teamId: "TSECOND",
           threads: [],
@@ -217,6 +219,7 @@ describe("workspace-binding operator projection", () => {
         activity: "in-progress",
         evidenceAtUnixMs: 1000,
         executions: [],
+        excerpt: "First work thread",
         id: "workspace:TFIRST:C123:1000.000001",
         label: "C123 · 1000.000001",
         workspaceId: "TFIRST",
@@ -227,6 +230,7 @@ describe("workspace-binding operator projection", () => {
         activity: "needs-attention",
         evidenceAtUnixMs: 2000,
         executions: [],
+        excerpt: "Unknown work thread",
         id: "workspace:TUNKNOWN:C123:1000.000001",
         label: "C123 · 1000.000001",
         workspaceId: "TUNKNOWN",

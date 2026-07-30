@@ -7,6 +7,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  screen,
   Tray,
 } from "electron";
 import { OperatorStatusClient } from "../operator-status/client.ts";
@@ -18,6 +19,7 @@ import {
   type ServiceReconciliationState,
 } from "./service-management.ts";
 import {
+  COMPANION_CONTENT_HEIGHT_CHANNEL,
   COMPANION_QUIT_CHANNEL,
   COMPANION_RECONNECT_CHANNEL,
   COMPANION_STATUS_CHANNEL,
@@ -26,16 +28,14 @@ import {
 
 const dirname = fileURLToPath(new URL(".", import.meta.url));
 const POPOVER_WIDTH = 380;
-// Sized to the tallest state (recovery guidance plus its action) so the panel
-// stays compact; the renderer scrolls if a longer state ever appears.
-const POPOVER_HEIGHT = 400;
-const createTrayIcon = (path: string): Electron.NativeImage => {
-  const icon = nativeImage.createFromDataURL(
-    "data:image/svg+xml;charset=utf-8," +
-      encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path fill="none" stroke="black" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="${path}"/></svg>`
-      )
-  );
+const POPOVER_INITIAL_HEIGHT = 400;
+const POPOVER_SCREEN_GAP = 8;
+const createTrayIcon = (base64: string): Electron.NativeImage => {
+  // Electron 43 does not decode SVG data URLs into NativeImage instances.
+  // Decode a high-resolution PNG and downsample it for a crisp menu-bar mask.
+  const icon = nativeImage
+    .createFromBuffer(Buffer.from(base64, "base64"))
+    .resize({ height: 18, quality: "best", width: 18 });
   icon.setTemplateImage(true);
   return icon;
 };
@@ -43,8 +43,12 @@ const createTrayIcon = (path: string): Electron.NativeImage => {
 // A distinct glyph keeps a stalled daemon legible in the menu bar without
 // opening the popover; template images cannot carry color on macOS.
 const trayIcons = {
-  attention: createTrayIcon("M4 4.5h10v9H4zM9 7v2.7M9 11.4h.01"),
-  nominal: createTrayIcon("M4 4.5h10v9H4zM6.5 7h5M6.5 10h3"),
+  attention: createTrayIcon(
+    "iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAAAbElEQVR42u3auwkAMAhAQfdfWmew83MP0oZwhSAkQpIkSZIkSeqVww8gQIAAAQLUB/r6DkCAAAE6BzTlDkCAAAECBAgQIECAAAECBMg2DwgQIEMaECBAgAAB8nkBECBAgAAtBJIkSZIkSdKeCpK7noxIUSMSAAAAAElFTkSuQmCC"
+  ),
+  nominal: createTrayIcon(
+    "iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAAAcElEQVR42u3asQkAMAhFQfdf2swgGDDxHtiHa36TCEmSJEmSJKlWDj9AgAABAgSoDrT1HYAAAQIE6Fegm9MNCBAgQIAAmXlAgAABAgSoZ+YBAQIECBAgMw8IEKB9QD4vAAIECBCg+UCSJEmSJEl6pwOIS+BKUAtIywAAAABJRU5ErkJggg=="
+  ),
 } as const;
 
 const trayPresentation: Record<
@@ -133,6 +137,7 @@ let popover: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let serviceReconciliation: Promise<void> | null = null;
+let requestedPopoverHeight = POPOVER_INITIAL_HEIGHT;
 
 const serviceStatusState = (
   state: ServiceReconciliationState
@@ -196,12 +201,21 @@ const positionPopover = (): void => {
     return;
   }
   const trayBounds = tray.getBounds();
-  const displayBounds = popover.getBounds();
-  popover.setPosition(
-    Math.round(trayBounds.x + trayBounds.width / 2 - displayBounds.width / 2),
-    Math.round(trayBounds.y + trayBounds.height + 4),
-    false
+  const workArea = screen.getDisplayMatching(trayBounds).workArea;
+  const y = Math.round(trayBounds.y + trayBounds.height + 4);
+  const idealX = Math.round(
+    trayBounds.x + trayBounds.width / 2 - POPOVER_WIDTH / 2
   );
+  const minimumX = workArea.x + POPOVER_SCREEN_GAP;
+  const maximumX =
+    workArea.x + workArea.width - POPOVER_WIDTH - POPOVER_SCREEN_GAP;
+  const x = Math.min(Math.max(idealX, minimumX), maximumX);
+  const maximumHeight = Math.max(
+    1,
+    workArea.y + workArea.height - y - POPOVER_SCREEN_GAP
+  );
+  const height = Math.min(requestedPopoverHeight, maximumHeight);
+  popover.setBounds({ height, width: POPOVER_WIDTH, x, y }, false);
 };
 
 const togglePopover = (): void => {
@@ -227,7 +241,7 @@ const createPopover = (): BrowserWindow => {
     alwaysOnTop: true,
     backgroundColor: popoverBackground(),
     frame: false,
-    height: POPOVER_HEIGHT,
+    height: POPOVER_INITIAL_HEIGHT,
     maximizable: false,
     minimizable: false,
     resizable: false,
@@ -237,7 +251,7 @@ const createPopover = (): BrowserWindow => {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: resolve(dirname, "../preload/preload.mjs"),
+      preload: resolve(dirname, "../preload/preload.cjs"),
       sandbox: true,
     },
     width: POPOVER_WIDTH,
@@ -306,6 +320,18 @@ if (app.requestSingleInstanceLock()) {
 
       ipcMain.on(COMPANION_STATUS_CHANNEL, (event) => {
         event.sender.send(COMPANION_STATUS_CHANNEL, latestStatus);
+      });
+      ipcMain.on(COMPANION_CONTENT_HEIGHT_CHANNEL, (event, height) => {
+        if (
+          event.sender !== popover?.webContents ||
+          !Number.isSafeInteger(height) ||
+          height < 1 ||
+          height > 100_000
+        ) {
+          return;
+        }
+        requestedPopoverHeight = height;
+        positionPopover();
       });
       ipcMain.handle(COMPANION_RECONNECT_CHANNEL, () => reconcileService());
       ipcMain.handle(COMPANION_QUIT_CHANNEL, () => app.quit());

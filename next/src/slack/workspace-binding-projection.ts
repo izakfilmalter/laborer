@@ -15,11 +15,30 @@ export interface WorkspaceBindingProjectionSnapshot {
 }
 
 const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
+const MAX_WORKSPACE_LABEL_LENGTH = 64;
 
 const safeTeamId = (teamId: string | undefined): string | null =>
   teamId !== undefined && teamId.length <= 58 && TEAM_ID_PATTERN.test(teamId)
     ? teamId
     : null;
+
+const safeWorkspaceLabel = (
+  workspaceName: string | undefined,
+  fallback: string
+): string => {
+  const normalized = (workspaceName ?? "")
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  let bounded = "";
+  for (const character of normalized) {
+    if (bounded.length + character.length > MAX_WORKSPACE_LABEL_LENGTH) {
+      break;
+    }
+    bounded += character;
+  }
+  return bounded.length > 0 ? bounded : fallback;
+};
 
 const initialBinding = (
   installation: SlackInstallationConfig
@@ -121,7 +140,10 @@ export const makeWorkspaceBindingProjection = (config: SlackDaemonConfig) => {
       workspaces[report.bindingIndex] = {
         detail: detailForReport(report),
         id: current.id,
-        label: teamId === null ? current.label : teamId,
+        label:
+          teamId === null
+            ? current.label
+            : safeWorkspaceLabel(report.workspaceName, current.label),
         readiness: readinessForReport(report),
         teamId,
         threads:

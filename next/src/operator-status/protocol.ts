@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const OPERATOR_PROTOCOL_VERSION = 4 as const;
+export const OPERATOR_PROTOCOL_VERSION = 5 as const;
 export const MAX_OPERATOR_RECORD_BYTES = 256 * 1024;
 export const MAX_OPERATOR_WORKSPACE_BINDINGS = 64;
 export const MAX_OPERATOR_WORK_THREADS = 512;
@@ -15,6 +15,16 @@ const teamIdPattern = /^T[A-Z0-9]+$/;
 const threadIdPattern =
   /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
 const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+const isOneLineText = (value: string): boolean =>
+  Array.from(value).every((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      codePoint > 31 &&
+      codePoint !== 127 &&
+      codePoint !== 0x20_28 &&
+      codePoint !== 0x20_29
+    );
+  });
 const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
 
 export const OperatorPendingExecutionSchema = z
@@ -50,6 +60,7 @@ export const OperatorWorkThreadSchema = z
     executions: z
       .array(OperatorPendingExecutionSchema)
       .max(MAX_OPERATOR_PENDING_EXECUTIONS),
+    excerpt: z.string().min(1).max(120).refine(isOneLineText),
     id: z.string().min(1).max(256).regex(threadIdPattern),
     label: z.string().min(1).max(80).regex(threadLabelPattern),
     stateChangedAtUnixMs: z
@@ -90,7 +101,7 @@ export const OperatorWorkspaceBindingSchema = z
   .object({
     detail: OperatorBindingDetailSchema.nullable(),
     id: boundedIdentity,
-    label: boundedIdentity,
+    label: z.string().min(1).max(64).refine(isOneLineText),
     readiness: z.enum([
       "pending",
       "ready",
@@ -109,7 +120,7 @@ export const OperatorWorkspaceBindingSchema = z
           bindingLabelPattern.test(binding.label)
         : (binding.id === `slack:${binding.teamId}` ||
             bindingIdPattern.test(binding.id)) &&
-          binding.label === binding.teamId &&
+          isOneLineText(binding.label) &&
           teamIdPattern.test(binding.teamId),
     "workspace identity is inconsistent"
   )

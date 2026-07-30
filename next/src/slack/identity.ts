@@ -5,6 +5,7 @@ import { SlackStartupError } from "./errors.ts";
 
 const AuthTestIdentity = Schema.Struct({
   bot_id: Schema.String,
+  team: Schema.String,
   team_id: Schema.String,
   user_id: Schema.String,
 });
@@ -34,6 +35,7 @@ export const authenticateSlackBot = (
         botId: identity.bot_id,
         botUserId: identity.user_id,
         teamId: identity.team_id,
+        teamName: identity.team,
       })
     )
   );

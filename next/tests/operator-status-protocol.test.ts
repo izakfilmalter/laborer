@@ -84,6 +84,7 @@ describe("operator status protocol", () => {
                     workspaceId: "TFIRST",
                   },
                 ],
+                excerpt: "Build the companion status view",
                 id: "workspace:TFIRST:C123:1000.000001",
                 label: "C123 · 1000.000001",
                 stateChangedAtUnixMs: 4000,
@@ -177,7 +178,7 @@ describe("operator status protocol", () => {
             {
               detail: "runtime-unavailable",
               id: "slack:TFIRST",
-              label: "TFIRST",
+              label: "First Workspace",
               readiness: "ready",
               teamId: "TFIRST",
               threads: [],

@@ -78,6 +78,7 @@ export interface SlackWorkspacePreflightReport {
     | "quarantined"
     | "circuit-open";
   readonly teamId?: string;
+  readonly workspaceName?: string;
 }
 
 type ObserveSlackWorkspacePreflight = (
@@ -360,6 +361,12 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
   Effect.gen(function* () {
     const { config, prepared } = options;
     const [client, identity] = options.authenticated;
+    const authenticatedWorkspace = {
+      teamId: identity.teamId,
+      ...(identity.teamName === undefined
+        ? {}
+        : { workspaceName: identity.teamName }),
+    } as const;
     if (
       config.expectedTeamId !== undefined &&
       config.expectedTeamId !== identity.teamId
@@ -377,7 +384,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-identity-mismatch",
         status: "setup-incomplete",
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
@@ -411,7 +418,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
     if (config.root === undefined) {
       yield* Effect.logError("Slack workspace has no configured local root", {
         bindingIndex: config.bindingIndex,
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       yield* options.routes.settleUnavailable(
         config.bindingIndex,
@@ -422,14 +429,14 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-root-missing",
         status: "setup-incomplete",
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
     if (prepared === null || prepared._tag === "Failure") {
       yield* Effect.logError("Slack workspace root preparation failed", {
         bindingIndex: config.bindingIndex,
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       yield* options.routes.settleUnavailable(
         config.bindingIndex,
@@ -438,7 +445,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
       );
       yield* reportPreflight(options.observePreflight, {
         ...unavailablePreparedReport(config.bindingIndex, prepared),
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
@@ -449,7 +456,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
     if (!hasLock) {
       yield* Effect.logError("Slack workspace root lock is unavailable", {
         bindingIndex: config.bindingIndex,
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       yield* options.routes.settleUnavailable(
         config.bindingIndex,
@@ -460,7 +467,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "workspace-root-lock-unavailable",
         status: "setup-incomplete",
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
@@ -481,7 +488,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "root-runtime-unavailable",
         status: "quarantined",
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
@@ -529,7 +536,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
         bindingIndex: config.bindingIndex,
         reasonCode: "acp-runner-quarantined",
         status: "quarantined",
-        teamId: identity.teamId,
+        ...authenticatedWorkspace,
       });
       return;
     }
@@ -549,7 +556,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
           ? "acp-workspace-ready"
           : `acp-workspace-${preflightStatus}`,
       status: preflightStatus,
-      teamId: identity.teamId,
+      ...authenticatedWorkspace,
     });
     yield* options.routes.settleReady(config.bindingIndex, {
       ...unavailableInstallation,

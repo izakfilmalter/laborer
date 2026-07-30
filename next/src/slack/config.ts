@@ -305,4 +305,5 @@ export class SlackRuntimeIdentity extends Schema.Class<SlackRuntimeIdentity>(
   botId: Schema.String,
   botUserId: Schema.String,
   teamId: Schema.String,
+  teamName: Schema.optional(Schema.String),
 }) {}

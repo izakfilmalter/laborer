@@ -582,7 +582,12 @@ export const makeAcpSlackWorkspaceRunner = Effect.fn(
       state: runtime.harness.store.snapshot,
     }).pipe(
       Effect.map(({ executions, state }) =>
-        observePrototypeWorkThreads(state, options.identity.teamId, executions)
+        observePrototypeWorkThreads(
+          state,
+          options.identity.teamId,
+          executions,
+          options.identity.botUserId
+        )
       )
     ),
   };

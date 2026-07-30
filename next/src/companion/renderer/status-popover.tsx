@@ -10,7 +10,7 @@ import {
   PlugZap,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CompanionStatusView } from "../shared.ts";
 import { Button } from "./components/ui/button.tsx";
 
@@ -629,7 +629,7 @@ const PendingExecutionList = ({
   const executions = orderedExecutions(thread.executions);
   return (
     <ul
-      aria-label={`Pending Executions for ${thread.label}`}
+      aria-label={`Pending Executions for ${thread.excerpt}`}
       className="mb-1.5 ml-[1.1875rem] border-border border-l pl-4"
     >
       {executions.map((execution) => (
@@ -664,10 +664,10 @@ const WorkThreadRow = ({
           className={`size-3.5 shrink-0 ${presentation.iconClassName}`}
         />
         <span
-          className={`min-w-0 flex-1 truncate font-medium font-mono text-xs leading-5 ${presentation.labelClassName}`}
-          title={thread.label}
+          className={`min-w-0 flex-1 truncate font-medium text-xs leading-5 ${presentation.labelClassName}`}
+          title={`${thread.excerpt} — ${thread.label}`}
         >
-          {thread.label}
+          {thread.excerpt}
         </span>
         <time
           className="shrink-0 text-[11px] text-muted-foreground tabular-nums leading-4"
@@ -831,8 +831,12 @@ const WorkspaceBindingCard = ({
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
           <h3
-            className={`min-w-0 flex-1 truncate font-semibold text-sm leading-5 ${workspace.teamId === null ? "" : "font-mono"}`}
-            title={workspace.label}
+            className="min-w-0 flex-1 truncate font-semibold text-sm leading-5"
+            title={
+              workspace.teamId === null
+                ? workspace.label
+                : `${workspace.label} — ${workspace.teamId}`
+            }
           >
             {workspace.label}
           </h3>
@@ -887,12 +891,18 @@ const BindingCountChip = ({
 export const StatusPopover = ({
   quit,
   reconnect,
+  reportContentHeight,
   status,
 }: {
   readonly quit: () => void;
   readonly reconnect: () => void;
+  readonly reportContentHeight?: (height: number) => void;
   readonly status: CompanionStatusView;
 }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const presentation =
     status.state === "running"
       ? runningPresentation(status)
@@ -905,9 +915,49 @@ export const StatusPopover = ({
   const nowUnixMs = useNow(hasThreads ? STATE_AGE_TICK_MS : null);
   const Icon = presentation.icon;
 
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const footer = footerRef.current;
+    const header = headerRef.current;
+    const section = sectionRef.current;
+    if (
+      reportContentHeight === undefined ||
+      content === null ||
+      footer === null ||
+      header === null ||
+      section === null
+    ) {
+      return;
+    }
+
+    const report = (): void => {
+      const sectionStyle = window.getComputedStyle(section);
+      const sectionPadding =
+        Number.parseFloat(sectionStyle.paddingTop) +
+        Number.parseFloat(sectionStyle.paddingBottom);
+      reportContentHeight(
+        Math.ceil(
+          header.getBoundingClientRect().height +
+            content.getBoundingClientRect().height +
+            footer.getBoundingClientRect().height +
+            sectionPadding
+        )
+      );
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(content);
+    observer.observe(footer);
+    observer.observe(header);
+    report();
+    return () => observer.disconnect();
+  }, [reportContentHeight]);
+
   return (
     <main className="flex h-screen flex-col bg-background text-foreground">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-border border-b px-5 py-4">
+      <header
+        className="flex shrink-0 items-center justify-between gap-3 border-border border-b px-5 py-4"
+        ref={headerRef}
+      >
         <div className="min-w-0">
           <h1 className="font-semibold text-base tracking-tight">Laborer</h1>
           <p className="text-muted-foreground text-xs">Local companion</p>
@@ -926,135 +976,141 @@ export const StatusPopover = ({
       <section
         aria-labelledby="daemon-status-heading"
         className="flex min-h-0 flex-1 flex-col overflow-y-auto p-5"
+        ref={sectionRef}
       >
-        <h2 className="sr-only" id="daemon-status-heading">
-          Daemon status
-        </h2>
+        <div ref={contentRef}>
+          <h2 className="sr-only" id="daemon-status-heading">
+            Daemon status
+          </h2>
 
-        <div className="flex items-start gap-3">
-          <span
-            className={`mt-0.5 shrink-0 rounded-full p-2 transition-colors ${badgeTone[presentation.tone]}`}
-          >
-            <Icon
-              aria-hidden="true"
-              className={
-                presentation.pending
-                  ? "size-5 animate-spin motion-reduce:animate-none"
-                  : "size-5"
-              }
-            />
-          </span>
-          <output className="min-w-0 flex-1">
-            <span className="block font-semibold text-sm leading-5">
-              {presentation.title}
-            </span>
-            <span className="mt-1 block text-muted-foreground text-xs leading-5">
-              {presentation.description}
-            </span>
-          </output>
-        </div>
-
-        {status.state === "running" ? (
-          <>
-            <dl className="mt-4 flex overflow-hidden rounded-xl border border-border bg-surface">
-              <div className="min-w-0 flex-1 px-3 py-2">
-                <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                  Version
-                </dt>
-                <dd
-                  className="mt-0.5 select-text truncate font-mono text-sm"
-                  title={status.version}
-                >
-                  {status.version}
-                </dd>
-              </div>
-              <div className="min-w-0 flex-1 border-border border-l px-3 py-2">
-                <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                  Uptime
-                </dt>
-                <dd className="mt-0.5 select-text truncate font-medium text-sm">
-                  {formatUptime(status.uptimeSeconds)}
-                </dd>
-              </div>
-            </dl>
-
-            {status.workspaces.length > 0 ? (
-              <section
-                aria-labelledby="binding-summary-heading"
-                className="mt-2 flex flex-wrap items-center gap-1.5"
-              >
-                <h2 className="sr-only" id="binding-summary-heading">
-                  Workspace binding summary
-                </h2>
-                <BindingCountChip
-                  label="connected"
-                  pending={false}
-                  tone="success"
-                  value={counts.ready}
-                />
-                <BindingCountChip
-                  label="pending"
-                  pending={true}
-                  tone="warning"
-                  value={counts.pending}
-                />
-                <BindingCountChip
-                  label="unavailable"
-                  pending={false}
-                  tone="danger"
-                  value={counts.unavailable}
-                />
-              </section>
-            ) : null}
-
-            <section
-              aria-labelledby="workspace-bindings-heading"
-              className="mt-5"
+          <div className="flex items-start gap-3">
+            <span
+              className={`mt-0.5 shrink-0 rounded-full p-2 transition-colors ${badgeTone[presentation.tone]}`}
             >
-              <h2
-                className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wide"
-                id="workspace-bindings-heading"
-              >
-                Slack workspaces
-              </h2>
-              {status.workspaces.length === 0 ? (
-                <p className="mt-2 rounded-xl border border-border border-dashed bg-surface p-3 text-muted-foreground text-xs leading-5">
-                  No workspace bindings are configured. Bind a Slack workspace
-                  to this daemon to see its readiness here.
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-2">
-                  {orderedBindings(status.workspaces).map((workspace) => (
-                    <li key={workspace.id}>
-                      <WorkspaceBindingCard
-                        nowUnixMs={nowUnixMs}
-                        workspace={workspace}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          </>
-        ) : null}
-
-        {presentation.action !== null && presentation.guidance !== null ? (
-          <div className="mt-5 rounded-xl border border-border bg-surface p-4">
-            <p className="text-muted-foreground text-xs leading-5">
-              {presentation.guidance}
-            </p>
-            <Button
-              className="mt-3 w-full"
-              onClick={reconnect}
-              variant="primary"
-            >
-              {presentation.action}
-            </Button>
+              <Icon
+                aria-hidden="true"
+                className={
+                  presentation.pending
+                    ? "size-5 animate-spin motion-reduce:animate-none"
+                    : "size-5"
+                }
+              />
+            </span>
+            <output className="min-w-0 flex-1">
+              <span className="block font-semibold text-sm leading-5">
+                {presentation.title}
+              </span>
+              <span className="mt-1 block text-muted-foreground text-xs leading-5">
+                {presentation.description}
+              </span>
+            </output>
           </div>
-        ) : null}
+
+          {status.state === "running" ? (
+            <>
+              <dl className="mt-4 flex overflow-hidden rounded-xl border border-border bg-surface">
+                <div className="min-w-0 flex-1 px-3 py-2">
+                  <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                    Version
+                  </dt>
+                  <dd
+                    className="mt-0.5 select-text truncate font-mono text-sm"
+                    title={status.version}
+                  >
+                    {status.version}
+                  </dd>
+                </div>
+                <div className="min-w-0 flex-1 border-border border-l px-3 py-2">
+                  <dt className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                    Uptime
+                  </dt>
+                  <dd className="mt-0.5 select-text truncate font-medium text-sm">
+                    {formatUptime(status.uptimeSeconds)}
+                  </dd>
+                </div>
+              </dl>
+
+              {status.workspaces.length > 0 ? (
+                <section
+                  aria-labelledby="binding-summary-heading"
+                  className="mt-2 flex flex-wrap items-center gap-1.5"
+                >
+                  <h2 className="sr-only" id="binding-summary-heading">
+                    Workspace binding summary
+                  </h2>
+                  <BindingCountChip
+                    label="connected"
+                    pending={false}
+                    tone="success"
+                    value={counts.ready}
+                  />
+                  <BindingCountChip
+                    label="pending"
+                    pending={true}
+                    tone="warning"
+                    value={counts.pending}
+                  />
+                  <BindingCountChip
+                    label="unavailable"
+                    pending={false}
+                    tone="danger"
+                    value={counts.unavailable}
+                  />
+                </section>
+              ) : null}
+
+              <section
+                aria-labelledby="workspace-bindings-heading"
+                className="mt-5"
+              >
+                <h2
+                  className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wide"
+                  id="workspace-bindings-heading"
+                >
+                  Slack workspaces
+                </h2>
+                {status.workspaces.length === 0 ? (
+                  <p className="mt-2 rounded-xl border border-border border-dashed bg-surface p-3 text-muted-foreground text-xs leading-5">
+                    No workspace bindings are configured. Bind a Slack workspace
+                    to this daemon to see its readiness here.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {orderedBindings(status.workspaces).map((workspace) => (
+                      <li key={workspace.id}>
+                        <WorkspaceBindingCard
+                          nowUnixMs={nowUnixMs}
+                          workspace={workspace}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </>
+          ) : null}
+
+          {presentation.action !== null && presentation.guidance !== null ? (
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+              <p className="text-muted-foreground text-xs leading-5">
+                {presentation.guidance}
+              </p>
+              <Button
+                className="mt-3 w-full"
+                onClick={reconnect}
+                variant="primary"
+              >
+                {presentation.action}
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </section>
 
-      <footer className="flex shrink-0 items-center justify-between gap-3 border-border border-t px-5 py-3">
+      <footer
+        className="flex shrink-0 items-center justify-between gap-3 border-border border-t px-5 py-3"
+        ref={footerRef}
+      >
         <p className="min-w-0 text-[11px] text-muted-foreground leading-4">
           Quitting the companion never stops daemon work.
         </p>

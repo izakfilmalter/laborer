@@ -5,6 +5,7 @@ export type WorkThreadActivity = "in-progress" | "needs-attention" | "dormant";
 export interface WorkThreadActivityObservation {
   readonly activity: WorkThreadActivity;
   readonly evidenceAtUnixMs: number;
+  readonly excerpt: string;
   readonly executions: readonly PendingExecutionObservation[];
   readonly id: string;
   readonly label: string;
@@ -13,6 +14,7 @@ export interface WorkThreadActivityObservation {
 
 export interface ProjectedWorkThread {
   readonly activity: WorkThreadActivity;
+  readonly excerpt: string;
   readonly executions: ProjectedPendingExecution[];
   readonly id: string;
   readonly label: string;
@@ -47,6 +49,7 @@ export interface PendingExecutionObservation {
 export type ProjectedPendingExecution = PendingExecutionObservation;
 
 const MAX_DISPLAY_LABEL_LENGTH = 80;
+const MAX_EXCERPT_LENGTH = 120;
 const MAX_RECENT_DORMANT_THREADS = 4;
 const MAX_PROJECTED_WORK_THREADS = 512;
 const MAX_RECENT_EVIDENCE_RECORDS = 1024;
@@ -59,6 +62,44 @@ const threadLabel = (thread: WorkThreadState): string =>
     0,
     MAX_DISPLAY_LABEL_LENGTH
   );
+
+const boundedExcerpt = (
+  text: string,
+  botUserId: string | undefined
+): string => {
+  const withoutLaborerMention =
+    botUserId === undefined ? text : text.replaceAll(`<@${botUserId}>`, "");
+  const normalized = withoutLaborerMention
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (normalized.length === 0) {
+    return "Slack work thread";
+  }
+  if (normalized.length <= MAX_EXCERPT_LENGTH) {
+    return normalized;
+  }
+  let bounded = "";
+  for (const character of normalized) {
+    if (bounded.length + character.length > MAX_EXCERPT_LENGTH - 1) {
+      break;
+    }
+    bounded += character;
+  }
+  return `${bounded}…`;
+};
+
+const activationExcerpt = (
+  thread: WorkThreadState,
+  botUserId: string | undefined
+): string => {
+  const activation = [
+    ...thread.context,
+    ...thread.unassigned,
+    ...thread.turns.flatMap((turn) => turn.messages),
+  ].find((message) => message.isActivation);
+  return boundedExcerpt(activation?.text ?? "", botUserId);
+};
 
 const slackTimestampMillis = (value: string | null): number => {
   if (value === null || !SLACK_TIMESTAMP_PATTERN.test(value)) {
@@ -160,7 +201,8 @@ const activityForThread = (
 export const observePrototypeWorkThreads = (
   state: PrototypeState,
   workspaceId: string,
-  executions: readonly ExecutionActivityObservation[] = []
+  executions: readonly ExecutionActivityObservation[] = [],
+  botUserId?: string
 ): readonly WorkThreadActivityObservation[] => {
   const threads = state.threads.filter(
     (thread) => thread.workspaceId === workspaceId
@@ -183,6 +225,7 @@ export const observePrototypeWorkThreads = (
   return threads.map((thread) => ({
     activity: activityForThread(state, thread, executions),
     evidenceAtUnixMs: evidenceTime(state, thread),
+    excerpt: activationExcerpt(thread, botUserId),
     id: thread.id,
     label: threadLabel(thread),
     executions: executions
@@ -262,6 +305,7 @@ const projectWorkThread = (
   return {
     activity: observation.activity,
     executions: [...observation.executions],
+    excerpt: observation.excerpt,
     id: observation.id,
     label: observation.label,
     stateChangedAtUnixMs,

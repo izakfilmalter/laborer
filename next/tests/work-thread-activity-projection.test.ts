@@ -24,7 +24,7 @@ const message = NormalizedMessage.make({
   id: "message-1" as never,
   isActivation: true,
   slackTs: "1000.000001",
-  text: "private prompt that must not be projected",
+  text: "<@ULAB> Fix the status projection\nwith a bounded excerpt",
 });
 
 const thread = (
@@ -74,6 +74,7 @@ const observed = (
   activity,
   evidenceAtUnixMs,
   executions: [],
+  excerpt: `Work ${id}`,
   id,
   label: `Thread ${id}`,
   workspaceId: "TFIRST",
@@ -203,12 +204,14 @@ describe("work-thread activity projection", () => {
         label: "C123 · 1000.000001",
       },
     ]);
-    expect(
-      JSON.stringify(observePrototypeWorkThreads(snapshot, "TFIRST"))
-    ).not.toContain(message.text);
-    expect(
-      JSON.stringify(observePrototypeWorkThreads(snapshot, "TFIRST"))
-    ).not.toContain("implementation response");
+    const operatorProjection = JSON.stringify(
+      observePrototypeWorkThreads(snapshot, "TFIRST", [], "ULAB")
+    );
+    expect(operatorProjection).toContain(
+      "Fix the status projection with a bounded excerpt"
+    );
+    expect(operatorProjection).not.toContain("<@ULAB>");
+    expect(operatorProjection).not.toContain("implementation response");
   });
 
   it("projects queued and running work ahead of dormant work", () => {

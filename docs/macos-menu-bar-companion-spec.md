@@ -18,7 +18,7 @@ The first implementation is deliberately a tracer, not a frozen interaction desi
 6. As a Laborer operator, I want blocked work separated as needing attention so it cannot disappear into ordinary history.
 7. As a Laborer operator, I want the four most recently dormant work threads in each workspace so I can verify that recent conversations settled.
 8. As a Laborer operator, I want the dashboard to update without reopening it so its state remains trustworthy while I watch.
-9. As a Laborer operator, I do not want the dashboard to expose prompts, private agent activity, secrets, commands, paths, or diagnostics.
+9. As a Laborer operator, I want only a bounded activating-message excerpt—not full prompts, private agent activity, secrets, commands, paths, or diagnostics—to identify each work thread.
 10. As a Laborer operator, I want closing or crashing the companion to leave the daemon and active work running.
 
 ## Product decisions

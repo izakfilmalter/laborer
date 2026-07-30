@@ -23,7 +23,7 @@ describe("companion status popover", () => {
             {
               detail: null,
               id: "slack:TFIRST",
-              label: "TFIRST",
+              label: "Freckle HQ",
               readiness: "ready",
               teamId: "TFIRST",
               threads: [],
@@ -41,7 +41,7 @@ describe("companion status popover", () => {
       "ready for Slack work"
     );
     expect(screen.getByText("1 connected")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "TFIRST" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Freckle HQ" })).toBeTruthy();
     expect(
       screen.getByText("Connected and listening for Slack work.")
     ).toBeTruthy();
@@ -291,13 +291,14 @@ describe("companion status popover", () => {
             {
               detail: null,
               id: "slack:TFIRST",
-              label: "TFIRST",
+              label: "Freckle HQ",
               readiness: "ready",
               teamId: "TFIRST",
               threads: [
                 {
                   activity: "needs-attention",
                   executions: [],
+                  excerpt: "Fix the blocked deployment",
                   id: "workspace:TFIRST:C123:1000.000001",
                   label: "C123 · 1000.000001",
                   stateChangedAtUnixMs: now - 5 * 60_000,
@@ -339,6 +340,7 @@ describe("companion status popover", () => {
                       workspaceId: "TFIRST",
                     },
                   ],
+                  excerpt: "Add workspace names to the companion",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 30_000,
@@ -347,6 +349,7 @@ describe("companion status popover", () => {
                 {
                   activity: "dormant",
                   executions: [],
+                  excerpt: "Review the previous release",
                   id: "workspace:TFIRST:C123:1002.000001",
                   label: "C123 · 1002.000001",
                   stateChangedAtUnixMs: now - 3 * 3_600_000,
@@ -367,12 +370,18 @@ describe("companion status popover", () => {
       "In progress, 1 work thread",
       "Recent, 1 work thread",
     ]);
-    expect(screen.getByText("C123 · 1000.000001")).toBeTruthy();
-    expect(screen.getByText("C123 · 1001.000001")).toBeTruthy();
-    expect(screen.getByText("C123 · 1002.000001")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Freckle HQ" })
+    ).toBeTruthy();
+    expect(screen.getByText("Fix the blocked deployment")).toBeTruthy();
+    expect(
+      screen.getByText("Add workspace names to the companion")
+    ).toBeTruthy();
+    expect(screen.getByText("Review the previous release")).toBeTruthy();
+    expect(screen.queryByText("C123 · 1000.000001")).toBeNull();
     expect(
       screen.getByRole("list", {
-        name: "Pending Executions for C123 · 1001.000001",
+        name: "Pending Executions for Add workspace names to the companion",
       })
     ).toBeTruthy();
     expect(screen.getByText("fixture/allocate")).toBeTruthy();
@@ -431,6 +440,7 @@ describe("companion status popover", () => {
                     execution(6, "implementation-ready", 5),
                     execution(7, "cancelling", 6),
                   ],
+                  excerpt: "Run all fixture actions",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 60_000,
@@ -444,7 +454,7 @@ describe("companion status popover", () => {
     );
 
     const rows = screen.getByRole("list", {
-      name: "Pending Executions for C123 · 1001.000001",
+      name: "Pending Executions for Run all fixture actions",
     }).children;
     expect(
       [...rows].map(
@@ -500,6 +510,7 @@ describe("companion status popover", () => {
                       workspaceId: "TFIRST",
                     },
                   ],
+                  excerpt: "Check execution timing",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 60_000,
@@ -538,6 +549,7 @@ describe("companion status popover", () => {
                 {
                   activity: "in-progress",
                   executions: [],
+                  excerpt: "Track active work",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: now - 5 * 60_000,
@@ -546,6 +558,7 @@ describe("companion status popover", () => {
                 {
                   activity: "dormant",
                   executions: [],
+                  excerpt: "Track recent work",
                   id: "workspace:TFIRST:C123:1002.000001",
                   label: "C123 · 1002.000001",
                   stateChangedAtUnixMs: now - 20_000,
@@ -593,6 +606,7 @@ describe("companion status popover", () => {
                 {
                   activity: "needs-attention",
                   executions: [],
+                  excerpt: "Unblock the failed work",
                   id: "workspace:TBLOCKED:C123:1000.000001",
                   label: "C123 · 1000.000001",
                   stateChangedAtUnixMs: Date.now() - 60_000,
@@ -639,6 +653,7 @@ describe("companion status popover", () => {
                 {
                   activity: "in-progress",
                   executions: [],
+                  excerpt: "Continue current work",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: Date.now(),
@@ -696,6 +711,7 @@ describe("companion status popover", () => {
     const recentThread = {
       activity: "dormant" as const,
       executions: [],
+      excerpt: "Recent completed request",
       id: "workspace:TFIRST:C123:1002.000001",
       label: "C123 · 1002.000001",
       stateChangedAtUnixMs: Date.now() - 3 * 3_600_000,
@@ -747,6 +763,7 @@ describe("companion status popover", () => {
                 {
                   activity: "in-progress",
                   executions: [],
+                  excerpt: "Current active request",
                   id: "workspace:TFIRST:C123:1001.000001",
                   label: "C123 · 1001.000001",
                   stateChangedAtUnixMs: Date.now(),

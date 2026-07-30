@@ -18,6 +18,7 @@ export type CompanionStatusView =
 export const COMPANION_STATUS_CHANNEL = "companion:status";
 export const COMPANION_RECONNECT_CHANNEL = "companion:reconnect";
 export const COMPANION_QUIT_CHANNEL = "companion:quit";
+export const COMPANION_CONTENT_HEIGHT_CHANNEL = "companion:content-height";
 
 const exactKeys = (value: object, expected: readonly string[]): boolean => {
   const keys = Object.keys(value).sort();
@@ -44,6 +45,16 @@ const teamIdPattern = /^T[A-Z0-9]+$/;
 const threadIdPattern =
   /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
 const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+const isOneLineText = (value: string): boolean =>
+  Array.from(value).every((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      codePoint > 31 &&
+      codePoint !== 127 &&
+      codePoint !== 0x20_28 &&
+      codePoint !== 0x20_29
+    );
+  });
 const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
 
 const isPendingExecution = (
@@ -96,6 +107,7 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
     value === null ||
     !exactKeys(value, [
       "activity",
+      "excerpt",
       "executions",
       "id",
       "label",
@@ -122,6 +134,10 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
           : null
       )
     ).size === thread.executions.length &&
+    typeof thread.excerpt === "string" &&
+    thread.excerpt.length > 0 &&
+    thread.excerpt.length <= 120 &&
+    isOneLineText(thread.excerpt) &&
     typeof thread.id === "string" &&
     thread.id.length > 0 &&
     thread.id.length <= 256 &&
@@ -179,7 +195,9 @@ const isWorkspaceBinding = (value: unknown): boolean => {
     typeof binding.id !== "string" ||
     binding.id.length > 64 ||
     typeof binding.label !== "string" ||
+    binding.label.length === 0 ||
     binding.label.length > 64 ||
+    !isOneLineText(binding.label) ||
     !Array.isArray(binding.threads) ||
     binding.threads.length > 512 ||
     !binding.threads.every((thread) => isWorkThread(thread, binding.teamId)) ||
@@ -211,8 +229,7 @@ const isWorkspaceBinding = (value: unknown): boolean => {
     teamIdPattern.test(binding.teamId) &&
     binding.teamId.length <= 58 &&
     (binding.id === `slack:${binding.teamId}` ||
-      bindingIdPattern.test(binding.id)) &&
-    binding.label === binding.teamId
+      bindingIdPattern.test(binding.id))
   );
 };
 
@@ -334,6 +351,7 @@ export const isOperatorStatusView = (
 export interface LaborerCompanionBridge {
   readonly quit: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
+  readonly setContentHeight: (height: number) => void;
   readonly subscribeStatus: (
     listener: (view: CompanionStatusView) => void
   ) => () => void;

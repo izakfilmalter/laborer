@@ -410,6 +410,7 @@ const AGENT_ICON_BY_RAW_NAME: Record<
 > = {
   claude: AGENT_ICONS.claude,
   opencode: AGENT_ICONS.opencode,
+  opencode2: AGENT_ICONS.opencode2,
   codex: AGENT_ICONS.codex,
 }
 
@@ -432,6 +433,10 @@ const AGENT_COMMAND_DISPLAY: Record<
   opencode: {
     label: 'OpenCode',
     icon: <AGENT_ICONS.opencode className="size-3.5 shrink-0" />,
+  },
+  opencode2: {
+    label: 'OpenCode 2',
+    icon: <AGENT_ICONS.opencode2 className="size-3.5 shrink-0" />,
   },
   codex: {
     label: 'Codex',

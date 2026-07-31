@@ -411,6 +411,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        *   (plugin is created at workspace setup, not per-spawn)
        */
       const HOOKABLE_AGENTS = new Set(['claude', 'opencode'])
+      const PROMPTABLE_AGENTS = new Set(['opencode', 'opencode2'])
 
       /**
        * Build the Claude Code `--settings` JSON for agent hook injection.
@@ -759,22 +760,31 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
 
-          const isAgent = command !== undefined && HOOKABLE_AGENTS.has(command)
+          const isHookableAgent =
+            command !== undefined && HOOKABLE_AGENTS.has(command)
+          const isPromptableAgent =
+            command !== undefined && PROMPTABLE_AGENTS.has(command)
 
           // Pre-generate terminal ID when spawning an agent so we can
           // inject it into the hook settings/env before the PTY starts.
-          const terminalId = isAgent ? crypto.randomUUID() : undefined
+          const terminalId = isHookableAgent ? crypto.randomUUID() : undefined
 
           // Build the command, potentially wrapping it with hook settings
-          const { command: agentCmd, extraEnv } =
-            isAgent && terminalId !== undefined
-              ? buildAgentCommand(
-                  command,
-                  terminalId,
-                  terminalPort,
-                  initialPrompt
-                )
-              : { command: command ?? defaultShell, extraEnv: {} }
+          let launchCommand = {
+            command: command ?? defaultShell,
+            extraEnv: {} as Record<string, string>,
+          }
+          if (isHookableAgent && terminalId !== undefined) {
+            launchCommand = buildAgentCommand(
+              command,
+              terminalId,
+              terminalPort,
+              initialPrompt
+            )
+          } else if (isPromptableAgent) {
+            launchCommand = withInitialAgentPrompt(command, initialPrompt)
+          }
+          const { command: agentCmd, extraEnv } = launchCommand
 
           const resolvedCommand = command ?? defaultShell
           const shellPath = command ? defaultShell : resolvedCommand

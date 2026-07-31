@@ -240,6 +240,7 @@ const KNOWN_PROCESSES: ReadonlyMap<
   // AI Agents
   ['claude', { category: 'agent', label: 'Claude' }],
   ['opencode', { category: 'agent', label: 'OpenCode' }],
+  ['opencode2', { category: 'agent', label: 'OpenCode 2' }],
   ['codex', { category: 'agent', label: 'Codex' }],
   ['aider', { category: 'agent', label: 'Aider' }],
   ['goose', { category: 'agent', label: 'Goose' }],

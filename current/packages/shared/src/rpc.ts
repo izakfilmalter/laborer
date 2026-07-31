@@ -187,7 +187,12 @@ const DevServerConfigResponse = Schema.Struct({
   workdir: ConfigResolvedValueString,
 })
 
-export const AgentProviderSchema = Schema.Literal('opencode', 'claude', 'codex')
+export const AgentProviderSchema = Schema.Literal(
+  'opencode',
+  'opencode2',
+  'claude',
+  'codex'
+)
 
 export type AgentProvider = typeof AgentProviderSchema.Type
 

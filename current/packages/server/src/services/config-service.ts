@@ -131,11 +131,12 @@ interface DevServerConfig {
  * Valid agent provider values.
  * Each value is also the CLI command used to launch the agent.
  */
-type AgentProvider = 'opencode' | 'claude' | 'codex'
+type AgentProvider = 'opencode' | 'opencode2' | 'claude' | 'codex'
 
 /** All valid agent provider values for runtime validation. */
 const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
   'opencode',
+  'opencode2',
   'claude',
   'codex',
 ]

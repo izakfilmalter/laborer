@@ -2,7 +2,8 @@
  * Agent provider icons for the sidebar agent button and settings.
  *
  * SVG icons sourced from .reference/t3code/apps/web/src/components/Icons.tsx.
- * Each icon corresponds to a CLI agent provider: opencode, claude, codex.
+ * Each icon corresponds to a CLI agent provider: opencode, opencode2, claude,
+ * codex.
  */
 
 import type { ReactNode, SVGProps } from 'react'
@@ -73,10 +74,11 @@ function CodexIcon(props: IconProps) {
  * Map from agent provider name to its icon component.
  */
 const AGENT_ICONS: Record<
-  'opencode' | 'claude' | 'codex',
+  'opencode' | 'opencode2' | 'claude' | 'codex',
   (props: IconProps) => ReactNode
 > = {
   opencode: OpenCodeIcon,
+  opencode2: OpenCodeIcon,
   claude: ClaudeIcon,
   codex: CodexIcon,
 }

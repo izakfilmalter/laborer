@@ -1805,9 +1805,6 @@ export function usePanelLayout() {
         if (panelType !== 'agent') {
           return undefined
         }
-        if (initialPrompt !== undefined) {
-          return 'opencode'
-        }
         const wsList = store.query(allWorkspaces$)
         const ws = wsList.find((w) => w.id === workspaceId)
         if (!ws?.projectId) {

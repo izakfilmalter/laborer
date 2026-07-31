@@ -205,6 +205,7 @@ describe('LaborerRpcs config management', () => {
           yield* client.config.update({
             projectId: project.id,
             config: {
+              agent: 'opencode2',
               devServer: {
                 autoOpen: true,
               },
@@ -239,7 +240,7 @@ describe('LaborerRpcs config management', () => {
               devServer: resolvedDevServerWithoutProvider,
             },
             {
-              agent: { source: 'default', value: 'opencode' },
+              agent: { source: canonicalConfigPath, value: 'opencode2' },
               devServer: {
                 autoOpen: { source: canonicalConfigPath, value: true },
                 autoStopInterval: { source: 'default', value: null },

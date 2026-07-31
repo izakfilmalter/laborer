@@ -31,7 +31,7 @@ interface ConfigResult {
   readonly _tag: 'Success'
   readonly value: {
     readonly agent: {
-      readonly value: 'opencode' | 'claude' | 'codex'
+      readonly value: 'opencode' | 'opencode2' | 'claude' | 'codex'
       readonly source: string
     }
     readonly worktreeDir: { readonly value: string; readonly source: string }
@@ -105,6 +105,7 @@ vi.mock('@/lib/toast', () => ({
 vi.mock('@/components/agent-icons', () => ({
   AGENT_ICONS: {
     opencode: (props: Record<string, unknown>) => <span {...props}>OC</span>,
+    opencode2: (props: Record<string, unknown>) => <span {...props}>OC2</span>,
     claude: (props: Record<string, unknown>) => <span {...props}>CL</span>,
     codex: (props: Record<string, unknown>) => <span {...props}>CX</span>,
   },

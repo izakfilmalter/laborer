@@ -36,6 +36,16 @@ describe('classifyProcess', () => {
     })
   })
 
+  it('classifies the OpenCode 2 agent binary', () => {
+    const result = classifyProcess('/usr/local/bin/OpenCode2')
+
+    expect(result).toStrictEqual({
+      category: 'agent',
+      label: 'OpenCode 2',
+      rawName: 'opencode2',
+    })
+  })
+
   it('classifies an uppercase agent binary as the known agent', () => {
     const result = classifyProcess('CLAUDE')
 

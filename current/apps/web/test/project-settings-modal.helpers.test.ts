@@ -75,6 +75,37 @@ describe('project settings modal helpers', () => {
     })
   })
 
+  it('builds an OpenCode 2 agent update', () => {
+    const result = buildConfigUpdates({
+      agent: 'opencode2',
+      devServerImage: '',
+      devServerInstallCommand: '',
+      devServerNetwork: '',
+      devServerProvider: null,
+      devServerAutoOpen: false,
+      devServerSetupScripts: [],
+      devServerStartCommand: '',
+      brrrConfig: '',
+      resolvedConfig: {
+        agent: 'opencode',
+        devServerImage: null,
+        devServerInstallCommand: null,
+        devServerNetwork: null,
+        devServerProvider: null,
+        devServerAutoOpen: false,
+        devServerSetupScripts: [],
+        devServerStartCommand: null,
+        brrrConfig: null,
+        setupScripts: [],
+        worktreeDir: '/tmp/worktrees',
+      },
+      setupScripts: [],
+      worktreeDir: '/tmp/worktrees',
+    })
+
+    expect(result).toEqual({ agent: 'opencode2' })
+  })
+
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
       agent: 'claude',

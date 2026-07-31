@@ -131,7 +131,7 @@ Each project managed by Laborer uses a `laborer.json` config file:
 }
 ```
 
-Supported agents: `opencode`, `claude`, `codex`, `rlph`.
+Supported agents: `opencode`, `opencode2`, `claude`, `codex`, `rlph`.
 
 ## Available Scripts
 

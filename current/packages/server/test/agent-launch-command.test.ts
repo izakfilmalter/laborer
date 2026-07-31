@@ -11,6 +11,15 @@ describe('withInitialAgentPrompt', () => {
     })
   })
 
+  it('passes an OpenCode 2 prompt through the environment', () => {
+    const initialPrompt = 'Investigate the Slack report.'
+
+    expect(withInitialAgentPrompt('opencode2', initialPrompt)).toEqual({
+      command: 'opencode2 --prompt "$LABORER_OPENCODE_INITIAL_PROMPT"',
+      extraEnv: { LABORER_OPENCODE_INITIAL_PROMPT: initialPrompt },
+    })
+  })
+
   it('does not modify commands that do not support prompt preloading', () => {
     expect(withInitialAgentPrompt('claude', 'Investigate the bug')).toEqual({
       command: 'claude',

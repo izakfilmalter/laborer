@@ -40,13 +40,14 @@ import {
 } from './ui/select'
 import { Spinner } from './ui/spinner'
 
-type AgentProvider = 'opencode' | 'claude' | 'codex'
+type AgentProvider = 'opencode' | 'opencode2' | 'claude' | 'codex'
 
 const AGENT_OPTIONS: ReadonlyArray<{
   readonly label: string
   readonly value: AgentProvider
 }> = [
   { label: 'OpenCode', value: 'opencode' },
+  { label: 'OpenCode 2', value: 'opencode2' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
 ]

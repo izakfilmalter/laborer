@@ -303,7 +303,7 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
-    agent?: 'opencode' | 'claude' | 'codex' | undefined
+    agent?: 'opencode' | 'opencode2' | 'claude' | 'codex' | undefined
     devServer?:
       | {
           autoOpen?: boolean | undefined
@@ -331,7 +331,7 @@ export const handleConfigUpdate = ({
   }
 }) =>
   Effect.gen(function* () {
-    const validAgents = ['opencode', 'claude', 'codex'] as const
+    const validAgents = ['opencode', 'opencode2', 'claude', 'codex'] as const
     const isValidAgent =
       config.agent === undefined || validAgents.some((a) => a === config.agent)
 
@@ -356,7 +356,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode/claude/codex), setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode/opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -380,7 +380,7 @@ export const handleGlobalConfigUpdate = ({
   config,
 }: {
   config: {
-    agent?: 'opencode' | 'claude' | 'codex' | undefined
+    agent?: 'opencode' | 'opencode2' | 'claude' | 'codex' | undefined
     defaultSandboxProvider?: 'docker' | 'daytona' | 'none' | undefined
   }
 }) =>

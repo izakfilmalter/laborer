@@ -6,7 +6,7 @@ interface SetupScriptItem {
 type SandboxProviderType = 'docker' | 'daytona' | 'none'
 
 interface ResolvedConfigSnapshot {
-  readonly agent: 'opencode' | 'claude' | 'codex'
+  readonly agent: 'opencode' | 'opencode2' | 'claude' | 'codex'
   readonly brrrConfig: string | null
   readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
@@ -20,7 +20,7 @@ interface ResolvedConfigSnapshot {
 }
 
 interface ConfigUpdates {
-  agent?: 'opencode' | 'claude' | 'codex'
+  agent?: 'opencode' | 'opencode2' | 'claude' | 'codex'
   brrrConfig?: string
   devServer?: {
     autoOpen?: boolean
@@ -141,7 +141,7 @@ const buildConfigUpdates = ({
   setupScripts,
   worktreeDir,
 }: {
-  agent: 'opencode' | 'claude' | 'codex'
+  agent: 'opencode' | 'opencode2' | 'claude' | 'codex'
   devServerAutoOpen: boolean
   devServerImage: string
   devServerInstallCommand: string

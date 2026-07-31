@@ -13,12 +13,15 @@ const withInitialAgentPrompt = (
   agentCommand: string,
   initialPrompt?: string
 ): AgentLaunchCommand => {
-  if (agentCommand !== 'opencode' || initialPrompt === undefined) {
+  if (
+    (agentCommand !== 'opencode' && agentCommand !== 'opencode2') ||
+    initialPrompt === undefined
+  ) {
     return { command: agentCommand, extraEnv: {} }
   }
 
   return {
-    command: `opencode --prompt "$${OPENCODE_INITIAL_PROMPT_ENV}"`,
+    command: `${agentCommand} --prompt "$${OPENCODE_INITIAL_PROMPT_ENV}"`,
     extraEnv: { [OPENCODE_INITIAL_PROMPT_ENV]: initialPrompt },
   }
 }

@@ -237,7 +237,7 @@ export function AppSettingsModal() {
         return
       }
 
-      setAgent((config.agent as AgentProvider | undefined) ?? 'opencode')
+      setAgent((config.agent as AgentProvider | undefined) ?? 'opencode2')
       setResolvedProvider(
         (config.defaultSandboxProvider as SandboxProvider | undefined) ??
           'docker'

@@ -127,7 +127,7 @@ Each project managed by Laborer uses a `laborer.json` config file:
     "autoOpen": true
   },
   "setupScripts": ["bun install"],
-  "agent": "opencode"
+  "agent": "opencode2"
 }
 ```
 

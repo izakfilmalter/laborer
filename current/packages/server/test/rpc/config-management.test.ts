@@ -102,7 +102,7 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(
             { ...configWithoutDefault, devServer: devServerWithoutProvider },
             {
-              agent: { source: 'default', value: 'opencode' },
+              agent: { source: 'default', value: 'opencode2' },
               devServer: {
                 autoOpen: { source: 'default', value: false },
                 autoStopInterval: { source: 'default', value: null },

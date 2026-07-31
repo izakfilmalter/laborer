@@ -895,15 +895,15 @@ export function usePanelLayout() {
         const wsList = store.query(allWorkspaces$)
         const ws = wsList.find((w) => w.id === wsId)
         if (!ws?.projectId) {
-          return 'opencode'
+          return 'opencode2'
         }
         try {
           const config = await getConfig({
             payload: { projectId: ws.projectId },
           })
-          return config.agent.value ?? 'opencode'
+          return config.agent.value ?? 'opencode2'
         } catch {
-          return 'opencode'
+          return 'opencode2'
         }
       }
 
@@ -1050,15 +1050,15 @@ export function usePanelLayout() {
           const wsList = store.query(allWorkspaces$)
           const ws = wsList.find((w) => w.id === wsId)
           if (!ws?.projectId) {
-            return 'opencode'
+            return 'opencode2'
           }
           try {
             const config = await getConfig({
               payload: { projectId: ws.projectId },
             })
-            return config.agent.value ?? 'opencode'
+            return config.agent.value ?? 'opencode2'
           } catch {
-            return 'opencode'
+            return 'opencode2'
           }
         }
 
@@ -1808,15 +1808,15 @@ export function usePanelLayout() {
         const wsList = store.query(allWorkspaces$)
         const ws = wsList.find((w) => w.id === workspaceId)
         if (!ws?.projectId) {
-          return 'opencode'
+          return 'opencode2'
         }
         try {
           const config = await getConfig({
             payload: { projectId: ws.projectId },
           })
-          return config.agent.value ?? 'opencode'
+          return config.agent.value ?? 'opencode2'
         } catch {
-          return 'opencode'
+          return 'opencode2'
         }
       }
 

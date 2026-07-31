@@ -207,7 +207,7 @@ describe("process-global Action registration promotion", () => {
               }),
               SCRIPTED_ACP_ACTION_ORDINARY_MARKER: ordinaryMarker,
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "1.18.4",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_DURABLE_SESSIONS_PATH: join(
                 controls,

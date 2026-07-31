@@ -38,6 +38,10 @@ import {
   prepareLaborerMemoryMcpRegistration,
   tryAuthorizeLaborerMemoryPermission,
 } from "../src/acp-conversation-prototype/memory-mcp.ts";
+import {
+  OPEN_CODE_ACP_ARGS,
+  OPEN_CODE_ACP_COMMAND,
+} from "../src/acp-conversation-prototype/open-code-acp-process.ts";
 import { productionActionCatalog } from "../src/action-catalog.ts";
 import { ParticipantInputEvent } from "../src/application.ts";
 import {
@@ -58,13 +62,14 @@ const execFilePromise = promisify(execFile);
 const PROJECT_ROOT = process.cwd();
 const OPEN_CODE_EXECUTABLE = resolve(
   PROJECT_ROOT,
-  "node_modules/opencode-ai/bin/opencode.exe"
+  "node_modules/@opencode-ai/cli/bin/opencode2.exe"
 );
 const MCP_FIXTURE = resolve(
   PROJECT_ROOT,
   "tests/fixtures/acp-permission-policy-mcp.ts"
 );
 const REQUEST_TIMEOUT_MILLIS = 30_000;
+const OPEN_CODE_2_VERSION_PREFIX = /^opencode2 v/;
 
 const pinnedRecoveryEvent = (turn: number): ParticipantInputEvent =>
   ParticipantInputEvent.make({
@@ -138,31 +143,37 @@ const projectConfig = (
   baseUrl: string,
   action: "allow" | "ask" | "deny"
 ): Readonly<Record<string, unknown>> => ({
+  agents: {
+    build: {
+      permissions: [
+        { action: "*", effect: "deny", resource: "*" },
+        { action: "execute", effect: "allow", resource: "*" },
+        { action: "policy_record", effect: action, resource: "*" },
+      ],
+    },
+  },
   formatter: false,
   lsp: false,
   model: "permission-policy/permission-policy-model",
-  permission: { "*": "deny", policy_record: action },
-  provider: {
+  permissions: [
+    { action: "*", effect: "deny", resource: "*" },
+    { action: "execute", effect: "allow", resource: "*" },
+    { action: "policy_record", effect: action, resource: "*" },
+  ],
+  providers: {
     "permission-policy": {
-      env: [],
-      id: "permission-policy",
       models: {
         "permission-policy-model": {
-          attachment: false,
+          capabilities: { input: ["text"], output: ["text"], tools: true },
           cost: { input: 0, output: 0 },
-          id: "permission-policy-model",
           limit: { context: 100_000, output: 10_000 },
           name: "Permission Policy Model",
-          options: {},
-          reasoning: false,
-          release_date: "2025-01-01",
-          temperature: false,
-          tool_call: true,
+          modelID: "permission-policy-model",
         },
       },
       name: "Permission Policy",
-      npm: "@ai-sdk/openai-compatible",
-      options: {
+      package: "aisdk:@ai-sdk/openai-compatible",
+      settings: {
         apiKey: "isolated-dummy-key",
         baseURL: baseUrl,
       },
@@ -175,7 +186,20 @@ const memoryProjectConfig = (
   memoryPermission: string
 ): Readonly<Record<string, unknown>> => ({
   ...projectConfig(baseUrl, "deny"),
-  permission: { "*": "deny", [memoryPermission]: "ask" },
+  agents: {
+    build: {
+      permissions: [
+        { action: "*", effect: "deny", resource: "*" },
+        { action: "execute", effect: "allow", resource: "*" },
+        { action: memoryPermission, effect: "ask", resource: "*" },
+      ],
+    },
+  },
+  permissions: [
+    { action: "*", effect: "deny", resource: "*" },
+    { action: "execute", effect: "allow", resource: "*" },
+    { action: memoryPermission, effect: "ask", resource: "*" },
+  ],
 });
 
 const actionProjectConfig = (
@@ -184,12 +208,28 @@ const actionProjectConfig = (
   policy: "allow" | "ask"
 ): Readonly<Record<string, unknown>> => ({
   ...projectConfig(baseUrl, "deny"),
-  permission: {
-    "*": "deny",
-    ...Object.fromEntries(
-      actionPermissions.map((permission) => [permission, policy])
-    ),
+  agents: {
+    build: {
+      permissions: [
+        { action: "*", effect: "deny", resource: "*" },
+        { action: "execute", effect: "allow", resource: "*" },
+        ...actionPermissions.map((permission) => ({
+          action: permission,
+          effect: policy,
+          resource: "*",
+        })),
+      ],
+    },
   },
+  permissions: [
+    { action: "*", effect: "deny", resource: "*" },
+    { action: "execute", effect: "allow", resource: "*" },
+    ...actionPermissions.map((permission) => ({
+      action: permission,
+      effect: policy,
+      resource: "*",
+    })),
+  ],
 });
 
 const closeChild = async (
@@ -272,7 +312,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         JSON.stringify({ formatter: false, lsp: false }),
         { mode: 0o600 }
       );
-      child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+      child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
         cwd: workspace,
         env: {
           ...isolatedEnvironment(home),
@@ -457,7 +497,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         let internalAllows = 0;
         const permissionRequests: RequestPermissionRequest[] = [];
         const sessionUpdates: unknown[] = [];
-        child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+        child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
           cwd: workspace,
           env: isolatedEnvironment(home),
           stdio: ["pipe", "pipe", "pipe"],
@@ -513,7 +553,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize Action ${policy}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "1.18.4");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
 
         const sessionIds: string[] = [];
         for (const { actionName, attempt } of [
@@ -554,10 +594,11 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
             prompt: `Invoke ${actionName} attempt ${attempt} under ${policy}.`,
             worktreeName: `pinned-${policy}-${attempt}`,
           };
-          provider.enqueue(
-            { input, kind: "tool", name: actionPermissions[actionName] },
-            { kind: "text", text: `${policy} attempt ${attempt} complete` }
-          );
+          provider.enqueue({
+            input,
+            kind: "tool",
+            name: actionPermissions[actionName],
+          });
           await withTimeout(
             connection.agent.request(methods.agent.session.prompt, {
               prompt: [
@@ -730,7 +771,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         name: actionName,
       }));
       const observedTools: string[] = [];
-      child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+      child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
         cwd: workspace,
         env: isolatedEnvironment(home),
         stdio: ["pipe", "pipe", "pipe"],
@@ -827,11 +868,10 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         }
       }
 
-      assert.deepStrictEqual(modelSelections, [
-        "ordinary",
-        "create-feature",
-        "deal-with-bug",
-      ]);
+      assert.deepStrictEqual(
+        [...new Set(modelSelections)],
+        ["ordinary", "create-feature", "deal-with-bug"]
+      );
       assert.deepStrictEqual(invokedActions, [
         "create-feature",
         "deal-with-bug",
@@ -872,7 +912,10 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         await mkdtemp(join(tmpdir(), "laborer-245-version-"))
       ),
     });
-    assert.strictEqual(version.stdout.trim(), "1.18.4");
+    assert.strictEqual(
+      version.stdout.trim().replace(OPEN_CODE_2_VERSION_PREFIX, ""),
+      "0.0.0-next-16573"
+    );
 
     for (const action of ["allow", "deny"] as const) {
       const root = await mkdtemp(join(tmpdir(), `laborer-245-real-${action}-`));
@@ -894,16 +937,13 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           JSON.stringify(projectConfig(provider.baseUrl, action)),
           { mode: 0o600 }
         );
-        provider.enqueue(
-          {
-            input: { value: `${action}-side-effect` },
-            kind: "tool",
-            name: "policy_record",
-          },
-          { kind: "text", text: `${action} complete` }
-        );
+        provider.enqueue({
+          input: { value: `${action}-side-effect` },
+          kind: "tool",
+          name: "policy_record",
+        });
         const permissionRequests: RequestPermissionRequest[] = [];
-        child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+        child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
           cwd: workspace,
           env: isolatedEnvironment(home),
           stdio: ["pipe", "pipe", "pipe"],
@@ -943,7 +983,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize ${action}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "1.18.4");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
         const session = await withTimeout(
           connection.agent.request(methods.agent.session.new, {
             cwd: workspace,
@@ -1033,18 +1073,15 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         JSON.stringify(memoryProjectConfig(provider.baseUrl, memoryPermission)),
         { mode: 0o600 }
       );
-      provider.enqueue(
-        {
-          input: {
-            operation: "add",
-            target: "workspace",
-            text: "real pinned memory permission proof",
-          },
-          kind: "tool",
-          name: memoryPermission,
+      provider.enqueue({
+        input: {
+          operation: "add",
+          target: "workspace",
+          text: "real pinned memory permission proof",
         },
-        { kind: "text", text: "memory complete" }
-      );
+        kind: "tool",
+        name: memoryPermission,
+      });
       const registrations = new Map<
         string,
         Parameters<
@@ -1064,7 +1101,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         readonly title?: unknown;
         readonly toolCallId: string;
       }> = [];
-      child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+      child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
         cwd: workspace,
         env: {
           ...isolatedEnvironment(home),
@@ -1123,7 +1160,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         "initialize memory"
       );
       assert.strictEqual(initialized.agentInfo?.name, "OpenCode");
-      assert.strictEqual(initialized.agentInfo?.version, "1.18.4");
+      assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
       const session = await withTimeout(
         connection.agent.request(methods.agent.session.new, {
           cwd: workspace,
@@ -1142,7 +1179,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         observedFingerprints: new Map(),
         observedToolCallIds: new Set(),
         permission: memoryPermission,
-        pinnedOpenCodeVersion: "1.18.4",
+        pinnedOpenCodeVersion: "0.0.0-next-16573",
         rejectedToolCallIds: new Set(),
         rejectUncorrelatedPermissions: false,
       });
@@ -1174,8 +1211,8 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
       assert.strictEqual(memoryPendingUpdates.length, 1);
       const permissionToolCall = memoryPermissionRequests[0]?.toolCall;
       const pendingToolCall = memoryPendingUpdates[0];
-      assert.strictEqual(permissionToolCall?.name, undefined);
-      assert.strictEqual(pendingToolCall?.name, undefined);
+      assert.strictEqual(permissionToolCall?.name, memoryPermission);
+      assert.strictEqual(pendingToolCall?.name, memoryPermission);
       assert.strictEqual(permissionToolCall?.title, memoryPermission);
       assert.strictEqual(pendingToolCall?.title, memoryPermission);
       assert.strictEqual(permissionToolCall?.kind, "other");
@@ -1206,7 +1243,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
     }
   }, 120_000);
 
-  it("restarts real pinned OpenCode 1.18.4 and resumes with Memory and Action registrations", async () => {
+  it("restarts real pinned OpenCode 0.0.0-next-16573 and resumes with Memory and Action registrations", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

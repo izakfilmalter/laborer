@@ -348,7 +348,7 @@ describe("Tracer 7 production composition", () => {
         const capturePath = join(root, "captured-environment");
         yield* Effect.promise(() =>
           writeFile(
-            join(root, "opencode"),
+            join(root, "opencode2"),
             `#!/bin/sh\nprintf '%s' "\${OPENAI_API_KEY-unset}|\${SLACK_BOT_TOKEN-unset}" > "\${CAPTURE_PATH}"\nprintf 'opencode server listening on http://127.0.0.1:43210\\n'\nwhile :; do /bin/sleep 1; done\n`,
             { mode: 0o700 }
           )
@@ -357,6 +357,7 @@ describe("Tracer 7 production composition", () => {
         const server = yield* Effect.acquireRelease(
           Effect.promise(() =>
             launchOpenCodeServer({
+              command: join(root, "opencode2"),
               environment: {
                 CAPTURE_PATH: capturePath,
                 OPENAI_API_KEY: "provider-secret",

@@ -457,7 +457,7 @@ describe("issue #245 bounded effective ACP metadata", () => {
             trustedRoot: root,
           });
           const metadata = extractAcpEffectiveMetadata({
-            agentInfo: { name: "OpenCode", version: "1.18.4" },
+            agentInfo: { name: "OpenCode", version: "0.0.0-next-16573" },
             configSourceInventory: {
               categories: [{ category: "config", fileCount: 1, totalBytes: 8 }],
               complete: false,
@@ -482,7 +482,7 @@ describe("issue #245 bounded effective ACP metadata", () => {
           });
           const signed = signAcpEffectiveMetadata(repository, metadata);
           const changedEnvironment = extractAcpEffectiveMetadata({
-            agentInfo: { name: "OpenCode", version: "1.18.4" },
+            agentInfo: { name: "OpenCode", version: "0.0.0-next-16573" },
             configSourceInventory: metadata.configSourceInventory,
             cwd: root,
             environment: {
@@ -501,7 +501,7 @@ describe("issue #245 bounded effective ACP metadata", () => {
             response,
           });
           const addedEnvironmentName = extractAcpEffectiveMetadata({
-            agentInfo: { name: "OpenCode", version: "1.18.4" },
+            agentInfo: { name: "OpenCode", version: "0.0.0-next-16573" },
             configSourceInventory: metadata.configSourceInventory,
             cwd: root,
             environment: {
@@ -526,7 +526,7 @@ describe("issue #245 bounded effective ACP metadata", () => {
           assert.strictEqual(metadata.selectedAgent, "build");
           assert.deepStrictEqual(metadata.implementation, {
             name: "OpenCode",
-            version: "1.18.4",
+            version: "0.0.0-next-16573",
           });
           assert.strictEqual(metadata.environmentNames.length, 64);
           assert.strictEqual(metadata.environmentNameCount, 102);

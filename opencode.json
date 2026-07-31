@@ -8,6 +8,7 @@
     },
     "opencode": {
       "repository": "anomalyco/opencode",
+      "branch": "v2",
       "description": "Use for OpenCode APIs, configuration, implementation patterns, tests, and examples"
     },
     "openclaw": {

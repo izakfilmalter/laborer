@@ -4,8 +4,8 @@ export const SUPPORTED_ACP_RUNTIME_MATRIX = {
   bun: "1.3.5",
   emulate: "0.9.0",
   node: "24.11.1",
-  openCodeCli: "1.18.4",
-  openCodeSdk: "1.18.4",
+  openCodeCli: "0.0.0-next-16573",
+  openCodeClient: "0.0.0-next-16573",
   slackSocketMode: "3.0.0",
   slackWebApi: "8.0.0",
 } as const;
@@ -43,15 +43,15 @@ const requirements: readonly Requirement[] = [
     satisfiedBy: equals(SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli),
   },
   {
-    expected: "true",
+    expected: "false",
     path: ["agentCapabilities", "loadSession"],
-    satisfiedBy: equals(true),
+    satisfiedBy: equals(false),
   },
-  ...["http", "sse"].map(
-    (capability): Requirement => ({
-      expected: "true",
+  ...Object.entries({ http: true, sse: false }).map(
+    ([capability, supported]): Requirement => ({
+      expected: String(supported),
       path: ["agentCapabilities", "mcpCapabilities", capability],
-      satisfiedBy: equals(true),
+      satisfiedBy: equals(supported),
     })
   ),
   ...["embeddedContext", "image"].map(
@@ -61,7 +61,7 @@ const requirements: readonly Requirement[] = [
       satisfiedBy: equals(true),
     })
   ),
-  ...["close", "fork", "list", "resume"].map(
+  ...["close", "list", "resume"].map(
     (capability): Requirement => ({
       expected: "an advertised capability object",
       path: ["agentCapabilities", "sessionCapabilities", capability],
@@ -118,7 +118,7 @@ export const assertSupportedOpenCodeInitialization = (input: unknown): void => {
     return;
   }
   const diagnostic = [
-    `OpenCode ACP compatibility check failed for opencode-ai@${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}.`,
+    `OpenCode ACP compatibility check failed for @opencode-ai/cli@${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}.`,
     ...failures.map((failure) => `- ${failure}`),
     "Reinstall with `bun install --frozen-lockfile`; if the failure remains, update next/docs/acp-runtime-matrix.md and its compatibility contract deliberately.",
   ].join("\n");

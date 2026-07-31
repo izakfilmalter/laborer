@@ -84,6 +84,9 @@ const readBody = async (request: IncomingMessage): Promise<unknown> => {
 const isTitleRequest = (body: unknown): boolean =>
   JSON.stringify(body).includes("Generate a title for this conversation");
 
+const isToolResultRequest = (body: unknown): boolean =>
+  JSON.stringify(body).includes('"tool_call_id"');
+
 const writeReply = (response: ServerResponse, reply: FakeOpenAiReply): void => {
   response.writeHead(200, {
     "cache-control": "no-cache",
@@ -98,24 +101,13 @@ const writeReply = (response: ServerResponse, reply: FakeOpenAiReply): void => {
           delta: {
             tool_calls: [
               {
-                function: { arguments: "", name: reply.name },
+                function: {
+                  arguments: JSON.stringify(reply.input),
+                  name: reply.name,
+                },
                 id: "call_laborer_permission_policy",
                 index: 0,
                 type: "function",
-              },
-            ],
-          },
-        })
-      )
-    );
-    response.write(
-      sse(
-        completionChunk({
-          delta: {
-            tool_calls: [
-              {
-                function: { arguments: JSON.stringify(reply.input) },
-                index: 0,
               },
             ],
           },
@@ -161,7 +153,11 @@ export const startFakeOpenAiProvider = async (
         writeReply(response, { kind: "text", text: "Permission Policy" });
         return;
       }
-      const reply = options.selectReply?.(body) ?? replies.shift();
+      const reply =
+        options.selectReply?.(body) ??
+        (isToolResultRequest(body)
+          ? { kind: "text" as const, text: "Tool complete" }
+          : replies.shift());
       if (reply === undefined) {
         response
           .writeHead(500, { "content-type": "application/json" })

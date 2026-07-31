@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { createHash, randomBytes } from "node:crypto";
 import type { Scope } from "effect";
 import {
   Effect,
@@ -11,6 +10,7 @@ import {
   pipe,
   Semaphore,
 } from "effect";
+import { OPEN_CODE_COMMAND } from "../acp-conversation-prototype/open-code-acp-process.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import type {
   AcceptImplementationAgentResponse,
@@ -191,6 +191,7 @@ export interface OpenCodeSessionClientOptions {
 
 export interface OpenCodeWorkspaceSessionClientOptions
   extends OpenCodeSessionClientOptions {
+  readonly command?: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly hostname?: string;
   readonly port?: number;
@@ -203,6 +204,7 @@ const MAX_IMPLEMENTATION_RESPONSE_LENGTH = 16_384;
 const MAX_IMPLEMENTATION_RESPONSES = 64;
 const MAX_PROMPT_LENGTH = 65_536;
 const MAX_SERVER_STARTUP_OUTPUT_LENGTH = 65_536;
+const MAX_OPEN_CODE_API_RESPONSE_LENGTH = 4 * 1024 * 1024;
 const DEFAULT_IMPLEMENTATION_OBSERVATION_POLL_INTERVAL_MILLIS = 1000;
 const MAX_IMPLEMENTATION_OBSERVATION_DURATION_MILLIS = 4 * 60 * 60 * 1000;
 const DEFAULT_WAIT_POLL_INTERVAL_MILLIS = 5 * 60 * 1000;
@@ -219,7 +221,7 @@ const OPEN_CODE_NATIVE_MESSAGE_ID_PATTERN =
 const LABORER_WIRE_MESSAGE_ID_PATTERN =
   /^msg_([0-9a-f]{12})_laborer_([0-9A-Za-z_-]+)$/;
 const SERVER_URL_PATTERN =
-  /opencode server listening.*on\s+(https?:\/\/[^\s]+)/;
+  /(?:opencode )?server listening.*on\s+(https?:\/\/[^\s]+)/;
 const LEGACY_WILDCARD_PERMISSION = "*";
 const LEGACY_WILDCARD_PATTERN = "*";
 const PERMISSION_RULE_KEYS = new Set(["action", "pattern", "permission"]);
@@ -423,6 +425,7 @@ const pollForPromptCompletion = Effect.fnUntraced(function* (
 });
 
 interface RunningOpenCodeServer {
+  readonly authorization: string;
   readonly close: () => Promise<void>;
   readonly url: string;
 }
@@ -541,18 +544,24 @@ const readServerUrl = async (
   });
 
 export const launchOpenCodeServer = async (options: {
+  readonly command?: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly hostname: string;
   readonly port: number;
   readonly timeoutMs: number;
 }): Promise<RunningOpenCodeServer> => {
   const detached = process.platform !== "win32";
+  const username = "opencode";
+  const password = randomBytes(32).toString("base64url");
   const child = spawn(
-    "opencode",
+    options.command ?? OPEN_CODE_COMMAND,
     ["serve", `--hostname=${options.hostname}`, `--port=${options.port}`],
     {
       detached,
-      env: options.environment,
+      env: {
+        ...options.environment,
+        OPENCODE_SERVER_PASSWORD: password,
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     }
@@ -567,12 +576,144 @@ export const launchOpenCodeServer = async (options: {
   drainServerOutput(child);
   let closePromise: Promise<void> | null = null;
   return {
+    authorization: `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`,
     close: () => {
       closePromise ??= stopServerProcess(child, detached);
       return closePromise;
     },
     url,
   };
+};
+
+const openCode2AssistantStatus = (
+  message: Record<string, unknown>,
+  finish: string | undefined
+): "completed" | "error" | "in-progress" => {
+  if (message.error !== undefined || finish === "error") {
+    return "error";
+  }
+  if (
+    (isRecord(message.time) && message.time.completed !== undefined) ||
+    finish !== undefined
+  ) {
+    return "completed";
+  }
+  return "in-progress";
+};
+
+const projectOpenCode2Message = (
+  message: unknown
+): readonly OpenCodeSessionMessage[] => {
+  if (!(isRecord(message) && typeof message.type === "string")) {
+    throw new Error("OpenCode 2 returned a malformed message");
+  }
+  if (message.type === "user") {
+    if (typeof message.id !== "string" || typeof message.text !== "string") {
+      throw new Error("OpenCode 2 returned a malformed user message");
+    }
+    return [{ id: message.id, role: "user", text: message.text }];
+  }
+  if (message.type !== "assistant") {
+    return [];
+  }
+  if (
+    typeof message.id !== "string" ||
+    !Array.isArray(message.content) ||
+    !isRecord(message.time)
+  ) {
+    throw new Error("OpenCode 2 returned a malformed assistant message");
+  }
+  const text = message.content
+    .flatMap((content): readonly string[] =>
+      isRecord(content) &&
+      content.type === "text" &&
+      typeof content.text === "string"
+        ? [content.text]
+        : []
+    )
+    .join("\n");
+  const finish =
+    typeof message.finish === "string" ? message.finish : undefined;
+  return [
+    {
+      ...(finish === undefined ? {} : { finish }),
+      id: message.id,
+      role: "assistant",
+      status: openCode2AssistantStatus(message, finish),
+      text,
+    },
+  ];
+};
+
+const projectOpenCode2Messages = (
+  messages: readonly unknown[]
+): readonly OpenCodeSessionMessage[] =>
+  messages.flatMap(projectOpenCode2Message);
+
+const readBoundedOpenCode2Response = async (
+  response: Response
+): Promise<string> => {
+  if (response.body === null) {
+    return "";
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) {
+        const joined = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          joined.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return new TextDecoder("utf-8", { fatal: true }).decode(joined);
+      }
+      totalBytes += next.value.byteLength;
+      if (totalBytes > MAX_OPEN_CODE_API_RESPONSE_LENGTH) {
+        throw new Error("OpenCode 2 API response exceeded the limit");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+};
+
+const openCode2Request = async (options: {
+  readonly authorization: string;
+  readonly baseUrl: string;
+  readonly body?: unknown;
+  readonly expectedStatus: number;
+  readonly method: "GET" | "POST";
+  readonly path: string;
+}): Promise<unknown> => {
+  const response = await fetch(new URL(options.path, options.baseUrl), {
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    headers: {
+      authorization: options.authorization,
+      ...(options.body === undefined
+        ? {}
+        : { "content-type": "application/json" }),
+    },
+    method: options.method,
+  });
+  const text = await readBoundedOpenCode2Response(response);
+  const decoded: unknown = text.length === 0 ? undefined : JSON.parse(text);
+  if (response.status !== options.expectedStatus) {
+    throw decoded ?? new Error(`OpenCode 2 API returned ${response.status}`);
+  }
+  return decoded;
+};
+
+const responseData = (response: unknown): unknown => {
+  if (!(isRecord(response) && "data" in response)) {
+    throw new Error("OpenCode 2 returned a malformed response");
+  }
+  return response.data;
 };
 
 export const makeOpenCodeSessionClientFromV2Api = (
@@ -969,6 +1110,9 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
     Effect.tryPromise({
       try: () =>
         launchOpenCodeServer({
+          ...(options.command === undefined
+            ? {}
+            : { command: options.command }),
           environment: options.environment,
           hostname: options.hostname ?? "127.0.0.1",
           port: options.port ?? 0,
@@ -982,83 +1126,115 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
         catch: () => sdkFailure("server shutdown"),
       }).pipe(Effect.orDie)
   );
-  const client = createOpencodeClient({
-    baseUrl: server.url,
-    directory: options.workspaceDirectory,
-  });
-  const session = client.v2.session;
-  const legacySession = client.session;
-  const legacyTransport = makeOpenCodeLegacySessionTransport({
-    messages: async (input, requestOptions) => {
-      const response = await legacySession.messages<true>(
-        input,
-        requestOptions
-      );
-      return { data: response.data };
-    },
-    prompt: async (input, requestOptions) => {
-      await legacySession.promptAsync<true>(input, requestOptions);
-    },
-  });
+  const request = (options: {
+    readonly body?: unknown;
+    readonly expectedStatus: number;
+    readonly method: "GET" | "POST";
+    readonly path: string;
+  }): Promise<unknown> =>
+    openCode2Request({
+      authorization: server.authorization,
+      baseUrl: server.url,
+      ...options,
+    });
   const api: OpenCodeV2SessionApi = {
     create: async (input) => {
-      const response = await session.create<true>(
-        {
-          ...(input.agent === undefined ? {} : { agent: input.agent }),
-          id: input.id,
-          location: { directory: input.workingDirectory },
-          ...(input.model === undefined
-            ? {}
-            : {
-                model: {
-                  id: input.model.modelID,
-                  providerID: input.model.providerID,
-                },
-              }),
-        },
-        { throwOnError: true }
+      const response = responseData(
+        await request({
+          body: {
+            ...(input.agent === undefined ? {} : { agent: input.agent }),
+            id: input.id,
+            location: { directory: input.workingDirectory },
+            ...(input.model === undefined
+              ? {}
+              : {
+                  model: {
+                    id: input.model.modelID,
+                    providerID: input.model.providerID,
+                  },
+                }),
+          },
+          expectedStatus: 200,
+          method: "POST",
+          path: "/api/session",
+        })
       );
-      return { id: response.data.data.id };
+      if (!(isRecord(response) && typeof response.id === "string")) {
+        throw new Error("OpenCode 2 returned a malformed session");
+      }
+      return { id: response.id };
     },
     get: async (input) => {
-      const response = await session.get<true>(
-        { sessionID: input.sessionId },
-        { throwOnError: true }
+      const response = responseData(
+        await request({
+          expectedStatus: 200,
+          method: "GET",
+          path: `/api/session/${encodeURIComponent(input.sessionId)}`,
+        })
       );
+      if (
+        !isRecord(response) ||
+        typeof response.id !== "string" ||
+        !isRecord(response.location) ||
+        typeof response.location.directory !== "string"
+      ) {
+        throw new Error("OpenCode 2 returned a malformed session");
+      }
       return {
-        id: response.data.data.id,
-        workingDirectory: response.data.data.location.directory,
+        id: response.id,
+        workingDirectory: response.location.directory,
       };
     },
-    getPermission: async (input) => {
-      const response = await legacySession.get<true>(
-        { sessionID: input.sessionId },
-        { throwOnError: true }
-      );
-      return response.data.permission;
-    },
+    // OpenCode 2 does not persist the V1 per-session permission override that
+    // this cutover guard removed. Keep the shared reuse path explicit while
+    // representing the absence of legacy rules.
+    getPermission: async () => [],
     interrupt: async (input) => {
-      await session.interrupt<true>(
-        { sessionID: input.sessionId },
-        { throwOnError: true }
-      );
+      await request({
+        expectedStatus: 204,
+        method: "POST",
+        path: `/api/session/${encodeURIComponent(input.sessionId)}/interrupt`,
+      });
     },
-    messages: legacyTransport.messages,
-    prompt: legacyTransport.prompt,
-    updatePermission: async (input) => {
-      await legacySession.update<true>(
-        {
-          permission: [...input.permission],
-          sessionID: input.sessionId,
-        },
-        { throwOnError: true }
-      );
+    messages: async (input) => {
+      const query = new URLSearchParams({
+        limit: String(input.limit),
+        order: input.order,
+      });
+      const response = await request({
+        expectedStatus: 200,
+        method: "GET",
+        path: `/api/session/${encodeURIComponent(input.sessionId)}/message?${query.toString()}`,
+      });
+      if (!(isRecord(response) && Array.isArray(response.data))) {
+        throw new Error("OpenCode 2 returned a malformed message list");
+      }
+      return projectOpenCode2Messages(response.data);
     },
+    prompt: async (input) => {
+      if (input.tools !== undefined) {
+        throw new Error("OpenCode 2 prompt-scoped tools are unsupported");
+      }
+      const response = responseData(
+        await request({
+          body: { id: input.promptId, text: input.text },
+          expectedStatus: 200,
+          method: "POST",
+          path: `/api/session/${encodeURIComponent(input.sessionId)}/prompt`,
+        })
+      );
+      if (!(isRecord(response) && typeof response.id === "string")) {
+        throw new Error("OpenCode 2 returned a malformed prompt response");
+      }
+      return { id: response.id };
+    },
+    updatePermission: async () => undefined,
     wait: async (input) => {
-      await session.wait<true>(
-        { sessionID: input.sessionId },
-        { throwOnError: true }
-      );
+      await request({
+        expectedStatus: 204,
+        method: "POST",
+        path: `/api/session/${encodeURIComponent(input.sessionId)}/wait`,
+      });
     },
   };
   return makeOpenCodeSessionClientFromV2Api(api, options);

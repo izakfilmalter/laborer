@@ -89,8 +89,8 @@ describe("issue #258 legacy Conversation cleanup", () => {
     ]);
 
     assert.ok(adapter.includes("makeOpenCodeImplementationAgent"));
-    assert.ok(adapter.includes("legacySession.promptAsync"));
-    assert.ok(adapter.includes("legacySession.update"));
+    assert.ok(adapter.includes("api.prompt"));
+    assert.ok(adapter.includes("api.updatePermission"));
     assert.ok(adapter.includes("prepareSessionForReuse"));
     assert.ok(application.includes("ConversationAgentShape"));
     assert.ok(application.includes('origin: "legacy"'));

@@ -21,12 +21,15 @@ const CURRENT_PATH_PATTERN = /- "current\/\*\*"/;
 
 const supportedInitialization = {
   agentCapabilities: {
-    loadSession: true,
-    mcpCapabilities: { http: true, sse: true },
+    loadSession: false,
+    mcpCapabilities: { http: true, sse: false },
     promptCapabilities: { embeddedContext: true, image: true },
-    sessionCapabilities: { close: {}, fork: {}, list: {}, resume: {} },
+    sessionCapabilities: { close: {}, list: {}, resume: {} },
   },
-  agentInfo: { name: "OpenCode", version: "1.18.4" },
+  agentInfo: {
+    name: "OpenCode",
+    version: SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli,
+  },
   protocolVersion: 1,
 };
 
@@ -57,11 +60,11 @@ describe("issue #243 ACP runtime matrix", () => {
       SUPPORTED_ACP_RUNTIME_MATRIX.acpSdk
     );
     assert.strictEqual(
-      packageJson.dependencies["@opencode-ai/sdk"],
-      SUPPORTED_ACP_RUNTIME_MATRIX.openCodeSdk
+      packageJson.dependencies["@opencode-ai/client"],
+      SUPPORTED_ACP_RUNTIME_MATRIX.openCodeClient
     );
     assert.strictEqual(
-      packageJson.devDependencies["opencode-ai"],
+      packageJson.devDependencies["@opencode-ai/cli"],
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
     );
     assert.strictEqual(
@@ -113,8 +116,12 @@ describe("issue #243 ACP runtime matrix", () => {
       compat_record: "ask",
     });
     assert.deepStrictEqual(
-      makeOpenCodeCompatibilityConfig("http://127.0.0.1/fixture").permission,
-      OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY
+      makeOpenCodeCompatibilityConfig("http://127.0.0.1/fixture").permissions,
+      [
+        { action: "*", effect: "deny", resource: "*" },
+        { action: "execute", effect: "allow", resource: "*" },
+        { action: "compat_record", effect: "ask", resource: "*" },
+      ]
     );
   });
 

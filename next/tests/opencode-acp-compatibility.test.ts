@@ -79,7 +79,12 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const mcpObservationPath = join(root, "mcp-invocations.jsonl");
-    const provider = await startFakeOpenAiProvider();
+    const provider = await startFakeOpenAiProvider({
+      selectReply: (request) =>
+        JSON.stringify(request).includes('"tool_call_id"')
+          ? { kind: "text", text: "MCP complete" }
+          : undefined,
+    });
     try {
       await Promise.all([
         mkdir(workspace, { mode: 0o700 }),
@@ -156,23 +161,16 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           "OpenCode must forward ACP image bytes to its model provider"
         );
 
-        provider.enqueue(
-          {
-            input: { value: "client-provided-mcp-invoked" },
-            kind: "tool",
-            name: "compat_record",
-          },
-          {
-            finishReason: "stop",
-            kind: "text",
-            textChunks: ["MCP complete"],
-          }
+        provider.enqueue({
+          input: { value: "client-provided-mcp-invoked" },
+          kind: "tool",
+          name: "compat_record",
+        });
+        const toolPrompt = await firstProcess.prompt(
+          durableSessionId,
+          "invoke MCP"
         );
-        assert.strictEqual(
-          (await firstProcess.prompt(durableSessionId, "invoke MCP"))
-            .stopReason,
-          "end_turn"
-        );
+        assert.strictEqual(toolPrompt.stopReason, "end_turn");
         assert.strictEqual(firstProcess.permissionRequests.length, 1);
         assert.ok(
           firstProcess.permissionRequests[0]?.options.some(
@@ -192,7 +190,7 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           (await firstProcess.prompt(durableSessionId, "emit max_tokens"))
             .stopReason,
           "end_turn",
-          "OpenCode 1.18.4 changed finish_reason:length behavior"
+          "OpenCode 0.0.0-next-16573 changed finish_reason:length behavior"
         );
 
         provider.enqueue({ finishReason: "content_filter", kind: "text" });
@@ -201,7 +199,11 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           "emit refusal"
         );
         observedStopReasons.add(refused.stopReason);
-        assert.strictEqual(refused.stopReason, "refusal");
+        assert.strictEqual(
+          refused.stopReason,
+          "end_turn",
+          "OpenCode 2 maps provider content filtering to end_turn"
+        );
 
         const expectedRequestCount = provider.requests.length + 1;
         provider.enqueue({ kind: "hang", textChunks: ["cancellable chunk"] });
@@ -257,7 +259,6 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
       assert.deepStrictEqual([...observedStopReasons].sort(), [
         "cancelled",
         "end_turn",
-        "refusal",
       ]);
       for (const request of provider.requests) {
         assert.strictEqual(

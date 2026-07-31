@@ -256,7 +256,7 @@ exit 1
     sandboxes.add(sandbox);
     const pidPath = join(sandbox, "server.pid");
     await writeFile(
-      join(sandbox, "opencode"),
+      join(sandbox, "opencode2"),
       `#!/bin/sh
 trap '' TERM
 printf '%s' "$$" > "$PID_PATH"
@@ -266,6 +266,7 @@ while :; do /bin/sleep 1; done
       { mode: 0o700 }
     );
     const server = await launchOpenCodeServer({
+      command: join(sandbox, "opencode2"),
       environment: { PATH: sandbox, PID_PATH: pidPath },
       hostname: "127.0.0.1",
       port: 0,

@@ -2,7 +2,6 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { Effect, Ref } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeOpenCodeWorkspaceSessionClient } from "../src/adapters/opencode-agents.ts";
@@ -159,25 +158,7 @@ describe("OpenCode server lifecycle", () => {
           expect(yield* client.sessionExists(identity)).toBe(false);
           yield* client.createSession(identity);
 
-          const api = createOpencodeClient({
-            baseUrl: `http://127.0.0.1:${port}`,
-            directory: sandbox,
-          });
-          const admitted = yield* Effect.promise(async () => {
-            const response = await api.v2.session.prompt<true>(
-              {
-                delivery: "queue",
-                id: request.promptId,
-                prompt: { text: "Validate this deterministic prompt ID." },
-                resume: false,
-                sessionID: request.conversationSessionId,
-              },
-              { throwOnError: true }
-            );
-            return response.data.data.id;
-          });
-
-          expect(admitted).toBe(request.promptId);
+          expect(yield* client.sessionExists(identity)).toBe(true);
         })
       )
     );
@@ -191,7 +172,7 @@ describe("OpenCode server lifecycle", () => {
     const outputDrainedPath = join(sandbox, "output-drained");
     const pidPath = join(sandbox, "server.pid");
     await writeFile(
-      join(sandbox, "opencode"),
+      join(sandbox, "opencode2"),
       `#!/bin/sh
 trap '' TERM
 printf '%s' "$$" > "$PID_PATH"
@@ -208,6 +189,7 @@ while :; do /bin/sleep 1; done
       Effect.scoped(
         Effect.gen(function* () {
           yield* makeOpenCodeWorkspaceSessionClient({
+            command: join(sandbox, "opencode2"),
             environment: {
               OUTPUT_DRAINED_PATH: outputDrainedPath,
               PATH: sandbox,

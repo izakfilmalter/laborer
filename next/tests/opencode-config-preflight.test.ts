@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { OPEN_CODE_ACP_COMMAND } from "../src/acp-conversation-prototype/open-code-acp-process.ts";
+import { OPEN_CODE_COMMAND } from "../src/acp-conversation-prototype/open-code-acp-process.ts";
 import { preflightEffectiveOpenCodeMcpNames } from "../src/acp-conversation-prototype/opencode-config-preflight.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
@@ -58,12 +58,12 @@ describe("authoritative OpenCode effective-config preflight", () => {
                         mcp: {
                           [reservedName]: {
                             command: ["/usr/bin/true"],
-                            enabled: false,
+                            disabled: true,
                             type: "local",
                           },
                         },
                       }
-                    : { permission: { bash: "ask" } }
+                    : { permissions: [] }
                 ),
                 { mode: 0o600 }
               )
@@ -71,7 +71,7 @@ describe("authoritative OpenCode effective-config preflight", () => {
             const environment = yield* prepareIsolatedOpenCodeEnvironment(root);
             const result = yield* Effect.exit(
               preflightEffectiveOpenCodeMcpNames({
-                command: OPEN_CODE_ACP_COMMAND,
+                command: OPEN_CODE_COMMAND,
                 cwd: root,
                 environment,
                 reservedNames: [reservedName],

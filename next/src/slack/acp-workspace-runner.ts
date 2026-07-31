@@ -30,7 +30,10 @@ import {
   laborerMemoryOpenCodePermission,
   makeLaborerMemoryMcpServerConfiguration,
 } from "../acp-conversation-prototype/memory-mcp.ts";
-import { openCodeAcpProcessOptions } from "../acp-conversation-prototype/open-code-acp-process.ts";
+import {
+  OPEN_CODE_COMMAND,
+  openCodeAcpProcessOptions,
+} from "../acp-conversation-prototype/open-code-acp-process.ts";
 import { preflightEffectiveOpenCodeMcpNames } from "../acp-conversation-prototype/opencode-config-preflight.ts";
 import {
   makeSlackParticipantLookup,
@@ -276,6 +279,9 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     options.applicationConfig.environment
   );
   const baseProcess = openCodeAcpProcessOptions({
+    ...(dependencies.process?.command === undefined
+      ? {}
+      : { command: dependencies.process.command }),
     cwd: options.root,
     environment: childEnvironment,
   });
@@ -306,7 +312,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     Effect.tapError(() => Effect.sync(observePreflightQuarantine))
   );
   yield* preflightEffectiveOpenCodeMcpNames({
-    command: dependencies.process?.command ?? baseProcess.command,
+    command: dependencies.process?.command ?? OPEN_CODE_COMMAND,
     cwd: options.root,
     environment: childEnvironment,
     reservedNames: reservedMcpNames,

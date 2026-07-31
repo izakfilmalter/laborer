@@ -185,7 +185,7 @@ if [[ -n "$state_json" ]]; then
   fi
 fi
 
-opencode_command="${LABORER_OPENCODE_COMMAND:-opencode}"
+opencode_command="${LABORER_OPENCODE_COMMAND:-opencode2}"
 [[ -n "${opencode_command//[[:space:]]/}" ]] || fail "OpenCode command override is blank"
 opencode_model="${LABORER_OPENCODE_MODEL:-}"
 

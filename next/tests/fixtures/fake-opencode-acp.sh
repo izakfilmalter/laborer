@@ -2,6 +2,68 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "serve" && "${2:-}" == "--stdio" ]]; then
+  case "${FAKE_OPENCODE_CONFIG_PROBE_MODE:-ok}" in
+    malformed)
+      printf '{"private":"%s"\n' "${FAKE_OPENCODE_CONFIG_PROBE_SECRET:-private}"
+      exit 0
+      ;;
+    nonzero)
+      printf '%s' "${FAKE_OPENCODE_CONFIG_PROBE_SECRET:-probe-failed}" >&2
+      exit 7
+      ;;
+    oversize)
+      "${FAKE_ACP_RUNTIME:?}" -e 'process.stdout.write("x".repeat(Number(process.env.FAKE_OPENCODE_CONFIG_PROBE_BYTES)))'
+      exit 0
+      ;;
+    timeout)
+      "${FAKE_ACP_RUNTIME:?}" -e 'setInterval(() => undefined, 1000)'
+      ;;
+    ok)
+      exec "${FAKE_ACP_RUNTIME:?}" -e '
+        const fs = require("node:fs");
+        const http = require("node:http");
+        if (process.env.FAKE_OPENCODE_CONFIG_PROBE_OBSERVATION_PATH) {
+          fs.writeFileSync(process.env.FAKE_OPENCODE_CONFIG_PROBE_OBSERVATION_PATH, JSON.stringify({
+            args: ["serve", "--stdio", "--port", "0"],
+            cwd: process.cwd(),
+            environmentNames: Object.keys(process.env).sort(),
+          }));
+        }
+        const sources = [
+          process.env.FAKE_OPENCODE_WELL_KNOWN_CONFIG_JSON,
+          process.env.FAKE_OPENCODE_ACCOUNT_CONFIG_JSON,
+          process.env.FAKE_OPENCODE_OS_MANAGED_CONFIG_JSON,
+          process.env.SCRIPTED_ACP_EFFECTIVE_CONFIG_JSON,
+        ];
+        const names = new Set();
+        for (const source of sources) {
+          if (!source) continue;
+          const parsed = JSON.parse(source);
+          for (const name of Object.keys(parsed.mcp || {})) names.add(name);
+        }
+        const server = http.createServer((request, response) => {
+          if (request.url?.startsWith("/api/mcp")) {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ data: [...names].map((name) => ({ name, status: { status: "disabled" } })), location: { directory: process.cwd(), project: { id: "fake", directory: process.cwd(), canonical: process.cwd() } } }));
+            return;
+          }
+          response.writeHead(404).end();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          process.stdout.write(JSON.stringify({ url: `http://127.0.0.1:${address.port}` }) + "\n");
+        });
+        process.stdin.resume();
+        process.stdin.on("end", () => server.close());
+      '
+      ;;
+    *)
+      exit 8
+      ;;
+  esac
+fi
+
 if [[ "${1:-}" == "debug" && "${2:-}" == "config" && "$#" -eq 2 ]]; then
   if [[ -n "${FAKE_OPENCODE_CONFIG_PROBE_OBSERVATION_PATH:-}" ]]; then
     "${FAKE_ACP_RUNTIME:?}" -e '

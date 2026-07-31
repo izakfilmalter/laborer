@@ -18,16 +18,21 @@ import {
   assertSupportedOpenCodeInitialization,
   SUPPORTED_ACP_RUNTIME_MATRIX,
 } from "../../src/acp-compatibility/runtime-matrix.ts";
+import {
+  OPEN_CODE_ACP_ARGS,
+  OPEN_CODE_ACP_COMMAND,
+} from "../../src/acp-conversation-prototype/open-code-acp-process.ts";
 import { superviseSubprocess } from "./subprocess-supervisor.ts";
 
 const PROJECT_ROOT = process.cwd();
 const OPEN_CODE_EXECUTABLE = resolve(
   PROJECT_ROOT,
-  "node_modules/opencode-ai/bin/opencode.exe"
+  "node_modules/@opencode-ai/cli/bin/opencode2.exe"
 );
 const REQUEST_TIMEOUT_MILLIS = 30_000;
 const STDERR_TAIL_CHARACTERS = 8000;
 const DUMMY_PROVIDER_KEY = "laborer-acp-compatibility-dummy-key";
+const OPEN_CODE_2_VERSION_PREFIX = /^opencode2 v/;
 
 export const OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY = {
   "*": "deny",
@@ -90,32 +95,41 @@ const platformPath = (): string => {
 export const makeOpenCodeCompatibilityConfig = (
   baseUrl: string
 ): Readonly<Record<string, unknown>> => ({
+  agents: {
+    build: {
+      permissions: [
+        { action: "*", effect: "deny", resource: "*" },
+        { action: "execute", effect: "allow", resource: "*" },
+        { action: "compat_record", effect: "ask", resource: "*" },
+      ],
+    },
+  },
   formatter: false,
   lsp: false,
   model: "compatibility/compatibility-model",
-  permission: OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY,
-  provider: {
+  permissions: [
+    { action: "*", effect: "deny", resource: "*" },
+    { action: "execute", effect: "allow", resource: "*" },
+    { action: "compat_record", effect: "ask", resource: "*" },
+  ],
+  providers: {
     compatibility: {
-      env: [],
-      id: "compatibility",
       models: {
         "compatibility-model": {
-          attachment: true,
+          capabilities: {
+            input: ["text", "image"],
+            output: ["text"],
+            tools: true,
+          },
           cost: { input: 0, output: 0 },
-          id: "compatibility-model",
           limit: { context: 100_000, output: 10_000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
+          modelID: "compatibility-model",
           name: "ACP Compatibility Model",
-          options: {},
-          reasoning: false,
-          release_date: "2025-01-01",
-          temperature: false,
-          tool_call: true,
         },
       },
       name: "ACP Compatibility",
-      npm: "@ai-sdk/openai-compatible",
-      options: { apiKey: DUMMY_PROVIDER_KEY, baseURL: baseUrl },
+      package: "aisdk:@ai-sdk/openai-compatible",
+      settings: { apiKey: DUMMY_PROVIDER_KEY, baseURL: baseUrl },
     },
   },
 });
@@ -204,7 +218,7 @@ export const readLocalOpenCodeVersion = async (
         `local OpenCode version check exited with ${String(result.code)}: ${capturedStderr.slice(-2000)}`
       );
     }
-    return capturedStdout.trim();
+    return capturedStdout.trim().replace(OPEN_CODE_2_VERSION_PREFIX, "");
   } finally {
     await supervisor.terminate();
   }
@@ -214,7 +228,7 @@ export const startOpenCodeAcpHarness = async (
   options: OpenCodeAcpHarnessOptions
 ): Promise<OpenCodeAcpHarness> => {
   await mkdir(join(options.home, "tmp"), { recursive: true, mode: 0o700 });
-  const child = spawn(OPEN_CODE_EXECUTABLE, ["acp"], {
+  const child = spawn(OPEN_CODE_ACP_COMMAND, [...OPEN_CODE_ACP_ARGS], {
     cwd: options.cwd,
     env: isolatedEnvironment(options),
     stdio: ["pipe", "pipe", "pipe"],
@@ -270,7 +284,10 @@ export const startOpenCodeAcpHarness = async (
     } catch (cause) {
       connection.close();
       await supervisor.terminate();
-      throw new Error(`${label} failed\n${diagnostic()}`, { cause });
+      throw new Error(
+        `${label} failed\npermission requests: ${permissionRequests.length}\n${diagnostic()}`,
+        { cause }
+      );
     }
   };
   return {

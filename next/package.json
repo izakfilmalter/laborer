@@ -49,7 +49,7 @@
     "@effect/sql-sqlite-bun": "4.0.0-beta.99",
     "@effect/sql-sqlite-node": "4.0.0-beta.99",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@opencode-ai/sdk": "1.18.4",
+    "@opencode-ai/client": "0.0.0-next-16573",
     "@slack/socket-mode": "3.0.0",
     "@slack/web-api": "8.0.0",
     "@tanstack/react-router": "1.170.18",
@@ -69,6 +69,7 @@
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "^0.87.0",
     "@effect/vitest": "4.0.0-beta.99",
+    "@opencode-ai/cli": "0.0.0-next-16573",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/router-plugin": "1.168.23",
     "@testing-library/react": "16.3.2",
@@ -80,12 +81,14 @@
     "electron": "43.2.0",
     "electron-vite": "5.0.0",
     "jsdom": "30.0.0",
-    "opencode-ai": "1.18.4",
-    "tsx": "^4.22.4",
     "tailwindcss": "4.3.3",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "ultracite": "7.2.4",
     "vite": "7.3.6",
     "vitest": "^4.0.17"
-  }
+  },
+  "trustedDependencies": [
+    "@opencode-ai/cli"
+  ]
 }

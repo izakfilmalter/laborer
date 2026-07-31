@@ -301,15 +301,18 @@ The command never falls back to `SLACK_APP_TOKEN` or `SLACK_BOT_TOKEN`; missing
 or wrong-kind canary credentials fail startup, as do canary credentials equal
 to production credentials present in the same environment. Neither production nor canary
 Slack credentials cross into the ACP child environment. Once the separate app
-is installed, ensure the `opencode` CLI is authenticated and run from `next`:
+is installed, ensure the `opencode2` CLI is authenticated and run from `next`:
 
 ```sh
 bun run start:acp-canary
 ```
 
-The explicit command defaults to `opencode acp`, with the configured
-`LABORER_ROOT` (or this `next` directory) as both process cwd and ACP session
-working context. It initializes ACP once and uses the same durable Conversation
+The explicit command defaults to Laborer's OpenCode 2 ACP adapter. The adapter
+keeps ACP as Laborer's generic harness boundary, starts a private authenticated
+`opencode2 serve` process, and registers client-provided MCP servers as direct
+tools rather than Code Mode tools. The configured `LABORER_ROOT` (or this
+`next` directory) remains both process cwd and ACP session working context. It
+initializes ACP once and uses the same durable Conversation
 session lifecycle as production, including resume and explicit unresolved
 recovery boundaries. It streams each public ACP message through Slack's native
 `chat.startStream`, `chat.appendStream`, and `chat.stopStream` methods. Appends
@@ -375,7 +378,7 @@ exact pinned-OpenCode session-not-found response or ACP `ResourceNotFound`
 response with its canonical message and either no URI or the requested session
 URI permits an atomic generation replacement. Explicitly conflicting identity,
 wrong-code, and wrong-message failures do not replace.
-Pinned OpenCode 1.18.4 first calls the backing SDK `session.get` during
+Pinned OpenCode 0.0.0-next-16573 first calls the backing SDK `session.get` during
 `session/resume`. Its missing-session HTTP error is not an ACP tagged error, so
 `fromUnknownError` serializes it as the otherwise-generic JSON-RPC shape
 `-32603 / "Internal error: OpenCode service failure" / {service:"session"}`.
@@ -440,7 +443,7 @@ OpenCode does not emit live `user_message_chunk` updates: its resume tests emit
 no transcript chunks, its event bridge emits only assistant deltas, and its
 ascending `msg_` IDs encode a full 48-bit millisecond-plus-counter order in the
 first twelve hexadecimal digits. Laborer accepts only the reviewed OpenCode
-identity and version 1.18.4, waits at most 25 ms for a later local
+identity and version 0.0.0-next-16573, waits at most 25 ms for a later local
 clock tick before sending `session/prompt`, and requires the full order to be
 strictly greater than both that boundary and every previously observed order.
 Older or same-prior-tick delayed IDs remain suppressed. Agents that

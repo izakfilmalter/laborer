@@ -1,8 +1,9 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { Effect } from "effect";
 import { HandlerFailure } from "../prototype/errors.ts";
 
-const CONFIG_PROBE_ARGS = ["debug", "config"] as const;
+const CONFIG_PROBE_ARGS = ["serve", "--stdio", "--port", "0"] as const;
 const CONFIG_PROBE_STARTUP_TIMEOUT_MILLIS = 5000;
 const CONFIG_PROBE_RUNTIME_TIMEOUT_MILLIS = 15_000;
 const CONFIG_PROBE_MAX_STDOUT_BYTES = 1024 * 1024;
@@ -66,6 +67,7 @@ const terminateProbe = (child: ChildProcessWithoutNullStreams): void => {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
+  child.stdin.end();
   if (process.platform !== "win32" && child.pid !== undefined) {
     try {
       process.kill(-child.pid, "SIGKILL");
@@ -77,116 +79,172 @@ const terminateProbe = (child: ChildProcessWithoutNullStreams): void => {
   child.kill("SIGKILL");
 };
 
-const collectEffectiveConfig = (options: {
-  readonly command: string;
-  readonly cwd: string;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly limits: ResolvedConfigProbeLimits;
-}): Promise<string> =>
-  new Promise<string>((resolveProbe, rejectProbe) => {
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(options.command, [...CONFIG_PROBE_ARGS], {
-        cwd: options.cwd,
-        detached: process.platform !== "win32",
-        env: options.environment,
-        shell: false,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-    } catch {
-      rejectProbe(new Error("probe spawn failed"));
-      return;
-    }
-
-    const stdout: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
+const startupUrl = (
+  child: ChildProcessWithoutNullStreams,
+  limits: ResolvedConfigProbeLimits
+): Promise<string> =>
+  new Promise<string>((resolveUrl, rejectUrl) => {
     let settled = false;
-    let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
-    const startupTimer = setTimeout(() => {
-      failProbe();
-    }, options.limits.startupTimeoutMillis);
-
+    let stdout = Buffer.alloc(0);
+    let stderrBytes = 0;
+    const timer = setTimeout(() => fail(), limits.startupTimeoutMillis);
     const cleanup = (): void => {
-      clearTimeout(startupTimer);
-      if (runtimeTimer !== undefined) {
-        clearTimeout(runtimeTimer);
-      }
-      child.stdout.removeAllListeners();
-      child.stderr.removeAllListeners();
-      child.removeAllListeners();
+      clearTimeout(timer);
+      child.stdout.removeListener("data", onStdout);
+      child.stderr.removeListener("data", onStderr);
+      child.removeListener("error", fail);
+      child.removeListener("exit", fail);
     };
-    const failProbe = (): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      terminateProbe(child);
-      cleanup();
-      rejectProbe(new Error("probe failed"));
-    };
-    const completeProbe = (source: string): void => {
+    const fail = (): void => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      resolveProbe(source);
+      rejectUrl(new Error("OpenCode probe startup failed"));
     };
-
-    child.stdin.end();
-    child.once("error", failProbe);
-    child.once("spawn", () => {
-      clearTimeout(startupTimer);
-      runtimeTimer = setTimeout(failProbe, options.limits.runtimeTimeoutMillis);
-    });
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      stdoutBytes += bytes.byteLength;
-      if (stdoutBytes > options.limits.maxStdoutBytes) {
-        failProbe();
-        return;
-      }
-      stdout.push(bytes);
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    const onStderr = (chunk: Buffer | string): void => {
       stderrBytes += Buffer.byteLength(chunk);
-      if (stderrBytes > options.limits.maxStderrBytes) {
-        failProbe();
+      if (stderrBytes > limits.maxStderrBytes) {
+        fail();
       }
-    });
-    child.once("close", (code, signal) => {
-      if (code !== 0 || signal !== null) {
-        failProbe();
+    };
+    const onStdout = (chunk: Buffer | string): void => {
+      stdout = Buffer.concat([
+        stdout,
+        Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+      ]);
+      if (stdout.byteLength > limits.maxStdoutBytes) {
+        fail();
+        return;
+      }
+      const newline = stdout.indexOf(0x0a);
+      if (newline < 0) {
         return;
       }
       try {
-        completeProbe(
+        const parsed: unknown = JSON.parse(
           new TextDecoder("utf-8", { fatal: true }).decode(
-            Buffer.concat(stdout)
+            stdout.subarray(0, newline)
           )
         );
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          !("url" in parsed) ||
+          typeof parsed.url !== "string"
+        ) {
+          fail();
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolveUrl(parsed.url);
       } catch {
-        failProbe();
+        fail();
       }
-    });
+    };
+    child.once("error", fail);
+    child.once("exit", fail);
+    child.stderr.on("data", onStderr);
+    child.stdout.on("data", onStdout);
   });
 
 const exactEffectiveMcpNames = (source: string): ReadonlySet<string> => {
   const parsed = JSON.parse(source) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("effective config is not an object");
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !("data" in parsed) ||
+    !Array.isArray(parsed.data)
+  ) {
+    throw new Error("effective MCP response is invalid");
   }
-  const effectiveConfig = parsed as Record<string, unknown>;
-  const mcp = effectiveConfig.mcp;
-  if (mcp === undefined) {
-    return new Set();
+  const names = parsed.data.map((entry) => {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      Array.isArray(entry) ||
+      !("name" in entry) ||
+      typeof entry.name !== "string"
+    ) {
+      throw new Error("effective MCP entry is invalid");
+    }
+    return entry.name;
+  });
+  return new Set(names);
+};
+
+const readBoundedResponse = async (
+  response: Response,
+  maximumBytes: number
+): Promise<Buffer> => {
+  if (response.body === null) {
+    return Buffer.alloc(0);
   }
-  if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) {
-    throw new Error("effective MCP config is not an object");
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) {
+        return Buffer.concat(chunks, totalBytes);
+      }
+      totalBytes += next.value.byteLength;
+      if (totalBytes > maximumBytes) {
+        throw new Error("OpenCode MCP probe response exceeded the limit");
+      }
+      chunks.push(Buffer.from(next.value));
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  return new Set(Object.keys(mcp));
+};
+
+const collectEffectiveMcpNames = async (options: {
+  readonly command: string;
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly limits: ResolvedConfigProbeLimits;
+}): Promise<ReadonlySet<string>> => {
+  const password = randomBytes(32).toString("base64url");
+  const child = spawn(options.command, [...CONFIG_PROBE_ARGS], {
+    cwd: options.cwd,
+    detached: process.platform !== "win32",
+    env: { ...options.environment, OPENCODE_PASSWORD: password },
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  try {
+    const url = await startupUrl(child, options.limits);
+    child.stdout.resume();
+    child.stderr.resume();
+    const endpoint = new URL("/api/mcp", url);
+    endpoint.searchParams.set("location[directory]", options.cwd);
+    const response = await fetch(endpoint, {
+      headers: {
+        authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
+      },
+      signal: AbortSignal.timeout(options.limits.runtimeTimeoutMillis),
+    });
+    if (!response.ok) {
+      throw new Error("OpenCode MCP probe request failed");
+    }
+    const bytes = await readBoundedResponse(
+      response,
+      options.limits.maxStdoutBytes
+    );
+    return exactEffectiveMcpNames(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    );
+  } finally {
+    terminateProbe(child);
+  }
 };
 
 export const preflightEffectiveOpenCodeMcpNames = Effect.fn(
@@ -203,15 +261,13 @@ export const preflightEffectiveOpenCodeMcpNames = Effect.fn(
     return yield* preflightFailure();
   }
   const effectiveMcpNames = yield* Effect.tryPromise({
-    try: async () => {
-      const source = await collectEffectiveConfig({
+    try: () =>
+      collectEffectiveMcpNames({
         command: options.command,
         cwd: options.cwd,
         environment: options.environment,
         limits: resolveLimits(options.limits),
-      });
-      return exactEffectiveMcpNames(source);
-    },
+      }),
     catch: preflightFailure,
   });
   for (const name of effectiveMcpNames) {

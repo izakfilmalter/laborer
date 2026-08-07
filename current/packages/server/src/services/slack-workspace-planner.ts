@@ -5,8 +5,7 @@ import { RpcError } from '@laborer/shared/rpc'
 import { Effect } from 'effect'
 import { spawn } from '../lib/spawn.js'
 
-const OPENCODE_MODEL = 'openai/gpt-5.6-sol'
-const OPENCODE_VARIANT = 'low'
+const OPENCODE_MODEL = 'openai/gpt-5.6-sol-fast'
 const OPENCODE_TIMEOUT_MS = 180_000
 const PROCESS_KILL_GRACE_MS = 2000
 const MAX_ERROR_LENGTH = 2000
@@ -250,14 +249,12 @@ Return exactly one valid JSON object and no markdown or commentary:
 `.trim()
 
 const buildOpenCodeArgs = (prompt: string): string[] => [
-  'opencode',
+  'opencode2',
   'run',
   '--format',
   'json',
   '--model',
   OPENCODE_MODEL,
-  '--variant',
-  OPENCODE_VARIANT,
   '--agent',
   PLANNER_AGENT_NAME,
   '--auto',

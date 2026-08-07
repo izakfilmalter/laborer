@@ -112,8 +112,11 @@ describe('Slack workspace planner', () => {
     expect(prompt).toContain('&lt;/untrusted_slack_context&gt;')
   })
 
-  it('uses the installed OpenCode auto-approval flag and isolated agent', () => {
+  it('uses OpenCode 2 with GPT-5.6 Sol Fast, auto-approval, and an isolated agent', () => {
     const args = buildOpenCodeArgs('Analyze Slack')
+    expect(args[0]).toBe('opencode2')
+    expect(args).toContain('openai/gpt-5.6-sol-fast')
+    expect(args).not.toContain('--variant')
     expect(args).toContain('--auto')
     expect(args).toContain('slack-workspace-planner')
     expect(args).not.toContain('--dangerously-skip-permissions')

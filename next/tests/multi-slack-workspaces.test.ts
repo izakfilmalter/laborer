@@ -42,6 +42,7 @@ import {
   type SocketModeClientBoundary,
   startSocketModeAdapter,
 } from "../src/slack/socket-mode.ts";
+import { makeWorkspaceBindingProjection } from "../src/slack/workspace-binding-projection.ts";
 import type { SlackWorkspaceStartupAdapter } from "../src/slack/workspace-startup.ts";
 import {
   prepareSlackWorkspaceRoot,
@@ -188,6 +189,7 @@ const makeTestStartupAdapter = (options: {
     readonly teamId: string;
     readonly text: string;
   }[];
+  readonly readinessObservers?: Map<string, (readiness: string) => void>;
   readonly runnerGates?: ReadonlyMap<string, Deferred.Deferred<void>>;
   readonly runners: Map<string, Runner>;
   readonly rootRuntimeCreations?: Map<string, number>;
@@ -249,6 +251,12 @@ const makeTestStartupAdapter = (options: {
       }),
   makeRunner: (runtime) =>
     Effect.gen(function* () {
+      if (runtime.observeReadiness !== undefined) {
+        options.readinessObservers?.set(
+          runtime.identity.teamId,
+          runtime.observeReadiness
+        );
+      }
       if (runtime.rootRuntime !== undefined) {
         options.rootRuntimeObservations?.set(
           runtime.identity.teamId,
@@ -562,6 +570,93 @@ describe("multi-workspace Slack daemon", () => {
           assert.deepStrictEqual(preflightReports, [
             "TFIRST:ready:acp-workspace-ready",
           ]);
+        })
+      )
+  );
+
+  it.effect(
+    "projects runtime recovery after an initially incomplete preflight",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const anchor = yield* makeTempDirectoryScoped(
+            "laborer-readiness-recovery-"
+          );
+          const root = join(anchor, "root");
+          yield* createLaborerRoot(root);
+          const token = fixtureToken("readiness-recovery");
+          const environment = {
+            LABORER_SLACK_WORKSPACES: JSON.stringify([
+              {
+                botTokenEnvironment: "SLACK_BOT_TOKEN_FIRST",
+                root,
+                teamId: firstIdentity.teamId,
+              },
+            ]),
+            SLACK_APP_TOKEN: ["x", "app", "-fixture"].join(""),
+            SLACK_BOT_TOKEN_FIRST: token,
+          };
+          const config = yield* loadSlackDaemonConfig({
+            defaultRoot: "/unused",
+            environment,
+          });
+          const readinessObservers = new Map<
+            string,
+            (readiness: string) => void
+          >();
+          const projection = makeWorkspaceBindingProjection(config);
+          const baseAdapter = makeTestStartupAdapter({
+            gatewayTeams: [],
+            handlerFor: () => ({ invoke: () => Effect.void }),
+            identitiesByToken: new Map([[token, firstIdentity]]),
+            readinessObservers,
+            runners: new Map(),
+            setupReplies: [],
+            statePaths: new Map(),
+            stores: new Map(),
+          });
+          const routeDirectory = yield* startSlackWorkspaceDirectory({
+            acquireRootLock: () => Effect.succeed(true),
+            adapter: {
+              ...baseAdapter,
+              makeRunner: (runtime) =>
+                baseAdapter.makeRunner(runtime).pipe(
+                  Effect.map((runner) => ({
+                    ...runner,
+                    health: Effect.fail("fixture health unavailable"),
+                  }))
+                ),
+            },
+            config,
+            environment,
+            observePreflight: projection.observe,
+            prepareRoot: prepareSlackWorkspaceRoot,
+          });
+          yield* routeDirectory.awaitReady(firstIdentity.teamId);
+          assert.strictEqual(
+            projection.snapshot().workspaces[0]?.readiness,
+            "setup-incomplete"
+          );
+
+          const observeReadiness = readinessObservers.get(firstIdentity.teamId);
+          assert.ok(observeReadiness !== undefined);
+          observeReadiness("setup-incomplete");
+          assert.strictEqual(
+            projection.snapshot().workspaces[0]?.readiness,
+            "setup-incomplete"
+          );
+
+          observeReadiness("ready");
+          assert.strictEqual(
+            projection.snapshot().workspaces[0]?.readiness,
+            "ready"
+          );
+
+          observeReadiness("future-runtime-state");
+          assert.strictEqual(
+            projection.snapshot().workspaces[0]?.readiness,
+            "setup-incomplete"
+          );
         })
       )
   );

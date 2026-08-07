@@ -38,6 +38,7 @@ export interface SlackWorkspaceRuntimeOptions<Client, Gateway> {
   readonly gateway: Gateway;
   readonly identity: SlackRuntimeIdentity;
   readonly laborer: LoadedLaborerConfig;
+  readonly observeReadiness?: (readiness: string) => void;
   readonly paths: SlackRuntimePaths;
   readonly rootRuntime?: RootDurableRuntimeShape;
 }
@@ -132,7 +133,7 @@ const preflightStatusForReadiness = (
     "quarantined",
     "circuit-open",
   ] as const;
-  return known.find((status) => status === readiness) ?? "ready";
+  return known.find((status) => status === readiness) ?? "setup-incomplete";
 };
 
 export const prepareSlackWorkspaceRoot = Effect.fn("prepareSlackWorkspaceRoot")(
@@ -493,6 +494,18 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
       return;
     }
     const ownerScope = yield* Effect.scope;
+    const observeRuntimeReadiness = (readiness: string): void => {
+      const status = preflightStatusForReadiness(readiness);
+      options.observePreflight?.({
+        bindingIndex: config.bindingIndex,
+        reasonCode:
+          status === "ready"
+            ? "acp-workspace-ready"
+            : `acp-workspace-${status}`,
+        status,
+        ...authenticatedWorkspace,
+      });
+    };
     const runner = yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const bindingScope = yield* Scope.make();
@@ -504,6 +517,7 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
                 gateway,
                 identity,
                 laborer: prepared.success.laborer,
+                observeReadiness: observeRuntimeReadiness,
                 paths: prepared.success.paths,
                 ...(rootRuntime.success === null
                   ? {}
@@ -544,10 +558,12 @@ const initializeAuthenticatedBinding = <Client, Gateway>(options: {
       runner.value.health === undefined
         ? null
         : yield* Effect.result(runner.value.health);
-    const readiness =
-      runtimeHealth?._tag === "Success"
-        ? runtimeHealth.success.readiness
-        : "ready";
+    let readiness = "setup-incomplete";
+    if (runner.value.health === undefined) {
+      readiness = "ready";
+    } else if (runtimeHealth?._tag === "Success") {
+      readiness = runtimeHealth.success.readiness;
+    }
     const preflightStatus = preflightStatusForReadiness(readiness);
     yield* reportPreflight(options.observePreflight, {
       bindingIndex: config.bindingIndex,

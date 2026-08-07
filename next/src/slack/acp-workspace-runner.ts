@@ -560,10 +560,14 @@ export const makeAcpSlackWorkspaceRunner = Effect.fn(
   options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>,
   dependencies: ProductionAcpWorkspaceApplicationDependencies = {}
 ) {
-  const runtime = yield* makeProductionAcpSlackWorkspaceRuntime(
-    options,
-    dependencies
-  );
+  const observeConfiguredHealth = dependencies.observeHealth;
+  const runtime = yield* makeProductionAcpSlackWorkspaceRuntime(options, {
+    ...dependencies,
+    observeHealth: (health) => {
+      observeConfiguredHealth?.(health);
+      options.observeReadiness?.(health.status);
+    },
+  });
   const recovery = makeAcpRecoveryService({
     paths: options.paths,
     runner: runtime.harness.runner,

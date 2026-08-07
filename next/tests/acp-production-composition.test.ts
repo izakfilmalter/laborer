@@ -55,6 +55,7 @@ import {
   type SocketModeClientBoundary,
   startSocketModeAdapter,
 } from "../src/slack/socket-mode.ts";
+import { makeWorkspaceBindingProjection } from "../src/slack/workspace-binding-projection.ts";
 import { makeLazyOpenCodeImplementationAgent } from "../src/slack/workspace-runner.ts";
 import {
   prepareSlackWorkspaceRoot,
@@ -4891,6 +4892,7 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
           [incompatibleToken, incompatibleIdentity],
         ]);
         const order: string[] = [];
+        const runtimeReadiness: string[] = [];
         const routeMessages: CapturedSlackMessage[] = [];
         let legacyFallbackAcquisitions = 0;
         const clientIdentities = new Map<WebClient, SlackRuntimeIdentity>();
@@ -4925,28 +4927,41 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
                 ? {}
                 : { SCRIPTED_ACP_DISABLE_RESUME_CAPABILITY: "1" }),
             });
-            return makeAcpSlackWorkspaceRunner(runtime, {
-              environment: childEnvironment,
-              makeOpenCodeClient: () =>
-                Effect.sync(() => {
-                  legacyFallbackAcquisitions += 1;
-                  return makeUnusedImplementationClient({
-                    implementationPrompts: 0,
-                  });
-                }),
-              observeHealth: ({ status, workspaceId }) =>
-                order.push(`${workspaceId}:${status}`),
-              participantLookup: {
-                lookupVisibleName: (slackUserId) => Effect.succeed(slackUserId),
+            return makeAcpSlackWorkspaceRunner(
+              {
+                ...runtime,
+                observeReadiness: (readiness) => {
+                  runtimeReadiness.push(
+                    `${runtime.identity.teamId}:${readiness}`
+                  );
+                  runtime.observeReadiness?.(readiness);
+                },
               },
-              process: {
-                command: fakeOpenCodePath,
-                testHooks: { treatCommandAsOpenCode: true },
-              },
-            });
+              {
+                environment: childEnvironment,
+                makeOpenCodeClient: () =>
+                  Effect.sync(() => {
+                    legacyFallbackAcquisitions += 1;
+                    return makeUnusedImplementationClient({
+                      implementationPrompts: 0,
+                    });
+                  }),
+                observeHealth: ({ status, workspaceId }) =>
+                  order.push(`${workspaceId}:${status}`),
+                participantLookup: {
+                  lookupVisibleName: (slackUserId) =>
+                    Effect.succeed(slackUserId),
+                },
+                process: {
+                  command: fakeOpenCodePath,
+                  testHooks: { treatCommandAsOpenCode: true },
+                },
+              }
+            );
           },
           makeSetupIncompleteResponder: () => () => Effect.void,
         };
+        const projection = makeWorkspaceBindingProjection(config);
         const routes = yield* startSlackWorkspaceDirectory({
           acquireRootLock: () =>
             Effect.sync(() => {
@@ -4956,6 +4971,7 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
           adapter,
           config,
           environment: {},
+          observePreflight: projection.observe,
           prepareRoot: (binding, environment) =>
             prepareSlackWorkspaceRoot(binding, environment),
         });
@@ -4991,6 +5007,12 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
         assert.strictEqual(order[0], "lock");
         assert.ok(order.includes("T244HEALTHY:ready"));
         assert.ok(order.includes("T244BAD:quarantined"));
+        assert.ok(runtimeReadiness.includes("T244HEALTHY:starting"));
+        assert.ok(runtimeReadiness.includes("T244HEALTHY:ready"));
+        assert.deepStrictEqual(
+          projection.snapshot().workspaces.map(({ readiness }) => readiness),
+          ["ready", "unavailable"]
+        );
         assert.strictEqual(
           (yield* Schema.decodeUnknownEffect(FakeLaunch)(
             JSON.parse(

@@ -23,6 +23,7 @@ import type {
   SessionInfo,
   SessionMessageAssistant,
 } from "../../node_modules/@opencode-ai/client/dist/promise/generated/types.js";
+import { openCodeMcpConfig } from "./action-mcp-timeouts.ts";
 import { OPEN_CODE_COMMAND } from "./open-code-acp-process.ts";
 
 const OPEN_CODE_VERSION = "0.0.0-next-16573";
@@ -146,31 +147,6 @@ const startServer = async (): Promise<RunningServer> => {
     client: makeOpenCodeClient({ baseUrl: url, headers: { authorization } }),
     close: () => stopChild(child),
     closed,
-  };
-};
-
-const mcpConfig = (server: McpServer) => {
-  if ("type" in server) {
-    if (server.type === "acp") {
-      throw new Error("MCP-over-ACP is not supported");
-    }
-    return {
-      codemode: false,
-      headers: Object.fromEntries(
-        server.headers.map((header) => [header.name, header.value])
-      ),
-      oauth: false as const,
-      type: "remote" as const,
-      url: server.url,
-    };
-  }
-  return {
-    codemode: false,
-    command: [server.command, ...server.args],
-    environment: Object.fromEntries(
-      server.env.map((entry) => [entry.name, entry.value])
-    ),
-    type: "local" as const,
   };
 };
 
@@ -308,7 +284,7 @@ const run = async (): Promise<void> => {
         );
       }
       await server.client.mcp.add({
-        config: mcpConfig(registration),
+        config: openCodeMcpConfig(registration),
         location,
         server: registration.name,
       });

@@ -9,6 +9,7 @@ import { Effect } from "effect";
 import { actionDefinition } from "../action-catalog.ts";
 import { executionControlDefinition } from "../execution-control-catalog.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
+import { ACTION_MCP_CONTROL_TIMEOUT_MILLIS } from "./action-mcp-timeouts.ts";
 
 const controlUrl = process.env.LABORER_ACTION_CONTROL_URL;
 const bootstrapPath = process.env.LABORER_ACTION_BOOTSTRAP_PATH;
@@ -30,7 +31,9 @@ if (
     body: unknown,
     requestSignal?: AbortSignal
   ): Promise<unknown> => {
-    const timeoutSignal = AbortSignal.timeout(65_000);
+    const timeoutSignal = AbortSignal.timeout(
+      ACTION_MCP_CONTROL_TIMEOUT_MILLIS
+    );
     const signal =
       requestSignal === undefined
         ? timeoutSignal

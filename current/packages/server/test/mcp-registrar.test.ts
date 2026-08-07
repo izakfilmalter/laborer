@@ -20,10 +20,13 @@ import {
   mergeClaudeConfig,
   mergeCodexConfig,
   mergeOpencodeConfig,
+  OPENCODE_CONFIG_PATH,
   registerClaudeConfig,
   registerCodexConfig,
   registerOpencodeConfig,
 } from '../src/services/mcp-registrar.js'
+
+const OPENCODE_CONFIG_PATH_PATTERN = /\.config\/opencode\/opencode\.json$/
 
 const createTempDir = (prefix: string): string => {
   const dir = join(
@@ -42,6 +45,10 @@ const DummyLaborerStoreLayer = Layer.succeed(LaborerStore, {
 })
 
 let testRoot: string
+
+it('uses the OpenCode 2 global configuration filename', () => {
+  expect(OPENCODE_CONFIG_PATH).toMatch(OPENCODE_CONFIG_PATH_PATTERN)
+})
 
 beforeAll(() => {
   testRoot = createTempDir('mcp-registrar')

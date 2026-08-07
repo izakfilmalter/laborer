@@ -6,7 +6,7 @@ interface SetupScriptItem {
 type SandboxProviderType = 'docker' | 'daytona' | 'none'
 
 interface ResolvedConfigSnapshot {
-  readonly agent: 'opencode' | 'opencode2' | 'claude' | 'codex'
+  readonly agent: AgentProvider
   readonly brrrConfig: string | null
   readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
@@ -20,7 +20,7 @@ interface ResolvedConfigSnapshot {
 }
 
 interface ConfigUpdates {
-  agent?: 'opencode' | 'opencode2' | 'claude' | 'codex'
+  agent?: AgentProvider
   brrrConfig?: string
   devServer?: {
     autoOpen?: boolean
@@ -141,7 +141,7 @@ const buildConfigUpdates = ({
   setupScripts,
   worktreeDir,
 }: {
-  agent: 'opencode' | 'opencode2' | 'claude' | 'codex'
+  agent: AgentProvider
   devServerAutoOpen: boolean
   devServerImage: string
   devServerInstallCommand: string
@@ -229,3 +229,5 @@ export {
   normalizeSetupScripts,
 }
 export type { ResolvedConfigSnapshot, SandboxProviderType, SetupScriptItem }
+
+import type { AgentProvider } from '@laborer/shared/rpc'

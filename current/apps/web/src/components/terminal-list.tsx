@@ -165,7 +165,7 @@ function ConfiguredTerminalSpawnButtons({
   const agentProvider =
     configResult._tag === 'Success'
       ? configResult.value.agent.value
-      : 'opencode'
+      : 'opencode2'
 
   return <TerminalSpawnButtons {...props} agentProvider={agentProvider} />
 }
@@ -177,7 +177,7 @@ function ConfigAwareTerminalSpawnButtons({
   const isEventuallyReady = useWhenPhase(LifecyclePhase.Eventually)
 
   if (!isEventuallyReady) {
-    return <TerminalSpawnButtons {...props} agentProvider="opencode" />
+    return <TerminalSpawnButtons {...props} agentProvider="opencode2" />
   }
 
   return <ConfiguredTerminalSpawnButtons {...props} projectId={projectId} />

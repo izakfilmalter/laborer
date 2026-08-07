@@ -199,6 +199,31 @@ describe('ConfigService', () => {
       })
     )
 
+    it.effect('migrates legacy OpenCode config to OpenCode 2 when read', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'legacy-opencode-migration')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = join(projectDir, CONFIG_FILE_NAME)
+        writeFileSync(
+          configPath,
+          JSON.stringify({ agent: 'opencode', customField: 'preserve-me' })
+        )
+
+        const result = yield* resolveConfig(projectDir, 'migration-test')
+        const migrated = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+          agent: string
+          customField: string
+        }
+
+        assert.strictEqual(result.agent.value, 'opencode2')
+        assert.strictEqual(result.agent.source, configPath)
+        assert.deepStrictEqual(migrated, {
+          agent: 'opencode2',
+          customField: 'preserve-me',
+        })
+      })
+    )
+
     it.effect('should inherit from ancestor config', () =>
       Effect.gen(function* () {
         const parent = join(testRoot, 'ancestor-inherit-parent')

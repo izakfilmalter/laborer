@@ -12,7 +12,7 @@
  */
 
 import { join } from 'node:path'
-import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
+import { type AgentProvider, LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array, Effect, pipe, Schema, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
@@ -303,7 +303,7 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
-    agent?: 'opencode' | 'opencode2' | 'claude' | 'codex' | undefined
+    agent?: AgentProvider | undefined
     devServer?:
       | {
           autoOpen?: boolean | undefined
@@ -331,7 +331,7 @@ export const handleConfigUpdate = ({
   }
 }) =>
   Effect.gen(function* () {
-    const validAgents = ['opencode', 'opencode2', 'claude', 'codex'] as const
+    const validAgents = ['opencode2', 'claude', 'codex'] as const
     const isValidAgent =
       config.agent === undefined || validAgents.some((a) => a === config.agent)
 
@@ -356,7 +356,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode/opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -380,7 +380,7 @@ export const handleGlobalConfigUpdate = ({
   config,
 }: {
   config: {
-    agent?: 'opencode' | 'opencode2' | 'claude' | 'codex' | undefined
+    agent?: AgentProvider | undefined
     defaultSandboxProvider?: 'docker' | 'daytona' | 'none' | undefined
   }
 }) =>

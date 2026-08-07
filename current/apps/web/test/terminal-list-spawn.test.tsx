@@ -94,7 +94,7 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
     })),
   useAtomValue: () => ({
     _tag: 'Success',
-    value: { agent: { value: 'opencode' } },
+    value: { agent: { value: 'opencode2' } },
   }),
 }))
 
@@ -135,7 +135,7 @@ vi.mock('@/lib/toast', () => ({
 // Agent icons
 vi.mock('@/components/agent-icons', () => ({
   AGENT_ICONS: {
-    opencode: ({ className }: { className?: string }) => (
+    opencode2: ({ className }: { className?: string }) => (
       <span className={className} data-testid="agent-icon" />
     ),
   },
@@ -186,7 +186,7 @@ describe('TerminalList spawn buttons', () => {
       render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
-        name: 'Start opencode agent',
+        name: 'Start opencode2 agent',
       })
       fireEvent.click(agentButton)
 
@@ -205,7 +205,7 @@ describe('TerminalList spawn buttons', () => {
       render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
-        name: 'Start opencode agent',
+        name: 'Start opencode2 agent',
       })
       fireEvent.click(agentButton, { metaKey: true })
 
@@ -285,7 +285,7 @@ describe('TerminalList spawn buttons', () => {
       render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
-        name: 'Start opencode agent',
+        name: 'Start opencode2 agent',
       })
       fireEvent.click(agentButton)
 
@@ -318,7 +318,7 @@ describe('TerminalList spawn buttons', () => {
       render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
-        name: 'Start opencode agent',
+        name: 'Start opencode2 agent',
       })
       fireEvent.click(agentButton)
 

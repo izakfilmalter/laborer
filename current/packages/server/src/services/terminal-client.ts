@@ -201,6 +201,24 @@ const startAgentHookServer = (
     )
   })
 
+/** Build the OpenCode command and environment passed to the terminal spawn. */
+const buildOpenCodeSpawnCommand = (
+  agentCommand: 'opencode' | 'opencode2',
+  terminalId: string,
+  terminalPort: number,
+  initialPrompt?: string
+): { command: string; extraEnv: Record<string, string> } => {
+  const launchCommand = withInitialAgentPrompt(agentCommand, initialPrompt)
+  return {
+    command: launchCommand.command,
+    extraEnv: {
+      LABORER_TERMINAL_ID: terminalId,
+      LABORER_HOOK_URL: `http://localhost:${terminalPort}/hook/agent-status`,
+      ...launchCommand.extraEnv,
+    },
+  }
+}
+
 class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   TerminalClient,
   {
@@ -388,7 +406,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           )
 
           // Lightweight HTTP server for agent hook callbacks.
-          // Agent CLIs (opencode plugin, claude hooks) POST lifecycle
+          // Agent CLIs (OpenCode plugin, Claude hooks) POST lifecycle
           // events here. The server forwards them to the terminal
           // service via the `terminal.setAgentStatus` RPC.
           const hookPort = yield* startAgentHookServer(client, layerScope)
@@ -407,10 +425,10 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        * Known agent commands that support hook-based lifecycle reporting.
        * Each agent has a different mechanism:
        * - `claude` — supports `--settings` with hooks JSON
-       * - `opencode` — supports plugins via `.opencode/plugins/` directory
+       * - `opencode2` — supports plugins via `.opencode/plugins/` directory
        *   (plugin is created at workspace setup, not per-spawn)
        */
-      const HOOKABLE_AGENTS = new Set(['claude', 'opencode'])
+      const HOOKABLE_AGENTS = new Set(['claude', 'opencode', 'opencode2'])
       const PROMPTABLE_AGENTS = new Set(['opencode', 'opencode2'])
 
       /**
@@ -515,17 +533,15 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           }
         }
 
-        // For opencode and other agents, add any supported initial prompt.
+        // For OpenCode and other agents, add any supported initial prompt.
         // OpenCode hooks are handled via a plugin file that reads
         // LABORER_TERMINAL_ID and LABORER_HOOK_URL from the environment.
-        const launchCommand = withInitialAgentPrompt(
-          agentCommand,
+        return buildOpenCodeSpawnCommand(
+          agentCommand as 'opencode' | 'opencode2',
+          terminalId,
+          terminalPort,
           initialPrompt
         )
-        return {
-          command: launchCommand.command,
-          extraEnv: { ...extraEnv, ...launchCommand.extraEnv },
-        }
       }
 
       /**
@@ -742,7 +758,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       /**
        * Spawn a terminal on the host for a non-containerized workspace.
        *
-       * When the command is a known agent CLI (claude, opencode), hook
+       * When the command is a known agent CLI (claude, opencode2), hook
        * settings are injected so the agent reports its lifecycle state
        * back to the terminal service. This enables accurate "needs input"
        * detection for agents that stay running as interactive CLIs.
@@ -987,4 +1003,4 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   )
 }
 
-export { TerminalClient }
+export { buildOpenCodeSpawnCommand, TerminalClient }

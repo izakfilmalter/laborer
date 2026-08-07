@@ -517,7 +517,7 @@ describe('usePanelLayout', () => {
       expect(spawnTerminalMock).toHaveBeenCalledWith({
         payload: {
           workspaceId: 'workspace-new',
-          command: 'opencode',
+          command: 'opencode2',
           initialPrompt: 'Investigate the Slack report.',
         },
       })

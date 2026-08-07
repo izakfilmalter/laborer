@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import type { AgentProvider } from '@laborer/shared/rpc'
 import { appSettings, events } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import {
@@ -40,13 +41,10 @@ import {
 } from './ui/select'
 import { Spinner } from './ui/spinner'
 
-type AgentProvider = 'opencode' | 'opencode2' | 'claude' | 'codex'
-
 const AGENT_OPTIONS: ReadonlyArray<{
   readonly label: string
   readonly value: AgentProvider
 }> = [
-  { label: 'OpenCode', value: 'opencode' },
   { label: 'OpenCode 2', value: 'opencode2' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
@@ -222,7 +220,7 @@ export function AppSettingsModal() {
   const [success, setSuccess] = useState(false)
   const csrfStateRef = useRef<string>('')
 
-  const [agent, setAgent] = useState<AgentProvider>('opencode')
+  const [agent, setAgent] = useState<AgentProvider>('opencode2')
   const [resolvedProvider, setResolvedProvider] =
     useState<SandboxProvider>('docker')
   const [agentInitialized, setAgentInitialized] = useState(false)
@@ -402,7 +400,7 @@ export function AppSettingsModal() {
   }, [hasToken, success])
 
   const AgentIcon =
-    agent in AGENT_ICONS ? AGENT_ICONS[agent] : AGENT_ICONS.opencode
+    agent in AGENT_ICONS ? AGENT_ICONS[agent] : AGENT_ICONS.opencode2
 
   const isLoadingAgent = open && !agentInitialized
 

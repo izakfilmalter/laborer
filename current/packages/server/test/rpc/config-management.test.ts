@@ -95,14 +95,16 @@ describe('LaborerRpcs config management', () => {
           // and devServer.provider, which both depend on the real global
           // config (defaultSandboxProvider falls back to devServer.provider)
           // and vary by environment.
-          const { defaultSandboxProvider: _dsp, ...configWithoutDefault } =
-            config
+          const {
+            agent: resolvedAgent,
+            defaultSandboxProvider: _dsp,
+            ...configWithoutDefault
+          } = config
           const { provider: _prov, ...devServerWithoutProvider } =
             configWithoutDefault.devServer
           assert.deepStrictEqual(
             { ...configWithoutDefault, devServer: devServerWithoutProvider },
             {
-              agent: { source: 'default', value: 'opencode2' },
               devServer: {
                 autoOpen: { source: 'default', value: false },
                 autoStopInterval: { source: 'default', value: null },
@@ -145,6 +147,8 @@ describe('LaborerRpcs config management', () => {
               },
             }
           )
+          assert.strictEqual(resolvedAgent.value, 'opencode2')
+          assert.isString(resolvedAgent.source)
           // defaultSandboxProvider has a valid structure regardless of value
           assert.isString(config.defaultSandboxProvider.source)
           assert.include(

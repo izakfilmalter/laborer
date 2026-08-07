@@ -31,7 +31,7 @@ interface ConfigResult {
   readonly _tag: 'Success'
   readonly value: {
     readonly agent: {
-      readonly value: 'opencode' | 'opencode2' | 'claude' | 'codex'
+      readonly value: 'opencode2' | 'claude' | 'codex'
       readonly source: string
     }
     readonly worktreeDir: { readonly value: string; readonly source: string }
@@ -141,7 +141,7 @@ describe('ProjectSettingsModal', () => {
     configResult = {
       _tag: 'Success',
       value: {
-        agent: { value: 'opencode', source: 'default' },
+        agent: { value: 'opencode2', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
         brrrConfig: { value: '.brrr/config.toml', source: 'laborer.json' },

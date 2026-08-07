@@ -44,7 +44,7 @@ const OPENCODE_CONFIG_PATH = join(
   homedir(),
   '.config',
   'opencode',
-  'config.json'
+  'opencode.json'
 )
 
 const CLAUDE_CONFIG_PATH = join(homedir(), '.claude.json')

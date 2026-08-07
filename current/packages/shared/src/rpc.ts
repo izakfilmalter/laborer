@@ -188,7 +188,6 @@ const DevServerConfigResponse = Schema.Struct({
 })
 
 export const AgentProviderSchema = Schema.Literal(
-  'opencode',
   'opencode2',
   'claude',
   'codex'

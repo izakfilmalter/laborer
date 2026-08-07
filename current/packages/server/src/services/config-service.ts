@@ -49,6 +49,7 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import type { AgentProvider } from '@laborer/shared/rpc'
 import { Context, Data, Effect, Layer } from 'effect'
 
 // ---------------------------------------------------------------------------
@@ -131,11 +132,8 @@ interface DevServerConfig {
  * Valid agent provider values.
  * Each value is also the CLI command used to launch the agent.
  */
-type AgentProvider = 'opencode' | 'opencode2' | 'claude' | 'codex'
-
 /** All valid agent provider values for runtime validation. */
 const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
-  'opencode',
   'opencode2',
   'claude',
   'codex',
@@ -288,7 +286,7 @@ const readConfigFile = (
     }
 
     const parsed = yield* Effect.try({
-      try: () => JSON.parse(content) as LaborerConfig,
+      try: () => JSON.parse(content) as unknown,
       catch: (cause) =>
         new ConfigIOError({
           message: `Failed to parse ${configPath}`,
@@ -300,12 +298,32 @@ const readConfigFile = (
           yield* Effect.logWarning(
             `${error.message}: ${String(error.cause)}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
-          return {} as LaborerConfig
+          return {} as unknown
         })
       )
     )
 
-    return parsed
+    if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+    ) {
+      const config = parsed as Record<string, unknown>
+      if (config.agent === 'opencode') {
+        const migrated = { ...config, agent: 'opencode2' }
+        yield* writeJsonAtomicStrict(configPath, migrated).pipe(Effect.orDie)
+        yield* Effect.logInfo(
+          `Migrated legacy OpenCode agent config at ${configPath} to opencode2`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+        return migrated as LaborerConfig
+      }
+      return config as LaborerConfig
+    }
+
+    yield* Effect.logWarning(
+      `Expected object in ${configPath}, got ${typeof parsed}`
+    ).pipe(Effect.annotateLogs('module', logPrefix))
+    return {} as LaborerConfig
   })
 
 /**
@@ -431,7 +449,10 @@ const applyConfigUpdates = (
   existing: Record<string, unknown>,
   updates: ProjectConfigUpdates
 ): Record<string, unknown> => {
-  const next = { ...existing }
+  const next: Record<string, unknown> = {
+    ...existing,
+    ...(existing.agent === 'opencode' ? { agent: 'opencode2' } : {}),
+  }
 
   if (updates.agent !== undefined) {
     next.agent = updates.agent
@@ -477,10 +498,10 @@ const applyConfigUpdates = (
 /**
  * Atomically write JSON to a path by writing a temp file and renaming.
  */
-const writeJsonAtomic = (
+const writeJsonAtomicStrict = (
   targetPath: string,
   content: Record<string, unknown>
-): Effect.Effect<void, never> =>
+): Effect.Effect<void, ConfigIOError> =>
   Effect.gen(function* () {
     const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -494,13 +515,7 @@ const writeJsonAtomic = (
           message: `Failed to write temp config file ${tempPath}`,
           cause,
         }),
-    }).pipe(
-      Effect.catchAll((error) =>
-        Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
-          Effect.annotateLogs('module', logPrefix)
-        )
-      )
-    )
+    })
 
     yield* Effect.try({
       try: () => renameSync(tempPath, targetPath),
@@ -509,14 +524,20 @@ const writeJsonAtomic = (
           message: `Failed to atomically move ${tempPath} to ${targetPath}`,
           cause,
         }),
-    }).pipe(
-      Effect.catchAll((error) =>
-        Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
-          Effect.annotateLogs('module', logPrefix)
-        )
+    })
+  })
+
+const writeJsonAtomic = (
+  targetPath: string,
+  content: Record<string, unknown>
+): Effect.Effect<void, never> =>
+  writeJsonAtomicStrict(targetPath, content).pipe(
+    Effect.catchAll((error) =>
+      Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+        Effect.annotateLogs('module', logPrefix)
       )
     )
-  })
+  )
 
 /**
  * Walk up from a starting directory, collecting all `laborer.json` files
@@ -1051,7 +1072,6 @@ export {
 }
 
 export type {
-  AgentProvider,
   DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,

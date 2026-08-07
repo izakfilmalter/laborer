@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import type { AgentProvider } from '@laborer/shared/rpc'
 import {
   CircleSlash,
   Cloud,
@@ -63,13 +64,10 @@ import {
   type SetupScriptItem,
 } from './project-settings-modal.helpers'
 
-type AgentProvider = 'opencode' | 'opencode2' | 'claude' | 'codex'
-
 const AGENT_OPTIONS: ReadonlyArray<{
   readonly label: string
   readonly value: AgentProvider
 }> = [
-  { label: 'OpenCode', value: 'opencode' },
   { label: 'OpenCode 2', value: 'opencode2' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
@@ -141,7 +139,7 @@ function ProjectSettingsForm({
 
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
-  const [agent, setAgent] = useState<AgentProvider>('opencode')
+  const [agent, setAgent] = useState<AgentProvider>('opencode2')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [brrrConfig, setBrrrConfig] = useState('')

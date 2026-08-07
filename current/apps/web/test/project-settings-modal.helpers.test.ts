@@ -30,7 +30,7 @@ describe('project settings modal helpers', () => {
 
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
-      agent: 'opencode',
+      agent: 'opencode2',
       devServerImage: 'node:22',
       devServerInstallCommand: 'yarn install --frozen-lockfile',
       devServerNetwork: 'myproject_default',
@@ -60,7 +60,7 @@ describe('project settings modal helpers', () => {
     })
 
     expect(result).toEqual({
-      agent: 'opencode',
+      agent: 'opencode2',
       devServer: {
         image: 'node:22',
         installCommand: 'yarn install --frozen-lockfile',
@@ -87,7 +87,7 @@ describe('project settings modal helpers', () => {
       devServerStartCommand: '',
       brrrConfig: '',
       resolvedConfig: {
-        agent: 'opencode',
+        agent: 'claude',
         devServerImage: null,
         devServerInstallCommand: null,
         devServerNetwork: null,

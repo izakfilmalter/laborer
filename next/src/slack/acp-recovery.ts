@@ -6,7 +6,10 @@ import { Effect, Schema, type Scope } from "effect";
 import type { AcpWorkspaceSupervisorHealthSnapshot } from "../acp-conversation-prototype/acp-process-supervisor.ts";
 import type { ConversationRecoveryDecisionResult } from "../application.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
-import { assertSafeFilePath } from "../prototype/path-safety.ts";
+import {
+  assertSafeFilePath,
+  assertSafeSocketPath,
+} from "../prototype/path-safety.ts";
 import { makePrototypeHarness, type Runner } from "../prototype/runtime.ts";
 import { makeFileStoreLayer } from "../prototype/store.ts";
 import {
@@ -1022,7 +1025,7 @@ export const startAcpRecoverySocket = Effect.fn("startAcpRecoverySocket")(
     yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => {
-          await assertSafeFilePath({
+          await assertSafeSocketPath({
             anchor: options.trustedRoot,
             operation: "start-acp-recovery-socket",
             path: options.path,

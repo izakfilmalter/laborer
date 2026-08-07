@@ -7,7 +7,11 @@ import {
   PublicReplyProtocolRecord,
   ReplyId,
 } from "../src/prototype/domain.ts";
-import { DeliveryError, type StoreError } from "../src/prototype/errors.ts";
+import {
+  DeliveryError,
+  HandlerFailure,
+  type StoreError,
+} from "../src/prototype/errors.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
   LABORER_SLACK_ID,
@@ -71,6 +75,36 @@ const activationWithEventId = (eventId: string) =>
   });
 
 describe("durable activation reaction lifecycle", () => {
+  it.effect("clears the working acknowledgement after handler failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lifecycle: string[] = [];
+        const harness = yield* makePrototypeHarness({
+          activationAcknowledger: {
+            acknowledge: () =>
+              Effect.sync(() => {
+                lifecycle.push("acknowledged");
+              }),
+            complete: () =>
+              Effect.sync(() => {
+                lifecycle.push("completed");
+              }),
+          },
+          handler: {
+            invoke: () =>
+              HandlerFailure.make({ category: "exit", safeDetail: null }),
+          },
+          laborerSlackId: LABORER_SLACK_ID,
+          slack,
+        });
+
+        yield* harness.runner.inject(activation);
+
+        assert.deepStrictEqual(lifecycle, ["acknowledged", "completed"]);
+      })
+    )
+  );
+
   it.live("retries transient add and remove failures before completing", () =>
     Effect.scoped(
       Effect.gen(function* () {

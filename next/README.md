@@ -41,6 +41,14 @@
 > Conversation can use `prompt-execution` to send its interpreted follow-up into
 > that same owned Execution, implementation session, and working directory;
 > subsequent assistant messages traverse the same ordered private update path.
+>
+> **RETIRED CLASSIFIER-WORKER PROTOTYPE for issues #205 and #207.** This handler
+> proved that one short-lived agent could classify an activation, hand a bounded
+> brief to a specialized worker, persist per-thread continuation state, and
+> recover staged classifier or worker results without blindly repeating known
+> completed calls. Its OpenCode V1 CLI dependencies (`--dir` and `export`) were
+> removed upstream. The implementation and dedicated fixtures are gone; it is no
+> longer executable or selected by tracked configuration or package scripts.
 
 ## Run it
 

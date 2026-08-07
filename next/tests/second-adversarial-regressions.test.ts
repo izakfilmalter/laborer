@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
@@ -23,11 +22,6 @@ const processTreeFixture = resolve(
   projectRoot,
   "tests/fixtures/process-tree-handler.ts"
 );
-const stateHelper = resolve(
-  projectRoot,
-  "src/handlers/classifier-worker-state-helper.ts"
-);
-
 const makeTurn = (text: string): ClaimedTurn => {
   const threadId = ThreadId.make("CPROCESS:1.0");
   const message = NormalizedMessage.make({
@@ -198,56 +192,6 @@ describe("second adversarial process regressions", () => {
         SLACK_TEAM_ID: "safe-explicit-metadata",
       });
     })
-  );
-
-  it.effect(
-    "rejects symlink leaves and parent components for handler state",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const temporaryRoot = yield* makeTempDirectoryScoped(
-            "laborer-state-symlink-"
-          );
-          const realDirectory = join(temporaryRoot, "real");
-          const linkedDirectory = join(temporaryRoot, "linked");
-          const externalState = join(temporaryRoot, "external.json");
-          yield* Effect.promise(() => mkdir(realDirectory));
-          yield* Effect.promise(() => writeFile(externalState, "external"));
-          yield* Effect.promise(() => symlink(realDirectory, linkedDirectory));
-          yield* Effect.promise(() =>
-            symlink(
-              externalState,
-              join(realDirectory, "classifier-worker-state.json")
-            )
-          );
-
-          const runHelper = (directory: string) =>
-            new Promise<number | null>((resolveExit, rejectExit) => {
-              const child = spawn(
-                process.execPath,
-                [stateHelper, "read", directory],
-                {
-                  cwd: projectRoot,
-                  stdio: ["ignore", "ignore", "ignore"],
-                }
-              );
-              child.once("error", rejectExit);
-              child.once("exit", resolveExit);
-            });
-          assert.notStrictEqual(
-            yield* Effect.promise(() => runHelper(realDirectory)),
-            0
-          );
-          assert.notStrictEqual(
-            yield* Effect.promise(() => runHelper(linkedDirectory)),
-            0
-          );
-          assert.strictEqual(
-            yield* Effect.promise(() => readFile(externalState, "utf8")),
-            "external"
-          );
-        })
-      )
   );
 
   it.effect("cleans the raw temp directory when canonicalization fails", () =>

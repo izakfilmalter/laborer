@@ -1,0 +1,138 @@
+import type { AgentProvider } from "@ai-hero/sandcastle";
+
+export interface OpenCodeV2AgentOptions {
+  readonly agent?: string;
+  readonly env?: Record<string, string>;
+  readonly variant?: string;
+}
+
+const shellQuote = (value: string): string =>
+  `'${value.replaceAll("'", `'\\''`)}'`;
+
+const toolArgumentFields: Readonly<Record<string, string>> = {
+  bash: "command",
+  task: "description",
+  webfetch: "url",
+};
+
+const errorMessage = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  if (typeof record.message === "string") {
+    return record.message;
+  }
+  return errorMessage(record.error);
+};
+
+const parseCompletedTool = (
+  part: Readonly<Record<string, unknown>>
+): ReturnType<AgentProvider["parseStreamLine"]> => {
+  if (part.type !== "tool" || typeof part.tool !== "string") {
+    return [];
+  }
+  const state = part.state;
+  if (typeof state !== "object" || state === null) {
+    return [];
+  }
+  const stateRecord = state as Readonly<Record<string, unknown>>;
+  const input = stateRecord.input;
+  if (
+    stateRecord.status !== "completed" ||
+    typeof input !== "object" ||
+    input === null
+  ) {
+    return [];
+  }
+  const inputRecord = input as Readonly<Record<string, unknown>>;
+  const argumentField = toolArgumentFields[part.tool];
+  const argument =
+    argumentField === undefined ? undefined : inputRecord[argumentField];
+  return [
+    {
+      args: typeof argument === "string" ? argument : JSON.stringify(input),
+      name: part.tool,
+      type: "tool_call",
+    },
+  ];
+};
+
+const parseOpenCodeV2StreamLine: AgentProvider["parseStreamLine"] = (line) => {
+  if (!line.startsWith("{")) {
+    return [];
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(line) as unknown;
+  } catch {
+    return [];
+  }
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+  const event = value as Readonly<Record<string, unknown>>;
+  if (event.type === "step_start" && typeof event.sessionID === "string") {
+    return [{ sessionId: event.sessionID, type: "session_id" }];
+  }
+  if (event.type === "error") {
+    const message = errorMessage(event);
+    return message === null ? [] : [{ result: message, type: "result" }];
+  }
+  const part = event.part;
+  if (typeof part !== "object" || part === null) {
+    return [];
+  }
+  const partRecord = part as Readonly<Record<string, unknown>>;
+  if (
+    event.type === "text" &&
+    partRecord.type === "text" &&
+    typeof partRecord.text === "string"
+  ) {
+    return [
+      { text: partRecord.text, type: "text" },
+      { result: partRecord.text, type: "result" },
+    ];
+  }
+  if (event.type !== "tool_use") {
+    return [];
+  }
+  return parseCompletedTool(partRecord);
+};
+
+export const opencodeV2Agent = (
+  model: string,
+  options: OpenCodeV2AgentOptions = {}
+): AgentProvider => {
+  const selectedModel = options.variant ? `${model}#${options.variant}` : model;
+
+  return {
+    name: "opencode-v2",
+    env: options.env ?? {},
+    captureSessions: false,
+    buildPrintCommand({ prompt, dangerouslySkipPermissions }) {
+      const args = [
+        "run",
+        "--standalone",
+        "--format",
+        "json",
+        "--model",
+        selectedModel,
+      ];
+      if (options.agent) {
+        args.push("--agent", options.agent);
+      }
+      if (dangerouslySkipPermissions) {
+        args.push("--auto");
+      }
+      return {
+        command: `opencode2 ${args.map(shellQuote).join(" ")}`,
+        stdin: prompt,
+      };
+    },
+    parseStreamLine: parseOpenCodeV2StreamLine,
+  };
+};

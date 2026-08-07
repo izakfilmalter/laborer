@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { createSandbox, Output, opencode, run } from "@ai-hero/sandcastle";
+import { createSandbox, Output, run } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
@@ -32,6 +32,7 @@ import {
   type RunnableIssue,
   scheduleIssueGraph,
 } from "./issue-graph-scheduler/index.ts";
+import { opencodeV2Agent } from "./opencode-v2-agent/index.ts";
 import { waitForExpectedPrHead } from "./pr-head-observation/index.ts";
 import {
   appendSpecProgress,
@@ -156,9 +157,9 @@ const VERIFICATION_POLICY = [
 mkdirSync(BUN_CACHE_DIR, { recursive: true });
 
 const allAroundAgent = () =>
-  opencode("openai/gpt-5.6-sol", { variant: "medium" });
+  opencodeV2Agent("openai/gpt-5.6-sol", { variant: "medium" });
 const uiAgent = () =>
-  opencode("anthropic/claude-opus-5", { variant: "medium" });
+  opencodeV2Agent("anthropic/claude-opus-5", { variant: "medium" });
 
 const sandboxProvider = () =>
   docker({

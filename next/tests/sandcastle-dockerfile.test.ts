@@ -11,12 +11,23 @@ const installsTiniPattern = /apt-get install -y[\s\S]*\btini\b/;
 const tiniEntrypointPattern =
   /ENTRYPOINT \["\/usr\/bin\/tini", "-g", "--", "sleep", "infinity"\]/;
 const openCodeCliInstallPattern = /npm install -g @opencode-ai\/cli@([^\s]+)/;
+const nodeGypInstallPattern = /npm install -g node-gyp@([^\s]+)/;
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 describe("Sandcastle Docker image", () => {
   it("uses an init process that reaps orphaned test children", () => {
     assert.match(dockerfile, installsTiniPattern);
     assert.match(dockerfile, tiniEntrypointPattern);
+  });
+
+  it("can build native dependencies in fresh Linux ARM64 worktrees", () => {
+    for (const tool of ["g++", "make", "python3"]) {
+      assert.include(dockerfile, `  ${tool} \\`);
+    }
+    assert.match(
+      nodeGypInstallPattern.exec(dockerfile)?.[1] ?? "",
+      exactVersionPattern
+    );
   });
 
   it("installs the exact Sandcastle opencode2 CLI pin", () => {

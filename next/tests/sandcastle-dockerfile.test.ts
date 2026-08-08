@@ -32,6 +32,10 @@ describe("Sandcastle Docker image", () => {
   });
 
   it("warms both frozen Bun dependency caches without sending secrets", () => {
+    assert.include(
+      dockerfile,
+      "ENV BUN_INSTALL_CACHE_DIR=/home/agent/.bun/install/cache"
+    );
     assert.include(dockerfile, "current/package.json current/bun.lock");
     assert.include(dockerfile, "next/package.json next/bun.lock");
     assert.include(

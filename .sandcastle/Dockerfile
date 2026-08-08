@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
 # Match both workspace package managers. Sandcastle installs current and next in
 # each worktree so an issue can target either implementation.
 ENV BUN_INSTALL=/usr/local/bun
+ENV BUN_INSTALL_CACHE_DIR=/home/agent/.bun/install/cache
 ENV PATH=/usr/local/bun/bin:$PATH
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.5
 
@@ -34,11 +35,13 @@ RUN npm install -g @opencode-ai/cli@0.0.0-next-16573
 RUN npm install -g node-gyp@13.0.1
 
 RUN mkdir -p \
+  /home/agent/.bun/install/cache \
   /home/agent/.cache \
   /home/agent/.config/opencode \
   /home/agent/.local/share/opencode \
   /home/agent/.local/state \
   && chown -R $AGENT_UID:$AGENT_GID \
+  /home/agent/.bun \
   /home/agent/.cache \
   /home/agent/.config \
   /home/agent/.local

@@ -14,14 +14,13 @@
 import { join } from 'node:path'
 import { type AgentProvider, LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Schema, Stream } from 'effect'
+import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { FileService } from '../services/file-service.js'
-import { runGhPrViewWithOriginFallback } from '../services/github-pr-view.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -42,10 +41,6 @@ import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
 const PRD_ISSUE_EXTERNAL_ID_REGEX = /:issue:(\d+)$/u
-
-const GhPrViewOutput = Schema.Struct({
-  number: Schema.optional(Schema.Number),
-})
 
 const toRpcError = (
   error: PrdStorageError,
@@ -105,81 +100,6 @@ const toTaskResponse = (task: {
   externalId: task.externalId ?? undefined,
   title: task.title,
   status: task.status,
-})
-
-/**
- * Detect the PR number for a workspace's branch.
- *
- * First checks the LiveStore workspace row for a cached `prNumber`
- * (populated by PrWatcher polling). If not available yet, falls back
- * to running `gh pr view --json number` in the worktree directory.
- *
- * If no PR exists for the branch, yields an RpcError so the caller
- * can surface a clear message to the user.
- */
-const detectPrNumber = Effect.fn('detectPrNumber')(function* (
-  workspaceId: string
-) {
-  const { store } = yield* LaborerStore
-  const allWorkspaces = store.query(tables.workspaces)
-  const workspaceOpt = pipe(
-    allWorkspaces,
-    Array.findFirst((w) => w.id === workspaceId)
-  )
-
-  if (workspaceOpt._tag === 'None') {
-    return yield* new RpcError({
-      message: `Workspace not found: ${workspaceId}`,
-      code: 'NOT_FOUND',
-    })
-  }
-
-  const workspace = workspaceOpt.value
-
-  // Fast path: use cached PR number from PrWatcher polling
-  if (typeof workspace.prNumber === 'number' && workspace.prNumber > 0) {
-    return workspace.prNumber
-  }
-
-  // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
-  const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
-    workspace.worktreePath,
-    workspace.branchName,
-    'number',
-    (error) =>
-      new RpcError({
-        message: `Failed to run gh pr view: ${String(error)}`,
-        code: 'GH_COMMAND_FAILED',
-      })
-  )
-
-  if (exitCode !== 0) {
-    return yield* new RpcError({
-      message: `No pull request found for branch "${workspace.branchName}". Push the branch and open a PR first.\n${stderr.trim()}`,
-      code: 'PR_NOT_FOUND',
-    })
-  }
-
-  const parsed = yield* Schema.decodeUnknown(Schema.parseJson(GhPrViewOutput))(
-    stdout.trim()
-  ).pipe(
-    Effect.mapError(
-      () =>
-        new RpcError({
-          message: `Could not parse PR number from gh output: ${stdout.trim()}`,
-          code: 'PR_NOT_FOUND',
-        })
-    )
-  )
-
-  if (typeof parsed.number !== 'number' || parsed.number <= 0) {
-    return yield* new RpcError({
-      message: `Could not parse PR number from gh output: ${stdout.trim()}`,
-      code: 'PR_NOT_FOUND',
-    })
-  }
-
-  return parsed.number
 })
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
@@ -325,7 +245,6 @@ export const handleConfigUpdate = ({
         }
       | undefined
     prdsDir?: string | undefined
-    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -347,8 +266,6 @@ export const handleConfigUpdate = ({
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
-      (config.brrrConfig === undefined ||
-        typeof config.brrrConfig === 'string') &&
       isValidSetupScripts &&
       isValidDevServer
 
@@ -356,7 +273,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -797,7 +714,6 @@ export const handleProjectList = () =>
       id: project.id,
       repoPath: project.repoPath,
       name: project.name,
-      brrrConfig: project.brrrConfig ?? undefined,
     }))
   })
 
@@ -814,9 +730,6 @@ export const handleProjectList = () =>
  * - terminal.spawn: delegates to TerminalClient.spawnInWorkspace (Issue #50/#143)
  * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
  * - editor.open: opens file in configured editor (Issue #111)
- * - brrr.startLoop: delegates to TerminalClient.spawnInWorkspace with `brrr build --once` (Issue #92/#143)
- * - brrr.review: delegates to TerminalClient.spawnInWorkspace with `brrr review <prNumber>` (Issue #96/#143)
- * - brrr.fix: delegates to TerminalClient.spawnInWorkspace with `brrr fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
  * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" + auto-destroys on "completed"/"cancelled" (Issue #101/#105/#106)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
@@ -868,7 +781,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          brrrConfig: project.brrrConfig ?? undefined,
         }
       }),
     'project.remove': ({ projectId }) =>
@@ -1316,31 +1228,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
               code: 'EDITOR_FAILED',
             }),
         })
-      }),
-
-    // -------------------------------------------------------------------
-    // brrr RPCs (Issue #92-98, #143)
-    // Now delegate to TerminalClient.spawnInWorkspace instead of TerminalManager.
-    // -------------------------------------------------------------------
-    'brrr.startLoop': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, 'brrr build --once')
-      }),
-    'brrr.review': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const prNumber = yield* detectPrNumber(workspaceId)
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(
-          workspaceId,
-          `brrr review ${prNumber}`
-        )
-      }),
-    'brrr.fix': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const prNumber = yield* detectPrNumber(workspaceId)
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, `brrr fix ${prNumber}`)
       }),
 
     // -------------------------------------------------------------------

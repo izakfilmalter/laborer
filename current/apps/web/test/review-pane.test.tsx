@@ -6,12 +6,12 @@
  * and error states, finding cards with severity sorting, collapsible
  * suggested fixes, comment cards with author info, polling behavior, manual
  * refresh, checkbox selection, reaction state display, selection controls,
- * Fix Selected action, and Unqueue action.
+ * and Unqueue action.
  *
  * @see Issue #5: Grouped display with severity badges
  * @see Issue #6: Polling + manual refresh
  * @see Issue #8: Checkbox selection + reaction state display
- * @see Issue #9: Rocket reaction RPCs + Fix Selected action
+ * @see Issue #9: Rocket reaction RPCs
  */
 
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -31,7 +31,6 @@ const mockAddReaction = vi.fn().mockResolvedValue({
   userId: 100,
 })
 const mockRemoveReaction = vi.fn().mockResolvedValue(undefined)
-const mockFixFindings = vi.fn().mockResolvedValue({ id: 'terminal-1' })
 const mockEditorOpen = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -43,8 +42,6 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
         return mockAddReaction
       case 'review.removeReaction':
         return mockRemoveReaction
-      case 'brrr.fix':
-        return mockFixFindings
       case 'editor.open':
         return mockEditorOpen
       default:
@@ -64,14 +61,6 @@ vi.mock('@/atoms/laborer-client', () => ({
 // so the component renders its content without phase gating.
 vi.mock('@/hooks/use-when-phase', () => ({
   useWhenPhase: () => true,
-}))
-
-const mockAssignTerminalToPane = vi.fn()
-
-vi.mock('@/panels/panel-context', () => ({
-  usePanelActions: () => ({
-    assignTerminalToPane: mockAssignTerminalToPane,
-  }),
 }))
 
 const mockScrollDiffToFile = vi.fn()
@@ -290,11 +279,8 @@ describe('ReviewPane', () => {
     })
     mockRemoveReaction.mockReset()
     mockRemoveReaction.mockResolvedValue(undefined)
-    mockFixFindings.mockReset()
-    mockFixFindings.mockResolvedValue({ id: 'terminal-1' })
     mockEditorOpen.mockReset()
     mockEditorOpen.mockResolvedValue(undefined)
-    mockAssignTerminalToPane.mockReset()
     mockScrollDiffToFile.mockReset()
   })
 
@@ -1143,86 +1129,8 @@ describe('ReviewPane', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Issue #9: Rocket reaction RPCs + Fix Selected action
+  // Issue #9: Rocket reaction RPCs
   // -------------------------------------------------------------------------
-
-  it('renders Fix Selected button when findings exist', () => {
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [CRITICAL_FINDING, WARNING_FINDING],
-        comments: [],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    const fixButton = screen.getByTestId('fix-selected-button')
-    expect(fixButton).toBeTruthy()
-  })
-
-  it('Fix Selected button is disabled when no findings are selected', () => {
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [CRITICAL_FINDING, WARNING_FINDING],
-        comments: [],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    const fixButton = screen.getByTestId('fix-selected-button')
-    expect(fixButton.getAttribute('disabled')).not.toBeNull()
-  })
-
-  it('Fix Selected button is enabled when findings are selected', async () => {
-    const user = userEvent.setup()
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [CRITICAL_FINDING],
-        comments: [],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    // Select a finding
-    const checkbox = screen.getByTestId('finding-checkbox')
-    await user.click(checkbox)
-
-    const fixButton = screen.getByTestId('fix-selected-button')
-    expect(fixButton.getAttribute('disabled')).toBeNull()
-  })
-
-  it('Fix Selected button shows count when findings are selected', async () => {
-    const user = userEvent.setup()
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [CRITICAL_FINDING, WARNING_FINDING],
-        comments: [],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    // Select both findings
-    const checkboxes = screen.getAllByTestId('finding-checkbox')
-    if (!(checkboxes[0] && checkboxes[1])) {
-      throw new Error('Expected at least 2 checkboxes')
-    }
-    await user.click(checkboxes[0])
-    await user.click(checkboxes[1])
-
-    const fixButton = screen.getByTestId('fix-selected-button')
-    expect(fixButton.textContent).toContain('(2)')
-  })
 
   it('queues a finding immediately when its checkbox is clicked', async () => {
     const user = userEvent.setup()
@@ -1247,43 +1155,6 @@ describe('ReviewPane', () => {
         content: 'rocket',
       },
     })
-  })
-
-  it('Fix Selected button starts fix after findings are queued', async () => {
-    const user = userEvent.setup()
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [CRITICAL_FINDING],
-        comments: [],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    await user.click(screen.getByTestId('finding-checkbox'))
-    await user.click(screen.getByTestId('fix-selected-button'))
-
-    expect(mockAddReaction).toHaveBeenCalledTimes(1)
-    expect(mockFixFindings).toHaveBeenCalledWith({
-      payload: { workspaceId: 'ws-1' },
-    })
-  })
-
-  it('does not render Fix Selected button when no findings exist', () => {
-    currentResult = {
-      _tag: 'Success',
-      waiting: false,
-      value: {
-        verdict: null,
-        findings: [],
-        comments: [ISSUE_COMMENT],
-      },
-    }
-    render(<ReviewPane workspaceId="ws-1" />)
-
-    expect(screen.queryByTestId('fix-selected-button')).toBeNull()
   })
 
   it('renders Unqueue button on findings with rocket reaction', () => {

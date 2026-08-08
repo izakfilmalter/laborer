@@ -41,7 +41,6 @@ const setupWorkspace = (
       id: 'project-1',
       repoPath,
       name: 'test-repo',
-      brrrConfig: null,
     })
   )
   store.commit(

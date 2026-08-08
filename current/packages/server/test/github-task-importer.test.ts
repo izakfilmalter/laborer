@@ -76,7 +76,6 @@ describe('GithubTaskImporter.importProjectIssues', () => {
             id: 'project-1',
             repoPath,
             name: 'laborer',
-            brrrConfig: null,
           })
         )
         store.commit(
@@ -159,7 +158,6 @@ describe('GithubTaskImporter.importProjectIssues', () => {
           id: 'project-1',
           repoPath,
           name: 'laborer',
-          brrrConfig: null,
         })
       )
 

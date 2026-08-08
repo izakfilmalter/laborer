@@ -14,9 +14,7 @@
  * or won't-fix (confused). Already-resolved findings are visually dimmed.
  * A selected count and select all/deselect all control appear in the header.
  *
- * "Fix Selected" adds rocket reactions to all selected findings and spawns
- * a `brrr fix` terminal. "Unqueue" removes the rocket reaction from a
- * single finding.
+ * "Unqueue" removes the rocket reaction from a single finding.
  *
  * File:line references in finding cards and inline comment cards are
  * clickable — clicking opens the file in the user's configured editor
@@ -49,7 +47,6 @@ import {
   AlertTriangle,
   ChevronRight,
   ClipboardCheck,
-  Eye,
   FileCode,
   GitPullRequestClosed,
   MessageSquare,
@@ -57,7 +54,6 @@ import {
   Rocket,
   Search,
   ThumbsUp,
-  Wrench,
   X,
 } from 'lucide-react'
 import {
@@ -94,12 +90,9 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useDiffScrollDispatch } from '@/panels/diff-scroll-context'
-import { usePanelActions } from '@/panels/panel-context'
 
 const addReactionMutation = LaborerClient.mutation('review.addReaction')
 const removeReactionMutation = LaborerClient.mutation('review.removeReaction')
-const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
-const reviewPrMutation = LaborerClient.mutation('brrr.review')
 const editorOpenMutation = LaborerClient.mutation('editor.open')
 
 /** Polling interval in milliseconds (30 seconds). */
@@ -665,101 +658,20 @@ function ReviewPaneContent({
   const allSelected = findings.length > 0 && selectedCount === findings.length
 
   // -----------------------------------------------------------------------
-  // Mutation hooks for rocket reactions, brrr fix, review, and editor open.
+  // Mutation hooks for rocket reactions and editor open.
   // -----------------------------------------------------------------------
   const addReaction = useAtomSet(addReactionMutation, { mode: 'promise' })
   const removeReaction = useAtomSet(removeReactionMutation, { mode: 'promise' })
-  const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
-  const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
-  const panelActions = usePanelActions()
   const scrollDiffToFile = useDiffScrollDispatch()
 
   // Ref to avoid stale closures in the onOpenFile callback passed to cards.
   const openEditorRef = useRef(openEditor)
   openEditorRef.current = openEditor
 
-  const [isFixing, setIsFixing] = useState(false)
-  const [isReviewStarting, setIsReviewStarting] = useState(false)
-
-  /** Start a new AI review via `brrr review`. */
-  const handleStartReview = useCallback(async () => {
-    setIsReviewStarting(true)
-    try {
-      const reviewResult = await reviewPr({
-        payload: { workspaceId },
-      })
-      toast.success('Review started')
-      if (panelActions) {
-        panelActions.assignTerminalToPane(reviewResult.id, workspaceId)
-      }
-    } catch (error: unknown) {
-      const message = extractErrorMessage(error)
-      toast.error(`Failed to start PR review: ${message}`)
-    } finally {
-      setIsReviewStarting(false)
-    }
-  }, [workspaceId, reviewPr, panelActions])
   const [unqueuingCommentId, setUnqueuingCommentId] = useState<number | null>(
     null
   )
-
-  /**
-   * Fix Selected: ensure selected findings are queued, then kick off `brrr fix`.
-   */
-  const handleFixSelected = useCallback(async () => {
-    setIsFixing(true)
-    try {
-      const unqueuedSelectedFindings = displayedFindings.filter(
-        (finding) =>
-          selectedIds.has(finding.commentId) &&
-          !hasReaction(finding.reactions, 'rocket')
-      )
-
-      await Promise.all(
-        unqueuedSelectedFindings.map((finding) =>
-          addReaction({
-            payload: {
-              workspaceId,
-              commentId: finding.commentId,
-              content: 'rocket',
-            },
-          })
-        )
-      )
-
-      const result = await fixFindings({
-        payload: { workspaceId },
-      })
-      toast.success('Fix started')
-      if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId)
-      }
-
-      // Clear selection and refresh to show updated reaction state
-      setSelectedIds(new Set())
-      refresh()
-      startPolling()
-    } catch (error: unknown) {
-      const message = extractErrorMessage(error)
-      const code = extractErrorCode(error)
-      const guidance = getErrorGuidance(code ?? null)
-      toast.error('Failed to start fix', {
-        description: guidance ?? message,
-      })
-    } finally {
-      setIsFixing(false)
-    }
-  }, [
-    addReaction,
-    displayedFindings,
-    fixFindings,
-    panelActions,
-    refresh,
-    selectedIds,
-    startPolling,
-    workspaceId,
-  ])
 
   const handleQueueFinding = useCallback(
     async (finding: ReviewFinding) => {
@@ -928,10 +840,8 @@ function ReviewPaneContent({
       <>
         <ReviewPaneHeader
           isRefreshing={false}
-          isReviewStarting={isReviewStarting}
           onClose={onClose}
           onRefresh={handleManualRefresh}
-          onStartReview={handleStartReview}
         />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -981,10 +891,8 @@ function ReviewPaneContent({
       <>
         <ReviewPaneHeader
           isRefreshing={false}
-          isReviewStarting={isReviewStarting}
           onClose={onClose}
           onRefresh={handleManualRefresh}
-          onStartReview={handleStartReview}
         />
         <div className="p-3">
           <Alert variant="destructive">
@@ -1010,10 +918,8 @@ function ReviewPaneContent({
       <>
         <ReviewPaneHeader
           isRefreshing={isRefreshing}
-          isReviewStarting={isReviewStarting}
           onClose={onClose}
           onRefresh={handleManualRefresh}
-          onStartReview={handleStartReview}
         />
         <Empty className="flex-1">
           <EmptyHeader>
@@ -1037,18 +943,14 @@ function ReviewPaneContent({
     <>
       <ReviewPaneHeader
         isRefreshing={isRefreshing}
-        isReviewStarting={isReviewStarting}
         onClose={onClose}
         onRefresh={handleManualRefresh}
-        onStartReview={handleStartReview}
       />
       {findings.length > 0 && (
         <ReviewActionsBar
           allSelected={allSelected}
           findingsCount={findings.length}
-          isFixing={isFixing}
           onDeselectAll={handleDeselectAll}
-          {...(findings.length > 0 ? { onFixSelected: handleFixSelected } : {})}
           onSelectAll={handleSelectAll}
           selectedCount={selectedCount}
         />
@@ -1093,21 +995,16 @@ function ReviewPaneContent({
 }
 
 /**
- * The review pane header — combines the "Review" title with refresh controls
- * and an "AI Review" button to start a new brrr review.
+ * The review pane header combines the "Review" title with refresh controls.
  */
 function ReviewPaneHeader({
   isRefreshing,
   onClose,
   onRefresh,
-  onStartReview,
-  isReviewStarting,
 }: {
   readonly isRefreshing: boolean
-  readonly isReviewStarting?: boolean
   readonly onClose?: (() => void) | undefined
   readonly onRefresh: () => void
-  readonly onStartReview?: () => void
 }) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
@@ -1122,20 +1019,6 @@ function ReviewPaneHeader({
             <RefreshCw className="size-3 animate-spin" />
             <span>Refreshing...</span>
           </div>
-        )}
-        {onStartReview && (
-          <Button
-            aria-label="Start AI review"
-            className="h-5 gap-1 px-1.5 text-xs"
-            data-testid="ai-review-button"
-            disabled={isReviewStarting}
-            onClick={onStartReview}
-            size="sm"
-            variant="ghost"
-          >
-            <Eye className="size-3 text-chart-4" />
-            AI Review
-          </Button>
         )}
         <Button
           aria-label="Refresh comments"
@@ -1170,17 +1053,13 @@ function ReviewPaneHeader({
 function ReviewActionsBar({
   allSelected = false,
   findingsCount = 0,
-  isFixing = false,
   onDeselectAll,
-  onFixSelected,
   onSelectAll,
   selectedCount,
 }: {
   readonly allSelected?: boolean
   readonly findingsCount?: number
-  readonly isFixing?: boolean
   readonly onDeselectAll?: () => void
-  readonly onFixSelected?: () => void | Promise<void>
   readonly onSelectAll?: () => void
   readonly selectedCount: number
 }) {
@@ -1220,23 +1099,6 @@ function ReviewActionsBar({
           >
             {selectedCount} selected
           </span>
-        )}
-      </div>
-      <div className="flex items-center gap-1">
-        {/* Fix Selected button */}
-        {onFixSelected && (
-          <Button
-            aria-label={`Fix ${selectedCount} selected finding${selectedCount === 1 ? '' : 's'}`}
-            className="h-5 gap-1 px-1.5 text-xs"
-            data-testid="fix-selected-button"
-            disabled={selectedCount === 0 || isFixing}
-            onClick={onFixSelected}
-            size="sm"
-            variant="ghost"
-          >
-            <Wrench className="size-3" />
-            Fix{selectedCount > 0 ? ` (${selectedCount})` : ''}
-          </Button>
         )}
       </div>
     </div>

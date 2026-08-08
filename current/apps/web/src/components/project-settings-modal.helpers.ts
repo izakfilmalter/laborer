@@ -7,7 +7,6 @@ type SandboxProviderType = 'docker' | 'daytona' | 'none'
 
 interface ResolvedConfigSnapshot {
   readonly agent: AgentProvider
-  readonly brrrConfig: string | null
   readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
@@ -21,7 +20,6 @@ interface ResolvedConfigSnapshot {
 
 interface ConfigUpdates {
   agent?: AgentProvider
-  brrrConfig?: string
   devServer?: {
     autoOpen?: boolean
     image?: string
@@ -136,7 +134,6 @@ const buildConfigUpdates = ({
   devServerProvider,
   devServerSetupScripts,
   devServerStartCommand,
-  brrrConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
@@ -149,7 +146,6 @@ const buildConfigUpdates = ({
   devServerProvider: SandboxProviderType | null
   devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
-  brrrConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
@@ -162,7 +158,6 @@ const buildConfigUpdates = ({
 
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
-  const normalizedBrrrConfig = brrrConfig.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -175,13 +170,6 @@ const buildConfigUpdates = ({
     !areStringArraysEqual(normalizedSetupScripts, resolvedConfig.setupScripts)
   ) {
     updates.setupScripts = normalizedSetupScripts
-  }
-
-  if (
-    normalizedBrrrConfig.length > 0 &&
-    normalizedBrrrConfig !== (resolvedConfig.brrrConfig ?? '')
-  ) {
-    updates.brrrConfig = normalizedBrrrConfig
   }
 
   const devServerUpdate = buildDevServerUpdates(

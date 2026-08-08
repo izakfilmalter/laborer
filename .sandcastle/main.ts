@@ -109,7 +109,7 @@ interface PlannedIssue extends z.infer<typeof plannedIssueSchema> {
 type Sandbox = Awaited<ReturnType<typeof createSandbox>>;
 
 const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
-const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 1);
+const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 4);
 const OPENCODE_MAX_ATTEMPTS = positiveIntegerEnv(
   "SANDCASTLE_OPENCODE_MAX_ATTEMPTS",
   3

@@ -1,9 +1,12 @@
 FROM node:24.11.1-bookworm
 
 RUN apt-get update && apt-get install -y \
+  g++ \
   curl \
   git \
   jq \
+  make \
+  python3 \
   tini \
   unzip \
   && rm -rf /var/lib/apt/lists/*
@@ -28,6 +31,7 @@ RUN groupmod -o -g $AGENT_GID node \
   && usermod -o -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
 
 RUN npm install -g @opencode-ai/cli@0.0.0-next-16573
+RUN npm install -g node-gyp@13.0.1
 
 RUN mkdir -p \
   /home/agent/.cache \

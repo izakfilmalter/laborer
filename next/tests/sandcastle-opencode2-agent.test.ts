@@ -213,6 +213,8 @@ describe("Sandcastle opencode2 agent", () => {
         "Continue preserved work.\n---attempt---\nContinue preserved work.\n---attempt---\n"
       );
       assert.include(stdout, '"text":"recovered"');
+      assert.include(stdout, "retrying preserved worktree");
+      assert.notInclude(invocation.command, ">&2");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

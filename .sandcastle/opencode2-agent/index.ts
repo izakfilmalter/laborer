@@ -147,7 +147,7 @@ export const opencode2Agent = (
           `  ${invocation} < "$prompt_file" && exit 0`,
           "  status=$?",
           `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
-          '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt" >&2',
+          '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',
           `  sleep $((attempt * ${retryDelaySeconds}))`,
           "  attempt=$((attempt + 1))",
           "done",

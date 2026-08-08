@@ -1,6 +1,6 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
-import { Chat } from "chat";
+import { type Adapter, Chat } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
 
 export interface ChatSdkMessageLike {
@@ -142,11 +142,13 @@ export const makeLiveChatPlaneLayer = (
     makeSdk: () => {
       const bot = new Chat({
         adapters: {
+          // SlackAdapter implements Adapter at runtime, but its botUserId getter
+          // is declared `string | undefined` rather than as an optional property.
           slack: createSlackAdapter({
             appToken: config.appToken,
             botToken: config.botToken,
             mode: "socket",
-          }),
+          }) as Adapter,
         },
         logger: "info",
         state: createMemoryState(),

@@ -139,9 +139,7 @@ describe("Chat plane walking skeleton", () => {
 
         const failure = yield* Effect.flip(
           Effect.provide(
-            Effect.gen(function* () {
-              yield* ChatPlane;
-            }),
+            Effect.asVoid(ChatPlane),
             makeChatPlaneLayer({
               handler: placeholderMentionHandler,
               makeSdk: () => sdk,

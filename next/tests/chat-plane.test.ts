@@ -5,6 +5,7 @@ import { Effect } from "effect";
 import {
   ChatPlane,
   ChatPlaneOperationError,
+  ChatPlaneStartupError,
   type ChatSdkLike,
   type ChatSdkMentionHandler,
   type ChatSdkThreadLike,
@@ -114,6 +115,48 @@ describe("Chat plane walking skeleton", () => {
         assert.instanceOf(failures.streamReply, ChatPlaneOperationError);
         assert.equal(failures.streamReply.operation, "thread.post");
         assert.equal(failures.streamReply.reason, "Chat SDK operation failed");
+      })
+    )
+  );
+
+  it.effect("shuts down an SDK whose initialization fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lifecycle: string[] = [];
+        const sdk: ChatSdkLike = {
+          initialize: () => {
+            lifecycle.push("initialize");
+            return Promise.reject(new Error("private initialization failure"));
+          },
+          onNewMention: () => {
+            lifecycle.push("register");
+          },
+          shutdown: () => {
+            lifecycle.push("shutdown");
+            return Promise.resolve();
+          },
+        };
+
+        const failure = yield* Effect.flip(
+          Effect.provide(
+            Effect.gen(function* () {
+              yield* ChatPlane;
+            }),
+            makeChatPlaneLayer({
+              handler: placeholderMentionHandler,
+              makeSdk: () => sdk,
+            })
+          )
+        );
+
+        assert.instanceOf(failure, ChatPlaneStartupError);
+        assert.equal(failure.operation, "initialize");
+        assert.equal(failure.reason, "Chat SDK startup failed");
+        assert.deepStrictEqual(lifecycle, [
+          "register",
+          "initialize",
+          "shutdown",
+        ]);
       })
     )
   );

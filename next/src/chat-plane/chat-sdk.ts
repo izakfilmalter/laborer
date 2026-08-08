@@ -1,6 +1,6 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
-import { type Adapter, Chat } from "chat";
+import { Chat } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
 
 export interface ChatSdkMessageLike {
@@ -146,7 +146,7 @@ export const makeLiveChatPlaneLayer = (
             appToken: config.appToken,
             botToken: config.botToken,
             mode: "socket",
-          }) as Adapter,
+          }),
         },
         logger: "info",
         state: createMemoryState(),

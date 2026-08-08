@@ -169,6 +169,55 @@ describe("Sandcastle opencode2 agent", () => {
     assert.include(invocation.command, "'anthropic/claude-opus-5'");
   });
 
+  it("replays the prompt after a transient process failure", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-retry-"));
+    const executable = join(directory, "opencode2");
+    const attemptsPath = join(directory, "attempts");
+    const stdinPath = join(directory, "stdin");
+    writeFileSync(
+      executable,
+      [
+        "#!/bin/sh",
+        'attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
+        'printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
+        'cat >> "$FAKE_OPENCODE_STDIN"',
+        'printf "\\n---attempt---\\n" >> "$FAKE_OPENCODE_STDIN"',
+        '[ "$attempt" -gt 1 ] || exit 1',
+        'printf \'%s\\n\' \'{"type":"text","part":{"type":"text","text":"recovered"}}\'',
+      ].join("\n")
+    );
+    chmodSync(executable, 0o755);
+
+    try {
+      const invocation = opencode2Agent("fixture/model", {
+        maxAttempts: 2,
+        retryDelaySeconds: 0,
+      }).buildPrintCommand({
+        dangerouslySkipPermissions: true,
+        prompt: "Continue preserved work.",
+      });
+      const stdout = await runCommand(
+        invocation.command,
+        invocation.stdin ?? "",
+        {
+          ...process.env,
+          FAKE_OPENCODE_ATTEMPTS: attemptsPath,
+          FAKE_OPENCODE_STDIN: stdinPath,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+        }
+      );
+
+      assert.strictEqual(readFileSync(attemptsPath, "utf8"), "2");
+      assert.strictEqual(
+        readFileSync(stdinPath, "utf8"),
+        "Continue preserved work.\n---attempt---\nContinue preserved work.\n---attempt---\n"
+      );
+      assert.include(stdout, '"text":"recovered"');
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("fails closed on malformed records and surfaces opencode2 errors", () => {
     const agent = opencode2Agent("fixture/model");
 

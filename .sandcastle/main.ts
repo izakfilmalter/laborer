@@ -109,7 +109,15 @@ interface PlannedIssue extends z.infer<typeof plannedIssueSchema> {
 type Sandbox = Awaited<ReturnType<typeof createSandbox>>;
 
 const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
-const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 4);
+const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 2);
+const OPENCODE_MAX_ATTEMPTS = positiveIntegerEnv(
+  "SANDCASTLE_OPENCODE_MAX_ATTEMPTS",
+  3
+);
+const OPENCODE_RETRY_DELAY_SECONDS = nonNegativeIntegerEnv(
+  "SANDCASTLE_OPENCODE_RETRY_DELAY_SECONDS",
+  15
+);
 const MAX_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
   "SANDCASTLE_MAX_REPAIR_ATTEMPTS",
   3
@@ -180,9 +188,17 @@ const VERIFICATION_POLICY = [
 prepareOpenCodeCredentialSeed();
 
 const allAroundAgent = () =>
-  opencode2Agent("openai/gpt-5.6-sol-fast", { variant: "medium" });
+  opencode2Agent("openai/gpt-5.6-sol-fast", {
+    maxAttempts: OPENCODE_MAX_ATTEMPTS,
+    retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    variant: "medium",
+  });
 const uiAgent = () =>
-  opencode2Agent("anthropic/claude-opus-5", { variant: "medium" });
+  opencode2Agent("anthropic/claude-opus-5", {
+    maxAttempts: OPENCODE_MAX_ATTEMPTS,
+    retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    variant: "medium",
+  });
 
 const sandboxProvider = () =>
   docker({

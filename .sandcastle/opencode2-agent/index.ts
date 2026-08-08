@@ -3,6 +3,8 @@ import type { AgentProvider } from "@ai-hero/sandcastle";
 export interface OpenCode2AgentOptions {
   readonly agent?: string;
   readonly env?: Record<string, string>;
+  readonly maxAttempts?: number;
+  readonly retryDelaySeconds?: number;
   readonly variant?: string;
 }
 
@@ -108,6 +110,11 @@ export const opencode2Agent = (
   options: OpenCode2AgentOptions = {}
 ): AgentProvider => {
   const selectedModel = options.variant ? `${model}#${options.variant}` : model;
+  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 3));
+  const retryDelaySeconds = Math.max(
+    0,
+    Math.floor(options.retryDelaySeconds ?? 15)
+  );
 
   return {
     name: "opencode2",
@@ -128,8 +135,23 @@ export const opencode2Agent = (
       if (dangerouslySkipPermissions) {
         args.push("--auto");
       }
+      const invocation = `opencode2 ${args.map(shellQuote).join(" ")}`;
       return {
-        command: `if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db; fi && opencode2 ${args.map(shellQuote).join(" ")}`,
+        command: [
+          'prompt_file="$(mktemp)"',
+          'trap \'rm -f "$prompt_file"\' EXIT HUP INT TERM',
+          'cat > "$prompt_file"',
+          "attempt=1",
+          "while :; do",
+          "  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db; fi",
+          `  ${invocation} < "$prompt_file" && exit 0`,
+          "  status=$?",
+          `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
+          '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt" >&2',
+          `  sleep $((attempt * ${retryDelaySeconds}))`,
+          "  attempt=$((attempt + 1))",
+          "done",
+        ].join("\n"),
         stdin: prompt,
       };
     },

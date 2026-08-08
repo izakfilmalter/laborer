@@ -4,6 +4,8 @@ status: accepted
 
 # The Slack plane is the Vercel Chat SDK, and conversational delivery is at-most-once
 
+Native specification: [#330 — Chat SDK becomes the Slack plane; Laborer focuses on conversation, Actions, and Executions](https://github.com/izakfilmalter/laborer/issues/330).
+
 Laborer `next/` adopts the Vercel Chat SDK (`chat` + `@chat-adapter/slack`, Socket Mode) as its entire Slack plane: ingestion, normalization, routing, delivery, streaming, and interactive UI (Block Kit, permission buttons). The bespoke durable conversational machinery it replaces is deleted rather than rebuilt on top: durable-acceptance-before-ACK, the per-thread turn FIFO and replayable turn attempts, the durable outbox with delivery-gated turn settlement, the crash-resumable Slack stream projection, and the blue/green development daemon generations. Chat SDK is wrapped in a narrow Effect service; multi-workspace uses one Slack adapter with an `installationProvider` backed by local per-workspace tokens; Chat SDK state lives in a custom SQLite `StateAdapter`; runtime state collapses from per-root ownership to a single state root partitioned by Slack workspace.
 
 What survives, unchanged in ownership: ACP/OpenCode child-process supervision, the Action/Execution durable runtime (SQLite + Effect Cluster) and its private Execution event path, the public/private output gate (`NO_REPLY`, current-prompt-only publication, implementation agents never publish), and Agent context (Soul, Workspace memory, User profiles).

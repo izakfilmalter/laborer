@@ -147,7 +147,6 @@ const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
 const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
 const SANDBOX_IMAGE_NAME =
   process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer";
-const BUN_CACHE_DIR = resolve(SANDCASTLE_DIR, "bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
 const RUNNER_BASE_WORKTREE = resolve(REPO_ROOT, ".sandcastle/base");
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
@@ -178,7 +177,6 @@ const VERIFICATION_POLICY = [
   "Never run live Slack or ACP canaries unless an issue explicitly requires a manual credentialed smoke test.",
 ].join(" ");
 
-mkdirSync(BUN_CACHE_DIR, { recursive: true });
 prepareOpenCodeCredentialSeed();
 
 const allAroundAgent = () =>
@@ -221,10 +219,6 @@ const sandboxProvider = () =>
         sandboxPath:
           "/home/agent/.local/share/opencode/opencode-next.seed.db",
         readonly: true,
-      },
-      {
-        hostPath: BUN_CACHE_DIR,
-        sandboxPath: "/home/agent/.bun/install/cache",
       },
     ],
   });

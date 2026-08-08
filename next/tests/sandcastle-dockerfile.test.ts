@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { assert, describe, it } from "@effect/vitest";
 
 const dockerfile = readFileSync("../.sandcastle/Dockerfile", "utf8");
+const dockerignore = readFileSync("../.dockerignore", "utf8");
 const packageJson = JSON.parse(
   readFileSync("../.sandcastle/package.json", "utf8")
 ) as {
@@ -28,6 +29,21 @@ describe("Sandcastle Docker image", () => {
       nodeGypInstallPattern.exec(dockerfile)?.[1] ?? "",
       exactVersionPattern
     );
+  });
+
+  it("warms both frozen Bun dependency caches without sending secrets", () => {
+    assert.include(dockerfile, "current/package.json current/bun.lock");
+    assert.include(dockerfile, "next/package.json next/bun.lock");
+    assert.include(
+      dockerfile,
+      "bun install --cwd /tmp/sandcastle-current --frozen-lockfile --ignore-scripts"
+    );
+    assert.include(
+      dockerfile,
+      "bun install --cwd /tmp/sandcastle-next --frozen-lockfile --ignore-scripts"
+    );
+    assert.include(dockerignore, "**/.env");
+    assert.include(dockerignore, "**/node_modules/");
   });
 
   it("installs the exact Sandcastle opencode2 CLI pin", () => {

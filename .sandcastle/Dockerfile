@@ -44,5 +44,26 @@ RUN mkdir -p \
   /home/agent/.local
 
 USER ${AGENT_UID}:${AGENT_GID}
+
+# Populate the agent user's Bun cache from lockfiles without baking a worktree's
+# node_modules into the image. Runtime frozen installs still validate and link
+# each worktree, but package archives do not need to be downloaded again.
+COPY --chown=$AGENT_UID:$AGENT_GID current/package.json current/bun.lock /tmp/sandcastle-current/
+COPY --chown=$AGENT_UID:$AGENT_GID current/apps/desktop/package.json /tmp/sandcastle-current/apps/desktop/
+COPY --chown=$AGENT_UID:$AGENT_GID current/apps/web/package.json /tmp/sandcastle-current/apps/web/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/config/package.json /tmp/sandcastle-current/packages/config/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/env/package.json /tmp/sandcastle-current/packages/env/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/file-watcher/package.json /tmp/sandcastle-current/packages/file-watcher/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/mcp/package.json /tmp/sandcastle-current/packages/mcp/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/server/package.json /tmp/sandcastle-current/packages/server/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/shared/package.json /tmp/sandcastle-current/packages/shared/
+COPY --chown=$AGENT_UID:$AGENT_GID current/packages/terminal/package.json /tmp/sandcastle-current/packages/terminal/
+RUN bun install --cwd /tmp/sandcastle-current --frozen-lockfile --ignore-scripts \
+  && rm -rf /tmp/sandcastle-current
+
+COPY --chown=$AGENT_UID:$AGENT_GID next/package.json next/bun.lock /tmp/sandcastle-next/
+RUN bun install --cwd /tmp/sandcastle-next --frozen-lockfile --ignore-scripts \
+  && rm -rf /tmp/sandcastle-next
+
 WORKDIR /home/agent
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "sleep", "infinity"]

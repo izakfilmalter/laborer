@@ -156,6 +156,7 @@ describe("Sandcastle fast flow", () => {
     assert.include(main, "bun install --cwd next --frozen-lockfile");
     assert.include(main, "prepareOpenCodeCredentialSeed()");
     assert.include(main, "HOST_ANTHROPIC_PLUGIN_DIST");
+    assert.notInclude(main, "BUN_CACHE_DIR");
     assert.include(
       main,
       '"/home/agent/.local/share/opencode/opencode-next.seed.db"'

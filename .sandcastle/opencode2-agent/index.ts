@@ -1,6 +1,6 @@
 import type { AgentProvider } from "@ai-hero/sandcastle";
 
-export interface OpenCodeV2AgentOptions {
+export interface OpenCode2AgentOptions {
   readonly agent?: string;
   readonly env?: Record<string, string>;
   readonly variant?: string;
@@ -61,7 +61,7 @@ const parseCompletedTool = (
   ];
 };
 
-const parseOpenCodeV2StreamLine: AgentProvider["parseStreamLine"] = (line) => {
+const parseOpenCode2StreamLine: AgentProvider["parseStreamLine"] = (line) => {
   if (!line.startsWith("{")) {
     return [];
   }
@@ -103,14 +103,14 @@ const parseOpenCodeV2StreamLine: AgentProvider["parseStreamLine"] = (line) => {
   return parseCompletedTool(partRecord);
 };
 
-export const opencodeV2Agent = (
+export const opencode2Agent = (
   model: string,
-  options: OpenCodeV2AgentOptions = {}
+  options: OpenCode2AgentOptions = {}
 ): AgentProvider => {
   const selectedModel = options.variant ? `${model}#${options.variant}` : model;
 
   return {
-    name: "opencode-v2",
+    name: "opencode2",
     env: options.env ?? {},
     captureSessions: false,
     buildPrintCommand({ prompt, dangerouslySkipPermissions }) {
@@ -133,6 +133,6 @@ export const opencodeV2Agent = (
         stdin: prompt,
       };
     },
-    parseStreamLine: parseOpenCodeV2StreamLine,
+    parseStreamLine: parseOpenCode2StreamLine,
   };
 };

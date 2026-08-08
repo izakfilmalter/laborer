@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
   unzip \
   && rm -rf /var/lib/apt/lists/*
 
-# Match package.json. Sandcastle installs the next workspace in each worktree.
+# Match both workspace package managers. Sandcastle installs current and next in
+# each worktree so an issue can target either implementation.
 ENV BUN_INSTALL=/usr/local/bun
 ENV PATH=/usr/local/bun/bin:$PATH
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.5

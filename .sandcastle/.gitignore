@@ -1,6 +1,8 @@
 .env
 opencode-account.json
 opencode-auth.json
+base/
 bun-cache/
 logs/
+node_modules/
 worktrees/

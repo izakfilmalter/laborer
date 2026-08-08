@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { assert, describe, it } from "@effect/vitest";
 
-const dockerfile = readFileSync(".sandcastle/Dockerfile", "utf8");
-const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+const dockerfile = readFileSync("../.sandcastle/Dockerfile", "utf8");
+const packageJson = JSON.parse(
+  readFileSync("../.sandcastle/package.json", "utf8")
+) as {
   readonly devDependencies: Readonly<Record<string, string>>;
 };
 const installsTiniPattern = /apt-get install -y[\s\S]*\btini\b/;
@@ -17,7 +19,7 @@ describe("Sandcastle Docker image", () => {
     assert.match(dockerfile, tiniEntrypointPattern);
   });
 
-  it("installs the exact workspace OpenCode V2 CLI pin", () => {
+  it("installs the exact Sandcastle opencode2 CLI pin", () => {
     const install = openCodeCliInstallPattern.exec(dockerfile);
     const packageVersion =
       packageJson.devDependencies["@opencode-ai/cli"] ?? "";

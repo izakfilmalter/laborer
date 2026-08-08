@@ -5,7 +5,7 @@ The reviewer agents load this file during Sandcastle review.
 ## Scope and architecture
 
 - Default product work to `next/`; change `current/` only when an issue explicitly concerns the legacy app.
-- Preserve the ownership boundaries and canonical language in `AGENTS.md`, `next/AGENTS.md`, and `CONTEXT.md`.
+- Preserve the ownership boundaries and canonical language in `AGENTS.md`, the nearest implementation `AGENTS.md`, and `CONTEXT.md`.
 - The Runner owns ingestion, durable turn ordering, process supervision, and delivery. Work handlers own workflow meaning, tools, agent choice, continuation state, and repository policy.
 - Keep Slack, ACP, and OpenCode details in adapters or configured handlers rather than the generic core.
 - Keep throwaway work inside its named prototype unless the issue explicitly promotes it.
@@ -15,20 +15,20 @@ The reviewer agents load this file during Sandcastle review.
 
 - Use Bun commands and existing repository patterns.
 - Avoid `any`, unsafe casts, broad rewrites, and speculative abstractions.
-- Before changing Effect code, follow `next/AGENTS.md`: inspect the installed Effect 4 beta APIs and existing usage rather than assuming stable Effect APIs.
+- Before changing Effect code, follow the nearest implementation `AGENTS.md` and inspect that implementation's installed Effect APIs and existing usage rather than assuming APIs match across `current/` and `next/`.
 - Use Schema at untrusted and persisted boundaries, schema-tagged expected errors, narrow services, Layers, and scoped resource lifecycles.
 
 ## Security and durability
 
 - Never expose Slack credentials, raw child output, diagnostics, local paths, or private agent activity in public replies.
-- Do not copy `next/.env.local` into Sandcastle worktrees or agent environments.
+- Do not copy implementation environment files into Sandcastle worktrees or agent environments.
 - Preserve stable identities, durable ordering, replay idempotency, atomic persistence, and bounded shutdown behavior.
 - Automated tests must remain deterministic and offline. Do not run live Slack or ACP canaries unless the issue explicitly requires a manual smoke test and credentials are available.
 
 ## Verification
 
 - Run targeted checks while iterating.
-- From the repository root, format with `bun run --cwd next format:fix` and run the full next gate with `bun run --cwd next check`.
+- For `next/`, format with `bun run --cwd next format:fix` and run `bun run --cwd next check`. For `current/`, run its corresponding `format:fix` and `check` scripts. Run both when a change crosses the implementation boundary.
 - Add deterministic regression coverage for behavior changes. Use fakes and Emulate instead of live services.
 
 ## Sandcastle workflow
@@ -39,6 +39,6 @@ The reviewer agents load this file during Sandcastle review.
 - Descendant issues remain open while their shared PR is unmerged. After the reviewed PR merges, the runner closes descendants from the leaves upward and closes the root last.
 - Agents commit but never push, merge, poll CI, or invoke nested review workflows. The runner owns those operations.
 - The runner refreshes its base and reads prompts through its detached `.sandcastle/base` worktree so concurrent Git work cannot redirect integration onto the operator's checkout.
-- Builders and UI agents use targeted checks while iterating. The final code-review agent runs `bun run --cwd next check`, distinguishes scoped failures from unrelated infrastructure or flakes, and reports its evidence. The runner trusts that review and does not rerun checks.
+- Builders and UI agents use targeted checks while iterating. The final code-review agent runs the comprehensive check for every affected implementation, distinguishes scoped failures from unrelated infrastructure or flakes, and reports its evidence. The runner trusts that review and does not rerun checks.
 - PRs use `Closes #<issue>` and preserve GitHub as the integration surface.
 - Failed checks are repaired on the same branch and PR.

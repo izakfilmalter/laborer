@@ -13,8 +13,8 @@
   "type": "module",
   "scripts": {
     "prepare": "effect-language-service patch",
-    "sandcastle": "tsx .sandcastle/main.ts",
-    "sandcastle:build-image": "sandcastle docker build-image --image-name sandcastle:laborer-next --dockerfile .sandcastle/Dockerfile",
+    "sandcastle": "bun run --cwd ../.sandcastle start",
+    "sandcastle:build-image": "bun run --cwd ../.sandcastle build-image",
     "prototype": "bun run src/prototype/demo.ts",
     "companion:build": "electron-vite build",
     "companion:acceptance:macos": "sh tests/macos-launch-agent-acceptance.sh",
@@ -65,7 +65,6 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@ai-hero/sandcastle": "^0.12.0",
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "^0.87.0",
     "@effect/vitest": "4.0.0-beta.99",

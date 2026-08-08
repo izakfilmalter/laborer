@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { GitHubCliIssueGraphSource } from "../.sandcastle/github-cli-issue-graph-source/index.ts";
+import { GitHubCliIssueGraphSource } from "../../.sandcastle/github-cli-issue-graph-source/index.ts";
 
 const multiplePullRequestsPattern = /multiple open pull requests/;
 

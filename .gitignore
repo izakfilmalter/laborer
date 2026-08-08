@@ -25,9 +25,12 @@ slack-config-access-token*
 # Local Laborer runtime state
 .laborer-runtime/
 
-# Sandcastle runtime state (configuration lives in next/.sandcastle)
-/.sandcastle/
-/next/.sandcastle/bun-cache/
+# Sandcastle configuration and local runtime state
+/.sandcastle/base/
+/.sandcastle/bun-cache/
+/.sandcastle/logs/
+/.sandcastle/node_modules/
+/.sandcastle/worktrees/
 
 # IDEs and editors
 .vscode/*

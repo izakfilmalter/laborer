@@ -1,10 +1,12 @@
 // Laborer adaptation of the parallel planner/reviewer setup from church-work.
-// Run from next/ with `bun run sandcastle` after building the Docker image.
+// Run from either implementation with `bun run sandcastle` after building the
+// shared Docker image.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createSandbox, Output, run } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { config as loadEnv } from "dotenv";
@@ -32,7 +34,7 @@ import {
   type RunnableIssue,
   scheduleIssueGraph,
 } from "./issue-graph-scheduler/index.ts";
-import { opencodeV2Agent } from "./opencode-v2-agent/index.ts";
+import { opencode2Agent } from "./opencode2-agent/index.ts";
 import { waitForExpectedPrHead } from "./pr-head-observation/index.ts";
 import {
   appendSpecProgress,
@@ -46,7 +48,10 @@ import {
   specClosureOrder,
 } from "./spec-pr-progress/index.ts";
 
-loadEnv({ path: ".sandcastle/.env", quiet: true });
+const SANDCASTLE_DIR = fileURLToPath(new URL(".", import.meta.url));
+const REPO_ROOT = resolve(SANDCASTLE_DIR, "..");
+
+loadEnv({ path: resolve(SANDCASTLE_DIR, ".env"), quiet: true });
 
 const plannedIssueSchema = z
   .object({
@@ -133,10 +138,9 @@ const AUTO_MERGE_PRS = process.env.SANDCASTLE_AUTO_MERGE !== "false";
 const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
 const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
 const SANDBOX_IMAGE_NAME =
-  process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer-next";
-const BUN_CACHE_DIR = resolve(".sandcastle/bun-cache");
+  process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer";
+const BUN_CACHE_DIR = resolve(SANDCASTLE_DIR, "bun-cache");
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
-const REPO_ROOT = "..";
 const RUNNER_BASE_WORKTREE = resolve(REPO_ROOT, ".sandcastle/base");
 const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
 const HOST_OPENCODE_AUTH = resolve(
@@ -157,9 +161,9 @@ const VERIFICATION_POLICY = [
 mkdirSync(BUN_CACHE_DIR, { recursive: true });
 
 const allAroundAgent = () =>
-  opencodeV2Agent("openai/gpt-5.6-sol", { variant: "medium" });
+  opencode2Agent("openai/gpt-5.6-sol", { variant: "medium" });
 const uiAgent = () =>
-  opencodeV2Agent("anthropic/claude-opus-5", { variant: "medium" });
+  opencode2Agent("anthropic/claude-opus-5", { variant: "medium" });
 
 const sandboxProvider = () =>
   docker({
@@ -347,7 +351,7 @@ async function classifyRunnableIssues(
     root: issue.root,
     title: issue.issue.title,
   }));
-  const plan = await run({
+  const planResult = await run({
     agent: allAroundAgent(),
     branchStrategy: { type: "branch", branch: "sandcastle/planner" },
     cwd: REPO_ROOT,
@@ -360,14 +364,15 @@ async function classifyRunnableIssues(
     sandbox: sandboxProvider(),
     signal: agentRunSignal(),
   });
+  const plan = planSchema.parse(planResult.output);
 
-  if (plan.output.issues.length !== runnable.length) {
+  if (plan.issues.length !== runnable.length) {
     throw new Error(
-      `Planner returned ${plan.output.issues.length} classifications for ${runnable.length} runnable issues.`
+      `Planner returned ${plan.issues.length} classifications for ${runnable.length} runnable issues.`
     );
   }
-  const byId = new Map(plan.output.issues.map((issue) => [issue.id, issue]));
-  if (byId.size !== plan.output.issues.length) {
+  const byId = new Map(plan.issues.map((issue) => [issue.id, issue]));
+  if (byId.size !== plan.issues.length) {
     throw new Error("Planner returned duplicate issue classifications.");
   }
 
@@ -985,7 +990,7 @@ async function createIssueSandbox(issue: PlannedIssue) {
     syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
     const setup = await sandbox.exec(
       boundedSandboxCommand(
-        "gh auth setup-git && bun install --cwd next --frozen-lockfile"
+        "gh auth setup-git && bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile"
       ),
       { onLine: (line) => console.log(`  ${line}`) }
     );
@@ -1604,7 +1609,7 @@ function runnerBaseHead() {
 }
 
 function runnerPromptFile(name: string) {
-  return resolve(RUNNER_BASE_WORKTREE, "next/.sandcastle", name);
+  return resolve(RUNNER_BASE_WORKTREE, ".sandcastle", name);
 }
 
 function gitCommonDirectory(worktreePath?: string) {

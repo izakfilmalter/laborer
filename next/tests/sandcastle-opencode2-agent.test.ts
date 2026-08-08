@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { opencodeV2Agent } from "../.sandcastle/opencode-v2-agent/index.ts";
+import { opencode2Agent } from "../../.sandcastle/opencode2-agent/index.ts";
 
 const runCommand = async (
   command: string,
@@ -43,13 +43,15 @@ const runCommand = async (
     child.stdin.end(stdin);
   });
 
-describe("Sandcastle OpenCode V2 agent", () => {
+describe("Sandcastle opencode2 agent", () => {
   it("matches its command contract to the installed pinned CLI", () => {
-    const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+    const packageJson = JSON.parse(
+      readFileSync("../.sandcastle/package.json", "utf8")
+    ) as {
       readonly devDependencies: Readonly<Record<string, string>>;
     };
     const version = packageJson.devDependencies["@opencode-ai/cli"];
-    const executable = "./node_modules/.bin/opencode2";
+    const executable = "../.sandcastle/node_modules/.bin/opencode2";
     const reportedVersion = execFileSync(executable, ["--version"], {
       encoding: "utf8",
     });
@@ -71,8 +73,8 @@ describe("Sandcastle OpenCode V2 agent", () => {
     assert.notInclude(help, "--variant");
   });
 
-  it("launches standalone V2 with an encoded variant and preserves JSON events", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "laborer-opencode-v2-"));
+  it("launches standalone opencode2 with an encoded variant and preserves JSON events", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-"));
     const executable = join(directory, "opencode2");
     const argsPath = join(directory, "args");
     const stdinPath = join(directory, "stdin");
@@ -90,7 +92,7 @@ describe("Sandcastle OpenCode V2 agent", () => {
     chmodSync(executable, 0o755);
 
     try {
-      const agent = opencodeV2Agent("openai/gpt-5.6-sol", {
+      const agent = opencode2Agent("openai/gpt-5.6-sol", {
         agent: "build",
         variant: "medium",
       });
@@ -145,7 +147,7 @@ describe("Sandcastle OpenCode V2 agent", () => {
   });
 
   it("does not auto-approve when Sandcastle preserves permission prompts", () => {
-    const invocation = opencodeV2Agent(
+    const invocation = opencode2Agent(
       "anthropic/claude-opus-5"
     ).buildPrintCommand({
       dangerouslySkipPermissions: false,
@@ -156,8 +158,8 @@ describe("Sandcastle OpenCode V2 agent", () => {
     assert.include(invocation.command, "'anthropic/claude-opus-5'");
   });
 
-  it("fails closed on malformed records and surfaces V2 errors", () => {
-    const agent = opencodeV2Agent("fixture/model");
+  it("fails closed on malformed records and surfaces opencode2 errors", () => {
+    const agent = opencode2Agent("fixture/model");
 
     assert.deepStrictEqual(agent.parseStreamLine("not-json"), []);
     assert.deepStrictEqual(agent.parseStreamLine('{"type":"text"'), []);

@@ -122,11 +122,17 @@ describe("OpenCode V1 operational source policy", () => {
     assert.deepStrictEqual(violations, []);
   });
 
-  it("ties the Sandcastle V2 executable and image install to the CLI pin", () => {
-    const cliVersion = packageJson.devDependencies?.["@opencode-ai/cli"] ?? "";
-    const dockerfile = readFileSync(".sandcastle/Dockerfile", "utf8");
+  it("ties the Sandcastle opencode2 executable and image install to the CLI pin", () => {
+    const sandcastlePackage = JSON.parse(
+      readFileSync("../.sandcastle/package.json", "utf8")
+    ) as {
+      readonly devDependencies?: Readonly<Record<string, string>>;
+    };
+    const cliVersion =
+      sandcastlePackage.devDependencies?.["@opencode-ai/cli"] ?? "";
+    const dockerfile = readFileSync("../.sandcastle/Dockerfile", "utf8");
     const agent = readFileSync(
-      ".sandcastle/opencode-v2-agent/index.ts",
+      "../.sandcastle/opencode2-agent/index.ts",
       "utf8"
     );
     const install = pinnedCliInstall.exec(dockerfile);

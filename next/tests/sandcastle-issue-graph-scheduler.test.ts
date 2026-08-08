@@ -5,7 +5,7 @@ import {
   IssueGraphRelationshipError,
   type IssueGraphSource,
   scheduleIssueGraph,
-} from "../.sandcastle/issue-graph-scheduler/index.ts";
+} from "../../.sandcastle/issue-graph-scheduler/index.ts";
 
 const head267 = "a".repeat(40);
 const head268 = "b".repeat(40);

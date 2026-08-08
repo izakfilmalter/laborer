@@ -29,6 +29,8 @@
   },
   "type": "module",
   "scripts": {
+    "sandcastle": "bun run --cwd ../.sandcastle start",
+    "sandcastle:build-image": "bun run --cwd ../.sandcastle build-image",
     "dev": "turbo dev dev:electron",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",

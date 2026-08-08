@@ -18,7 +18,7 @@ You are the all-around builder. Own architecture, TypeScript, Effect, durability
 
 # CONTEXT
 
-Read `AGENTS.md`, `next/AGENTS.md`, relevant sections of `CONTEXT.md`, and applicable ADRs. Respect the primary/legacy boundary.
+Read `AGENTS.md`, the nearest implementation `AGENTS.md`, relevant sections of `CONTEXT.md`, and applicable ADRs. Respect the primary/legacy boundary.
 
 Recent commits:
 

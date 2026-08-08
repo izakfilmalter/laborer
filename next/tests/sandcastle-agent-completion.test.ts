@@ -4,7 +4,7 @@ import {
   assertNewWorkAfterAcceptedHead,
   assertRecordedRecoveryLineage,
   classifyBranchRecovery,
-} from "../.sandcastle/agent-completion/index.ts";
+} from "../../.sandcastle/agent-completion/index.ts";
 
 const missingCompletionPattern = /did not emit its completion signal/;
 const missingNewWorkPattern = /without work after its accepted head/;

@@ -139,12 +139,14 @@ export const opencode2Agent = (
       return {
         command: [
           'prompt_file="$(mktemp)"',
-          'trap \'rm -f "$prompt_file"\' EXIT HUP INT TERM',
+          'attempt_state="$(mktemp -d)"',
+          'trap \'rm -rf "$attempt_state"; rm -f "$prompt_file"\' EXIT HUP INT TERM',
           'cat > "$prompt_file"',
           "attempt=1",
           "while :; do",
-          "  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db; fi",
-          `  cat "$prompt_file" | ${invocation} && exit 0`,
+          '  attempt_db="$attempt_state/opencode-$attempt.db"',
+          '  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db "$attempt_db"; fi',
+          `  cat "$prompt_file" | OPENCODE_DB="$attempt_db" ${invocation} && exit 0`,
           "  status=$?",
           `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
           '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',

@@ -154,6 +154,11 @@ describe("Sandcastle fast flow", () => {
     assert.include(main, 'resolve(RUNNER_BASE_WORKTREE, ".sandcastle", name)');
     assert.include(main, "bun install --cwd current --frozen-lockfile");
     assert.include(main, "bun install --cwd next --frozen-lockfile");
+    assert.include(main, "worktreeIsDirty(sandbox.worktreePath)");
+    assert.include(
+      main,
+      "test -d current/node_modules && test -d next/node_modules"
+    );
     assert.include(main, "prepareOpenCodeCredentialSeed()");
     assert.include(main, "HOST_ANTHROPIC_PLUGIN_DIST");
     assert.notInclude(main, "BUN_CACHE_DIR");

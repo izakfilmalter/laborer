@@ -109,7 +109,7 @@ interface PlannedIssue extends z.infer<typeof plannedIssueSchema> {
 type Sandbox = Awaited<ReturnType<typeof createSandbox>>;
 
 const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
-const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 2);
+const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 1);
 const OPENCODE_MAX_ATTEMPTS = positiveIntegerEnv(
   "SANDCASTLE_OPENCODE_MAX_ATTEMPTS",
   3
@@ -1036,9 +1036,12 @@ async function createIssueSandbox(issue: PlannedIssue) {
   try {
     syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
     refreshUnstartedIssueBranch(issue, sandbox.worktreePath);
+    const dependencySetup = worktreeIsDirty(sandbox.worktreePath)
+      ? "test -d current/node_modules && test -d next/node_modules"
+      : "bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile";
     const setup = await sandbox.exec(
       boundedSandboxCommand(
-        "gh auth setup-git && bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile"
+        `gh auth setup-git && ${dependencySetup}`
       ),
       { onLine: (line) => console.log(`  ${line}`) }
     );
@@ -1732,15 +1735,23 @@ function syncPlannerBranchToBase() {
 }
 
 function assertWorktreeClean(worktreePath: string, context: string) {
-  const status = runFile("git", [
+  const status = worktreeStatus(worktreePath);
+  if (status) {
+    throw new Error(`Sandcastle worktree is dirty ${context}:\n${status}`);
+  }
+}
+
+function worktreeIsDirty(worktreePath: string) {
+  return worktreeStatus(worktreePath).length > 0;
+}
+
+function worktreeStatus(worktreePath: string) {
+  return runFile("git", [
     "-C",
     worktreePath,
     "status",
     "--porcelain",
   ]).trim();
-  if (status) {
-    throw new Error(`Sandcastle worktree is dirty ${context}:\n${status}`);
-  }
 }
 
 function worktreeHead(worktreePath: string) {

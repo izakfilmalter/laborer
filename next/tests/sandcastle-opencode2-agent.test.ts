@@ -109,7 +109,7 @@ describe("Sandcastle opencode2 agent", () => {
       });
       assert.include(
         invocation.command,
-        "cp /opt/sandcastle/opencode-next.db /home/agent/.local/share/opencode/opencode-next.db"
+        "cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db"
       );
       const stdout = await runCommand(
         invocation.command,

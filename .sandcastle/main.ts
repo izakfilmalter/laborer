@@ -217,7 +217,8 @@ const sandboxProvider = () =>
       },
       {
         hostPath: OPENCODE_CREDENTIAL_SEED,
-        sandboxPath: "/opt/sandcastle/opencode-next.db",
+        sandboxPath:
+          "/home/agent/.local/share/opencode/opencode-next.seed.db",
         readonly: true,
       },
       {

@@ -143,6 +143,11 @@ describe("Sandcastle fast flow", () => {
     assert.include(main, "bun install --cwd next --frozen-lockfile");
     assert.include(main, "prepareOpenCodeCredentialSeed()");
     assert.include(main, "HOST_ANTHROPIC_PLUGIN_DIST");
+    assert.include(
+      main,
+      '"/home/agent/.local/share/opencode/opencode-next.seed.db"'
+    );
+    assert.notInclude(main, 'sandboxPath: "/opt/');
     assert.include(main, "Sandcastle stopped safely ");
   });
 

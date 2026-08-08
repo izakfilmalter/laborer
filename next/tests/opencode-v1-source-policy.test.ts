@@ -28,7 +28,7 @@ const programmaticOpenCodeRun =
   /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["'`]opencode["'`]\s*,\s*\[\s*["'`]run["'`]/m;
 const pinnedVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const pinnedCliInstall = /npm install -g @opencode-ai\/cli@([^\s]+)/;
-const opencode2Command = /command:\s*`opencode2 \$\{args/;
+const opencode2Command = /opencode2 \$\{args/;
 
 const operationalSourcePaths = (): readonly string[] =>
   execFileSync(

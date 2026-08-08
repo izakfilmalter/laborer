@@ -3,7 +3,14 @@
 // shared Docker image.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,6 +158,18 @@ const HOST_OPENCODE_ACCOUNT = resolve(
   homedir(),
   ".local/share/opencode/account.json"
 );
+const HOST_OPENCODE_DATABASE = resolve(
+  homedir(),
+  ".local/share/opencode/opencode-next.db"
+);
+const HOST_ANTHROPIC_PLUGIN =
+  process.env.SANDCASTLE_OPENCODE_ANTHROPIC_PLUGIN_PATH?.trim() ||
+  resolve(REPO_ROOT, "../opencode-anthropic-auth");
+const HOST_ANTHROPIC_PLUGIN_DIST = resolve(HOST_ANTHROPIC_PLUGIN, "dist");
+const OPENCODE_CREDENTIAL_SEED = resolve(
+  SANDCASTLE_DIR,
+  "opencode-credential-seed.db"
+);
 const VERIFICATION_POLICY = [
   "Run deterministic offline checks only.",
   "Agents own verification; the runner will not rerun checks.",
@@ -159,6 +178,7 @@ const VERIFICATION_POLICY = [
 ].join(" ");
 
 mkdirSync(BUN_CACHE_DIR, { recursive: true });
+prepareOpenCodeCredentialSeed();
 
 const allAroundAgent = () =>
   opencode2Agent("openai/gpt-5.6-sol-fast", { variant: "medium" });
@@ -176,6 +196,16 @@ const sandboxProvider = () =>
         readonly: true,
       },
       {
+        hostPath: HOST_OPENCODE_CONFIG,
+        sandboxPath: HOST_OPENCODE_CONFIG,
+        readonly: true,
+      },
+      {
+        hostPath: HOST_ANTHROPIC_PLUGIN,
+        sandboxPath: HOST_ANTHROPIC_PLUGIN,
+        readonly: true,
+      },
+      {
         hostPath: HOST_OPENCODE_AUTH,
         sandboxPath: "/home/agent/.local/share/opencode/auth.json",
         readonly: true,
@@ -183,6 +213,11 @@ const sandboxProvider = () =>
       {
         hostPath: HOST_OPENCODE_ACCOUNT,
         sandboxPath: "/home/agent/.local/share/opencode/account.json",
+        readonly: true,
+      },
+      {
+        hostPath: OPENCODE_CREDENTIAL_SEED,
+        sandboxPath: "/opt/sandcastle/opencode-next.db",
         readonly: true,
       },
       {
@@ -1691,6 +1726,40 @@ function defaultBranch() {
     throw new Error("Could not determine the repository default branch.");
   }
   return branch;
+}
+
+function prepareOpenCodeCredentialSeed() {
+  for (const [name, path] of [
+    ["OpenCode V2 database", HOST_OPENCODE_DATABASE],
+    ["Anthropic auth plugin build", HOST_ANTHROPIC_PLUGIN_DIST],
+  ] as const) {
+    if (!existsSync(path)) {
+      throw new Error(`${name} is unavailable at ${path}.`);
+    }
+  }
+
+  const temporarySeed = `${OPENCODE_CREDENTIAL_SEED}.tmp`;
+  rmSync(temporarySeed, { force: true });
+  try {
+    const schema = runFile("sqlite3", [HOST_OPENCODE_DATABASE, ".schema"]);
+    runFileWithInput("sqlite3", [temporarySeed], schema);
+    const databasePath = HOST_OPENCODE_DATABASE.replaceAll("'", "''");
+    runFile("sqlite3", [
+      temporarySeed,
+      [
+        `ATTACH DATABASE '${databasePath}' AS source;`,
+        "INSERT INTO credential SELECT * FROM source.credential;",
+        "INSERT INTO migration SELECT * FROM source.migration;",
+        "INSERT INTO data_migration SELECT * FROM source.data_migration;",
+        "DETACH DATABASE source;",
+      ].join(" "),
+    ]);
+    chmodSync(temporarySeed, 0o600);
+    renameSync(temporarySeed, OPENCODE_CREDENTIAL_SEED);
+  } catch (error) {
+    rmSync(temporarySeed, { force: true });
+    throw error;
+  }
 }
 
 function runFile(command: string, args: string[]) {

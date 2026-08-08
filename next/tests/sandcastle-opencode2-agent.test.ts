@@ -107,6 +107,10 @@ describe("Sandcastle opencode2 agent", () => {
         dangerouslySkipPermissions: true,
         prompt: "Implement safely.\nThen test.",
       });
+      assert.include(
+        invocation.command,
+        "cp /opt/sandcastle/opencode-next.db /home/agent/.local/share/opencode/opencode-next.db"
+      );
       const stdout = await runCommand(
         invocation.command,
         invocation.stdin ?? "",

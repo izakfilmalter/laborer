@@ -5,4 +5,5 @@ base/
 bun-cache/
 logs/
 node_modules/
+opencode-credential-seed.db
 worktrees/

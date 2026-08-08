@@ -129,7 +129,7 @@ export const opencode2Agent = (
         args.push("--auto");
       }
       return {
-        command: `opencode2 ${args.map(shellQuote).join(" ")}`,
+        command: `if [ -f /opt/sandcastle/opencode-next.db ]; then cp /opt/sandcastle/opencode-next.db /home/agent/.local/share/opencode/opencode-next.db; fi && opencode2 ${args.map(shellQuote).join(" ")}`,
         stdin: prompt,
       };
     },

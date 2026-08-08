@@ -11,6 +11,23 @@ export const reviewedHeadNeedsPush = (
   reviewedLocalHead: string
 ) => pullRequestHead !== reviewedLocalHead;
 
+export const shouldRefreshUnstartedBranch = (
+  branchHead: string,
+  baseHead: string,
+  hasRecordedWork: boolean,
+  branchIsAncestorOfBase: boolean
+) => {
+  if (branchHead === baseHead || hasRecordedWork) {
+    return false;
+  }
+  if (!branchIsAncestorOfBase) {
+    throw new Error(
+      "Unstarted issue branch has diverged from the runner base branch."
+    );
+  }
+  return true;
+};
+
 export const hostCheckoutProblem = (
   baseBranch: string,
   currentBranch: string,

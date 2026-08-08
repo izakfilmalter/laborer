@@ -33,6 +33,7 @@ import {
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldRefreshUnstartedBranch,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
 import {
@@ -1024,6 +1025,7 @@ async function createIssueSandbox(issue: PlannedIssue) {
   });
   try {
     syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
+    refreshUnstartedIssueBranch(issue, sandbox.worktreePath);
     const setup = await sandbox.exec(
       boundedSandboxCommand(
         "gh auth setup-git && bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile"
@@ -1031,14 +1033,48 @@ async function createIssueSandbox(issue: PlannedIssue) {
       { onLine: (line) => console.log(`  ${line}`) }
     );
     if (setup.exitCode !== 0) {
+      const detail = [setup.stderr, setup.stdout]
+        .flatMap((output) => output.split("\n"))
+        .filter((line) => line.trim())
+        .slice(-20)
+        .join("\n")
+        .slice(-4000);
       throw new Error(
-        `Sandbox setup failed for #${issue.id} with exit code ${setup.exitCode}.`
+        `Sandbox setup failed for #${issue.id} with exit code ${setup.exitCode}.${detail ? `\n${detail}` : ""}`
       );
     }
     return sandbox;
   } catch (error) {
     await sandbox.close();
     throw error;
+  }
+}
+
+function refreshUnstartedIssueBranch(
+  issue: PlannedIssue,
+  worktreePath: string
+) {
+  const branchHead = worktreeHead(worktreePath);
+  const baseHead = runnerBaseHead();
+  const hasRecordedWork =
+    issue.latestImplementedHead !== undefined ||
+    [
+      recordedCompletion(issue),
+      recordedProgress(issue),
+      recordedImplementation(issue),
+      recordedUiReview(issue),
+      recordedReviewed(issue),
+      recordedGatePending(issue),
+      recordedGatePassed(issue),
+    ].some((head) => head !== undefined);
+  const shouldRefresh = shouldRefreshUnstartedBranch(
+    branchHead,
+    baseHead,
+    hasRecordedWork,
+    commitIsAncestor(worktreePath, branchHead, baseHead)
+  );
+  if (shouldRefresh) {
+    runFile("git", ["-C", worktreePath, "merge", "--ff-only", baseHead]);
   }
 }
 

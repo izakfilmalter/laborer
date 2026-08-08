@@ -9,7 +9,10 @@ import {
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldRefreshUnstartedBranch,
 } from "../../.sandcastle/fast-flow/index.ts";
+
+const divergedRunnerBasePattern = /diverged from the runner base/;
 
 describe("Sandcastle fast flow", () => {
   it("merges without asking gh to delete a checked-out worktree branch", () => {
@@ -111,6 +114,16 @@ describe("Sandcastle fast flow", () => {
     assert.deepStrictEqual(
       attemptHostStep(() => undefined),
       { ok: true }
+    );
+  });
+
+  it("advances only dormant issue branches when the runner base moves", () => {
+    assert.isTrue(shouldRefreshUnstartedBranch("old", "base", false, true));
+    assert.isFalse(shouldRefreshUnstartedBranch("base", "base", false, true));
+    assert.isFalse(shouldRefreshUnstartedBranch("old", "base", true, true));
+    assert.throws(
+      () => shouldRefreshUnstartedBranch("other", "base", false, false),
+      divergedRunnerBasePattern
     );
   });
 

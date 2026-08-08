@@ -2,36 +2,26 @@
  * Cross-project workspace dashboard component.
  *
  * Provides a high-level overview of all workspaces across all projects
- * with their status, and task status summaries per project. Gives the
- * developer a command-center view of what's happening across their
- * entire development environment.
+ * with their status. Gives the developer a command-center view of what's
+ * happening across their entire development environment.
  *
  * Per-project sections show:
  * - Project name and repo path
- * - Task summary counts (pending, in progress, completed, cancelled)
  * - All workspaces for that project with status badges, branch names,
  *   and terminal counts
  *
- * Workspace and task data comes from LiveStore queries. Terminal counts
- * come from the terminal service via the `useTerminalList` polling hook.
+ * Workspace data comes from LiveStore queries. Terminal counts come from
+ * the terminal service via the `useTerminalList` polling hook.
  *
  * @see Issue #114: Cross-project workspace dashboard
  * @see Issue #144: Web app LiveStore terminal query replacement
  * @see Issue #160: UI for detected workspaces
  */
 
-import { projects, tasks, workspaces } from '@laborer/shared/schema'
+import { projects, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import {
-  CheckCircle2,
-  CircleDot,
-  FolderGit2,
-  GitBranch,
-  LayoutDashboard,
-  Loader2,
-  XCircle,
-} from 'lucide-react'
+import { FolderGit2, GitBranch, LayoutDashboard } from 'lucide-react'
 import { useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,7 +33,6 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -60,7 +49,6 @@ const dashboardProjects$ = queryDb(projects, { label: 'dashboardProjects' })
 const dashboardWorkspaces$ = queryDb(workspaces, {
   label: 'dashboardWorkspaces',
 })
-const dashboardTasks$ = queryDb(tasks, { label: 'dashboardTasks' })
 
 /**
  * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
@@ -120,86 +108,6 @@ function StatusDot({ status }: { readonly status: string }) {
   })()
 
   return <span className={cn('inline-block size-2 rounded-full', dotColor)} />
-}
-
-/** Task status counts for a single project. */
-interface TaskCounts {
-  readonly cancelled: number
-  readonly completed: number
-  readonly in_progress: number
-  readonly pending: number
-  readonly total: number
-}
-
-/** Aggregate task counts from a filtered task list. */
-function computeTaskCounts(
-  taskList: ReadonlyArray<{ readonly status: string }>
-): TaskCounts {
-  let pending = 0
-  let in_progress = 0
-  let completed = 0
-  let cancelled = 0
-  for (const task of taskList) {
-    switch (task.status) {
-      case 'pending':
-        pending++
-        break
-      case 'in_progress':
-        in_progress++
-        break
-      case 'completed':
-        completed++
-        break
-      case 'cancelled':
-        cancelled++
-        break
-      default:
-        break
-    }
-  }
-  return {
-    pending,
-    in_progress,
-    completed,
-    cancelled,
-    total: taskList.length,
-  }
-}
-
-/** Compact task summary with icons and counts. */
-function TaskSummary({ counts }: { readonly counts: TaskCounts }) {
-  if (counts.total === 0) {
-    return <span className="text-muted-foreground text-xs">No tasks</span>
-  }
-
-  return (
-    <div className="flex flex-wrap gap-3 text-xs">
-      {counts.pending > 0 && (
-        <span className="flex items-center gap-1 text-info">
-          <CircleDot className="size-3" />
-          {counts.pending} pending
-        </span>
-      )}
-      {counts.in_progress > 0 && (
-        <span className="flex items-center gap-1 text-warning">
-          <Loader2 className="size-3" />
-          {counts.in_progress} in progress
-        </span>
-      )}
-      {counts.completed > 0 && (
-        <span className="flex items-center gap-1 text-success">
-          <CheckCircle2 className="size-3" />
-          {counts.completed} completed
-        </span>
-      )}
-      {counts.cancelled > 0 && (
-        <span className="flex items-center gap-1 text-muted-foreground">
-          <XCircle className="size-3" />
-          {counts.cancelled} cancelled
-        </span>
-      )}
-    </div>
-  )
 }
 
 /** Per-project workspace status summary counts. */
@@ -322,7 +230,6 @@ interface ProjectSection {
     readonly name: string
     readonly repoPath: string
   }
-  readonly taskCounts: TaskCounts
   readonly terminalCountByWorkspace: ReadonlyMap<string, number>
   readonly workspaceCounts: WorkspaceCounts
   readonly workspaces: ReadonlyArray<{
@@ -346,14 +253,13 @@ interface ProjectSection {
  * Cross-project workspace dashboard.
  *
  * Shows all workspaces across all projects with status badges and
- * per-project task summaries. Provides a high-level command-center
+ * per-project status summaries. Provides a high-level command-center
  * overview for developers running multiple agents simultaneously.
  */
 function WorkspaceDashboard() {
   const store = useLaborerStore()
   const projectList = store.useQuery(dashboardProjects$)
   const workspaceList = store.useQuery(dashboardWorkspaces$)
-  const taskList = store.useQuery(dashboardTasks$)
   const { terminals: terminalList } = useTerminalList()
 
   // Build per-project dashboard sections
@@ -362,8 +268,6 @@ function WorkspaceDashboard() {
       const projectWorkspaces = workspaceList.filter(
         (ws) => ws.projectId === project.id && ws.status !== 'destroyed'
       )
-      const projectTasks = taskList.filter((t) => t.projectId === project.id)
-      const taskCounts = computeTaskCounts(projectTasks)
       const workspaceCounts = computeWorkspaceCounts(projectWorkspaces)
 
       // Count terminals per workspace
@@ -378,12 +282,11 @@ function WorkspaceDashboard() {
       return {
         project,
         workspaces: projectWorkspaces,
-        taskCounts,
         workspaceCounts,
         terminalCountByWorkspace,
       }
     })
-  }, [projectList, workspaceList, taskList, terminalList])
+  }, [projectList, workspaceList, terminalList])
 
   // Global summary counts
   const globalSummary = useMemo(() => {
@@ -393,9 +296,8 @@ function WorkspaceDashboard() {
     return {
       totalProjects: projectList.length,
       workspaceCounts: computeWorkspaceCounts(activeWorkspaces),
-      taskCounts: computeTaskCounts(taskList),
     }
-  }, [projectList, workspaceList, taskList])
+  }, [projectList, workspaceList])
 
   if (projectList.length === 0) {
     return (
@@ -426,14 +328,10 @@ function WorkspaceDashboard() {
               {globalSummary.totalProjects !== 1 ? 's' : ''}
             </Badge>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div>
             <div>
               <p className="mb-1 text-muted-foreground text-xs">Workspaces</p>
               <WorkspaceStatusSummary counts={globalSummary.workspaceCounts} />
-            </div>
-            <div>
-              <p className="mb-1 text-muted-foreground text-xs">Tasks</p>
-              <TaskSummary counts={globalSummary.taskCounts} />
             </div>
           </div>
         </div>
@@ -461,7 +359,6 @@ function ProjectDashboardSection({
   const {
     project,
     workspaces: projectWorkspaces,
-    taskCounts,
     workspaceCounts,
     terminalCountByWorkspace,
   } = section
@@ -484,25 +381,11 @@ function ProjectDashboardSection({
               {workspaceCounts.total} workspace
               {workspaceCounts.total !== 1 ? 's' : ''}
             </Badge>
-            <Badge variant="outline">
-              {taskCounts.total} task
-              {taskCounts.total !== 1 ? 's' : ''}
-            </Badge>
           </div>
         </div>
       </CardHeader>
 
       <CardContent>
-        {/* Task summary */}
-        <div className="mb-3">
-          <p className="mb-1 font-medium text-muted-foreground text-xs">
-            Tasks
-          </p>
-          <TaskSummary counts={taskCounts} />
-        </div>
-
-        <Separator className="my-3" />
-
         {/* Workspace list */}
         <div>
           <p className="mb-2 font-medium text-muted-foreground text-xs">

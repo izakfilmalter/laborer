@@ -1,6 +1,6 @@
 import { Rpc, RpcGroup } from '@effect/rpc'
 import { Schema } from 'effect'
-import { PrdStatus, TerminalStatus, WorkspaceStatus } from './types.js'
+import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
@@ -204,47 +204,10 @@ const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
   defaultSandboxProvider: ConfigResolvedValueNullableSandboxProvider,
   devServer: DevServerConfigResponse,
-  prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
   brrrConfig: ConfigResolvedValueNullableString,
   watchIgnore: ConfigResolvedValueStringArray,
-})
-
-const TaskResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  source: Schema.String,
-  prdId: Schema.optional(Schema.String),
-  externalId: Schema.optional(Schema.String),
-  title: Schema.String,
-  status: Schema.String,
-})
-
-const TaskImportResponse = Schema.Struct({
-  importedCount: Schema.Int,
-  totalCount: Schema.Int,
-})
-
-export const PrdResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  title: Schema.String,
-  slug: Schema.String,
-  filePath: Schema.String,
-  status: PrdStatus,
-  createdAt: Schema.String,
-})
-
-const PrdReadResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  title: Schema.String,
-  slug: Schema.String,
-  filePath: Schema.String,
-  status: PrdStatus,
-  createdAt: Schema.String,
-  content: Schema.String,
 })
 
 const WorkspaceResponse = Schema.Struct({
@@ -712,7 +675,6 @@ export class LaborerRpcs extends RpcGroup.make(
             workdir: Schema.optional(Schema.String),
           })
         ),
-        prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
         brrrConfig: Schema.optional(Schema.String),
@@ -759,96 +721,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // PRD RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('prd.create', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-      title: Schema.String,
-      content: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.list', {
-    success: Schema.Array(PrdResponse),
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.read', {
-    success: PrdReadResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.remove', {
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.update', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      content: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.updateStatus', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      status: PrdStatus,
-    },
-  }),
-
-  Rpc.make('prd.createIssue', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      title: Schema.String,
-      body: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.readIssues', {
-    success: Schema.String,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.listRemainingIssues', {
-    success: Schema.Array(TaskResponse),
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.updateIssue', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
-      body: Schema.optional(Schema.String),
-      status: Schema.optional(Schema.String),
-    },
-  }),
-
-  // -----------------------------------------------------------------------
   // Workspace RPCs
   // -----------------------------------------------------------------------
   Rpc.make('workspace.create', {
@@ -857,7 +729,6 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       projectId: Schema.String,
       branchName: Schema.optional(Schema.String),
-      taskId: Schema.optional(Schema.String),
       /**
        * Creates a sub-workspace: the new worktree branches from this
        * workspace's current HEAD and its PR targets that workspace's branch.
@@ -1111,51 +982,6 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Task RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('task.create', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-      prdId: Schema.optional(Schema.String),
-      title: Schema.String,
-      description: Schema.optional(Schema.String),
-    },
-  }),
-
-  Rpc.make('task.importGithub', {
-    success: TaskImportResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.importLinear', {
-    success: TaskImportResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.updateStatus', {
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
-      status: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.remove', {
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
     },
   }),
 

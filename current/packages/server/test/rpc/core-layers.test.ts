@@ -28,14 +28,10 @@ import {
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
-import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
-import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
-import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { SandboxProvider } from '../../src/services/sandbox-provider.js'
-import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
@@ -60,16 +56,12 @@ const DeferredServiceStubs = Layer.mergeAll(
     })
   ),
   Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry')),
-  Layer.succeed(PrdStorageService, makeServiceProxy('PrdStorageService')),
-  Layer.succeed(TaskManager, makeServiceProxy('TaskManager')),
   Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider')),
   Layer.succeed(FileService, makeServiceProxy('FileService')),
   Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
   Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
-  Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
-  Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
   Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
   Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
   Layer.succeed(

@@ -787,9 +787,12 @@ describe('LiveStore schema', () => {
     })
   )
 
-  it.scoped('materializes task lifecycle events into the tasks table', () =>
+  it.scoped('keeps historical task and PRD events as no-ops', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
+
+      assert.isFalse(schema.state.sqlite.tables.has('tasks'))
+      assert.isFalse(schema.state.sqlite.tables.has('prds'))
 
       store.commit(
         events.taskCreated({
@@ -798,45 +801,14 @@ describe('LiveStore schema', () => {
           source: 'manual',
           prdId: 'prd-1',
           externalId: null,
-          title: 'Cover schema materializers',
+          title: 'Cover schema compatibility',
           status: 'pending',
         })
       )
-
-      assert.deepStrictEqual(store.query(tables.tasks.where('id', 'task-1')), [
-        {
-          id: 'task-1',
-          projectId: 'project-1',
-          source: 'manual',
-          prdId: 'prd-1',
-          externalId: null,
-          title: 'Cover schema materializers',
-          status: 'pending',
-        },
-      ])
-
       store.commit(
         events.taskStatusChanged({ id: 'task-1', status: 'completed' })
       )
-
-      assert.strictEqual(
-        store.query(tables.tasks.where('id', 'task-1'))[0]?.status,
-        'completed'
-      )
-
       store.commit(events.taskRemoved({ id: 'task-1' }))
-
-      assert.deepStrictEqual(
-        store.query(tables.tasks.where('id', 'task-1')),
-        []
-      )
-    })
-  )
-
-  it.scoped('materializes prd lifecycle events into the prds table', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
       store.commit(
         events.prdCreated({
           id: 'prd-1',
@@ -848,29 +820,19 @@ describe('LiveStore schema', () => {
           createdAt: '2026-03-06T00:00:00.000Z',
         })
       )
-
-      assert.deepStrictEqual(store.query(tables.prds.where('id', 'prd-1')), [
-        {
+      store.commit(events.prdStatusChanged({ id: 'prd-1', status: 'active' }))
+      store.commit(
+        events.prdUpdated({
           id: 'prd-1',
           projectId: 'project-1',
-          title: 'MCP planning',
-          slug: 'mcp-planning',
-          filePath: '/tmp/PRD-mcp-planning.md',
-          status: 'draft',
+          title: 'Updated MCP planning',
+          slug: 'updated-mcp-planning',
+          filePath: '/tmp/PRD-updated-mcp-planning.md',
+          status: 'active',
           createdAt: '2026-03-06T00:00:00.000Z',
-        },
-      ])
-
-      store.commit(events.prdStatusChanged({ id: 'prd-1', status: 'active' }))
-
-      assert.strictEqual(
-        store.query(tables.prds.where('id', 'prd-1'))[0]?.status,
-        'active'
+        })
       )
-
       store.commit(events.prdRemoved({ id: 'prd-1' }))
-
-      assert.deepStrictEqual(store.query(tables.prds.where('id', 'prd-1')), [])
     })
   )
 
@@ -930,8 +892,6 @@ describe('LiveStore schema', () => {
       const beforeDeprecatedEvents = {
         projects: store.query(tables.projects),
         workspaces: store.query(tables.workspaces),
-        tasks: store.query(tables.tasks),
-        prds: store.query(tables.prds),
       }
 
       store.commit(
@@ -963,8 +923,6 @@ describe('LiveStore schema', () => {
         {
           projects: store.query(tables.projects),
           workspaces: store.query(tables.workspaces),
-          tasks: store.query(tables.tasks),
-          prds: store.query(tables.prds),
         },
         beforeDeprecatedEvents
       )

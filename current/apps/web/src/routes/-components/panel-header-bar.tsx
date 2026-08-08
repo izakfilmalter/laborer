@@ -16,8 +16,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-/** The two main content views: terminal panels, cross-project dashboard, or plan editor. */
-export type MainView = 'panels' | 'dashboard' | 'plan'
+/** The two main content views: terminal panels or cross-project dashboard. */
+export type MainView = 'panels' | 'dashboard'
 
 /** Displays the contextual label for the current view. */
 function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
@@ -26,9 +26,6 @@ function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
   }
   if (mainView === 'dashboard') {
     return <span className="text-foreground">Dashboard</span>
-  }
-  if (mainView === 'plan') {
-    return <span className="text-foreground">Plan</span>
   }
   return null
 }

@@ -16,7 +16,6 @@
  * ```json
  * {
  *   "worktreeDir": "/path/to/my-project.worktrees",
- *   "prdsDir": "/path/to/my-project.worktrees/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
  *   "brrrConfig": "path/to/brrr/config.toml"
  * }
@@ -155,7 +154,6 @@ interface LaborerConfig {
    */
   readonly defaultSandboxProvider?: SandboxProviderType
   readonly devServer?: DevServerConfig
-  readonly prdsDir?: string
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -167,7 +165,6 @@ interface ProjectConfigUpdates {
   readonly brrrConfig?: string | undefined
   readonly defaultSandboxProvider?: SandboxProviderType | undefined
   readonly devServer?: DevServerConfig | undefined
-  readonly prdsDir?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -218,8 +215,6 @@ interface ResolvedLaborerConfig {
    */
   readonly defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
   readonly devServer: ResolvedDevServerConfig
-  /** Absolute path with `~` already expanded. */
-  readonly prdsDir: ResolvedValue<string>
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -460,10 +455,6 @@ const applyConfigUpdates = (
 
   if (updates.defaultSandboxProvider !== undefined) {
     next.defaultSandboxProvider = updates.defaultSandboxProvider
-  }
-
-  if (updates.prdsDir !== undefined) {
-    next.prdsDir = updates.prdsDir
   }
 
   if (updates.worktreeDir !== undefined) {
@@ -796,7 +787,6 @@ const mergeConfigs = (
   projectRepoPath: string
 ): ResolvedLaborerConfig => {
   const defaultWorktreeDir = `${projectRepoPath}.worktrees`
-  const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
   let agent: ResolvedValue<AgentProvider> = {
     value: 'opencode2',
@@ -804,10 +794,6 @@ const mergeConfigs = (
   }
   let worktreeDir: ResolvedValue<string> = {
     value: defaultWorktreeDir,
-    source: 'default',
-  }
-  let prdsDir: ResolvedValue<string> = {
-    value: defaultPrdsDir,
     source: 'default',
   }
   let setupScripts: ResolvedValue<readonly string[]> = {
@@ -848,19 +834,6 @@ const mergeConfigs = (
         value: resolve(expandTilde(config.worktreeDir)),
         source: path,
       }
-      if (prdsDir.source === 'default') {
-        prdsDir = {
-          value: join(worktreeDir.value, 'prds'),
-          source: 'default',
-        }
-      }
-    }
-
-    if (config.prdsDir !== undefined) {
-      prdsDir = {
-        value: resolve(expandTilde(config.prdsDir)),
-        source: path,
-      }
     }
 
     if (config.setupScripts !== undefined) {
@@ -898,7 +871,6 @@ const mergeConfigs = (
     agent,
     defaultSandboxProvider,
     devServer: applyProviderFallback(devServer, defaultSandboxProvider),
-    prdsDir,
     worktreeDir,
     setupScripts,
     brrrConfig,
@@ -995,7 +967,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved

@@ -8,9 +8,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
-import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
-import { PlanEditor } from '@/components/plan-editor'
-import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ProjectGroup } from '@/components/project-group'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
@@ -1022,22 +1019,9 @@ function HomeComponent() {
   // When search is cleared, the stored collapse state is naturally restored.
   const isSearchActive = searchQuery.trim().length > 0
 
-  // Main content view toggle — panels (terminal panes), dashboard, or plan editor
+  // Main content view toggle — panels (terminal panes) or dashboard
   const [mainView, setMainView] = useState<MainView>('panels')
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false)
-
-  // Handle plan selection from sidebar — switch to plan view
-  const handleSelectPlan = useCallback((prdId: string) => {
-    setSelectedPlanId(prdId)
-    setMainView('plan')
-  }, [])
-
-  // Handle back from plan editor — return to panels view
-  const handlePlanBack = useCallback(() => {
-    setSelectedPlanId(null)
-    setMainView('panels')
-  }, [])
 
   // Sidebar width is pixel-based, matching t3code's CSS-variable approach so
   // viewport resizes do not proportionally scale the sidebar.
@@ -1166,10 +1150,8 @@ function HomeComponent() {
                           : collapseState.isExpanded(project.id)
                       }
                       key={project.id}
-                      onSelectPlan={handleSelectPlan}
                       onToggle={() => collapseState.toggle(project.id)}
                       project={project}
-                      selectedPlanId={selectedPlanId}
                     />
                   ))}
                   {projectList.length === 0 && (
@@ -1208,40 +1190,7 @@ function HomeComponent() {
           {/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
           <main className="min-w-0 flex-1">
             {!hasProjects && <WelcomeEmptyState />}
-            {hasProjects && mainView === 'plan' && selectedPlanId && (
-              <div className="flex h-full flex-col border-2 border-transparent">
-                <PanelHeaderBar
-                  mainView={mainView}
-                  onToggleSidebar={
-                    responsiveSizes.canCollapseSidebar
-                      ? toggleSidebar
-                      : undefined
-                  }
-                  onViewChange={setMainView}
-                  sidebarCollapsed={sidebarCollapsed}
-                />
-                <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-                  <div className="min-h-0 min-w-0 flex-1">
-                    <PlanEditor
-                      onBack={handlePlanBack}
-                      prdId={selectedPlanId}
-                    />
-                  </div>
-                  <div className="h-64 shrink-0 border-t md:h-auto md:w-80 md:border-t-0 md:border-l">
-                    <div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
-                      <span className="font-medium text-sm">Issues</span>
-                    </div>
-                    <ScrollArea className="h-[calc(100%-2rem)]">
-                      <div className="grid gap-3 p-3">
-                        <CreatePlanWorkspace prdId={selectedPlanId} />
-                        <PlanIssuesList prdId={selectedPlanId} />
-                      </div>
-                    </ScrollArea>
-                  </div>
-                </div>
-              </div>
-            )}
-            {hasProjects && mainView !== 'plan' && (
+            {hasProjects && (
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   mainView={mainView}

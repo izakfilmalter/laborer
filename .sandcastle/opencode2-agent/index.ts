@@ -144,7 +144,7 @@ export const opencode2Agent = (
           "attempt=1",
           "while :; do",
           "  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db; fi",
-          `  ${invocation} < "$prompt_file" && exit 0`,
+          `  cat "$prompt_file" | ${invocation} && exit 0`,
           "  status=$?",
           `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
           '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',

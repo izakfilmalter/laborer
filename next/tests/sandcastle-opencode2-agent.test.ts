@@ -178,6 +178,7 @@ describe("Sandcastle opencode2 agent", () => {
       executable,
       [
         "#!/bin/sh",
+        '[ -p /dev/stdin ] || { printf "stdin must be a pipe\\n" >&2; exit 2; }',
         'attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
         'printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
         'cat >> "$FAKE_OPENCODE_STDIN"',

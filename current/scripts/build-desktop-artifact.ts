@@ -47,7 +47,6 @@ import rootPkg from '../package.json' with { type: 'json' }
 import fileWatcherPkg from '../packages/file-watcher/package.json' with {
   type: 'json',
 }
-import mcpPkg from '../packages/mcp/package.json' with { type: 'json' }
 import serverPkg from '../packages/server/package.json' with { type: 'json' }
 import terminalPkg from '../packages/terminal/package.json' with {
   type: 'json',
@@ -118,7 +117,6 @@ const DIST_DIRS = {
   serverDist: join(REPO_ROOT, 'packages/server/dist'),
   terminalDist: join(REPO_ROOT, 'packages/terminal/dist'),
   fileWatcherDist: join(REPO_ROOT, 'packages/file-watcher/dist'),
-  mcpDist: join(REPO_ROOT, 'packages/mcp/dist'),
 }
 
 const REQUIRED_ASAR_FILES = [
@@ -420,8 +418,6 @@ interface StagePackageJson {
  *         dist/                 <- utility-main.mjs (node-pty direct, MessagePort RPC)
  *       file-watcher/
  *         dist/                 <- utility-main.mjs (@parcel/watcher, MessagePort RPC)
- *       mcp/
- *         dist/                 <- main.mjs (stdio), utility-main.mjs (MessagePort RPC)
  *     dist/                     <- electron-builder output
  */
 function stage(stageRoot: string): void {
@@ -447,7 +443,6 @@ function stage(stageRoot: string): void {
   mkdirSync(join(stageAppDir, 'packages/server'), { recursive: true })
   mkdirSync(join(stageAppDir, 'packages/terminal'), { recursive: true })
   mkdirSync(join(stageAppDir, 'packages/file-watcher'), { recursive: true })
-  mkdirSync(join(stageAppDir, 'packages/mcp'), { recursive: true })
 
   // Copy built artifacts.
   cpSync(
@@ -474,10 +469,6 @@ function stage(stageRoot: string): void {
     join(stageAppDir, 'packages/file-watcher/dist'),
     { recursive: true }
   )
-  cpSync(DIST_DIRS.mcpDist, join(stageAppDir, 'packages/mcp/dist'), {
-    recursive: true,
-  })
-
   // Resolve dependencies from all service packages.
   const resolvedServerDeps = resolveServiceDeps(serverPkg, 'packages/server')
   const resolvedTerminalDeps = resolveServiceDeps(
@@ -488,7 +479,6 @@ function stage(stageRoot: string): void {
     fileWatcherPkg,
     'packages/file-watcher'
   )
-  const resolvedMcpDeps = resolveServiceDeps(mcpPkg, 'packages/mcp')
   const resolvedDesktopDeps = resolveDesktopRuntimeDeps()
 
   const electronVersion = desktopPkg.dependencies.electron
@@ -508,7 +498,6 @@ function stage(stageRoot: string): void {
       ...resolvedServerDeps,
       ...resolvedTerminalDeps,
       ...resolvedFileWatcherDeps,
-      ...resolvedMcpDeps,
       ...resolvedDesktopDeps,
     },
     devDependencies: {

@@ -25,7 +25,7 @@
  *   restarts happen only on actual process exit or user request. This
  *   matches VS Code's pty host, whose missed heartbeats only ever fire
  *   `onPtyHostUnresponsive`.
- * - Stateless sidecars (file-watcher, mcp) keep kill + restart on
+ * - The stateless file-watcher sidecar keeps kill + restart on
  *   heartbeat timeout.
  *
  * Follows VS Code's patterns:

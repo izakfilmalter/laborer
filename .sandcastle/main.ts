@@ -161,7 +161,7 @@ const VERIFICATION_POLICY = [
 mkdirSync(BUN_CACHE_DIR, { recursive: true });
 
 const allAroundAgent = () =>
-  opencode2Agent("openai/gpt-5.6-sol", { variant: "medium" });
+  opencode2Agent("openai/gpt-5.6-sol-fast", { variant: "medium" });
 const uiAgent = () =>
   opencode2Agent("anthropic/claude-opus-5", { variant: "medium" });
 

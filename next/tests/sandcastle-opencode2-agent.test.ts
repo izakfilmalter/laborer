@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { opencode2Agent } from "../../.sandcastle/opencode2-agent/index.ts";
 
+const sandcastleMain = readFileSync("../.sandcastle/main.ts", "utf8");
+
 const runCommand = async (
   command: string,
   stdin: string,
@@ -44,6 +46,11 @@ const runCommand = async (
   });
 
 describe("Sandcastle opencode2 agent", () => {
+  it("uses the available fast OpenAI model for all-around phases", () => {
+    assert.include(sandcastleMain, 'opencode2Agent("openai/gpt-5.6-sol-fast"');
+    assert.notInclude(sandcastleMain, 'opencode2Agent("openai/gpt-5.6-sol",');
+  });
+
   it("matches its command contract to the installed pinned CLI", () => {
     const packageJson = JSON.parse(
       readFileSync("../.sandcastle/package.json", "utf8")

@@ -12,11 +12,54 @@ import {
   makeChatPlaneLayer,
 } from "../src/chat-plane/chat-sdk.ts";
 import { placeholderMentionHandler } from "../src/chat-plane/placeholder-handler.ts";
+import {
+  CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+  CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+  loadChatCanarySlackConfig,
+} from "../src/slack/config.ts";
 
 const CHAT_SDK_PACKAGE_IMPORT =
   /from ["'](?:chat|@chat-adapter\/slack|@chat-adapter\/state-memory)["']/;
 
 describe("Chat plane walking skeleton", () => {
+  it.effect("requires valid credentials dedicated to the Chat SDK canary", () =>
+    Effect.gen(function* () {
+      const appToken = ["x", "app", "-chat-canary-fixture"].join("");
+      const botToken = ["x", "oxb", "-chat-canary-fixture"].join("");
+
+      const missingDedicatedTokens = yield* Effect.result(
+        loadChatCanarySlackConfig({
+          SLACK_APP_TOKEN: ["x", "app", "-production-fixture"].join(""),
+          SLACK_BOT_TOKEN: ["x", "oxb", "-production-fixture"].join(""),
+        })
+      );
+      assert.strictEqual(missingDedicatedTokens._tag, "Failure");
+
+      const reusedProductionTokens = yield* Effect.result(
+        loadChatCanarySlackConfig({
+          [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+          [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+          SLACK_APP_TOKEN: appToken,
+          SLACK_BOT_TOKEN: botToken,
+        })
+      );
+      assert.strictEqual(reusedProductionTokens._tag, "Failure");
+      if (reusedProductionTokens._tag === "Failure") {
+        assert.strictEqual(
+          reusedProductionTokens.failure.reason,
+          "matches-production-token"
+        );
+      }
+
+      const dedicatedConfig = yield* loadChatCanarySlackConfig({
+        [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+        [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+      });
+      assert.strictEqual(dedicatedConfig.appToken.toString(), "<redacted>");
+      assert.strictEqual(dedicatedConfig.botToken.toString(), "<redacted>");
+    })
+  );
+
   it.effect("bridges a mention Effect into a streamed SDK thread reply", () =>
     Effect.scoped(
       Effect.gen(function* () {

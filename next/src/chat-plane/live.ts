@@ -1,5 +1,6 @@
 /** Dedicated canary composition for the Chat SDK Slack plane. */
-import { Config, Console, Effect, Redacted } from "effect";
+import { Console, Effect, Redacted } from "effect";
+import { loadChatCanarySlackConfig } from "../slack/config.ts";
 import { ChatPlane, makeLiveChatPlaneLayer } from "./chat-sdk.ts";
 import { placeholderMentionHandler } from "./placeholder-handler.ts";
 
@@ -14,16 +15,11 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 });
 
 const program = Effect.gen(function* () {
-  const appToken = yield* Config.redacted(
-    "LABORER_CHAT_CANARY_SLACK_APP_TOKEN"
-  );
-  const botToken = yield* Config.redacted(
-    "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN"
-  );
+  const config = yield* loadChatCanarySlackConfig();
   const layer = makeLiveChatPlaneLayer(
     {
-      appToken: Redacted.value(appToken),
-      botToken: Redacted.value(botToken),
+      appToken: Redacted.value(config.appToken),
+      botToken: Redacted.value(config.botToken),
       userName: "laborer",
     },
     placeholderMentionHandler

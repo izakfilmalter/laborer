@@ -18,6 +18,10 @@ export const ACP_CANARY_SLACK_APP_TOKEN_VARIABLE =
   "LABORER_ACP_CANARY_SLACK_APP_TOKEN";
 export const ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE =
   "LABORER_ACP_CANARY_SLACK_BOT_TOKEN";
+export const CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE =
+  "LABORER_CHAT_CANARY_SLACK_APP_TOKEN";
+export const CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE =
+  "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN";
 const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
 const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
 
@@ -265,34 +269,48 @@ export const loadSlackConfig: Effect.Effect<
   });
 });
 
-export const loadAcpCanarySlackConfig = (
-  environment: NodeJS.ProcessEnv = process.env
+const loadCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv,
+  appTokenVariable: string,
+  botTokenVariable: string
 ): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
   Effect.gen(function* () {
     const appToken = yield* readToken(
       environment,
-      ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+      appTokenVariable,
       APP_TOKEN_PREFIX
     );
     const botToken = yield* readToken(
       environment,
-      ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+      botTokenVariable,
       BOT_TOKEN_PREFIX
     );
     if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
-      return yield* configFailure(
-        ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
-        "matches-production-token"
-      );
+      return yield* configFailure(appTokenVariable, "matches-production-token");
     }
     if (matchesProductionBotToken(environment, botToken)) {
-      return yield* configFailure(
-        ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
-        "matches-production-token"
-      );
+      return yield* configFailure(botTokenVariable, "matches-production-token");
     }
     return SlackConfig.of({ appToken, botToken });
   });
+
+export const loadAcpCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv = process.env
+): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
+  loadCanarySlackConfig(
+    environment,
+    ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+    ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE
+  );
+
+export const loadChatCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv = process.env
+): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
+  loadCanarySlackConfig(
+    environment,
+    CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+    CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE
+  );
 
 export const slackConfigLayer: Layer.Layer<
   SlackConfig,

@@ -204,3 +204,17 @@ What a terminal pane is meant to launch (agent CLI or plain shell), persisted wi
 **Orphan**:
 A freshly spawned terminal that no client ever claimed. Only orphans may be reaped on a timer; a terminal that was claimed once is never an orphan, no matter how long it goes unwatched.
 _Avoid_: Calling detached or restored terminals orphans
+
+**Agent status**:
+The semantic state of the agent running in a terminal: working, needs input, idle, or unknown. An agent error surfaces as needs input.
+_Avoid_: Active, waiting-for-input (the legacy two-value signal)
+
+**Seen**:
+Whether the operator has viewed a terminal since its agent last became idle. Viewing the terminal's workspace in a focused window marks it seen.
+
+**Done**:
+The display state of an idle, unseen terminal — the agent finished while nobody was watching. Done is derived from idle plus unseen; it is never stored and never reported by a detector.
+_Avoid_: Completed (as a stored agent status)
+
+**Attention**:
+The agent states that ask for operator notice: needs input and done. Attention ranks a terminal above working and idle in UI emphasis and is what notifications announce.

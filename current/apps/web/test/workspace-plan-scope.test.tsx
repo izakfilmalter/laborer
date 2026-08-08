@@ -19,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   destroyFn,
   isElectronMock,
-  startLoopFn,
   closeWorkspaceMock,
   mutationMap,
   openExternalUrlMock,
@@ -28,7 +27,6 @@ const {
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
-  startLoopFn: vi.fn(),
   closeWorkspaceMock: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   openExternalUrlMock: vi.fn(async () => true),
@@ -77,9 +75,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
       }
-      if (name === 'brrr.startLoop') {
-        mutationMap.set(sentinel, startLoopFn)
-      }
       if (name === 'task.updateStatus') {
         mutationMap.set(sentinel, vi.fn())
       }
@@ -121,13 +116,6 @@ vi.mock('@/components/terminal-list', () => ({
 }))
 
 // Stub review pr and fix findings forms
-vi.mock('@/components/review-pr-form', () => ({
-  ReviewPrForm: () => null,
-}))
-vi.mock('@/components/fix-findings-form', () => ({
-  FixFindingsForm: () => null,
-}))
-
 // Stub copy-button
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,

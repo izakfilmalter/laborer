@@ -56,19 +56,14 @@ describe('LiveStore schema', () => {
   it.scoped('decodes historical project events with removed fields', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
-      const removedConfigKey = `${'br'}${'rr'}Config`
       const historicalPayload = {
         id: 'historical-project',
         repoPath: '/tmp/historical-project',
         name: 'Historical Project',
-        [removedConfigKey]: '.removed/config.toml',
+        removedConfigField: '.removed/config.toml',
       }
 
-      store.commit(
-        events.projectCreated(
-          historicalPayload as Parameters<typeof events.projectCreated>[0]
-        )
-      )
+      store.commit(events.projectCreated(historicalPayload))
 
       assert.deepStrictEqual(
         store.query(tables.projects.where('id', 'historical-project')),

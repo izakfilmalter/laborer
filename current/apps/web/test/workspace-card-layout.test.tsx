@@ -2,7 +2,6 @@
  * Tests for the reorganized workspace card layout.
  *
  * Row 1 (Git): branch name + PR badge + review verdict + findings count
- *   + Review/Fix action buttons (hidden when no PR)
  *
  * Row 2 (Sandbox/Infra): sandbox URL/port + status badge + pause/play
  *
@@ -21,14 +20,12 @@ const {
   isElectronMock,
   mutationMap,
   queryDbMock,
-  startLoopFn,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  startLoopFn: vi.fn(),
   useLaborerStoreMock: vi.fn(),
 }))
 
@@ -71,9 +68,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       const sentinel = Symbol.for(`mutation:${name}`)
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
-      }
-      if (name === 'brrr.startLoop') {
-        mutationMap.set(sentinel, startLoopFn)
       }
       return sentinel
     },
@@ -201,8 +195,6 @@ import { WorkspaceList } from '../src/components/workspace-list'
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const REVIEW_PR_RE = /review pr/i
-const FIX_FINDINGS_RE = /fix findings/i
 const PAUSE_SANDBOX_RE = /pause sandbox/i
 const RESUME_SANDBOX_RE = /resume sandbox/i
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
@@ -280,16 +272,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('hides Review PR and Fix Findings buttons when workspace has no PR', () => {
-    mockStore([makeWorkspace()])
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
-    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
-  })
-
-  it('shows Review PR and Fix Findings buttons when workspace has a PR', () => {
+  it('shows review findings metadata when the workspace has a PR', () => {
     mockStore([
       makeWorkspace({
         prNumber: 42,
@@ -301,8 +284,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    expect(screen.getByRole('button', { name: REVIEW_PR_RE })).toBeTruthy()
-    expect(screen.getByRole('button', { name: FIX_FINDINGS_RE })).toBeTruthy()
+    expect(screen.getByTestId('review-findings-count')).toBeTruthy()
   })
 })
 

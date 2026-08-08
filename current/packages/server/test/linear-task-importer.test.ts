@@ -88,7 +88,6 @@ describe('LinearTaskImporter.importProjectIssues', () => {
           id: 'project-1',
           repoPath,
           name: 'laborer',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -188,7 +187,6 @@ describe('LinearTaskImporter.importProjectIssues', () => {
           id: 'project-1',
           repoPath,
           name: 'laborer',
-          brrrConfig: null,
         })
       )
 

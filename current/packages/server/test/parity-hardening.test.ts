@@ -232,7 +232,6 @@ describe('Persisted identity migration and dedupe hardening', () => {
             id: 'legacy-null-identity',
             repoPath,
             name: 'legacy-null-identity',
-            brrrConfig: null,
           })
         )
 

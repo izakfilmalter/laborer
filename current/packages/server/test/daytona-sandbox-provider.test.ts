@@ -500,7 +500,6 @@ const seedWorkspace = (
       id: projectId,
       repoPath,
       name: projectName,
-      brrrConfig: null,
     })
   )
   store.commit(

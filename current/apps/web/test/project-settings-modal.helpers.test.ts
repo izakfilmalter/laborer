@@ -38,7 +38,6 @@ describe('project settings modal helpers', () => {
       devServerAutoOpen: true,
       devServerSetupScripts: [{ id: '1', value: 'apt-get install -y curl' }],
       devServerStartCommand: 'npm run dev',
-      brrrConfig: '.brrr/config.toml',
       resolvedConfig: {
         agent: 'claude',
         devServerImage: 'node:lts',
@@ -48,7 +47,6 @@ describe('project settings modal helpers', () => {
         devServerAutoOpen: false,
         devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
-        brrrConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },
@@ -69,7 +67,6 @@ describe('project settings modal helpers', () => {
         setupScripts: ['apt-get install -y curl'],
         startCommand: 'npm run dev',
       },
-      brrrConfig: '.brrr/config.toml',
       setupScripts: ['bun install', 'bun test'],
       worktreeDir: '~/worktrees',
     })
@@ -85,7 +82,6 @@ describe('project settings modal helpers', () => {
       devServerAutoOpen: false,
       devServerSetupScripts: [],
       devServerStartCommand: '',
-      brrrConfig: '',
       resolvedConfig: {
         agent: 'claude',
         devServerImage: null,
@@ -95,7 +91,6 @@ describe('project settings modal helpers', () => {
         devServerAutoOpen: false,
         devServerSetupScripts: [],
         devServerStartCommand: null,
-        brrrConfig: null,
         setupScripts: [],
         worktreeDir: '/tmp/worktrees',
       },
@@ -119,7 +114,6 @@ describe('project settings modal helpers', () => {
         { id: '2', value: '' },
       ],
       devServerStartCommand: '',
-      brrrConfig: '  ',
       resolvedConfig: {
         agent: 'claude',
         devServerImage: 'node:lts',
@@ -129,7 +123,6 @@ describe('project settings modal helpers', () => {
         devServerAutoOpen: false,
         devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
-        brrrConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },

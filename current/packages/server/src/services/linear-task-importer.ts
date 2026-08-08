@@ -4,7 +4,6 @@ import { isAbsolute, resolve } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
-import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { TaskManager } from './task-manager.js'
 
@@ -155,9 +154,9 @@ const parseBrrrConfig = (content: string): ParsedBrrrConfig => {
 
 const getConfigPath = (
   projectRepoPath: string,
-  brrrConfigPath: string | null
+  configPathOverride: string | null
 ): string => {
-  const configPath = brrrConfigPath?.trim() || DEFAULT_BRRR_CONFIG_PATH
+  const configPath = configPathOverride?.trim() || DEFAULT_BRRR_CONFIG_PATH
   return isAbsolute(configPath)
     ? configPath
     : resolve(projectRepoPath, configPath)
@@ -290,7 +289,6 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
     LinearTaskImporter,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
-      const configService = yield* ConfigService
       const taskManager = yield* TaskManager
 
       const importProjectIssues = Effect.fn(
@@ -304,21 +302,7 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
           })
         }
 
-        const resolvedConfig = yield* configService
-          .resolveConfig(project.repoPath, project.name)
-          .pipe(
-            Effect.mapError(
-              (e) =>
-                new RpcError({
-                  message: e.message,
-                  code: 'CONFIG_VALIDATION_ERROR',
-                })
-            )
-          )
-        const configPath = getConfigPath(
-          project.repoPath,
-          resolvedConfig.brrrConfig.value
-        )
+        const configPath = getConfigPath(project.repoPath, null)
 
         const parsedConfig = yield* readBrrrConfig(configPath)
         const linearConfig = parsedConfig.linear

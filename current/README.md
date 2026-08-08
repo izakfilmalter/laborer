@@ -46,8 +46,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 ### Planning and Task Management
 - **PRD editor** -- Plate.js rich text editor for writing product requirements documents with debounced auto-save and integrated issues list.
-- **Task management** -- Import tasks from GitHub Issues, Linear tickets, or create via MCP-driven PRD workflow. Create workspaces directly from tasks.
-- **MCP server** -- Model Context Protocol server enabling AI agents to create PRDs, break them into issues, and query remaining work. Auto-registers with OpenCode, Claude Code, and Codex.
+- **Task management** -- Import tasks from GitHub Issues or Linear tickets, track PRD plans, and create workspaces directly from tasks.
 - **Auto-updates** -- GitHub Releases-based auto-update keeps the desktop app current.
 
 ## Tech Stack
@@ -91,7 +90,6 @@ Laborer runs as multiple cooperating services:
 | Web App | 2101 | React frontend (Vite dev server) |
 | Terminal | 2102 | PTY terminal management and WebSocket I/O |
 | File Watcher | 2104 | Filesystem watching via @parcel/watcher |
-| MCP | stdio | MCP server for AI agent tool integration |
 | Desktop | — | Electron shell (spawns backend services as sidecars in production) |
 
 In development, Turborepo runs all services as separate processes. In production, the Electron main process spawns backend services as sidecar child processes with health monitoring and automatic crash recovery.
@@ -107,7 +105,6 @@ current/
 │   ├── server/           # Main backend server (Effect TS)
 │   ├── terminal/         # PTY terminal service (Effect TS)
 │   ├── file-watcher/     # File watcher service
-│   ├── mcp/              # MCP server for AI agent integration
 │   ├── shared/           # Shared types, schema, RPC contracts
 │   ├── env/              # Environment variable validation
 │   └── config/           # Shared TypeScript config

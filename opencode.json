@@ -20,6 +20,11 @@
       "branch": "main",
       "description": "Use for Hermes Agent architecture, implementation patterns, tools, tests, and examples"
     },
+    "herdr": {
+      "repository": "herdrdev/herdr",
+      "branch": "master",
+      "description": "Use for Herdr runtime architecture, terminal orchestration, agent integrations, tests, and examples"
+    },
     "chat": {
       "repository": "vercel/chat",
       "description": "Use for Vercel Chat architecture, implementation patterns, tests, and examples"

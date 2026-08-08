@@ -21,6 +21,7 @@ OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 - `@opencode` — `github.com/anomalyco/opencode`
 - `@openclaw` — `github.com/openclaw/openclaw`
 - `@hermes-agent` — `github.com/NousResearch/hermes-agent`
+- `@herdr` — `github.com/herdrdev/herdr`
 - `@agent-client-protocol` — `github.com/agentclientprotocol/agent-client-protocol`
 - `@chat` — `github.com/vercel/chat`
 

@@ -2,6 +2,7 @@ import { createSlackAdapter } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { type Adapter, Chat } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
 
 export interface ChatSdkMessageLike {
   readonly text: string;
@@ -140,15 +141,20 @@ export const makeLiveChatPlaneLayer = (
   makeChatPlaneLayer({
     handler,
     makeSdk: () => {
+      const slackAdapter = createSlackAdapter({
+        appToken: config.appToken,
+        botToken: config.botToken,
+        mode: "socket",
+        webClientOptions: slackWebApiRequestPolicy,
+      });
       const bot = new Chat({
         adapters: {
           // SlackAdapter implements Adapter at runtime, but its botUserId getter
           // is declared `string | undefined` rather than as an optional property.
-          slack: createSlackAdapter({
-            appToken: config.appToken,
-            botToken: config.botToken,
-            mode: "socket",
-          }) as Adapter,
+          // Narrow the bridge to that one upstream exact-optional mismatch so a
+          // future incompatibility in any other Adapter member still fails here.
+          slack: slackAdapter as Omit<typeof slackAdapter, "botUserId"> &
+            Pick<Adapter, "botUserId">,
         },
         logger: "info",
         state: createMemoryState(),

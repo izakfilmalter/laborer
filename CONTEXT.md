@@ -13,28 +13,21 @@ Laborer's conversational identity in Slack. People mention it in a conversation 
 **Laborer daemon**:
 The local Laborer service that connects the Laborer Slack app to one or more Slack workspaces and supervises their configured local runtimes. One daemon may serve several workspace bindings without merging their conversations or state.
 
-**Daemon generation**:
-One loaded instance of Laborer daemon code participating in development-time replacement. A replacement prepares a new Daemon generation before retiring the currently owning generation.
-_Avoid_: ACP generation, hot-reloaded daemon
-
 **Laborer companion**:
-The local macOS menu-bar application through which an operator observes the Laborer daemon and its current work. It is a client of the daemon and does not own work-thread, Runner, or Execution state.
+The local macOS menu-bar application through which an operator observes the Laborer daemon and its current work. It is a client of the daemon and does not own work-thread or Execution state.
 _Avoid_: Laborer app
 
 **Slack workspace binding**:
-The daemon-owned association from one authenticated Slack workspace installation to one Laborer root. Each Slack workspace has one binding, while several workspaces may deliberately share a root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
-
-**Laborer Runner**:
-The root-bound runtime that receives work-thread events and invokes the configured work handler. One Runner is bound to one Laborer root and may be supervised by a Laborer daemon alongside other Runners.
+The daemon-owned association from one authenticated Slack workspace installation to its local configuration, including the work handler's Laborer root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
 
 **Laborer root**:
-The directory that binds a Laborer Runner to its configuration and work handler. It is the handler's initial working directory and does not need to be a Git repository.
+The directory configured for a Slack workspace binding as the work handler's initial working directory. It carries no runtime-state or ownership semantics and does not need to be a Git repository.
 
 **Laborer global config root**:
 The user-owned directory containing only durable Markdown Agent context and its directory partitions. It is `~/.config/laborer` by default or `$XDG_CONFIG_HOME/laborer` when `XDG_CONFIG_HOME` is absolute and nonblank. It is outside every Laborer root: Souls are partitioned there by canonical Laborer-root identity, while Workspace memory and User profiles are partitioned by authenticated Slack workspace identity.
 
 **Laborer global state root**:
-The user-owned coordination directory for cross-process Agent-context mutation locks. It is `~/.local/state/laborer` by default or `$XDG_STATE_HOME/laborer` when `XDG_STATE_HOME` is absolute and nonblank. Workspace and User-profile locks are keyed by authenticated Slack workspace and target so different Laborer roots coordinate the same memory. Runtime JSON, logs, diagnostics, readiness files, and Runner state remain under each Laborer root's `.laborer-runtime` directory; they are not global state.
+The user-owned directory for the daemon's durable runtime state and cross-process Agent-context mutation locks. It is `~/.local/state/laborer` by default or `$XDG_STATE_HOME/laborer` when `XDG_STATE_HOME` is absolute and nonblank. Runtime state is partitioned by authenticated Slack workspace rather than by Laborer root; Workspace and User-profile locks are keyed by authenticated Slack workspace and target so different Laborer roots coordinate the same memory.
 
 **Work thread**:
 A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
@@ -42,9 +35,6 @@ A Slack channel thread accepted by Laborer as a unit of work and delivered to on
 **In-progress work thread**:
 A work thread with accepted work for which Laborer still owes progress, including any nonterminal Execution. This transient activity state does not affect whether the work thread remains activated.
 _Avoid_: Active conversation
-
-**Needs-attention work thread**:
-A work thread whose current work cannot progress or settle without explicit intervention. It remains visible separately from both in-progress and dormant work threads.
 
 **Dormant work thread**:
 A work thread that has responded to all accepted participant input and has no nonterminal Executions. Dormancy is transient: later participant input moves the still-activated work thread back into progress.
@@ -62,13 +52,7 @@ The narrow text-oriented record Laborer presents to a work handler. It carries a
 The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run from the Laborer root. It owns all workflow-specific behavior, resources, and continuation state, including any worktrees it creates.
 
 **Turn**:
-One serialized batch of work-thread input delivered to a work handler. A turn has one stable identity across replay attempts, and a known handler outcome permanently consumes its assigned input.
-
-**Turn attempt**:
-One invocation of a work handler for a turn. An attempt interrupted by a Runner shutdown or crash is replayed automatically as a new attempt of the same turn; a known handler failure is not retried automatically.
-
-**Settled turn**:
-A turn whose handler has a known terminal outcome and whose accepted outbound items have all been delivered or explicitly abandoned. Only a settled turn permits the next queued turn in its work thread to start.
+One work-handler invocation over a work thread's latest accepted message together with the coalesced backlog of earlier messages that arrived while the previous turn ran. Turns are at-most-once: a failed or interrupted turn is not replayed, and recovery is a participant addressing Laborer again.
 
 **Handler invocation**:
 The temporary local process that executes one turn. It exits when the turn finishes; an idle work thread consumes no running handler process.
@@ -77,16 +61,10 @@ The temporary local process that executes one turn. It exits when the turn finis
 A stable filesystem directory Laborer assigns to one work thread and presents to its work handler on every turn. Laborer manages the directory's identity and location but treats its contents as opaque handler-owned state.
 
 **Public reply**:
-A conversational message the work handler explicitly chooses to send by emitting a public-reply protocol record. Laborer binds it to the work thread and posts it as the Laborer Slack app. Public replies are ordered, append-only, and the only handler-authored output shown in Slack; internal output remains private.
+A conversational message the work handler explicitly chooses to send. Laborer binds it to the work thread and posts it as the Laborer Slack app on a best-effort basis. Public replies are the only handler-authored output shown in Slack; internal output remains private.
 
 **Operational notice**:
-A sanitized, Laborer-authored Slack message reporting that a turn or reply failed. Operational notices identify the turn and failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They exist because Slack is the prototype's primary interface.
-
-**Outbound item**:
-A durable, ordered Slack message awaiting delivery for a turn. Public replies and operational notices use the same outbox and may be pending, delivering, delivered, or blocked. A permanently blocked head item pauses only its work thread until a local operator retries or abandons it.
-
-**Durable snapshot**:
-The Runner-owned, versioned record of accepted inbound identities, work-thread queues, turns, attempts, sanitized outcomes, and outbound delivery state. The prototype stores one atomic filesystem JSON snapshot per Runner, retains it indefinitely, and fails closed rather than inferring or resetting corrupt or unwritable state. Handler state-directory contents and raw process output are not part of the snapshot.
+A sanitized, Laborer-authored Slack message reporting that a turn failed. Operational notices identify the failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They are best-effort and are not durably queued.
 
 The following terms belong to the first intended coding-workflow use case, not to Laborer's generic core.
 

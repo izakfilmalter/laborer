@@ -496,10 +496,10 @@ describe("Chat plane walking skeleton", () => {
         const turns: ChatPlaneTurn[] = [];
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([
-            root,
-            earlier,
-            activation,
             message("33.000", "too late"),
+            activation,
+            earlier,
+            root,
           ]),
           channelMessages: asMessages([]),
           id: "slack:C1:30.000",

@@ -177,9 +177,6 @@ const collectActivationHistory = async (
       message.id === activation.id ||
       !isBeforeActivation(message, activation, activationTime)
     ) {
-      if (!isRootActivation) {
-        break;
-      }
       continue;
     }
     if (isEligibleAuthoredText(message)) {
@@ -190,7 +187,7 @@ const collectActivationHistory = async (
     }
   }
 
-  return isRootActivation ? collected.reverse() : collected;
+  return collected.reverse();
 };
 
 const makeService = (): ChatPlaneShape => ({

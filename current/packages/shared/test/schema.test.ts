@@ -130,13 +130,6 @@ describe('LiveStore schema', () => {
           createdAt: '2026-03-06T00:00:00.000Z',
           baseSha: 'abc123',
           baseBranch: null,
-          sandboxId: null,
-          sandboxUrl: null,
-          sandboxPort: null,
-          sandboxImage: null,
-          sandboxStatus: null,
-          sandboxSetupStep: null,
-          sandboxProvider: null,
           prNumber: null,
           prUrl: null,
           prTitle: null,
@@ -219,550 +212,100 @@ describe('LiveStore schema', () => {
   )
 
   it.scoped(
-    'materializes container lifecycle events on the workspaces table',
+    'keeps historical container and sandbox events as no-op decoders',
     () =>
       Effect.gen(function* () {
         const store = yield* makeTestStore
 
-        // Create a workspace first
         store.commit(
           events.workspaceCreated({
-            id: 'workspace-container',
+            id: 'workspace-history',
             projectId: 'project-1',
             taskSource: null,
-            branchName: 'feature/container-test',
-            worktreePath: '/tmp/project-1/.laborer/workspace-container',
+            branchName: 'feature/history',
+            worktreePath: '/tmp/project-1/.laborer/workspace-history',
             status: 'running',
             origin: 'laborer',
-            createdAt: '2026-03-06T00:00:00.000Z',
-            baseSha: 'def456',
+            createdAt: '2026-04-07T00:00:00.000Z',
+            baseSha: 'abc123',
+            sandboxProvider: 'historical-provider',
           })
         )
 
-        // Verify sandbox fields start as null
-        const beforeContainer = store.query(
-          tables.workspaces.where('id', 'workspace-container')
+        const beforeHistoricalEvents = store.query(
+          tables.workspaces.where('id', 'workspace-history')
         )
-        assert.strictEqual(beforeContainer.length, 1)
-        assert.strictEqual(beforeContainer[0]?.sandboxId, null)
-        assert.strictEqual(beforeContainer[0]?.sandboxUrl, null)
-        assert.strictEqual(beforeContainer[0]?.sandboxImage, null)
-        assert.strictEqual(beforeContainer[0]?.sandboxStatus, null)
 
-        // Start a container
         store.commit(
           events.containerStarted({
-            workspaceId: 'workspace-container',
-            containerId: 'docker-abc123',
-            containerUrl: 'feature-container-test--project-1.orb.local',
+            workspaceId: 'workspace-history',
+            containerId: 'container-1',
+            containerUrl: 'container.example.test',
             containerImage: 'node:22',
-          })
-        )
-
-        const afterStart = store.query(
-          tables.workspaces.where('id', 'workspace-container')
-        )
-        assert.strictEqual(afterStart.length, 1)
-        assert.strictEqual(afterStart[0]?.sandboxId, 'docker-abc123')
-        assert.strictEqual(
-          afterStart[0]?.sandboxUrl,
-          'feature-container-test--project-1.orb.local'
-        )
-        assert.strictEqual(afterStart[0]?.sandboxImage, 'node:22')
-        assert.strictEqual(afterStart[0]?.sandboxStatus, 'running')
-
-        // Pause the container
-        store.commit(
-          events.containerPaused({
-            workspaceId: 'workspace-container',
-          })
-        )
-
-        const afterPause = store.query(
-          tables.workspaces.where('id', 'workspace-container')
-        )
-        assert.strictEqual(afterPause.length, 1)
-        assert.strictEqual(afterPause[0]?.sandboxStatus, 'paused')
-        // Other sandbox fields should be preserved
-        assert.strictEqual(afterPause[0]?.sandboxId, 'docker-abc123')
-        assert.strictEqual(afterPause[0]?.sandboxImage, 'node:22')
-
-        // Unpause the container
-        store.commit(
-          events.containerUnpaused({
-            workspaceId: 'workspace-container',
-          })
-        )
-
-        const afterUnpause = store.query(
-          tables.workspaces.where('id', 'workspace-container')
-        )
-        assert.strictEqual(afterUnpause.length, 1)
-        assert.strictEqual(afterUnpause[0]?.sandboxStatus, 'running')
-        assert.strictEqual(afterUnpause[0]?.sandboxId, 'docker-abc123')
-
-        // Stop the container
-        store.commit(
-          events.containerStopped({
-            workspaceId: 'workspace-container',
-          })
-        )
-
-        const afterStop = store.query(
-          tables.workspaces.where('id', 'workspace-container')
-        )
-        assert.strictEqual(afterStop.length, 1)
-        assert.strictEqual(afterStop[0]?.sandboxId, null)
-        assert.strictEqual(
-          afterStop[0]?.sandboxUrl,
-          'feature-container-test--project-1.orb.local'
-        )
-        assert.strictEqual(afterStop[0]?.sandboxImage, 'node:22')
-        assert.strictEqual(afterStop[0]?.sandboxStatus, null)
-
-        // Verify other workspace fields are preserved after container events
-        assert.strictEqual(afterStop[0]?.branchName, 'feature/container-test')
-        assert.strictEqual(afterStop[0]?.status, 'running')
-      })
-  )
-
-  // ---------------------------------------------------------------------------
-  // v2.Sandbox* events — provider-agnostic sandbox lifecycle
-  // ---------------------------------------------------------------------------
-
-  it.scoped('v2.SandboxStarted sets sandbox fields and sandboxProvider', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-sandbox',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-test',
-          worktreePath: '/tmp/project-1/.laborer/workspace-sandbox',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-sandbox',
-          sandboxId: 'daytona-xyz789',
-          sandboxUrl: 'https://3000-xyz789.preview.daytona.io',
-          sandboxImage: 'node:22',
-          sandboxPort: 3000,
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      const row = store.query(
-        tables.workspaces.where('id', 'workspace-sandbox')
-      )
-      assert.strictEqual(row.length, 1)
-      assert.strictEqual(row[0]?.sandboxId, 'daytona-xyz789')
-      assert.strictEqual(
-        row[0]?.sandboxUrl,
-        'https://3000-xyz789.preview.daytona.io'
-      )
-      assert.strictEqual(row[0]?.sandboxImage, 'node:22')
-      assert.strictEqual(row[0]?.sandboxPort, 3000)
-      assert.strictEqual(row[0]?.sandboxStatus, 'running')
-      assert.strictEqual(row[0]?.sandboxSetupStep, null)
-      assert.strictEqual(row[0]?.sandboxProvider, 'daytona')
-    })
-  )
-
-  it.scoped('v2.SandboxStarted works without optional sandboxPort', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-sandbox-noport',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-noport',
-          worktreePath: '/tmp/project-1/.laborer/workspace-sandbox-noport',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-sandbox-noport',
-          sandboxId: 'docker-abc456',
-          sandboxUrl: 'feature-sandbox-noport--project-1.orb.local',
-          sandboxImage: 'node:22',
-          sandboxProvider: 'docker',
-        })
-      )
-
-      const row = store.query(
-        tables.workspaces.where('id', 'workspace-sandbox-noport')
-      )
-      assert.strictEqual(row.length, 1)
-      assert.strictEqual(row[0]?.sandboxId, 'docker-abc456')
-      assert.strictEqual(row[0]?.sandboxPort, null)
-      assert.strictEqual(row[0]?.sandboxProvider, 'docker')
-    })
-  )
-
-  it.scoped('v2.SandboxStopped clears sandbox state', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-stop',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-stop',
-          worktreePath: '/tmp/project-1/.laborer/workspace-stop',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-stop',
-          sandboxId: 'daytona-stop-test',
-          sandboxUrl: 'https://3000-stop.preview.daytona.io',
-          sandboxImage: 'node:22',
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      store.commit(events.sandboxStopped({ workspaceId: 'workspace-stop' }))
-
-      const row = store.query(tables.workspaces.where('id', 'workspace-stop'))
-      assert.strictEqual(row.length, 1)
-      assert.strictEqual(row[0]?.sandboxId, null)
-      assert.strictEqual(row[0]?.sandboxStatus, null)
-      assert.strictEqual(row[0]?.sandboxSetupStep, null)
-      // URL and image preserved (same as v1.ContainerStopped behavior)
-      assert.strictEqual(
-        row[0]?.sandboxUrl,
-        'https://3000-stop.preview.daytona.io'
-      )
-      assert.strictEqual(row[0]?.sandboxImage, 'node:22')
-    })
-  )
-
-  it.scoped('v2.SandboxPaused sets sandboxStatus to paused', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-pause',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-pause',
-          worktreePath: '/tmp/project-1/.laborer/workspace-pause',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-pause',
-          sandboxId: 'daytona-pause-test',
-          sandboxUrl: 'https://3000-pause.preview.daytona.io',
-          sandboxImage: 'node:22',
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      store.commit(events.sandboxPaused({ workspaceId: 'workspace-pause' }))
-
-      const row = store.query(tables.workspaces.where('id', 'workspace-pause'))
-      assert.strictEqual(row.length, 1)
-      assert.strictEqual(row[0]?.sandboxStatus, 'paused')
-      // Other sandbox fields preserved
-      assert.strictEqual(row[0]?.sandboxId, 'daytona-pause-test')
-      assert.strictEqual(row[0]?.sandboxImage, 'node:22')
-    })
-  )
-
-  it.scoped('v2.SandboxResumed sets sandboxStatus to running', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-resume',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-resume',
-          worktreePath: '/tmp/project-1/.laborer/workspace-resume',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-resume',
-          sandboxId: 'daytona-resume-test',
-          sandboxUrl: 'https://3000-resume.preview.daytona.io',
-          sandboxImage: 'node:22',
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      store.commit(events.sandboxPaused({ workspaceId: 'workspace-resume' }))
-
-      store.commit(events.sandboxResumed({ workspaceId: 'workspace-resume' }))
-
-      const row = store.query(tables.workspaces.where('id', 'workspace-resume'))
-      assert.strictEqual(row.length, 1)
-      assert.strictEqual(row[0]?.sandboxStatus, 'running')
-      assert.strictEqual(row[0]?.sandboxId, 'daytona-resume-test')
-    })
-  )
-
-  it.scoped('v2.SandboxSetupStepChanged updates sandboxSetupStep', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-setup',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-setup',
-          worktreePath: '/tmp/project-1/.laborer/workspace-setup',
-          status: 'creating',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxSetupStepChanged({
-          workspaceId: 'workspace-setup',
-          step: 'creating-sandbox',
-        })
-      )
-
-      const row1 = store.query(tables.workspaces.where('id', 'workspace-setup'))
-      assert.strictEqual(row1[0]?.sandboxSetupStep, 'creating-sandbox')
-
-      store.commit(
-        events.sandboxSetupStepChanged({
-          workspaceId: 'workspace-setup',
-          step: 'pushing-code',
-        })
-      )
-
-      const row2 = store.query(tables.workspaces.where('id', 'workspace-setup'))
-      assert.strictEqual(row2[0]?.sandboxSetupStep, 'pushing-code')
-
-      // Clear step (setup complete)
-      store.commit(
-        events.sandboxSetupStepChanged({
-          workspaceId: 'workspace-setup',
-          step: null,
-        })
-      )
-
-      const row3 = store.query(tables.workspaces.where('id', 'workspace-setup'))
-      assert.strictEqual(row3[0]?.sandboxSetupStep, null)
-    })
-  )
-
-  it.scoped('v2.SandboxPortChanged updates sandboxPort', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-port',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-port',
-          worktreePath: '/tmp/project-1/.laborer/workspace-port',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-port',
-          sandboxId: 'daytona-port-test',
-          sandboxUrl: 'https://3000-port.preview.daytona.io',
-          sandboxImage: 'node:22',
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      store.commit(
-        events.sandboxPortChanged({
-          workspaceId: 'workspace-port',
-          sandboxPort: 8080,
-        })
-      )
-
-      const row = store.query(tables.workspaces.where('id', 'workspace-port'))
-      assert.strictEqual(row[0]?.sandboxPort, 8080)
-
-      // Clear port
-      store.commit(
-        events.sandboxPortChanged({
-          workspaceId: 'workspace-port',
-          sandboxPort: null,
-        })
-      )
-
-      const row2 = store.query(tables.workspaces.where('id', 'workspace-port'))
-      assert.strictEqual(row2[0]?.sandboxPort, null)
-    })
-  )
-
-  it.scoped('v2.SandboxUrlChanged updates sandboxUrl', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-url-change',
-          projectId: 'project-1',
-          taskSource: null,
-          branchName: 'feature/sandbox-url-change',
-          worktreePath: '/tmp/project-1/.laborer/workspace-url-change',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: '2026-04-07T00:00:00.000Z',
-          baseSha: 'abc123',
-        })
-      )
-
-      store.commit(
-        events.sandboxStarted({
-          workspaceId: 'workspace-url-change',
-          sandboxId: 'daytona-url-test',
-          sandboxUrl: 'daytona-url-test',
-          sandboxImage: 'daytona-default',
-          sandboxProvider: 'daytona',
-        })
-      )
-
-      // Initially sandboxUrl is the sandbox ID
-      const row = store.query(
-        tables.workspaces.where('id', 'workspace-url-change')
-      )
-      assert.strictEqual(row[0]?.sandboxUrl, 'daytona-url-test')
-
-      // Update with full Daytona preview URL
-      store.commit(
-        events.sandboxUrlChanged({
-          workspaceId: 'workspace-url-change',
-          sandboxUrl: 'https://3000-daytona-url-test.preview.daytona.io',
-        })
-      )
-
-      const row2 = store.query(
-        tables.workspaces.where('id', 'workspace-url-change')
-      )
-      assert.strictEqual(
-        row2[0]?.sandboxUrl,
-        'https://3000-daytona-url-test.preview.daytona.io'
-      )
-    })
-  )
-
-  it.scoped(
-    'v2.Sandbox* and v1.Container* events coexist and both materialize correctly',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        // Create two workspaces — one uses v1 events, one uses v2 events
-        store.commit(
-          events.workspaceCreated({
-            id: 'workspace-v1',
-            projectId: 'project-1',
-            taskSource: null,
-            branchName: 'feature/v1-events',
-            worktreePath: '/tmp/project-1/.laborer/workspace-v1',
-            status: 'running',
-            origin: 'laborer',
-            createdAt: '2026-04-07T00:00:00.000Z',
-            baseSha: 'abc123',
+            containerPort: 3000,
           })
         )
         store.commit(
-          events.workspaceCreated({
-            id: 'workspace-v2',
-            projectId: 'project-1',
-            taskSource: null,
-            branchName: 'feature/v2-events',
-            worktreePath: '/tmp/project-1/.laborer/workspace-v2',
-            status: 'running',
-            origin: 'laborer',
-            createdAt: '2026-04-07T00:00:00.000Z',
-            baseSha: 'abc123',
+          events.containerPortChanged({
+            workspaceId: 'workspace-history',
+            containerPort: 4000,
           })
         )
-
-        // v1 container event on workspace-v1
         store.commit(
-          events.containerStarted({
-            workspaceId: 'workspace-v1',
-            containerId: 'docker-v1-123',
-            containerUrl: 'v1-test.orb.local',
-            containerImage: 'node:20',
+          events.containerStopped({ workspaceId: 'workspace-history' })
+        )
+        store.commit(
+          events.containerPaused({ workspaceId: 'workspace-history' })
+        )
+        store.commit(
+          events.containerUnpaused({ workspaceId: 'workspace-history' })
+        )
+        store.commit(
+          events.containerSetupStepChanged({
+            workspaceId: 'workspace-history',
+            step: 'historical-step',
           })
         )
-
-        // v2 sandbox event on workspace-v2
         store.commit(
           events.sandboxStarted({
-            workspaceId: 'workspace-v2',
-            sandboxId: 'daytona-v2-456',
-            sandboxUrl: 'https://3000-v2.preview.daytona.io',
+            workspaceId: 'workspace-history',
+            sandboxId: 'sandbox-1',
+            sandboxUrl: 'sandbox.example.test',
             sandboxImage: 'node:22',
-            sandboxProvider: 'daytona',
+            sandboxPort: 3000,
+            sandboxProvider: 'historical-provider',
+          })
+        )
+        store.commit(
+          events.sandboxStopped({ workspaceId: 'workspace-history' })
+        )
+        store.commit(events.sandboxPaused({ workspaceId: 'workspace-history' }))
+        store.commit(
+          events.sandboxResumed({ workspaceId: 'workspace-history' })
+        )
+        store.commit(
+          events.sandboxSetupStepChanged({
+            workspaceId: 'workspace-history',
+            step: 'historical-step',
+          })
+        )
+        store.commit(
+          events.sandboxPortChanged({
+            workspaceId: 'workspace-history',
+            sandboxPort: 4000,
+          })
+        )
+        store.commit(
+          events.sandboxUrlChanged({
+            workspaceId: 'workspace-history',
+            sandboxUrl: 'updated.example.test',
           })
         )
 
-        const v1Row = store.query(tables.workspaces.where('id', 'workspace-v1'))
-        const v2Row = store.query(tables.workspaces.where('id', 'workspace-v2'))
-
-        // v1 event still writes to sandbox* columns
-        assert.strictEqual(v1Row[0]?.sandboxId, 'docker-v1-123')
-        assert.strictEqual(v1Row[0]?.sandboxUrl, 'v1-test.orb.local')
-        assert.strictEqual(v1Row[0]?.sandboxStatus, 'running')
-        // v1 events don't set sandboxProvider
-        assert.strictEqual(v1Row[0]?.sandboxProvider, null)
-
-        // v2 event writes to sandbox* columns with provider
-        assert.strictEqual(v2Row[0]?.sandboxId, 'daytona-v2-456')
-        assert.strictEqual(
-          v2Row[0]?.sandboxUrl,
-          'https://3000-v2.preview.daytona.io'
+        assert.deepStrictEqual(
+          store.query(tables.workspaces.where('id', 'workspace-history')),
+          beforeHistoricalEvents
         )
-        assert.strictEqual(v2Row[0]?.sandboxStatus, 'running')
-        assert.strictEqual(v2Row[0]?.sandboxProvider, 'daytona')
       })
   )
 

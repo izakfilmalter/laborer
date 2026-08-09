@@ -26,7 +26,7 @@ import type {
 import { openCodeMcpConfig } from "./action-mcp-timeouts.ts";
 import { OPEN_CODE_COMMAND } from "./open-code-acp-process.ts";
 
-const OPEN_CODE_VERSION = "0.0.0-next-16573";
+const OPEN_CODE_VERSION = "0.0.0-next-17055";
 const STARTUP_TIMEOUT_MILLIS = 30_000;
 const SHUTDOWN_TIMEOUT_MILLIS = 3000;
 const MAX_STARTUP_LINE_BYTES = 64 * 1024;
@@ -120,7 +120,11 @@ const startServer = async (): Promise<RunningServer> => {
   const password = randomBytes(32).toString("base64url");
   const child = spawn(OPEN_CODE_COMMAND, ["serve", "--stdio", "--port", "0"], {
     cwd: process.cwd(),
-    env: { ...process.env, OPENCODE_PASSWORD: password },
+    env: {
+      ...process.env,
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_PASSWORD: password,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const closed = new Promise<void>((resolveClosed) => {
@@ -370,8 +374,8 @@ const run = async (): Promise<void> => {
           event.type === "permission.asked" &&
           event.data.sessionID === session.id
         ) {
-          const tool = event.data.source?.callID
-            ? tools.get(event.data.source.callID)
+          const tool = event.data.source?.id
+            ? tools.get(event.data.source.id)
             : undefined;
           const toolName = tool?.name ?? event.data.action;
           const toolInput = { ...event.data.metadata, ...tool?.input };
@@ -388,7 +392,7 @@ const run = async (): Promise<void> => {
               ],
               sessionId: session.id,
               toolCall: pendingToolCall(
-                event.data.source?.callID ?? event.data.id,
+                event.data.source?.id ?? event.data.id,
                 toolName,
                 toolInput
               ),
@@ -453,27 +457,23 @@ const run = async (): Promise<void> => {
             },
           });
         } else if (event.type === "session.tool.input.started") {
-          tools.set(event.data.callID, { input: {}, name: event.data.name });
+          tools.set(event.data.id, { input: {}, name: event.data.name });
         } else if (event.type === "session.tool.called") {
-          const current = tools.get(event.data.callID) ?? {
+          const current = tools.get(event.data.id) ?? {
             input: {},
             name: "tool",
           };
           current.input = event.data.input;
-          tools.set(event.data.callID, current);
+          tools.set(event.data.id, current);
           await peer.sessionUpdate({
             sessionId: session.id,
             update: {
-              ...pendingToolCall(
-                event.data.callID,
-                current.name,
-                current.input
-              ),
+              ...pendingToolCall(event.data.id, current.name, current.input),
               sessionUpdate: "tool_call",
             },
           });
         } else if (event.type === "session.tool.success") {
-          tools.delete(event.data.callID);
+          tools.delete(event.data.id);
           await peer.sessionUpdate({
             sessionId: session.id,
             update: {
@@ -490,18 +490,18 @@ const run = async (): Promise<void> => {
                 : [],
               rawOutput: { metadata: event.data.metadata ?? {} },
               status: "completed",
-              toolCallId: event.data.callID,
+              toolCallId: event.data.id,
               sessionUpdate: "tool_call_update",
             },
           });
         } else if (event.type === "session.tool.failed") {
-          tools.delete(event.data.callID);
+          tools.delete(event.data.id);
           await peer.sessionUpdate({
             sessionId: session.id,
             update: {
               rawOutput: { error: event.data.error.message },
               status: "failed",
-              toolCallId: event.data.callID,
+              toolCallId: event.data.id,
               sessionUpdate: "tool_call_update",
             },
           });

@@ -215,7 +215,11 @@ const collectEffectiveMcpNames = async (options: {
   const child = spawn(options.command, [...CONFIG_PROBE_ARGS], {
     cwd: options.cwd,
     detached: process.platform !== "win32",
-    env: { ...options.environment, OPENCODE_PASSWORD: password },
+    env: {
+      ...options.environment,
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_PASSWORD: password,
+    },
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,

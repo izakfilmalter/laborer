@@ -553,7 +553,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize Action ${policy}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
 
         const sessionIds: string[] = [];
         for (const { actionName, attempt } of [
@@ -914,7 +914,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
     });
     assert.strictEqual(
       version.stdout.trim().replace(OPEN_CODE_2_VERSION_PREFIX, ""),
-      "0.0.0-next-16573"
+      "0.0.0-next-17055"
     );
 
     for (const action of ["allow", "deny"] as const) {
@@ -983,7 +983,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize ${action}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
         const session = await withTimeout(
           connection.agent.request(methods.agent.session.new, {
             cwd: workspace,
@@ -1160,7 +1160,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         "initialize memory"
       );
       assert.strictEqual(initialized.agentInfo?.name, "OpenCode");
-      assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+      assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
       const session = await withTimeout(
         connection.agent.request(methods.agent.session.new, {
           cwd: workspace,
@@ -1179,7 +1179,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         observedFingerprints: new Map(),
         observedToolCallIds: new Set(),
         permission: memoryPermission,
-        pinnedOpenCodeVersion: "0.0.0-next-16573",
+        pinnedOpenCodeVersion: "0.0.0-next-17055",
         rejectedToolCallIds: new Set(),
         rejectUncorrelatedPermissions: false,
       });
@@ -1243,7 +1243,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
     }
   }, 120_000);
 
-  it("restarts real pinned OpenCode 0.0.0-next-16573 and resumes with Memory and Action registrations", async () => {
+  it("restarts real pinned OpenCode 0.0.0-next-17055 and resumes with Memory and Action registrations", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

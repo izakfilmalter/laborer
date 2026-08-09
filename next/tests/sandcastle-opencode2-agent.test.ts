@@ -88,12 +88,14 @@ describe("Sandcastle opencode2 agent", () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-"));
     const executable = join(directory, "opencode2");
     const argsPath = join(directory, "args");
+    const environmentPath = join(directory, "environment");
     const stdinPath = join(directory, "stdin");
     writeFileSync(
       executable,
       [
         "#!/bin/sh",
         'printf "%s\\n" "$@" > "$FAKE_OPENCODE_ARGS"',
+        'printf "%s" "$OPENCODE_DISABLE_AUTOUPDATE" > "$FAKE_OPENCODE_ENVIRONMENT"',
         'cat > "$FAKE_OPENCODE_STDIN"',
         'printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-1","part":{}}\'',
         'printf \'%s\\n\' \'{"type":"text","part":{"type":"text","text":"finished"}}\'',
@@ -121,6 +123,7 @@ describe("Sandcastle opencode2 agent", () => {
         {
           ...process.env,
           FAKE_OPENCODE_ARGS: argsPath,
+          FAKE_OPENCODE_ENVIRONMENT: environmentPath,
           FAKE_OPENCODE_STDIN: stdinPath,
           PATH: `${directory}:${process.env.PATH ?? ""}`,
         }
@@ -143,6 +146,7 @@ describe("Sandcastle opencode2 agent", () => {
         readFileSync(stdinPath, "utf8"),
         "Implement safely.\nThen test."
       );
+      assert.strictEqual(readFileSync(environmentPath, "utf8"), "1");
       assert.deepStrictEqual(
         stdout
           .trimEnd()

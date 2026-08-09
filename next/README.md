@@ -411,7 +411,7 @@ exact pinned-OpenCode session-not-found response or ACP `ResourceNotFound`
 response with its canonical message and either no URI or the requested session
 URI permits an atomic generation replacement. Explicitly conflicting identity,
 wrong-code, and wrong-message failures do not replace.
-Pinned OpenCode 0.0.0-next-16573 first calls the backing SDK `session.get` during
+Pinned OpenCode 0.0.0-next-17055 first calls the backing SDK `session.get` during
 `session/resume`. Its missing-session HTTP error is not an ACP tagged error, so
 `fromUnknownError` serializes it as the otherwise-generic JSON-RPC shape
 `-32603 / "Internal error: OpenCode service failure" / {service:"session"}`.
@@ -476,7 +476,7 @@ OpenCode does not emit live `user_message_chunk` updates: its resume tests emit
 no transcript chunks, its event bridge emits only assistant deltas, and its
 ascending `msg_` IDs encode a full 48-bit millisecond-plus-counter order in the
 first twelve hexadecimal digits. Laborer accepts only the reviewed OpenCode
-identity and version 0.0.0-next-16573, waits at most 25 ms for a later local
+identity and version 0.0.0-next-17055, waits at most 25 ms for a later local
 clock tick before sending `session/prompt`, and requires the full order to be
 strictly greater than both that boundary and every previously observed order.
 Older or same-prior-tick delayed IDs remain suppressed. Agents that

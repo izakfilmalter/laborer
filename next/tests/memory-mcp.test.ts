@@ -313,7 +313,7 @@ it("classifies memory permissions without falling through failed authentication"
 });
 
 it("authenticates only exact pinned OpenCode name-less memory fingerprints", () => {
-  for (const pinnedOpenCodeVersion of ["0.0.0-next-16573"] as const) {
+  for (const pinnedOpenCodeVersion of ["0.0.0-next-17055"] as const) {
     const sessionId = `session:pinned:${pinnedOpenCodeVersion}`;
     const permission = `laborer-memory-pinned-${pinnedOpenCodeVersion}_memory`;
     const registration = {

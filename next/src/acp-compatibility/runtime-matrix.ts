@@ -4,8 +4,8 @@ export const SUPPORTED_ACP_RUNTIME_MATRIX = {
   bun: "1.3.5",
   emulate: "0.9.0",
   node: "24.11.1",
-  openCodeCli: "0.0.0-next-16573",
-  openCodeClient: "0.0.0-next-16573",
+  openCodeCli: "0.0.0-next-17055",
+  openCodeClient: "0.0.0-next-17055",
   slackSocketMode: "3.0.0",
   slackWebApi: "8.0.0",
 } as const;

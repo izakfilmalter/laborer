@@ -185,7 +185,7 @@ async function runStreaming(
 ): Promise<CommandResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn("opencode2", args, {
-      env: process.env,
+      env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     activeChildren.add(child);
@@ -332,7 +332,7 @@ async function runCaptured(
 ): Promise<{ readonly exitCode: number; readonly stdout: string }> {
   return await new Promise((resolve) => {
     const child = spawn("opencode2", args, {
-      env: process.env,
+      env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: "1" },
       stdio: ["ignore", "pipe", "ignore"],
     });
     activeChildren.add(child);

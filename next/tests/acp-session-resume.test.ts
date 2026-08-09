@@ -1113,7 +1113,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             );
             const openCodeEnvironment = {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_USE_OPENCODE_MESSAGE_IDS: "1",
             } as const;
@@ -2071,7 +2071,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_REPLAY_AFTER_PROMPT_BEFORE_MARKER: "1",
               SCRIPTED_ACP_USE_OPENCODE_MESSAGE_IDS: "1",
@@ -2142,7 +2142,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
                 controls,
                 environment: {
                   SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-                  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+                  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
                   SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
                   SCRIPTED_ACP_TEXTLESS_STOP_REASON: stopReason,
                 },
@@ -2222,7 +2222,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_TEXTLESS_STOP_REASON: "max_turn_requests",
             },
@@ -2819,7 +2819,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
             },
             repository,

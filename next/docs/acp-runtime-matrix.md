@@ -8,8 +8,8 @@ Issue #243 establishes one exact release-safety contract for `next`.
 | Bun | `1.3.5` | package manager pin, Sandcastle image and local tests |
 | ACP wire protocol | stable v1 (`1`) | initialization validator and compatibility suite |
 | `@agentclientprotocol/sdk` | `1.3.0` | exact dependency and lockfile |
-| `@opencode-ai/cli` (`opencode2`) | `0.0.0-next-16573` | exact dev dependency, Sandcastle image, CLI assertion |
-| `@opencode-ai/client` | `0.0.0-next-16573` | exact dependency and lockfile |
+| `@opencode-ai/cli` (`opencode2`) | `0.0.0-next-17055` | exact dev dependency, Sandcastle image, CLI assertion |
+| `@opencode-ai/client` | `0.0.0-next-17055` | exact dependency and lockfile |
 | `@slack/web-api` | `8.0.0` | exact dependency and lockfile |
 | `@slack/socket-mode` | `3.0.0` | exact dependency and lockfile |
 | Emulate | `0.9.0` | exact dependency and lockfile |

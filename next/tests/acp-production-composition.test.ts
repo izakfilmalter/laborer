@@ -327,7 +327,7 @@ const scriptedEnvironment = (
   HOME: join(dirname(paths.ready), "home"),
   OPENAI_API_KEY: "provider-secret-244",
   SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
   SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
   SCRIPTED_ACP_DURABLE_SESSIONS_PATH: paths.durableSessions,
   SCRIPTED_ACP_LIFECYCLE_LOG_PATH: paths.lifecycle,

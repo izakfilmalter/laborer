@@ -190,7 +190,7 @@ describe("issue #243 real OpenCode ACP compatibility", () => {
           (await firstProcess.prompt(durableSessionId, "emit max_tokens"))
             .stopReason,
           "end_turn",
-          "OpenCode 0.0.0-next-16573 changed finish_reason:length behavior"
+          "OpenCode 0.0.0-next-17055 changed finish_reason:length behavior"
         );
 
         provider.enqueue({ finishReason: "content_filter", kind: "text" });

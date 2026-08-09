@@ -1,4 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Stream } from "node:stream";
 import type {
   InteractiveExecOptions,
@@ -58,18 +66,35 @@ export const supervisedNoSandbox = (
       readonly env: Record<string, string>;
       readonly worktreePath: string;
     }): Promise<NoSandboxHandle> {
-    const worktreePath = createOptions.worktreePath;
+      const worktreePath = createOptions.worktreePath;
+      const gitConfigDirectory = mkdtempSync(
+        join(tmpdir(), "laborer-sandcastle-git-")
+      );
+      const gitConfigPath = join(gitConfigDirectory, "config");
+      const inheritedGitConfig =
+        process.env.GIT_CONFIG_GLOBAL ?? join(homedir(), ".gitconfig");
+      writeFileSync(
+        gitConfigPath,
+        existsSync(inheritedGitConfig)
+          ? `[include]\n\tpath = ${JSON.stringify(inheritedGitConfig)}\n`
+          : "",
+        { mode: 0o600 }
+      );
       const environment = {
         ...process.env,
         ...options.env,
         ...createOptions.env,
+        // Sandcastle's lifecycle writes safe.directory and identity through
+        // `git config --global`. Give every concurrent host handle its own
+        // overlay so those writes cannot race on the user's ~/.gitconfig.
+        GIT_CONFIG_GLOBAL: gitConfigPath,
       };
       const activeChildren = new Map<number, ChildProcess>();
       const activeExecutions = new Set<Promise<unknown>>();
-    const maxOutputTailChars =
-      options.maxOutputTailChars ?? DEFAULT_MAX_OUTPUT_TAIL_CHARS;
-    const killGraceMilliseconds =
-      options.killGraceMilliseconds ?? KILL_GRACE_MS;
+      const maxOutputTailChars =
+        options.maxOutputTailChars ?? DEFAULT_MAX_OUTPUT_TAIL_CHARS;
+      const killGraceMilliseconds =
+        options.killGraceMilliseconds ?? KILL_GRACE_MS;
 
     const runProcess = (
       executable: string,
@@ -234,6 +259,7 @@ export const supervisedNoSandbox = (
           )
         );
         await Promise.allSettled(activeExecutions);
+        rmSync(gitConfigDirectory, { force: true, recursive: true });
       },
     };
     },

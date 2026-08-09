@@ -16,6 +16,43 @@ import {
 } from "../../.sandcastle/host-native-provider/index.ts";
 
 describe("Sandcastle host process supervision", () => {
+  it("isolates concurrent global Git configuration writes", async () => {
+    const firstDirectory = mkdtempSync(join(tmpdir(), "laborer-host-git-a-"));
+    const secondDirectory = mkdtempSync(join(tmpdir(), "laborer-host-git-b-"));
+    const provider = supervisedNoSandbox({ defaultTimeoutSeconds: 30 });
+    const [first, second] = await Promise.all([
+      provider.create({ env: {}, worktreePath: firstDirectory }),
+      provider.create({ env: {}, worktreePath: secondDirectory }),
+    ]);
+
+    try {
+      const [firstWrite, secondWrite] = await Promise.all([
+        first.exec(
+          `git config --global --add safe.directory ${JSON.stringify(firstDirectory)} && printf '%s' "$GIT_CONFIG_GLOBAL"`
+        ),
+        second.exec(
+          `git config --global --add safe.directory ${JSON.stringify(secondDirectory)} && printf '%s' "$GIT_CONFIG_GLOBAL"`
+        ),
+      ]);
+
+      assert.strictEqual(firstWrite.exitCode, 0);
+      assert.strictEqual(secondWrite.exitCode, 0);
+      assert.notStrictEqual(firstWrite.stdout, secondWrite.stdout);
+      assert.strictEqual(
+        readFileSync(firstWrite.stdout, "utf8").includes(firstDirectory),
+        true
+      );
+      assert.strictEqual(
+        readFileSync(secondWrite.stdout, "utf8").includes(secondDirectory),
+        true
+      );
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+      rmSync(firstDirectory, { force: true, recursive: true });
+      rmSync(secondDirectory, { force: true, recursive: true });
+    }
+  });
+
   it("times out and kills the complete command process group", async () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-host-command-"));
     const childPidPath = join(directory, "child-pid");

@@ -201,8 +201,8 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
         // For the "add" pass, use ALL workspaces (including destroyed
         // laborer-managed ones). A laborer workspace in "destroyed" status
         // may still have its worktree directory on disk while cleanup is
-        // in progress (container stop + git worktree remove can take
-        // seconds). Without checking destroyed laborer records, the
+        // in progress (git worktree removal can take seconds). Without
+        // checking destroyed laborer records, the
         // reconciler would re-detect the same worktree and create a
         // duplicate "external" record that immediately reappears in the UI.
         const allByCanonicalPath = new Map(

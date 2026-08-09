@@ -386,7 +386,7 @@ function assignTerminalInWorkspace(
  */
 const paneSpawnGuard = createSpawnGuard()
 
-/** LiveStore query for workspaces (used by isWorkspaceContainerized). */
+/** LiveStore query used to resolve workspace state throughout the hook. */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'laborer:panel-layout:v1:'
@@ -1319,7 +1319,7 @@ export function usePanelLayout() {
    * Toggle the dev server terminal as a panel tab.
    *
    * When toggling ON: creates a new 'devServerTerminal' panel tab in the
-   * workspace that contains the given pane, then spawns a container terminal
+   * workspace that contains the given pane, then spawns its local terminal
    * with `autoRun: true`.
    *
    * When toggling OFF: removes the dev server panel tab from the workspace.

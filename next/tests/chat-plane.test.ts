@@ -13,6 +13,8 @@ import {
 } from "../src/chat-plane/chat-sdk.ts";
 import { placeholderMentionHandler } from "../src/chat-plane/placeholder-handler.ts";
 import {
+  ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+  ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
   CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
   CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
   loadChatCanarySlackConfig,
@@ -48,6 +50,42 @@ describe("Chat plane walking skeleton", () => {
         assert.strictEqual(
           reusedProductionTokens.failure.reason,
           "matches-production-token"
+        );
+      }
+
+      const reusedAcpCanaryTokens = yield* Effect.result(
+        loadChatCanarySlackConfig({
+          [ACP_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+          [ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+          [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+          [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+        })
+      );
+      assert.strictEqual(reusedAcpCanaryTokens._tag, "Failure");
+      if (reusedAcpCanaryTokens._tag === "Failure") {
+        assert.strictEqual(
+          reusedAcpCanaryTokens.failure.reason,
+          "matches-other-canary-token"
+        );
+      }
+
+      const reusedAcpCanaryBotToken = yield* Effect.result(
+        loadChatCanarySlackConfig({
+          [ACP_CANARY_SLACK_APP_TOKEN_VARIABLE]: [
+            "x",
+            "app",
+            "-acp-canary-fixture",
+          ].join(""),
+          [ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+          [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+          [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+        })
+      );
+      assert.strictEqual(reusedAcpCanaryBotToken._tag, "Failure");
+      if (reusedAcpCanaryBotToken._tag === "Failure") {
+        assert.strictEqual(
+          reusedAcpCanaryBotToken.failure.variable,
+          CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE
         );
       }
 

@@ -16,6 +16,7 @@ export interface ChatSdkMessageLike {
   readonly isMention: boolean;
   readonly sentAt: Date;
   readonly text: string;
+  readonly workspaceId: string;
 }
 
 export interface ChatSdkThreadLike {
@@ -26,6 +27,7 @@ export interface ChatSdkThreadLike {
   readonly post: (reply: string | AsyncIterable<string>) => Promise<unknown>;
   readonly rootMessageId: string;
   readonly subscribe: () => Promise<void>;
+  readonly workspaceId: string;
 }
 
 export interface ChatSdkMessageContextLike {
@@ -273,11 +275,103 @@ export const makeChatPlaneLayer = (
     })
   );
 
-export interface LiveChatPlaneConfig {
+interface BaseLiveChatPlaneConfig {
   readonly appToken: string;
-  readonly botToken: string;
   readonly userName: string;
 }
+
+export type LiveChatPlaneConfig = BaseLiveChatPlaneConfig &
+  (
+    | {
+        readonly botToken: string;
+        readonly installations?: never;
+      }
+    | {
+        readonly botToken?: never;
+        readonly installations: readonly LocalSlackInstallation[];
+      }
+  );
+
+export interface LocalSlackInstallation {
+  readonly botToken: string;
+  readonly teamId: string;
+}
+
+export interface LocalSlackInstallationProvider {
+  readonly getInstallation: (
+    installationId: string,
+    isEnterpriseInstall: boolean
+  ) => Promise<LocalSlackResolvedInstallation | null>;
+  readonly recordBotUserId: (teamId: string, botUserId: string) => void;
+}
+
+export interface LocalSlackResolvedInstallation {
+  readonly botToken: string;
+  readonly botUserId?: string;
+}
+
+export const makeLocalSlackInstallationProvider = (
+  installations: readonly LocalSlackInstallation[]
+): LocalSlackInstallationProvider => {
+  const byTeam = new Map<string, LocalSlackResolvedInstallation>();
+  for (const installation of installations) {
+    if (byTeam.has(installation.teamId)) {
+      throw new Error("Duplicate local Slack workspace installation");
+    }
+    byTeam.set(installation.teamId, { botToken: installation.botToken });
+  }
+
+  return {
+    getInstallation: (installationId, isEnterpriseInstall) =>
+      Promise.resolve(
+        isEnterpriseInstall ? null : (byTeam.get(installationId) ?? null)
+      ),
+    recordBotUserId: (teamId, botUserId) => {
+      const installation = byTeam.get(teamId);
+      if (installation === undefined) {
+        throw new Error("Unknown local Slack workspace installation");
+      }
+      byTeam.set(teamId, { ...installation, botUserId });
+    },
+  };
+};
+
+const SlackMessageWorkspace = Schema.Struct({
+  team: Schema.optional(Schema.String),
+  team_id: Schema.optional(Schema.String),
+});
+const SLACK_TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
+
+export const workspaceIdFromRawSlackMessage = (
+  raw: unknown,
+  configuredWorkspaceIds?: ReadonlySet<string>
+): string => {
+  let decoded: typeof SlackMessageWorkspace.Type;
+  try {
+    decoded = Schema.decodeUnknownSync(SlackMessageWorkspace)(raw);
+  } catch {
+    // Schema parse errors include the rejected value. Keep Slack message
+    // payloads out of the adapter's error logs by replacing them here.
+    throw new Error("Slack workspace identity unavailable");
+  }
+  if (
+    decoded.team !== undefined &&
+    decoded.team_id !== undefined &&
+    decoded.team !== decoded.team_id
+  ) {
+    throw new Error("Slack workspace identity unavailable");
+  }
+  const workspaceId = decoded.team_id ?? decoded.team;
+  if (
+    workspaceId === undefined ||
+    !SLACK_TEAM_ID_PATTERN.test(workspaceId) ||
+    (configuredWorkspaceIds !== undefined &&
+      !configuredWorkspaceIds.has(workspaceId))
+  ) {
+    throw new Error("Slack workspace identity unavailable");
+  }
+  return workspaceId;
+};
 
 interface LiveMessageLike {
   readonly author: ChatSdkMessageLike["author"];
@@ -290,21 +384,26 @@ interface LiveMessageLike {
   readonly text: string;
 }
 
-const toChatSdkMessage = (message: LiveMessageLike): ChatSdkMessageLike => ({
+const toChatSdkMessage = (
+  message: LiveMessageLike,
+  workspaceId: string
+): ChatSdkMessageLike => ({
   author: message.author,
   edited: message.metadata.edited,
   id: message.id,
   isMention: message.isMention === true,
   sentAt: message.metadata.dateSent,
   text: message.text,
+  workspaceId,
 });
 
 const mapMessages = (
-  messages: AsyncIterable<LiveMessageLike>
+  messages: AsyncIterable<LiveMessageLike>,
+  workspaceId: string
 ): AsyncIterable<ChatSdkMessageLike> => ({
   async *[Symbol.asyncIterator]() {
     for await (const message of messages) {
-      yield toChatSdkMessage(message);
+      yield toChatSdkMessage(message, workspaceId);
     }
   },
 });
@@ -318,20 +417,27 @@ interface LiveThreadLike {
   readonly subscribe: () => Promise<void>;
 }
 
-const toChatSdkThread = (thread: LiveThreadLike): ChatSdkThreadLike => ({
-  allMessages: mapMessages(thread.allMessages),
-  channelMessages: mapMessages(thread.channel.messages),
+const toChatSdkThread = (
+  thread: LiveThreadLike,
+  workspaceId: string
+): ChatSdkThreadLike => ({
+  allMessages: mapMessages(thread.allMessages, workspaceId),
+  channelMessages: mapMessages(thread.channel.messages, workspaceId),
   id: thread.id,
   isDM: thread.isDM,
   post: (reply) => thread.post(reply),
   rootMessageId: thread.id.slice(thread.id.lastIndexOf(":") + 1),
   subscribe: () => thread.subscribe(),
+  workspaceId,
 });
 
 const toChatSdkContext = (
-  context: { readonly skipped: readonly LiveMessageLike[] } | undefined
+  context: { readonly skipped: readonly LiveMessageLike[] } | undefined,
+  workspaceId: string
 ): ChatSdkMessageContextLike => ({
-  skipped: context?.skipped.map(toChatSdkMessage) ?? [],
+  skipped:
+    context?.skipped.map((message) => toChatSdkMessage(message, workspaceId)) ??
+    [],
 });
 
 export const makeLiveChatPlaneLayer = (
@@ -341,12 +447,38 @@ export const makeLiveChatPlaneLayer = (
   makeChatPlaneLayer({
     handler,
     makeSdk: () => {
-      const slackAdapter = createSlackAdapter({
-        appToken: config.appToken,
-        botToken: config.botToken,
-        mode: "socket",
-        webClientOptions: slackWebApiRequestPolicy,
-      });
+      if (
+        (config.botToken === undefined) ===
+        (config.installations === undefined)
+      ) {
+        throw new Error(
+          "Configure either one bot token or local workspace installations"
+        );
+      }
+      const installationProvider = makeLocalSlackInstallationProvider(
+        config.installations ?? []
+      );
+      const configuredWorkspaceIds =
+        config.installations === undefined
+          ? undefined
+          : new Set(
+              config.installations.map((installation) => installation.teamId)
+            );
+      const slackAdapter = createSlackAdapter(
+        config.botToken !== undefined
+          ? {
+              appToken: config.appToken,
+              botToken: config.botToken,
+              mode: "socket",
+              webClientOptions: slackWebApiRequestPolicy,
+            }
+          : {
+              appToken: config.appToken,
+              installationProvider,
+              mode: "socket",
+              webClientOptions: slackWebApiRequestPolicy,
+            }
+      );
       const bot = new Chat({
         adapters: {
           // SlackAdapter implements Adapter at runtime, but its botUserId getter
@@ -364,31 +496,62 @@ export const makeLiveChatPlaneLayer = (
 
       return {
         initialize: async () => {
+          if (config.installations !== undefined) {
+            for (const installation of config.installations) {
+              const identity = await slackAdapter.withBotToken(
+                installation.botToken,
+                () => slackAdapter.webClient.auth.test(),
+                { installationId: installation.teamId }
+              );
+              if (
+                !identity.ok ||
+                identity.team_id !== installation.teamId ||
+                identity.user_id === undefined
+              ) {
+                throw new Error("Slack installation identity mismatch");
+              }
+              installationProvider.recordBotUserId(
+                installation.teamId,
+                identity.user_id
+              );
+            }
+          }
           await bot.initialize();
           // The Slack adapter deliberately treats a failed auth.test as a
           // warning. A single-workspace canary cannot route mentions without
           // that identity, so fail startup instead of appearing connected.
-          if (slackAdapter.botUserId === undefined) {
+          if (
+            config.botToken !== undefined &&
+            slackAdapter.botUserId === undefined
+          ) {
             throw new Error("Slack adapter identity unavailable");
           }
         },
         onNewMention: (registeredHandler) => {
-          bot.onNewMention((thread, message, context) =>
-            registeredHandler(
-              toChatSdkThread(thread),
-              toChatSdkMessage(message),
-              toChatSdkContext(context)
-            )
-          );
+          bot.onNewMention((thread, message, context) => {
+            const workspaceId = workspaceIdFromRawSlackMessage(
+              message.raw,
+              configuredWorkspaceIds
+            );
+            return registeredHandler(
+              toChatSdkThread(thread, workspaceId),
+              toChatSdkMessage(message, workspaceId),
+              toChatSdkContext(context, workspaceId)
+            );
+          });
         },
         onSubscribedMessage: (registeredHandler) => {
-          bot.onSubscribedMessage((thread, message, context) =>
-            registeredHandler(
-              toChatSdkThread(thread),
-              toChatSdkMessage(message),
-              toChatSdkContext(context)
-            )
-          );
+          bot.onSubscribedMessage((thread, message, context) => {
+            const workspaceId = workspaceIdFromRawSlackMessage(
+              message.raw,
+              configuredWorkspaceIds
+            );
+            return registeredHandler(
+              toChatSdkThread(thread, workspaceId),
+              toChatSdkMessage(message, workspaceId),
+              toChatSdkContext(context, workspaceId)
+            );
+          });
         },
         shutdown: () => bot.shutdown(),
       };

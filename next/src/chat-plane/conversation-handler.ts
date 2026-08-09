@@ -20,6 +20,7 @@ export class ChatPlaneNormalizedMessage extends Schema.Class<ChatPlaneNormalized
 export interface ChatPlaneTurn {
   readonly messages: readonly ChatPlaneNormalizedMessage[];
   readonly threadId: string;
+  readonly workspaceId: string;
 }
 
 export interface ChatPlaneWorkResult {
@@ -89,6 +90,7 @@ export const makeConversationHandler = (
         const result = yield* workHandler({
           messages,
           threadId: thread.id,
+          workspaceId: thread.workspaceId,
         }).pipe(Effect.catchCause(() => Effect.fail("work-handler" as const)));
         if (result.publicReply !== undefined) {
           yield* chatPlane

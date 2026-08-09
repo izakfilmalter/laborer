@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Redacted } from "effect";
 import {
   ChatPlane,
   ChatPlaneOperationError,
@@ -11,6 +11,8 @@ import {
   type ChatSdkMessageLike,
   type ChatSdkThreadLike,
   makeChatPlaneLayer,
+  makeLocalSlackInstallationProvider,
+  workspaceIdFromRawSlackMessage,
 } from "../src/chat-plane/chat-sdk.ts";
 import {
   type ChatPlaneTurn,
@@ -23,6 +25,7 @@ import {
   ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
   CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
   CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+  CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
   loadChatCanarySlackConfig,
 } from "../src/slack/config.ts";
 
@@ -54,6 +57,7 @@ const message = (
     readonly isMe?: boolean;
     readonly isMention?: boolean;
     readonly isSystem?: boolean;
+    readonly workspaceId?: string;
   } = {}
 ): ChatSdkMessageLike => ({
   author: {
@@ -67,6 +71,7 @@ const message = (
   isMention: options.isMention ?? false,
   sentAt: new Date(Number(id.split(".")[0] ?? "0") * 1000),
   text,
+  workspaceId: options.workspaceId ?? "TFIRST",
 });
 
 describe("Chat plane walking skeleton", () => {
@@ -139,8 +144,11 @@ describe("Chat plane walking skeleton", () => {
         [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
         [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
       });
+      assert.strictEqual(dedicatedConfig.mode, "single-workspace");
       assert.strictEqual(dedicatedConfig.appToken.toString(), "<redacted>");
-      assert.strictEqual(dedicatedConfig.botToken.toString(), "<redacted>");
+      if (dedicatedConfig.mode === "single-workspace") {
+        assert.strictEqual(dedicatedConfig.botToken.toString(), "<redacted>");
+      }
     })
   );
 
@@ -169,6 +177,7 @@ describe("Chat plane walking skeleton", () => {
             lifecycle.push("subscribe");
             return Promise.resolve();
           },
+          workspaceId: "TFIRST",
         };
         const sdk: ChatSdkLike = {
           initialize: () => {
@@ -220,6 +229,7 @@ describe("Chat plane walking skeleton", () => {
           post: () => Promise.reject(new Error("private SDK failure")),
           rootMessageId: "failure",
           subscribe: () => Promise.reject(new Error("private SDK failure")),
+          workspaceId: "TFIRST",
         };
         const sdk: ChatSdkLike = {
           initialize: () => Promise.resolve(),
@@ -274,6 +284,154 @@ describe("Chat plane walking skeleton", () => {
       })
     )
   );
+
+  it.effect(
+    "resolves local tokens and partitions inbound work by workspace identity",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const firstToken = ["x", "oxb", "-first-chat-fixture"].join("");
+          const secondToken = ["x", "oxb", "-second-chat-fixture"].join("");
+          const environment = {
+            [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: [
+              "x",
+              "app",
+              "-chat-canary-fixture",
+            ].join(""),
+            [CHAT_CANARY_SLACK_WORKSPACES_VARIABLE]: JSON.stringify([
+              {
+                botTokenEnvironment:
+                  "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_FIRST",
+                teamId: "TFIRST",
+              },
+              {
+                botTokenEnvironment:
+                  "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_SECOND",
+                teamId: "TSECOND",
+              },
+            ]),
+            LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_FIRST: firstToken,
+            LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_SECOND: secondToken,
+          };
+          const config = yield* loadChatCanarySlackConfig(environment);
+          assert.strictEqual(config.mode, "multi-workspace");
+          if (config.mode !== "multi-workspace") {
+            return;
+          }
+
+          const provider = makeLocalSlackInstallationProvider(
+            config.installations.map((installation) => ({
+              botToken: Redacted.value(installation.botToken),
+              teamId: installation.teamId,
+            }))
+          );
+          const [first, second, unknown, enterprise] = yield* Effect.promise(
+            () =>
+              Promise.all([
+                provider.getInstallation("TFIRST", false),
+                provider.getInstallation("TSECOND", false),
+                provider.getInstallation("TUNKNOWN", false),
+                provider.getInstallation("TFIRST", true),
+              ])
+          );
+          assert.strictEqual(first?.botToken, firstToken);
+          assert.strictEqual(second?.botToken, secondToken);
+          assert.strictEqual(unknown, null);
+          assert.strictEqual(enterprise, null);
+          provider.recordBotUserId("TFIRST", "UFIRSTBOT");
+          const identifiedFirst = yield* Effect.promise(() =>
+            provider.getInstallation("TFIRST", false)
+          );
+          assert.strictEqual(identifiedFirst?.botUserId, "UFIRSTBOT");
+
+          const partitions = new Map<string, string[]>();
+          let mentionHandler: ChatSdkMentionHandler | undefined;
+          const sdk: ChatSdkLike = {
+            initialize: () => Promise.resolve(),
+            onNewMention: (handler) => {
+              mentionHandler = handler;
+            },
+            onSubscribedMessage: () => undefined,
+            shutdown: () => Promise.resolve(),
+          };
+          const handler = (
+            thread: ChatSdkThreadLike,
+            message: { readonly text: string; readonly workspaceId: string }
+          ) =>
+            Effect.sync(() => {
+              assert.strictEqual(thread.workspaceId, message.workspaceId);
+              const messages = partitions.get(message.workspaceId) ?? [];
+              partitions.set(message.workspaceId, [...messages, message.text]);
+            });
+
+          yield* Effect.provide(
+            Effect.promise(async () => {
+              assert.ok(mentionHandler);
+              for (const workspaceId of ["TFIRST", "TSECOND"]) {
+                const activation = message("123.456", `from ${workspaceId}`, {
+                  isMention: true,
+                  workspaceId,
+                });
+                await mentionHandler(
+                  {
+                    allMessages: asMessages([activation]),
+                    channelMessages: asMessages([activation]),
+                    id: "slack:CSHARED:123.456",
+                    isDM: false,
+                    post: () => Promise.resolve(),
+                    rootMessageId: activation.id,
+                    subscribe: () => Promise.resolve(),
+                    workspaceId,
+                  },
+                  activation
+                );
+              }
+            }),
+            makeChatPlaneLayer({ handler, makeSdk: () => sdk })
+          );
+
+          assert.deepStrictEqual(partitions.get("TFIRST"), ["from TFIRST"]);
+          assert.deepStrictEqual(partitions.get("TSECOND"), ["from TSECOND"]);
+        })
+      )
+  );
+
+  it("fails closed on malformed, conflicting, or unconfigured workspace identity", () => {
+    const configuredWorkspaceIds = new Set(["TFIRST", "TSECOND"]);
+
+    assert.equal(
+      workspaceIdFromRawSlackMessage(
+        { team_id: "TFIRST" },
+        configuredWorkspaceIds
+      ),
+      "TFIRST"
+    );
+    assert.equal(
+      workspaceIdFromRawSlackMessage(
+        { team: "TSECOND" },
+        configuredWorkspaceIds
+      ),
+      "TSECOND"
+    );
+
+    const rejectedPayloads: readonly unknown[] = [
+      { text: "private TOKEN=value" },
+      { team: "TFIRST", team_id: "TSECOND" },
+      { team_id: "TUNKNOWN" },
+      { team_id: 42, text: "private TOKEN=value" },
+    ];
+    for (const payload of rejectedPayloads) {
+      let failure: unknown;
+      try {
+        workspaceIdFromRawSlackMessage(payload, configuredWorkspaceIds);
+      } catch (error) {
+        failure = error;
+      }
+      assert.instanceOf(failure, Error);
+      assert.equal(failure.message, "Slack workspace identity unavailable");
+      assert.notMatch(failure.message, PRIVATE_FAILURE_DETAIL);
+    }
+  });
 
   it.effect("shuts down an SDK whose initialization fails", () =>
     Effect.scoped(
@@ -342,6 +500,7 @@ describe("Chat plane walking skeleton", () => {
               subscriptions += 1;
               return Promise.resolve();
             },
+            workspaceId: "TFIRST",
           };
           const sdk: ChatSdkLike = {
             initialize: () => Promise.resolve(),
@@ -414,6 +573,7 @@ describe("Chat plane walking skeleton", () => {
             post: () => Promise.resolve(),
             rootMessageId: activation.id,
             subscribe: () => Promise.resolve(),
+            workspaceId: "TFIRST",
           };
           const sdk: ChatSdkLike = {
             initialize: () => Promise.resolve(),
@@ -507,6 +667,7 @@ describe("Chat plane walking skeleton", () => {
           post: () => Promise.resolve(),
           rootMessageId: root.id,
           subscribe: () => Promise.resolve(),
+          workspaceId: "TFIRST",
         };
         const sdk: ChatSdkLike = {
           initialize: () => Promise.resolve(),
@@ -559,6 +720,7 @@ describe("Chat plane walking skeleton", () => {
           post: () => Promise.resolve(),
           rootMessageId: "40.000",
           subscribe: () => Promise.resolve(),
+          workspaceId: "TFIRST",
         };
         const sdk: ChatSdkLike = {
           initialize: () => Promise.resolve(),
@@ -627,6 +789,7 @@ describe("Chat plane walking skeleton", () => {
             },
             rootMessageId: activation.id,
             subscribe: () => Promise.resolve(),
+            workspaceId: "TFIRST",
           };
           const sdk: ChatSdkLike = {
             initialize: () => Promise.resolve(),

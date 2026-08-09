@@ -17,11 +17,20 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 const program = Effect.gen(function* () {
   const config = yield* loadChatCanarySlackConfig();
   const layer = makeLiveChatPlaneLayer(
-    {
-      appToken: Redacted.value(config.appToken),
-      botToken: Redacted.value(config.botToken),
-      userName: "laborer",
-    },
+    config.mode === "single-workspace"
+      ? {
+          appToken: Redacted.value(config.appToken),
+          botToken: Redacted.value(config.botToken),
+          userName: "laborer",
+        }
+      : {
+          appToken: Redacted.value(config.appToken),
+          installations: config.installations.map((installation) => ({
+            botToken: Redacted.value(installation.botToken),
+            teamId: installation.teamId,
+          })),
+          userName: "laborer",
+        },
     placeholderMentionHandler
   );
 

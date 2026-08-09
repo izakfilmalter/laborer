@@ -20,13 +20,15 @@
 > dedicated credentials and state. It is a manual gate and must prove native
 > streaming plus one Action/Execution scene.
 >
-> **CHAT SDK CONVERSATION CANARY for issues #328 and #333.** `start:chat-canary`
-> starts a separate single-workspace Slack Socket Mode composition using the
-> Vercel Chat SDK and in-memory SDK state. A non-DM authored mention subscribes
-> its thread, receives one-time bounded history, and streams a placeholder reply
-> through an Effect-owned boundary. Later authored replies use Chat SDK's
-> coalesced queue backlog, and failed turns receive one best-effort sanitized
-> operational notice. It uses only
+> **CHAT SDK CONVERSATION CANARY for issues #328, #332, and #333.**
+> `start:chat-canary` starts a separate multi-workspace Slack Socket Mode
+> composition using one Vercel Chat SDK adapter and in-memory SDK state. Local
+> configuration maps each Slack team ID to its dedicated bot-token environment
+> variable; no OAuth server or installation store is involved. A non-DM authored
+> mention subscribes its thread, receives one-time bounded history, and streams a
+> placeholder reply through an Effect-owned, workspace-partitioned boundary.
+> Later authored replies use Chat SDK's coalesced queue backlog, and failed turns
+> receive one best-effort sanitized operational notice. It uses only
 > the dedicated `LABORER_CHAT_CANARY_SLACK_*` credentials and does not alter or
 > replace `start:slack`.
 >
@@ -76,6 +78,22 @@ turn, and prints the store/process/Slack evidence. Cleanup is scope-finalized.
 
 This is the **Emulate proof**, not a connection to Slack. It requires no Slack
 app or credentials and remains the default automated integration path.
+
+The manual Chat SDK canary reads one app-level token plus a local workspace
+registry. Every registry entry names its expected Slack team and a dedicated
+environment variable containing that team's bot token:
+
+```sh
+LABORER_CHAT_CANARY_SLACK_APP_TOKEN=...
+LABORER_CHAT_CANARY_SLACK_WORKSPACES='[{"teamId":"TFIRST","botTokenEnvironment":"LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_FIRST"},{"teamId":"TSECOND","botTokenEnvironment":"LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_SECOND"}]'
+LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_FIRST=...
+LABORER_CHAT_CANARY_SLACK_BOT_TOKEN_SECOND=...
+bun run start:chat-canary
+```
+
+Startup authenticates each local installation and fails closed if a token does
+not belong to its configured team. The legacy single-workspace canary variables
+remain supported when the workspace registry is absent.
 
 Run the adversarial proof with:
 

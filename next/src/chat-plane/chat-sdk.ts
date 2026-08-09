@@ -120,7 +120,7 @@ const isEligibleAuthoredText = (message: ChatSdkMessageLike): boolean =>
   !message.edited &&
   message.text.trim().length > 0;
 
-const SLACK_MESSAGE_ID = /^(\d+)\.(\d+)$/;
+const SLACK_MESSAGE_ID = /^(\d{1,20})\.(\d{1,20})$/;
 
 const isBeforeActivation = (
   message: ChatSdkMessageLike,
@@ -177,6 +177,12 @@ const collectActivationHistory = async (
       message.id === activation.id ||
       !isBeforeActivation(message, activation, activationTime)
     ) {
+      // Channel history is newest-first, whereas Thread.allMessages is
+      // oldest-first. Once reply history reaches the activation, no later
+      // message can be historical context.
+      if (!isRootActivation) {
+        break;
+      }
       continue;
     }
     if (isEligibleAuthoredText(message)) {
@@ -187,7 +193,7 @@ const collectActivationHistory = async (
     }
   }
 
-  return collected.reverse();
+  return isRootActivation ? collected.reverse() : collected;
 };
 
 const makeService = (): ChatPlaneShape => ({

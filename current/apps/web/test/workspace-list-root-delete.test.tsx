@@ -50,7 +50,7 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: () => ({
     _tag: 'Success',
-    value: { devServer: { autoOpen: { value: false } } },
+    value: {},
   }),
 }))
 
@@ -181,10 +181,7 @@ import { WorkspaceList } from '../src/components/workspace-list'
 // ---------------------------------------------------------------------------
 
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
-const PAUSE_SANDBOX_RE = /pause sandbox/i
 const PROJECT_REPO_PATH = '/Users/dev/my-project'
-const SET_SANDBOX_PORT_RE = /set sandbox port/i
-const START_SANDBOX_RE = /start sandbox/i
 
 const makeWorkspace = (
   overrides: Partial<{
@@ -196,11 +193,6 @@ const makeWorkspace = (
     origin: string
     createdAt: string
     taskSource: string | null
-    sandboxId: string | null
-    sandboxProvider: string | null
-    sandboxUrl: string | null
-    sandboxStatus: string | null
-    sandboxSetupStep: string | null
     worktreeSetupStep: string | null
     prNumber: number | null
     prUrl: string | null
@@ -218,11 +210,6 @@ const makeWorkspace = (
   origin: 'external',
   createdAt: new Date().toISOString(),
   taskSource: null,
-  sandboxId: null,
-  sandboxProvider: null,
-  sandboxUrl: null,
-  sandboxStatus: null,
-  sandboxSetupStep: null,
   worktreeSetupStep: null,
   prNumber: null,
   prUrl: null,
@@ -319,28 +306,6 @@ describe('WorkspaceList — root workspace delete protection', () => {
       name: DESTROY_WORKSPACE_RE,
     })
     expect(destroyButtons).toHaveLength(1)
-  })
-
-  it('hides sandbox actions for no-sandbox workspaces but keeps destroy available', () => {
-    const noSandboxWorkspace = makeWorkspace({
-      id: 'no-sandbox-ws',
-      branchName: 'feature/no-sandbox',
-      sandboxProvider: 'none',
-      worktreePath: '/Users/dev/my-project-worktrees/feature-no-sandbox',
-    })
-
-    mockStore([noSandboxWorkspace])
-
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
-
-    expect(
-      screen.getByRole('button', { name: DESTROY_WORKSPACE_RE })
-    ).toBeTruthy()
-    expect(screen.queryByRole('button', { name: START_SANDBOX_RE })).toBeNull()
-    expect(screen.queryByRole('button', { name: PAUSE_SANDBOX_RE })).toBeNull()
-    expect(
-      screen.queryByRole('button', { name: SET_SANDBOX_PORT_RE })
-    ).toBeNull()
   })
 
   it('shows a pending workspace instead of the empty state during Slack planning', () => {

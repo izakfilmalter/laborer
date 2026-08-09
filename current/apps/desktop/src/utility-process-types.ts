@@ -110,23 +110,6 @@ export interface FileWatcherRpcPortMessage {
   readonly type: 'file-watcher-rpc-port'
 }
 
-/**
- * Sent by the main process to transfer a per-terminal data channel
- * MessagePort to the server utility process for Daytona PTY sessions.
- * The actual MessagePort is in the `ports` array of the MessageEvent.
- *
- * Daytona PTY sessions are managed by the server utility process (not
- * the terminal utility process) because the Daytona SDK WebSocket
- * connection lives in the server. Terminal IDs with the `daytona:`
- * prefix are routed here instead of to the terminal utility process.
- *
- * @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
- */
-export interface DaytonaTerminalDataPortMessage {
-  readonly terminalId: string
-  readonly type: 'daytona-terminal-data-port'
-}
-
 /** All messages the main process can send to a utility process. */
 export type UtilityProcessParentMessage =
   | PortTransferMessage
@@ -134,4 +117,3 @@ export type UtilityProcessParentMessage =
   | SyncPortMessage
   | TerminalRpcPortMessage
   | FileWatcherRpcPortMessage
-  | DaytonaTerminalDataPortMessage

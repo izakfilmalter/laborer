@@ -55,7 +55,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -83,19 +82,7 @@ import {
 } from '@/lib/keybinds'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
-/**
- * Daytona terminal IDs are prefixed with `daytona:` so the correct
- * RPC endpoint (server vs terminal utility process) can be selected.
- * Mirrors the routing logic in the Electron main process (ipc.ts)
- * and the server's SandboxProviderRouter.
- */
-const DAYTONA_TERMINAL_PREFIX = 'daytona:'
-
-/** Mutation atom for resizing local (Docker/host) terminals via the terminal utility process. */
-const localResizeMutation = TerminalServiceClient.mutation('terminal.resize')
-
-/** Mutation atom for resizing Daytona terminals via the server (LaborerRpcs). */
-const daytonaResizeMutation = LaborerClient.mutation('terminal.resize')
+const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
 
 /**
  * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
@@ -535,11 +522,7 @@ function TerminalPaneRenderer({
     replayStatus,
     terminalStatus,
   } = connection
-  const resizeLocal = useAtomSet(localResizeMutation)
-  const resizeDaytona = useAtomSet(daytonaResizeMutation)
-  const resizeTerminal = terminalId.startsWith(DAYTONA_TERMINAL_PREFIX)
-    ? resizeDaytona
-    : resizeLocal
+  const resizeTerminal = useAtomSet(resizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)

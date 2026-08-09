@@ -280,13 +280,10 @@ packages/server/src/main.ts
   |     LaborerStoreLive (SQLite), ConfigService, RepositoryIdentity
   |
   |-- DeferredServicesProxyLive:
-  |     Creates 15 Ref-backed proxy services
+  |     Creates Ref-backed proxy services
   |     Each proxy initially delegates to Effect.die("not initialized")
   |
   |-- Background fiber builds real implementations in groups:
-  |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
-  |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
-  |                       RepositoryWatchCoordinator, ProjectRegistry, WorkspaceProvider
   |     Group 3 (independent): TerminalClient
   |
   |-- As each group completes: Ref.set() swaps proxy with real implementation

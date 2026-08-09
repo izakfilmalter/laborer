@@ -2,7 +2,7 @@
  * Presentational header bar for a single workspace frame.
  *
  * Shows project / branch name, workspace-level action buttons (diff toggle,
- * dev server toggle), and a close-workspace button that kills all terminals
+ * pane toggles), and a close-workspace button that kills all terminals
  * for this workspace.
  *
  * Per-pane actions (split, fullscreen, close pane) are rendered as an
@@ -14,15 +14,7 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import {
-  FileCode2,
-  FolderTree,
-  Minus,
-  Plus,
-  Server,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
 import { useCallback } from 'react'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -58,8 +50,6 @@ interface WorkspaceFrameHeaderProps {
     | undefined
   /** Whether this workspace frame is the currently active/focused one. */
   readonly isActiveFrame?: boolean | undefined
-  /** Whether the workspace runs in a container (shows dev server toggle). */
-  readonly isContainerized: boolean
   /** Whether the workspace frame is minimized (collapsed to header only). */
   readonly isMinimized?: boolean | undefined
   /** Called when the header area is clicked (focus pane or expand if minimized). */
@@ -163,7 +153,6 @@ function WorkspaceFrameHeader({
   diffIsOpen,
   dragHandleRef,
   isActiveFrame = false,
-  isContainerized,
   isMinimized,
   onHeaderClick,
   onMinimize,
@@ -264,38 +253,6 @@ function WorkspaceFrameHeader({
       <div className="flex gap-0.5">
         {!isMinimized && (
           <>
-            {isContainerized && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label="New dev server terminal"
-                      disabled={!hasActivePane}
-                      onClick={withFocus((paneId) => {
-                        if (workspaceId) {
-                          actions?.splitPane(paneId, 'horizontal', {
-                            paneType: 'devServerTerminal',
-                            workspaceId,
-                          })
-                        }
-                      })}
-                      size="icon-sm"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <Server className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  New dev server terminal
-                  <KbdGroup>
-                    <Kbd>^</Kbd>
-                    <Kbd>B</Kbd>
-                    <Kbd>S</Kbd>
-                  </KbdGroup>
-                </TooltipContent>
-              </Tooltip>
-            )}
             <TreeToggleButton
               disabled={!hasActivePane}
               onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}

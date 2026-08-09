@@ -2,13 +2,13 @@
 
 ## Problem Statement
 
-Modern AI-assisted development often means running several coding agents across isolated workspaces, but existing tools still force developers into a single-agent view and leave worktree, terminal, port, and dev-server management to the operator.
+Modern AI-assisted development often means running several coding agents across isolated workspaces, but existing tools still force developers into a single-agent view and leave worktree and terminal management to the operator.
 
 The core pain points are:
 
 1. **No multi-agent visibility.** Existing tools (Conductor, OpenCode Desktop, T3's tool) show one agent conversation at a time. Developers herding 4-5+ agents need to see all of them simultaneously, like a Tmux session for AI agents.
 
-2. **Manual environment management.** Setting up isolated workspaces (worktrees, ports, dev servers, file watcher scoping) for each agent is tedious and error-prone. Tearing them down is often forgotten.
+2. **Manual environment management.** Setting up local worktrees, terminals, and file watcher scoping for each agent is tedious and error-prone. Tearing them down is often forgotten.
 
 3. **Wasted local compute.** Developers with $200/month AI subscriptions get near-unlimited usage on their local machine but have no way to fully leverage their hardware for parallel agent execution.
 
@@ -17,7 +17,6 @@ The core pain points are:
 Laborer is a local-first, API-first application for orchestrating multiple AI coding agents in parallel. It provides:
 
 - A **tmux-style panel system** where each pane is a live terminal (xterm.js) showing an agent's TUI, a diff viewer, or a raw shell. Panes split recursively (horizontal/vertical), resize, and persist across sessions.
-- **Automated workspace isolation** via git worktrees (v1) with a pluggable provider interface for future Docker/Daytona support. Each workspace gets its own branch, port allocation, file watcher scope, and setup script execution.
 - A **standalone Bun server** running Effect TS services, separate from the app. The server manages all side effects (process spawning, git operations, file system). The app can run in a browser or a Tauri desktop shell.
 - **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and app, with **effect-atom (`@effect-atom/atom-react`) + `@effect/rpc`** for triggering side effects via `AtomRpc` mutations.
 
@@ -30,7 +29,7 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 5. As a developer, I want the diff viewer to update live as the agent modifies files, so that I can catch issues early without waiting for the agent to finish.
 6. As a developer, I want to open multiple terminals per workspace (agent, type checker, test runner, raw shell), so that I can run supplementary processes alongside the coding agent.
 7. As a developer, I want to also create ad-hoc workspaces for quick one-off tasks that don't warrant an issue, so that the tool doesn't force me through an issue tracker for everything.
-8. As a developer, I want each workspace to have its own allocated port for its dev server, so that I can run multiple Next.js (or similar) dev servers simultaneously without port conflicts.
+8. As a developer, I want a dedicated terminal pane for a workspace's dev server, so that I can monitor it alongside the coding agent.
 9. As a developer, I want the workspace setup to automatically run project-specific scripts (install deps, copy .env files, etc.), so that I don't have to manually bootstrap each worktree.
 10. As a developer, I want to manage multiple projects (repos) simultaneously, so that I can work across different codebases in the same session.
 11. As a developer, I want to interact with agents in human-in-the-loop mode (typing directly into the agent's terminal), so that I can guide the agent when needed.
@@ -139,7 +138,7 @@ const destroyWorkspace = useAtomSet(LaborerClient.mutation("workspace.destroy"))
 
 Key RPC methods (all mutations unless noted):
 - `workspace.create(projectId, branchName?)` — creates a local git worktree and runs setup
-- `workspace.destroy(workspaceId)` — tears down worktree, kills processes, frees port
+- `workspace.destroy(workspaceId)` — tears down the worktree and kills its processes
 - `terminal.spawn(workspaceId, command?)` — creates PTY in workspace directory
 - `terminal.write(terminalId, data)` — sends input to PTY
 - `terminal.resize(terminalId, cols, rows)` — resizes PTY
@@ -155,9 +154,9 @@ Key RPC methods (all mutations unless noted):
 ### Modules
 
 **1. WorkspaceProvider (Effect Service)**
-An Effect service with a tag-based interface allowing multiple implementations. V1 ships with `WorktreeProvider` that wraps git worktree operations (inspired by gtr/git-worktree-runner for worktree lifecycle: creation, file copying, setup scripts, cleanup). The interface is generic enough to accommodate future `DockerProvider` and `DaytonaProvider` implementations.
+An Effect service that owns local git worktree operations (inspired by gtr/git-worktree-runner for worktree lifecycle: creation, file copying, setup scripts, cleanup).
 
-Responsibilities: worktree creation/destruction, port allocation (via PortAllocator sub-service), setup script execution, file watcher scoping, branch management.
+Responsibilities: worktree creation/destruction, setup script execution, file watcher scoping, and branch management.
 
 Reference: https://github.com/coderabbitai/git-worktree-runner for worktree lifecycle patterns.
 
@@ -366,8 +365,6 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 ## Out of Scope
 
-- **Slack bot integration.** Remote workspace creation via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
-- **Docker/Daytona workspace providers.** V1 ships with git worktrees only. The `WorkspaceProvider` interface is designed for future implementations, but they are not built in v1.
 - **Browser preview pane.** Embedding an iframe showing the dev server is a future enhancement. V1 focuses on terminals and diffs.
 - **Authentication / multi-user.** V1 is a single-user, local-only tool with no auth.
 - **Agent-specific tool protocols.** V1 treats agents as terminal processes and does not install a Laborer-owned tool server into them.

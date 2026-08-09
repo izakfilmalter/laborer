@@ -13,7 +13,7 @@
  *     -> LaborerRpcsLive -> Service implementations
  *
  * Tests cover:
- * - Core RPCs (health.check, lifecycle.initStatus, docker.status)
+ * - Core RPCs (health.check, lifecycle.initStatus)
  * - Deferred service proxy behavior (SERVICE_INITIALIZING errors)
  * - Multiple concurrent requests
  *
@@ -35,17 +35,13 @@ import { afterAll, beforeAll, it } from 'vitest'
 
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
-import { ContainerService } from '../../src/services/container-service.js'
 import {
   DeferredServicesReadyLayer,
   makeServiceProxy,
 } from '../../src/services/deferred-service.js'
-import { DepsImageService } from '../../src/services/deps-image-service.js'
-import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
@@ -80,30 +76,15 @@ function toRpcPort(
 
 /**
  * Placeholder proxy layers for all deferred services.
- * Each proxy returns SERVICE_INITIALIZING errors for method calls,
- * except DockerDetection which returns { available: false }.
+ * Each proxy returns SERVICE_INITIALIZING errors for method calls.
  */
 const DeferredServiceStubs = Layer.mergeAll(
-  Layer.succeed(
-    DockerDetection,
-    makeServiceProxy('DockerDetection', {
-      check: () => Effect.succeed({ available: false }),
-    })
-  ),
   Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry')),
   Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider')),
   Layer.succeed(FileService, makeServiceProxy('FileService')),
   Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
-  Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
-  Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
-  Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
-  Layer.succeed(
-    SandboxProvider,
-    makeServiceProxy<SandboxProvider['Type']>('SandboxProvider', {
-      checkAvailability: () => Effect.succeed({ available: false }),
-    })
-  )
+  Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient'))
 )
 
 // ---------------------------------------------------------------------------
@@ -202,17 +183,6 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   })
 
   // -----------------------------------------------------------------------
-  // docker.status — deferred service with placeholder override
-  // -----------------------------------------------------------------------
-
-  it('docker.status returns placeholder data via MessagePort', async () => {
-    const result = await run(client.docker.status())
-
-    // DockerDetection proxy has a placeholder override
-    assert.strictEqual(result.available, false)
-  })
-
-  // -----------------------------------------------------------------------
   // Deferred service — SERVICE_INITIALIZING errors
   // -----------------------------------------------------------------------
 
@@ -240,19 +210,17 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   // -----------------------------------------------------------------------
 
   it('handles multiple concurrent requests via MessagePort', async () => {
-    const [health, initStatus, docker] = await run(
+    const [health, initStatus] = await run(
       Effect.all([
         client.health.check(),
         client.lifecycle
           .initStatus()
           .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow)),
-        client.docker.status(),
       ])
     )
 
     assert.strictEqual(health.status, 'ok')
     assert.strictEqual(initStatus.ready, false)
-    assert.strictEqual(docker.available, false)
   })
 
   // -----------------------------------------------------------------------

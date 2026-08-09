@@ -15,7 +15,6 @@
     ".": "./src/utility-main.ts"
   },
   "dependencies": {
-    "@daytonaio/sdk": "^0.161.0",
     "@effect/cli": "catalog:",
     "@effect/cluster": "catalog:",
     "@effect/experimental": "catalog:",

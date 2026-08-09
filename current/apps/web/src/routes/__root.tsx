@@ -10,7 +10,6 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
-import { ProviderStatusBanner } from '@/components/provider-status-banner'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { SyncStatusBridge } from '@/components/sync-status-bridge'
 import { SyncStatusProvider } from '@/components/sync-status-context'
@@ -94,8 +93,7 @@ function RootComponent() {
                   <AtomRegistryProvider key={`atom-registry-${generation}`}>
                     <AppSettingsProvider>
                       <SyncStatusProvider>
-                        <div className="grid h-svh grid-rows-[auto_1fr]">
-                          <ProviderStatusBanner />
+                        <div className="h-svh">
                           <LiveStoreProvider key={`livestore-${generation}`}>
                             <SyncStatusBridge />
                             <AppSettingsModal />

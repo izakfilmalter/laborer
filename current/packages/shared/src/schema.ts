@@ -39,20 +39,6 @@ export const workspaces = State.SQLite.table({
      * workspaces' branchName — see docs/adr/0001-branch-keyed-workspace-lineage.md.
      */
     baseBranch: State.SQLite.text({ nullable: true }),
-    /** Sandbox ID when a dev server sandbox is running for this workspace. Null when no sandbox exists. */
-    sandboxId: State.SQLite.text({ nullable: true }),
-    /** The URL for the sandbox dev server. Null when no sandbox exists. */
-    sandboxUrl: State.SQLite.text({ nullable: true }),
-    /** Port the dev server listens on inside the sandbox. Null when not configured. */
-    sandboxPort: State.SQLite.integer({ nullable: true }),
-    /** The image used for the sandbox (e.g., `node:22`). Null when no sandbox exists. */
-    sandboxImage: State.SQLite.text({ nullable: true }),
-    /** The current sandbox status: 'running' or 'paused'. Null when no sandbox exists. */
-    sandboxStatus: State.SQLite.text({ nullable: true }),
-    /** Current step of the background sandbox setup process. Null when setup is complete or not started. */
-    sandboxSetupStep: State.SQLite.text({ nullable: true }),
-    /** Which sandbox provider was used: 'docker', 'daytona', or 'none'. Null for workspaces created before provider support. */
-    sandboxProvider: State.SQLite.text({ nullable: true }),
     /** Current step of the background worktree setup process (git fetch, worktree add, setup scripts). Null when setup is complete or not started. */
     worktreeSetupStep: State.SQLite.text({ nullable: true }),
     /** Pull request number associated with this workspace's branch. Null when no PR exists. */
@@ -177,7 +163,7 @@ export const workspaceCreated = Events.synced({
     baseSha: Schema.optionalWith(Schema.NullOr(Schema.String), {
       default: () => null,
     }),
-    /** Provider selected when creating the workspace. Optional for backward compatibility with old events. */
+    /** @deprecated — Decode-only provider value retained for historical events. */
     sandboxProvider: Schema.optional(Schema.NullOr(Schema.String)),
     /** Branch this workspace's PR targets (sub-workspaces only). Optional for backward compatibility with old events. */
     baseBranch: Schema.optional(Schema.NullOr(Schema.String)),
@@ -449,7 +435,7 @@ export const prdRemoved = Events.synced({
   }),
 })
 
-// -- v2 Sandbox events (provider-agnostic) -----------------------------------
+// -- Removed v2 execution-environment events (decode-only) -------------------
 
 export const sandboxStarted = Events.synced({
   name: 'v2.SandboxStarted',
@@ -460,7 +446,7 @@ export const sandboxStarted = Events.synced({
     sandboxImage: Schema.String,
     /** Port the dev server listens on. Optional for backward compat. */
     sandboxPort: Schema.optional(Schema.Number),
-    /** Which provider created this sandbox: 'docker' or 'daytona'. */
+    /** Historical provider identifier. */
     sandboxProvider: Schema.String,
   }),
 })
@@ -508,7 +494,7 @@ export const sandboxUrlChanged = Events.synced({
   name: 'v2.SandboxUrlChanged',
   schema: Schema.Struct({
     workspaceId: Schema.String,
-    /** The new preview URL (full URL for Daytona, hostname for Docker). */
+    /** Historical preview URL. */
     sandboxUrl: Schema.String,
   }),
 })
@@ -629,7 +615,6 @@ const materializers = State.SQLite.materializers(events, {
     origin,
     createdAt,
     baseSha,
-    sandboxProvider,
     baseBranch,
   }) =>
     workspaces.insert({
@@ -643,12 +628,6 @@ const materializers = State.SQLite.materializers(events, {
       createdAt,
       baseSha,
       baseBranch: baseBranch ?? null,
-      sandboxId: null,
-      sandboxUrl: null,
-      sandboxImage: null,
-      sandboxStatus: null,
-      sandboxSetupStep: null,
-      sandboxProvider: sandboxProvider ?? null,
       worktreeSetupStep: null,
       prNumber: null,
       prUrl: null,
@@ -682,78 +661,21 @@ const materializers = State.SQLite.materializers(events, {
     workspaces.update({ aheadCount, behindCount }).where({ id }),
   'v1.WorkspaceOriginChanged': ({ id, origin }) =>
     workspaces.update({ origin }).where({ id }),
-  'v1.ContainerStarted': ({
-    workspaceId,
-    containerId,
-    containerUrl,
-    containerImage,
-    containerPort,
-  }) =>
-    workspaces
-      .update({
-        sandboxId: containerId,
-        sandboxUrl: containerUrl,
-        sandboxImage: containerImage,
-        sandboxPort: containerPort ?? null,
-        sandboxStatus: 'running',
-        sandboxSetupStep: null,
-      })
-      .where({ id: workspaceId }),
-  'v1.ContainerPortChanged': ({ workspaceId, containerPort }) =>
-    workspaces
-      .update({ sandboxPort: containerPort })
-      .where({ id: workspaceId }),
-  'v1.ContainerStopped': ({ workspaceId }) =>
-    workspaces
-      .update({
-        sandboxId: null,
-        sandboxStatus: null,
-        sandboxSetupStep: null,
-      })
-      .where({ id: workspaceId }),
-  'v1.ContainerPaused': ({ workspaceId }) =>
-    workspaces.update({ sandboxStatus: 'paused' }).where({ id: workspaceId }),
-  'v1.ContainerUnpaused': ({ workspaceId }) =>
-    workspaces.update({ sandboxStatus: 'running' }).where({ id: workspaceId }),
-  'v1.ContainerSetupStepChanged': ({ workspaceId, step }) =>
-    workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
-  'v2.SandboxStarted': ({
-    workspaceId,
-    sandboxId,
-    sandboxUrl,
-    sandboxImage,
-    sandboxPort,
-    sandboxProvider,
-  }) =>
-    workspaces
-      .update({
-        sandboxId,
-        sandboxUrl,
-        sandboxImage,
-        sandboxPort: sandboxPort ?? null,
-        sandboxStatus: 'running',
-        sandboxSetupStep: null,
-        sandboxProvider,
-      })
-      .where({ id: workspaceId }),
-  'v2.SandboxStopped': ({ workspaceId }) =>
-    workspaces
-      .update({
-        sandboxId: null,
-        sandboxStatus: null,
-        sandboxSetupStep: null,
-      })
-      .where({ id: workspaceId }),
-  'v2.SandboxPaused': ({ workspaceId }) =>
-    workspaces.update({ sandboxStatus: 'paused' }).where({ id: workspaceId }),
-  'v2.SandboxResumed': ({ workspaceId }) =>
-    workspaces.update({ sandboxStatus: 'running' }).where({ id: workspaceId }),
-  'v2.SandboxSetupStepChanged': ({ workspaceId, step }) =>
-    workspaces.update({ sandboxSetupStep: step }).where({ id: workspaceId }),
-  'v2.SandboxPortChanged': ({ workspaceId, sandboxPort }) =>
-    workspaces.update({ sandboxPort }).where({ id: workspaceId }),
-  'v2.SandboxUrlChanged': ({ workspaceId, sandboxUrl }) =>
-    workspaces.update({ sandboxUrl }).where({ id: workspaceId }),
+  // The removed execution-environment events remain decodable but no longer
+  // contribute to the workspace read model.
+  'v1.ContainerStarted': () => [],
+  'v1.ContainerPortChanged': () => [],
+  'v1.ContainerStopped': () => [],
+  'v1.ContainerPaused': () => [],
+  'v1.ContainerUnpaused': () => [],
+  'v1.ContainerSetupStepChanged': () => [],
+  'v2.SandboxStarted': () => [],
+  'v2.SandboxStopped': () => [],
+  'v2.SandboxPaused': () => [],
+  'v2.SandboxResumed': () => [],
+  'v2.SandboxSetupStepChanged': () => [],
+  'v2.SandboxPortChanged': () => [],
+  'v2.SandboxUrlChanged': () => [],
   'v1.WorktreeSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ worktreeSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

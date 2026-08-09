@@ -8,7 +8,7 @@ A local-first desktop application for orchestrating multiple AI coding agents in
 +-------------------+-------------------+-------------------+
 |  Agent: auth-fix  |  Agent: api-v2    |  Agent: tests     |
 |  branch: fix/auth |  branch: feat/api |  branch: test/e2e |
-|  port: 3101       |  port: 3102       |  port: 3103       |
+|  worktree: auth   |  worktree: api    |  worktree: tests  |
 |  [running]        |  [waiting]        |  [running]        |
 +-------------------+-------------------+-------------------+
 |          Diff Viewer          |        File Tree          |
@@ -21,16 +21,14 @@ A local-first desktop application for orchestrating multiple AI coding agents in
 Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, Codex) but can only effectively use **one at a time**. The bottleneck is no longer the AI -- it's the developer's ability to manage multiple agents at once.
 
 - **No multi-agent visibility** -- Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes with real-time status tracking.
-- **Manual environment management** -- Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace. Each agent gets a fully isolated environment automatically.
+- **Manual environment management** -- Laborer automates local git worktree creation, setup scripts, and file watcher scoping per workspace.
 - **Disconnected workflows** -- Brings workspace execution and GitHub pull requests into one interface.
 - **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent. Laborer saturates your machine with parallel execution.
 
 ## Features
 
 ### Workspace Management
-- **Git worktree-based workspaces** -- Each workspace gets its own branch, directory, and allocated port (range 3100-3999). Automatic setup scripts, port allocation, and full lifecycle management (create/run/stop/destroy). Auto-detects existing worktrees.
-- **Docker container support** -- Optional containerized dev servers via OrbStack with bind-mounted worktrees and stable `.orb.local` URLs. Container pause/unpause and status tracking.
-- **Cross-project dashboard** -- High-level command-center view showing workspace status across all projects.
+- **Git worktree-based workspaces** -- Each workspace gets its own branch and local directory. Includes automatic setup scripts, lifecycle management (create/run/stop/destroy), and detection of existing worktrees.
 
 ### Terminal and Agent Orchestration
 - **Tmux-style panel layout** -- Recursive horizontal/vertical splits with keyboard shortcuts (Ctrl+B prefix), drag-and-drop workspace tabs, fullscreen mode, and tabbed window layout (window tabs > workspace tiles > panel tabs > panel splits).
@@ -83,7 +81,6 @@ Laborer runs as multiple cooperating services:
 
 | Service | Default Port | Description |
 |---|---|---|
-| Server | 2100 | Main backend — workspaces, projects, diffs, and containers |
 | Web App | 2101 | React frontend (Vite dev server) |
 | Terminal | 2102 | PTY terminal management and WebSocket I/O |
 | File Watcher | 2104 | Filesystem watching via @parcel/watcher |
@@ -115,11 +112,6 @@ Each project managed by Laborer uses a `laborer.json` config file:
 
 ```json
 {
-  "devServer": {
-    "startCommand": "bun dev",
-    "image": "node:22",
-    "autoOpen": true
-  },
   "setupScripts": ["bun install"],
   "agent": "opencode2"
 }
@@ -127,6 +119,14 @@ Each project managed by Laborer uses a `laborer.json` config file:
 
 Supported agents: `opencode2`, `claude`, and `codex`. Existing
 `"agent": "opencode"` configuration is migrated to `opencode2` when read.
+
+### Upgrading from sandbox-enabled releases
+
+Laborer no longer manages Docker or Daytona execution environments. Existing
+containers, dependency images, Daytona sandboxes or snapshots, and generated
+SSH config entries are not deleted automatically. Remove any resources you no
+longer need in Docker or Daytona directly; Daytona resources may continue to
+incur charges until deleted.
 
 ## Available Scripts
 

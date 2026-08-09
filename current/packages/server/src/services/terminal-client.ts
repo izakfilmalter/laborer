@@ -40,7 +40,6 @@ import { tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
   Context,
-  Duration,
   Effect,
   Layer,
   Option,
@@ -50,9 +49,7 @@ import {
   Stream,
 } from 'effect'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
-import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
-import { ProjectRegistry } from './project-registry.js'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -227,15 +224,10 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
      * Resolves workspace info (worktree path, env vars) locally, then
      * delegates the actual PTY spawn to the terminal service.
      *
-     * When `autoRun` is true and the workspace is containerized, auto-types
-     * setup scripts from `laborer.json` followed by the `devServer.startCommand`
-     * into the terminal after spawn. The scripts are written with small delays
-     * between them to allow the shell to process each line.
      */
     readonly spawnInWorkspace: (
       workspaceId: string,
       command?: string,
-      autoRun?: boolean,
       initialPrompt?: string
     ) => Effect.Effect<TerminalRecord, RpcError>
 
@@ -246,30 +238,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     readonly killAllForWorkspace: (
       workspaceId: string
     ) => Effect.Effect<number, never>
-
-    /**
-     * Resize a terminal's PTY session.
-     * Forwards to the terminal utility process via the RPC connection.
-     */
-    readonly resizeTerminal: (
-      terminalId: string,
-      cols: number,
-      rows: number
-    ) => Effect.Effect<void, RpcError>
-
-    /**
-     * Kill a terminal's PTY session (stop the process, retain metadata).
-     * Forwards to the terminal utility process via the RPC connection.
-     */
-    readonly killTerminal: (terminalId: string) => Effect.Effect<void, RpcError>
-
-    /**
-     * Remove a terminal — kills the PTY (if running) and cleans up.
-     * Forwards to the terminal utility process via the RPC connection.
-     */
-    readonly removeTerminal: (
-      terminalId: string
-    ) => Effect.Effect<void, RpcError>
   }
 >() {
   static readonly layer = Layer.scoped(
@@ -277,8 +245,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
       const workspaceProvider = yield* WorkspaceProvider
-      const configService = yield* ConfigService
-      const registry = yield* ProjectRegistry
 
       // Capture the layer's scope so lazy connection can use it later.
       // The scope lives for the lifetime of this service layer.
@@ -562,201 +528,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         effect.pipe(Effect.provideService(Scope.Scope, layerScope))
 
       /**
-       * Auto-type setup scripts and dev server start command into a terminal.
-       * Runs as a fire-and-forget background fiber so it doesn't block the
-       * spawn response. Scripts are written sequentially with delays to allow
-       * the shell to process each line.
-       */
-      const autoTypeScripts = (
-        rpcClient: TerminalRpc,
-        terminalId: string,
-        setupScripts: readonly string[],
-        startCommand: string | null
-      ): Effect.Effect<void, never> =>
-        Effect.gen(function* () {
-          // Wait for the shell inside the container to initialize.
-          // Docker exec + /bin/sh startup takes a moment.
-          yield* Effect.sleep(Duration.millis(500))
-
-          // Auto-type each setup script
-          for (const script of setupScripts) {
-            yield* Effect.log(`Auto-typing setup script: ${script}`).pipe(
-              Effect.annotateLogs('module', logPrefix)
-            )
-
-            yield* provideLayerScope(
-              rpcClient.terminal
-                .write({
-                  id: terminalId,
-                  data: `${script}\n`,
-                })
-                .pipe(
-                  Effect.catchAll((err) =>
-                    Effect.logWarning(
-                      `Failed to auto-type setup script '${script}': ${String(err)}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-                  )
-                )
-            )
-
-            // Small delay between scripts to allow the shell to process
-            yield* Effect.sleep(Duration.millis(200))
-          }
-
-          // Auto-type the dev server start command
-          if (startCommand !== null) {
-            yield* Effect.log(
-              `Auto-typing start command: ${startCommand}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            yield* provideLayerScope(
-              rpcClient.terminal
-                .write({
-                  id: terminalId,
-                  data: `${startCommand}\n`,
-                })
-                .pipe(
-                  Effect.catchAll((err) =>
-                    Effect.logWarning(
-                      `Failed to auto-type start command '${startCommand}': ${String(err)}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-                  )
-                )
-            )
-          }
-
-          yield* Effect.log(
-            `Auto-typing complete for terminal ${terminalId}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        })
-
-      /**
-       * Resolve config and schedule auto-typing of setup scripts and start
-       * command into a terminal. Runs as a fire-and-forget daemon fiber.
-       */
-      const scheduleAutoRun = (
-        rpcClient: TerminalRpc,
-        terminalId: string,
-        projectId: string,
-        sandboxImage: string | null
-      ): Effect.Effect<void, never> =>
-        Effect.gen(function* () {
-          const project = yield* registry.getProject(projectId)
-          const resolvedConfig = yield* configService
-            .resolveConfig(project.repoPath, project.name)
-            .pipe(
-              Effect.catchAll((err) =>
-                Effect.logWarning(
-                  `Failed to resolve config for auto-run: ${err.message}`
-                ).pipe(
-                  Effect.annotateLogs('module', logPrefix),
-                  Effect.map(() => null)
-                )
-              )
-            )
-
-          if (resolvedConfig !== null) {
-            // Skip setup scripts when a cached deps image was used —
-            // node_modules and other setup is already baked into the image.
-            const hasCachedDeps =
-              sandboxImage?.startsWith('laborer-deps/') === true
-            const setupScripts = hasCachedDeps
-              ? []
-              : resolvedConfig.devServer.setupScripts.value
-
-            if (hasCachedDeps) {
-              yield* Effect.logInfo(
-                'Skipping container setup scripts — using cached deps image'
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-            }
-
-            yield* autoTypeScripts(
-              rpcClient,
-              terminalId,
-              setupScripts,
-              resolvedConfig.devServer.startCommand.value
-            )
-          }
-        }).pipe(
-          Effect.catchAll((err) =>
-            Effect.logWarning(
-              `Auto-run failed for terminal ${terminalId}: ${String(err)}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-          )
-        )
-
-      /**
-       * Spawn a terminal inside a Docker container via `docker exec`.
-       * Optionally auto-types setup scripts + start command when `autoRun` is true.
-       */
-      const spawnContainerTerminal = Effect.fn(
-        'TerminalClient.spawnContainerTerminal'
-      )(function* (
-        workspace: {
-          readonly sandboxId: string | null
-          readonly sandboxImage: string | null
-          readonly sandboxUrl: string | null
-          readonly projectId: string
-          readonly worktreePath: string
-        },
-        workspaceId: string,
-        command: string | undefined,
-        autoRun: boolean | undefined
-      ) {
-        const { client: rpcClient } =
-          yield* provideLayerScope(getOrCreateClient)
-
-        const containerNameValue =
-          workspace.sandboxUrl?.replace('.orb.local', '') ?? workspaceId
-
-        yield* Effect.log(
-          `Spawning container terminal: docker exec -it ${containerNameValue} /bin/sh`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-
-        const dockerArgs = command
-          ? ['exec', '-it', containerNameValue, '/bin/sh', '-c', command]
-          : ['exec', '-it', containerNameValue, '/bin/sh']
-
-        const terminalInfo = yield* provideLayerScope(
-          rpcClient.terminal
-            .spawn({
-              command: 'docker',
-              args: dockerArgs,
-              cwd: workspace.worktreePath,
-              env: {
-                ...process.env,
-                TERM: 'xterm-256color',
-                COLORTERM: 'truecolor',
-              } as Record<string, string>,
-              cols: 80,
-              rows: 24,
-              workspaceId,
-            })
-            .pipe(Effect.catchAll(mapTerminalError))
-        )
-
-        // Auto-type setup scripts + start command when autoRun is requested.
-        // Runs as a fire-and-forget background fiber so it doesn't block
-        // the spawn response back to the client.
-        if (autoRun === true && command === undefined) {
-          yield* scheduleAutoRun(
-            rpcClient,
-            terminalInfo.id,
-            workspace.projectId,
-            workspace.sandboxImage ?? null
-          ).pipe(Effect.forkDaemon)
-        }
-
-        return {
-          id: terminalInfo.id,
-          workspaceId,
-          command: command ?? 'docker exec /bin/sh',
-          status: terminalInfo.status as 'running' | 'stopped',
-        }
-      })
-
-      /**
-       * Spawn a terminal on the host for a non-containerized workspace.
+       * Spawn a terminal in the local worktree.
        *
        * When the command is a known agent CLI (claude, opencode2), hook
        * settings are injected so the agent reports its lifecycle state
@@ -840,7 +612,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         function* (
           workspaceId: string,
           command?: string,
-          autoRun?: boolean,
           initialPrompt?: string
         ) {
           // 1. Validate workspace exists and get its info from LiveStore
@@ -868,12 +639,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
 
           if (workspace.worktreePath.trim() === '') {
             return yield* new RpcError({
-              message: `Workspace ${workspaceId} is not ready for terminal spawn yet. Wait for sandbox setup to finish.`,
+              message: `Workspace ${workspaceId} has no local worktree.`,
               code: 'INVALID_STATE',
             })
           }
 
-          // 1c. Verify worktree directory exists on disk (Docker / host only)
+          // Verify the local worktree directory exists on disk.
           if (!existsSync(workspace.worktreePath)) {
             return yield* new RpcError({
               message: `Worktree directory does not exist: ${workspace.worktreePath}. The git worktree may have been removed outside of Laborer.`,
@@ -881,17 +652,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 3. Dev server terminal in Docker container: spawn inside container
-          if (workspace.sandboxId != null && autoRun === true) {
-            return yield* spawnContainerTerminal(
-              workspace,
-              workspaceId,
-              command,
-              autoRun
-            )
-          }
-
-          // 4. Regular terminal: always spawn on host (even for containerized workspaces)
           return yield* spawnHostTerminal(
             workspace,
             workspaceId,
@@ -946,46 +706,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           return killedCount
         })
 
-      // ---------------------------------------------------------------
-      // Individual terminal lifecycle — forward to terminal process
-      // ---------------------------------------------------------------
-
-      const resizeTerminal = Effect.fn('TerminalClient.resizeTerminal')(
-        function* (terminalId: string, cols: number, rows: number) {
-          const { client: rpcClient } =
-            yield* provideLayerScope(getOrCreateClient)
-          yield* provideLayerScope(
-            rpcClient.terminal
-              .resize({ id: terminalId, cols, rows })
-              .pipe(Effect.catchAll(mapTerminalError))
-          )
-        }
-      )
-
-      const killTerminal = Effect.fn('TerminalClient.killTerminal')(function* (
-        terminalId: string
-      ) {
-        const { client: rpcClient } =
-          yield* provideLayerScope(getOrCreateClient)
-        yield* provideLayerScope(
-          rpcClient.terminal
-            .kill({ id: terminalId })
-            .pipe(Effect.catchAll(mapTerminalError))
-        )
-      })
-
-      const removeTerminal = Effect.fn('TerminalClient.removeTerminal')(
-        function* (terminalId: string) {
-          const { client: rpcClient } =
-            yield* provideLayerScope(getOrCreateClient)
-          yield* provideLayerScope(
-            rpcClient.terminal
-              .remove({ id: terminalId })
-              .pipe(Effect.catchAll(mapTerminalError))
-          )
-        }
-      )
-
       yield* Effect.addFinalizer(() =>
         Effect.log('Shutdown: disconnecting from terminal service').pipe(
           Effect.annotateLogs('module', logPrefix)
@@ -995,9 +715,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       return TerminalClient.of({
         spawnInWorkspace,
         killAllForWorkspace,
-        resizeTerminal,
-        killTerminal,
-        removeTerminal,
       })
     })
   )

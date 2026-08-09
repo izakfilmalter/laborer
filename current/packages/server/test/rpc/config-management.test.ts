@@ -87,69 +87,20 @@ describe('LaborerRpcs config management', () => {
           const canonicalProjectConfigPath = realpathSync(projectConfigPath)
           const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
-          // Check all resolved fields except defaultSandboxProvider
-          // and devServer.provider, which both depend on the real global
-          // config (defaultSandboxProvider falls back to devServer.provider)
-          // and vary by environment.
-          const {
-            agent: resolvedAgent,
-            defaultSandboxProvider: _dsp,
-            ...configWithoutDefault
-          } = config
-          const { provider: _prov, ...devServerWithoutProvider } =
-            configWithoutDefault.devServer
-          assert.deepStrictEqual(
-            { ...configWithoutDefault, devServer: devServerWithoutProvider },
-            {
-              devServer: {
-                autoOpen: { source: 'default', value: false },
-                autoStopInterval: { source: 'default', value: null },
-                dockerfile: { source: 'default', value: null },
-                image: { source: 'default', value: 'node:lts' },
-                installCommand: { source: 'default', value: null },
-                network: { source: 'default', value: null },
-                port: { source: 'default', value: null },
-                resources: { source: 'default', value: null },
-                setupScripts: {
-                  source: 'default',
-                  value: [
-                    'corepack enable',
-                    'pnpm install --force',
-                    'exec bash',
-                  ],
-                },
-                startCommand: { source: 'default', value: null },
-                workdir: { source: 'default', value: '/app' },
-              },
-              setupScripts: {
-                source: canonicalProjectConfigPath,
-                value: ['bun install', 'bun test'],
-              },
-              watchIgnore: {
-                source: 'default',
-                value: [],
-              },
-              worktreeDir: {
-                source: canonicalAncestorConfigPath,
-                value: join(homedir(), 'ancestor-worktrees'),
-              },
-            }
-          )
+          const { agent: resolvedAgent, ...configWithoutAgent } = config
+          assert.deepStrictEqual(configWithoutAgent, {
+            setupScripts: {
+              source: canonicalProjectConfigPath,
+              value: ['bun install', 'bun test'],
+            },
+            watchIgnore: { source: 'default', value: [] },
+            worktreeDir: {
+              source: canonicalAncestorConfigPath,
+              value: join(homedir(), 'ancestor-worktrees'),
+            },
+          })
           assert.strictEqual(resolvedAgent.value, 'opencode2')
           assert.isString(resolvedAgent.source)
-          // defaultSandboxProvider has a valid structure regardless of value
-          assert.isString(config.defaultSandboxProvider.source)
-          assert.include(
-            [null, 'docker', 'daytona'],
-            config.defaultSandboxProvider.value
-          )
-          // devServer.provider falls back to defaultSandboxProvider when
-          // no per-project provider is set (Issue 6)
-          assert.isString(config.devServer.provider.source)
-          assert.include(
-            [null, 'docker', 'daytona'],
-            config.devServer.provider.value
-          )
         })
       )
   )
@@ -197,9 +148,6 @@ describe('LaborerRpcs config management', () => {
             projectId: project.id,
             config: {
               agent: 'opencode2',
-              devServer: {
-                autoOpen: true,
-              },
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
             },
@@ -216,59 +164,18 @@ describe('LaborerRpcs config management', () => {
 
           const resolved = yield* client.config.get({ projectId: project.id })
 
-          // Check all fields except defaultSandboxProvider and
-          // devServer.provider (both env-dependent due to global fallback).
-          const { defaultSandboxProvider: _dsp2, ...resolvedWithoutDefault } =
-            resolved
-          const { provider: _prov2, ...resolvedDevServerWithoutProvider } =
-            resolvedWithoutDefault.devServer
-          assert.deepStrictEqual(
-            {
-              ...resolvedWithoutDefault,
-              devServer: resolvedDevServerWithoutProvider,
+          assert.deepStrictEqual(resolved, {
+            agent: { source: canonicalConfigPath, value: 'opencode2' },
+            setupScripts: {
+              source: canonicalConfigPath,
+              value: ['bun install'],
             },
-            {
-              agent: { source: canonicalConfigPath, value: 'opencode2' },
-              devServer: {
-                autoOpen: { source: canonicalConfigPath, value: true },
-                autoStopInterval: { source: 'default', value: null },
-                dockerfile: { source: 'default', value: null },
-                image: { source: 'default', value: 'node:lts' },
-                installCommand: { source: 'default', value: null },
-                network: { source: 'default', value: null },
-                port: { source: 'default', value: null },
-                resources: { source: 'default', value: null },
-                setupScripts: {
-                  source: 'default',
-                  value: [
-                    'corepack enable',
-                    'pnpm install --force',
-                    'exec bash',
-                  ],
-                },
-                startCommand: { source: 'default', value: null },
-                workdir: { source: 'default', value: '/app' },
-              },
-              setupScripts: {
-                source: canonicalConfigPath,
-                value: ['bun install'],
-              },
-              watchIgnore: {
-                source: 'default',
-                value: [],
-              },
-              worktreeDir: {
-                source: canonicalConfigPath,
-                value: join(homedir(), 'updated-worktrees'),
-              },
-            }
-          )
-          // devServer.provider is env-dependent (Issue 6 fallback)
-          assert.isString(resolved.devServer.provider.source)
-          assert.include(
-            [null, 'docker', 'daytona'],
-            resolved.devServer.provider.value
-          )
+            watchIgnore: { source: 'default', value: [] },
+            worktreeDir: {
+              source: canonicalConfigPath,
+              value: join(homedir(), 'updated-worktrees'),
+            },
+          })
         })
       )
   )

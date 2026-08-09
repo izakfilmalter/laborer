@@ -24,8 +24,8 @@ import { LaborerClient } from '@/atoms/laborer-client'
 
 /** Payload shape matching the terminal.spawn RPC definition. */
 interface SpawnTerminalPayload {
-  readonly autoRun?: boolean | undefined
   readonly command?: string | undefined
+  readonly initialPrompt?: string | undefined
   readonly workspaceId: string
 }
 

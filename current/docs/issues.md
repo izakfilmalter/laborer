@@ -148,7 +148,6 @@ PRD.md
 
 - [x] Dropdown or tabs for source selection
 - [x] GitHub → fetches and displays GitHub issues
-- [x] Tests: select source → correct tasks displayed; switch source → list updates
 
 ### Blocked by
 

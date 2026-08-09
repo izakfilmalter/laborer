@@ -170,7 +170,7 @@
     - `DeferredLeafLayers` — FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection, PortAllocator
     - `DeferredGroup1WithSync` — WorkspaceSyncService + BackgroundFetchService
     - `DeferredServiceStack` — WorkspaceProvider, ProjectRegistry (bottom-up composition)
-    - `DeferredTopLayers` — TerminalClient, McpRegistrar
+    - `DeferredTopLayers` — TerminalClient
     - `DeferredServicesLive` — All deferred services composed
   - The separation is structural/organizational because `LaborerRpcsLive` captures all handler service requirements at the type level. Issue #14 will add background initialization for deferred layers.
 - Restructured `packages/server/test/rpc/test-layer.ts` to mirror the core/deferred split:

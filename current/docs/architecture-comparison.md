@@ -101,7 +101,7 @@ src/main.ts (true entry point)
        |   Child ServiceCollection adds 25+ services:
        |     IUpdateService, IWindowsMainService, IDialogMainService,
        |     IStorageMainService, ILocalPtyService, ITelemetryService,
-       |     IExtensionsScannerService, IMcpGatewayService, etc.
+       |     IExtensionsScannerService, etc.
        |   -> mainInstantiationService.createChild(services)
        |
        |-- initChannels() -> register IPC channels

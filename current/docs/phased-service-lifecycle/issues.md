@@ -658,7 +658,6 @@ The remaining ~16 layers that are not in the core group (Issue #13) are initiali
 - `WorkspaceProvider`, `WorktreeDetector`, `WorktreeReconciler`
 - `PortAllocator`, `BranchStateTracker`, `RepositoryWatchCoordinator`
 - `WorkspaceSyncService`, `PrWatcher`, `BackgroundFetchService`
-- `McpRegistrar`
 
 RPC handlers for deferred services need to handle the case where their backing service isn't ready yet. They should return a typed "service initializing" error (e.g., a tagged `ServiceInitializing` error in the RPC response) that the renderer can interpret and show appropriate loading states.
 

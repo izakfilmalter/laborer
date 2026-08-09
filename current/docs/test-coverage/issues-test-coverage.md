@@ -164,40 +164,6 @@ None - can start immediately
 
 ---
 
-## Issue 6: Migrate task/importer server tests to @effect/vitest
-
-### Parent PRD
-
-PRD-test-coverage.md
-
-### What to build
-
-
-
-Replace `import { describe, expect, it } from "vitest"` with `import { assert, describe, it } from "@effect/vitest"`. Replace manual `runWithTestServices` / `Effect.runPromise` with `it.effect` or `it.scoped`. Replace `expect` with `assert`.
-
-See PRD Implementation Decisions > @effect/vitest Migration for patterns.
-
-### Acceptance criteria
-
-- [x] All 4 files import from `@effect/vitest` instead of `vitest`
-- [x] All 4 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [x] All 4 files use `assert` instead of `expect`
-- [x] The `runWithTestServices` helper is removed from each file (replaced by `Effect.provide(TestLayer)`)
-- [x] All tests pass (`bun run test` in packages/server)
-- [x] `bun x ultracite check` passes on all modified files
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 4
-- User story 27
-
----
-
 ## Issue 7: Migrate remaining server tests to @effect/vitest
 
 ### Parent PRD
@@ -304,38 +270,6 @@ None - can start immediately
 ### User stories addressed
 
 - User story 8
-- User story 9
-
----
-
-## Issue 10: Add LiveStore schema tests -- diff, task, PRD, panel layout events
-
-### Parent PRD
-
-PRD-test-coverage.md
-
-### What to build
-
-Expand `packages/shared/test/schema.test.ts` with materializer tests for the remaining active event groups:
-
-1. **Diff events**: `DiffUpdated` upserts (including conflict resolution), `DiffCleared` deletes
-4. **Panel layout events**: `LayoutSplit` upserts, `LayoutPaneClosed` upserts, `LayoutPaneAssigned` upserts, `LayoutRestored` upserts
-
-Each test commits an event and verifies the table state via query.
-
-### Acceptance criteria
-
-- [x] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
-- [x] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
-- [x] All tests use `@effect/vitest` patterns
-- [x] `bun x ultracite check` passes
-
-### Blocked by
-
-- Blocked by Issue 9 (shared test infrastructure must exist)
-
-### User stories addressed
-
 - User story 9
 
 ---
@@ -724,11 +658,9 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 3 | Extract timing shared helpers | None | Done |
 | 4 | Delete dead/duplicate test files from server | None | Done |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
-| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Done |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Done |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Done |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
-| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
 | 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Done |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |

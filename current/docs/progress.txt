@@ -244,20 +244,6 @@ Date: 2026-03-04
 - This unblocks Issue #20 (AtomRpc client setup) which was previously blocked on #19.
 
 
-Date: 2026-03-04
-
-### What was done
-- Defined `tasks` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `source` (text), `externalId` (text, nullable), `title` (text), `status` (text, default "pending").
-- Added `tasks` to the `tables` export and all three events to the `events` export.
-- Updated `state` and `schema` exports to include the new table and events.
-- Verified: `tsc --noEmit` passes for both shared and server packages (no type errors), `biome check` passes on schema.ts (no lint issues).
-
-### Acceptance criteria status
-- [x] Materializer correctly updates table state from events
-- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
-
-### Issues unblocked
-
 ## Issue 7: LiveStore schema — PanelLayout table + events + materializer — COMPLETED
 
 Date: 2026-03-04
@@ -292,7 +278,7 @@ Date: 2026-03-04
 - Events are `synced` (not `clientOnly`) so layout state can be synced between server and client via LiveStore's sync mechanism, enabling session persistence across server restarts.
 
 ### Note: All 6 LiveStore tables are now defined
-With this issue complete, the full LiveStore schema layer is done: projects, workspaces, terminals, diffs, tasks, and panelLayout. The schema is ready for the LiveStore adapter setup (Issue #16).
+With this issue complete, the LiveStore schema layer is ready. The schema is ready for the LiveStore adapter setup (Issue #16).
 
 ## Issue 14: Server env validation — COMPLETED
 
@@ -2087,24 +2073,6 @@ LiveStore's `store.events()` replays ALL historical events from the persisted ev
 - Issue #65: Terminal scrollback buffer replay (was blocked by #64 — now done! Note: scrollback replay is actually already handled by the event log replay mechanism discovered in this issue.)
 
 
-Date: 2026-03-04
-
-### What was done
-  1. Validates the project exists by querying LiveStore's `projects` table. Returns `RpcError` with code `NOT_FOUND` if missing.
-  3. Validates the title is non-empty after trimming. Returns `RpcError` with code `INVALID_TITLE` if empty.
-  4. Generates a unique ID via `crypto.randomUUID()`.
-  1. Validates the task exists by querying LiveStore's `tasks` table. Returns `RpcError` with code `NOT_FOUND` if missing.
-  2. Validates the status is one of: `pending`, `in_progress`, `completed`, `cancelled`. Returns `RpcError` with code `INVALID_STATUS` if invalid.
-  1. Validates the task exists. Returns `RpcError` with code `NOT_FOUND` if missing.
-- Verified: `tsc --noEmit` passes for both server and shared packages (no type errors), `ultracite check` passes with zero issues on all 4 new/modified files.
-
-### Acceptance criteria status
-- [x] RPC contract expanded from 16 to 19 methods
-
-### Design decisions
-
-### Issues unblocked
-
 ## Issue #75, #76, #77, #78: Keyboard shortcuts — tmux-style panel operations
 **Status: Done**
 
@@ -3013,167 +2981,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 
 ---
 
-
-**Status:** Done
-**Date:** 2026-03-05
-
-### Summary
-
-### What was done
-
-   - **Status filter tabs**: Tabs component (Base UI) with "All", "Pending", "In Progress", "Completed", "Cancelled" tabs. Each tab shows the count of tasks in that status. Filtering is done client-side via `useMemo`.
-   - **Status icons**: Animated icons per status — pending=Circle, in_progress=Loader2 (spinning), completed=CheckCircle2, cancelled=XCircle.
-   - **Empty state**: ClipboardList icon with guidance message when no tasks exist.
-   - **Project name lookup**: Queries projects table to display project name per task.
-
-2. **Modified `apps/web/src/routes/index.tsx`**:
-   - Added a "Tasks" section in the sidebar between "Workspaces" and "Server Status". Uses the same section structure as Projects and Workspaces.
-
-### Files created
-
-### Files modified
-
-### Acceptance criteria status
-- [x] Renders tasks with title, source badge, status badge (color-coded badges for both source and status)
-- [x] Status filter dropdown/tabs (Tabs with All, Pending, In Progress, Completed, Cancelled — each showing count)
-- [x] Updates reactively (LiveStore reactive query re-fires on any task event)
-- [ ] Tests: tasks render with correct badges; filter works; new task → list updates (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
-
-### Verification
-- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors)
-- `ultracite check` passes on both new/modified files with zero issues
-- All 52 server tests pass (no regressions)
-
-### Design decisions
-- The inline status Select uses the same color-coding as the status badges, providing visual consistency between the current status display and the available options.
-- Project name lookup uses the same `queryDb(projects)` + `Map` pattern established in `workspace-list.tsx`. The Map is wrapped in `useMemo` to avoid recreating on every render.
-
-### Issues unblocked
-- Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104. **Now unblocked!**
-
-
-**Status:** Done
-**Date:** 2026-03-05
-
-### Summary
-
-### What was done
-
-   - **TanStack Form**: `useForm` with `defaultValues: { projectId: "", title: "", description: "" }` and `onSubmit` handler
-   - **Project selector**: `Select` component populated from LiveStore `projects` table with `onChange` validator (required)
-   - **Title field**: `Input` component with `onChange` validator (required, non-empty after trim)
-   - **Description field**: `Textarea` component (optional, no validation)
-   - **Dialog wrapper**: `Dialog` with trigger button (`ClipboardPlus` icon + "Add Task" text), header with title and description, form body, and footer with submit button
-   - **Submit button**: Uses `form.Subscribe` to disable when `!canSubmit || isSubmitting`, shows "Creating..." during submission
-   - **Success handling**: `toast.success`, `form.reset()`, `setOpen(false)`
-   - **Error handling**: `extractErrorMessage(error)` + `toast.error(message)` — consistent with all other forms in the codebase
-   - **Follows the exact same pattern** as `create-workspace-form.tsx` (Issue #42) — same Dialog/Form/Field/Submit structure, same mutation pattern, same error handling
-
-2. **Modified `apps/web/src/routes/index.tsx`**:
-   - Changed the "Tasks" section header from a plain `<div className="mb-2">` to `<div className="mb-2 flex items-center justify-between">` to match the Projects and Workspaces section layout
-
-### Files created
-
-### Files modified
-
-### Acceptance criteria status
-- [x] Form with title and description fields (title as `Input`, description as `Textarea`)
-- [x] Project selector populated from LiveStore projects table
-- [x] Empty title shows validation error ("Title is required")
-- [x] No project selected shows validation error ("Project is required")
-- [x] Server errors displayed via toast notification
-- [x] Form resets and dialog closes on success
-- [ ] Tests: valid submit -> task created; empty title -> validation error (deferred — requires running both server and web app)
-
-### Verification
-- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors)
-- `biome check` passes on both new/modified files with zero issues
-- All 52 server tests pass (no regressions)
-
-### Design decisions
-- Used `ClipboardPlus` icon from lucide-react for the trigger button — semantically represents "add a task to the clipboard/list", visually distinct from the other section buttons (FolderPlus for projects, Layers for workspaces).
-- The dialog trigger button uses `size="sm" variant="outline"` — same as `CreateWorkspaceForm` and `AddProjectForm` — for visual consistency across all sidebar section action buttons.
-
-### Issues unblocked
-
-
-**Status:** Done
-**Date:** 2026-03-05
-
-### Summary
-
-### What was done
-
-
-
-
-
-4. **Branch name derivation**: Creates a descriptive branch name from the task: `task/<id-prefix>/<slug>`. The slug is derived from the task title by lowercasing, replacing non-alphanumeric characters with hyphens, trimming leading/trailing hyphens, and truncating to 40 characters. Example: task with ID `abc12345-...` and title "Fix login bug" → branch `task/abc12345/fix-login-bug`.
-
-
-6. **Auto-start diff polling**: If the workspace is created with status "running", starts diff polling via `DiffService.startPolling(workspace.id)` — mirroring the existing `workspace.create` handler pattern.
-
-### Files modified
-
-### Acceptance criteria status
-- [x] Workspace branch name derived from task (e.g., `task/<id-prefix>/<slug>` — `task/abc12345/fix-login-bug`)
-- [x] Duplicate prevention: toggling a task back to "in_progress" does not create a second workspace if one already exists
-- [x] Diff polling auto-starts for the new workspace (mirrors `workspace.create` handler)
-- [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link (deferred — vitest not yet configured for integration tests)
-
-### Verification
-- `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages — no new errors)
-- `ultracite check` passes on `handlers.ts` with zero issues
-- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
-
-### Design decisions
-- **Branch naming convention**: `task/<id-prefix>/<slug>` provides three benefits: (a) easy to identify as task-derived in `git branch` output, (b) the ID prefix enables programmatic lookup, (c) the slug provides human-readable context. The 40-character slug limit prevents excessively long branch names from long task titles.
-- **Duplicate prevention via LiveStore query**: Rather than tracking auto-created workspaces in memory, the handler queries LiveStore's `workspaces` table for any non-destroyed workspace linked to the task. This is robust across server restarts and handles edge cases like manually destroying a task's workspace and then toggling the task back to "in_progress" (which correctly creates a new workspace).
-
-### Issues unblocked
-
-
-**Status:** Done
-**Date:** 2026-03-05
-
-### Summary
-
-### What was done
-
-
-1. **Status check**: After the existing auto-creation block (Issue #105), added a conditional that triggers when `status === "completed" || status === "cancelled"`.
-
-
-3. **Full cleanup sequence**: For each linked workspace, runs the same destroy sequence as the `workspace.destroy` handler:
-   - `DiffService.stopPolling(workspace.id)` — stops background diff polling fiber
-   - `TerminalManager.killAllForWorkspace(workspace.id)` — kills all PTY processes
-   - `WorkspaceProvider.destroyWorktree(workspace.id)` — removes git worktree, frees port, deletes branch, commits `workspaceDestroyed` event
-
-4. **Best-effort cleanup**: Each workspace cleanup is wrapped in `Effect.catchAll` that logs a warning on failure. This ensures:
-   - If one workspace fails to destroy, others are still attempted
-   - Partial cleanup failures are logged for manual resolution
-
-5. **Updated JSDoc**: Added Issue #106 reference to the handler documentation.
-
-### Files modified
-
-### Acceptance criteria status
-- [x] All workspace resources cleaned up (diff polling stopped, terminals killed, worktree removed, port freed, branch deleted)
-- [x] Multiple linked workspaces handled (Arr.filter finds all, loop destroys each)
-- [ ] Tests: complete task → linked workspace destroyed; resources freed (deferred — vitest not yet configured for integration tests)
-
-### Verification
-- `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages — no new errors)
-- `ultracite check` passes on `handlers.ts` with zero issues
-- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
-
-### Design decisions
-- **Filter vs findFirst**: Used `Arr.filter` instead of `Arr.findFirst` to handle the (unlikely but possible) case of multiple workspaces linked to a single task. This could happen if a workspace was destroyed and the task was toggled back to "in_progress" (creating a new workspace), then the old workspace was somehow still in a non-destroyed state.
-- **Both "completed" and "cancelled"**: Both terminal task states trigger cleanup. A cancelled task's workspace is just as stale as a completed task's workspace — no reason to keep it around.
-
-### Issues unblocked
-- No direct downstream issues exclusively blocked by #106. This completes the task-workspace lifecycle loop (#105 + #106).
-
 ## Bug fix: Terminal WebSocket route not registered (GET /terminal returning 404)
 
 **Date:** 2026-03-05
@@ -3492,7 +3299,7 @@ Added explicit shutdown finalization and startup restoration logging to the Labo
 
 Modified `packages/server/src/services/laborer-store.ts`:
 
-1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the 4 primary tables (projects, workspaces, terminals, tasks) and logs their row counts. This confirms state was successfully restored from the previous session. Example output: `[LaborerStore] Store initialized — restored from SQLite: 2 project(s), 5 workspace(s), 3 terminal(s), 8 task(s)`.
+1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the primary tables and logs their row counts. This confirms state was successfully restored from the previous session.
 
 2. **Explicit shutdown finalizer via `Effect.addFinalizer`**: When the layer scope is torn down (SIGINT/SIGTERM → `BunRuntime.runMain` interrupts → `Layer.launch` tears down scopes), the finalizer:
    - Logs "Shutdown: flushing LiveStore state to SQLite..."
@@ -3530,7 +3337,7 @@ This ordering is critical: TerminalManager needs the store to be alive when it c
 ### Design decisions
 - **Explicit finalizer despite upstream handling**: The `@livestore/adapter-node` already registers `Effect.acquireRelease` finalizers that call `db.close()` on both SQLite databases. Our explicit finalizer adds three things: (1) observable logging so shutdown progress is visible in server output, (2) final entity count logging for post-mortem verification, (3) explicit `store.shutdown()` call which flushes pending writes before the adapter's own finalizers run. This belt-and-suspenders approach ensures data integrity.
 - **catchAll around store.shutdown()**: The `store.shutdown()` call is wrapped in `Effect.catchAll` as a defensive measure. During abnormal shutdown (e.g., the store was already in an error state, or the scope is being interrupted), `shutdown()` might throw. The catchAll ensures the finalizer completes and subsequent cleanup (adapter finalizers, server teardown) proceeds.
-- **Entity count logging**: Queries the 4 primary domain tables (projects, workspaces, terminals, tasks) — not diffs or panelLayout, which are transient state that's less critical for persistence verification. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
+- **Entity count logging**: Queries the primary domain tables; transient presentation state is excluded. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
 - **No explicit "flush" API**: LiveStore doesn't expose a separate "flush pending writes" API. `store.shutdown()` is the official mechanism for ensuring all pending commits are persisted. The upstream `createStore()` implementation closes the `lifetimeScope` which cascades through the adapter's `acquireRelease` to `db.close()`, and SQLite guarantees that `close()` flushes the WAL to the main database file.
 
 ### Issues unblocked

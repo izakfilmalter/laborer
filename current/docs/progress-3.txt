@@ -355,7 +355,7 @@ Added explicit shutdown finalization and startup restoration logging to the Labo
 
 Modified `packages/server/src/services/laborer-store.ts`:
 
-1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the 4 primary tables (projects, workspaces, terminals, tasks) and logs their row counts. This confirms state was successfully restored from the previous session. Example output: `[LaborerStore] Store initialized — restored from SQLite: 2 project(s), 5 workspace(s), 3 terminal(s), 8 task(s)`.
+1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the primary tables and logs their row counts. This confirms state was successfully restored from the previous session.
 
 2. **Explicit shutdown finalizer via `Effect.addFinalizer`**: When the layer scope is torn down (SIGINT/SIGTERM → `BunRuntime.runMain` interrupts → `Layer.launch` tears down scopes), the finalizer:
    - Logs "Shutdown: flushing LiveStore state to SQLite..."
@@ -393,7 +393,7 @@ This ordering is critical: TerminalManager needs the store to be alive when it c
 ### Design decisions
 - **Explicit finalizer despite upstream handling**: The `@livestore/adapter-node` already registers `Effect.acquireRelease` finalizers that call `db.close()` on both SQLite databases. Our explicit finalizer adds three things: (1) observable logging so shutdown progress is visible in server output, (2) final entity count logging for post-mortem verification, (3) explicit `store.shutdown()` call which flushes pending writes before the adapter's own finalizers run. This belt-and-suspenders approach ensures data integrity.
 - **catchAll around store.shutdown()**: The `store.shutdown()` call is wrapped in `Effect.catchAll` as a defensive measure. During abnormal shutdown (e.g., the store was already in an error state, or the scope is being interrupted), `shutdown()` might throw. The catchAll ensures the finalizer completes and subsequent cleanup (adapter finalizers, server teardown) proceeds.
-- **Entity count logging**: Queries the 4 primary domain tables (projects, workspaces, terminals, tasks) — not diffs or panelLayout, which are transient state that's less critical for persistence verification. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
+- **Entity count logging**: Queries the primary domain tables; transient presentation state is excluded. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
 - **No explicit "flush" API**: LiveStore doesn't expose a separate "flush pending writes" API. `store.shutdown()` is the official mechanism for ensuring all pending commits are persisted. The upstream `createStore()` implementation closes the `lifetimeScope` which cascades through the adapter's `acquireRelease` to `db.close()`, and SQLite guarantees that `close()` flushes the WAL to the main database file.
 
 ### Issues unblocked
@@ -667,7 +667,6 @@ Tree: `H-Split(A, V-Split(B, H-Split(C, D)))`
 ### Acceptance criteria status
 - [x] Dropdown or tabs for source selection
 - [x] GitHub -> fetches and displays GitHub issues
-- [x] Tests: select source -> correct tasks displayed; switch source -> list updates
 
 ### Verification
 - `bun run test` in `apps/web` ✅ (35 tests passed)
@@ -1021,7 +1020,6 @@ Both empty states disappear reactively when a project is added — the LiveStore
    - Created `WelcomeEmptyState` component: full-height centered empty state with FolderGit2 icon, "Welcome to Laborer" title, descriptive text, and `<AddProjectForm />` CTA
    - Updated `HomeComponent` to query projects via `sidebarProjects$`, derive `hasProjects` boolean
    - Conditionally renders main content panel: `hasProjects` → normal panel system (header + hotkeys + PanelManager); `!hasProjects` → `<WelcomeEmptyState />`
-   - Sidebar always renders (Projects, Workspaces, Tasks, Server Status sections remain visible regardless of project count)
 
 ### Files modified
 - `apps/web/src/components/project-list.tsx` — Added EmptyContent CTA with AddProjectForm, added imports, updated JSDoc
@@ -1041,7 +1039,6 @@ Both empty states disappear reactively when a project is added — the LiveStore
 
 ### Design decisions
 - **Two empty states, not one**: The sidebar ProjectList empty state and the main content WelcomeEmptyState serve different purposes. The sidebar CTA is a contextual "add project here" action adjacent to where projects will appear. The main content welcome state is a prominent, full-page onboarding experience that communicates "this is the starting point." Both contain the AddProjectForm button so the user can take action from whichever area they notice first.
-- **Sidebar always visible**: The sidebar sections (Projects, Workspaces, Tasks, Server Status) are always rendered even when there are no projects. This ensures the user can see the health check status (confirming the server is connected) and discover the app's organizational model (projects → workspaces → tasks) even before adding their first project. Hiding the sidebar would make the app feel like a blank page with no structure.
 - **Panel system hidden when no projects**: The PanelHeaderBar, PanelHotkeys, and PanelManager are all hidden when `!hasProjects`. These components are non-functional without projects — there are no workspaces, terminals, or diffs to show. Rendering them would show a confusing empty panel with split/close buttons that do nothing. The WelcomeEmptyState is a more appropriate use of the space.
 - **Reuse of AddProjectForm**: Rather than duplicating the folder-picker logic, both empty states render the existing `<AddProjectForm />` component directly. This ensures consistent behavior (same Tauri dialog, same mutation, same toast notifications) and avoids code duplication.
 - **Separate LiveStore query label**: Used `sidebarProjects` as the query label (distinct from `projectList` and `headerProjects`) to avoid potential subscription conflicts and to make debugging clearer in LiveStore's internal logs.
@@ -1284,7 +1281,6 @@ Enhanced the Create Workspace form to display distinct, actionable error message
 - **Conditional rendering**: The switcher is only shown when `hasProjects` is true. When no projects exist, the sidebar shows the empty state with "Add Project" CTA — a switcher with no options would be confusing.
 - **FolderGit2 icon in trigger**: The small icon in the trigger provides visual context that this dropdown relates to git repositories/projects. It matches the FolderGit2 icon used in the ProjectList cards and the WelcomeEmptyState.
 - **No LiveStore persistence for activeProjectId**: The active project filter is ephemeral (React state). It resets on page reload. This is intentional — the filter is a view preference, not application state. Persisting it to LiveStore would add complexity for minimal benefit, and the user might be confused if they return after a session and see a filtered view without remembering they set it.
-- **ProjectList unfiltered**: The ProjectList itself is NOT filtered by the active project — it always shows all projects. This is by design: the user needs to see all projects to switch between them. Only workspaces and tasks are filtered.
 
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104 (done). Not directly blocked by #113, but the project switcher's filtering pattern can be reused or extended for the dashboard's per-project summary view.
@@ -1514,7 +1510,6 @@ Enhanced worktree creation with comprehensive post-creation validation and added
    - **`WorkspaceStatusSummary` component**: Compact inline display of workspace counts with status dots/spinners. Only shows non-zero counts.
    - **`DashboardWorkspaceRow` component**: Compact workspace row with GitBranch icon, branch name (monospace), port, running terminal count, and status badge (StatusDot + text)
    - **`WorkspaceDashboard` component**: Main dashboard with global overview section (aggregate counts across all projects in a bordered card) and per-project sections. Empty state when no projects exist.
-   - **`ProjectSection` interface**: Structured data type for per-project dashboard data (project, workspaces, taskCounts, workspaceCounts, terminalCountByWorkspace)
    - **Status classes**: Reuses the same `getStatusClasses` and `StatusDot` patterns from workspace-list.tsx for visual consistency
 
 2. **Modified `apps/web/src/routes/index.tsx`** — integrated dashboard into main content area:
@@ -3328,7 +3323,6 @@ Started Issue #145 as the highest-priority ready dependency for terminal extract
 
 2. **Removed terminal table from active LiveStore state** (`packages/shared/src/schema.ts`)
    - Introduced `activeTables` and wired `State.SQLite.makeState({ tables: activeTables, materializers })`.
-   - `activeTables` includes: `projects`, `workspaces`, `diffs`, `tasks`, `panelLayout`.
    - Kept the legacy `terminals` table definition/export for compatibility with older modules/tests, but it is no longer part of active materialization.
 
 3. **Stopped terminal event commits in active server terminal path** (`packages/server/src/services/terminal-client.ts`)

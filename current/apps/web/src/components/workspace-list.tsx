@@ -119,6 +119,7 @@ import {
 } from '@/hooks/use-project-collapse-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
+import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
@@ -1045,8 +1046,7 @@ function WorkspaceItem({
     return workspace.status
   })()
 
-  const needsAttention = workspaceAgentStatus === 'needs_input'
-  const isDone = workspaceAgentStatus === 'done'
+  const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
   // Attention and in-flight work surface at card level; acknowledged idle and
   // unknown stay in the terminal rows that own them.
   const showsAgentStatus =
@@ -1111,12 +1111,11 @@ function WorkspaceItem({
     <Card
       className={cn(
         isActiveWorkspace && 'border-primary',
-        // Steady amber edge and glow rather than a pulsing card: the whole
-        // card animating made its text hard to read, so the motion now lives
-        // only in the status badge's dot.
-        needsAttention &&
-          'border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]',
-        isDone && 'border-violet-400/50 shadow-[0_0_8px_rgba(167,139,250,0.12)]'
+        // Steady edges rather than a pulsing card: the whole card animating
+        // made its text hard to read, so the motion now lives only in the
+        // status badge's dot. A blocked agent glows, an unseen result does
+        // not — the sidebar's loudest card should be the one to act on.
+        agentSurface.cardClassName
       )}
       data-agent-status={workspaceAgentStatus ?? undefined}
       data-testid={`workspace-card-${workspace.branchName}`}

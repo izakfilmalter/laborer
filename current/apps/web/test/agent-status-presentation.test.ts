@@ -14,6 +14,7 @@ import {
   describeAgentStatus,
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
+  getAgentStatusSurface,
 } from '../src/lib/agent-status-presentation'
 
 const ALL_STATUSES: readonly AgentStatus[] = [
@@ -89,10 +90,61 @@ describe('agent status presentation', () => {
     )
   })
 
+  it('separates done from the lifecycle dots by shape', () => {
+    expect(getAgentStatusPresentation('done').glyph).toBe('check')
+
+    for (const status of ALL_STATUSES) {
+      expect(getAgentStatusPresentation(status).glyph).toBe('dot')
+    }
+  })
+
   it('says out loud when a status may be out of date', () => {
     expect(describeAgentStatus(snapshot('working', { stale: true }))).toContain(
       'stale'
     )
     expect(describeAgentStatus(snapshot('working'))).not.toContain('stale')
+  })
+})
+
+describe('agent status surface accents', () => {
+  it('accents only the states worth interrupting for', () => {
+    for (const status of ['idle', 'unknown'] as const) {
+      const surface = getAgentStatusSurface(status)
+
+      expect(surface.cardClassName).toBe('')
+      expect(surface.headerClassName).toBe('')
+      expect(surface.rowClassName).toBe('')
+    }
+
+    expect(getAgentStatusSurface(null).rowClassName).toBe('')
+    expect(getAgentStatusSurface(undefined).cardClassName).toBe('')
+  })
+
+  it('gives needs input and done distinct row and card treatments', () => {
+    const attention = getAgentStatusSurface('needs_input')
+    const done = getAgentStatusSurface('done')
+
+    expect(attention.rowClassName).not.toBe(done.rowClassName)
+    expect(attention.cardClassName).not.toBe(done.cardClassName)
+    expect(attention.headerClassName).not.toBe(done.headerClassName)
+    expect(done.rowClassName).not.toBe('')
+    expect(done.cardClassName).not.toBe('')
+  })
+
+  it('reserves the loudest card treatment for a blocked agent', () => {
+    // Only "act now" glows; an unseen result is present but never shouts
+    // over the workspace that is actually waiting on the operator.
+    expect(getAgentStatusSurface('needs_input').cardClassName).toContain(
+      'shadow-'
+    )
+    expect(getAgentStatusSurface('done').cardClassName).not.toContain('shadow-')
+  })
+
+  it('keeps working quiet everywhere but the frame header it owns', () => {
+    const working = getAgentStatusSurface('working')
+
+    expect(working.cardClassName).toBe('')
+    expect(working.rowClassName).toBe('')
+    expect(working.headerClassName).not.toBe('')
   })
 })

@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
+import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -182,8 +183,16 @@ function WorkspaceFrameHeader({
   const isDone = agentStatus === 'done'
   const isWorking = agentStatus === 'working'
   // The header stays quiet for at-rest states: an idle or unknown agent has
-  // nothing to say at workspace level, while working and needs input do.
+  // nothing to say at workspace level, while working, done, and needs input
+  // do.
   const showsAgentStatus = needsAttention || isDone || isWorking
+  // Attention and an unseen result outrank the active-frame accent; a working
+  // tint is the quietest layer and yields to the frame the operator is
+  // already looking at.
+  const agentAccentClassName =
+    isWorking && isActiveFrame
+      ? ''
+      : getAgentStatusSurface(agentStatus).headerClassName
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -205,11 +214,7 @@ function WorkspaceFrameHeader({
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
         isActiveFrame && !needsAttention && 'border-b-2 border-b-primary',
-        // Attention outranks the active-frame accent; a working tint is the
-        // quietest layer and never competes with either.
-        needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
-        isDone && 'border-b-violet-400/50 bg-violet-400/5',
-        isWorking && !isActiveFrame && 'border-b-blue-400/40 bg-blue-400/5',
+        agentAccentClassName,
         isMinimized && 'cursor-pointer'
       )}
       data-testid="workspace-frame-header"

@@ -673,6 +673,42 @@ describe('WorkspaceFrameHeader', () => {
     // The amber attention border should take priority over the active accent border
     expect(header.className).not.toContain('border-b-2')
     expect(header.className).not.toContain('border-b-primary')
-    expect(header.className).toContain('border-b-amber-400/50')
+    expect(header.className).toContain('border-b-amber-400')
+  })
+
+  it('accents an unseen completion differently from a blocked agent', () => {
+    const actions = mockActions()
+    const { container } = render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="done"
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(screen.getByText('done')).toBeTruthy()
+    expect(header.className).toContain('border-b-violet-400')
+    expect(header.className).not.toContain('amber')
+    // The check glyph, not hue alone, separates "review" from "act now".
+    expect(
+      container.querySelector('[data-testid="agent-status-check"]')
+    ).not.toBeNull()
+  })
+
+  it('lets the active-frame accent win over a merely working agent', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="working"
+        isActiveFrame
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).toContain('border-b-primary')
+    expect(header.className).not.toContain('bg-blue-400')
   })
 })

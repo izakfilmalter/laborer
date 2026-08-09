@@ -92,9 +92,41 @@ describe('AgentStatusBadge', () => {
       <AgentStatusBadge snapshot={snapshot({ status: 'idle', seen: false })} />
     )
 
-    expect(screen.getByText('done')).toBeDefined()
-    expect(dotElement(container).className).toContain('bg-violet-400')
+    const badge = screen.getByText('done').parentElement
+
+    expect(badge?.getAttribute('data-agent-status')).toBe('done')
+    expect(badge?.className).toContain('violet')
     expect(container.innerHTML).not.toContain('bg-amber-400')
+  })
+
+  it('marks done with a check rather than a lifecycle dot', () => {
+    const { container } = render(
+      <AgentStatusBadge snapshot={snapshot({ status: 'idle', seen: false })} />
+    )
+
+    // Shape, not hue: the check survives colour-blindness and tells
+    // "review this result" apart from "act on this now".
+    expect(
+      container.querySelector('[data-testid="agent-status-check"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-hidden="true"].relative')).toBeNull()
+  })
+
+  it('keeps the done check still and readable when detection is stale', () => {
+    const { container } = render(
+      <AgentStatusBadge
+        snapshot={snapshot({ status: 'idle', seen: false, stale: true })}
+      />
+    )
+
+    const badge = screen.getByText('done').parentElement
+
+    expect(
+      container.querySelector('[data-testid="agent-status-check"]')
+    ).not.toBeNull()
+    expect(badge?.className).toContain('border-dashed')
+    expect(container.innerHTML).not.toContain('animate-ping')
+    expect(badge?.textContent).toContain('out of date')
   })
 })
 

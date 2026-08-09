@@ -1,10 +1,13 @@
 /**
  * Shared badge for the semantic Agent status lifecycle.
  *
- * Renders one status dot plus its label so every agent surface — terminal
+ * Renders one status mark plus its label so every agent surface — terminal
  * rows, workspace frame headers, workspace cards — reads identically. The
- * dot carries the state redundantly (colour, motion) alongside the text
- * label, so the state survives colour-blindness and reduced motion.
+ * mark carries the state redundantly (shape, colour, motion) alongside the
+ * text label, so the state survives colour-blindness and reduced motion:
+ * lifecycle states render a dot, while `done` renders a check, because
+ * "review this result" is a different kind of request from "act now" and
+ * should not depend on telling violet from amber.
  *
  * The badge is not interactive: it exposes its provenance through `title`
  * and an `aria-label`, avoiding a nested interactive tooltip trigger inside
@@ -14,13 +17,17 @@
  * @see Issue #323: Semantic agent status end-to-end via process inspection
  */
 
+import { Check } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { AgentStatusSnapshot } from '@/hooks/use-terminal-list'
 import {
   type AgentDisplayStatus,
   deriveAgentDisplayStatus,
 } from '@/lib/agent-attention-projection'
-import type { AgentStatusMotion } from '@/lib/agent-status-presentation'
+import type {
+  AgentStatusMotion,
+  AgentStatusPresentation,
+} from '@/lib/agent-status-presentation'
 import {
   describeAgentStatus,
   getAgentStatusBadgeClassName,
@@ -66,6 +73,39 @@ function AgentStatusDot({
   )
 }
 
+/**
+ * The mark a badge leads with: a lifecycle dot, or the check that marks a
+ * finished result. The check never animates and needs no stale variant —
+ * uncertainty is carried by the badge's dashed, dimmed chrome and by the
+ * sentence beside it, while the shape keeps saying "result, not request".
+ */
+function AgentStatusGlyph({
+  isStale,
+  presentation,
+}: {
+  readonly isStale: boolean
+  readonly presentation: AgentStatusPresentation
+}) {
+  if (presentation.glyph === 'check') {
+    return (
+      <Check
+        aria-hidden="true"
+        className="size-2.5 shrink-0"
+        data-testid="agent-status-check"
+        strokeWidth={3}
+      />
+    )
+  }
+
+  return (
+    <AgentStatusDot
+      className={presentation.dotClassName}
+      motion={isStale ? 'none' : presentation.motion}
+      staleClassName={isStale ? presentation.dotStaleClassName : undefined}
+    />
+  )
+}
+
 interface AgentStatusBadgeProps {
   /** Extra classes for the host surface (e.g. `shrink-0`). */
   readonly className?: string | undefined
@@ -90,13 +130,7 @@ function AgentStatusBadge({ className, snapshot }: AgentStatusBadgeProps) {
       title={description}
       variant="outline"
     >
-      <AgentStatusDot
-        className={presentation.dotClassName}
-        motion={snapshot.stale ? 'none' : presentation.motion}
-        staleClassName={
-          snapshot.stale ? presentation.dotStaleClassName : undefined
-        }
-      />
+      <AgentStatusGlyph isStale={snapshot.stale} presentation={presentation} />
       {/* The visible label is hidden from assistive tech because the sr-only
           sentence below already opens with it; otherwise the state would be
           announced twice before its provenance. */}
@@ -131,10 +165,7 @@ function AggregateAgentStatusBadge({
       title={description}
       variant="outline"
     >
-      <AgentStatusDot
-        className={presentation.dotClassName}
-        motion={presentation.motion}
-      />
+      <AgentStatusGlyph isStale={false} presentation={presentation} />
       <span aria-hidden="true">{presentation.label}</span>
       <span className="sr-only">{description}</span>
     </Badge>

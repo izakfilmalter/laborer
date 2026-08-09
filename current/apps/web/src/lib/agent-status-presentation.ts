@@ -2,11 +2,10 @@
  * Presentation vocabulary for the semantic Agent status lifecycle.
  *
  * One module owns how `working | needs_input | idle | unknown` and the
- * display-only `done` projection look and
- * reads, so terminal rows, workspace frame headers, and workspace cards
- * never drift apart. Surfaces pick the pieces they need (label, badge
- * classes, dot treatment, provenance sentence) instead of re-deriving
- * colours and copy locally.
+ * display-only `done` projection look and read, so terminal rows, workspace
+ * frame headers, and workspace cards never drift apart. Surfaces pick the
+ * pieces they need (label, badge classes, glyph, surface accent, provenance
+ * sentence) instead of re-deriving colours and copy locally.
  *
  * Motion is meaning here: `needs input` pings (act now), `working` breathes
  * (in flight), `idle` and `unknown` are still (nothing to do). All motion is
@@ -15,10 +14,22 @@
  * hollowing the dot instead — because a status that may be out of date must
  * not look like fresh activity.
  *
+ * Shape is meaning too: `done` swaps the dot for a check, so "review this
+ * result" and "act on this now" differ by glyph and not only by hue.
+ *
+ * The same module owns the surface accents (terminal row, workspace card,
+ * frame header) so the two actionable states keep one hierarchy everywhere:
+ * `needs input` is the loudest surface it appears on — tint, border and a
+ * glow — while `done` carries a quieter tint and border, and `working` only
+ * whispers on the frame header it already owns. At-rest states accent
+ * nothing, leaving the badge to say all there is to say.
+ *
  * @see apps/web/src/components/agent-status-badge.tsx — shared badge
  * @see apps/web/src/components/terminal-list.tsx — terminal rows
  * @see apps/web/src/components/workspace-frame-header.tsx — frame header
+ * @see apps/web/src/components/workspace-list.tsx — workspace cards
  * @see Issue #323: Semantic agent status end-to-end via process inspection
+ * @see Issue #324: Seen bit, done projection, and attention surfaces
  */
 
 import type {
@@ -33,6 +44,27 @@ import {
 /** How a status dot animates. `none` is used for at-rest states. */
 type AgentStatusMotion = 'ping' | 'breathe' | 'none'
 
+/**
+ * The mark a badge leads with. `check` is reserved for `done`, whose
+ * meaning — a finished result waiting to be read — is a different kind of
+ * thing from the lifecycle dots and should not have to be told apart by
+ * colour alone.
+ */
+type AgentStatusGlyphKind = 'dot' | 'check'
+
+/**
+ * Accents a status lends to the surfaces that host it. Empty strings mean
+ * "stay quiet": an at-rest agent should not tint a row, card, or header.
+ */
+interface AgentStatusSurface {
+  /** Workspace card in the sidebar. */
+  readonly cardClassName: string
+  /** Workspace frame header bar. */
+  readonly headerClassName: string
+  /** Terminal row in the sidebar. */
+  readonly rowClassName: string
+}
+
 interface AgentStatusPresentation {
   /** Badge chrome (border, background, text colour). */
   readonly badgeClassName: string
@@ -44,7 +76,12 @@ interface AgentStatusPresentation {
    * ink — the one cue that survives both colour-blindness and low contrast.
    */
   readonly dotStaleClassName: string
-  /** True when the state asks the operator to act now. */
+  /** The mark the badge leads with. */
+  readonly glyph: AgentStatusGlyphKind
+  /**
+   * True when the state wants the operator: `needs input` to act now, and
+   * `done` to review a result nobody has seen yet.
+   */
   readonly isAttention: boolean
   /** Human-readable badge text, lower case to match sibling badges. */
   readonly label: string
@@ -60,7 +97,7 @@ interface AgentStatusPresentation {
  *
  * - `needs input` — amber, pinging dot. The only state that demands action.
  * - `working` — blue, the agent identity colour, breathing dot.
- * - `done` — violet, still dot. Review the completed result.
+ * - `done` — violet, still check. Review the completed result.
  * - `idle` — success green, matching the shell-at-prompt badge, still dot.
  * - `unknown` — muted with a dashed edge, signalling "no answer yet".
  */
@@ -73,6 +110,7 @@ const AGENT_STATUS_PRESENTATION: Record<
     badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
     dotClassName: 'bg-blue-400',
     dotStaleClassName: 'border-blue-400',
+    glyph: 'dot',
     motion: 'breathe',
     meaning: 'The agent is working.',
     isAttention: false,
@@ -82,6 +120,7 @@ const AGENT_STATUS_PRESENTATION: Record<
     badgeClassName: 'border-amber-400/40 bg-amber-400/15 text-amber-400',
     dotClassName: 'bg-amber-400',
     dotStaleClassName: 'border-amber-400',
+    glyph: 'dot',
     motion: 'ping',
     meaning: 'The agent is waiting on you.',
     isAttention: true,
@@ -91,6 +130,7 @@ const AGENT_STATUS_PRESENTATION: Record<
     badgeClassName: 'border-success/30 bg-success/10 text-success',
     dotClassName: 'bg-success',
     dotStaleClassName: 'border-success',
+    glyph: 'dot',
     motion: 'none',
     meaning: 'The agent finished and is idle.',
     isAttention: false,
@@ -100,8 +140,10 @@ const AGENT_STATUS_PRESENTATION: Record<
     badgeClassName: 'border-violet-400/40 bg-violet-400/15 text-violet-300',
     dotClassName: 'bg-violet-400',
     dotStaleClassName: 'border-violet-400',
+    glyph: 'check',
     motion: 'none',
-    meaning: 'The agent finished while you were away; review its result.',
+    meaning:
+      'The agent finished while you were away; open this workspace to review its result.',
     isAttention: true,
   },
   unknown: {
@@ -110,10 +152,49 @@ const AGENT_STATUS_PRESENTATION: Record<
       'border-muted-foreground/30 border-dashed bg-muted text-muted-foreground',
     dotClassName: 'bg-muted-foreground/60',
     dotStaleClassName: 'border-muted-foreground/60',
+    glyph: 'dot',
     motion: 'none',
     meaning: 'The agent state could not be determined.',
     isAttention: false,
   },
+}
+
+const QUIET_SURFACE: AgentStatusSurface = {
+  cardClassName: '',
+  headerClassName: '',
+  rowClassName: '',
+}
+
+/**
+ * Surface accents, ordered so urgency reads before hue does.
+ *
+ * `needs input` is the only state that borrows the whole surface: a tint, a
+ * saturated edge, and — on a workspace card, where it competes with every
+ * other card in the sidebar — a glow. `done` deliberately stops short of the
+ * glow: an unseen result should be findable without shouting over an agent
+ * that is actually blocked. `working` accents only the frame header, whose
+ * bar is already the quietest place a status can live, and never fights the
+ * active-frame accent for it.
+ */
+const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
+  needs_input: {
+    cardClassName:
+      'border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.18)]',
+    headerClassName: 'border-b-amber-400/60 bg-amber-400/10',
+    rowClassName: 'border-amber-400/50 bg-amber-400/10',
+  },
+  done: {
+    cardClassName: 'border-violet-400/45',
+    headerClassName: 'border-b-violet-400/45 bg-violet-400/5',
+    rowClassName: 'border-violet-400/35 bg-violet-400/5',
+  },
+  working: {
+    cardClassName: '',
+    headerClassName: 'border-b-blue-400/40 bg-blue-400/5',
+    rowClassName: '',
+  },
+  idle: QUIET_SURFACE,
+  unknown: QUIET_SURFACE,
 }
 
 /** Detector names in operator language rather than implementation shorthand. */
@@ -134,6 +215,16 @@ function getAgentStatusPresentation(
   status: AgentDisplayStatus
 ): AgentStatusPresentation {
   return AGENT_STATUS_PRESENTATION[status]
+}
+
+/**
+ * Accents a status lends to its host surfaces. At-rest states return empty
+ * strings, so callers can apply the result unconditionally.
+ */
+function getAgentStatusSurface(
+  status: AgentDisplayStatus | null | undefined
+): AgentStatusSurface {
+  return status == null ? QUIET_SURFACE : AGENT_STATUS_SURFACE[status]
 }
 
 /**
@@ -175,5 +266,11 @@ export {
   describeAgentStatus,
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
+  getAgentStatusSurface,
 }
-export type { AgentStatusMotion, AgentStatusPresentation }
+export type {
+  AgentStatusGlyphKind,
+  AgentStatusMotion,
+  AgentStatusPresentation,
+  AgentStatusSurface,
+}

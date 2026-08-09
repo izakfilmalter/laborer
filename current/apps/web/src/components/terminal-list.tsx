@@ -64,6 +64,7 @@ import {
   describeAgentStatus,
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
+  getAgentStatusSurface,
 } from '@/lib/agent-status-presentation'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
@@ -674,10 +675,9 @@ function TerminalItem({
       terminal.agentStatus,
       terminal.processChain
     )
-  const needsAttention = agentStatus?.status === 'needs_input'
-  const isDone = agentStatus
-    ? deriveAgentDisplayStatus(agentStatus) === 'done'
-    : false
+  const displayStatus = agentStatus
+    ? deriveAgentDisplayStatus(agentStatus)
+    : null
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -698,14 +698,12 @@ function TerminalItem({
       className={cn(
         'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
         'hover:bg-accent hover:text-accent-foreground',
-        // A row asking for input carries a steady amber edge; the motion
-        // lives in the badge dot so the label stays readable.
-        needsAttention && 'border-amber-400/40 bg-amber-400/5',
-        isDone && 'border-violet-400/40 bg-violet-400/5'
+        // A row that wants something carries a steady edge from the shared
+        // vocabulary — amber to act on, violet to review — and the motion
+        // stays in the badge so the label remains readable.
+        getAgentStatusSurface(displayStatus).rowClassName
       )}
-      data-agent-status={
-        agentStatus ? deriveAgentDisplayStatus(agentStatus) : undefined
-      }
+      data-agent-status={displayStatus ?? undefined}
       data-testid={`terminal-row-${terminal.id}`}
     >
       <button

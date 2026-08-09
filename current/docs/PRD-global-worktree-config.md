@@ -2,11 +2,9 @@
 
 ## Problem Statement
 
-Worktrees are currently created inside the project repository at `<repoPath>/.worktrees/<branchSlug>`. This pollutes the repo directory and causes issues with tooling that watches the repo — IDE indexers, file watchers, and `git status` all pick up the `.worktrees/` directory as noise. Developers have no way to configure where worktrees are placed, and there is no UI for managing project-level settings (setup scripts, rlph config) — these are buried in a JSON file that must be edited manually.
 
 ## Solution
 
-Move the default worktree location to a global directory outside the repo (`~/.config/laborer/<projectName>/<branchSlug>`) and introduce a layered configuration system using a single `laborer.json` file format. A config file at the project root can override the global default, and the resolution walks up the directory tree. A new project settings modal (accessed via a gear icon on each project card) lets users view and edit all project settings — worktree directory, setup scripts, and rlph config — with changes written to the appropriate `laborer.json` file.
 
 ## User Stories
 
@@ -19,7 +17,6 @@ Move the default worktree location to a global directory outside the repo (`~/.c
 7. As a developer, I want a settings modal accessible via a gear icon on each project card, so that I can configure project settings without editing JSON files by hand.
 8. As a developer, I want to see and edit the worktree directory path in the settings modal, so that I can customize where worktrees are created for this project.
 9. As a developer, I want to see and edit setup scripts in the settings modal, so that I can manage the post-worktree-creation commands without opening a text editor.
-10. As a developer, I want to see and edit the rlph config in the settings modal, so that all project-level settings are in one place.
 11. As a developer, I want the settings modal to show the resolved value of each setting and where it came from (project file, ancestor file, global default), so that I understand the layered config resolution.
 12. As a developer, I want changes made in the settings modal to be written to `laborer.json` at the project root, so that my overrides are local to the project.
 13. As a developer, I want the existing `.laborer.json` format to be consolidated into the new `laborer.json` format, so that there is a single config file to maintain.
@@ -57,7 +54,6 @@ A new `ConfigService` Effect tagged service that encapsulates all config file I/
 {
   "worktreeDir": string (optional, supports ~ expansion),
   "setupScripts": string[] (optional),
-  "rlphConfig": string (optional)
 }
 ```
 
@@ -95,7 +91,6 @@ Two new RPC endpoints added to `LaborerRpcs`:
 - Form fields:
   - **Worktree directory**: text input showing the resolved path. Placeholder shows the default. Helper text shows provenance (e.g., "from ~/.config/laborer/laborer.json").
   - **Setup scripts**: an editable list of strings. Add/remove buttons for each entry. Each entry is a text input.
-  - **rlph config**: text input for the rlph config string.
 - Save button calls `config.update` RPC with only the changed fields.
 - Uses the standard mutation pattern: `LaborerClient.mutation("config.update")` + `useAtomSet`.
 - Toast notification on success/failure.
@@ -176,4 +171,3 @@ Prior art: no frontend component tests exist yet — these would be the first. U
 - The `laborer.json` file at the project root will likely be committed to version control (it contains team-shared `setupScripts`). The `worktreeDir` field is optional and user-specific — teams should establish a convention about whether to include it. It could be `.gitignore`d on a per-field basis by convention (don't commit your `worktreeDir`), but this is a social contract, not enforced by tooling.
 - Project name is derived from `basename(repoPath)`. Two repos with the same directory name will share a worktree base directory under the default global path. This is accepted as a known limitation — users with name collisions can set a per-project `worktreeDir` override.
 - The global config directory `~/.config/laborer/` will also serve as the default worktree base directory. Worktrees for a project "my-app" would be at `~/.config/laborer/my-app/<branchSlug>`. This keeps the filesystem layout clean and predictable.
-- The `rlphConfig` field is currently stored on the `projects` LiveStore table. With this change, it moves to the config file. The LiveStore column should be kept for backward compatibility but the config file becomes the source of truth. The settings modal reads from and writes to the config file. The LiveStore column can be deprecated in a follow-up.

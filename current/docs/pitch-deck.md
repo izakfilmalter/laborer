@@ -50,13 +50,10 @@ Each workspace spins up an isolated environment:
 - Automatic **setup scripts** (install dependencies, start dev server)
 
 ### 3. Launch agents
-Spawn OpenCode, Claude Code, or Codex in workspace terminals. Each agent can run independently while the operator retains direct terminal access.
 
 ### 4. Monitor everything
-Tmux-style split panes show agents simultaneously. Live diff viewers and file trees provide context without switching windows.
 
 ### 5. Review and ship
-Inspect changes in the Diff Viewer, track each workspace's pull request, and open affected files directly in an editor.
 
 ---
 
@@ -130,7 +127,6 @@ Laborer is built for reliability and performance, mirroring battle-tested patter
 | Workspace isolation | Automated (worktrees, ports, containers) | Manual setup per session | Automated (containers) | Manual |
 | Diff viewer | Built-in, per-hunk accept/reject | External tool | None | None |
 | Process isolation | VS Code-grade utility processes | N/A | Container-based | Single process |
-| Agent support | OpenCode, Claude Code, Codex | Any | Specific agents | Specific agents |
 | Desktop app | Native Electron | Terminal-only | Electron | Electron |
 
 **Laborer is the only tool purpose-built for developers who run multiple AI agents in parallel.**
@@ -158,7 +154,6 @@ Developers with unlimited AI subscriptions have **no tooling to fully leverage t
 
 2. **Local-first, API-first.** Everything runs on the developer's machine. No cloud dependency. The API is the primary interface; the UI is a client. Future integrations (Slack bots, CLI, CI) are architectural no-ops.
 
-3. **Progressive complexity.** A developer can start with one workspace and one terminal, then add splits, dev servers, and multiple windows when needed.
 
 4. **Keyboard-first.** Tmux-style shortcuts (Ctrl+B prefix), vim-inspired navigation, zero mouse dependency for power users.
 
@@ -169,7 +164,6 @@ Developers with unlimited AI subscriptions have **no tooling to fully leverage t
 **Late alpha / early beta.** Core features are implemented and working:
 
 - 886 commits, 65+ issues completed, 28 PRDs written
-- Fully functional panel system, workspace management, terminal emulation, Diff Viewer, file tree, multi-window support, and auto-updates
 - Daily-driven by the author for real development work
 - macOS primary, cross-platform architecture
 

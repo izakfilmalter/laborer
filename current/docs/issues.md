@@ -74,7 +74,6 @@ Added `useDebouncedValue` hook (300ms trailing-edge debounce with 500ms max wait
 
 ---
 
-## ~~Issue 107: PRD-generated issues become tasks~~ ✅ DONE
 
 ### Parent PRD
 
@@ -82,9 +81,7 @@ PRD.md
 
 ### What to build
 
-After `rlph prd` completes and creates issues (in Linear or GitHub), those issues should automatically appear as tasks in LiveStore. Monitor the rlph prd terminal output or poll the issue tracker for new issues.
 
-Watched `rlph prd` terminals from the server after spawn, waited for terminal completion via the terminal-service event stream, fetched the terminal scrollback over the terminal WebSocket, parsed GitHub issue URLs and Linear issue keys from rlph output, and imported missing tasks into LiveStore with `source = "prd"`. Added parser/importer tests covering GitHub links, Linear keys, ANSI-stripped output, and duplicate externalId deduping.
 
 ### Blocked by
 
@@ -96,7 +93,6 @@ Watched `rlph prd` terminals from the server after spawn, waited for terminal co
 
 ---
 
-## ~~Issue 108: Linear task sourcing~~ ✅ DONE
 
 ### Parent PRD
 
@@ -104,16 +100,11 @@ PRD.md
 
 ### What to build
 
-Implement fetching tasks from Linear's API based on the project's rlph configuration. Import Linear issues as tasks in LiveStore with source = "linear".
 
-Added `LinearTaskImporter` on the server plus a new `task.importLinear` RPC endpoint. The importer resolves the project's Laborer config, reads the configured rlph TOML file (defaulting to `.rlph/config.toml`), extracts the Linear team/project/label settings, fetches eligible issues from Linear's GraphQL API, dedupes against existing Linear-sourced tasks, and creates new LiveStore tasks with `source = "linear"` and `externalId = identifier` (for example `ENG-123`). Missing config, missing API key, and Linear API failures all surface as typed `RpcError`s. Added integration tests covering successful import with duplicate skipping and Linear API error handling.
 
 ### Acceptance criteria
 
-- [x] Fetch tasks from Linear API using project's rlph config
-- [x] Tasks created in LiveStore with source = "linear" and externalId
 - [x] Handle API errors gracefully
-- [x] Tests: mock Linear API → tasks imported; API error → handled
 
 ### Blocked by
 
@@ -125,7 +116,6 @@ Added `LinearTaskImporter` on the server plus a new `task.importLinear` RPC endp
 
 ---
 
-## ~~Issue 109: GitHub task sourcing~~ ✅ DONE
 
 ### Parent PRD
 
@@ -133,9 +123,7 @@ PRD.md
 
 ### What to build
 
-Implement fetching issues from GitHub's API for the project's repository. Import GitHub issues as tasks in LiveStore with source = "github".
 
-Added `GithubTaskImporter` on the server plus a new `task.importGithub` RPC endpoint. The importer resolves the repo's `remote.origin.url`, validates GitHub remotes (`git@github.com:owner/repo.git` and `https://github.com/owner/repo.git`), fetches open issues from the GitHub REST API, skips pull requests, dedupes against existing GitHub-sourced tasks, and creates new LiveStore tasks with `source = "github"` and `externalId = html_url`. API/network/remote errors surface as typed `RpcError`s. Added integration tests covering successful import, duplicate skipping, pull request filtering, and GitHub API failure handling.
 
 ### Blocked by
 
@@ -147,7 +135,6 @@ Added `GithubTaskImporter` on the server plus a new `task.importGithub` RPC endp
 
 ---
 
-## ~~Issue 110: Task source picker UI~~ ✅ DONE
 
 ### Parent PRD
 
@@ -155,17 +142,12 @@ PRD.md
 
 ### What to build
 
-Create a UI component to select the task source: Linear, GitHub, or Manual. Selecting Linear or GitHub triggers a fetch from that source. Manual shows the create task form.
 
-Added a task source picker above the task list with Manual, Linear, and GitHub tabs. Manual keeps the create-task dialog available, while Linear/GitHub selections auto-import tasks for the active project, expose a manual Sync action, and filter the task list to the selected source. Added helper tests covering source filtering and import gating.
 
 ### Acceptance criteria
 
 - [x] Dropdown or tabs for source selection
-- [x] Linear → fetches and displays Linear tasks
 - [x] GitHub → fetches and displays GitHub issues
-- [x] Manual → shows create task form
-- [x] Tests: select source → correct tasks displayed; switch source → list updates
 
 ### Blocked by
 
@@ -179,13 +161,11 @@ Added a task source picker above the task list with Manual, Linear, and GitHub t
 
 ## ~~Issue 113: Project switcher component~~ ✅ DONE
 
-Created a project switcher Select dropdown at the top of the sidebar. Lists all registered projects plus an "All Projects" option (default). Selecting a specific project filters the Workspace and Task lists to show only items belonging to that project. Controlled component pattern with state lifted to `HomeComponent`. Auto-clears filter if the selected project is removed. Status counts in task tabs reflect the filtered project.
 
 ---
 
 ## ~~Issue 114: Cross-project workspace dashboard~~ ✅ DONE
 
-Created a cross-project workspace dashboard with a view toggle in the panel header bar. Users switch between terminal panels and dashboard via Terminal/LayoutDashboard icon buttons. Dashboard shows a global overview section (aggregate workspace + task counts), and per-project sections with: project name/repo path, task summary counts (pending/in progress/completed/cancelled with color-coded icons), workspace/task count badges, and workspace rows with status badges, branch names, ports, and terminal counts. All data reactive via LiveStore queries.
 
 ---
 
@@ -455,7 +435,6 @@ PRD-terminal-extraction.md
 
 ### What to build
 
-Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC client connecting to the terminal service at `http://localhost:${TERMINAL_PORT}`. Subscribe to `terminal.events()` on startup to track which terminal IDs belong to which workspace (maintaining an in-memory workspace->terminal ID map). Update the server's `main.ts` layer tree: remove `PtyHostClient.layer`, `TerminalManager.layer`, and `TerminalWsRouteLive`; add `TerminalClient.layer`. Update server RPC handlers so that `rlph.startLoop`, `rlph.writePRD`, `rlph.review`, and `rlph.fix` delegate terminal spawning to `TerminalClient`. Implement `killAllForWorkspace` by iterating tracked terminal IDs and calling `TerminalClient.kill()` for each. Remove `node-pty` from server's `package.json`. The server should log a warning and retry if the terminal service is unreachable on startup, not crash.
 
 ### Acceptance criteria
 
@@ -463,7 +442,6 @@ Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC c
 - [x] Server connects to terminal service via Effect RPC HTTP client
 - [x] Server subscribes to `terminal.events()` and tracks workspace->terminal mapping
 - [x] Server `main.ts` no longer includes PtyHostClient, TerminalManager, or TerminalWsRoute layers
-- [x] rlph commands (startLoop, writePRD, review, fix) spawn terminals through the terminal service
 - [x] `killAllForWorkspace` kills terminals via TerminalClient
 - [x] `node-pty` is removed from server's package.json
 - [x] Server starts gracefully even if terminal service is temporarily unreachable
@@ -678,7 +656,6 @@ PRD-cmd-w-close-panel.md
 
 ### What to build
 
-When Cmd+W is pressed and no panes exist, show an AlertDialog asking "Close Laborer?" instead of silently doing nothing. The dialog uses the existing `alert-dialog.tsx` component with controlled `open` state (no trigger button — opened programmatically from the Cmd+W handler). Title: "Close Laborer?". Description: "The window will be hidden to the system tray. Your workspaces will continue running." Actions: "Cancel" (dismisses dialog) and "Close" (hides window to tray via Tauri window API). Follow the existing destructive confirmation pattern used by project removal, workspace destruction, and task removal dialogs.
 
 Added a controlled close-app `AlertDialog` opened programmatically from the Cmd+W hotkey path when no active pane exists. The dialog uses the exact copy from the PRD, supports Escape and Cancel dismissal, and the Close action hides the Tauri window to the system tray via `@tauri-apps/api/window`. Ctrl+B, X behavior is unchanged and does not trigger the dialog.
 
@@ -788,7 +765,6 @@ Wire the `ConfigService` (Issue #154) into `WorkspaceProvider` to replace the ha
 
 ## ~~Issue 157: Config RPC endpoints + project settings modal~~ ✅ DONE
 
-Added `config.get` + `config.update` RPC methods (shared contract + server handlers) and shipped a new `ProjectSettingsModal` (gear icon on each project card) for editing worktree directory, setup scripts, and rlph config with per-field provenance labels and save toasts.
 
 ### Parent PRD
 
@@ -798,12 +774,10 @@ PRD-global-worktree-config.md
 
 Add two new RPC endpoints to the `LaborerRpcs` group and build a project settings modal in the frontend.
 
-**RPC layer**: Add `config.get` (payload: `{ projectId: string }`, returns resolved config with provenance) and `config.update` (payload: `{ projectId: string, config: { worktreeDir?: string, setupScripts?: string[], rlphConfig?: string } }`) to the shared RPC definitions. Implement server handlers that look up the project via `ProjectRegistry.getProject`, then delegate to `ConfigService.resolveConfig` and `ConfigService.writeProjectConfig` respectively.
 
 **Frontend**: Build a `ProjectSettingsModal` component using the existing `Dialog` primitive. Entry point is a gear icon (`Settings` from lucide-react) on each project card in `ProjectList`, placed next to the existing delete icon. On open, fetches resolved config via `config.get` RPC query. Form fields:
 - **Worktree directory**: text input with resolved path, placeholder showing default, helper text showing provenance
 - **Setup scripts**: editable list of strings with add/remove buttons per entry
-- **rlph config**: text input
 
 Save button calls `config.update` mutation with only changed fields. Toast notification on success/failure. Uses the standard `LaborerClient.mutation` / `useAtomSet` pattern.
 
@@ -820,7 +794,6 @@ Save button calls `config.update` mutation with only changed fields. Toast notif
 - [x] Provenance labels show which file each value comes from
 - [x] Worktree directory field is editable with placeholder showing default
 - [x] Setup scripts field is an editable list with add/remove functionality
-- [x] rlph config field is editable
 - [x] Save writes changed fields via `config.update` RPC
 - [x] Toast confirms successful save or shows error
 
@@ -898,10 +871,6 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
 | 88 | ~~Diff viewer — accept/reject annotations~~ | ~~#87~~ | Done |
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
-| 107 | ~~PRD-generated issues → tasks~~ | ~~#94~~, ~~#100~~ | Done |
-| 108 | ~~Linear task sourcing~~ | ~~#102~~ | Done |
-| 109 | ~~GitHub task sourcing~~ | ~~#102~~ | Done |
-| 110 | ~~Task source picker UI~~ | ~~#108~~, ~~#109~~, ~~#103~~ | Done |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |
@@ -1227,7 +1196,6 @@ PRD-sidebar-workspace-ux.md
 
 ### What to build
 
-Restructure the `WorkspaceItem` card header from a single-row layout (branch name + all buttons competing for space) into a two-row layout. Row 1 (info row): GitBranch icon + branch name (line-clamped to 2 lines via Tailwind v4 `line-clamp-2`) + optional "Detected" badge + status badge pushed right. Row 2 (action row): all action buttons (WritePRD, Ralph Loop, Review PR, Fix Findings, expand/collapse, destroy) with `flex-wrap` so buttons wrap naturally at narrow widths. Replace `truncate` with `line-clamp-2` on the branch name span and the worktree path span in `CardContent`. The `CardDescription` (project name) remains below Row 1. Add `overflow-wrap: anywhere` or `break-all` for monospace text that lacks natural break points (e.g., branch names with `/` separators).
 
 ### Acceptance criteria
 
@@ -1266,10 +1234,6 @@ PRD-sidebar-workspace-ux.md
 
 Remove the `isActive` conditional gate on all six elements in the `WorkspaceItem` component so that detected (external) worktrees get the same UI as created workspaces. The following elements are currently wrapped in `{isActive && ...}` and should render unconditionally for all non-destroyed workspaces:
 
-1. `WritePrdForm`
-2. Start Ralph Loop button
-3. `ReviewPrForm`
-4. `FixFindingsForm`
 5. `CollapsibleTrigger` (expand/collapse chevron)
 6. `CollapsibleContent` (terminal list section)
 
@@ -1280,10 +1244,6 @@ The `isActive` variable may be retained for other purposes (e.g., the "creating"
 - [x] Detected worktrees show the expand/collapse chevron
 - [x] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
 - [x] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
-- [x] WritePRD button appears on detected worktrees
-- [x] Ralph Loop button appears on detected worktrees
-- [x] Review PR button appears on detected worktrees
-- [x] Fix Findings button appears on detected worktrees
 - [x] "Detected" label still displays on external worktrees
 - [x] Destroy confirmation still uses the softer message for detected worktrees
 - [x] No regression for Laborer-created workspaces (active workspaces still work as before)

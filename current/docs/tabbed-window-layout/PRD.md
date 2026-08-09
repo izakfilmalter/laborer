@@ -2,7 +2,6 @@
 
 ## Problem Statement
 
-The current layout model forces a rigid vertical stacking of workspace frames in the main work area. Each workspace occupies a vertical slice, and panels within a workspace are limited to splits with sidebar-toggled sub-panes (diff, review, dev server). There is no way to group multiple workspace arrangements into switchable views, tile workspaces horizontally, or manage panels as independent tabs within a workspace. Users who work across multiple workspaces simultaneously lack the flexibility to organize their screen real estate effectively — they cannot, for example, place two workspaces side-by-side, maintain separate "contexts" in tabs they can switch between, or quickly promote a diff view into its own tabbed panel.
 
 ## Solution
 
@@ -16,11 +15,9 @@ Window Tab  >  Workspace Tiles  >  Panel Tabs  >  Panel Splits
 
 2. **Workspace Tiles**: Within a window tab, workspaces tile in both horizontal and vertical directions (not just vertical as today). Each workspace frame has its own header bar showing branch name, PR badge, and workspace actions.
 
-3. **Panel Tabs**: Within each workspace frame, panels are organized as tabs. The workspace-level tab bar auto-hides when there is only one panel tab. Each panel tab represents a single panel type (terminal, diff, review, dev server terminal).
 
 4. **Panel Splits**: Panel tabs can be split horizontally and vertically, creating a tiled arrangement of panels within a single tab. This preserves the existing split functionality but scopes it within a tab.
 
-5. **First-Class Panel Types**: Diff, review, and dev server terminal are promoted from sidebar toggles to independent panel types. When creating a new panel (via split or new tab), a type picker appears with numbered options for quick selection.
 
 6. **cmux-Style Keybindings**: Direct `Cmd+key` shortcuts for all common operations, with the existing `Ctrl+B` prefix system retained as a fallback. `Cmd+number` switches window tabs, `Ctrl+number` switches panel tabs within the focused workspace.
 
@@ -28,7 +25,6 @@ Window Tab  >  Workspace Tiles  >  Panel Tabs  >  Panel Splits
 
 ## User Stories
 
-1. As a developer, I want to open multiple workspace arrangements in separate window tabs, so that I can maintain different contexts (e.g., "feature work" vs "code review") and switch between them instantly.
 
 2. As a developer, I want the window tab bar to auto-hide when I only have one tab, so that screen space is not wasted on chrome I don't need.
 
@@ -46,13 +42,11 @@ Window Tab  >  Workspace Tiles  >  Panel Tabs  >  Panel Splits
 
 9. As a developer, I want to drag-and-drop workspace frames to rearrange their tiling order and direction within a window tab, so that I can organize my layout visually.
 
-10. As a developer, I want each workspace frame to have its own tab bar for panels, so that I can keep multiple panels (terminal, diff, review) in the same workspace and switch between them.
 
 11. As a developer, I want the workspace panel tab bar to auto-hide when there is only one panel tab, so that single-panel workspaces stay clean and spacious.
 
 12. As a developer, I want to create a new panel tab in the focused workspace with `Ctrl+T`, so that I can add panels without splitting.
 
-13. As a developer, I want a panel type picker to appear when creating a new tab or split, showing numbered options (1: Terminal, 2: Diff, 3: Review, 4: Dev Server), so that I can quickly select the panel type I need by pressing the corresponding number key or arrow-keying and pressing Enter.
 
 14. As a developer, I want the terminal option to be pre-selected in the panel type picker, so that I can press Enter immediately if I just want another terminal.
 
@@ -74,7 +68,6 @@ Window Tab  >  Workspace Tiles  >  Panel Tabs  >  Panel Splits
 
 23. As a developer, I want to toggle the sidebar with `Cmd+B`, so that I can reclaim horizontal space when I don't need the project tree.
 
-24. As a developer, I want to use diff, review, and dev server as first-class panel types that I can open in any tab or split, so that I am not limited to toggling them as sidebars on a terminal pane.
 
 25. As a developer, I want diff panels to default to right-side alignment when created, so that they follow the conventional layout without manual adjustment.
 
@@ -94,7 +87,6 @@ Window Tab  >  Workspace Tiles  >  Panel Tabs  >  Panel Splits
 
 33. As a developer, I want directional pane navigation (`Ctrl+B` then Arrow) to continue working as a fallback alongside `Cmd+Option+Arrow`, so that both styles are supported.
 
-34. As a developer, I want the `Ctrl+B` prefix sequences for diff (`D`), review (`R`), and dev server (`S`) toggles to open those panel types in a new split or tab instead of toggling a sidebar, so that they align with the new first-class panel model.
 
 35. As a developer working in multiple Electron windows, I want to move a workspace from one window's tab to another window's tab, so that I can reorganize across monitors.
 
@@ -140,7 +132,6 @@ The layout tree model shifts from a single flat tree per window to a three-level
 
 **Level 2 — Workspace Tiles**: Within each window tab, a recursive split tree (like today) where leaf nodes represent workspace frames. Each leaf references a workspace ID. Tiling supports both horizontal and vertical splits. Each workspace leaf also contains its panel layout.
 
-**Level 3 — Panel Tabs + Splits**: Within each workspace frame, an ordered list of panel tabs. Each panel tab contains a recursive split tree where leaf nodes are individual panels (terminal, diff, review, devServer). One tab is marked active per workspace. One pane is marked focused per tab.
 
 The `LeafNode` type loses its `diffOpen`, `devServerOpen`, `devServerTerminalId` flags. Instead, diff and dev server become independent panel types created as separate leaf nodes in the panel split tree.
 
@@ -188,7 +179,6 @@ The component is purely presentational — it receives items and callbacks, with
 A lightweight popover component that appears when `Cmd+D`, `Cmd+Shift+D`, or `Ctrl+T` is pressed. It shows:
 1. Terminal (pre-selected)
 2. Diff
-3. Review
 4. Dev Server
 
 Arrow keys navigate, number keys select directly, Enter confirms, Escape cancels. The picker is context-aware: if opened from a workspace that has a diff or dev server already associated, those options can show relevant context.
@@ -256,7 +246,6 @@ The existing tests for `layout-utils.ts` provide the pattern for testing pure la
 ## Out of Scope
 
 - **Customizable keybindings UI**: Users cannot remap shortcuts through a settings interface. This is a follow-up feature.
-- **New panel types (browser, markdown)**: Only the four existing panel types (terminal, diff, review, dev server) are supported. New types can be added later by extending the panel type picker.
 - **Command palette (`Cmd+Shift+P`)**: A searchable command palette for all actions is not part of this PRD.
 - **Tab pinning**: The ability to pin tabs (prevent accidental close, sort to left) is a follow-up.
 - **Cross-pane tab dragging (panel tabs between workspaces)**: Drag-and-drop of panel tabs between different workspace frames is a follow-up. Within a workspace, tab reordering is supported.
@@ -271,7 +260,6 @@ To avoid confusion with cmux's terminology (where "Tab" = "Workspace"):
 - **Workspace**: A git worktree + container + terminals. Unchanged from current meaning.
 - **Panel Tab**: A tab within a workspace's tab bar. Contains a panel type or a split of panels.
 - **Pane**: A leaf node in a split tree — the actual visible content area displaying a panel.
-- **Panel**: The content type (terminal, diff, review, dev server terminal).
 
 ### Migration Path
 
@@ -313,5 +301,4 @@ This ensures zero data loss on upgrade and maintains backward compatibility with
 | | `Ctrl+B`, `O` | Cycle focus to next pane |
 | | `Ctrl+B`, `P` | Cycle focus to previous pane |
 | | `Ctrl+B`, `D` | New diff panel (split/tab) |
-| | `Ctrl+B`, `R` | New review panel (split/tab) |
 | | `Ctrl+B`, `S` | New dev server panel (split/tab) |

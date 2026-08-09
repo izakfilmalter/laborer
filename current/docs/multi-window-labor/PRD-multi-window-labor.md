@@ -16,7 +16,7 @@ The feature includes:
 2. New windows always start from a blank default session in v1.
 3. Per-window panel state, including pane tree, active pane, selected workspaces, and other window-local UI state.
 4. Persistent window records so Laborer restores all previously open windows after relaunch.
-5. A clear separation between global app state (projects, workspaces, tasks, terminal backends) and window-local presentation state (which panes are open where).
+5. A clear separation between global app state (projects, workspaces, terminal backends) and window-local presentation state (which panes are open where).
 6. Basic window lifecycle handling for create, focus, close/hide, restore, and cleanup.
 
 The intended feel is: Laborer behaves more like a terminal app or IDE where each window is a first-class workspace container, while all windows still participate in the same underlying project/workspace system. V1 is intentionally narrow: create isolated windows, persist them, restore them, and make targeting coherent. It does not attempt advanced pane transfer or window templating.
@@ -33,7 +33,7 @@ The intended feel is: Laborer behaves more like a terminal app or IDE where each
 8. As a user, I want relaunching Laborer to restore my previously open windows, so that my multi-window setup comes back automatically.
 9. As a user, I want restored windows to come back with their prior layouts and pane contents, so that I do not need to rebuild them after every restart.
 10. As a user, I want window state restoration to handle missing or deleted workspaces gracefully, so that one bad reference does not prevent the app from loading.
-11. As a user, I want global data like projects, tasks, and workspace metadata to stay shared across all windows, so that Laborer still feels like one app.
+11. As a user, I want global data like projects and workspace metadata to stay shared across all windows, so that Laborer still feels like one app.
 12. As a user, I want window-local UI state to stay isolated, so that opening or closing a pane in one window does not unexpectedly mutate another window.
 13. As a user, I want a menu action for opening a new window, so that the feature is discoverable even if I do not know the shortcut.
 14. As a user, I want a newly opened window to start from a sensible blank default layout, so that window creation is predictable.
@@ -71,7 +71,7 @@ Introduce a desktop-layer window manager responsible for creating, identifying, 
 
 Separate Laborer's state into:
 
-- **Global state**: projects, workspaces, tasks, terminal records, agent records, shared metadata.
+- **Global state**: projects, workspaces, terminal records, agent records, shared metadata.
 - **Window session state**: pane tree, active pane id, selected pane content, layout sizing, and other presentation state tied to one specific window.
 
 This separation is the core architectural decision. Multi-window support should not be modeled as several views mutating one shared panel tree.
@@ -136,7 +136,6 @@ Build this in narrow vertical slices instead of a large horizontal refactor:
 
 - Moving an existing pane from one window to another.
 - Dragging tabs or panes between windows.
-- Window-specific project/task filtering redesigns beyond what is required for independent panel sessions.
 - New collaborative or multi-user synchronization semantics.
 - Re-architecting terminal or agent backends unless a small compatibility change is required for window-aware targeting.
 - Advanced window management such as named window templates, saved window sets, or "reopen closed window."

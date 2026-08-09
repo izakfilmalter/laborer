@@ -18,7 +18,6 @@ WorkspaceList gains a required `projectId` prop and renders only workspaces for 
 
 Collapse/expand state is stored in React state as a `Record<string, boolean>` mapping project IDs to expanded/collapsed. Initialized from localStorage on mount (default: all expanded). Persisted to localStorage on every change via `useEffect`.
 
-The ProjectSwitcher dropdown and Tasks section remain temporarily (addressed in later issues). The old `ProjectList` component (flat card list) is replaced by the project heading rendering inside `ProjectGroup`.
 
 ### Acceptance criteria
 
@@ -78,7 +77,6 @@ The "+" button should have a tooltip ("Create Workspace") and a clear hover stat
 
 ---
 
-## Issue 170: Tasks nested under each project
 
 ### Parent PRD
 
@@ -86,24 +84,12 @@ PRD-sidebar-project-grouped.md
 
 ### What to build
 
-Move tasks from the flat bottom section of the sidebar into each ProjectGroup as a sub-section below the project's workspaces.
 
-Each project gets its own TaskSourcePicker + TaskList, scoped to that project's ID. The task source state (`activeTaskSource`) changes from a single global value to a per-project `Record<string, TaskSourceFilter>`, so each project can independently have Manual/Linear/GitHub selected.
 
-TaskSourcePicker and TaskList already accept `activeProjectId` props — these become required `projectId` props since tasks are always rendered within a specific project context. The "Workspaces" and "Tasks" sub-sections within each ProjectGroup are visually separated (e.g., a subtle divider or sub-heading).
 
-The old standalone Tasks section in the sidebar is removed.
 
 ### Acceptance criteria
 
-- [ ] Each project group has a "Tasks" sub-section below its workspaces
-- [ ] TaskSourcePicker renders within each project group, scoped to that project
-- [ ] TaskList renders within each project group, scoped to that project
-- [ ] Task source selection (Manual/Linear/GitHub) is independent per project
-- [ ] Tasks and workspaces are visually separated within each project group
-- [ ] The old standalone Tasks section is removed from the sidebar
-- [ ] Task import (Linear/GitHub sync) works correctly when scoped to a project
-- [ ] Empty task states render correctly per project
 
 ### Blocked by
 
@@ -227,7 +213,6 @@ End-to-end verification and polish pass for the full sidebar restructure. Verify
 
 ### Acceptance criteria
 
-- [ ] Consistent indentation and visual hierarchy between project headings, workspace cards, and task sub-sections
 - [ ] Chevron rotation animation on expand/collapse is smooth and responsive
 - [ ] Search bar handles edge cases: partial matches, case-insensitive, matches on both project names and workspace branch names
 - [ ] Auto-expansion during search feels natural; clearing search restores previous collapse state
@@ -237,7 +222,6 @@ End-to-end verification and polish pass for the full sidebar restructure. Verify
 - [ ] "+" button on project headings has clear hover state and tooltip
 - [ ] Search bar clear button works correctly
 - [ ] Sidebar retains current resizable behavior and responsive sizing
-- [ ] No visual regressions for workspace cards, task lists, or project actions
 
 ### Blocked by
 
@@ -255,7 +239,6 @@ End-to-end verification and polish pass for the full sidebar restructure. Verify
 |---|-------|-----------|--------|
 | 168 | ProjectGroup collapsible headings with nested workspaces | None | Done |
 | 169 | Per-project "+" button and CreateWorkspaceForm pre-selection | #168 | Done |
-| 170 | Tasks nested under each project | #168 | Done |
 | 171 | Replace ProjectSwitcher with search bar | #168 | Done |
 | 172 | Server Status sticky footer | #168 | Done |
 | 173 | Sidebar project-grouped layout — polish and verification | #168, #169, #170, #171, #172, #174 | Done |

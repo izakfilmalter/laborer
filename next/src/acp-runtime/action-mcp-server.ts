@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListToolsResultSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Effect } from "effect";
 import { actionDefinition } from "../action-catalog.ts";
@@ -16,6 +17,38 @@ const bootstrapPath = process.env.LABORER_ACTION_BOOTSTRAP_PATH;
 const catalogPath = process.env.LABORER_ACTION_CATALOG_PATH;
 const serverName = process.env.LABORER_ACTION_SERVER_NAME;
 const serverGeneration = process.env.LABORER_ACTION_SERVER_GENERATION;
+const MAX_CATALOG_BYTES = 1024 * 1024;
+const CATALOG_FINGERPRINT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+const decodeCatalog = (source: string) => {
+  if (Buffer.byteLength(source, "utf8") > MAX_CATALOG_BYTES) {
+    throw new Error("Action catalog is oversized");
+  }
+  const candidate: unknown = JSON.parse(source);
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    !("fingerprint" in candidate) ||
+    typeof candidate.fingerprint !== "string" ||
+    !CATALOG_FINGERPRINT_PATTERN.test(candidate.fingerprint) ||
+    !("tools" in candidate)
+  ) {
+    throw new Error("Action catalog is invalid");
+  }
+  const decoded = ListToolsResultSchema.safeParse({ tools: candidate.tools });
+  if (
+    !decoded.success ||
+    decoded.data.tools.length > 256 ||
+    new Set(decoded.data.tools.map((tool) => tool.name)).size !==
+      decoded.data.tools.length
+  ) {
+    throw new Error("Action catalog is invalid");
+  }
+  return {
+    fingerprint: candidate.fingerprint,
+    tools: decoded.data.tools,
+  };
+};
 
 if (
   controlUrl === undefined ||
@@ -27,35 +60,11 @@ if (
   process.exitCode = 1;
 } else {
   const bootstrap = (await readFile(bootstrapPath, "utf8")).trim();
-  const catalog = (
+  const catalog = decodeCatalog(
     catalogPath === undefined
-      ? productionGeneratedMutationCatalog
-      : JSON.parse(await readFile(catalogPath, "utf8"))
-  ) as {
-    readonly fingerprint: string;
-    readonly tools: readonly {
-      readonly name: string;
-      readonly [key: string]: unknown;
-    }[];
-  };
-  const catalogSource = JSON.stringify(catalog);
-  if (Buffer.byteLength(catalogSource, "utf8") > 1024 * 1024) {
-    throw new Error("Action catalog is oversized");
-  }
-  if (
-    typeof catalog.fingerprint !== "string" ||
-    !Array.isArray(catalog.tools) ||
-    catalog.tools.length > 256 ||
-    catalog.tools.some(
-      (tool) =>
-        typeof tool !== "object" ||
-        tool === null ||
-        typeof tool.name !== "string" ||
-        tool.name.length === 0
-    )
-  ) {
-    throw new Error("Action catalog is invalid");
-  }
+      ? JSON.stringify(productionGeneratedMutationCatalog)
+      : await readFile(catalogPath, "utf8")
+  );
   const toolNames = new Set(catalog.tools.map((tool) => tool.name));
   const callControl = async (
     path: string,
@@ -129,9 +138,16 @@ if (
         // this capability process.
         encoded = result;
       }
+      if (
+        typeof encoded !== "object" ||
+        encoded === null ||
+        Array.isArray(encoded)
+      ) {
+        throw new Error("Action result is invalid");
+      }
       return {
         content: [{ text: JSON.stringify(encoded), type: "text" as const }],
-        structuredContent: encoded as Record<string, unknown>,
+        structuredContent: { ...encoded },
       };
     } catch {
       return {

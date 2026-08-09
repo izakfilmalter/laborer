@@ -3,16 +3,62 @@ import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { makeAcpAuthorityRepository } from "../src/acp-runtime/acp-authority.ts";
 import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
-import { defineApplication } from "../src/durable-runtime/action.ts";
+import {
+  defineAction,
+  defineApplication,
+} from "../src/durable-runtime/action.ts";
 import { makeRenderLocalTextAction } from "../src/durable-runtime/local-command-action.ts";
 import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
+import { conversationCapabilitiesForRootRuntime } from "../src/durable-runtime/reference-coding-application.ts";
 import { makeGeneratedMutationCatalog } from "../src/generated-mutation-catalog.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 describe("registered local command Action", () => {
+  it.effect("rejects Action names reserved for Execution controls", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* makeTempDirectoryScoped(
+          "laborer-local-command-collision-"
+        );
+        const application = defineApplication({
+          actions: [
+            defineAction({
+              description: "Conflicts with a generated Execution control.",
+              input: Schema.Struct({}),
+              name: "cancel-execution",
+              result: Schema.Struct({}),
+              revision: "collision/v1",
+              run: () => Effect.succeed({}),
+            }),
+          ],
+        });
+        const authority = yield* makeAcpAuthorityRepository({
+          keyPath: join(directory, "authority.key"),
+          statePath: join(directory, "authority.json"),
+          trustedRoot: directory,
+        });
+        const failure = yield* makeLaborerActionMcpBridge({
+          actionCatalog: application.actions,
+          authorityRepository: authority,
+          bootstrapPath: join(directory, "action-bootstrap"),
+          processGeneration: 313,
+          root: directory,
+          rootAuthority: "local-command-root",
+          statePath: join(directory, "action-capabilities.json"),
+          trustedRuntimeRoot: directory,
+          workspaceId: "TLOCAL",
+        }).pipe(Effect.flip);
+        assert.strictEqual(
+          failure.safeDetail,
+          "Action catalog conflicts with an Execution control"
+        );
+      })
+    )
+  );
+
   it.live(
     "projects an arbitrary capability and keeps bounded command evidence durable",
     () =>
@@ -104,25 +150,99 @@ describe("registered local command Action", () => {
             databasePath: join(directory, "runtime.sqlite"),
             rootIdentity: directory,
           });
-          const request = {
-            actionName: action.name,
-            conversationId: "conversation-local-command",
-            input: { text: "private command evidence" },
-            invocationId: "invocation-local-command",
+          const conversationId = "conversation-local-command";
+          const workspaceId = "TLOCAL";
+          const capabilities = conversationCapabilitiesForRootRuntime({
             rootIdentity: directory,
-            workspaceId: "TLOCAL",
-          } as const;
-          const accepted = yield* runtime.startExecution(request);
-          const duplicate = yield* runtime.startExecution(request);
-          assert.strictEqual(duplicate.executionId, accepted.executionId);
+            runtime,
+            workspaceId,
+          });
+          const conversationAction = capabilities
+            .actionsFor(conversationId)
+            .find((candidate) => candidate.name === action.name);
+          assert.ok(conversationAction);
+          const sessionId = "session-local-command";
+          const toolCallId = "tool-call-local-command";
+          const permission = `${bridge.serverName}_${action.name}`;
+          const input = { text: "private command evidence" };
+          const closeTurn = yield* bridge.activateTurn({
+            actionServerGeneration: registration.actionServerGeneration,
+            actions: [conversationAction],
+            controls: [],
+            scope: {
+              bindingGeneration: 1,
+              channelId: "CLOCAL",
+              conversationId,
+              processGeneration: 313,
+              promptId: "prompt-local-command",
+              rootTs: "313.1",
+              sessionId,
+              turnId: "turn-local-command",
+              workspaceId,
+            },
+          });
+          bridge.observeToolCall({
+            sessionId,
+            update: {
+              kind: "other",
+              name: permission,
+              rawInput: input,
+              sessionUpdate: "tool_call",
+              status: "pending",
+              title: permission,
+              toolCallId,
+            },
+          });
+          const authorization = yield* bridge.tryAuthorizePermission({
+            options: [
+              {
+                kind: "allow_once",
+                name: "Allow once",
+                optionId: "allow-action-once",
+              },
+              {
+                kind: "reject_once",
+                name: "Reject",
+                optionId: "reject-action",
+              },
+            ],
+            sessionId,
+            toolCall: {
+              kind: "other",
+              rawInput: input,
+              status: "pending",
+              title: permission,
+              toolCallId,
+            },
+          });
+          assert.strictEqual(authorization?.outcome.outcome, "selected");
+          const invoked = yield* Effect.promise(() =>
+            client.callTool({ arguments: input, name: action.name })
+          );
+          assert.strictEqual(invoked.isError, undefined);
+          assert.ok(
+            !JSON.stringify(invoked).includes("private command evidence")
+          );
+          const receipt = invoked.structuredContent;
+          assert.ok(
+            typeof receipt === "object" &&
+              receipt !== null &&
+              "executionId" in receipt &&
+              typeof receipt.executionId === "string"
+          );
+          const accepted = yield* runtime.getExecution(
+            receipt.executionId,
+            conversationId,
+            workspaceId
+          );
           assert.strictEqual(accepted.result, null);
 
           let terminal = accepted;
           for (let attempt = 0; attempt < 500; attempt += 1) {
             terminal = yield* runtime.getExecution(
               accepted.executionId,
-              request.conversationId,
-              request.workspaceId
+              conversationId,
+              workspaceId
             );
             if (terminal.status === "completed") {
               break;
@@ -138,14 +258,15 @@ describe("registered local command Action", () => {
             stdout: "private command evidence",
           });
           const events = yield* runtime.pendingEvents(
-            request.conversationId,
-            request.workspaceId
+            conversationId,
+            workspaceId
           );
           assert.deepStrictEqual(
             events.map((event) => event.kind),
             ["progress", "progress", "completed"]
           );
           assert.deepStrictEqual(events.at(-1)?.payload, terminal.result);
+          yield* closeTurn;
         })
       ),
     15_000

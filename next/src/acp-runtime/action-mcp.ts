@@ -443,6 +443,15 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   readonly workspaceId: string;
 }): Effect.fn.Return<LaborerActionMcpBridge, HandlerFailure, Scope.Scope> {
   const actionCatalog = options.actionCatalog;
+  if (
+    actionCatalog?.actions.some(
+      (action) => executionControlDefinition(action.name) !== undefined
+    ) === true
+  ) {
+    return yield* bridgeFailure(
+      "Action catalog conflicts with an Execution control"
+    );
+  }
   const actionResultDocument = Schema.toJsonSchemaDocument(
     PersistedActionResult
   );

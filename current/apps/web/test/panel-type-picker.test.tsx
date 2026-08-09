@@ -286,6 +286,13 @@ describe('PanelTypePicker', () => {
       expect(onSelect).toHaveBeenCalledWith('diff')
     })
 
+    it('clicking the last option selects Dev Server', () => {
+      const { onSelect } = renderPicker()
+      const options = getOptions()
+      fireEvent.click(options[3] as HTMLElement)
+      expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
+    })
+
     it('hovering an option updates the highlighted index', () => {
       renderPicker()
       const options = getOptions()
@@ -320,8 +327,8 @@ describe('PanelTypePicker', () => {
   // ---- PANEL_TYPE_OPTIONS export ----
 
   describe('PANEL_TYPE_OPTIONS', () => {
-    it('exports 3 panel type options', () => {
-      expect(PANEL_TYPE_OPTIONS).toHaveLength(3)
+    it('exports 4 panel type options', () => {
+      expect(PANEL_TYPE_OPTIONS).toHaveLength(4)
     })
 
     it('has agent as the first option', () => {
@@ -333,6 +340,7 @@ describe('PanelTypePicker', () => {
         'agent',
         'terminal',
         'diff',
+        'devServerTerminal',
       ])
     })
 
@@ -341,6 +349,7 @@ describe('PanelTypePicker', () => {
         'Agent',
         'Terminal',
         'Diff',
+        'Dev Server',
       ])
     })
   })

@@ -1,22 +1,22 @@
 ## Problem Statement
 
-Laborer's Daytona cloud sandbox terminals suffer from perceptible keystroke latency (~100ms per character). Every keystroke takes a full network round trip: renderer -> Electron main process -> server utility process -> WebSocket -> Daytona cloud sandbox PTY -> and back. Even on a fast connection, this round trip introduces 40-100ms+ of delay depending on distance to the Daytona data center.
+Laborer's terminal renderer waits for the PTY to echo each keystroke before displaying it. Process scheduling, a busy agent, or backpressure in the terminal data channel can make that delay perceptible and cause interactive typing to feel less responsive.
 
-The result is that typing in a Daytona terminal feels sluggish. You press a key and wait ~100ms before it appears on screen. This makes interactive terminal work (editing commands, navigating with arrows, using tab completion) feel laggy and frustrating compared to the instant response of local Docker terminals.
+The delay is most noticeable while editing commands, navigating with arrows, or using tab completion. The renderer can hide it without changing terminal correctness by predicting ordinary input until the PTY confirms the output.
 
-This is not a bug in the Daytona integration — it is an inherent physical limitation of remote terminals. SSH terminals, VS Code Remote SSH, and Google Cloud Shell all face the same problem.
+This is a general terminal-rendering concern rather than a workspace-lifecycle concern. The prediction layer therefore responds to measured echo latency instead of assuming a particular terminal type.
 
 ## Solution
 
 Port VS Code's `TypeAheadAddon` — a client-side local echo prediction system — into laborer's terminal renderer. When a user types a character, the addon immediately writes a predicted version of that character to xterm.js (rendered with a dim style to indicate it's unconfirmed). When the server's echo arrives, the addon reconciles: if the prediction was correct, the dim styling is replaced with the real output; if the prediction was wrong, it is rolled back and the real output is shown.
 
-The addon uses adaptive latency detection to automatically enable itself for any terminal (Docker or Daytona) where the median round-trip latency exceeds a configurable threshold. For low-latency terminals (local Docker), the addon stays dormant and adds no overhead. For high-latency terminals (Daytona cloud), it activates automatically and makes typing feel instant.
+The addon uses adaptive latency detection to enable itself whenever median echo latency exceeds a configurable threshold. It stays dormant on responsive terminals and activates only when prediction would improve typing.
 
 The addon is adapted from VS Code's MIT-licensed `terminalTypeAheadAddon.ts` (~1575 lines), with VS Code-specific framework dependencies (DI, configuration service, telemetry, Disposable/Emitter) replaced by minimal inline equivalents. The core prediction logic — covering character prediction, backspace, cursor movement, word boundary navigation, line wrapping, newline, and reconciliation — is preserved as-is.
 
 ## User Stories
 
-1. As a developer, I want typed characters to appear immediately in Daytona cloud terminals, so that I don't feel the ~100ms round-trip latency on every keystroke.
+1. As a developer, I want typed characters to appear immediately when terminal echo is delayed, so that interactive typing remains responsive.
 
 2. As a developer, I want predicted characters to be visually distinguishable from confirmed characters (rendered dim), so that I know which characters haven't been confirmed by the server yet.
 
@@ -34,7 +34,7 @@ The addon is adapted from VS Code's MIT-licensed `terminalTypeAheadAddon.ts` (~1
 
 9. As a developer, I want the prediction system to automatically detect when I'm running a full-screen program (vim, vi, nano, tmux) and disable itself, so that predictions don't interfere with programs that handle their own input.
 
-10. As a developer, I want the prediction system to automatically enable itself based on latency, so that I get local echo when I need it (high-latency Daytona terminals) and no overhead when I don't (low-latency Docker terminals).
+10. As a developer, I want the prediction system to automatically enable itself based on latency, so that I get local echo only when it helps.
 
 11. As a developer, I want predictions to be automatically cleared after a timeout if the server doesn't confirm them, so that stale predictions don't linger on screen.
 
@@ -64,7 +64,7 @@ The addon is adapted from VS Code's MIT-licensed `terminalTypeAheadAddon.ts` (~1
 
 5. Verify that the addon doesn't interfere with existing terminal features: web links detection, image rendering (iTerm2/Sixel), Unicode character width, WebGL rendering.
 
-6. Verify that the addon adds no measurable overhead to local Docker terminals where it remains dormant (no wasted computation in the `beforeServerInput` path when no predictions are pending).
+6. Verify that the addon adds no measurable overhead to responsive terminals where it remains dormant (no wasted computation in the `beforeServerInput` path when no predictions are pending).
 
 7. Verify that prediction accuracy is >90% for basic typing scenarios (printable characters, backspace, Enter) in bash and zsh shells.
 
@@ -115,7 +115,7 @@ Predictions are disabled when:
 
 Prediction is also disabled when the terminal title matches the exclude regex (`/\b(vim|vi|nano|tmux)\b/i`).
 
-This means the addon is completely dormant for low-latency Docker terminals and auto-activates for high-latency Daytona terminals, with no terminal-type-specific logic needed.
+This means the addon is completely dormant while echo is responsive and auto-activates when measured latency crosses the threshold, with no terminal-type-specific logic needed.
 
 ### Prediction Safety Mechanisms
 
@@ -153,16 +153,15 @@ Good tests for this addon verify external behavior through the prediction interf
 
 ### Prior art
 
-The existing terminal-related tests in `apps/web/test/` (e.g., `workspace-card-layout.test.tsx`) demonstrate the component testing patterns. The `packages/server/test/daytona-terminal-data-channel.test.ts` tests demonstrate testing terminal data flow logic in isolation.
+The existing terminal-related tests in `apps/web/test/` (e.g., `workspace-card-layout.test.tsx`) demonstrate the component testing patterns.
 
 ## Out of Scope
 
 - **User-facing settings UI**: No settings modal entries for latency threshold, style, or exclude programs. Hardcoded defaults are sufficient for v1.
 - **Server-side prediction**: All prediction happens in the renderer. No server-side changes to the terminal data channel protocol.
-- **Mosh-style UDP transport**: The addon works within the existing WebSocket PTY transport. No protocol changes.
+- **Alternative terminal transport**: The addon works within the existing PTY data channel. No protocol changes.
 - **Custom prediction styles beyond VS Code's set**: The addon supports VS Code's built-in styles (bold, dim, italic, underlined, inverted, hex color) but we only use dim. No UI for choosing styles.
 - **Per-terminal prediction toggle**: No way to manually enable/disable prediction for a specific terminal. The adaptive system handles this automatically.
-- **Bidirectional file sync as an alternative**: This PRD addresses the typing latency issue through prediction, not by changing the Daytona terminal architecture to a local-terminal-with-sync model.
 
 ## Further Notes
 

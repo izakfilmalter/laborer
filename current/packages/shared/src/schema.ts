@@ -460,7 +460,7 @@ export const prdRemoved = Events.synced({
   }),
 })
 
-// -- v2 Sandbox events (provider-agnostic) -----------------------------------
+// -- Removed v2 execution-environment events (decode-only) -------------------
 
 export const sandboxStarted = Events.synced({
   name: 'v2.SandboxStarted',
@@ -471,7 +471,7 @@ export const sandboxStarted = Events.synced({
     sandboxImage: Schema.String,
     /** Port the dev server listens on. Optional for backward compat. */
     sandboxPort: Schema.optional(Schema.Number),
-    /** Which provider created this sandbox: 'docker' or 'daytona'. */
+    /** Historical provider identifier. */
     sandboxProvider: Schema.String,
   }),
 })
@@ -519,7 +519,7 @@ export const sandboxUrlChanged = Events.synced({
   name: 'v2.SandboxUrlChanged',
   schema: Schema.Struct({
     workspaceId: Schema.String,
-    /** The new preview URL (full URL for Daytona, hostname for Docker). */
+    /** Historical preview URL. */
     sandboxUrl: Schema.String,
   }),
 })
@@ -688,7 +688,7 @@ const materializers = State.SQLite.materializers(events, {
     workspaces.update({ aheadCount, behindCount }).where({ id }),
   'v1.WorkspaceOriginChanged': ({ id, origin }) =>
     workspaces.update({ origin }).where({ id }),
-  // The removed sandbox feature's events remain decodable but no longer
+  // The removed execution-environment events remain decodable but no longer
   // contribute to the workspace read model.
   'v1.ContainerStarted': () => [],
   'v1.ContainerPortChanged': () => [],

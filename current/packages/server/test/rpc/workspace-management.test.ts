@@ -324,14 +324,14 @@ describe('LaborerRpcs workspace management', () => {
           )
 
           const repoPath = initRepo(
-            'rpc-workspace-create-no-sandbox',
+            'rpc-workspace-create-local-only',
             tempRoots
           )
           const worktreeRoot = createTempDir(
-            'rpc-worktree-root-no-sandbox',
+            'rpc-worktree-root-local-only',
             tempRoots
           )
-          const branchName = 'feature/rpc-no-sandbox'
+          const branchName = 'feature/rpc-local-only'
 
           writeLaborerConfig(repoPath, {
             devServer: {
@@ -344,7 +344,7 @@ describe('LaborerRpcs workspace management', () => {
             worktreeDir: worktreeRoot,
           })
           git('add laborer.json', repoPath)
-          git('commit -m "add no sandbox config"', repoPath)
+          git('commit -m "add local config"', repoPath)
 
           const project = yield* client.project.add({ repoPath })
           const workspace = yield* client.workspace.create({

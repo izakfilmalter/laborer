@@ -212,7 +212,7 @@ describe('LiveStore schema', () => {
   )
 
   it.scoped(
-    'keeps historical container and sandbox events as no-op decoders',
+    'keeps historical execution-environment events as no-op decoders',
     () =>
       Effect.gen(function* () {
         const store = yield* makeTestStore
@@ -268,8 +268,8 @@ describe('LiveStore schema', () => {
         store.commit(
           events.sandboxStarted({
             workspaceId: 'workspace-history',
-            sandboxId: 'sandbox-1',
-            sandboxUrl: 'sandbox.example.test',
+            sandboxId: 'historical-environment-1',
+            sandboxUrl: 'historical-environment.example.test',
             sandboxImage: 'node:22',
             sandboxProvider: 'historical-provider',
           })

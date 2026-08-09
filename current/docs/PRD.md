@@ -19,7 +19,7 @@ The core pain points are:
 Laborer is a local-first, API-first application for orchestrating multiple AI coding agents in parallel. It provides:
 
 - A **tmux-style panel system** where each pane is a live terminal (xterm.js) showing an agent's TUI, a diff viewer, or a raw shell. Panes split recursively (horizontal/vertical), resize, and persist across sessions.
-- **Automated workspace isolation** via git worktrees (v1) with a pluggable provider interface for future Docker/Daytona support. Each workspace gets its own branch, port allocation, file watcher scope, and setup script execution.
+- **Automated workspace isolation** via local git worktrees. Each workspace gets its own branch, port allocation, file watcher scope, and setup script execution.
 - **Task-driven lifecycle** where workspaces are created from Linear tickets or GitHub issues, and cleaned up when PRs merge or tasks close.
 - A **standalone Bun server** running Effect TS services, separate from the app. The server manages all side effects (process spawning, git operations, file system). The app can run in a browser or a Tauri desktop shell.
 - **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and app, with **effect-atom (`@effect-atom/atom-react`) + `@effect/rpc`** for triggering side effects via `AtomRpc` mutations.
@@ -177,7 +177,7 @@ Key RPC methods (all mutations unless noted):
 ### Modules
 
 **1. WorkspaceProvider (Effect Service)**
-An Effect service with a tag-based interface allowing multiple implementations. V1 ships with `WorktreeProvider` that wraps git worktree operations (inspired by gtr/git-worktree-runner for worktree lifecycle: creation, file copying, setup scripts, cleanup). The interface is generic enough to accommodate future `DockerProvider` and `DaytonaProvider` implementations.
+An Effect service that owns local git worktree operations (inspired by gtr/git-worktree-runner for worktree lifecycle: creation, file copying, setup scripts, cleanup).
 
 Responsibilities: worktree creation/destruction, port allocation (via PortAllocator sub-service), setup script execution, file watcher scoping, branch management.
 
@@ -402,7 +402,6 @@ Playwright tests run against the full stack (server + web app). They spin up the
 ## Out of Scope
 
 - **Slack bot integration.** Remote task triggering via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
-- **Docker/Daytona workspace providers.** V1 ships with git worktrees only. The `WorkspaceProvider` interface is designed for future implementations, but they are not built in v1.
 - **Browser preview pane.** Embedding an iframe showing the dev server is a future enhancement. V1 focuses on terminals and diffs.
 - **Authentication / multi-user.** V1 is a single-user, local-only tool with no auth.
 - **Custom agent protocol.** V1 treats agents as black-box terminal processes. No custom protocol or MCP integration for agent-specific events.

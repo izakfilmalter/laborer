@@ -255,7 +255,7 @@ Prior art: no frontend component tests exist yet. Use Vitest + React Testing Lib
 - **Branch change detection within existing worktrees**: The watcher only detects worktree add/remove, not branch switches within an existing worktree (e.g., `git checkout` inside a worktree). Updating the branch name on workspace records for checkout events is out of scope.
 - **Worktree pruning**: Automatically running `git worktree prune` to clean up stale worktree references is not part of this feature. The detection uses `git worktree list` which already excludes prunable entries.
 - **Bare repository support**: Bare repos have no main worktree. Detection in bare repos is not supported — the `isMain` worktree is always expected.
-- **Remote/network worktrees**: Only local filesystem worktrees are detected. Network-mounted or containerized worktrees are out of scope.
+- **Remote/network worktrees**: Only local filesystem worktrees are detected. Network-mounted worktrees are out of scope.
 - **Migration of worktree directory locations**: This feature is orthogonal to the global worktree config PRD. Detection works with whatever paths `git worktree list` reports, regardless of location.
 
 ## Further Notes

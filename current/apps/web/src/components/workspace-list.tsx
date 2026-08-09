@@ -10,9 +10,8 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes brrr action buttons (Start Ralph Loop, Review PR,
- * Fix Findings) on every non-destroyed workspace for triggering agent
- * workflows.
+ * Includes a brrr action button on every non-destroyed workspace for
+ * triggering the agent workflow.
  *
  * When a workspace is associated with a plan (branch name matches
  * `plan/<slug>`), a scoped task list is shown inside the workspace card
@@ -27,8 +26,6 @@
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
  * @see Issue #93: "Start Ralph Loop" button UI
- * @see Issue #97: "Review PR" button + PR number input
- * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
@@ -58,7 +55,6 @@ import {
   type FC,
   type KeyboardEvent,
   type ReactNode,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -73,13 +69,9 @@ import {
   type PendingWorkspaceCreation,
   type PendingWorkspaceCreationChangeHandler,
 } from '@/components/create-workspace-form'
-import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanIssuesList } from '@/components/plan-issues-list'
-import { ReviewFindingsCount } from '@/components/review-findings-count'
-import { ReviewPrForm } from '@/components/review-pr-form'
-import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
 import {
   AlertDialog,
@@ -1135,7 +1127,7 @@ function WorkspaceItem({
       size="sm"
     >
       <CardHeader className="gap-2">
-        {/* Row 1 — Git: branch name, PR info, review/fix actions, destroy */}
+        {/* Row 1 — Git: branch name, PR info, and destroy action */}
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -1164,28 +1156,6 @@ function WorkspaceItem({
               behindCount={workspace.behindCount}
               workspaceId={workspace.id}
             />
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewVerdictBadge workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewFindingsCount workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <ReviewPrForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
-            {workspace.prNumber != null && (
-              <FixFindingsForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
             {!isRootWorkspace && showCreateSubWorkspaceAction && (
               <CreateWorkspaceForm
                 baseWorkspace={{

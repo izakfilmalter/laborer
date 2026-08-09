@@ -48,7 +48,6 @@ import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
@@ -106,7 +105,6 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
   Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
   Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
-  Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
   Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
   Layer.succeed(
     SandboxProvider,

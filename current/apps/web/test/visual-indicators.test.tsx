@@ -203,12 +203,10 @@ describe('Panel type picker keycap numbers', () => {
     render(<PanelTypePicker onCancel={vi.fn()} onSelect={vi.fn()} />)
     const picker = screen.getByTestId('panel-type-picker')
     const kbdElements = picker.querySelectorAll('kbd')
-    expect(kbdElements.length).toBe(5)
+    expect(kbdElements.length).toBe(3)
     expect(kbdElements[0]?.textContent).toBe('1')
     expect(kbdElements[1]?.textContent).toBe('2')
     expect(kbdElements[2]?.textContent).toBe('3')
-    expect(kbdElements[3]?.textContent).toBe('4')
-    expect(kbdElements[4]?.textContent).toBe('5')
   })
 
   it('keycap numbers have border styling for prominence', () => {

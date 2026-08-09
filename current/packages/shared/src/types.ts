@@ -59,8 +59,7 @@ export const PaneType = Schema.Literal(
   'agent',
   'terminal',
   'diff',
-  'devServerTerminal',
-  'review'
+  'devServerTerminal'
 )
 export type PaneType = typeof PaneType.Type
 
@@ -131,7 +130,7 @@ export class Diff extends Schema.Class<Diff>('Diff')({
 
 /**
  * A leaf node in the panel split tree. Represents a single pane that can
- * hold a terminal, agent, diff, dev server, or review session.
+ * hold a terminal, agent, diff, or dev server session.
  */
 export interface LeafNode {
   readonly _tag: 'LeafNode'

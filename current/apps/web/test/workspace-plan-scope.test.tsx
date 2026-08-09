@@ -42,12 +42,6 @@ vi.mock('@/lib/desktop', () => ({
   terminalRpcUrl: () => 'http://localhost:2101',
 }))
 
-// Stub the review findings count — not relevant for plan scope tests.
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => null,
-  useUnresolvedFindingsCount: () => 0,
-}))
-
 vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: () => ({
     terminals: [],
@@ -118,14 +112,6 @@ vi.mock('@/panels/panel-context', () => ({
 // Stub terminal list to avoid complex nested mocking
 vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
-}))
-
-// Stub review pr and fix findings forms
-vi.mock('@/components/review-pr-form', () => ({
-  ReviewPrForm: () => null,
-}))
-vi.mock('@/components/fix-findings-form', () => ({
-  FixFindingsForm: () => null,
 }))
 
 // Stub copy-button

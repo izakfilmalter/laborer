@@ -5,7 +5,7 @@
  *
  * Interaction:
  * - Arrow keys (up/down) to navigate with wrapping
- * - Number keys (1-5) to select directly
+ * - Number keys (1-3) to select directly
  * - Enter to confirm selection
  * - Escape to cancel
  * - Mouse click to select
@@ -17,7 +17,7 @@
  */
 
 import type { PaneType } from '@laborer/shared/types'
-import { Bot, Eye, FileCode2, Server, Terminal } from 'lucide-react'
+import { Bot, FileCode2, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
@@ -58,12 +58,6 @@ const PANEL_TYPE_OPTIONS: readonly PanelTypeOption[] = [
     icon: <Terminal className="size-4" />,
   },
   { type: 'diff', label: 'Diff', icon: <FileCode2 className="size-4" /> },
-  { type: 'review', label: 'Review', icon: <Eye className="size-4" /> },
-  {
-    type: 'devServerTerminal',
-    label: 'Dev Server',
-    icon: <Server className="size-4" />,
-  },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -75,7 +69,7 @@ function PanelTypePicker({
   onCancel,
   className,
 }: PanelTypePickerProps) {
-  // Terminal (index 0) is pre-selected
+  // Agent (index 0) is pre-selected
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -115,9 +109,7 @@ function PanelTypePicker({
         }
         case '1':
         case '2':
-        case '3':
-        case '4':
-        case '5': {
+        case '3': {
           e.preventDefault()
           const index = Number.parseInt(e.key, 10) - 1
           const option = PANEL_TYPE_OPTIONS[index]

@@ -1,4 +1,5 @@
 import type { AgentProvider } from "@ai-hero/sandcastle";
+import { fileURLToPath } from "node:url";
 
 export interface OpenCode2AgentOptions {
   readonly agent?: string;
@@ -6,13 +7,20 @@ export interface OpenCode2AgentOptions {
   readonly dangerouslyAutoApproveHostPermissions?: boolean;
   readonly env?: Record<string, string>;
   readonly maxAttempts?: number;
+  readonly diagnosticsPath?: string;
+  readonly initialStaggerSeconds?: number;
+  readonly recoveryPollSeconds?: number;
+  readonly recoveryTimeoutSeconds?: number;
   readonly retryDelaySeconds?: number;
+  readonly retryJitterSeconds?: number;
   readonly runTimeoutSeconds?: number;
   readonly variant?: string;
 }
 
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'\\''`)}'`;
+
+const runnerPath = fileURLToPath(new URL("./run.ts", import.meta.url));
 
 const toolArgumentFields: Readonly<Record<string, string>> = {
   bash: "command",
@@ -118,6 +126,24 @@ export const opencode2Agent = (
     0,
     Math.floor(options.retryDelaySeconds ?? 15)
   );
+  const retryJitterSeconds = Math.max(
+    0,
+    Math.floor(options.retryJitterSeconds ?? 15)
+  );
+  const initialStaggerSeconds = Math.max(
+    0,
+    Math.floor(options.initialStaggerSeconds ?? 15)
+  );
+  const recoveryPollSeconds = Math.max(
+    0,
+    Math.floor(options.recoveryPollSeconds ?? 5)
+  );
+  const recoveryTimeoutSeconds = Math.max(
+    0,
+    Math.floor(
+      options.recoveryTimeoutSeconds ?? options.runTimeoutSeconds ?? 14_400
+    )
+  );
 
   return {
     name: "opencode2",
@@ -140,8 +166,27 @@ export const opencode2Agent = (
       ) {
         args.push("--auto");
       }
-      const executable = "opencode2";
-      const invocation = `${executable} ${args
+      const runnerArgs = [
+        "--max-attempts",
+        String(maxAttempts),
+        "--retry-delay-seconds",
+        String(retryDelaySeconds),
+        "--retry-jitter-seconds",
+        String(retryJitterSeconds),
+        "--initial-stagger-seconds",
+        String(initialStaggerSeconds),
+        "--recovery-poll-seconds",
+        String(recoveryPollSeconds),
+        "--recovery-timeout-seconds",
+        String(recoveryTimeoutSeconds),
+        ...(options.diagnosticsPath === undefined
+          ? []
+          : ["--diagnostics-path", options.diagnosticsPath]),
+        "--",
+        "opencode2",
+        ...args,
+      ];
+      const invocation = `bun ${shellQuote(runnerPath)} ${runnerArgs
         .map(shellQuote)
         .join(" ")}`;
       return {
@@ -149,18 +194,7 @@ export const opencode2Agent = (
           `# sandcastle-timeout-seconds=${String(
             Math.max(1, Math.floor(options.runTimeoutSeconds ?? 14_400))
           )}`,
-          'prompt_file="$(mktemp)"',
-          'trap \'rm -f "$prompt_file"\' EXIT HUP INT TERM',
-          'cat > "$prompt_file"',
-          "attempt=1",
-          "while :; do",
-          `  cat "$prompt_file" | ${invocation} && exit 0`,
-          "  status=$?",
-          `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
-          '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',
-          `  sleep $((attempt * ${retryDelaySeconds}))`,
-          "  attempt=$((attempt + 1))",
-          "done",
+          invocation,
         ].join("\n"),
         stdin: prompt,
       };

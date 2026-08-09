@@ -122,7 +122,7 @@ describe('Slack workspace planner', () => {
     expect(args).not.toContain('--dangerously-skip-permissions')
   })
 
-  it('allows only Slack MCP tools in the planner agent', () => {
+  it('allows only Slack tools in the planner agent', () => {
     const config = makePlannerConfig()
     const agent = config.agent['slack-workspace-planner']
     expect(agent.tools).toEqual({ '*': false, 'slack_*': true })

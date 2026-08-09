@@ -836,9 +836,9 @@ describe('LiveStore schema', () => {
         events.prdCreated({
           id: 'prd-1',
           projectId: 'project-1',
-          title: 'MCP planning',
-          slug: 'mcp-planning',
-          filePath: '/tmp/PRD-mcp-planning.md',
+          title: 'Historical planning',
+          slug: 'historical-planning',
+          filePath: '/tmp/PRD-historical-planning.md',
           status: 'draft',
           createdAt: '2026-03-06T00:00:00.000Z',
         })
@@ -848,9 +848,9 @@ describe('LiveStore schema', () => {
         events.prdUpdated({
           id: 'prd-1',
           projectId: 'project-1',
-          title: 'Updated MCP planning',
-          slug: 'updated-mcp-planning',
-          filePath: '/tmp/PRD-updated-mcp-planning.md',
+          title: 'Updated historical planning',
+          slug: 'updated-historical-planning',
+          filePath: '/tmp/PRD-updated-historical-planning.md',
           status: 'active',
           createdAt: '2026-03-06T00:00:00.000Z',
         })

@@ -26,14 +26,12 @@ This solves the SIGHUP problem by completely isolating PTY file descriptors and 
 4. As a developer, I want to resize the terminal pane and have the PTY dimensions update correctly, so that full-screen programs (vim, htop, etc.) render properly.
 5. As a developer, I want to kill a terminal and have the underlying process actually terminate, so that resources are freed.
 6. As a developer, I want to spawn multiple terminals simultaneously across different workspaces, so that I can run agents, test runners, and shells in parallel.
-7. As a developer, I want the rlph workflow commands (startLoop, writePRD, review, fix) to work, since they depend on terminal spawning.
 8. As a developer, I want terminals to be marked as "stopped" if the server crashes and restarts, so that I don't see orphaned "running" terminals that are actually dead.
 9. As a developer, I want the PTY Host to check and fix `node-pty`'s `spawn-helper` permissions on startup, so that I don't hit a cryptic `posix_spawnp failed` error after a fresh `bun install`.
 10. As a developer, I want the server to handle PTY Host crashes gracefully (marking terminals as stopped), so that the app doesn't get stuck in an inconsistent state.
 11. As a developer, I want terminal output to persist across page reloads via LiveStore event replay, so that I can see previous output when I reopen a terminal pane.
 12. As a developer, I want workspace destruction to kill all terminals in that workspace, so that cleanup is complete.
 13. As a developer, I want the PTY Host startup to be transparent — no manual steps required beyond starting the server.
-14. As a developer, I want terminals spawned with a specific command (e.g., `rlph --once`) to run that command and exit cleanly when done.
 
 ## 'Polishing' Requirements
 

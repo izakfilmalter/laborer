@@ -20,19 +20,30 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 const program = Effect.gen(function* () {
   const config = yield* loadChatCanarySlackConfig();
   const xdgStateHome = process.env.XDG_STATE_HOME?.trim();
+  const statePath = resolve(
+    xdgStateHome !== undefined && isAbsolute(xdgStateHome)
+      ? xdgStateHome
+      : resolve(homedir(), ".local", "state"),
+    "laborer",
+    "chat-plane.sqlite"
+  );
   const layer = makeLiveChatPlaneLayer(
-    {
-      appToken: Redacted.value(config.appToken),
-      botToken: Redacted.value(config.botToken),
-      statePath: resolve(
-        xdgStateHome !== undefined && isAbsolute(xdgStateHome)
-          ? xdgStateHome
-          : resolve(homedir(), ".local", "state"),
-        "laborer",
-        "chat-plane.sqlite"
-      ),
-      userName: "laborer",
-    },
+    config.mode === "single-workspace"
+      ? {
+          appToken: Redacted.value(config.appToken),
+          botToken: Redacted.value(config.botToken),
+          statePath,
+          userName: "laborer",
+        }
+      : {
+          appToken: Redacted.value(config.appToken),
+          installations: config.installations.map((installation) => ({
+            botToken: Redacted.value(installation.botToken),
+            teamId: installation.teamId,
+          })),
+          statePath,
+          userName: "laborer",
+        },
     placeholderMentionHandler
   );
 

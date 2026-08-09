@@ -3,7 +3,7 @@
  *
  * Verifies rendering of numbered items with icons, keyboard navigation
  * (arrow keys, number keys, Enter, Escape), mouse interaction, and
- * pre-selection of the terminal option.
+ * pre-selection of the agent option.
  *
  * @see apps/web/src/components/ui/panel-type-picker.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #11

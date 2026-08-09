@@ -10,6 +10,9 @@ describe('WindowWorkspacePresenceRegistry', () => {
     const backgroundWindow = windowFact()
 
     registry.update(focusedWindow, {
+      contexts: [
+        { branchName: 'feature/focus', workspaceId: 'focused-workspace' },
+      ],
       focused: true,
       workspaceIds: ['focused-workspace'],
     })
@@ -23,6 +26,9 @@ describe('WindowWorkspacePresenceRegistry', () => {
     expect(registry.isWorkspaceFocused('background-workspace')).toBe(false)
     expect(registry.isWorkspaceFocused('focused-workspace')).toBe(true)
     expect(registry.focusedWorkspaceIds()).toEqual(['focused-workspace'])
+    expect(registry.branchNameForWorkspace('focused-workspace')).toBe(
+      'feature/focus'
+    )
   })
 
   it('drops destroyed windows from every query', () => {
@@ -34,5 +40,22 @@ describe('WindowWorkspacePresenceRegistry', () => {
     destroyed = true
     expect(registry.hasFocusedWindow()).toBe(false)
     expect(registry.findWindowForWorkspace('workspace')).toBeNull()
+  })
+
+  it('routes an absent workspace to a fallback window that can open it', () => {
+    const registry = new WindowWorkspacePresenceRegistry()
+    const fallback = windowFact()
+    let routedWindow: typeof fallback | null = null
+
+    expect(
+      registry.routeToOrOpenWorkspace(
+        'not-visible',
+        () => fallback,
+        (window) => {
+          routedWindow = window
+        }
+      )
+    ).toBe(true)
+    expect(routedWindow).toBe(fallback)
   })
 })

@@ -4,6 +4,7 @@ interface PresenceWindow {
 }
 
 interface WindowPresence {
+  readonly branchNames: ReadonlyMap<string, string>
   readonly focused: boolean
   readonly workspaceIds: ReadonlySet<string>
 }
@@ -19,6 +20,10 @@ class WindowWorkspacePresenceRegistry<TWindow extends PresenceWindow> {
     window: TWindow,
     facts: {
       readonly focused: boolean
+      readonly contexts?: readonly {
+        readonly branchName: string
+        readonly workspaceId: string
+      }[]
       readonly workspaceIds: readonly string[]
     }
   ): void {
@@ -27,6 +32,12 @@ class WindowWorkspacePresenceRegistry<TWindow extends PresenceWindow> {
       return
     }
     this.#windows.set(window, {
+      branchNames: new Map(
+        facts.contexts?.map(({ branchName, workspaceId }) => [
+          workspaceId,
+          branchName,
+        ]) ?? []
+      ),
       focused: facts.focused,
       workspaceIds: new Set(facts.workspaceIds),
     })
@@ -45,8 +56,36 @@ class WindowWorkspacePresenceRegistry<TWindow extends PresenceWindow> {
     return null
   }
 
+  /**
+   * Route an intent to a visible owner, or to a fallback window that can open
+   * the absent workspace. Keeping selection here makes click routing use the
+   * same presence facts as focus suppression.
+   */
+  routeToOrOpenWorkspace(
+    workspaceId: string,
+    fallbackWindow: () => TWindow | null,
+    route: (window: TWindow) => void
+  ): boolean {
+    const window = this.findWindowForWorkspace(workspaceId) ?? fallbackWindow()
+    if (window === null || window.isDestroyed()) {
+      return false
+    }
+    route(window)
+    return true
+  }
+
   hasFocusedWindow(): boolean {
     return this.#liveEntries().some(([, presence]) => presence.focused)
+  }
+
+  branchNameForWorkspace(workspaceId: string): string | null {
+    for (const [, presence] of this.#liveEntries()) {
+      const branchName = presence.branchNames.get(workspaceId)
+      if (branchName !== undefined) {
+        return branchName
+      }
+    }
+    return null
   }
 
   isWorkspaceVisible(workspaceId: string): boolean {

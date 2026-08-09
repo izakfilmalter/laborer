@@ -1,5 +1,4 @@
 import type {
-  AgentNotificationPayload,
   BeforeQuitPayload,
   ContextMenuItem,
   DesktopUpdateActionResult,
@@ -10,7 +9,6 @@ import type {
 import {
   BrowserWindow,
   dialog,
-  Notification as ElectronNotification,
   type IpcMainEvent,
   ipcMain,
   Menu,
@@ -34,8 +32,6 @@ export const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 export const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
-export const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
-export const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
 export const REPORT_VISIBLE_WORKSPACES_CHANNEL =
   'desktop:report-visible-workspaces'
 export const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL =
@@ -606,6 +602,28 @@ export function registerIpcHandlers(
         typeof payload === 'object' && payload !== null && 'focused' in payload
           ? payload.focused === true
           : false
+      const contexts =
+        typeof payload === 'object' &&
+        payload !== null &&
+        'contexts' in payload &&
+        Array.isArray(payload.contexts)
+          ? payload.contexts
+              .filter(
+                (
+                  context
+                ): context is {
+                  branchName: string
+                  workspaceId: string
+                } =>
+                  typeof context === 'object' &&
+                  context !== null &&
+                  'branchName' in context &&
+                  typeof context.branchName === 'string' &&
+                  'workspaceId' in context &&
+                  typeof context.workspaceId === 'string'
+              )
+              .slice(0, 1000)
+          : []
       if (!Array.isArray(workspaceIds)) {
         return
       }
@@ -620,60 +638,13 @@ export function registerIpcHandlers(
       }
 
       workspaceRegistry.update(senderWindow, {
+        contexts,
         focused,
         workspaceIds: validIds.slice(0, 1000),
       })
       publishWorkspacePresence()
     }
   )
-
-  // -- Agent notification ---------------------------------------------------
-  ipcMain.removeHandler(SEND_NOTIFICATION_CHANNEL)
-  ipcMain.handle(SEND_NOTIFICATION_CHANNEL, (_event, payload: unknown) => {
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      !('title' in payload) ||
-      !('body' in payload) ||
-      !('workspaceId' in payload)
-    ) {
-      return
-    }
-
-    const { title, body, workspaceId } = payload as AgentNotificationPayload
-
-    if (
-      typeof title !== 'string' ||
-      typeof body !== 'string' ||
-      typeof workspaceId !== 'string'
-    ) {
-      return
-    }
-
-    if (!ElectronNotification.isSupported()) {
-      return
-    }
-
-    const notification = new ElectronNotification({ title, body })
-
-    notification.on('click', () => {
-      // Prefer the window that already has this workspace visible.
-      // Fall back to the general fallback window if no match is found.
-      const targetWindow =
-        workspaceRegistry.findWindowForWorkspace(workspaceId) ??
-        getFallbackWindow()
-      if (!targetWindow) {
-        return
-      }
-
-      // Focus the selected window and tell the renderer which workspace was clicked.
-      targetWindow.show()
-      targetWindow.focus()
-      targetWindow.webContents.send(NOTIFICATION_CLICKED_CHANNEL, workspaceId)
-    })
-
-    notification.show()
-  })
 
   // -- Focus window for workspace ------------------------------------------
   ipcMain.removeHandler(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)

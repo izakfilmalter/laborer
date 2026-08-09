@@ -87,58 +87,6 @@ describe('workspace-to-window targeting', () => {
     vi.restoreAllMocks()
   })
 
-  it('routes notification click to the window that reported the target workspace', async () => {
-    const {
-      getWorkspaceWindowRegistry,
-      registerIpcHandlers,
-      REPORT_VISIBLE_WORKSPACES_CHANNEL,
-      SEND_NOTIFICATION_CHANNEL,
-      NOTIFICATION_CLICKED_CHANNEL: _NOTIFICATION_CLICKED_CHANNEL,
-    } = await import('../src/ipc.js')
-
-    const windowA = createMockWindow(1)
-    const windowB = createMockWindow(2)
-    const fallbackWindow = createMockWindow(3)
-
-    registerIpcHandlers(
-      () =>
-        fallbackWindow as unknown as Parameters<
-          typeof registerIpcHandlers
-        >[0] extends () => infer R
-          ? R
-          : never
-    )
-
-    // Simulate window B reporting it has workspace-42 visible
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
-    expect(reportHandler).toBeDefined()
-
-    fromWebContentsMock.mockReturnValue(windowB)
-    reportHandler?.({ sender: windowB.webContents }, [
-      'workspace-42',
-      'workspace-99',
-    ])
-
-    // Now simulate sending a notification for workspace-42
-    const sendHandler = ipcHandlers.get(SEND_NOTIFICATION_CHANNEL)
-    expect(sendHandler).toBeDefined()
-
-    sendHandler?.(
-      { sender: windowA.webContents },
-      { title: 'Test', body: 'Agent done', workspaceId: 'workspace-42' }
-    )
-
-    // The actual notification was created inside sendHandler — we need to
-    // test through the registry directly instead
-    const registry = getWorkspaceWindowRegistry()
-    const found = registry.findWindowForWorkspace('workspace-42')
-    expect(found).toBe(windowB)
-
-    // Verify that an unregistered workspace falls back to null
-    const notFound = registry.findWindowForWorkspace('workspace-unknown')
-    expect(notFound).toBeNull()
-  })
-
   it('updates workspace list when the same window reports different workspaces', async () => {
     const {
       getWorkspaceWindowRegistry,

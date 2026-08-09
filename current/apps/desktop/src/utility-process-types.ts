@@ -38,6 +38,17 @@ export type UtilityProcessBootstrapMessage =
   | UtilityProcessReadyMessage
   | UtilityProcessErrorMessage
   | UtilityProcessHeartbeatMessage
+  | TerminalAgentStatusMessage
+
+/** Ephemeral per-terminal agent fact forwarded to the main coordinator. */
+export interface TerminalAgentStatusMessage {
+  readonly agentId: string
+  readonly agentName: string
+  readonly status: import('@laborer/shared/rpc').AgentStatus | null
+  readonly terminalId: string
+  readonly type: 'terminal-agent-status'
+  readonly workspaceId: string
+}
 
 // ---------------------------------------------------------------------------
 // Port transfer messages (parent -> utility process)

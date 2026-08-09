@@ -1,4 +1,5 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import { projects, workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
@@ -14,11 +15,9 @@ import { SidebarSearch } from '@/components/sidebar-search'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
-import { useAgentNotifications } from '@/hooks/use-agent-notifications'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
-import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -859,40 +858,40 @@ function HomeComponent() {
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
   useTrayWorkspaceCount()
 
-  // Desktop notifications for agent status transitions (no-op in browser)
-  const { terminals: notificationTerminals } = useTerminalList()
+  const [pendingActivation, setPendingActivation] =
+    useState<WorkspaceActivationIntent | null>(null)
 
-  const notificationWorkspaces = useMemo(
-    () => workspaceList.map((ws) => ({ id: ws.id, branchName: ws.branchName })),
-    [workspaceList]
-  )
-
-  const handleNotificationClicked = useCallback(
-    (workspaceId: string) => {
-      if (!windowLayout) {
-        return
-      }
-      // Find the first leaf pane belonging to this workspace and activate it
-      const leaf = getActiveTabLeafNodes(windowLayout).find(
-        (l) => l.workspaceId === workspaceId
-      )
-      if (leaf) {
-        panelActions.setActivePaneId(leaf.id)
-      }
+  const handleWorkspaceActivation = useCallback(
+    (intent: WorkspaceActivationIntent) => {
+      setPendingActivation(intent)
+      // This is also the open-if-absent path. The layout action moves an
+      // existing workspace into the active tab or adds it when absent.
+      panelActions.addWorkspaceToCurrentTab?.(intent.workspaceId)
     },
-    [windowLayout, panelActions]
+    [panelActions]
   )
 
-  useAgentNotifications(
-    notificationTerminals,
-    notificationWorkspaces,
-    handleNotificationClicked
-  )
+  useEffect(() => {
+    if (!(pendingActivation && windowLayout)) {
+      return
+    }
+    const workspaceLeaves = getActiveTabLeafNodes(windowLayout).filter(
+      (leaf) => leaf.workspaceId === pendingActivation.workspaceId
+    )
+    const target =
+      workspaceLeaves.find(
+        (leaf) => leaf.terminalId === pendingActivation.terminalId
+      ) ?? workspaceLeaves[0]
+    if (target) {
+      panelActions.setActivePaneId(target.id)
+      setPendingActivation(null)
+    }
+  }, [panelActions, pendingActivation, windowLayout])
 
   // Subscribe to workspace-activation events from other windows.
   // When another window calls focusWindowForWorkspace, the main process
   // focuses this window and sends an activate-workspace event.
-  useActivateWorkspace(handleNotificationClicked)
+  useActivateWorkspace(handleWorkspaceActivation)
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()

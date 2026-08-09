@@ -790,9 +790,18 @@ export function usePanelLayout() {
     const report = () => {
       const focused =
         document.visibilityState === 'visible' && document.hasFocus()
-      bridge.reportVisibleWorkspaces(workspaceIds, focused).catch(() => {
-        // Silently ignore — reporting is best-effort
-      })
+      bridge
+        .reportVisibleWorkspaces(
+          workspaceIds,
+          focused,
+          workspaceList.map((workspace) => ({
+            branchName: workspace.branchName,
+            workspaceId: workspace.id,
+          }))
+        )
+        .catch(() => {
+          // Silently ignore — reporting is best-effort
+        })
     }
 
     report()
@@ -804,7 +813,7 @@ export function usePanelLayout() {
       window.removeEventListener('blur', report)
       document.removeEventListener('visibilitychange', report)
     }
-  }, [persistedWindowLayout])
+  }, [persistedWindowLayout, workspaceList])
 
   /**
    * Ref to hold the latest `handleAssignTerminalToPane` callback.

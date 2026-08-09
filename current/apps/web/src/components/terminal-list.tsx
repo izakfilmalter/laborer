@@ -40,6 +40,7 @@ import {
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
+import { AgentStatusBadge } from '@/components/agent-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -56,6 +57,11 @@ import type {
 } from '@/hooks/use-terminal-list'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import {
+  describeAgentStatus,
+  getAgentStatusBadgeClassName,
+  getAgentStatusPresentation,
+} from '@/lib/agent-status-presentation'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
@@ -531,25 +537,7 @@ function getAgentStatusDisplay(
   const displayedAgentProcess =
     rootProcess ??
     (foregroundProcess?.category === 'agent' ? foregroundProcess : null)
-  const presentation = {
-    working: {
-      label: 'working',
-      className: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
-    },
-    needs_input: {
-      label: 'needs input',
-      className:
-        'animate-pulse border-amber-400/30 bg-amber-400/10 text-amber-400',
-    },
-    idle: {
-      label: 'idle',
-      className: 'border-teal-400/30 bg-teal-400/10 text-teal-400',
-    },
-    unknown: {
-      label: 'unknown',
-      className: 'border-muted-foreground/30 bg-muted text-muted-foreground',
-    },
-  }[agentStatus.status]
+  const presentation = getAgentStatusPresentation(agentStatus.status)
 
   return {
     icon: displayedAgentProcess
@@ -564,11 +552,9 @@ function getAgentStatusDisplay(
       ? displayedAgentProcess.label
       : (agentCommandInfo?.label ?? commandLabel),
     badgeLabel: presentation.label,
-    badgeClassName: cn(
-      presentation.className,
-      agentStatus.stale && 'opacity-50'
-    ),
-    badgeTitle: `${agentStatus.source} · ${new Date(agentStatus.changedAt).toLocaleString()}${agentStatus.stale ? ' · detection stale' : ''}`,
+    badgeClassName: getAgentStatusBadgeClassName(agentStatus),
+    badgeTitle: describeAgentStatus(agentStatus),
+    agentStatus,
   }
 }
 
@@ -590,6 +576,11 @@ function getTerminalDisplay(
   badgeLabel: string | null
   badgeClassName: string | null
   badgeTitle?: string
+  /**
+   * Present only for agent terminals, so the row can render the shared
+   * semantic status badge (dot, motion, provenance) instead of a plain one.
+   */
+  agentStatus?: AgentStatusSnapshot
 } {
   const rootProcess = processChain[0] ?? null
   const commandLabel = command || 'shell'
@@ -670,7 +661,7 @@ function TerminalItem({
   onRestart,
 }: TerminalItemProps) {
   const isRunning = terminal.status === 'running'
-  const { icon, label, badgeLabel, badgeClassName, badgeTitle } =
+  const { agentStatus, icon, label, badgeLabel, badgeClassName, badgeTitle } =
     getTerminalDisplay(
       terminal.command,
       terminal.foregroundProcess,
@@ -678,6 +669,7 @@ function TerminalItem({
       terminal.agentStatus,
       terminal.processChain
     )
+  const needsAttention = agentStatus?.status === 'needs_input'
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -697,8 +689,13 @@ function TerminalItem({
     <div
       className={cn(
         'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
-        'hover:bg-accent hover:text-accent-foreground'
+        'hover:bg-accent hover:text-accent-foreground',
+        // A row asking for input carries a steady amber edge; the motion
+        // lives in the badge dot so the label stays readable.
+        needsAttention && 'border-amber-400/40 bg-amber-400/5'
       )}
+      data-agent-status={agentStatus?.status}
+      data-testid={`terminal-row-${terminal.id}`}
     >
       <button
         className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left focus-visible:outline-none active:cursor-grabbing"
@@ -709,7 +706,10 @@ function TerminalItem({
       >
         {icon}
         <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
-        {badgeLabel !== null && badgeClassName !== null && (
+        {agentStatus ? (
+          <AgentStatusBadge className="shrink-0" snapshot={agentStatus} />
+        ) : null}
+        {!agentStatus && badgeLabel !== null && badgeClassName !== null && (
           <Badge
             className={cn(
               'shrink-0 border text-[10px] leading-none',

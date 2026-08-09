@@ -497,6 +497,7 @@ export type { TerminalInfo, TerminalServiceStatus }
 export type {
   AgentStatus,
   AgentStatusSnapshot,
+  AgentStatusSource,
   ForegroundProcess,
   ProcessCategory,
 } from '@laborer/shared/rpc'

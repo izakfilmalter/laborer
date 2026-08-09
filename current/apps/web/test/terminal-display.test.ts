@@ -27,7 +27,7 @@ describe('getTerminalDisplay', () => {
     const result = getTerminalDisplay('claude', null, true, status(agentState))
 
     expect(result.badgeLabel).toBe(label)
-    expect(result.badgeTitle).toContain('ps')
+    expect(result.badgeTitle).toContain('process inspection')
   })
 
   it('dims stale status and explains its provenance', () => {
@@ -39,7 +39,8 @@ describe('getTerminalDisplay', () => {
     )
 
     expect(result.badgeClassName).toContain('opacity-50')
-    expect(result.badgeTitle).toContain('detection stale')
+    expect(result.badgeClassName).toContain('border-dashed')
+    expect(result.badgeTitle).toContain('stale')
   })
 
   it('shows "stopped" badge for a stopped terminal', () => {
@@ -172,7 +173,9 @@ describe('getTerminalDisplay', () => {
     )
 
     expect(result.badgeLabel).toBe('needs input')
-    expect(result.badgeClassName).toContain('animate-pulse')
+    // Amber is reserved for the one state that asks the operator to act.
+    expect(result.badgeClassName).toContain('amber')
+    expect(result.agentStatus?.status).toBe('needs_input')
   })
 
   it('uses the agent display label when needs_input with no foreground process', () => {
@@ -200,7 +203,8 @@ describe('getTerminalDisplay', () => {
     )
 
     expect(result.badgeLabel).toBe('working')
-    expect(result.badgeClassName).not.toContain('animate-pulse')
+    // Working must not borrow the attention colour.
+    expect(result.badgeClassName).not.toContain('amber')
   })
 
   it('does not show needs-input for stopped terminals even with waiting status', () => {

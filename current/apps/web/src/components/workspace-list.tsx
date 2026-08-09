@@ -54,6 +54,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CopyButton } from '@/components/copy-button'
 import {
   CreateWorkspaceForm,
@@ -116,6 +117,7 @@ import {
   type CollapseState,
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
+import type { AgentStatus } from '@/hooks/use-terminal-list'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
@@ -976,9 +978,8 @@ function WorkspaceItem({
   showCreateSubWorkspaceAction = true,
 }: WorkspaceItemProps) {
   const [isStartingSandbox, setIsStartingSandbox] = useState(false)
-  const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
-    'working' | 'needs_input' | 'idle' | 'unknown' | null
-  >(null)
+  const [workspaceAgentStatus, setWorkspaceAgentStatus] =
+    useState<AgentStatus | null>(null)
   const startSandbox = useAtomSet(startSandboxMutation, {
     mode: 'promise',
   })
@@ -1045,6 +1046,10 @@ function WorkspaceItem({
   })()
 
   const needsAttention = workspaceAgentStatus === 'needs_input'
+  // Working and needs input are the only states worth surfacing at card
+  // level; idle and unknown stay in the terminal rows that own them.
+  const showsAgentStatus =
+    workspaceAgentStatus === 'needs_input' || workspaceAgentStatus === 'working'
 
   const handleSandboxLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>
@@ -1103,9 +1108,13 @@ function WorkspaceItem({
     <Card
       className={cn(
         isActiveWorkspace && 'border-primary',
+        // Steady amber edge and glow rather than a pulsing card: the whole
+        // card animating made its text hard to read, so the motion now lives
+        // only in the status badge's dot.
         needsAttention &&
-          'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
+          'border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
       )}
+      data-agent-status={workspaceAgentStatus ?? undefined}
       data-testid={`workspace-card-${workspace.branchName}`}
       size="sm"
     >
@@ -1128,6 +1137,9 @@ function WorkspaceItem({
             </CardTitle>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {showsAgentStatus && workspaceAgentStatus ? (
+              <AggregateAgentStatusBadge status={workspaceAgentStatus} />
+            ) : null}
             <GitHubPrStatusBadge
               prNumber={workspace.prNumber}
               prState={workspace.prState}

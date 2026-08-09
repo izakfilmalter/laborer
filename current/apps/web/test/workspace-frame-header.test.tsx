@@ -579,6 +579,33 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.queryByText('needs input')).toBeNull()
   })
 
+  it('shows a "working" badge when the workspace agent is working', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="working"
+      />
+    )
+
+    expect(screen.getByText('working')).toBeTruthy()
+  })
+
+  it('stays quiet for at-rest agent states', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="idle"
+      />
+    )
+
+    expect(screen.queryByText('idle')).toBeNull()
+    expect(screen.queryByText('needs input')).toBeNull()
+  })
+
   it('does not show "needs input" badge when agentStatus is active', () => {
     const actions = mockActions()
     render(

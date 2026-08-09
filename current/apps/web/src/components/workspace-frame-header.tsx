@@ -24,8 +24,8 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback } from 'react'
+import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
@@ -34,6 +34,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
+import type { AgentStatus } from '@/hooks/use-terminal-list'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -43,13 +44,7 @@ interface WorkspaceFrameHeaderProps {
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
   /** Aggregate semantic Agent status for the workspace. */
-  readonly agentStatus?:
-    | 'working'
-    | 'needs_input'
-    | 'idle'
-    | 'unknown'
-    | null
-    | undefined
+  readonly agentStatus?: AgentStatus | null | undefined
   /** Number of local commits ahead of upstream. */
   readonly aheadCount: number | null
   /** Number of upstream commits not yet pulled locally. */
@@ -184,6 +179,10 @@ function WorkspaceFrameHeader({
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
   const needsAttention = agentStatus === 'needs_input'
+  const isWorking = agentStatus === 'working'
+  // The header stays quiet for at-rest states: an idle or unknown agent has
+  // nothing to say at workspace level, while working and needs input do.
+  const showsAgentStatus = needsAttention || isWorking
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -205,7 +204,10 @@ function WorkspaceFrameHeader({
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
         isActiveFrame && !needsAttention && 'border-b-2 border-b-primary',
+        // Attention outranks the active-frame accent; a working tint is the
+        // quietest layer and never competes with either.
         needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
+        isWorking && !isActiveFrame && 'border-b-blue-400/40 bg-blue-400/5',
         isMinimized && 'cursor-pointer'
       )}
       data-testid="workspace-frame-header"
@@ -258,14 +260,12 @@ function WorkspaceFrameHeader({
             workspaceId={workspaceId}
           />
         ) : null}
-        {needsAttention && (
-          <Badge
-            className="shrink-0 animate-pulse border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-400 leading-none"
-            variant="outline"
-          >
-            needs input
-          </Badge>
-        )}
+        {showsAgentStatus && agentStatus ? (
+          <AggregateAgentStatusBadge
+            className="shrink-0"
+            status={agentStatus}
+          />
+        ) : null}
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (

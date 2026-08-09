@@ -129,7 +129,9 @@ function useAgentNotifications(
       bridge
         .sendNotification({
           title,
-          body: 'Agent is waiting for input',
+          // Same wording as the in-app badge, so a notification and the
+          // status it refers to describe the state identically.
+          body: 'Agent needs input',
           workspaceId,
         })
         .catch(() => {

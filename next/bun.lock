@@ -8,7 +8,6 @@
         "@agentclientprotocol/sdk": "1.3.0",
         "@base-ui/react": "1.6.0",
         "@chat-adapter/slack": "4.37.0",
-        "@chat-adapter/state-memory": "4.37.0",
         "@effect/platform-bun": "4.0.0-beta.99",
         "@effect/platform-node": "4.0.0-beta.99",
         "@effect/sql-sqlite-bun": "4.0.0-beta.99",
@@ -137,8 +136,6 @@
     "@chat-adapter/shared": ["@chat-adapter/shared@4.37.0", "", { "dependencies": { "chat": "4.37.0" } }, "sha512-q/uSBRfcHcHBdweDyx3tRy5teUYUTFR5jyaLzT5hVPwVJR59lTRv2AHxhpixBOL6UQloS3uGexWJUsBXxi/ifg=="],
 
     "@chat-adapter/slack": ["@chat-adapter/slack@4.37.0", "", { "dependencies": { "@chat-adapter/shared": "4.37.0", "@slack/socket-mode": "^2.0.5", "@slack/web-api": "^7.18.0", "chat": "4.37.0" } }, "sha512-4EWvfot/dl+LBEqGrNqcxpYsZ9y6UwE7l1t0kb0C3H59WnB5NXlsWyQeATM8UkjC2XmtzVWWQt/8Oc6DmKevqQ=="],
-
-    "@chat-adapter/state-memory": ["@chat-adapter/state-memory@4.37.0", "", { "dependencies": { "chat": "4.37.0" } }, "sha512-dI3dk+PUxkL1q5FZ7fn7T9nq9SIBnoovw3moTIl8xwuB4kWRNsvFa5CM7H0fGeaDPeyJPR+PQ+rUKPGKumMKTg=="],
 
     "@clack/core": ["@clack/core@1.4.3", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ=="],
 

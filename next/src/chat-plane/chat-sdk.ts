@@ -1,8 +1,8 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
-import { createMemoryState } from "@chat-adapter/state-memory";
 import { type Adapter, Chat } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
+import { createSQLiteState } from "./sqlite-state-adapter.ts";
 
 export interface ChatSdkMessageLike {
   readonly author: {
@@ -277,6 +277,7 @@ export const makeChatPlaneLayer = (
 
 interface BaseLiveChatPlaneConfig {
   readonly appToken: string;
+  readonly statePath: string;
   readonly userName: string;
 }
 
@@ -490,7 +491,7 @@ export const makeLiveChatPlaneLayer = (
         },
         concurrency: "queue",
         logger: "info",
-        state: createMemoryState(),
+        state: createSQLiteState({ path: config.statePath }),
         userName: config.userName,
       });
 

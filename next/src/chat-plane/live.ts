@@ -1,4 +1,7 @@
 /** Dedicated canary composition for the Chat SDK Slack plane. */
+
+import { homedir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
 import { Console, Effect, Redacted } from "effect";
 import { loadChatCanarySlackConfig } from "../slack/config.ts";
 import { ChatPlane, makeLiveChatPlaneLayer } from "./chat-sdk.ts";
@@ -16,11 +19,20 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 
 const program = Effect.gen(function* () {
   const config = yield* loadChatCanarySlackConfig();
+  const xdgStateHome = process.env.XDG_STATE_HOME?.trim();
+  const statePath = resolve(
+    xdgStateHome !== undefined && isAbsolute(xdgStateHome)
+      ? xdgStateHome
+      : resolve(homedir(), ".local", "state"),
+    "laborer",
+    "chat-plane.sqlite"
+  );
   const layer = makeLiveChatPlaneLayer(
     config.mode === "single-workspace"
       ? {
           appToken: Redacted.value(config.appToken),
           botToken: Redacted.value(config.botToken),
+          statePath,
           userName: "laborer",
         }
       : {
@@ -29,6 +41,7 @@ const program = Effect.gen(function* () {
             botToken: Redacted.value(installation.botToken),
             teamId: installation.teamId,
           })),
+          statePath,
           userName: "laborer",
         },
     placeholderMentionHandler

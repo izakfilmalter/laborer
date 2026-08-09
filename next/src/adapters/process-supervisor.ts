@@ -166,7 +166,10 @@ export const terminateSupervisedProcess = async (
         processGroupId,
         Math.max(1, deadline - Date.now())
       );
-      if (members.every((pid) => pid === processGroupId)) {
+      // An empty or incomplete inspection is not evidence that the sentinel is
+      // the group's only live member. Fail closed to the bounded group KILL so
+      // a successful but malformed `ps` response cannot strand descendants.
+      if (members.length === 1 && members[0] === processGroupId) {
         child.kill("SIGKILL");
         if (!(await waitForLeaderExit(child, graceMillis))) {
           throw new Error("process supervisor did not settle after SIGKILL");

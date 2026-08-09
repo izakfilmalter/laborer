@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -387,6 +388,44 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
         );
 
         assert.strictEqual(groupSignals, 0);
+        assert.strictEqual(directSignals, 0);
+      })
+  );
+
+  it.effect(
+    "fails closed when process-group inspection omits the owned leader",
+    () =>
+      Effect.gen(function* () {
+        let directSignals = 0;
+        const groupSignals: NodeJS.Signals[] = [];
+        const leader = Object.assign(new EventEmitter(), {
+          exitCode: null as number | null,
+          kill: () => {
+            directSignals += 1;
+            leader.exitCode = 0;
+            leader.emit("exit", 0, null);
+            return true;
+          },
+          pid: 424_245,
+          signalCode: null as NodeJS.Signals | null,
+        }) as unknown as ChildProcessWithoutNullStreams;
+
+        const outcome = yield* Effect.promise(() =>
+          terminateSupervisedProcess(leader, 1, true, {
+            processGroupMembers: async () => [],
+            signalProcessGroup: (_processGroupId, signal) => {
+              groupSignals.push(signal);
+              if (signal === "SIGKILL") {
+                leader.exitCode = 0;
+                leader.emit("exit", 0, signal);
+              }
+              return true;
+            },
+          })
+        );
+
+        assert.strictEqual(outcome, "kill");
+        assert.deepStrictEqual(groupSignals, ["SIGTERM", "SIGKILL"]);
         assert.strictEqual(directSignals, 0);
       })
   );

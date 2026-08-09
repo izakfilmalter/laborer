@@ -43,19 +43,10 @@ const ActivePaneType = Schema.Literal(
 )
 
 /** Decode removed review panes in saved layouts as diff panes. */
-export const PaneType: Schema.Schema<
-  'agent' | 'terminal' | 'diff' | 'devServerTerminal'
-> = Schema.transform(
-  Schema.Literal('agent', 'terminal', 'diff', 'devServerTerminal', 'review'),
+export const PaneType = Schema.Union(
   ActivePaneType,
-  {
-    strict: true,
-    decode: (paneType) => (paneType === 'review' ? 'diff' : paneType),
-    encode: (paneType) => paneType,
-  }
-) as unknown as Schema.Schema<
-  'agent' | 'terminal' | 'diff' | 'devServerTerminal'
->
+  Schema.transformLiteral('review', 'diff')
+)
 export type PaneType = typeof PaneType.Type
 
 export const SplitDirection = Schema.Literal('horizontal', 'vertical')
@@ -131,33 +122,39 @@ export interface SplitNode {
 
 export type PanelNode = LeafNode | SplitNode
 
-export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
-  'LeafNode',
-  {
+export interface EncodedLeafNode extends Omit<LeafNode, 'paneType'> {
+  readonly paneType: PaneType | 'review'
+}
+
+export interface EncodedSplitNode extends Omit<SplitNode, 'children'> {
+  readonly children: readonly EncodedPanelNode[]
+}
+
+export type EncodedPanelNode = EncodedLeafNode | EncodedSplitNode
+
+export const LeafNodeSchema: Schema.Schema<LeafNode, EncodedLeafNode> =
+  Schema.TaggedStruct('LeafNode', {
     command: Schema.optional(Schema.String),
     id: Schema.String,
     paneType: PaneType,
     terminalId: Schema.optional(Schema.String),
     workspaceId: Schema.optional(Schema.String),
-  }
-)
+  })
 
-export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
-  'SplitNode',
-  {
+export const SplitNodeSchema: Schema.Schema<SplitNode, EncodedSplitNode> =
+  Schema.TaggedStruct('SplitNode', {
     id: Schema.String,
     direction: SplitDirection,
     children: Schema.Array(
-      Schema.suspend((): Schema.Schema<PanelNode> => PanelNodeSchema)
+      Schema.suspend(
+        (): Schema.Schema<PanelNode, EncodedPanelNode> => PanelNodeSchema
+      )
     ),
     sizes: Schema.Array(Schema.Number),
-  }
-)
+  })
 
-export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
-  LeafNodeSchema,
-  SplitNodeSchema
-)
+export const PanelNodeSchema: Schema.Schema<PanelNode, EncodedPanelNode> =
+  Schema.Union(LeafNodeSchema, SplitNodeSchema)
 
 // ---------------------------------------------------------------------------
 // Hierarchical Layout Tree (Window Tabs > Workspace Tiles > Panel Tabs)
@@ -176,12 +173,17 @@ export interface PanelTab {
   readonly panelLayout: PanelNode
 }
 
-export const PanelTabSchema: Schema.Schema<PanelTab> = Schema.Struct({
-  id: Schema.String,
-  label: Schema.optional(Schema.String),
-  panelLayout: PanelNodeSchema,
-  focusedPaneId: Schema.optional(Schema.String),
-})
+export interface EncodedPanelTab extends Omit<PanelTab, 'panelLayout'> {
+  readonly panelLayout: EncodedPanelNode
+}
+
+export const PanelTabSchema: Schema.Schema<PanelTab, EncodedPanelTab> =
+  Schema.Struct({
+    id: Schema.String,
+    label: Schema.optional(Schema.String),
+    panelLayout: PanelNodeSchema,
+    focusedPaneId: Schema.optional(Schema.String),
+  })
 
 // -- Workspace Tile Tree ----------------------------------------------------
 
@@ -211,28 +213,49 @@ export interface WorkspaceTileSplit {
 
 export type WorkspaceTileNode = WorkspaceTileLeaf | WorkspaceTileSplit
 
-export const WorkspaceTileLeafSchema: Schema.Schema<WorkspaceTileLeaf> =
-  Schema.TaggedStruct('WorkspaceTileLeaf', {
-    id: Schema.String,
-    workspaceId: Schema.String,
-    panelTabs: Schema.Array(PanelTabSchema),
-    activePanelTabId: Schema.optional(Schema.String),
-  })
+export interface EncodedWorkspaceTileLeaf
+  extends Omit<WorkspaceTileLeaf, 'panelTabs'> {
+  readonly panelTabs: readonly EncodedPanelTab[]
+}
 
-export const WorkspaceTileSplitSchema: Schema.Schema<WorkspaceTileSplit> =
-  Schema.TaggedStruct('WorkspaceTileSplit', {
-    id: Schema.String,
-    direction: SplitDirection,
-    children: Schema.Array(
-      Schema.suspend(
-        (): Schema.Schema<WorkspaceTileNode> => WorkspaceTileNodeSchema
-      )
-    ),
-    sizes: Schema.Array(Schema.Number),
-  })
+export interface EncodedWorkspaceTileSplit
+  extends Omit<WorkspaceTileSplit, 'children'> {
+  readonly children: readonly EncodedWorkspaceTileNode[]
+}
 
-export const WorkspaceTileNodeSchema: Schema.Schema<WorkspaceTileNode> =
-  Schema.Union(WorkspaceTileLeafSchema, WorkspaceTileSplitSchema)
+export type EncodedWorkspaceTileNode =
+  | EncodedWorkspaceTileLeaf
+  | EncodedWorkspaceTileSplit
+
+export const WorkspaceTileLeafSchema: Schema.Schema<
+  WorkspaceTileLeaf,
+  EncodedWorkspaceTileLeaf
+> = Schema.TaggedStruct('WorkspaceTileLeaf', {
+  id: Schema.String,
+  workspaceId: Schema.String,
+  panelTabs: Schema.Array(PanelTabSchema),
+  activePanelTabId: Schema.optional(Schema.String),
+})
+
+export const WorkspaceTileSplitSchema: Schema.Schema<
+  WorkspaceTileSplit,
+  EncodedWorkspaceTileSplit
+> = Schema.TaggedStruct('WorkspaceTileSplit', {
+  id: Schema.String,
+  direction: SplitDirection,
+  children: Schema.Array(
+    Schema.suspend(
+      (): Schema.Schema<WorkspaceTileNode, EncodedWorkspaceTileNode> =>
+        WorkspaceTileNodeSchema
+    )
+  ),
+  sizes: Schema.Array(Schema.Number),
+})
+
+export const WorkspaceTileNodeSchema: Schema.Schema<
+  WorkspaceTileNode,
+  EncodedWorkspaceTileNode
+> = Schema.Union(WorkspaceTileLeafSchema, WorkspaceTileSplitSchema)
 
 // -- Window Tab -------------------------------------------------------------
 
@@ -247,12 +270,17 @@ export interface WindowTab {
   readonly workspaceLayout?: WorkspaceTileNode | undefined
 }
 
-export const WindowTabSchema: Schema.Schema<WindowTab> = Schema.Struct({
-  focusedWorkspaceTileId: Schema.optional(Schema.String),
-  id: Schema.String,
-  label: Schema.optional(Schema.String),
-  workspaceLayout: Schema.optional(WorkspaceTileNodeSchema),
-})
+export interface EncodedWindowTab extends Omit<WindowTab, 'workspaceLayout'> {
+  readonly workspaceLayout?: EncodedWorkspaceTileNode | undefined
+}
+
+export const WindowTabSchema: Schema.Schema<WindowTab, EncodedWindowTab> =
+  Schema.Struct({
+    focusedWorkspaceTileId: Schema.optional(Schema.String),
+    id: Schema.String,
+    label: Schema.optional(Schema.String),
+    workspaceLayout: Schema.optional(WorkspaceTileNodeSchema),
+  })
 
 // -- Window Layout (top-level) ----------------------------------------------
 
@@ -265,7 +293,14 @@ export interface WindowLayout {
   readonly tabs: readonly WindowTab[]
 }
 
-export const WindowLayoutSchema: Schema.Schema<WindowLayout> = Schema.Struct({
+export interface EncodedWindowLayout extends Omit<WindowLayout, 'tabs'> {
+  readonly tabs: readonly EncodedWindowTab[]
+}
+
+export const WindowLayoutSchema: Schema.Schema<
+  WindowLayout,
+  EncodedWindowLayout
+> = Schema.Struct({
   tabs: Schema.Array(WindowTabSchema),
   activeTabId: Schema.optional(Schema.String),
 })

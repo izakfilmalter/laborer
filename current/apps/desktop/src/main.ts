@@ -403,9 +403,8 @@ async function startServerBackend(): Promise<void> {
  * either service, since old ports die with old processes.
  */
 function brokerInterProcessPorts(): void {
-  // Server no longer runs as a utility process. The backend child reaches
-  // terminal and file-watcher over loopback WebSocket RPC
-  // clients reach the backend child's `/rpc` endpoint directly.
+  // No utility processes require brokered MessagePorts. The backend child
+  // reaches terminal and file-watcher over loopback WebSocket RPC.
 }
 
 app

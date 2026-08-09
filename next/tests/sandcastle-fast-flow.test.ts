@@ -182,6 +182,7 @@ describe("Sandcastle fast flow", () => {
       "test -d current/node_modules && test -d next/node_modules"
     );
     assert.include(main, "supervisedNoSandbox({");
+    assert.include(main, 'OPENCODE_DISABLE_AUTOUPDATE: "1"');
     assert.notInclude(main, "prepareOpenCodeCredentialSeed");
     assert.notInclude(main, "BUN_CACHE_DIR");
     assert.notInclude(main, "/home/agent");

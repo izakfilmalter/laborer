@@ -23,7 +23,11 @@ import {
   type ProcessTimeTimeout,
   scheduleProcessTimeTimeout,
 } from '@laborer/shared/process-time-scheduler'
-import { TerminalRpcError } from '@laborer/shared/rpc'
+import {
+  type AgentStatusReport,
+  type AgentStatusSnapshot,
+  TerminalRpcError,
+} from '@laborer/shared/rpc'
 import {
   Cause,
   Context,
@@ -40,6 +44,7 @@ import type {
   SerializedCommandDetectionCapability,
   SerializedReplayEvent,
 } from './terminal-session-persistence.js'
+import { TerminalStatusEngine } from './terminal-status-engine.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalManager'
@@ -132,20 +137,11 @@ interface TerminalSubscriberState {
 }
 
 /**
- * Agent status for a terminal, derived from foreground process transitions.
- *
- * - `active` — an AI agent is currently the foreground process
- * - `waiting_for_input` — an agent was running but is now idle (needs user input or completed)
- * - `null` — no agent has been detected in this terminal
- */
-type AgentStatus = 'active' | 'waiting_for_input'
-
-/**
  * Shape of a terminal record returned by the manager.
  * Matches the TerminalInfo RPC schema fields.
  */
 interface TerminalRecord {
-  readonly agentStatus: AgentStatus | null
+  readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
@@ -376,6 +372,8 @@ const execAsync = (command: string): Promise<string | null> =>
  * Computed asynchronously and cached on the TerminalRecord.
  */
 interface ProcessDetectionResult {
+  /** PIDs of every recognized agent found in the bounded process-tree walk. */
+  readonly agentProcessIds: readonly number[]
   readonly foregroundProcess: ForegroundProcess | null
   readonly hasChildProcess: boolean
   /**
@@ -389,6 +387,7 @@ interface ProcessDetectionResult {
 
 /** Default detection result when process info is unavailable. */
 const EMPTY_DETECTION: ProcessDetectionResult = {
+  agentProcessIds: [],
   foregroundProcess: null,
   hasChildProcess: false,
   processChain: [],
@@ -451,35 +450,56 @@ const classifyAndCollect = (
   pid: number,
   commByPid: ReadonlyMap<number, string>,
   chain: ForegroundProcess[]
-): void => {
+): ForegroundProcess | null => {
   const comm = commByPid.get(pid) ?? ''
   const classified = classifyProcess(comm)
   if (classified !== null && classified.category !== 'shell') {
     chain.push(classified)
   }
+  return classified
 }
 
 /**
- * Walk the process tree from a shell PID down to the deepest first-child,
- * collecting all non-shell classified processes along the way into a chain
- * for display (e.g., "OpenCode › biome"). Returns the deepest child PID.
+ * Walk every branch of a process tree with hard depth and width bounds.
+ * The breadth-first order is stable because `ps` order is stable, and is
+ * flattened for the existing process-chain presentation.
  */
 const walkProcessTree = (
   startPid: number,
   childrenByPid: ReadonlyMap<number, number[]>,
   commByPid: ReadonlyMap<number, string>,
-  chain: ForegroundProcess[]
+  chain: ForegroundProcess[],
+  agentProcessIds: number[],
+  visitedPids: Set<number>
 ): void => {
-  let targetPid = startPid
-  classifyAndCollect(targetPid, commByPid, chain)
+  const MAX_DEPTH = 10
+  const MAX_PROCESSES = 256
+  const queue: Array<{ readonly depth: number; readonly pid: number }> = [
+    { pid: startPid, depth: 0 },
+  ]
 
-  for (let depth = 0; depth < 10; depth++) {
-    const grandchildren = childrenByPid.get(targetPid)
-    if (grandchildren === undefined || grandchildren.length === 0) {
+  while (queue.length > 0 && visitedPids.size < MAX_PROCESSES) {
+    const next = queue.shift()
+    if (next === undefined) {
       break
     }
-    targetPid = grandchildren[0] ?? targetPid
-    classifyAndCollect(targetPid, commByPid, chain)
+    if (visitedPids.has(next.pid)) {
+      continue
+    }
+    visitedPids.add(next.pid)
+    const classified = classifyAndCollect(next.pid, commByPid, chain)
+    if (classified?.category === 'agent') {
+      agentProcessIds.push(next.pid)
+    }
+    if (next.depth >= MAX_DEPTH) {
+      continue
+    }
+    for (const childPid of childrenByPid.get(next.pid) ?? []) {
+      if (queue.length + visitedPids.size >= MAX_PROCESSES) {
+        break
+      }
+      queue.push({ pid: childPid, depth: next.depth + 1 })
+    }
   }
 }
 
@@ -509,17 +529,31 @@ const detectForShellPid = (
 
   if (hasChildren) {
     const chain: ForegroundProcess[] = []
+    const agentProcessIds: number[] = []
+    const visitedPids = new Set<number>()
 
     // If the shell was exec-replaced (e.g., zsh → opencode), include the
     // exec'd process as the root of the chain before walking children.
     if (isExecReplaced) {
       chain.push(shellClassified)
+      if (shellClassified.category === 'agent') {
+        agentProcessIds.push(shellPid)
+      }
     }
 
-    const firstChildPid = children[0] ?? shellPid
-    walkProcessTree(firstChildPid, childrenByPid, commByPid, chain)
+    for (const childPid of children) {
+      walkProcessTree(
+        childPid,
+        childrenByPid,
+        commByPid,
+        chain,
+        agentProcessIds,
+        visitedPids
+      )
+    }
 
     return {
+      agentProcessIds,
       foregroundProcess: chain.at(-1) ?? null,
       hasChildProcess: true,
       processChain: chain,
@@ -534,6 +568,7 @@ const detectForShellPid = (
   // child process beneath the original shell PID, but the terminal still has
   // an active foreground process and should require close confirmation.
   return {
+    agentProcessIds: shellClassified.category === 'agent' ? [shellPid] : [],
     foregroundProcess: shellClassified,
     hasChildProcess: true,
     processChain: [shellClassified],
@@ -554,13 +589,18 @@ const detectForShellPid = (
  * This turns O(N×12) synchronous shell spawns into O(1) async shell spawn,
  * keeping the Node.js event loop free for terminal data throughput.
  */
+interface ProcessDetectionBatch {
+  readonly available: boolean
+  readonly results: ReadonlyMap<string, ProcessDetectionResult>
+}
+
 const detectProcessesForPids = async (
   shellPids: ReadonlyMap<string, number>
-): Promise<ReadonlyMap<string, ProcessDetectionResult>> => {
+): Promise<ProcessDetectionBatch> => {
   const results = new Map<string, ProcessDetectionResult>()
 
   if (shellPids.size === 0) {
-    return results
+    return { available: true, results }
   }
 
   // Single async ps call to get the full process table.
@@ -569,10 +609,7 @@ const detectProcessesForPids = async (
   const psOutput = await execAsync('ps -eo pid=,ppid=,comm=')
 
   if (psOutput === null) {
-    for (const terminalId of shellPids.keys()) {
-      results.set(terminalId, EMPTY_DETECTION)
-    }
-    return results
+    return { available: false, results }
   }
 
   const { childrenByPid, commByPid } = parsePsOutput(psOutput)
@@ -584,7 +621,7 @@ const detectProcessesForPids = async (
     )
   }
 
-  return results
+  return { available: true, results }
 }
 
 /**
@@ -655,6 +692,7 @@ const buildDetectionFromTitle = (
     }
     // Preserve ps-based hasChildProcess — never downgrade to false.
     return {
+      agentProcessIds: previousSnapshot.agentProcessIds,
       foregroundProcess: null,
       hasChildProcess: previousSnapshot.hasChildProcess,
       processChain: previousSnapshot.processChain,
@@ -665,6 +703,10 @@ const buildDetectionFromTitle = (
   const classified = classifyProcess(title)
   if (classified !== null && classified.category !== 'shell') {
     return {
+      agentProcessIds:
+        classified.category === 'agent'
+          ? (previousSnapshot?.agentProcessIds ?? [])
+          : [],
       foregroundProcess: classified,
       hasChildProcess: true,
       processChain: [classified],
@@ -675,6 +717,7 @@ const buildDetectionFromTitle = (
   const hasChild =
     classified !== null || (previousSnapshot?.hasChildProcess ?? false)
   return {
+    agentProcessIds: previousSnapshot?.agentProcessIds ?? [],
     foregroundProcess: classified,
     hasChildProcess: hasChild,
     processChain:
@@ -858,14 +901,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
      * transitions. Hook-reported status takes priority over the
      * ps-based detection in `listTerminals`.
      *
-     * Valid events:
-     * - `'active'` — agent is actively working (session started, prompt submitted)
-     * - `'waiting_for_input'` — agent is idle / needs user input (notification, stop)
-     * - `'clear'` — clear hook override, revert to ps-based detection
+     * Reports carry a semantic status and a monotonically increasing
+     * sequence. Their authority remains scoped to the detected agent process.
      */
     readonly setAgentStatusFromHook: (
       terminalId: string,
-      event: 'active' | 'waiting_for_input' | 'clear'
+      report: AgentStatusReport
     ) => Effect.Effect<void, TerminalRpcError>
 
     /**
@@ -904,16 +945,15 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // Both running AND stopped terminals are stored here.
       const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>())
 
-      // Per-terminal agent status tracking. Tracks whether an agent was
-      // previously the foreground process so we can detect the transition
-      // from "agent active" → "shell idle" (waiting for input / completed).
-      const agentStatusMap = new Map<string, AgentStatus | null>()
-
-      // Hook-reported agent status overrides. When an agent CLI reports
-      // its lifecycle state via the hook endpoint, that status takes
-      // priority over the ps-based detection. Set to `undefined` (or
-      // deleted) to revert to ps-based detection.
-      const hookAgentStatusMap = new Map<string, AgentStatus>()
+      const statusEngines = new Map<string, TerminalStatusEngine>()
+      const getStatusEngine = (terminalId: string): TerminalStatusEngine => {
+        let engine = statusEngines.get(terminalId)
+        if (engine === undefined) {
+          engine = new TerminalStatusEngine()
+          statusEngines.set(terminalId, engine)
+        }
+        return engine
+      }
 
       // Per-terminal subscriber state (WebSocket connections).
       const subscriberStates = new Map<string, TerminalSubscriberState>()
@@ -1061,65 +1101,21 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         runFork(lifecyclePubSub.publish(event))
       }
 
-      /**
-       * Compute the agent status for a terminal based on the current
-       * process chain and the previous tracked status.
-       *
-       * An agent is considered "active" if it appears anywhere in the
-       * process chain (typically as the root). This handles the common
-       * case where `zsh -c opencode` exec-replaces into opencode, which
-       * then spawns tool subprocesses like biome via node. The agent is
-       * still running — it just has child processes doing work.
-       *
-       * State transitions:
-       * - Agent in chain → `active`
-       * - Was `active`, now idle (no foreground or shell) → `waiting_for_input`
-       * - Was `waiting_for_input`, agent comes back → `active`
-       * - No agent in chain, non-shell foreground → clear to `null`
-       * - No agent ever seen → `null`
-       */
-      const computeAgentStatus = (
-        terminalId: string,
-        foregroundProcess: ForegroundProcess | null,
-        processChain: readonly ForegroundProcess[]
-      ): AgentStatus | null => {
-        const previous = agentStatusMap.get(terminalId) ?? null
-
-        // Check if any process in the chain is an agent (typically the root).
-        // This correctly detects agents that exec-replace the shell and then
-        // spawn child tool processes (e.g., opencode → node → biome).
-        const hasAgentInChain = processChain.some((p) => p.category === 'agent')
-
-        if (hasAgentInChain) {
-          agentStatusMap.set(terminalId, 'active')
-          return 'active'
+      /** Emit semantic completion before the terminal stop clears status. */
+      const emitAgentCompletionBeforeStop = (terminalId: string): void => {
+        const engine = statusEngines.get(terminalId)
+        if (engine === undefined || engine.processExited(Date.now()) === null) {
+          return
         }
-
-        // Agent was active, now idle (shell at prompt or no foreground process)
-        if (
-          previous === 'active' &&
-          (foregroundProcess === null || foregroundProcess.category === 'shell')
-        ) {
-          agentStatusMap.set(terminalId, 'waiting_for_input')
-          return 'waiting_for_input'
+        const terminal = runSync(Ref.get(terminalsRef)).get(terminalId)
+        if (terminal === undefined) {
+          return
         }
-
-        // Stay in waiting_for_input until a non-agent process takes over
-        // or the user dismisses it (by running another command)
-        if (
-          previous === 'waiting_for_input' &&
-          (foregroundProcess === null || foregroundProcess.category === 'shell')
-        ) {
-          return 'waiting_for_input'
-        }
-
-        // A non-agent, non-shell process is now foreground — clear agent status
-        if (previous !== null && foregroundProcess !== null) {
-          agentStatusMap.set(terminalId, null)
-          return null
-        }
-
-        return previous
+        lastProcessSnapshot.set(terminalId, EMPTY_DETECTION)
+        emitEvent({
+          _tag: 'ProcessChanged',
+          terminal: toTerminalRecord(terminal, EMPTY_DETECTION),
+        })
       }
 
       const getOrCreateSubscriberState = (
@@ -1358,6 +1354,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
+            emitAgentCompletionBeforeStop(id)
 
             runSync(
               Ref.update(terminalsRef, (map) => {
@@ -1600,8 +1597,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         subscriberStates.delete(terminalId)
         revivedReplayEvents.delete(terminalId)
         headlessManager.dispose(terminalId)
-        agentStatusMap.delete(terminalId)
-        hookAgentStatusMap.delete(terminalId)
+        statusEngines.delete(terminalId)
 
         // Clean up OSC activity tracking state
         sessionsWithOscActivity.delete(terminalId)
@@ -1632,14 +1628,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const foregroundProcess = detected?.foregroundProcess ?? null
         const processChain = detected?.processChain ?? []
 
-        // Hook-reported status takes priority over ps-based detection.
-        // If an agent CLI has reported its state via the hook endpoint,
-        // use that. Otherwise fall back to the ps-based state machine.
-        const hookStatus = hookAgentStatusMap.get(terminal.id)
         const agentStatus =
           terminal.status === 'running'
-            ? (hookStatus ??
-              computeAgentStatus(terminal.id, foregroundProcess, processChain))
+            ? (statusEngines.get(terminal.id)?.current ?? null)
             : null
 
         return {
@@ -1654,6 +1645,34 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           processChain,
           status: terminal.status,
         }
+      }
+
+      /** Feed one batch observation through status arbitration and caching. */
+      const observeProcessDetection = (
+        terminal: ManagedTerminal,
+        detectionBatch: ProcessDetectionBatch,
+        sampledAt: number
+      ): ProcessDetectionResult | undefined => {
+        const freshDetection = detectionBatch.results.get(terminal.id)
+        if (terminal.status === 'running' && terminal.shellPid !== undefined) {
+          const engine = getStatusEngine(terminal.id)
+          if (detectionBatch.available && freshDetection !== undefined) {
+            engine.sample({
+              agentProcesses: freshDetection.agentProcessIds.map((pid) => ({
+                pid,
+              })),
+              hasNonAgentProcess: freshDetection.processChain.length > 0,
+              sampledAt,
+            })
+          } else if (!detectionBatch.available) {
+            engine.unavailable(sampledAt)
+          }
+        }
+
+        if (freshDetection !== undefined) {
+          lastProcessSnapshot.set(terminal.id, freshDetection)
+        }
+        return freshDetection ?? lastProcessSnapshot.get(terminal.id)
       }
 
       /**
@@ -1689,12 +1708,21 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           }
 
           // Single async ps call for all terminals at once
-          const detectionResults = yield* Effect.promise(() =>
+          const detectionBatch = yield* Effect.promise(() =>
             detectProcessesForPids(shellPids)
           )
 
+          const now = Date.now()
+          const observed = new Map<string, ProcessDetectionResult | undefined>()
+          for (const terminal of terminalsInScope) {
+            observed.set(
+              terminal.id,
+              observeProcessDetection(terminal, detectionBatch, now)
+            )
+          }
+
           return terminalsInScope.map((terminal) =>
-            toTerminalRecord(terminal, detectionResults.get(terminal.id))
+            toTerminalRecord(terminal, observed.get(terminal.id))
           )
         }
       )
@@ -1805,6 +1833,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           },
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
+            emitAgentCompletionBeforeStop(terminalId)
 
             runSync(
               Ref.update(terminalsRef, (m) => {
@@ -1842,9 +1871,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           }
         )
 
-        // Reset agent status tracking on restart
-        agentStatusMap.delete(terminalId)
-        hookAgentStatusMap.delete(terminalId)
+        // Restart creates a new process generation.
+        statusEngines.delete(terminalId)
 
         const record: TerminalRecord = {
           id: terminalId,
@@ -2144,10 +2172,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
       const setAgentStatusFromHook = Effect.fn(
         'TerminalManager.setAgentStatusFromHook'
-      )(function* (
-        terminalId: string,
-        event: 'active' | 'waiting_for_input' | 'clear'
-      ) {
+      )(function* (terminalId: string, report: AgentStatusReport) {
         const map = yield* Ref.get(terminalsRef)
         const terminal = map.get(terminalId)
 
@@ -2158,20 +2183,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           })
         }
 
-        if (event === 'clear') {
-          hookAgentStatusMap.delete(terminalId)
-          yield* Effect.log(
-            `Hook: cleared agent status override for terminal ${terminalId}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        } else {
-          hookAgentStatusMap.set(terminalId, event)
-          // Also sync the ps-based map so transitions are consistent
-          // when the hook override is later cleared
-          agentStatusMap.set(terminalId, event)
-          yield* Effect.log(
-            `Hook: set agent status to '${event}' for terminal ${terminalId}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        }
+        getStatusEngine(terminalId).report(report, Date.now())
+        yield* Effect.log(
+          `Hook: reported agent status '${report.status}' (sequence ${report.sequence}) for terminal ${terminalId}`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
 
         // Push the updated state to stream subscribers immediately so
         // the UI reflects hook-reported agent status without waiting
@@ -2239,16 +2254,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
        */
       const diffAndEmitChanges = (
         allTerminals: readonly ManagedTerminal[],
-        detectionResults: ReadonlyMap<string, ProcessDetectionResult>,
+        detectionBatch: ProcessDetectionBatch,
         terminalIds: ReadonlySet<string>
       ): void => {
+        const sampledAt = Date.now()
         for (const terminal of allTerminals) {
-          const detected = detectionResults.get(terminal.id)
-
-          if (detected !== undefined) {
-            lastProcessSnapshot.set(terminal.id, detected)
-          }
-
+          const detected = observeProcessDetection(
+            terminal,
+            detectionBatch,
+            sampledAt
+          )
           const record = toTerminalRecord(terminal, detected)
           const json = JSON.stringify(record)
           const previous = lastRecordJson.get(terminal.id)
@@ -2277,11 +2292,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         const { shellPids, allTerminals } = collectShellPids(map)
 
-        const detectionResults = yield* Effect.promise(() =>
+        const detectionBatch = yield* Effect.promise(() =>
           detectProcessesForPids(shellPids)
         )
 
-        diffAndEmitChanges(allTerminals, detectionResults, new Set(map.keys()))
+        diffAndEmitChanges(allTerminals, detectionBatch, new Set(map.keys()))
       }).pipe(
         Effect.tapDefect((cause) =>
           Effect.logWarning(
@@ -2341,7 +2356,6 @@ export {
   TerminalManager,
 }
 export type {
-  AgentStatus,
   ForegroundProcess,
   ManagedTerminal,
   OutputSubscriber,

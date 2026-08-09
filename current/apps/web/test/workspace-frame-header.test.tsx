@@ -552,13 +552,13 @@ describe('WorkspaceFrameHeader', () => {
   // Agent status: needs input indicator
   // ---------------------------------------------------------------------------
 
-  it('shows "needs input" badge when agentStatus is waiting_for_input', () => {
+  it('shows "needs input" badge when agentStatus is needs_input', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="waiting_for_input"
+        agentStatus="needs_input"
       />
     )
 
@@ -585,7 +585,7 @@ describe('WorkspaceFrameHeader', () => {
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="active"
+        agentStatus="working"
       />
     )
 
@@ -637,7 +637,7 @@ describe('WorkspaceFrameHeader', () => {
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="waiting_for_input"
+        agentStatus="needs_input"
         isActiveFrame
       />
     )

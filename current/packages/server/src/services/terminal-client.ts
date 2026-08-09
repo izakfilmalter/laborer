@@ -140,6 +140,7 @@ const startAgentHookServer = (
   scope: Scope.Scope
 ): Effect.Effect<number> =>
   Effect.async<number>((resume) => {
+    const reportSequences = new Map<string, number>()
     const server: Server = createServer((req, res) => {
       if (req.method !== 'POST' || req.url !== '/hook/agent-status') {
         res.writeHead(404)
@@ -151,23 +152,34 @@ const startAgentHookServer = (
         .then((body) => {
           const parsed = JSON.parse(body) as {
             terminalId?: string
-            event?: string
+            status?: string
           }
-          const { terminalId, event } = parsed
+          const { terminalId, status } = parsed
 
           if (
             typeof terminalId !== 'string' ||
-            (event !== 'active' &&
-              event !== 'waiting_for_input' &&
-              event !== 'clear')
+            (status !== 'working' &&
+              status !== 'needs_input' &&
+              status !== 'idle' &&
+              status !== 'unknown')
           ) {
             res.writeHead(400)
             res.end()
             return
           }
 
+          // Epoch-based sequences stay newer when this proxy restarts while
+          // the terminal service and agent process remain alive.
+          const sequence = Math.max(
+            Date.now(),
+            (reportSequences.get(terminalId) ?? -1) + 1
+          )
+          reportSequences.set(terminalId, sequence)
           Effect.runPromise(
-            rpcClient.terminal.setAgentStatus({ id: terminalId, event })
+            rpcClient.terminal.setAgentStatus({
+              id: terminalId,
+              report: { status, sequence },
+            })
           )
             .then(() => {
               res.writeHead(200)
@@ -457,7 +469,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
                 {
                   type: 'command',
                   command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"active\\"}" > /dev/null 2>&1',
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"working\\"}" > /dev/null 2>&1',
                   timeout: 10,
                 },
               ],
@@ -470,7 +482,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
                 {
                   type: 'command',
                   command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"idle\\"}" > /dev/null 2>&1',
                   timeout: 10,
                 },
               ],
@@ -483,7 +495,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
                 {
                   type: 'command',
                   command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"needs_input\\"}" > /dev/null 2>&1',
                   timeout: 10,
                 },
               ],

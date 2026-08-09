@@ -9,34 +9,44 @@
  * @see apps/web/src/components/workspace-frame-header.tsx — panel header
  */
 
-import type { AgentStatus } from '@/hooks/use-terminal-list'
+import type {
+  AgentStatus,
+  AgentStatusSnapshot,
+} from '@/hooks/use-terminal-list'
 
 /**
  * Derive the aggregate agent status for a workspace from its terminals.
  *
- * Priority: `waiting_for_input` > `active` > `null`
+ * Priority: `needs_input` > `working` > `idle` > `unknown` > `null`
  *
- * - Returns `'waiting_for_input'` if any terminal's agent needs input
- * - Returns `'active'` if any terminal has an active agent but none waiting
+ * - Returns `'needs_input'` if any terminal's agent needs input
+ * - Returns `'working'` if any terminal has a working agent but none need input
  * - Returns `null` if no agents are detected
  */
 function deriveWorkspaceAgentStatus(
   terminals: ReadonlyArray<{
-    readonly agentStatus: AgentStatus | null
+    readonly agentStatus: AgentStatusSnapshot | null
   }>
 ): AgentStatus | null {
-  let hasActive = false
+  let best: AgentStatus | null = null
+  const priority: Record<AgentStatus, number> = {
+    needs_input: 4,
+    working: 3,
+    idle: 2,
+    unknown: 1,
+  }
 
   for (const terminal of terminals) {
-    if (terminal.agentStatus === 'waiting_for_input') {
-      return 'waiting_for_input'
-    }
-    if (terminal.agentStatus === 'active') {
-      hasActive = true
+    const status = terminal.agentStatus?.status
+    if (
+      status !== undefined &&
+      (best === null || priority[status] > priority[best])
+    ) {
+      best = status
     }
   }
 
-  return hasActive ? 'active' : null
+  return best
 }
 
 export { deriveWorkspaceAgentStatus }

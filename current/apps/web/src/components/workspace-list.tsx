@@ -977,7 +977,7 @@ function WorkspaceItem({
 }: WorkspaceItemProps) {
   const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
-    'active' | 'waiting_for_input' | null
+    'working' | 'needs_input' | 'idle' | 'unknown' | null
   >(null)
   const startSandbox = useAtomSet(startSandboxMutation, {
     mode: 'promise',
@@ -1044,7 +1044,7 @@ function WorkspaceItem({
     return workspace.status
   })()
 
-  const needsAttention = workspaceAgentStatus === 'waiting_for_input'
+  const needsAttention = workspaceAgentStatus === 'needs_input'
 
   const handleSandboxLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>

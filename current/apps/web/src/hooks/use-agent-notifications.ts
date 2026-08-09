@@ -2,7 +2,7 @@
  * Desktop notification hook for agent status transitions.
  *
  * Watches terminal list polling for workspace-level agent status changes.
- * When a workspace transitions from 'active' → 'waiting_for_input',
+ * When a workspace transitions from 'working' → 'needs_input',
  * fires an Electron desktop notification (via DesktopBridge). Clicking
  * the notification focuses the app window and invokes the provided
  * `onWorkspaceClicked` callback so the caller can activate that workspace's pane.

@@ -42,8 +42,14 @@ interface WorkspaceFrameHeaderProps {
   readonly actions: PanelActions | null
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
-  /** Aggregate agent status for the workspace (null, active, or waiting_for_input). */
-  readonly agentStatus?: 'active' | 'waiting_for_input' | null | undefined
+  /** Aggregate semantic Agent status for the workspace. */
+  readonly agentStatus?:
+    | 'working'
+    | 'needs_input'
+    | 'idle'
+    | 'unknown'
+    | null
+    | undefined
   /** Number of local commits ahead of upstream. */
   readonly aheadCount: number | null
   /** Number of upstream commits not yet pulled locally. */
@@ -177,7 +183,7 @@ function WorkspaceFrameHeader({
   workspacePath,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
-  const needsAttention = agentStatus === 'waiting_for_input'
+  const needsAttention = agentStatus === 'needs_input'
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(

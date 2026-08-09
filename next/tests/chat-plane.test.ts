@@ -328,6 +328,7 @@ describe("Chat plane walking skeleton", () => {
           let handled = 0;
           let subscriptions = 0;
           const activation = message("10.000", "@laborer start", {
+            isBot: true,
             isMention: true,
           });
           const baseThread: ChatSdkThreadLike = {

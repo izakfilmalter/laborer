@@ -122,9 +122,9 @@ describe("issue 314 production cutover", () => {
     const retired = [
       "../src/development-daemon/dev.ts",
       "../src/durable-runtime/legacy-import.ts",
-      "../src/core/process-handler.ts",
-      "../src/core/runtime.ts",
-      "../src/core/store.ts",
+      "../src/prototype/process-handler.ts",
+      "../src/prototype/runtime.ts",
+      "../src/prototype/store.ts",
       "../src/slack/live.ts",
       "../src/slack/native-stream.ts",
       "../src/slack/normalize.ts",

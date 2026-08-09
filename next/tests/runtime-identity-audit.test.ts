@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const nextRoot = resolve(import.meta.dirname, "..");
 const repositoryRoot = resolve(nextRoot, "..");
-const CHAT_DEPENDENCY_IMPORT =
-  /from\s+["'](?:chat|@chat-adapter\/slack)(?:\/[^"']*)?["']/;
+const CHAT_DEPENDENCY_REFERENCE =
+  /["'](?:chat|@chat-adapter\/slack)(?:\/[^"']*)?["']/;
 const PROTOTYPE_PATH_REFERENCE = /[/"']prototype[/"']/;
 const RETIRED_TERMS = [
   /Handler invocation/i,
@@ -42,10 +42,18 @@ describe("primary runtime identity audit", () => {
   it("names the primary package and documents the authoritative composition", async () => {
     const packageJson = JSON.parse(
       await readFile(resolve(nextRoot, "package.json"), "utf8")
-    ) as { readonly name?: string };
+    ) as {
+      readonly name?: string;
+      readonly scripts?: Readonly<Record<string, string>>;
+    };
     const readme = await readFile(resolve(nextRoot, "README.md"), "utf8");
 
     expect(packageJson.name).toBe("@laborer/slack-runtime");
+    expect(
+      Object.keys(packageJson.scripts ?? {}).filter(
+        (name) => name.includes("oauth") || name.includes("funnel")
+      )
+    ).toEqual([]);
     for (const required of [
       "chat` + `@chat-adapter/slack",
       "installationProvider",
@@ -65,8 +73,8 @@ describe("primary runtime identity audit", () => {
 
   it("keeps Chat dependencies inside the Chat Effect boundary", async () => {
     const sourceRoot = resolve(nextRoot, "src");
-    const sourceFiles = (await filesBelow(sourceRoot)).filter((path) =>
-      path.endsWith(".ts")
+    const sourceFiles = (await filesBelow(sourceRoot)).filter(
+      (path) => path.endsWith(".ts") || path.endsWith(".tsx")
     );
     const violations: string[] = [];
 
@@ -75,7 +83,7 @@ describe("primary runtime identity audit", () => {
       const sourcePath = relative(nextRoot, path);
       if (
         !sourcePath.startsWith("src/chat-plane/") &&
-        CHAT_DEPENDENCY_IMPORT.test(source)
+        CHAT_DEPENDENCY_REFERENCE.test(source)
       ) {
         violations.push(sourcePath);
       }
@@ -100,6 +108,7 @@ describe("primary runtime identity audit", () => {
       "runner-state.json",
       "slack/normalize.ts",
       "slack/socket-mode.ts",
+      "slack-funnel.ts",
     ] as const;
     const violations: string[] = [];
 

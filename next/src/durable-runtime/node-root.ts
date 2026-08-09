@@ -1,7 +1,6 @@
 import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Layer } from "effect";
 import { defineApplication, type LaborerApplication } from "./action.ts";
-import { legacyRuntimeRootForDatabase } from "./legacy-import.ts";
 import {
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,
@@ -17,7 +16,6 @@ export const makeNodeRootDurableRuntime = Effect.fn(
 )(function* (options: {
   readonly databasePath: string;
   readonly application?: LaborerApplication;
-  readonly legacyWorkspaceId?: string;
   readonly rootIdentity: string;
 }): Effect.fn.Return<
   RootDurableRuntimeShape,
@@ -28,9 +26,7 @@ export const makeNodeRootDurableRuntime = Effect.fn(
     makeRootDurableRuntimeLayer(
       makeSqliteLayer({ filename: options.databasePath }),
       options.application?.actions ?? conversationOnlyApplication.actions,
-      options.rootIdentity,
-      legacyRuntimeRootForDatabase(options.databasePath),
-      options.legacyWorkspaceId
+      options.rootIdentity
     )
   );
   return yield* RootDurableRuntime.pipe(Effect.provide(context));

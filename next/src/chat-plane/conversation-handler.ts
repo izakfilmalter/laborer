@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { NormalizedImage } from "../core/domain.ts";
 import {
   ChatPlane,
   type ChatPlaneMessageHandler,
@@ -12,13 +13,16 @@ export class ChatPlaneNormalizedMessage extends Schema.Class<ChatPlaneNormalized
   authorSlackId: Schema.String,
   classification: Schema.Literals(["context", "input"]),
   id: Schema.String,
+  images: Schema.optional(Schema.Array(NormalizedImage)),
   isActivation: Schema.Boolean,
   slackTs: Schema.String,
   text: Schema.String,
 }) {}
 
 export interface ChatPlaneTurn {
+  readonly channelId: string;
   readonly messages: readonly ChatPlaneNormalizedMessage[];
+  readonly rootTs: string;
   readonly threadId: string;
   readonly workspaceId: string;
 }
@@ -49,6 +53,7 @@ const normalizeMessage = (
     authorSlackId: message.author.userId,
     classification,
     id: message.id,
+    images: message.images === undefined ? [] : [...message.images],
     isActivation,
     slackTs: message.id,
     text: message.text,
@@ -88,7 +93,9 @@ export const makeConversationHandler = (
           normalizeMessage(message, "input", isActivation),
         ];
         const result = yield* workHandler({
+          channelId: thread.channelId,
           messages,
+          rootTs: thread.rootMessageId,
           threadId: thread.id,
           workspaceId: thread.workspaceId,
         }).pipe(Effect.catchCause(() => Effect.fail("work-handler" as const)));

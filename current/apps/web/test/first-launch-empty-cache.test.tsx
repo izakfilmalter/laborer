@@ -56,7 +56,7 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: () => ({
     _tag: 'Success',
-    value: { devServer: { autoOpen: { value: false } } },
+    value: {},
   }),
 }))
 
@@ -256,10 +256,6 @@ describe('First-launch empty cache handling', () => {
         origin: 'manual',
         createdAt: '2026-03-14T00:00:00.000Z',
         taskSource: null,
-        sandboxId: null,
-        sandboxUrl: null,
-        sandboxStatus: null,
-        sandboxSetupStep: null,
         worktreeSetupStep: null,
         prNumber: null,
         prUrl: null,

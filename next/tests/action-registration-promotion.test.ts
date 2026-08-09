@@ -2,9 +2,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber } from "effect";
-import { makeAcpAuthorityRepository } from "../src/acp-conversation-prototype/acp-authority.ts";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
-import { makeLaborerActionMcpBridge } from "../src/acp-conversation-prototype/action-mcp.ts";
+import { makeAcpAuthorityRepository } from "../src/acp-runtime/acp-authority.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
+import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
 import type {
   ConversationAction,
   ConversationAgentRequest,
@@ -207,7 +207,7 @@ describe("process-global Action registration promotion", () => {
               }),
               SCRIPTED_ACP_ACTION_ORDINARY_MARKER: ordinaryMarker,
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_DURABLE_SESSIONS_PATH: join(
                 controls,

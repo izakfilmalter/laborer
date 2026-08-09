@@ -10,8 +10,8 @@ import {
   pipe,
   Semaphore,
 } from "effect";
-import { OPEN_CODE_COMMAND } from "../acp-conversation-prototype/open-code-acp-process.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { OPEN_CODE_COMMAND } from "../acp-runtime/open-code-acp-process.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import type {
   AcceptImplementationAgentResponse,
   ImplementationAgentInspectionRequest,

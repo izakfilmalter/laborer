@@ -94,7 +94,6 @@ const BASE_PROPS = {
   branchName: 'main',
   behindCount: null,
   diffIsOpen: false,
-  isContainerized: false,
   prNumber: null,
   prState: null,
   prTitle: null,
@@ -439,7 +438,7 @@ describe('WorkspaceFrameHeader', () => {
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------
 
-  it('hides diff, close workspace, and dev server buttons when minimized', () => {
+  it('hides diff and close workspace buttons when minimized', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader

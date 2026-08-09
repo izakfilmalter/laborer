@@ -23,10 +23,7 @@ import {
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 
-import type {
-  AssignTerminalToPaneOptions,
-  AutoOpenAgentOptions,
-} from '@/panels/panel-context'
+import type { AutoOpenAgentOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
   addPanelTab,
@@ -386,7 +383,7 @@ function assignTerminalInWorkspace(
  */
 const paneSpawnGuard = createSpawnGuard()
 
-/** LiveStore query for workspaces (used by isWorkspaceContainerized). */
+/** LiveStore query used to resolve workspace state throughout the hook. */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'laborer:panel-layout:v1:'
@@ -443,18 +440,7 @@ const writeStoredPanelLayout = (
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
 
-/**
- * Daytona terminal IDs are prefixed with `daytona:` so the correct
- * RPC endpoint (server vs terminal utility process) can be selected.
- */
-const DAYTONA_TERMINAL_PREFIX = 'daytona:'
-
-/** Mutation atom for removing local (Docker/host) terminals via the terminal utility process. */
-const localRemoveTerminalMutation =
-  TerminalServiceClient.mutation('terminal.remove')
-
-/** Mutation atom for removing Daytona terminals via the server (LaborerRpcs). */
-const daytonaRemoveTerminalMutation = LaborerClient.mutation('terminal.remove')
+const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Manages the panel layout state, providing split and close actions
@@ -595,10 +581,7 @@ export function usePanelLayout() {
   const getConfig = useAtomSet(configGetMutation, {
     mode: 'promise',
   })
-  const removeTerminalLocal = useAtomSet(localRemoveTerminalMutation, {
-    mode: 'promise',
-  })
-  const removeTerminalDaytona = useAtomSet(daytonaRemoveTerminalMutation, {
+  const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
   // Start as "reconciling" when a persisted layout exists — this prevents
@@ -612,9 +595,6 @@ export function usePanelLayout() {
   const removeTerminalOptimistically = useCallback(
     (terminalId: string, logContext: string) => {
       removeTerminalListItem(terminalId)
-      const removeTerminal = terminalId.startsWith(DAYTONA_TERMINAL_PREFIX)
-        ? removeTerminalDaytona
-        : removeTerminalLocal
       removeTerminal({ payload: { id: terminalId } }).catch((error) => {
         // Silently ignore "not found" — the terminal was already removed
         // by another close path (e.g., progressive close escalation).
@@ -627,7 +607,7 @@ export function usePanelLayout() {
         console.warn(`${logContext} terminal remove failed:`, error)
       })
     },
-    [removeTerminalLocal, removeTerminalDaytona]
+    [removeTerminal]
   )
 
   /**
@@ -821,13 +801,7 @@ export function usePanelLayout() {
    * without creating a circular useCallback dependency.
    */
   const assignTerminalToPaneRef = useRef<
-    | ((
-        terminalId: string,
-        workspaceId: string,
-        paneId?: string,
-        options?: AssignTerminalToPaneOptions
-      ) => void)
-    | null
+    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
   >(null)
 
   const handleSplitPane = useCallback(
@@ -1231,34 +1205,8 @@ export function usePanelLayout() {
     [persistedWindowLayout, persistWindowLayout]
   )
 
-  /**
-   * Check if a workspace is containerized by looking up its LiveStore record.
-   * Used to auto-open dev server panes for containerized workspaces.
-   */
-  const isWorkspaceContainerized = useCallback(
-    (workspaceId: string): boolean => {
-      const wsList = store.query(allWorkspaces$)
-      const ws = wsList.find((w) => w.id === workspaceId)
-      return ws?.sandboxId != null
-    },
-    [store]
-  )
-
-  /**
-   * Schedule auto-open of the dev server terminal for a containerized workspace.
-   * Fire-and-forget: errors are logged but do not block the layout assignment.
-   */
-  const autoOpenDevServerRef = useRef<
-    ((paneId: string) => Promise<boolean>) | null
-  >(null)
-
   const handleAssignTerminalToPane = useCallback(
-    async (
-      terminalId: string,
-      workspaceId: string,
-      paneId?: string,
-      options?: AssignTerminalToPaneOptions
-    ) => {
+    async (terminalId: string, workspaceId: string, paneId?: string) => {
       // Gate: if the workspace is already visible in another window,
       // focus that window instead of duplicating the workspace here.
       const focusedElsewhere =
@@ -1289,7 +1237,7 @@ export function usePanelLayout() {
       )
 
       // Assign the terminal directly into the hierarchical layout.
-      const { layout: resultLayout, focusPaneId } = assignTerminalInWorkspace(
+      const { layout: resultLayout } = assignTerminalInWorkspace(
         baseLayout,
         workspaceId,
         terminalId,
@@ -1299,19 +1247,8 @@ export function usePanelLayout() {
       if (resultLayout !== persistedWindowLayout) {
         persistWindowLayout('terminal-assigned', resultLayout)
       }
-
-      // Auto-open dev server for containerized workspaces
-      const shouldAutoOpenDevServer = options?.autoOpenDevServer === true
-      if (shouldAutoOpenDevServer && isWorkspaceContainerized(workspaceId)) {
-        const devPaneId = focusPaneId ?? paneId
-        if (devPaneId) {
-          autoOpenDevServerRef.current?.(devPaneId)?.catch((error) => {
-            console.warn('[auto-open] dev server spawn failed:', error)
-          })
-        }
-      }
     },
-    [persistedWindowLayout, persistWindowLayout, isWorkspaceContainerized]
+    [persistedWindowLayout, persistWindowLayout]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -1392,8 +1329,8 @@ export function usePanelLayout() {
    * Toggle the dev server terminal as a panel tab.
    *
    * When toggling ON: creates a new 'devServerTerminal' panel tab in the
-   * workspace that contains the given pane, then spawns a container terminal
-   * with `autoRun: true`.
+   * workspace that contains the given pane, then spawns its local terminal
+   * as a local shell.
    *
    * When toggling OFF: removes the dev server panel tab from the workspace.
    * The terminal session is killed.
@@ -1439,12 +1376,9 @@ export function usePanelLayout() {
         return false
       }
 
-      // Toggle ON — spawn a new dev server terminal with autoRun
+      // Toggle ON — spawn a local terminal dedicated to the dev server.
       const result = await spawnTerminal({
-        payload: {
-          workspaceId: wsId,
-          autoRun: true,
-        },
+        payload: { workspaceId: wsId },
       })
 
       // Re-read the layout to avoid overwriting concurrent changes.
@@ -1471,11 +1405,6 @@ export function usePanelLayout() {
       removeTerminalOptimistically,
     ]
   )
-
-  // Keep the auto-open ref in sync with the latest toggle handler
-  useEffect(() => {
-    autoOpenDevServerRef.current = handleToggleDevServerPane
-  }, [handleToggleDevServerPane])
 
   /**
    * Close a terminal and its associated pane (ungated — no confirmation).

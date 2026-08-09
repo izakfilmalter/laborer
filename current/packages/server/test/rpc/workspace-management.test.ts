@@ -117,7 +117,6 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/rpc-create'
 
           writeLaborerConfig(repoPath, {
-            devServer: { image: null, provider: 'docker' },
             setupScripts: [
               `printf '%s' "$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
             ],
@@ -231,17 +230,6 @@ describe('LaborerRpcs workspace management', () => {
           assert.strictEqual(workspaceRow.status, 'running')
           assert.isNull(workspaceRow.taskSource)
           assert.strictEqual(workspaceRow.worktreePath, workspace.worktreePath)
-          assert.isNull(workspaceRow.sandboxId)
-          assert.isNull(workspaceRow.sandboxUrl)
-          assert.isNull(workspaceRow.sandboxImage)
-          assert.isNull(workspaceRow.sandboxStatus)
-          // sandboxSetupStep is set by a background fiber and may be
-          // non-null if the async sandbox setup has started by query time
-          assert.isString(
-            typeof workspaceRow.sandboxSetupStep === 'string'
-              ? workspaceRow.sandboxSetupStep
-              : 'null-is-ok'
-          )
         })
       )
   )
@@ -272,7 +260,6 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/colleague-pr'
 
           writeLaborerConfig(localPath, {
-            devServer: { image: null, provider: 'docker' },
             setupScripts: [],
             worktreeDir: worktreeRoot,
           })
@@ -325,7 +312,7 @@ describe('LaborerRpcs workspace management', () => {
   )
 
   it.scopedLive(
-    'workspace.create with no sandbox creates only a local worktree',
+    'workspace.create ignores legacy dev-server config and creates a local worktree',
     () =>
       runWithRpcTestContext(({ client, store }) =>
         Effect.gen(function* () {
@@ -335,14 +322,14 @@ describe('LaborerRpcs workspace management', () => {
           )
 
           const repoPath = initRepo(
-            'rpc-workspace-create-no-sandbox',
+            'rpc-workspace-create-local-only',
             tempRoots
           )
           const worktreeRoot = createTempDir(
-            'rpc-worktree-root-no-sandbox',
+            'rpc-worktree-root-local-only',
             tempRoots
           )
-          const branchName = 'feature/rpc-no-sandbox'
+          const branchName = 'feature/rpc-local-only'
 
           writeLaborerConfig(repoPath, {
             devServer: {
@@ -355,7 +342,7 @@ describe('LaborerRpcs workspace management', () => {
             worktreeDir: worktreeRoot,
           })
           git('add laborer.json', repoPath)
-          git('commit -m "add no sandbox config"', repoPath)
+          git('commit -m "add local config"', repoPath)
 
           const project = yield* client.project.add({ repoPath })
           const workspace = yield* client.workspace.create({
@@ -372,14 +359,14 @@ describe('LaborerRpcs workspace management', () => {
               )[0]
               if (row?.status === 'errored') {
                 return assert.fail(
-                  `Workspace errored during no-sandbox setup: ${row.errorMessage ?? ''}`
+                  `Workspace errored during local setup: ${row.errorMessage ?? ''}`
                 )
               }
               if (row?.status === 'running' && row.worktreeSetupStep === null) {
                 return
               }
             }
-            assert.fail('Timed out waiting for no-sandbox workspace setup')
+            assert.fail('Timed out waiting for local workspace setup')
           })
 
           assert.isTrue(existsSync(workspace.worktreePath))
@@ -403,15 +390,8 @@ describe('LaborerRpcs workspace management', () => {
           )[0]
           assert.isDefined(workspaceRow)
           if (workspaceRow === undefined) {
-            assert.fail('Expected no-sandbox workspace row to exist')
+            assert.fail('Expected local workspace row to exist')
           }
-
-          assert.strictEqual(workspaceRow.sandboxProvider, 'none')
-          assert.isNull(workspaceRow.sandboxId)
-          assert.isNull(workspaceRow.sandboxUrl)
-          assert.isNull(workspaceRow.sandboxImage)
-          assert.isNull(workspaceRow.sandboxStatus)
-          assert.isNull(workspaceRow.sandboxSetupStep)
         })
       )
   )
@@ -436,7 +416,6 @@ describe('LaborerRpcs workspace management', () => {
           )
 
           writeLaborerConfig(localPath, {
-            devServer: { image: null, provider: 'none' },
             setupScripts: [],
             worktreeDir: worktreeRoot,
           })
@@ -562,7 +541,6 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -673,7 +651,6 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -725,7 +702,6 @@ describe('LaborerRpcs workspace management', () => {
 
           writeLaborerConfig(repoPath, {
             worktreeDir: worktreeRoot,
-            devServer: { image: null, provider: 'docker' },
           })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
@@ -841,7 +817,6 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/rpc-setup-fail'
 
           writeLaborerConfig(repoPath, {
-            devServer: { image: null, provider: 'docker' },
             setupScripts: ['exit 42'],
             worktreeDir: worktreeRoot,
           })
@@ -876,10 +851,6 @@ describe('LaborerRpcs workspace management', () => {
                 assert.isNull(
                   row.worktreeSetupStep,
                   'worktreeSetupStep should be cleared on error'
-                )
-                assert.isNull(
-                  row.sandboxSetupStep,
-                  'sandboxSetupStep should be cleared on error'
                 )
                 // Error message should mention the failed script
                 assert.isString(row.errorMessage)

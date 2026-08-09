@@ -6,12 +6,12 @@ import { Effect, Exit, Fiber, Schema, Scope } from "effect";
 import {
   type AcpConversationAgentOptions,
   makeAcpConversationAgent,
-} from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+} from "../src/acp-runtime/acp-conversation-agent.ts";
 import {
   prepareAcpAgentContextSources,
   userProfilePath,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeLaborerMemoryMcpServerConfiguration } from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeLaborerMemoryMcpServerConfiguration } from "../src/acp-runtime/memory-mcp.ts";
 import {
   type ApplicationPublicOutput,
   type ApplicationShape,
@@ -22,7 +22,7 @@ import {
   NormalizedMessage,
   ThreadId,
   TurnId,
-} from "../src/prototype/domain.ts";
+} from "../src/core/domain.ts";
 import {
   CONVERSATION_ADOPTION_MIGRATION_CONTRACT,
   conversationAdoptionId,
@@ -1113,7 +1113,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             );
             const openCodeEnvironment = {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_USE_OPENCODE_MESSAGE_IDS: "1",
             } as const;
@@ -2071,7 +2071,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_REPLAY_AFTER_PROMPT_BEFORE_MARKER: "1",
               SCRIPTED_ACP_USE_OPENCODE_MESSAGE_IDS: "1",
@@ -2142,7 +2142,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
                 controls,
                 environment: {
                   SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-                  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+                  SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
                   SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
                   SCRIPTED_ACP_TEXTLESS_STOP_REASON: stopReason,
                 },
@@ -2222,7 +2222,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
               SCRIPTED_ACP_TEXTLESS_STOP_REASON: "max_turn_requests",
             },
@@ -2819,7 +2819,7 @@ describe.concurrent("issue #241 durable ACP session bindings", () => {
             controls,
             environment: {
               SCRIPTED_ACP_AGENT_NAME: "OpenCode",
-              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-16573",
+              SCRIPTED_ACP_AGENT_VERSION: "0.0.0-next-17055",
               SCRIPTED_ACP_DISABLE_PROMPT_MARKER: "1",
             },
             repository,

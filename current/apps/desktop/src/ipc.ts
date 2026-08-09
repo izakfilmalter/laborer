@@ -765,14 +765,6 @@ export function registerIpcHandlers(
   // the data channel handles high-frequency I/O streaming.
   //
   // @see Issue #8: Terminal PTY I/O data channel over MessagePort
-  // -- Acquire terminal data port ------------------------------------------
-  // Routes terminal data ports to the correct utility process:
-  // - Daytona terminals (prefixed with `daytona:`) → server utility process
-  //   (where the Daytona SDK and PTY WebSocket connections live)
-  // - Docker/host terminals → terminal utility process
-  //   (where node-pty sessions are managed)
-  //
-  // @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
   ipcMain.removeAllListeners(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL)
   ipcMain.on(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL, (event, payload: unknown) => {
     const parsed = parseTerminalDataPortPayload(payload)
@@ -781,11 +773,7 @@ export function registerIpcHandlers(
     }
 
     const { terminalId, nonce } = parsed
-    const isDaytonaTerminal = terminalId.startsWith('daytona:')
-    const processName = isDaytonaTerminal ? 'server' : 'terminal'
-    const messageType = isDaytonaTerminal
-      ? 'daytona-terminal-data-port'
-      : 'terminal-data-port'
+    const processName = 'terminal'
 
     if (!utilityProcessManagerRef?.isRunning(processName)) {
       return
@@ -798,7 +786,9 @@ export function registerIpcHandlers(
 
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
     rendererPortRegistry.track(processName, rendererPort)
-    targetProcess.postMessage({ type: messageType, terminalId }, [utilityPort])
+    targetProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
+      utilityPort,
+    ])
     event.sender.postMessage(TERMINAL_DATA_PORT_RESPONSE_CHANNEL, nonce, [
       rendererPort,
     ])

@@ -12,7 +12,7 @@
  * | 1 | Starting | Local OPFS data, navigation, panel layouts |
  * | 2 | Ready | Core RPCs, LiveStore sync, workspace CRUD |
  * | 3 | Restored | Terminals, file watching, full read/write |
- * | 4 | Eventually | Docker, PR tracking, everything |
+ * | 4 | Eventually | PR tracking, everything else |
  *
  * ## Architecture
  *

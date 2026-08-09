@@ -38,7 +38,7 @@ PRD.md
 
 ### What to build
 
-Define the core domain types in `packages/shared/src/types.ts`: Project, Workspace (with status enum: creating/running/stopped/errored/destroyed), Terminal (with status enum: running/stopped), Task (with source enum: linear/github/manual/prd and status), PanelLayout (tree structure of splits and panes), and Diff. These are the foundational types referenced throughout the PRD's "State Management: LiveStore" section.
+Define the core domain types in `packages/shared/src/types.ts`: Project, Workspace (with status enum: creating/running/stopped/errored/destroyed), Terminal (with status enum: running/stopped), PanelLayout (tree structure of splits and panes), and Diff. These are the foundational types referenced throughout the PRD's "State Management: LiveStore" section.
 
 ### Acceptance criteria
 

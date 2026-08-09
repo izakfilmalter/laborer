@@ -5,8 +5,8 @@ import {
   type OpenCodePromptInput,
   type OpenCodeSessionClient,
 } from "../src/adapters/opencode-agents.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
+import { ThreadId } from "../src/core/domain.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 
 const FEATURE_WORKFLOW_PATTERN = /feature workflow/i;
 const INITIAL_REQUEST_PATTERN = /Build the requested capability/;

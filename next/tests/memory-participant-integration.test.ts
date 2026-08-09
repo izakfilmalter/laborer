@@ -2,18 +2,18 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Array as EffectArray, Logger } from "effect";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
 import {
   prepareAcpAgentContextSources,
   userProfilePath,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeLaborerMemoryStore } from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeLaborerMemoryStore } from "../src/acp-runtime/memory-mcp.ts";
 import {
   makeBoundedSlackParticipantLookup,
   makeSlackParticipantLookup,
   SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT,
-} from "../src/acp-conversation-prototype/slack-participant-lookup.ts";
-import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
+} from "../src/acp-runtime/slack-participant-lookup.ts";
+import { MessageId, NormalizedMessage } from "../src/core/domain.ts";
 import type { ConversationAgentRequest } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 

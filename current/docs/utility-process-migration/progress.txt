@@ -1091,8 +1091,8 @@ be available when the server runs as a utility process without HTTP.
 ### No files created
 
 This issue required no new files — only modifications to existing ones.
-All 25+ consumer files that import `LaborerClient` (project settings,
-tasks, etc.) use the transport-agnostic `LaborerClient.mutation()` /
+All consumer files that import `LaborerClient` use the
+transport-agnostic `LaborerClient.mutation()` /
 `LaborerClient.query()` API and required zero changes.
 
 ### Verification
@@ -1114,8 +1114,8 @@ tasks, etc.) use the transport-agnostic `LaborerClient.mutation()` /
 - [x] All ~30 `LaborerRpcs` endpoints work over MessagePort — the
       transport swap is transparent; all consumer components use the
       transport-agnostic `LaborerClient.mutation()` / `.query()` API
-- [x] Project listing, workspace creation, config updates, PRD
-      operations all function correctly — they go through the same
+- [x] Project listing, workspace creation, and config updates all
+      function correctly — they go through the same
       `LaborerClient` transport layer
 - [x] The `server-init-status` check (deferred service readiness)
       works over MessagePort — phase transition driver uses

@@ -75,57 +75,6 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'ConfigService'
 
-/** Valid sandbox provider values. */
-type SandboxProviderType = 'docker' | 'daytona' | 'none'
-
-/** All valid sandbox provider values for runtime validation. */
-const VALID_SANDBOX_PROVIDERS: readonly SandboxProviderType[] = [
-  'docker',
-  'daytona',
-  'none',
-]
-
-/** Resource limits for Daytona sandboxes. */
-interface SandboxResources {
-  /** CPU cores (e.g. 2). */
-  readonly cpu?: number | undefined
-  /** Disk size in GB (e.g. 20). */
-  readonly disk?: number | undefined
-  /** Memory in GB (e.g. 4). */
-  readonly memory?: number | undefined
-}
-
-/**
- * Dev server sandbox configuration.
- * `image` and `dockerfile` are mutually exclusive.
- */
-interface DevServerConfig {
-  /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
-  readonly autoOpen?: boolean | undefined
-  /** Minutes of inactivity before auto-stop (Daytona only, default 15). */
-  readonly autoStopInterval?: number | undefined
-  /** Path to a Dockerfile for building the container image. */
-  readonly dockerfile?: string | undefined
-  /** Base Docker image name (e.g. "node:22"). */
-  readonly image?: string | undefined
-  /** Override the auto-detected install command for cached deps images (e.g. "pnpm install --frozen-lockfile"). */
-  readonly installCommand?: string | undefined
-  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses default bridge networking. Containers can reach other Docker containers via .orb.local domains and host services via host.docker.internal. */
-  readonly network?: string | undefined
-  /** Port the dev server listens on inside the container. Appended to the .orb.local URL so the workspace card link works. */
-  readonly port?: number | undefined
-  /** Sandbox provider for this project ("docker", "daytona", or "none"). */
-  readonly provider?: SandboxProviderType | undefined
-  /** Daytona sandbox resource limits (CPU, memory, disk). */
-  readonly resources?: SandboxResources | undefined
-  /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
-  readonly setupScripts?: readonly string[] | undefined
-  /** Command to start the dev server (e.g. "bun dev"). */
-  readonly startCommand?: string | undefined
-  /** Mount point inside the container. Defaults to "/app". */
-  readonly workdir?: string | undefined
-}
-
 /**
  * Valid agent provider values.
  * Each value is also the CLI command used to launch the agent.
@@ -145,13 +94,6 @@ const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
 interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
-  /**
-   * Global default sandbox provider.
-   * Per-project `devServer.provider` overrides this.
-   * When neither is set, defaults to `"docker"`.
-   */
-  readonly defaultSandboxProvider?: SandboxProviderType
-  readonly devServer?: DevServerConfig
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -160,8 +102,6 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
-  readonly defaultSandboxProvider?: SandboxProviderType | undefined
-  readonly devServer?: DevServerConfig | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -179,38 +119,12 @@ interface ResolvedValue<T> {
 }
 
 /**
- * Fully resolved dev server configuration with provenance for each field.
- * All fields have concrete values (no undefined).
- */
-interface ResolvedDevServerConfig {
-  readonly autoOpen: ResolvedValue<boolean>
-  readonly autoStopInterval: ResolvedValue<number | null>
-  readonly dockerfile: ResolvedValue<string | null>
-  readonly image: ResolvedValue<string | null>
-  readonly installCommand: ResolvedValue<string | null>
-  readonly network: ResolvedValue<string | null>
-  readonly port: ResolvedValue<number | null>
-  readonly provider: ResolvedValue<SandboxProviderType | null>
-  readonly resources: ResolvedValue<SandboxResources | null>
-  readonly setupScripts: ResolvedValue<readonly string[]>
-  readonly startCommand: ResolvedValue<string | null>
-  readonly workdir: ResolvedValue<string>
-}
-
-/**
  * Fully resolved config with provenance for each field.
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
-  /**
-   * Global default sandbox provider.
-   * Resolved from the closest config that sets it; defaults to null
-   * (which means "docker" when no per-project provider is set).
-   */
-  readonly defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
-  readonly devServer: ResolvedDevServerConfig
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -384,55 +298,6 @@ const readRawConfigObject = (
   })
 
 /**
- * Merge devServer update fields into an existing devServer config object.
- */
-const mergeDevServerUpdates = (
-  existing: Record<string, unknown>,
-  updates: NonNullable<ProjectConfigUpdates['devServer']>
-): Record<string, unknown> => {
-  const merged = { ...existing }
-
-  if (updates.autoOpen !== undefined) {
-    merged.autoOpen = updates.autoOpen
-  }
-  if (updates.autoStopInterval !== undefined) {
-    merged.autoStopInterval = updates.autoStopInterval
-  }
-  if (updates.image !== undefined) {
-    merged.image = updates.image
-  }
-  if (updates.dockerfile !== undefined) {
-    merged.dockerfile = updates.dockerfile
-  }
-  if (updates.installCommand !== undefined) {
-    merged.installCommand = updates.installCommand
-  }
-  if (updates.network !== undefined) {
-    merged.network = updates.network
-  }
-  if (updates.port !== undefined) {
-    merged.port = updates.port
-  }
-  if (updates.provider !== undefined) {
-    merged.provider = updates.provider
-  }
-  if (updates.resources !== undefined) {
-    merged.resources = updates.resources
-  }
-  if (updates.setupScripts !== undefined) {
-    merged.setupScripts = [...updates.setupScripts]
-  }
-  if (updates.startCommand !== undefined) {
-    merged.startCommand = updates.startCommand
-  }
-  if (updates.workdir !== undefined) {
-    merged.workdir = updates.workdir
-  }
-
-  return merged
-}
-
-/**
  * Apply explicit config updates to an existing config object.
  * Undefined fields in updates are ignored (do not overwrite existing values).
  */
@@ -449,10 +314,6 @@ const applyConfigUpdates = (
     next.agent = updates.agent
   }
 
-  if (updates.defaultSandboxProvider !== undefined) {
-    next.defaultSandboxProvider = updates.defaultSandboxProvider
-  }
-
   if (updates.worktreeDir !== undefined) {
     next.worktreeDir = updates.worktreeDir
   }
@@ -463,16 +324,6 @@ const applyConfigUpdates = (
 
   if (updates.watchIgnore !== undefined) {
     next.watchIgnore = [...updates.watchIgnore]
-  }
-
-  if (updates.devServer !== undefined) {
-    const existingDevServer =
-      typeof existing.devServer === 'object' &&
-      existing.devServer !== null &&
-      !Array.isArray(existing.devServer)
-        ? (existing.devServer as Record<string, unknown>)
-        : {}
-    next.devServer = mergeDevServerUpdates(existingDevServer, updates.devServer)
   }
 
   return next
@@ -587,192 +438,6 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
  *   closest (project root) to farthest (global). Closest wins.
  * @param projectName - Used to compute the default worktreeDir.
  */
-/**
- * Resolve devServer config from layered configs.
- * Iterates from farthest to closest (closest wins).
- */
-const mergeDevServerConfig = (
-  configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
-): ResolvedDevServerConfig => {
-  let autoOpen: ResolvedValue<boolean> = {
-    value: false,
-    source: 'default',
-  }
-  let autoStopInterval: ResolvedValue<number | null> = {
-    value: null,
-    source: 'default',
-  }
-  let image: ResolvedValue<string | null> = {
-    value: 'node:lts',
-    source: 'default',
-  }
-  let dockerfile: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let installCommand: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let setupScripts: ResolvedValue<readonly string[]> = {
-    value: ['corepack enable', 'pnpm install --force', 'exec bash'],
-    source: 'default',
-  }
-  let network: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let port: ResolvedValue<number | null> = {
-    value: null,
-    source: 'default',
-  }
-  let provider: ResolvedValue<SandboxProviderType | null> = {
-    value: null,
-    source: 'default',
-  }
-  let resources: ResolvedValue<SandboxResources | null> = {
-    value: null,
-    source: 'default',
-  }
-  let startCommand: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let workdir: ResolvedValue<string> = {
-    value: '/app',
-    source: 'default',
-  }
-
-  const applyImage = (value: string, path: string) => {
-    image = { value, source: path }
-    if (dockerfile.source === path) {
-      return
-    }
-    dockerfile = { value: null, source: 'default' }
-  }
-
-  const applyDockerfile = (value: string, path: string) => {
-    dockerfile = { value, source: path }
-    if (image.source === path) {
-      return
-    }
-    image = { value: null, source: 'default' }
-  }
-
-  const applyOptionalField = <T>(
-    value: T | undefined,
-    apply: (resolvedValue: T) => void
-  ) => {
-    if (value !== undefined) {
-      apply(value)
-    }
-  }
-
-  const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
-    applyOptionalField(ds.autoOpen, (value) => {
-      autoOpen = { value, source: path }
-    })
-    applyOptionalField(ds.autoStopInterval, (value) => {
-      autoStopInterval = { value, source: path }
-    })
-    applyOptionalField(ds.image, (value) => applyImage(value, path))
-    applyOptionalField(ds.dockerfile, (value) => applyDockerfile(value, path))
-    applyOptionalField(ds.installCommand, (value) => {
-      installCommand = { value, source: path }
-    })
-    applyOptionalField(ds.network, (value) => {
-      network = { value, source: path }
-    })
-    applyOptionalField(ds.port, (value) => {
-      port = { value, source: path }
-    })
-    applyOptionalField(ds.provider, (value) => {
-      provider = { value, source: path }
-    })
-    applyOptionalField(ds.resources, (value) => {
-      resources = { value, source: path }
-    })
-    applyOptionalField(ds.setupScripts, (value) => {
-      setupScripts = { value, source: path }
-    })
-    applyOptionalField(ds.startCommand, (value) => {
-      startCommand = { value, source: path }
-    })
-    applyOptionalField(ds.workdir, (value) => {
-      workdir = { value, source: path }
-    })
-  }
-
-  for (let i = configLayers.length - 1; i >= 0; i--) {
-    const layer = configLayers[i]
-    if (layer === undefined) {
-      continue
-    }
-    const { config, path } = layer
-
-    if (config.devServer !== undefined) {
-      applyDevServerLayer(config.devServer, path)
-    }
-  }
-
-  return {
-    autoOpen,
-    autoStopInterval,
-    dockerfile,
-    image,
-    installCommand,
-    network,
-    port,
-    provider,
-    resources,
-    setupScripts,
-    startCommand,
-    workdir,
-  }
-}
-
-/**
- * Validate that the resolved devServer config is consistent.
- * Returns an error message string if validation fails, or undefined if valid.
- */
-const validateDevServerConfig = (
-  devServer: ResolvedDevServerConfig
-): string | undefined => {
-  if (devServer.image.value !== null && devServer.dockerfile.value !== null) {
-    return (
-      'devServer.image and devServer.dockerfile are mutually exclusive. ' +
-      `image from ${devServer.image.source}, dockerfile from ${devServer.dockerfile.source}`
-    )
-  }
-  if (
-    devServer.provider.value !== null &&
-    !VALID_SANDBOX_PROVIDERS.includes(devServer.provider.value)
-  ) {
-    return `devServer.provider must be "docker", "daytona", or "none", got "${String(devServer.provider.value)}" from ${devServer.provider.source}`
-  }
-  return undefined
-}
-
-/**
- * Apply the global defaultSandboxProvider fallback to devServer.provider:
- * If no per-project devServer.provider is set, fall back to the global
- * defaultSandboxProvider. If that is also null, the effective provider
- * remains null (which downstream code treats as "docker").
- */
-const applyProviderFallback = (
-  devServer: ResolvedDevServerConfig,
-  defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
-): ResolvedDevServerConfig =>
-  devServer.provider.value === null && defaultSandboxProvider.value !== null
-    ? {
-        ...devServer,
-        provider: {
-          value: defaultSandboxProvider.value,
-          source: defaultSandboxProvider.source,
-        },
-      }
-    : devServer
-
 const mergeConfigs = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>,
   _projectName: string,
@@ -794,10 +459,6 @@ const mergeConfigs = (
   }
   let watchIgnore: ResolvedValue<readonly string[]> = {
     value: [],
-    source: 'default',
-  }
-  let defaultSandboxProvider: ResolvedValue<SandboxProviderType | null> = {
-    value: null,
     source: 'default',
   }
 
@@ -837,21 +498,10 @@ const mergeConfigs = (
         source: path,
       }
     }
-
-    if (config.defaultSandboxProvider !== undefined) {
-      defaultSandboxProvider = {
-        value: config.defaultSandboxProvider,
-        source: path,
-      }
-    }
   }
-
-  const devServer = mergeDevServerConfig(configLayers)
 
   return {
     agent,
-    defaultSandboxProvider,
-    devServer: applyProviderFallback(devServer, defaultSandboxProvider),
     worktreeDir,
     setupScripts,
     watchIgnore,
@@ -938,16 +588,8 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         // 5. Merge with closest-wins strategy and apply defaults
         const resolved = mergeConfigs(allLayers, projectName, projectRepoPath)
 
-        // 6. Validate devServer mutual exclusion (image vs dockerfile)
-        const validationError = validateDevServerConfig(resolved.devServer)
-        if (validationError !== undefined) {
-          return yield* new ConfigValidationError({
-            message: validationError,
-          })
-        }
-
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -1007,29 +649,22 @@ export {
   ConfigService,
   ConfigValidationError,
   VALID_AGENT_PROVIDERS,
-  VALID_SANDBOX_PROVIDERS,
   // Exported for testing
   CONFIG_FILE_NAME,
   expandTilde,
   GLOBAL_CONFIG_DIR,
   GLOBAL_CONFIG_PATH,
   mergeConfigs,
-  mergeDevServerConfig,
   readConfigFile,
   readRawConfigObject,
-  validateDevServerConfig,
   walkUpForConfigs,
   applyConfigUpdates,
   writeJsonAtomic,
 }
 
 export type {
-  DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,
-  ResolvedDevServerConfig,
   ResolvedLaborerConfig,
   ResolvedValue,
-  SandboxProviderType,
-  SandboxResources,
 }

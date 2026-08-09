@@ -132,60 +132,6 @@ const ConfigResolvedValueStringArray = Schema.Struct({
   source: Schema.String,
 })
 
-const ConfigResolvedValueBoolean = Schema.Struct({
-  value: Schema.Boolean,
-  source: Schema.String,
-})
-
-const ConfigResolvedValueNullableString = Schema.Struct({
-  value: Schema.NullOr(Schema.String),
-  source: Schema.String,
-})
-
-const ConfigResolvedValueNullableNumber = Schema.Struct({
-  value: Schema.NullOr(Schema.Number),
-  source: Schema.String,
-})
-
-export const SandboxProviderTypeSchema = Schema.Literal(
-  'docker',
-  'daytona',
-  'none'
-)
-
-export type SandboxProviderType = typeof SandboxProviderTypeSchema.Type
-
-const SandboxResourcesSchema = Schema.Struct({
-  cpu: Schema.optional(Schema.Number),
-  disk: Schema.optional(Schema.Number),
-  memory: Schema.optional(Schema.Number),
-})
-
-const ConfigResolvedValueNullableSandboxProvider = Schema.Struct({
-  value: Schema.NullOr(SandboxProviderTypeSchema),
-  source: Schema.String,
-})
-
-const ConfigResolvedValueNullableSandboxResources = Schema.Struct({
-  value: Schema.NullOr(SandboxResourcesSchema),
-  source: Schema.String,
-})
-
-const DevServerConfigResponse = Schema.Struct({
-  autoOpen: ConfigResolvedValueBoolean,
-  autoStopInterval: ConfigResolvedValueNullableNumber,
-  image: ConfigResolvedValueNullableString,
-  dockerfile: ConfigResolvedValueNullableString,
-  installCommand: ConfigResolvedValueNullableString,
-  network: ConfigResolvedValueNullableString,
-  port: ConfigResolvedValueNullableNumber,
-  provider: ConfigResolvedValueNullableSandboxProvider,
-  resources: ConfigResolvedValueNullableSandboxResources,
-  setupScripts: ConfigResolvedValueStringArray,
-  startCommand: ConfigResolvedValueNullableString,
-  workdir: ConfigResolvedValueString,
-})
-
 export const AgentProviderSchema = Schema.Literal(
   'opencode2',
   'claude',
@@ -201,8 +147,6 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
-  defaultSandboxProvider: ConfigResolvedValueNullableSandboxProvider,
-  devServer: DevServerConfigResponse,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
   watchIgnore: ConfigResolvedValueStringArray,
@@ -228,17 +172,6 @@ const TerminalResponse = Schema.Struct({
   command: Schema.String,
   status: Schema.Literal('running', 'stopped'),
 })
-
-const DockerStatusResponse = Schema.Struct({
-  available: Schema.Boolean,
-  error: Schema.optional(Schema.String),
-})
-
-/**
- * Alias for DockerStatusResponse — used by the new provider-agnostic
- * `sandbox.providerStatus` RPC. Same shape as `docker.status`.
- */
-const ProviderStatusResponse = DockerStatusResponse
 
 const PrStatusResponse = Schema.Struct({
   number: Schema.NullOr(Schema.Int),
@@ -498,13 +431,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // Docker Prerequisite Detection
-  // -----------------------------------------------------------------------
-  Rpc.make('docker.status', {
-    success: DockerStatusResponse,
-  }),
-
-  // -----------------------------------------------------------------------
   // Project RPCs
   // -----------------------------------------------------------------------
   Rpc.make('project.add', {
@@ -544,22 +470,6 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
-        devServer: Schema.optional(
-          Schema.Struct({
-            autoOpen: Schema.optional(Schema.Boolean),
-            autoStopInterval: Schema.optional(Schema.Number),
-            image: Schema.optional(Schema.String),
-            dockerfile: Schema.optional(Schema.String),
-            installCommand: Schema.optional(Schema.String),
-            network: Schema.optional(Schema.String),
-            port: Schema.optional(Schema.Number),
-            provider: Schema.optional(SandboxProviderTypeSchema),
-            resources: Schema.optional(SandboxResourcesSchema),
-            setupScripts: Schema.optional(Schema.Array(Schema.String)),
-            startCommand: Schema.optional(Schema.String),
-            workdir: Schema.optional(Schema.String),
-          })
-        ),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
       }),
@@ -572,7 +482,6 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('globalConfig.get', {
     success: Schema.Struct({
       agent: Schema.optional(AgentProviderSchema),
-      defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
     }),
     error: RpcError,
   }),
@@ -582,25 +491,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
-        defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
       }),
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Settings RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('settings.getDefaultProvider', {
-    success: Schema.Struct({
-      provider: Schema.NullOr(SandboxProviderTypeSchema),
-    }),
-    error: RpcError,
-  }),
-
-  Rpc.make('settings.setDefaultProvider', {
-    error: RpcError,
-    payload: {
-      provider: SandboxProviderTypeSchema,
     },
   }),
 
@@ -677,96 +568,6 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  Rpc.make('workspace.startContainer', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Container RPCs (Issue 10)
-  // -----------------------------------------------------------------------
-  Rpc.make('container.setPort', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** The port number, or null to clear. */
-      port: Schema.NullOr(Schema.Int),
-    },
-  }),
-
-  Rpc.make('container.pause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('container.unpause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Sandbox RPCs (provider-agnostic replacements for container/docker RPCs)
-  //
-  // These are the canonical names going forward. The old container.* and
-  // docker.* names above are kept as backward-compatible aliases.
-  // -----------------------------------------------------------------------
-
-  Rpc.make('sandbox.providerStatus', {
-    success: ProviderStatusResponse,
-  }),
-
-  Rpc.make('workspace.startSandbox', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.setPort', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** The port number, or null to clear. */
-      port: Schema.NullOr(Schema.Int),
-    },
-  }),
-
-  Rpc.make('sandbox.pause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.resume', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.setAutoStop', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** Minutes of inactivity before auto-stop (0 disables auto-stop). */
-      interval: Schema.Int,
-    },
-  }),
-
-  Rpc.make('sandbox.openInVsCode', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
   // -----------------------------------------------------------------------
   // Terminal RPCs
   // -----------------------------------------------------------------------
@@ -778,56 +579,6 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
-      /**
-       * When true and the workspace is containerized, auto-types setup scripts
-       * from `laborer.json` followed by the `devServer.startCommand` into the
-       * terminal after spawn. Used for dev server terminals.
-       */
-      autoRun: Schema.optional(Schema.Boolean),
-    },
-  }),
-
-  /**
-   * Resize a Daytona terminal's PTY session.
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local (Docker/host) terminals are resized directly via the terminal
-   * utility process's `TerminalRpcs.terminal.resize`.
-   *
-   * @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
-   */
-  Rpc.make('terminal.resize', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
-      cols: Schema.Int,
-      rows: Schema.Int,
-    },
-  }),
-
-  /**
-   * Kill a Daytona terminal's PTY session (stop the process).
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local terminals are killed via `TerminalRpcs.terminal.kill`.
-   */
-  Rpc.make('terminal.kill', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
-    },
-  }),
-
-  /**
-   * Remove a Daytona terminal — kills the PTY (if running) and cleans up.
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local terminals are removed via `TerminalRpcs.terminal.remove`.
-   */
-  Rpc.make('terminal.remove', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
     },
   }),
 

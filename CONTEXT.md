@@ -18,10 +18,10 @@ The local macOS menu-bar application through which an operator observes the Labo
 _Avoid_: Laborer app
 
 **Slack workspace binding**:
-The daemon-owned association from one authenticated Slack workspace installation to its local configuration, including the work handler's Laborer root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
+The daemon-owned association from one authenticated Slack workspace installation to its local configuration, including its Laborer root. A binding selects local configuration; it does not define the conversation agent's workflow or choose repositories for it.
 
 **Laborer root**:
-The directory configured for a Slack workspace binding as the work handler's initial working directory. It carries no runtime-state or ownership semantics and does not need to be a Git repository.
+The directory configured for a Slack workspace binding as its registered application's initial working directory. It carries no runtime-state or ownership semantics and does not need to be a Git repository.
 
 **Laborer global config root**:
 The user-owned directory containing only durable Markdown Agent context and its directory partitions. It is `~/.config/laborer` by default or `$XDG_CONFIG_HOME/laborer` when `XDG_CONFIG_HOME` is absolute and nonblank. It is outside every Laborer root: Souls are partitioned there by canonical Laborer-root identity, while Workspace memory and User profiles are partitioned by authenticated Slack workspace identity.
@@ -30,7 +30,7 @@ The user-owned directory containing only durable Markdown Agent context and its 
 The user-owned directory for the daemon's durable runtime state and cross-process Agent-context mutation locks. It is `~/.local/state/laborer` by default or `$XDG_STATE_HOME/laborer` when `XDG_STATE_HOME` is absolute and nonblank. Runtime state is partitioned by authenticated Slack workspace rather than by Laborer root; Workspace and User-profile locks are keyed by authenticated Slack workspace and target so different Laborer roots coordinate the same memory.
 
 **Work thread**:
-A Slack channel thread accepted by Laborer as a unit of work and delivered to one configured work handler over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
+A Slack channel thread accepted by Laborer as a unit of work and delivered to the workspace's registered application over a sequence of turns. Its identity is bound to the canonical Slack thread root, and it remains active indefinitely after activation.
 
 **In-progress work thread**:
 A work thread with accepted work for which Laborer still owes progress, including any nonterminal Execution. This transient activity state does not affect whether the work thread remains activated.
@@ -46,25 +46,16 @@ The first newly created, nonblank text message that explicitly mentions Laborer 
 One-time Slack conversation context included in a work thread's first turn. A root activation receives the ten preceding top-level channel messages without expanding their threads. A reply activation receives the canonical root and earlier replies through the activating reply. Context is distinguished from input and is not replayed in later turns.
 
 **Normalized message**:
-The narrow text-oriented record Laborer presents to a work handler. It carries a stable identity, context-or-input classification, activation marker, author kind and Slack ID, original Slack timestamp, and verbatim Slack `mrkdwn` text. Laborer excludes its own messages, textless rich content, system notices, edits, deletions, and reactions; it does not resolve display names or expose raw Slack payloads.
-
-**Work handler**:
-The user-supplied local program Laborer invokes for a work thread. Its configuration specifies what to run from the Laborer root. It owns all workflow-specific behavior, resources, and continuation state, including any worktrees it creates.
+The narrow text-oriented record Laborer presents to the Conversation runtime. It carries a stable identity, context-or-input classification, activation marker, author kind and Slack ID, original Slack timestamp, and verbatim Slack `mrkdwn` text. Laborer excludes its own messages, textless rich content, system notices, edits, deletions, and reactions; it does not resolve display names or expose raw Slack payloads.
 
 **Turn**:
-One work-handler invocation over a work thread's latest accepted message together with the coalesced backlog of earlier messages that arrived while the previous turn ran. Turns are at-most-once: a failed or interrupted turn is not replayed, and recovery is a participant addressing Laborer again.
+One pass of the Conversation handler over a work thread's latest accepted message together with the coalesced backlog exposed by Chat SDK as `context.skipped`. Turns are at-most-once: a failed or interrupted turn is not replayed, and recovery is a participant addressing Laborer again.
 
-**Handler invocation**:
-The temporary local process that executes one turn. It exits when the turn finishes; an idle work thread consumes no running handler process.
-
-**Handler state directory**:
-A stable filesystem directory Laborer assigns to one work thread and presents to its work handler on every turn. Laborer manages the directory's identity and location but treats its contents as opaque handler-owned state.
-
-**Public reply**:
-A conversational message the work handler explicitly chooses to send. Laborer binds it to the work thread and posts it as the Laborer Slack app on a best-effort basis. Public replies are the only handler-authored output shown in Slack; internal output remains private.
+**Public output**:
+Output admitted by Laborer's public/private gate and streamed to the work thread as the Laborer Slack app on a best-effort basis. Conversation-agent messages are public output. Private silent completions, diagnostics, tool activity, and implementation-agent output remain private.
 
 **Operational notice**:
-A sanitized, Laborer-authored Slack message reporting that a turn failed. Operational notices identify the failure category without exposing handler output, commands, paths, environment, stack traces, or credentials. They are best-effort and are not durably queued.
+A sanitized, Laborer-authored Slack message reporting that a turn failed. Operational notices identify the failure category without exposing private runtime output, commands, paths, environment, stack traces, or credentials. They are best-effort and are not durably queued.
 
 The following terms belong to the first intended coding-workflow use case, not to Laborer's generic core.
 
@@ -109,7 +100,7 @@ Nonterminal information from an ongoing Execution that helps a conversation agen
 A question or interpreted instruction that a conversation agent directs to an ongoing Execution. It may request status, answer an implementation agent's question, or steer the work. The conversation agent derives a follow-up from the work-thread conversation rather than forwarding a participant's raw message, and ordinary conversation may continue while the Execution runs.
 
 **Intake pass**:
-A short-lived agent pass owned by a work handler that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer.
+A short-lived agent pass owned by a registered application that reads an activation's context, classifies the requested work, and prepares a brief for another agent. It is not part of Laborer's Slack plane.
 
 **Bug**:
 Existing or promised behavior producing the wrong result.
@@ -118,10 +109,10 @@ Existing or promised behavior producing the wrong result.
 Net-new or intentionally changed behavior.
 
 **Agent session**:
-An optional durable conversational identity managed by a work handler. The current conversation agent binds one agent session to each work thread and minimally resumes it across daemon restarts; Laborer otherwise treats agent choice and session continuation as handler concerns.
+A durable conversational identity managed by the ACP Conversation runtime. The current conversation agent binds one agent session to each work thread and resumes it across daemon restarts.
 
 **Legacy Laborer app**:
-The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by coding work handlers.
+The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by registered coding applications.
 
 **Project**:
 A git repository registered in the Legacy Laborer app. Owns workspaces.

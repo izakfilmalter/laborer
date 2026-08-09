@@ -84,7 +84,6 @@ export function WorkspaceFrameHeaderContainer({
         projectName: undefined,
         workspacePath: [],
         branchName: undefined,
-        isContainerized: false,
         prNumber: null,
         prUrl: null,
         prTitle: null,
@@ -99,7 +98,6 @@ export function WorkspaceFrameHeaderContainer({
         projectName: undefined,
         workspacePath: [],
         branchName: undefined,
-        isContainerized: false,
         prNumber: null,
         prUrl: null,
         prTitle: null,
@@ -109,7 +107,6 @@ export function WorkspaceFrameHeaderContainer({
       }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
-    const isContainerized = workspace.sandboxId != null
     const projectWorkspaces = workspaceList
       .filter(
         (ws) =>
@@ -128,7 +125,6 @@ export function WorkspaceFrameHeaderContainer({
       projectName: project?.name,
       workspacePath,
       branchName: workspace.branchName,
-      isContainerized,
       prNumber: workspace.prNumber ?? null,
       prUrl: workspace.prUrl ?? null,
       prTitle: workspace.prTitle ?? null,
@@ -159,7 +155,6 @@ export function WorkspaceFrameHeaderContainer({
       diffIsOpen={diffIsOpen ?? false}
       dragHandleRef={dragHandleRef}
       isActiveFrame={isActiveFrame}
-      isContainerized={workspaceData.isContainerized}
       isMinimized={isMinimized}
       onHeaderClick={onHeaderClick}
       onMinimize={onMinimize}

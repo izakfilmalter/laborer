@@ -105,6 +105,24 @@ describe("operator status protocol", () => {
     expect(() =>
       decodeOperatorSnapshot(
         JSON.stringify({
+          ...snapshot,
+          workspaces: [
+            {
+              ...snapshot.workspaces[0],
+              threads: [
+                {
+                  ...snapshot.workspaces[0]?.threads[0],
+                  activity: "needs-attention",
+                },
+              ],
+            },
+          ],
+        })
+      )
+    ).toThrowError(OperatorProtocolError);
+    expect(() =>
+      decodeOperatorSnapshot(
+        JSON.stringify({
           daemon: {
             receiver: "connected",
             startedAtUnixMs: 0,

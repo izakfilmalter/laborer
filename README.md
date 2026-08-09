@@ -2,17 +2,18 @@
 
 This repository contains two independent application roots:
 
-- [`current/`](./current/) — the existing Laborer Bun/Turborepo application.
+- [`current/`](./current/) — the legacy Laborer desktop mission-control application.
 - [`next/`](./next/) — the primary Slack-native Laborer runtime.
 
 Each application owns its package manifest, lockfile, dependencies, and build
 configuration. Run package-manager commands from the relevant application
 directory so dependencies do not leak between the two apps.
 
-The Slack runtime has one production receiver: `bun run --cwd next start:slack`.
-Its Conversation agent uses durable ACP; there is no alternate production
-receiver or legacy Conversation fallback. `start:acp-canary` is a diagnostic
-compatibility gate with isolated Slack credentials, not a second architecture.
+The Slack runtime has one authoritative daemon: `bun run --cwd next start:slack`.
+It uses `chat` + `@chat-adapter/slack` for the entire Slack plane and ACP with
+OpenCode 2 for its Conversation agent. There is no alternate production
+receiver or legacy Conversation fallback. Credential-isolated canaries are
+manual evidence gates, not alternate architectures.
 
 Implementation Actions continue through the OpenCode HTTP adapter. They inherit
 the user's OpenCode permission policy: Laborer does not install wildcard allows
@@ -22,12 +23,13 @@ all other session rules remain ordered and unchanged. See the
 [`next` runtime documentation](./next/README.md) for configuration, permission,
 and recovery details.
 
-The Slack-native application stores runtime state beneath each Laborer root's
-`.laborer-runtime` directory. Its Soul, Workspace-memory, and User-profile
-Markdown live outside repositories in `~/.config/laborer` (or
-`$XDG_CONFIG_HOME/laborer` for an absolute, nonblank `XDG_CONFIG_HOME`). Shared
-mutation locks live separately in `~/.local/state/laborer` (or
-`$XDG_STATE_HOME/laborer`).
+The Slack-native daemon stores all runtime state under
+`~/.local/state/laborer` (or an absolute, nonblank `$XDG_STATE_HOME/laborer`),
+partitioned by authenticated Slack workspace. Its Soul, Workspace memory, and
+User-profile Markdown live outside repositories in `~/.config/laborer` (or an
+absolute, nonblank `$XDG_CONFIG_HOME/laborer`). See the
+[`next` runtime documentation](./next/README.md) for the exact composition and
+state layout.
 
 ## Existing application
 

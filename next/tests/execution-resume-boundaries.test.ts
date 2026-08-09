@@ -5,7 +5,7 @@ import {
   type AcceptApplicationEvent,
   ExternalInputEvent,
 } from "../src/application.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
+import { ThreadId } from "../src/core/domain.ts";
 import {
   type ConversationAgentRequest,
   ImplementationAgent,

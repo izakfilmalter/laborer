@@ -3,7 +3,6 @@
  *
  * - **Phase 3 (Restored):** Terminal pane shows a connecting placeholder
  *   before Phase 3, and renders normally after.
- * - **Phase 4 (Eventually):** Docker status banner is gated behind Phase 4.
  *
  * These tests exercise the public UI: components show appropriate
  * loading/placeholder states in earlier phases and transition smoothly
@@ -46,29 +45,6 @@ function PhaseGatedTerminalPane() {
   return (
     <div data-testid="terminal-content">
       <p>Terminal output here</p>
-    </div>
-  )
-}
-
-/**
- * Simulates the Docker status banner phase gate.
- * Before Phase 4 (Eventually): shows "Checking Docker..." placeholder.
- * After Phase 4: shows Docker status content.
- */
-function PhaseGatedDockerBanner() {
-  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
-
-  if (!isEventually) {
-    return (
-      <div data-testid="docker-checking-placeholder">
-        <p>Checking Docker...</p>
-      </div>
-    )
-  }
-
-  return (
-    <div data-testid="docker-status-content">
-      <p>Docker is available</p>
     </div>
   )
 }
@@ -153,41 +129,6 @@ describe('Progressive feature enablement for Phases 3-4', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Docker status banner — Phase 4 (Eventually)
-  // -----------------------------------------------------------------------
-
-  it('Docker status banner shows placeholder before Phase 4 (Eventually)', () => {
-    render(
-      <LifecyclePhaseProvider>
-        <TestHarness>
-          <PhaseGatedDockerBanner />
-        </TestHarness>
-      </LifecyclePhaseProvider>
-    )
-
-    expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()
-    expect(screen.queryByTestId('docker-status-content')).toBeNull()
-  })
-
-  it('Docker status banner shows real status after Phase 4 (Eventually)', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <LifecyclePhaseProvider>
-        <TestHarness>
-          <PhaseGatedDockerBanner />
-        </TestHarness>
-      </LifecyclePhaseProvider>
-    )
-
-    // Advance to Eventually
-    await user.click(screen.getByTestId('advance-eventually'))
-
-    expect(screen.getByTestId('docker-status-content')).toBeDefined()
-    expect(screen.queryByTestId('docker-checking-placeholder')).toBeNull()
-  })
-
-  // -----------------------------------------------------------------------
   // Smooth transitions — no broken UI in intermediate phases
   // -----------------------------------------------------------------------
 
@@ -198,32 +139,19 @@ describe('Progressive feature enablement for Phases 3-4', () => {
       <LifecyclePhaseProvider>
         <TestHarness>
           <PhaseGatedTerminalPane />
-          <PhaseGatedDockerBanner />
         </TestHarness>
       </LifecyclePhaseProvider>
     )
 
-    // Phase 1: all placeholders
+    // Phase 1: both placeholders
     expect(screen.getByTestId('terminal-connecting-placeholder')).toBeDefined()
-    expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()
 
-    // Phase 2 (Ready): terminal still placeholder, docker still placeholder
+    // Phase 2 (Ready): terminal and review still show placeholders
     await user.click(screen.getByTestId('advance-ready'))
     expect(screen.getByTestId('terminal-connecting-placeholder')).toBeDefined()
-    expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()
-
-    // Phase 3 (Restored): terminal renders, Docker still shows a placeholder
-    await user.click(screen.getByTestId('advance-restored'))
-    expect(screen.getByTestId('terminal-content')).toBeDefined()
-    expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()
 
     // Phase 4 (Eventually): everything renders
     await user.click(screen.getByTestId('advance-eventually'))
     expect(screen.getByTestId('terminal-content')).toBeDefined()
-    expect(screen.getByTestId('docker-status-content')).toBeDefined()
-
-    // No placeholders remain
-    expect(screen.queryByTestId('terminal-connecting-placeholder')).toBeNull()
-    expect(screen.queryByTestId('docker-checking-placeholder')).toBeNull()
   })
 })

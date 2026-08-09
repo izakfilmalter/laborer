@@ -32,9 +32,6 @@ export type WorkspaceOrigin = typeof WorkspaceOrigin.Type
 export const TerminalStatus = Schema.Literal('running', 'stopped')
 export type TerminalStatus = typeof TerminalStatus.Type
 
-export const ContainerStatus = Schema.Literal('running', 'paused')
-export type ContainerStatus = typeof ContainerStatus.Type
-
 export const PaneType = Schema.Literal(
   'agent',
   'terminal',

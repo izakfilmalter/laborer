@@ -81,7 +81,6 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
-import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
@@ -186,7 +185,7 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   )
 
   // When the pane's workspace is still being set up (worktree creation,
-  // setup scripts, sandbox provisioning), the terminal spawn is deferred
+  // and setup scripts), the terminal spawn is deferred
   // until the workspace reaches 'running'. Show setup progress instead of
   // the manual CTA so the pane reads as a loading state, not a dead end.
   const paneWorkspace = workspaceId
@@ -199,9 +198,6 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     }
     if (paneWorkspace?.worktreeSetupStep) {
       return getWorktreeSetupLabel(paneWorkspace.worktreeSetupStep)
-    }
-    if (paneWorkspace?.sandboxSetupStep) {
-      return getSandboxSetupLabel(paneWorkspace.sandboxSetupStep)
     }
     return 'Preparing workspace...'
   })()
@@ -357,7 +353,7 @@ interface EmptyDevServerPaneProps {
 /**
  * Empty state for dev server terminal panes with no terminal assigned.
  *
- * Automatically spawns a dev server terminal with `autoRun: true` on mount.
+ * Automatically spawns a local shell for the dev server on mount.
  * While spawning, shows a loading indicator. If the spawn fails, shows an
  * error with a retry button.
  */
@@ -369,15 +365,15 @@ function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
   const hasSpawned = useRef(false)
 
   const description = isSpawning
-    ? 'Spawning the dev server terminal for this workspace.'
-    : (error ?? 'The dev server terminal will start automatically.')
+    ? 'Spawning a terminal for the dev server.'
+    : (error ?? 'Start the dev server in this terminal.')
 
   const handleSpawn = useCallback(async () => {
     setIsSpawning(true)
     setError(null)
     try {
       const result = await spawnTerminal({
-        payload: { workspaceId, autoRun: true },
+        payload: { workspaceId },
       })
       if (panelActions) {
         panelActions.assignTerminalToPane(result.id, workspaceId, paneId)

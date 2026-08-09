@@ -1,6 +1,4 @@
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Effect, Array as EffectArray, Schema } from "effect";
 import { isSensitiveCredentialEnvironmentName } from "../adapters/sensitive-environment.ts";
 import {
@@ -10,18 +8,8 @@ import {
   openRegularFileNoFollow,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
-
-export interface ProcessCommandConfig {
-  readonly args: readonly string[];
-  readonly command: string;
-  readonly environment: readonly string[];
-}
-
-export interface WorkHandlerConfig extends ProcessCommandConfig {
-  readonly initialize?: ProcessCommandConfig;
-}
 
 export interface ReferenceCodingApplicationConfig {
   readonly environment: readonly string[];
@@ -32,17 +20,9 @@ export interface ReferenceCodingApplicationConfig {
   readonly type: "reference-coding";
 }
 
-export type LaborerConfig = Readonly<Record<string, unknown>> &
-  (
-    | {
-        readonly application: ReferenceCodingApplicationConfig;
-        readonly workHandler?: never;
-      }
-    | {
-        readonly application?: never;
-        readonly workHandler: WorkHandlerConfig;
-      }
-  );
+export type LaborerConfig = Readonly<Record<string, unknown>> & {
+  readonly application: ReferenceCodingApplicationConfig;
+};
 
 export interface LoadedLaborerConfig {
   readonly config: LaborerConfig;
@@ -58,21 +38,6 @@ const OPENCODE_MODEL_PATTERN = /^[^/\s]+\/[^/\s]+(?:\/[^/\s]+)*$/;
 const OpenCodeModel = Schema.Trim.check(
   Schema.isPattern(OPENCODE_MODEL_PATTERN)
 );
-const ProcessCommandConfigFromJson = Schema.Struct({
-  args: Schema.Array(Schema.String).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed([]))
-  ),
-  command: HandlerCommand,
-  environment: Schema.Array(Schema.String).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed([]))
-  ),
-});
-
-const WorkHandlerConfigFromJson = Schema.Struct({
-  ...ProcessCommandConfigFromJson.fields,
-  initialize: Schema.optional(ProcessCommandConfigFromJson),
-});
-
 const ImplementationApplicationConfigFromJson = Schema.Struct({
   agent: Schema.optional(HandlerCommand),
   model: Schema.optional(OpenCodeModel),
@@ -90,7 +55,6 @@ const LaborerConfigFromJson = Schema.fromJsonString(
   Schema.StructWithRest(
     Schema.Struct({
       application: Schema.optional(ReferenceCodingApplicationConfigFromJson),
-      workHandler: Schema.optional(WorkHandlerConfigFromJson),
     }),
     [Schema.Record(Schema.String, Schema.Unknown)]
   )
@@ -117,7 +81,11 @@ const acpConfigMigrationIssue = (source: string): string | null => {
   } catch {
     return null;
   }
-  const application = objectRecord(objectRecord(decoded)?.application);
+  const root = objectRecord(decoded);
+  if (root !== null && Object.hasOwn(root, "workHandler")) {
+    return "configured-work-handler-retired";
+  }
+  const application = objectRecord(root?.application);
   if (application === null) {
     return null;
   }
@@ -152,68 +120,6 @@ const implementationConfig = (
         },
       };
 
-const executableFile = Effect.fnUntraced(function* (path: string) {
-  const fileResult = yield* Effect.result(
-    Effect.tryPromise({
-      try: () => openRegularFileNoFollow(path, "validate-work-handler-command"),
-      catch: () => false,
-    })
-  );
-  if (fileResult._tag === "Failure") {
-    return false;
-  }
-  try {
-    const accessResult = yield* Effect.result(
-      Effect.tryPromise({
-        try: () => access(path, constants.X_OK),
-        catch: () => false,
-      })
-    );
-    return accessResult._tag === "Success";
-  } finally {
-    yield* Effect.promise(() => fileResult.success.close());
-  }
-});
-
-const validateCommand = Effect.fnUntraced(function* (
-  command: string,
-  root: string,
-  environment: NodeJS.ProcessEnv,
-  operation: string
-) {
-  if (command.includes("/")) {
-    if (isAbsolute(command)) {
-      return yield* configFailure(operation, "absolute-command");
-    }
-    const resolvedCommand = resolve(root, command);
-    yield* Effect.tryPromise({
-      try: () =>
-        assertSafeFilePath({
-          anchor: root,
-          operation: "validate-work-handler-command",
-          path: resolvedCommand,
-        }),
-      catch: () => configFailure(operation, "unsafe-command-path"),
-    });
-    if (yield* executableFile(resolvedCommand)) {
-      return resolvedCommand;
-    }
-    return yield* configFailure(operation, "command-not-executable");
-  }
-
-  const path = environment.PATH;
-  if (path === undefined) {
-    return yield* configFailure(operation, "command-not-on-path");
-  }
-  for (const pathEntry of path.split(delimiter)) {
-    const candidate = resolve(root, pathEntry, command);
-    if (yield* executableFile(candidate)) {
-      return candidate;
-    }
-  }
-  return yield* configFailure(operation, "command-not-on-path");
-});
-
 const validateEnvironmentNames = (
   names: readonly string[],
   operation: string
@@ -232,19 +138,6 @@ const validateEnvironmentNames = (
   }
   return Effect.succeed(names);
 };
-
-const validateProcessCommand = Effect.fnUntraced(function* (
-  raw: typeof ProcessCommandConfigFromJson.Type,
-  root: string,
-  environment: NodeJS.ProcessEnv,
-  operation: string
-) {
-  return {
-    args: raw.args,
-    command: yield* validateCommand(raw.command, root, environment, operation),
-    environment: yield* validateEnvironmentNames(raw.environment, operation),
-  } satisfies ProcessCommandConfig;
-});
 
 const readConfig = async (root: string): Promise<string> => {
   const path = resolve(root, "laborer.json");
@@ -303,55 +196,17 @@ export const loadLaborerConfig = Effect.fn("loadLaborerConfig")(
     })(source).pipe(
       Effect.mapError(() => configFailure("parse-config", "invalid-config"))
     );
-    const hasApplication = rawConfig.application !== undefined;
-    const hasWorkHandler = rawConfig.workHandler !== undefined;
-    if (hasApplication === hasWorkHandler) {
+    if (rawConfig.application === undefined) {
       return yield* configFailure("parse-config", "invalid-config");
     }
-    if (rawConfig.application !== undefined) {
-      const application: ReferenceCodingApplicationConfig = {
-        environment: yield* validateEnvironmentNames(
-          rawConfig.application.environment,
-          "validate-reference-coding-application"
-        ),
-        ...implementationConfig(rawConfig.application.implementation),
-        type: "reference-coding",
-      };
-      const { workHandler: _workHandler, ...retainedConfig } = rawConfig;
-      const config: LaborerConfig = {
-        ...retainedConfig,
-        application,
-      };
-      return { config, root };
-    }
-    const rawWorkHandler = rawConfig.workHandler;
-    if (rawWorkHandler === undefined) {
-      return yield* configFailure("parse-config", "invalid-config");
-    }
-    const validatedWorkHandler = yield* validateProcessCommand(
-      rawWorkHandler,
-      root,
-      environment,
-      "validate-work-handler"
-    );
-    const initialize =
-      rawWorkHandler.initialize === undefined
-        ? undefined
-        : yield* validateProcessCommand(
-            rawWorkHandler.initialize,
-            root,
-            environment,
-            "validate-work-handler-initializer"
-          );
-    const workHandler = {
-      ...validatedWorkHandler,
-      ...(initialize === undefined ? {} : { initialize }),
-    } satisfies WorkHandlerConfig;
-    const { application: _application, ...retainedConfig } = rawConfig;
-    const config: LaborerConfig = { ...retainedConfig, workHandler };
-    return {
-      config,
-      root,
+    const application: ReferenceCodingApplicationConfig = {
+      environment: yield* validateEnvironmentNames(
+        rawConfig.application.environment,
+        "validate-reference-coding-application"
+      ),
+      ...implementationConfig(rawConfig.application.implementation),
+      type: "reference-coding",
     };
+    return { config: { ...rawConfig, application }, root };
   }
 );

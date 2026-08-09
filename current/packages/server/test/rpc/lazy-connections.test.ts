@@ -19,14 +19,11 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import { Context, Effect, Layer } from 'effect'
-import { ConfigService } from '../../src/services/config-service.js'
 import { makeServiceProxy } from '../../src/services/deferred-service.js'
 import {
   type FileEventHandler,
   FileWatcherClient,
 } from '../../src/services/file-watcher-client.js'
-import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { TestLaborerStore } from '../helpers/test-store.js'
@@ -79,22 +76,13 @@ describe('Lazy sidecar connections (Issue #16)', () => {
 
   describe('TerminalClient', () => {
     /**
-     * TerminalClient.layer requires LaborerStore, WorkspaceProvider,
-     * ConfigService, and ProjectRegistry. For this test, we provide
-     * stubs for the deferred services and real implementations for
-     * core services.
+     * TerminalClient.layer requires LaborerStore and WorkspaceProvider.
+     * For this test, we provide a stub for the deferred workspace service.
      */
     const TerminalClientTestLayer = TerminalClient.layer.pipe(
       Layer.provide(
         Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider'))
       ),
-      Layer.provide(
-        Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry'))
-      ),
-      Layer.provide(
-        Layer.succeed(SandboxProvider, makeServiceProxy('SandboxProvider'))
-      ),
-      Layer.provide(ConfigService.layer),
       Layer.provide(TestLaborerStore)
     )
 
@@ -170,19 +158,6 @@ describe('Lazy sidecar connections (Issue #16)', () => {
                   makeServiceProxy('WorkspaceProvider')
                 )
               ),
-              Layer.provide(
-                Layer.succeed(
-                  ProjectRegistry,
-                  makeServiceProxy('ProjectRegistry')
-                )
-              ),
-              Layer.provide(
-                Layer.succeed(
-                  SandboxProvider,
-                  makeServiceProxy('SandboxProvider')
-                )
-              ),
-              Layer.provide(ConfigService.layer),
               Layer.provide(TestLaborerStore)
             )
 

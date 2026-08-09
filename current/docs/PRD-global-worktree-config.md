@@ -164,7 +164,7 @@ Prior art: no frontend component tests exist yet — these would be the first. U
 - **Config file watching / hot reload**: Config is re-read on each worktree creation. There is no file watcher that detects external changes to `laborer.json` and pushes updates to the UI. The modal re-fetches on open.
 - **Global settings UI**: There is no modal or UI for editing the global `~/.config/laborer/laborer.json`. Users edit it by hand. Only the project-level settings modal is built.
 - **Config validation schema enforcement**: The config file is loosely typed JSON. There is no JSON Schema file published or strict validation beyond what the TypeScript interface expects. Unknown fields are preserved on write.
-- **Docker/container worktree providers**: The worktree path configuration only applies to the git-worktree provider. Future container-based providers are out of scope.
+- **Remote worktrees**: The worktree path configuration applies only to local git worktrees. Remote worktree storage is out of scope.
 
 ## Further Notes
 

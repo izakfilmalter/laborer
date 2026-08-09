@@ -12,17 +12,13 @@ import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
-import { ContainerService } from '../../src/services/container-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
-import { DepsImageService } from '../../src/services/deps-image-service.js'
-import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
-import { SandboxProviderRoutedLayer } from '../../src/services/sandbox-provider-router.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
@@ -67,7 +63,7 @@ const TestTerminalClient = Layer.effect(
     const recorder = yield* TestTerminalClientRecorder
 
     return TerminalClient.of({
-      spawnInWorkspace: (workspaceId, command, _autoRun) =>
+      spawnInWorkspace: (workspaceId, command) =>
         Effect.gen(function* () {
           yield* Ref.update(recorder.spawnInWorkspaceCalls, (calls) => [
             ...calls,
@@ -89,33 +85,7 @@ const TestTerminalClient = Layer.effect(
           ])
           return 0
         }),
-      resizeTerminal: () => Effect.void,
-      killTerminal: () => Effect.void,
-      removeTerminal: () => Effect.void,
     })
-  })
-)
-
-/**
- * Test stub for DockerDetection — always reports Docker as available.
- * Avoids running actual `which docker` / `docker info` commands in tests.
- */
-const TestDockerDetection = Layer.succeed(
-  DockerDetection,
-  DockerDetection.of({
-    check: () => Effect.succeed({ available: true }),
-  })
-)
-
-/**
- * Test stub for DepsImageService — always returns null (no lockfile found).
- * Prevents Docker commands from running in test workers, which would crash
- * tinypool when the test scope exits before the background fiber finishes.
- */
-const TestDepsImageService = Layer.succeed(
-  DepsImageService,
-  DepsImageService.of({
-    ensureDepsImage: () => Effect.succeed(null),
   })
 )
 
@@ -142,31 +112,19 @@ const CoreLeafLayers = Layer.mergeAll(
  */
 const DeferredLeafLayers = Layer.mergeAll(
   TestFileWatcherClientLayer,
-  WorktreeDetector.layer,
-  TestDepsImageService,
-  TestDockerDetection
+  WorktreeDetector.layer
 )
 
 /**
- * Deferred Group 1a — services depending on LaborerStore + leaf layers.
- * Does NOT include WorktreeReconciler because it needs SandboxProvider,
- * which is built in Group 1b after ContainerService is available.
+ * Deferred Group 1 — services depending on LaborerStore + leaf layers.
  */
 const DeferredGroup1aLayers = Layer.mergeAll(
   BranchStateTracker.layer,
-  ContainerService.layer,
   FileService.layer,
   PrWatcher.layer
 )
 
-/**
- * Deferred Group 1b — adds SandboxProvider (routed between Docker and
- * Daytona) on top of Group 1a, then builds WorktreeReconciler which
- * needs SandboxProvider for sandbox cleanup when removing stale
- * workspaces.
- */
 const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(
-  Layer.provideMerge(SandboxProviderRoutedLayer),
   Layer.provideMerge(DeferredGroup1aLayers)
 )
 
@@ -193,10 +151,6 @@ const DeferredGroup2Layers = Layer.mergeAll(RepositoryWatchCoordinator.layer)
 /**
  * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
- *
- * `SandboxProvider` is already in the stack from Group 1b
- * (via `SandboxProviderRoutedLayer`), so `WorkspaceProvider.layer`
- * can consume it directly.
  */
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
@@ -229,7 +183,6 @@ const DeferredServicesReadyTrueLayer = Layer.effect(
  */
 /**
  * DeferredServiceStack with TestTerminalClient baked in.
- * SandboxProviderRoutedLayer (inside the stack) requires TerminalClient.
  */
 const DeferredServiceStackWithTerminal = DeferredServiceStack.pipe(
   Layer.provide(TestTerminalClient),

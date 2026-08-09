@@ -20,7 +20,6 @@ import {
   makeServiceProxy,
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
-import type { DockerDetection } from '../../src/services/docker-detection.js'
 
 describe('Deferred service initialization (Issue #14)', () => {
   describe('makeServiceProxy', () => {
@@ -148,23 +147,6 @@ describe('Deferred service initialization (Issue #14)', () => {
         const isReady = yield* Ref.get(ref)
         assert.isTrue(isReady)
       }).pipe(Effect.provide(DeferredServicesReadyLayer))
-    )
-  })
-
-  describe('DockerDetection placeholder', () => {
-    it.effect('DockerDetection placeholder returns { available: false }', () =>
-      Effect.gen(function* () {
-        // This matches the production behavior in main.ts where
-        // DockerDetection gets a placeholder override for check()
-        const proxy = makeServiceProxy<
-          Context.Tag.Service<typeof DockerDetection>
-        >('DockerDetection', {
-          check: () => Effect.succeed({ available: false }),
-        })
-
-        const result = yield* proxy.check()
-        assert.deepEqual(result, { available: false })
-      })
     )
   })
 })

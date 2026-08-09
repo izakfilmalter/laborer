@@ -6,7 +6,7 @@ import { Effect, Ref } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeOpenCodeWorkspaceSessionClient } from "../src/adapters/opencode-agents.ts";
 import { ExternalInputEvent } from "../src/application.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
+import { ThreadId } from "../src/core/domain.ts";
 import {
   type ConversationAgentRequest,
   ImplementationAgent,

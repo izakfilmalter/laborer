@@ -8,8 +8,6 @@
  * Shared between the workspace card list and the empty terminal pane so
  * both surfaces show the same setup progress while a workspace is being
  * created.
- *
- * @see apps/web/src/lib/sandbox-setup-labels.ts — sandbox counterpart
  */
 
 /**

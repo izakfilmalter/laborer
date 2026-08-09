@@ -104,6 +104,16 @@ describe("SQLite Chat SDK state adapter", () => {
       assert.isNull(await adapter.get("dedupe"));
     }));
 
+  it("treats a zero TTL as immediate expiry rather than no expiry", () =>
+    withAdapter(async ({ adapter }) => {
+      await adapter.set("zero-cache", "stale", 0);
+      assert.isNull(await adapter.get("zero-cache"));
+      assert.isTrue(await adapter.setIfNotExists("zero-dedupe", "stale", 0));
+      assert.isNull(await adapter.get("zero-dedupe"));
+      await adapter.appendToList("zero-list", "stale", { ttlMs: 0 });
+      assert.deepStrictEqual(await adapter.getList("zero-list"), []);
+    }));
+
   it("serializes set-if-absent across adapter connections", () =>
     withAdapter(async ({ adapter, path }) => {
       const competitor = new SQLiteStateAdapter({ path });

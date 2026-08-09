@@ -271,11 +271,9 @@ Tests should verify external behavior through the public API, not implementation
 
 5. **File watcher sidecar changes** — the `@laborer/file-watcher` package stays as-is. We're only changing how the server consumes and exposes its events.
 
-6. **Container workspace file operations** — this PRD assumes direct filesystem access. Containerized workspaces may need a different path for file operations.
+6. **Tree virtualization** — the existing `@pierre/trees` component handles rendering. This PRD changes the data source, not the rendering.
 
-7. **Tree virtualization** — the existing `@pierre/trees` component handles rendering. This PRD changes the data source, not the rendering.
-
-8. **Accept/reject hunk interactions** — the diff panel's hunk-level accept/reject UI stays as-is. This PRD changes how diff data is fetched, not how it's rendered.
+7. **Accept/reject hunk interactions** — the diff panel's hunk-level accept/reject UI stays as-is. This PRD changes how diff data is fetched, not how it's rendered.
 
 ## Further Notes
 

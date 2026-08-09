@@ -598,10 +598,6 @@ export function registerIpcHandlers(
       ) {
         workspaceIds = payload.workspaceIds
       }
-      const focused =
-        typeof payload === 'object' && payload !== null && 'focused' in payload
-          ? payload.focused === true
-          : false
       const contexts =
         typeof payload === 'object' &&
         payload !== null &&
@@ -619,8 +615,11 @@ export function registerIpcHandlers(
                   context !== null &&
                   'branchName' in context &&
                   typeof context.branchName === 'string' &&
+                  context.branchName.length <= 1000 &&
                   'workspaceId' in context &&
-                  typeof context.workspaceId === 'string'
+                  typeof context.workspaceId === 'string' &&
+                  context.workspaceId.length > 0 &&
+                  context.workspaceId.length <= 1000
               )
               .slice(0, 1000)
           : []
@@ -629,7 +628,8 @@ export function registerIpcHandlers(
       }
 
       const validIds = workspaceIds.filter(
-        (id): id is string => typeof id === 'string' && id.length > 0
+        (id): id is string =>
+          typeof id === 'string' && id.length > 0 && id.length <= 1000
       )
 
       const senderWindow = BrowserWindow.fromWebContents(event.sender)
@@ -639,7 +639,9 @@ export function registerIpcHandlers(
 
       workspaceRegistry.update(senderWindow, {
         contexts,
-        focused,
+        // Window focus is a main-process fact. Do not let a renderer-supplied
+        // boolean bypass app-wide notification suppression.
+        focused: senderWindow.isFocused(),
         workspaceIds: validIds.slice(0, 1000),
       })
       publishWorkspacePresence()

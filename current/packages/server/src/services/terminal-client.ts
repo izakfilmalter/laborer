@@ -201,6 +201,11 @@ const startAgentHookServer = (
             terminalId,
             status,
           } = Schema.decodeUnknownSync(AgentHookRequestSchema)(body)
+          if (terminalId.length === 0 || terminalId.length > 1000) {
+            res.writeHead(400)
+            res.end()
+            return
+          }
 
           // Epoch-based sequences stay newer when this proxy restarts while
           // the terminal service and agent process remain alive.

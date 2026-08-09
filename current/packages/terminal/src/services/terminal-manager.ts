@@ -1690,7 +1690,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               agentProcesses: freshDetection.agentProcessIds.map((pid) => ({
                 pid,
               })),
-              hasNonAgentProcess: freshDetection.processChain.length > 0,
+              // Nested shells are omitted from the presentation chain, but
+              // they still mean another command has taken over.
+              hasNonAgentProcess: freshDetection.hasChildProcess,
               sampledAt,
             })
           } else if (!detectionBatch.available) {

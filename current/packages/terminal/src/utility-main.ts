@@ -388,7 +388,14 @@ function setupAgentStatusReporting(
         present: true,
       }
       owners.set(terminal.id, owner)
-    } else if (previousOwner?.present) {
+    } else if (
+      previousOwner?.present &&
+      (terminal.agentStatus === null || terminal.agentStatus.status === 'idle')
+    ) {
+      // Process inspection requires consecutive downward samples. Preserve
+      // the generation while the status engine still considers the agent
+      // active, otherwise one transient process-tree miss turns the same
+      // process into a new notification generation on the next sample.
       owner = { ...previousOwner, present: false }
       owners.set(terminal.id, owner)
     }

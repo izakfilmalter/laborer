@@ -49,7 +49,7 @@ import {
   NormalizedMessage,
   ThreadId,
   TurnId,
-} from "../src/prototype/domain.ts";
+} from "../src/core/domain.ts";
 import {
   type ConversationAction,
   makeFileApplicationRepository,

@@ -39,6 +39,19 @@ import {
   ExternalInputEvent,
   type PublishApplicationOutput,
 } from "./application.ts";
+import { withApplicationFileLock } from "./core/application-file-lock.ts";
+import {
+  NormalizedImage,
+  type NormalizedMessage,
+  ThreadId,
+} from "./core/domain.ts";
+import { HandlerFailure } from "./core/errors.ts";
+import {
+  assertSafeFilePath,
+  openRegularFileNoFollow,
+  retainTrustedDirectory,
+  verifyRetainedDirectory,
+} from "./core/path-safety.ts";
 import { ExecutionEvent } from "./durable-runtime/root-runtime.ts";
 import {
   CancelExecutionInput,
@@ -52,19 +65,6 @@ import {
   productionExecutionControlCatalog,
   SafeExecutionSnapshot,
 } from "./execution-control-catalog.ts";
-import { withApplicationFileLock } from "./prototype/application-file-lock.ts";
-import {
-  NormalizedImage,
-  type NormalizedMessage,
-  ThreadId,
-} from "./prototype/domain.ts";
-import { HandlerFailure } from "./prototype/errors.ts";
-import {
-  assertSafeFilePath,
-  openRegularFileNoFollow,
-  retainTrustedDirectory,
-  verifyRetainedDirectory,
-} from "./prototype/path-safety.ts";
 import type {
   ConversationAdoptionHistoryGateway,
   ConversationAdoptionHistorySnapshot,

@@ -5,8 +5,8 @@ import {
   DealWithBugActionInput,
 } from "../action-catalog.ts";
 import { makeGitWorktreeManager } from "../adapters/git-worktree-manager.ts";
-import { ThreadId } from "../prototype/domain.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { ThreadId } from "../core/domain.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import type {
   ActionInvocationAccepted,
   ConversationAction,
@@ -19,7 +19,7 @@ import {
   makeLazyOpenCodeImplementationAgent,
   type ReferenceCodingWorkspaceApplicationDependencies,
   type ReferenceCodingWorkspaceApplicationOptions,
-} from "../slack/workspace-runner.ts";
+} from "../slack/workspace-application.ts";
 import { defineAction, defineApplication } from "./action.ts";
 import type {
   ExecutionSnapshot,

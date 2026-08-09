@@ -16,8 +16,8 @@ import {
   NormalizedMessage,
   ThreadId,
   TurnId,
-} from "../src/prototype/domain.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
+} from "../src/core/domain.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 import {
   type AcceptImplementationAgentResponse,
   type ConversationAgentRequest,

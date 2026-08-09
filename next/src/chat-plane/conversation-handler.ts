@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { NormalizedImage } from "../prototype/domain.ts";
+import { NormalizedImage } from "../core/domain.ts";
 import {
   ChatPlane,
   type ChatPlaneMessageHandler,

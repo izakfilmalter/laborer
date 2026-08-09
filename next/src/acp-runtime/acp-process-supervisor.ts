@@ -9,7 +9,7 @@ import {
   Scope,
   Semaphore,
 } from "effect";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import type {
   ConversationAgentRequest,
   ConversationAgentShape,

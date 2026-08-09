@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { NormalizedImage } from "../prototype/domain.ts";
+import type { NormalizedImage } from "../core/domain.ts";
 
 interface HydratableAttachment {
   readonly fetchData?: () => Promise<Buffer>;

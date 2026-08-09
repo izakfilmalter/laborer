@@ -2,7 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { chmod, link, lstat, realpath, rm } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { assertSafeFilePath } from "../prototype/path-safety.ts";
+import { assertSafeFilePath } from "../core/path-safety.ts";
 
 const LOCK_RETRY_MILLIS = 25;
 const LOCK_MAX_RETRY_MILLIS = 2000;

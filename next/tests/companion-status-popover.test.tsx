@@ -276,7 +276,7 @@ describe("companion status popover", () => {
     expect(screen.getByText("2 unavailable")).toBeTruthy();
   });
 
-  it("groups actionable, ongoing, and recent threads beneath their owning workspace", () => {
+  it("groups ongoing and recent threads beneath their owning workspace", () => {
     const now = Date.now();
     render(
       <StatusPopover
@@ -296,7 +296,7 @@ describe("companion status popover", () => {
               teamId: "TFIRST",
               threads: [
                 {
-                  activity: "needs-attention",
+                  activity: "in-progress",
                   executions: [],
                   excerpt: "Fix the blocked deployment",
                   id: "workspace:TFIRST:C123:1000.000001",
@@ -365,11 +365,7 @@ describe("companion status popover", () => {
     const sections = screen.getAllByRole("heading", { level: 4 });
     expect(
       sections.map((section) => section.getAttribute("aria-label"))
-    ).toEqual([
-      "Needs attention, 1 work thread",
-      "In progress, 1 work thread",
-      "Recent, 1 work thread",
-    ]);
+    ).toEqual(["In progress, 2 work threads", "Recent, 1 work thread"]);
     expect(
       screen.getByRole("heading", { level: 3, name: "Freckle HQ" })
     ).toBeTruthy();
@@ -430,7 +426,7 @@ describe("companion status popover", () => {
               teamId: "TFIRST",
               threads: [
                 {
-                  activity: "needs-attention",
+                  activity: "in-progress",
                   executions: [
                     execution(1, "allocated", 1),
                     execution(2, "running", 2),
@@ -577,7 +573,7 @@ describe("companion status popover", () => {
     expect(screen.getByText("Recent for less than a minute")).toBeTruthy();
   });
 
-  it("raises blocked work into the summary and orders its workspace first", () => {
+  it("raises in-progress work into the summary and orders its workspace first", () => {
     render(
       <StatusPopover
         quit={() => undefined}
@@ -604,7 +600,7 @@ describe("companion status popover", () => {
               teamId: "TBLOCKED",
               threads: [
                 {
-                  activity: "needs-attention",
+                  activity: "in-progress",
                   executions: [],
                   excerpt: "Unblock the failed work",
                   id: "workspace:TBLOCKED:C123:1000.000001",
@@ -620,10 +616,10 @@ describe("companion status popover", () => {
     );
 
     expect(screen.getByRole("status").textContent).toContain(
-      "Work needs attention"
+      "Work in progress"
     );
     expect(screen.getByRole("status").textContent).toContain(
-      "1 work thread cannot progress without you"
+      "Laborer still owes progress on 1 work thread"
     );
     expect(
       screen

@@ -22,11 +22,11 @@ import {
   processSupervisorProxyPath,
   terminateSupervisedProcess,
 } from "../adapters/process-supervisor.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   assertNoSymlinkPathComponents,
   openRegularFileNoFollow,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import type {
   ConversationAgentRequest,
   ConversationAgentSessionBinding,

@@ -6,7 +6,7 @@ import { TestClock } from "effect/testing";
 import { makeAcpProcessStateRepository } from "../src/acp-runtime/acp-process-state.ts";
 import type { AcpGenerationContext } from "../src/acp-runtime/acp-process-supervisor.ts";
 import { makeAcpConversationProcessSupervisor } from "../src/acp-runtime/acp-process-supervisor.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 import type { ConversationAgentShape } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 

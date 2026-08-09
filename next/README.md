@@ -1,16 +1,28 @@
 # Slack-native Laborer
 
-`next/` is Laborer's primary Slack-native daemon. Vercel Chat SDK owns the
-Slack plane: Socket Mode ingestion, activation and subscription, coalesced
-backlogs, attachments, Block Kit actions, and best-effort streaming. The
-Effect-wrapped ACP/OpenCode runtime owns Conversation sessions, Agent context,
-the public/private output gate, registered Actions, and durable Executions.
+`next/` is Laborer's primary Slack-native implementation, package
+`@laborer/slack-runtime`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
+entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
+subscription, delivery, streaming, and Block Kit permission UI. One Slack
+adapter serves every configured workspace through an `installationProvider`
+that resolves local per-team bot tokens; Laborer runs no OAuth server or
+installation store.
+
+Chat is isolated behind a narrow, scoped Effect service. The surviving core is
+ACP/OpenCode 2 process supervision, durable Agent sessions and context (Soul,
+Workspace memory, and User profiles), registered Actions and durable
+Executions, and the public/private output gate. Substantive current-prompt
+Conversation output streams directly to Slack; `NO_REPLY`, diagnostics, and
+implementation-agent output remain private.
 
 Conversational turns are at-most-once. If the daemon or a turn fails, Laborer
 posts a sanitized best-effort notice when possible and a participant recovers by
-mentioning Laborer again. There is no conversational replay scheduler or durable
-Slack outbox. Action/Execution durability is independent of those messaging
-semantics.
+mentioning Laborer again. Messages received during a running turn are coalesced
+into the next turn through `context.skipped`. Streaming and permission clicks
+are best effort and at-most-once; a truncated stream is not resumed and a lost
+permission click is clicked again. There is no conversational replay scheduler
+or durable Slack outbox. Action/Execution durability is independent of those
+messaging semantics.
 
 ## Configure
 
@@ -40,11 +52,25 @@ SLACK_BOT_TOKEN_FIRST=
 ```
 
 Every installation is authenticated and must match its configured team ID.
-Workspace state is isolated under
+All daemon runtime state has one root. Workspace state is isolated under
 `$XDG_STATE_HOME/laborer/workspaces/<team-id>/` (defaulting to
-`~/.local/state/laborer/workspaces/<team-id>/`). Chat SDK state is stored at the
-single Laborer state root. Prior Runner state is intentionally not imported or
-archived; after this cutover, existing Slack threads activate again by mention.
+`~/.local/state/laborer/workspaces/<team-id>/`). The custom SQLite Chat SDK
+`StateAdapter` stores subscriptions, deduplication, locks, queues, and lists in
+`$XDG_STATE_HOME/laborer/chat.sqlite`; each workspace's durable
+Action/Execution runtime uses its partition's `runtime.sqlite`. Pre-Chat runtime
+state is deleted at cutover, not imported or archived; affected Slack threads
+activate again by mention.
+
+## Stable installed identities
+
+The source package is `@laborer/slack-runtime`, but already installed external
+identities do not follow package naming. The launchd service label remains
+`com.laborer.daemon` and the companion bundle identifier remains
+`com.laborer.companion`. The daemon/companion operator protocol is an explicit
+versioned local boundary (version 6 after the Chat cutover): peers reject a
+mismatched version, and schema changes must deliberately bump it. These are the
+forward-stable identities; pre-Chat runtime records have no compatibility
+identity and are deleted.
 
 ## Run
 
@@ -64,7 +90,9 @@ A restart does not drain or replay in-flight conversational work. Changes to
 dependencies, environment, package metadata, or Node itself require restarting
 the command.
 
-The dedicated manual canaries remain available under isolated credentials:
+The dedicated manual canaries remain available under isolated credentials.
+`start:acp-canary` exercises the production Chat/ACP/OpenCode composition;
+`start:chat-canary` isolates the Chat boundary with a placeholder responder:
 
 ```sh
 bun run --cwd next start:chat-canary
@@ -72,6 +100,12 @@ bun run --cwd next start:acp-canary
 ```
 
 Do not run canaries against production app credentials.
+
+Registered Actions are the extension seam for user-owned operations. The
+Conversation agent chooses when to invoke them; Actions and implementation
+agents never publish directly to Slack. `laborer.json` selects the registered
+application and may configure its Action-facing implementation agent, but it
+does not configure an alternate work handler.
 
 ## Verify
 
@@ -81,10 +115,11 @@ Automated checks are deterministic and offline:
 bun run --cwd next check
 ```
 
-The suite covers the Chat Effect boundary and SQLite StateAdapter, ACP process
-supervision and output authority, registered Actions and Executions, and the
-configuration cutover. Live Slack and ACP verification is a separate manual
-canary gate.
+`Emulate` is the Chat SDK's deterministic offline test harness, never a daemon
+or supported receiver. The suite drives the narrow Chat Effect boundary with
+fakes and covers the SQLite StateAdapter, ACP process supervision and output
+authority, registered Actions and Executions, and the configuration cutover.
+Live Slack and ACP verification is a separate manual canary gate.
 
 The supported ACP/OpenCode versions and deployment policy are documented in
 [`docs/acp-runtime-matrix.md`](docs/acp-runtime-matrix.md) and

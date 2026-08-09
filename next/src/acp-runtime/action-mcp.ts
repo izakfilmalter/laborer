@@ -25,6 +25,12 @@ import {
   actionInputHash,
   productionActionCatalog,
 } from "../action-catalog.ts";
+import { HandlerFailure } from "../core/errors.ts";
+import {
+  assertSafeFilePath,
+  retainTrustedDirectory,
+  verifyRetainedDirectory,
+} from "../core/path-safety.ts";
 import type { RegisteredActionCatalog } from "../durable-runtime/action.ts";
 import {
   CancelExecutionResult,
@@ -38,12 +44,6 @@ import {
   makeGeneratedMutationCatalog,
   productionGeneratedMutationCatalog,
 } from "../generated-mutation-catalog.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
-import {
-  assertSafeFilePath,
-  retainTrustedDirectory,
-  verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
 import type {
   ConversationAction,
   ConversationExecutionControl,

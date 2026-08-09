@@ -1,6 +1,6 @@
 import { Context, type Effect, Layer, Schema } from "effect";
-import { NormalizedMessage, ThreadId, TurnId } from "./prototype/domain.ts";
-import type { HandlerFailure, StoreError } from "./prototype/errors.ts";
+import { NormalizedMessage, ThreadId, TurnId } from "./core/domain.ts";
+import type { HandlerFailure, StoreError } from "./core/errors.ts";
 
 const NonBlankString = Schema.String.check(Schema.isPattern(/\S/));
 
@@ -76,7 +76,7 @@ export type ApplicationPublicOutput =
 
 /**
  * A prompt crossed the ACP admission boundary but no terminal result can be
- * proved. This is a domain outcome, not a HandlerFailure: the Runner must keep
+ * proved. This is a domain outcome, not a HandlerFailure: the application must keep
  * the owner and every later input durable until an operator decides what to do.
  */
 export class ConversationBlocked extends Schema.TaggedErrorClass<ConversationBlocked>()(

@@ -21,7 +21,7 @@ import {
 } from "node:path";
 import { Effect, Array as EffectArray } from "effect";
 import { SAFE_WORKTREE_NAME_PATTERN } from "../action-catalog.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   type ResourceInspectionOutcome,
   type WorktreeInspectionRequest,

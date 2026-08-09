@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { Effect } from "effect";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 
 const CONFIG_PROBE_ARGS = ["serve", "--stdio", "--port", "0"] as const;
 const CONFIG_PROBE_STARTUP_TIMEOUT_MILLIS = 5000;

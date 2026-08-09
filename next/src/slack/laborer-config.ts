@@ -8,7 +8,7 @@ import {
   openRegularFileNoFollow,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
 
 export interface ReferenceCodingApplicationConfig {

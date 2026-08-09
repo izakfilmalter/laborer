@@ -15,8 +15,8 @@ import {
   NormalizedMessage,
   stableMessageId,
   TurnId,
-} from "../prototype/domain.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+} from "../core/domain.ts";
+import { HandlerFailure } from "../core/errors.ts";
 
 export interface AcpChatWorkspaceRuntime {
   /**

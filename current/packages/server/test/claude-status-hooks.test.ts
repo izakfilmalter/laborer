@@ -1,47 +1,43 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildClaudeStatusHooksSettings,
+  type ClaudeStatusHooksSettings,
   type ClaudeStatusReport,
   runClaudeStatusHook,
   writeClaudeStatusHooks,
 } from '../src/services/claude-status-hooks.js'
 
-interface HookCommand {
-  readonly command: string
-}
-
-interface HookGroup {
-  readonly hooks: readonly HookCommand[]
-  readonly matcher: string
-}
-
-interface ClaudeSettings {
-  readonly hooks: Readonly<Record<string, readonly HookGroup[]>>
-}
-
-const asSettings = (value: Record<string, unknown>): ClaudeSettings =>
-  value as unknown as ClaudeSettings
-
-const commandStatus = (settings: ClaudeSettings, event: string): string => {
+const commandStatus = (
+  settings: ClaudeStatusHooksSettings,
+  event: keyof ClaudeStatusHooksSettings['hooks']
+): string => {
   const command = settings.hooks[event]?.[0]?.hooks[0]?.command
   return command?.split(' ').at(-1) ?? ''
 }
 
 describe('Claude status hook adapter', () => {
   it('maps the persistent interactive CLI lifecycle to semantic statuses', () => {
-    const settings = asSettings(
-      buildClaudeStatusHooksSettings('/tmp/laborer hook.mjs')
-    )
+    const settings = buildClaudeStatusHooksSettings('/tmp/laborer hook.mjs')
+    const lifecycleEvents = [
+      'SessionStart',
+      'Stop',
+      'UserPromptSubmit',
+      'Stop',
+    ] as const
 
     expect(
-      ['SessionStart', 'Stop', 'UserPromptSubmit', 'Stop'].map((event) =>
-        commandStatus(settings, event)
-      )
+      lifecycleEvents.map((event) => commandStatus(settings, event))
     ).toEqual(['working', 'idle', 'working', 'idle'])
     expect(commandStatus(settings, 'Notification')).toBe('needs_input')
     expect(settings.hooks.Notification?.[0]?.matcher).toBe(
@@ -92,7 +88,7 @@ describe('Claude status hook adapter', () => {
     const directory = mkdtempSync(join(tmpdir(), 'laborer-claude-hooks-'))
     const terminalId = 'terminal-with-stale-lock'
     const identity = createHash('sha256').update(terminalId).digest('hex')
-    mkdirSync(join(directory, `${identity}.sequence.lock`))
+    symlinkSync('99999999', join(directory, `${identity}.sequence.lock`))
 
     try {
       const report = await runClaudeStatusHook('working', {
@@ -101,6 +97,7 @@ describe('Claude status hook adapter', () => {
           LABORER_TERMINAL_ID: terminalId,
         },
         fetch: () => Promise.resolve(new Response(null, { status: 200 })),
+        lockTimeoutMs: 0,
         stateDirectory: directory,
       })
 
@@ -110,17 +107,46 @@ describe('Claude status hook adapter', () => {
     }
   })
 
+  it('does not displace a lock held by a live hook invocation', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'laborer-claude-hooks-'))
+    const terminalId = 'terminal-with-live-lock'
+    const identity = createHash('sha256').update(terminalId).digest('hex')
+    const lockPath = join(directory, `${identity}.sequence.lock`)
+    symlinkSync(String(process.pid), lockPath)
+
+    try {
+      const report = await runClaudeStatusHook('idle', {
+        environment: {
+          LABORER_HOOK_URL: 'http://127.0.0.1/hook/agent-status',
+          LABORER_TERMINAL_ID: terminalId,
+        },
+        lockTimeoutMs: 0,
+        stateDirectory: directory,
+      })
+
+      expect(report).toBeNull()
+      expect(readlinkSync(lockPath)).toBe(String(process.pid))
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
+
   it('writes a self-contained runtime and settings file', () => {
     const directory = mkdtempSync(join(tmpdir(), 'laborer-claude-hooks-'))
     try {
       const settingsPath = writeClaudeStatusHooks('terminal-1', { directory })
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as
-        | ClaudeSettings
-        | undefined
-      const command = settings?.hooks.SessionStart?.[0]?.hooks[0]?.command
+      const settingsText = readFileSync(settingsPath, 'utf8')
+      const command = buildClaudeStatusHooksSettings(
+        join(directory, 'claude-agent-status.mjs')
+      ).hooks.SessionStart[0]?.hooks[0]?.command
 
       expect(command).toContain("claude-agent-status.mjs'")
       expect(command?.endsWith(' working')).toBe(true)
+      expect(JSON.parse(settingsText)).toEqual(
+        buildClaudeStatusHooksSettings(
+          join(directory, 'claude-agent-status.mjs')
+        )
+      )
       const scriptPath = join(directory, 'claude-agent-status.mjs')
       expect(readFileSync(scriptPath, 'utf8')).toContain(
         'await runClaudeStatusHook(process.argv[2])'

@@ -158,9 +158,10 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   vi.doMock('../src/ipc.js', () => ({
     askRenderersBeforeQuit: vi.fn(async () => false),
     closeRendererPortsForService: vi.fn(),
-    getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
+    publishWorkspacePresence: vi.fn(),
     QUIT_CONFIRMED_CHANNEL: 'desktop:quit-confirmed',
     registerIpcHandlers: registerIpcHandlersMock,
+    removeWindowPresence: vi.fn(),
     setDownloadUpdateHandler: vi.fn(),
     setGetBackendWsUrlHandler: vi.fn(),
     setGetSidecarStatusesHandler: vi.fn(),
@@ -169,6 +170,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     setRestartSidecarHandler: vi.fn(),
     setTrayCountHandler: vi.fn(),
     setUtilityProcessManager: vi.fn(),
+    setWorkspacePresenceHandler: vi.fn(),
   }))
   vi.doMock('../src/utility-process-manager.js', () => ({
     UtilityProcessManager: class {

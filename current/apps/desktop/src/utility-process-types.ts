@@ -127,6 +127,12 @@ export interface DaytonaTerminalDataPortMessage {
   readonly type: 'daytona-terminal-data-port'
 }
 
+/** Focused-and-visible workspace facts owned by Electron main. */
+export interface WorkspacePresenceMessage {
+  readonly type: 'workspace-presence'
+  readonly workspaceIds: readonly string[]
+}
+
 /** All messages the main process can send to a utility process. */
 export type UtilityProcessParentMessage =
   | PortTransferMessage
@@ -135,3 +141,4 @@ export type UtilityProcessParentMessage =
   | TerminalRpcPortMessage
   | FileWatcherRpcPortMessage
   | DaytonaTerminalDataPortMessage
+  | WorkspacePresenceMessage

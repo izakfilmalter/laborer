@@ -20,6 +20,7 @@ import {
   shell,
 } from 'electron'
 import type { UtilityProcessManager } from './utility-process-manager.js'
+import { WindowWorkspacePresenceRegistry } from './window-workspace-presence.js'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match preload.ts)
@@ -127,46 +128,10 @@ async function showConfirmDialog(
  * Updated by the renderer via the `reportVisibleWorkspaces` IPC channel.
  * Used by the notification click handler to route clicks to the correct window.
  */
-class WorkspaceWindowRegistry {
-  /** Map from BrowserWindow to the set of workspace IDs visible in it. */
-  readonly #windowWorkspaces = new Map<BrowserWindow, Set<string>>()
-
-  /** Update the visible workspace set for a window. */
-  update(window: BrowserWindow, workspaceIds: readonly string[]): void {
-    if (window.isDestroyed()) {
-      this.#windowWorkspaces.delete(window)
-      return
-    }
-    this.#windowWorkspaces.set(window, new Set(workspaceIds))
-  }
-
-  /** Remove a window's entry (e.g., when it closes). */
-  remove(window: BrowserWindow): void {
-    this.#windowWorkspaces.delete(window)
-  }
-
-  /**
-   * Find the BrowserWindow that has the given workspace visible.
-   * Returns null if no window currently shows that workspace.
-   */
-  findWindowForWorkspace(workspaceId: string): BrowserWindow | null {
-    for (const [window, workspaces] of this.#windowWorkspaces) {
-      if (window.isDestroyed()) {
-        this.#windowWorkspaces.delete(window)
-        continue
-      }
-      if (workspaces.has(workspaceId)) {
-        return window
-      }
-    }
-    return null
-  }
-}
-
-const workspaceRegistry = new WorkspaceWindowRegistry()
+const workspaceRegistry = new WindowWorkspacePresenceRegistry<BrowserWindow>()
 
 /** Access the workspace-to-window registry for external wiring (e.g., cleanup). */
-export function getWorkspaceWindowRegistry(): WorkspaceWindowRegistry {
+export function getWorkspaceWindowRegistry(): WindowWorkspacePresenceRegistry<BrowserWindow> {
   return workspaceRegistry
 }
 
@@ -265,6 +230,7 @@ type GetUpdateStateCallback = () => DesktopUpdateState
 type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type GetBackendWsUrlCallback = () => string | null
+type WorkspacePresenceCallback = (workspaceIds: readonly string[]) => void
 
 let trayCountCallback: TrayCountCallback | null = null
 let restartSidecarCallback: RestartSidecarCallback | null = null
@@ -274,6 +240,23 @@ let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
 let getBackendWsUrlCallback: GetBackendWsUrlCallback | null = null
 let utilityProcessManagerRef: UtilityProcessManager | null = null
+let workspacePresenceCallback: WorkspacePresenceCallback | null = null
+
+export function publishWorkspacePresence(): void {
+  workspacePresenceCallback?.(workspaceRegistry.focusedWorkspaceIds())
+}
+
+export function setWorkspacePresenceHandler(
+  cb: WorkspacePresenceCallback | null
+): void {
+  workspacePresenceCallback = cb
+  publishWorkspacePresence()
+}
+
+export function removeWindowPresence(window: BrowserWindow): void {
+  workspaceRegistry.remove(window)
+  publishWorkspacePresence()
+}
 
 /** Set the callback invoked when the renderer updates the tray workspace count. */
 export function setTrayCountHandler(cb: TrayCountCallback): void {
@@ -608,7 +591,21 @@ export function registerIpcHandlers(
   ipcMain.removeHandler(REPORT_VISIBLE_WORKSPACES_CHANNEL)
   ipcMain.handle(
     REPORT_VISIBLE_WORKSPACES_CHANNEL,
-    (event, workspaceIds: unknown) => {
+    (event, payload: unknown) => {
+      let workspaceIds: unknown = null
+      if (Array.isArray(payload)) {
+        workspaceIds = payload
+      } else if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        'workspaceIds' in payload
+      ) {
+        workspaceIds = payload.workspaceIds
+      }
+      const focused =
+        typeof payload === 'object' && payload !== null && 'focused' in payload
+          ? payload.focused === true
+          : false
       if (!Array.isArray(workspaceIds)) {
         return
       }
@@ -622,7 +619,11 @@ export function registerIpcHandlers(
         return
       }
 
-      workspaceRegistry.update(senderWindow, validIds)
+      workspaceRegistry.update(senderWindow, {
+        focused,
+        workspaceIds: validIds.slice(0, 1000),
+      })
+      publishWorkspacePresence()
     }
   )
 

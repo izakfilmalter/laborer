@@ -909,6 +909,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       report: AgentStatusReport
     ) => Effect.Effect<void, TerminalRpcError>
 
+    /** Replace the set of workspaces visible in focused app windows. */
+    readonly setObservedWorkspaces: (
+      workspaceIds: ReadonlySet<string>
+    ) => Effect.Effect<void>
+
     /**
      * Get all terminal metadata without process detection.
      * Returns the raw ManagedTerminal data synchronously via an Effect.
@@ -946,10 +951,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>())
 
       const statusEngines = new Map<string, TerminalStatusEngine>()
+      let observedWorkspaceIds: ReadonlySet<string> = new Set()
       const getStatusEngine = (terminalId: string): TerminalStatusEngine => {
         let engine = statusEngines.get(terminalId)
         if (engine === undefined) {
           engine = new TerminalStatusEngine()
+          const terminal = runSync(Ref.get(terminalsRef)).get(terminalId)
+          engine.setObserved(
+            terminal !== undefined &&
+              observedWorkspaceIds.has(terminal.workspaceId)
+          )
           statusEngines.set(terminalId, engine)
         }
         return engine
@@ -2170,6 +2181,25 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         emitEvent({ _tag: 'ProcessChanged', terminal: record })
       }
 
+      const setObservedWorkspaces = Effect.fn(
+        'TerminalManager.setObservedWorkspaces'
+      )(function* (workspaceIds: ReadonlySet<string>) {
+        observedWorkspaceIds = new Set(workspaceIds)
+        const map = yield* Ref.get(terminalsRef)
+
+        for (const terminal of map.values()) {
+          const engine = statusEngines.get(terminal.id)
+          if (engine === undefined) {
+            continue
+          }
+          const wasSeen = engine.current?.seen
+          engine.setObserved(observedWorkspaceIds.has(terminal.workspaceId))
+          if (engine.current?.seen !== wasSeen) {
+            emitProcessChangedForTerminal(terminal)
+          }
+        }
+      })
+
       const setAgentStatusFromHook = Effect.fn(
         'TerminalManager.setAgentStatusFromHook'
       )(function* (terminalId: string, report: AgentStatusReport) {
@@ -2335,6 +2365,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         unsubscribe,
         terminalExists,
         setAgentStatusFromHook,
+        setObservedWorkspaces,
         getTerminals: () =>
           Effect.map(Ref.get(terminalsRef), (map) => [...map.values()]),
         setRevivedReplayEvent,

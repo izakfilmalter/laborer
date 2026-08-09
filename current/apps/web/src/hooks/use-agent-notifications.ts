@@ -53,7 +53,10 @@ function buildWorkspaceStatusMap(
   for (const [workspaceId, workspaceTerminals] of grouped) {
     const status = deriveWorkspaceAgentStatus(workspaceTerminals)
     if (status !== null) {
-      statusMap.set(workspaceId, status)
+      // Legacy renderer notifications consume lifecycle statuses only. Done
+      // remains a UI projection until the main-process coordinator replaces
+      // this hook in issue #325.
+      statusMap.set(workspaceId, status === 'done' ? 'idle' : status)
     }
   }
 

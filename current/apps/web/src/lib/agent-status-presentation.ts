@@ -1,7 +1,8 @@
 /**
  * Presentation vocabulary for the semantic Agent status lifecycle.
  *
- * One module owns how `working | needs_input | idle | unknown` looks and
+ * One module owns how `working | needs_input | idle | unknown` and the
+ * display-only `done` projection look and
  * reads, so terminal rows, workspace frame headers, and workspace cards
  * never drift apart. Surfaces pick the pieces they need (label, badge
  * classes, dot treatment, provenance sentence) instead of re-deriving
@@ -21,10 +22,13 @@
  */
 
 import type {
-  AgentStatus,
   AgentStatusSnapshot,
   AgentStatusSource,
 } from '@/hooks/use-terminal-list'
+import {
+  type AgentDisplayStatus,
+  deriveAgentDisplayStatus,
+} from '@/lib/agent-attention-projection'
 
 /** How a status dot animates. `none` is used for at-rest states. */
 type AgentStatusMotion = 'ping' | 'breathe' | 'none'
@@ -56,49 +60,61 @@ interface AgentStatusPresentation {
  *
  * - `needs input` — amber, pinging dot. The only state that demands action.
  * - `working` — blue, the agent identity colour, breathing dot.
+ * - `done` — violet, still dot. Review the completed result.
  * - `idle` — success green, matching the shell-at-prompt badge, still dot.
  * - `unknown` — muted with a dashed edge, signalling "no answer yet".
  */
-const AGENT_STATUS_PRESENTATION: Record<AgentStatus, AgentStatusPresentation> =
-  {
-    working: {
-      label: 'working',
-      badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
-      dotClassName: 'bg-blue-400',
-      dotStaleClassName: 'border-blue-400',
-      motion: 'breathe',
-      meaning: 'The agent is working.',
-      isAttention: false,
-    },
-    needs_input: {
-      label: 'needs input',
-      badgeClassName: 'border-amber-400/40 bg-amber-400/15 text-amber-400',
-      dotClassName: 'bg-amber-400',
-      dotStaleClassName: 'border-amber-400',
-      motion: 'ping',
-      meaning: 'The agent is waiting on you.',
-      isAttention: true,
-    },
-    idle: {
-      label: 'idle',
-      badgeClassName: 'border-success/30 bg-success/10 text-success',
-      dotClassName: 'bg-success',
-      dotStaleClassName: 'border-success',
-      motion: 'none',
-      meaning: 'The agent finished and is idle.',
-      isAttention: false,
-    },
-    unknown: {
-      label: 'unknown',
-      badgeClassName:
-        'border-muted-foreground/30 border-dashed bg-muted text-muted-foreground',
-      dotClassName: 'bg-muted-foreground/60',
-      dotStaleClassName: 'border-muted-foreground/60',
-      motion: 'none',
-      meaning: 'The agent state could not be determined.',
-      isAttention: false,
-    },
-  }
+const AGENT_STATUS_PRESENTATION: Record<
+  AgentDisplayStatus,
+  AgentStatusPresentation
+> = {
+  working: {
+    label: 'working',
+    badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
+    dotClassName: 'bg-blue-400',
+    dotStaleClassName: 'border-blue-400',
+    motion: 'breathe',
+    meaning: 'The agent is working.',
+    isAttention: false,
+  },
+  needs_input: {
+    label: 'needs input',
+    badgeClassName: 'border-amber-400/40 bg-amber-400/15 text-amber-400',
+    dotClassName: 'bg-amber-400',
+    dotStaleClassName: 'border-amber-400',
+    motion: 'ping',
+    meaning: 'The agent is waiting on you.',
+    isAttention: true,
+  },
+  idle: {
+    label: 'idle',
+    badgeClassName: 'border-success/30 bg-success/10 text-success',
+    dotClassName: 'bg-success',
+    dotStaleClassName: 'border-success',
+    motion: 'none',
+    meaning: 'The agent finished and is idle.',
+    isAttention: false,
+  },
+  done: {
+    label: 'done',
+    badgeClassName: 'border-violet-400/40 bg-violet-400/15 text-violet-300',
+    dotClassName: 'bg-violet-400',
+    dotStaleClassName: 'border-violet-400',
+    motion: 'none',
+    meaning: 'The agent finished while you were away; review its result.',
+    isAttention: true,
+  },
+  unknown: {
+    label: 'unknown',
+    badgeClassName:
+      'border-muted-foreground/30 border-dashed bg-muted text-muted-foreground',
+    dotClassName: 'bg-muted-foreground/60',
+    dotStaleClassName: 'border-muted-foreground/60',
+    motion: 'none',
+    meaning: 'The agent state could not be determined.',
+    isAttention: false,
+  },
+}
 
 /** Detector names in operator language rather than implementation shorthand. */
 const AGENT_STATUS_SOURCE_LABEL: Record<AgentStatusSource, string> = {
@@ -115,7 +131,7 @@ const AGENT_STATUS_SOURCE_LABEL: Record<AgentStatusSource, string> = {
 const STALE_BADGE_CLASSNAME = 'border-dashed opacity-70'
 
 function getAgentStatusPresentation(
-  status: AgentStatus
+  status: AgentDisplayStatus
 ): AgentStatusPresentation {
   return AGENT_STATUS_PRESENTATION[status]
 }
@@ -125,7 +141,9 @@ function getAgentStatusPresentation(
  * uncertainty never reads as a confident answer.
  */
 function getAgentStatusBadgeClassName(snapshot: AgentStatusSnapshot): string {
-  const presentation = getAgentStatusPresentation(snapshot.status)
+  const presentation = getAgentStatusPresentation(
+    deriveAgentDisplayStatus(snapshot)
+  )
   return snapshot.stale
     ? `${presentation.badgeClassName} ${STALE_BADGE_CLASSNAME}`
     : presentation.badgeClassName
@@ -140,7 +158,9 @@ function getAgentStatusBadgeClassName(snapshot: AgentStatusSnapshot): string {
  * pointer and screen-reader users learn the same thing.
  */
 function describeAgentStatus(snapshot: AgentStatusSnapshot): string {
-  const presentation = getAgentStatusPresentation(snapshot.status)
+  const presentation = getAgentStatusPresentation(
+    deriveAgentDisplayStatus(snapshot)
+  )
   const source = AGENT_STATUS_SOURCE_LABEL[snapshot.source]
   const changedAt = new Date(snapshot.changedAt).toLocaleTimeString()
   const staleNote = snapshot.stale

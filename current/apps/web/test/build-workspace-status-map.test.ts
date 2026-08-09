@@ -14,6 +14,7 @@ const status = (value: 'working' | 'needs_input' | 'idle' | 'unknown') => ({
   source: 'ps' as const,
   changedAt: 0,
   stale: false,
+  seen: true,
 })
 
 /** Minimal terminal fixture with just the fields buildWorkspaceStatusMap needs. */

@@ -34,7 +34,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
-import type { AgentStatus } from '@/hooks/use-terminal-list'
+import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -44,7 +44,7 @@ interface WorkspaceFrameHeaderProps {
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
   /** Aggregate semantic Agent status for the workspace. */
-  readonly agentStatus?: AgentStatus | null | undefined
+  readonly agentStatus?: AgentDisplayStatus | null | undefined
   /** Number of local commits ahead of upstream. */
   readonly aheadCount: number | null
   /** Number of upstream commits not yet pulled locally. */
@@ -179,10 +179,11 @@ function WorkspaceFrameHeader({
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
   const needsAttention = agentStatus === 'needs_input'
+  const isDone = agentStatus === 'done'
   const isWorking = agentStatus === 'working'
   // The header stays quiet for at-rest states: an idle or unknown agent has
   // nothing to say at workspace level, while working and needs input do.
-  const showsAgentStatus = needsAttention || isWorking
+  const showsAgentStatus = needsAttention || isDone || isWorking
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -207,6 +208,7 @@ function WorkspaceFrameHeader({
         // Attention outranks the active-frame accent; a working tint is the
         // quietest layer and never competes with either.
         needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
+        isDone && 'border-b-violet-400/50 bg-violet-400/5',
         isWorking && !isActiveFrame && 'border-b-blue-400/40 bg-blue-400/5',
         isMinimized && 'cursor-pointer'
       )}

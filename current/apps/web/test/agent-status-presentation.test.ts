@@ -31,6 +31,7 @@ const snapshot = (
   source: overrides.source ?? ('ps' as const),
   changedAt: 0,
   stale: overrides.stale ?? false,
+  seen: true,
 })
 
 describe('agent status presentation', () => {

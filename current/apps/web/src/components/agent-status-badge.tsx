@@ -15,10 +15,11 @@
  */
 
 import { Badge } from '@/components/ui/badge'
-import type {
-  AgentStatus,
-  AgentStatusSnapshot,
-} from '@/hooks/use-terminal-list'
+import type { AgentStatusSnapshot } from '@/hooks/use-terminal-list'
+import {
+  type AgentDisplayStatus,
+  deriveAgentDisplayStatus,
+} from '@/lib/agent-attention-projection'
 import type { AgentStatusMotion } from '@/lib/agent-status-presentation'
 import {
   describeAgentStatus,
@@ -73,7 +74,8 @@ interface AgentStatusBadgeProps {
 }
 
 function AgentStatusBadge({ className, snapshot }: AgentStatusBadgeProps) {
-  const presentation = getAgentStatusPresentation(snapshot.status)
+  const displayStatus = deriveAgentDisplayStatus(snapshot)
+  const presentation = getAgentStatusPresentation(displayStatus)
   const description = describeAgentStatus(snapshot)
 
   return (
@@ -83,7 +85,7 @@ function AgentStatusBadge({ className, snapshot }: AgentStatusBadgeProps) {
         getAgentStatusBadgeClassName(snapshot),
         className
       )}
-      data-agent-status={snapshot.status}
+      data-agent-status={displayStatus}
       data-agent-status-stale={snapshot.stale ? 'true' : undefined}
       title={description}
       variant="outline"
@@ -113,7 +115,7 @@ function AggregateAgentStatusBadge({
   status,
 }: {
   readonly className?: string | undefined
-  readonly status: AgentStatus
+  readonly status: AgentDisplayStatus
 }) {
   const presentation = getAgentStatusPresentation(status)
   const description = `Agent ${presentation.label} — ${presentation.meaning}`

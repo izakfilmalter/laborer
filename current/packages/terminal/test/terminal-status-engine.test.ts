@@ -12,6 +12,7 @@ describe('TerminalStatusEngine', () => {
       source: 'ps',
       changedAt: 0,
       stale: false,
+      seen: true,
     })
     engine.sample({ agentProcesses: [], sampledAt: 200 })
     engine.sample({ agentProcesses: [], sampledAt: 400 })
@@ -103,5 +104,49 @@ describe('TerminalStatusEngine', () => {
     const engine = new TerminalStatusEngine()
     engine.sample({ agentProcesses: [], sampledAt: 0 })
     expect(engine.report({ status: 'needs_input', sequence: 1 }, 10)).toBeNull()
+  })
+
+  it('leaves an unwatched completion unseen until its workspace is observed', () => {
+    const engine = new TerminalStatusEngine()
+    engine.sample({ agentProcesses: agent(), sampledAt: 0 })
+
+    expect(engine.processExited(100)?.seen).toBe(false)
+    expect(engine.setObserved(true)).toMatchObject({
+      status: 'idle',
+      seen: true,
+      changedAt: 100,
+    })
+  })
+
+  it('keeps a completion seen while its workspace is observed', () => {
+    const engine = new TerminalStatusEngine()
+    engine.setObserved(true)
+    engine.sample({ agentProcesses: agent(), sampledAt: 0 })
+
+    expect(engine.processExited(100)?.seen).toBe(true)
+  })
+
+  it('preserves unseen across an idle provenance change', () => {
+    const engine = new TerminalStatusEngine()
+    engine.sample({ agentProcesses: agent(), sampledAt: 0 })
+    engine.report({ status: 'idle', sequence: 1 }, 100)
+    expect(engine.current?.seen).toBe(false)
+
+    engine.sample({ agentProcesses: [], sampledAt: 200 })
+    engine.sample({ agentProcesses: [], sampledAt: 400 })
+    expect(engine.sample({ agentProcesses: [], sampledAt: 600 })?.seen).toBe(
+      false
+    )
+  })
+
+  it('marks every non-idle lifecycle status seen', () => {
+    const engine = new TerminalStatusEngine()
+    engine.sample({ agentProcesses: agent(), sampledAt: 0 })
+    engine.processExited(100)
+    expect(engine.current?.seen).toBe(false)
+
+    engine.sample({ agentProcesses: agent(), sampledAt: 150 })
+    engine.report({ status: 'needs_input', sequence: 1 }, 200)
+    expect(engine.current?.seen).toBe(true)
   })
 })

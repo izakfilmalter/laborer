@@ -51,12 +51,15 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import type {
-  AgentStatus,
   AgentStatusSnapshot,
   ForegroundProcess,
 } from '@/hooks/use-terminal-list'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import {
+  type AgentDisplayStatus,
+  deriveAgentDisplayStatus,
+} from '@/lib/agent-attention-projection'
 import {
   describeAgentStatus,
   getAgentStatusBadgeClassName,
@@ -77,7 +80,7 @@ const restartTerminalMutation =
 interface TerminalListProps {
   /** Called when the aggregate agent status for this workspace changes. */
   readonly onAgentStatusChange?:
-    | ((status: AgentStatus | null) => void)
+    | ((status: AgentDisplayStatus | null) => void)
     | undefined
   /** The project ID this workspace belongs to (for agent config resolution). */
   readonly projectId: string
@@ -537,7 +540,9 @@ function getAgentStatusDisplay(
   const displayedAgentProcess =
     rootProcess ??
     (foregroundProcess?.category === 'agent' ? foregroundProcess : null)
-  const presentation = getAgentStatusPresentation(agentStatus.status)
+  const presentation = getAgentStatusPresentation(
+    deriveAgentDisplayStatus(agentStatus)
+  )
 
   return {
     icon: displayedAgentProcess
@@ -670,6 +675,9 @@ function TerminalItem({
       terminal.processChain
     )
   const needsAttention = agentStatus?.status === 'needs_input'
+  const isDone = agentStatus
+    ? deriveAgentDisplayStatus(agentStatus) === 'done'
+    : false
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -692,9 +700,12 @@ function TerminalItem({
         'hover:bg-accent hover:text-accent-foreground',
         // A row asking for input carries a steady amber edge; the motion
         // lives in the badge dot so the label stays readable.
-        needsAttention && 'border-amber-400/40 bg-amber-400/5'
+        needsAttention && 'border-amber-400/40 bg-amber-400/5',
+        isDone && 'border-violet-400/40 bg-violet-400/5'
       )}
-      data-agent-status={agentStatus?.status}
+      data-agent-status={
+        agentStatus ? deriveAgentDisplayStatus(agentStatus) : undefined
+      }
       data-testid={`terminal-row-${terminal.id}`}
     >
       <button

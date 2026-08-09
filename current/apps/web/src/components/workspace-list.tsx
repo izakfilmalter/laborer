@@ -117,8 +117,8 @@ import {
   type CollapseState,
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
-import type { AgentStatus } from '@/hooks/use-terminal-list'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
@@ -979,7 +979,7 @@ function WorkspaceItem({
 }: WorkspaceItemProps) {
   const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] =
-    useState<AgentStatus | null>(null)
+    useState<AgentDisplayStatus | null>(null)
   const startSandbox = useAtomSet(startSandboxMutation, {
     mode: 'promise',
   })
@@ -1046,10 +1046,13 @@ function WorkspaceItem({
   })()
 
   const needsAttention = workspaceAgentStatus === 'needs_input'
-  // Working and needs input are the only states worth surfacing at card
-  // level; idle and unknown stay in the terminal rows that own them.
+  const isDone = workspaceAgentStatus === 'done'
+  // Attention and in-flight work surface at card level; acknowledged idle and
+  // unknown stay in the terminal rows that own them.
   const showsAgentStatus =
-    workspaceAgentStatus === 'needs_input' || workspaceAgentStatus === 'working'
+    workspaceAgentStatus === 'needs_input' ||
+    workspaceAgentStatus === 'done' ||
+    workspaceAgentStatus === 'working'
 
   const handleSandboxLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>
@@ -1112,7 +1115,8 @@ function WorkspaceItem({
         // card animating made its text hard to read, so the motion now lives
         // only in the status badge's dot.
         needsAttention &&
-          'border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
+          'border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]',
+        isDone && 'border-violet-400/50 shadow-[0_0_8px_rgba(167,139,250,0.12)]'
       )}
       data-agent-status={workspaceAgentStatus ?? undefined}
       data-testid={`workspace-card-${workspace.branchName}`}

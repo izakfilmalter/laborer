@@ -178,6 +178,7 @@ describe('applyEventToList', () => {
         source: 'ps' as const,
         changedAt: 0,
         stale: false,
+        seen: true,
       },
       hasChildProcess: true,
       foregroundProcess: {

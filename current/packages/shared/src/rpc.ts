@@ -1176,6 +1176,8 @@ export const AgentStatusSnapshotSchema = Schema.Struct({
   source: AgentStatusSourceSchema,
   changedAt: Schema.Number,
   stale: Schema.Boolean,
+  /** Whether the operator has viewed this terminal since its last completion. */
+  seen: Schema.Boolean,
 })
 
 export type AgentStatusSnapshot = typeof AgentStatusSnapshotSchema.Type

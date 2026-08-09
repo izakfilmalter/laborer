@@ -166,8 +166,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   restartSidecar: (name) => ipcRenderer.invoke(RESTART_SIDECAR_CHANNEL, name),
 
-  reportVisibleWorkspaces: (workspaceIds) =>
-    ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, workspaceIds),
+  reportVisibleWorkspaces: (workspaceIds, focused = false) =>
+    ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, {
+      focused,
+      workspaceIds,
+    }),
 
   sendNotification: (payload) =>
     ipcRenderer.invoke(SEND_NOTIFICATION_CHANNEL, payload),

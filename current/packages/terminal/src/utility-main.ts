@@ -338,13 +338,18 @@ async function main(): Promise<void> {
   type BufferedMessage =
     | { type: 'port'; port: RpcMessagePort }
     | { type: 'data-port'; port: RpcMessagePort; terminalId: string }
+    | { type: 'workspace-presence'; workspaceIds: readonly string[] }
   const bufferedMessages: BufferedMessage[] = []
   let messageHandler: ((msg: BufferedMessage) => void) | null = null
 
   // Register the listener BEFORE awaiting the runtime to avoid
   // dropping messages that arrive during initialization.
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
-    const data = event.data as { terminalId?: string; type?: string }
+    const data = event.data as {
+      terminalId?: string
+      type?: string
+      workspaceIds?: unknown
+    }
     if (
       data?.type === 'terminal-data-port' &&
       typeof data.terminalId === 'string' &&
@@ -359,6 +364,22 @@ async function main(): Promise<void> {
         port: dataPort,
         terminalId: data.terminalId,
       }
+      if (messageHandler) {
+        messageHandler(msg)
+      } else {
+        bufferedMessages.push(msg)
+      }
+    } else if (
+      data?.type === 'workspace-presence' &&
+      Array.isArray(data.workspaceIds)
+    ) {
+      const workspaceIds = data.workspaceIds
+        .filter(
+          (workspaceId): workspaceId is string =>
+            typeof workspaceId === 'string' && workspaceId.length > 0
+        )
+        .slice(0, 1000)
+      const msg: BufferedMessage = { type: 'workspace-presence', workspaceIds }
       if (messageHandler) {
         messageHandler(msg)
       } else {
@@ -395,8 +416,14 @@ async function main(): Promise<void> {
   const processMessage = (msg: BufferedMessage) => {
     if (msg.type === 'data-port') {
       handleTerminalDataPort(msg.port, msg.terminalId, runtime)
-    } else {
+    } else if (msg.type === 'port') {
       serveRpcOnPort(msg.port, sharedServicesLayer)
+    } else {
+      managedRuntime.runFork(
+        Effect.flatMap(TerminalManager, (manager) =>
+          manager.setObservedWorkspaces(new Set(msg.workspaceIds))
+        )
+      )
     }
   }
   messageHandler = processMessage

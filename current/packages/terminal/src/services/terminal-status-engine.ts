@@ -42,6 +42,7 @@ class TerminalStatusEngine {
   #downwardSamples = 0
   #firstFailureAt: number | null = null
   #hasSuccessfulSample = false
+  #observed = false
 
   constructor(options: StatusEngineOptions = {}) {
     this.#downwardConfirmations =
@@ -50,6 +51,15 @@ class TerminalStatusEngine {
   }
 
   get current(): AgentStatusSnapshot | null {
+    return this.#snapshot
+  }
+
+  /** Update focused visibility and acknowledge an unseen completion. */
+  setObserved(observed: boolean): AgentStatusSnapshot | null {
+    this.#observed = observed
+    if (observed && this.#snapshot?.seen === false) {
+      this.#snapshot = { ...this.#snapshot, seen: true }
+    }
     return this.#snapshot
   }
 
@@ -161,9 +171,21 @@ class TerminalStatusEngine {
     changedAt: number
   ): AgentStatusSnapshot {
     if (this.#snapshot?.status === status && this.#snapshot.source === source) {
+      if (status !== 'idle' && !this.#snapshot.seen) {
+        this.#snapshot = { ...this.#snapshot, seen: true }
+      }
       return this.#snapshot
     }
-    this.#snapshot = { status, source, changedAt, stale: false }
+    const completed =
+      status === 'idle' &&
+      this.#snapshot !== null &&
+      this.#snapshot.status !== 'idle'
+    const seen =
+      status !== 'idle' ||
+      (completed
+        ? this.#observed
+        : (this.#snapshot?.seen ?? true) || this.#observed)
+    this.#snapshot = { status, source, changedAt, stale: false, seen }
     return this.#snapshot
   }
 }

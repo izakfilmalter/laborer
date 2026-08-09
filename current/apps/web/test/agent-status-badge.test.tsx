@@ -25,6 +25,7 @@ const snapshot = (
   source: 'ps',
   changedAt: 0,
   stale: false,
+  seen: true,
   ...overrides,
 })
 
@@ -84,6 +85,16 @@ describe('AgentStatusBadge', () => {
     expect(
       screen.getByText('needs input').parentElement?.textContent
     ).toContain('out of date')
+  })
+
+  it('renders unseen idle as a distinct done treatment', () => {
+    const { container } = render(
+      <AgentStatusBadge snapshot={snapshot({ status: 'idle', seen: false })} />
+    )
+
+    expect(screen.getByText('done')).toBeDefined()
+    expect(dotElement(container).className).toContain('bg-violet-400')
+    expect(container.innerHTML).not.toContain('bg-amber-400')
   })
 })
 

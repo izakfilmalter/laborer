@@ -17,6 +17,7 @@ const status = (
   source: 'ps' as const,
   changedAt: 0,
   stale,
+  seen: true,
 })
 
 describe('getTerminalDisplay', () => {

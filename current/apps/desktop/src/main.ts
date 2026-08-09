@@ -21,9 +21,10 @@ import { fixPath } from './fix-path.js'
 import {
   askRenderersBeforeQuit,
   closeRendererPortsForService,
-  getWorkspaceWindowRegistry,
+  publishWorkspacePresence,
   QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
+  removeWindowPresence,
   setDownloadUpdateHandler,
   setGetBackendWsUrlHandler,
   setGetSidecarStatusesHandler,
@@ -32,6 +33,7 @@ import {
   setRestartSidecarHandler,
   setTrayCountHandler,
   setUtilityProcessManager,
+  setWorkspacePresenceHandler,
 } from './ipc.js'
 import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
@@ -335,7 +337,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   window.on('closed', () => {
     openWindows.delete(window)
-    getWorkspaceWindowRegistry().remove(window)
+    removeWindowPresence(window)
 
     // Remove the persisted record for windows the user intentionally closed.
     // During app quit, only windows that were previously hidden to tray
@@ -428,6 +430,9 @@ app
     utilityProcessManager.setMessageHandler((name, message) => {
       if (message.type === 'ready') {
         lifecycleMonitor?.handleReady(name)
+        if (name === 'terminal') {
+          publishWorkspacePresence()
+        }
       } else if (message.type === 'heartbeat') {
         lifecycleMonitor?.handleHeartbeat(name)
       }
@@ -436,6 +441,11 @@ app
     // Share the utility process manager with the IPC module so the
     // renderer can acquire direct MessagePort connections to services.
     setUtilityProcessManager(utilityProcessManager)
+    setWorkspacePresenceHandler((workspaceIds) => {
+      utilityProcessManager
+        ?.getProcess('terminal')
+        ?.postMessage({ type: 'workspace-presence', workspaceIds })
+    })
 
     await startServerBackend()
 

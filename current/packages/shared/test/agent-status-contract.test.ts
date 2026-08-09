@@ -18,8 +18,15 @@ describe('Agent status RPC contract', () => {
         source: 'ps',
         changedAt: 123,
         stale: false,
+        seen: true,
       })
-    ).toEqual({ status, source: 'ps', changedAt: 123, stale: false })
+    ).toEqual({
+      status,
+      source: 'ps',
+      changedAt: 123,
+      stale: false,
+      seen: true,
+    })
   })
 
   it('rejects the removed two-value status vocabulary', () => {
@@ -29,6 +36,25 @@ describe('Agent status RPC contract', () => {
         source: 'ps',
         changedAt: 123,
         stale: false,
+        seen: true,
+      })
+    ).toThrow()
+  })
+
+  it('rejects done as lifecycle or detector output', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(AgentStatusSnapshotSchema)({
+        status: 'done',
+        source: 'ps',
+        changedAt: 123,
+        stale: false,
+        seen: false,
+      })
+    ).toThrow()
+    expect(() =>
+      Schema.decodeUnknownSync(AgentStatusReportSchema)({
+        status: 'done',
+        sequence: 1,
       })
     ).toThrow()
   })

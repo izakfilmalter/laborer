@@ -290,7 +290,10 @@ export interface DesktopBridge {
    * The main process uses this to route notification clicks and other
    * workspace-targeting actions to the correct window.
    */
-  reportVisibleWorkspaces: (workspaceIds: readonly string[]) => Promise<void>
+  reportVisibleWorkspaces: (
+    workspaceIds: readonly string[],
+    focused?: boolean
+  ) => Promise<void>
 
   /**
    * Responds to a quit request from the main process.

@@ -8,6 +8,7 @@ interface MockWindow {
   readonly focus: ReturnType<typeof vi.fn>
   readonly id: number
   isDestroyed: () => boolean
+  readonly isFocused: ReturnType<typeof vi.fn>
   readonly show: ReturnType<typeof vi.fn>
   readonly webContents: { send: ReturnType<typeof vi.fn> }
 }
@@ -19,6 +20,7 @@ function createMockWindow(id: number): MockWindow {
     show: vi.fn(),
     focus: vi.fn(),
     isDestroyed: () => false,
+    isFocused: vi.fn(() => false),
   }
 }
 
@@ -124,6 +126,33 @@ describe('workspace-to-window targeting', () => {
     expect(registry.findWindowForWorkspace('workspace-1')).toBeNull()
     expect(registry.findWindowForWorkspace('workspace-2')).toBeNull()
     expect(registry.findWindowForWorkspace('workspace-3')).toBe(window)
+  })
+
+  it('uses main-process focus instead of a renderer-supplied value', async () => {
+    const {
+      getWorkspaceWindowRegistry,
+      registerIpcHandlers,
+      REPORT_VISIBLE_WORKSPACES_CHANNEL,
+    } = await import('../src/ipc.js')
+    const window = createMockWindow(11)
+    window.isFocused.mockReturnValue(true)
+
+    registerIpcHandlers(
+      () =>
+        null as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+    fromWebContentsMock.mockReturnValue(window)
+
+    ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)?.(
+      { sender: window.webContents },
+      { focused: false, workspaceIds: ['workspace-1'] }
+    )
+
+    expect(getWorkspaceWindowRegistry().hasFocusedWindow()).toBe(true)
   })
 
   it('removes workspace entries when a window is destroyed', async () => {

@@ -181,14 +181,13 @@ describe("Sandcastle fast flow", () => {
       main,
       "test -d current/node_modules && test -d next/node_modules"
     );
-    assert.include(main, "prepareOpenCodeCredentialSeed()");
-    assert.include(main, "HOST_ANTHROPIC_PLUGIN_DIST");
+    assert.include(main, "supervisedNoSandbox({");
+    assert.notInclude(main, "prepareOpenCodeCredentialSeed");
     assert.notInclude(main, "BUN_CACHE_DIR");
-    assert.include(
-      main,
-      '"/home/agent/.local/share/opencode/opencode-next.seed.db"'
-    );
-    assert.notInclude(main, 'sandboxPath: "/opt/');
+    assert.notInclude(main, "/home/agent");
+    assert.notInclude(main, "gh auth setup-git");
+    assert.notInclude(main, 'runFile("docker"');
+    assert.include(main, "boundedHostCommand(");
     assert.include(main, "Sandcastle stopped safely ");
   });
 

@@ -1,7 +1,15 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
-import { type Adapter, Chat } from "chat";
+import {
+  type Adapter,
+  type Attachment,
+  type CardElement,
+  Chat,
+  type SentMessage,
+} from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import type { NormalizedImage } from "../prototype/domain.ts";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
+import { hydrateChatImageAttachments } from "./attachment-hydration.ts";
 import { createSQLiteState } from "./sqlite-state-adapter.ts";
 
 export interface ChatSdkMessageLike {
@@ -13,6 +21,7 @@ export interface ChatSdkMessageLike {
   };
   readonly edited: boolean;
   readonly id: string;
+  readonly images?: readonly NormalizedImage[];
   readonly isMention: boolean;
   readonly sentAt: Date;
   readonly text: string;
@@ -21,6 +30,7 @@ export interface ChatSdkMessageLike {
 
 export interface ChatSdkThreadLike {
   readonly allMessages: AsyncIterable<ChatSdkMessageLike>;
+  readonly channelId: string;
   readonly channelMessages: AsyncIterable<ChatSdkMessageLike>;
   readonly id: string;
   readonly isDM: boolean;
@@ -44,9 +54,48 @@ export type ChatSdkMentionHandler = ChatSdkMessageHandler;
 
 export interface ChatSdkLike {
   readonly initialize: () => Promise<void>;
+  readonly onAction?: (handler: ChatSdkActionHandler) => void;
   readonly onNewMention: (handler: ChatSdkMessageHandler) => void;
   readonly onSubscribedMessage: (handler: ChatSdkMessageHandler) => void;
+  readonly postPermission?: (
+    request: ChatPermissionPresentation
+  ) => Promise<{ readonly messageTs: string }>;
+  readonly postToThread?: (
+    channelId: string,
+    rootTs: string,
+    output: string
+  ) => Promise<void>;
+  readonly settlePermission?: (
+    request: ChatPermissionSettlement
+  ) => Promise<void>;
   readonly shutdown: () => Promise<void>;
+}
+
+export interface ChatSdkActionLike {
+  readonly actionId: string;
+  readonly capability: string;
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly rootTs: string;
+  readonly slackUserId: string;
+  readonly workspaceId: string;
+}
+
+export type ChatSdkActionHandler = (action: ChatSdkActionLike) => Promise<void>;
+
+export interface ChatPermissionPresentation {
+  readonly authorizedSlackUserId: string;
+  readonly capability: string;
+  readonly category: string;
+  readonly channelId: string;
+  readonly presentationMarker: string;
+  readonly rootTs: string;
+  readonly workspaceId: string;
+}
+
+export interface ChatPermissionSettlement extends ChatPermissionPresentation {
+  readonly messageTs: string | null;
+  readonly state: "allowed" | "cancelled" | "expired" | "rejected";
 }
 
 export class ChatPlaneStartupError extends Schema.TaggedErrorClass<ChatPlaneStartupError>()(
@@ -70,10 +119,21 @@ export interface ChatPlaneShape {
     thread: ChatSdkThreadLike,
     notice: string
   ) => Effect.Effect<void, ChatPlaneOperationError>;
+  readonly postPermission: (
+    request: ChatPermissionPresentation
+  ) => Effect.Effect<{ readonly messageTs: string }, ChatPlaneOperationError>;
+  readonly postToThread: (
+    channelId: string,
+    rootTs: string,
+    output: string
+  ) => Effect.Effect<void, ChatPlaneOperationError>;
   readonly readActivationHistory: (
     thread: ChatSdkThreadLike,
     activation: ChatSdkMessageLike
   ) => Effect.Effect<readonly ChatSdkMessageLike[], ChatPlaneOperationError>;
+  readonly settlePermission: (
+    request: ChatPermissionSettlement
+  ) => Effect.Effect<void, ChatPlaneOperationError>;
   readonly streamReply: (
     thread: ChatSdkThreadLike,
     chunks: AsyncIterable<string>
@@ -97,8 +157,12 @@ export type ChatPlaneMessageHandler = (
 export type ChatPlaneMentionHandler = ChatPlaneMessageHandler;
 
 interface MakeChatPlaneLayerOptions {
+  readonly actionHandler?: (
+    action: ChatSdkActionLike
+  ) => Effect.Effect<void, unknown>;
   readonly handler: ChatPlaneMessageHandler;
   readonly makeSdk: () => ChatSdkLike;
+  readonly onReady?: (service: ChatPlaneShape) => void;
 }
 
 const operationFailure = (operation: string): ChatPlaneOperationError =>
@@ -106,6 +170,42 @@ const operationFailure = (operation: string): ChatPlaneOperationError =>
     operation,
     reason: "Chat SDK operation failed",
   });
+
+const permissionCard = (request: ChatPermissionPresentation): CardElement => ({
+  children: [
+    {
+      content: `<@${request.authorizedSlackUserId}> allow ${request.category}?`,
+      type: "text",
+    },
+    {
+      children: [
+        {
+          id: "laborer_permission_allow_once",
+          label: "Allow once",
+          style: "primary",
+          type: "button",
+          value: request.capability,
+        },
+        {
+          id: "laborer_permission_reject_once",
+          label: "Reject",
+          style: "danger",
+          type: "button",
+          value: request.capability,
+        },
+      ],
+      type: "actions",
+    },
+  ],
+  type: "card",
+});
+
+const settledPermissionCard = (
+  state: ChatPermissionSettlement["state"]
+): CardElement => ({
+  children: [{ content: `Permission ${state}.`, type: "text" }],
+  type: "card",
+});
 
 const startupFailure = (operation: string): ChatPlaneStartupError =>
   ChatPlaneStartupError.make({
@@ -198,7 +298,27 @@ const collectActivationHistory = async (
   return isRootActivation ? collected.reverse() : collected;
 };
 
-const makeService = (): ChatPlaneShape => ({
+const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
+  postPermission: (request) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.postPermission === undefined) {
+          throw new Error("Chat permission presentation unavailable");
+        }
+        return sdk.postPermission(request);
+      },
+      catch: () => operationFailure("thread.post-permission"),
+    }),
+  postToThread: (channelId, rootTs, output) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.postToThread === undefined) {
+          throw new Error("Chat thread publication unavailable");
+        }
+        return sdk.postToThread(channelId, rootTs, output);
+      },
+      catch: () => operationFailure("thread.post-external-output"),
+    }),
   postNotice: (thread, notice) =>
     Effect.tryPromise({
       try: () => thread.post(notice),
@@ -219,6 +339,11 @@ const makeService = (): ChatPlaneShape => ({
       try: () => thread.subscribe(),
       catch: () => operationFailure("thread.subscribe"),
     }),
+  settlePermission: (request) =>
+    Effect.tryPromise({
+      try: () => sdk.settlePermission?.(request) ?? Promise.resolve(),
+      catch: () => operationFailure("message.edit-permission"),
+    }),
 });
 
 export const makeChatPlaneLayer = (
@@ -231,7 +356,8 @@ export const makeChatPlaneLayer = (
         try: options.makeSdk,
         catch: () => startupFailure("construct"),
       });
-      const service = makeService();
+      const service = makeService(sdk);
+      yield* Effect.sync(() => options.onReady?.(service));
       const inboundRuntime = ManagedRuntime.make(
         Layer.succeed(ChatPlane, service)
       );
@@ -263,6 +389,16 @@ export const makeChatPlaneLayer = (
             };
           sdk.onNewMention(bridge(true));
           sdk.onSubscribedMessage(bridge(false));
+          if (
+            options.actionHandler !== undefined &&
+            sdk.onAction !== undefined
+          ) {
+            sdk.onAction((action) =>
+              inboundRuntime.runPromise(
+                options.actionHandler?.(action) ?? Effect.void
+              )
+            );
+          }
         },
         catch: () => startupFailure("register-mention-handler"),
       });
@@ -338,7 +474,9 @@ export const makeLocalSlackInstallationProvider = (
 };
 
 const SlackMessageWorkspace = Schema.Struct({
-  team: Schema.optional(Schema.String),
+  team: Schema.optional(
+    Schema.Union([Schema.String, Schema.Struct({ id: Schema.String })])
+  ),
   team_id: Schema.optional(Schema.String),
 });
 const SLACK_TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
@@ -356,13 +494,15 @@ export const workspaceIdFromRawSlackMessage = (
     throw new Error("Slack workspace identity unavailable");
   }
   if (
-    decoded.team !== undefined &&
+    typeof decoded.team === "string" &&
     decoded.team_id !== undefined &&
     decoded.team !== decoded.team_id
   ) {
     throw new Error("Slack workspace identity unavailable");
   }
-  const workspaceId = decoded.team_id ?? decoded.team;
+  const workspaceId =
+    decoded.team_id ??
+    (typeof decoded.team === "string" ? decoded.team : decoded.team?.id);
   if (
     workspaceId === undefined ||
     !SLACK_TEAM_ID_PATTERN.test(workspaceId) ||
@@ -375,6 +515,7 @@ export const workspaceIdFromRawSlackMessage = (
 };
 
 interface LiveMessageLike {
+  readonly attachments?: Attachment[];
   readonly author: ChatSdkMessageLike["author"];
   readonly id: string;
   readonly isMention?: boolean;
@@ -385,14 +526,22 @@ interface LiveMessageLike {
   readonly text: string;
 }
 
-const toChatSdkMessage = (
+const toChatSdkMessage = async (
   message: LiveMessageLike,
-  workspaceId: string
-): ChatSdkMessageLike => ({
+  workspaceId: string,
+  attachmentStorageRoot?: string
+): Promise<ChatSdkMessageLike> => ({
   author: message.author,
   edited: message.metadata.edited,
   id: message.id,
   isMention: message.isMention === true,
+  images:
+    attachmentStorageRoot === undefined
+      ? []
+      : await hydrateChatImageAttachments(
+          message.attachments ?? [],
+          attachmentStorageRoot
+        ),
   sentAt: message.metadata.dateSent,
   text: message.text,
   workspaceId,
@@ -400,11 +549,12 @@ const toChatSdkMessage = (
 
 const mapMessages = (
   messages: AsyncIterable<LiveMessageLike>,
-  workspaceId: string
+  workspaceId: string,
+  attachmentStorageRoot?: string
 ): AsyncIterable<ChatSdkMessageLike> => ({
   async *[Symbol.asyncIterator]() {
     for await (const message of messages) {
-      yield toChatSdkMessage(message, workspaceId);
+      yield await toChatSdkMessage(message, workspaceId, attachmentStorageRoot);
     }
   },
 });
@@ -420,10 +570,23 @@ interface LiveThreadLike {
 
 const toChatSdkThread = (
   thread: LiveThreadLike,
-  workspaceId: string
+  workspaceId: string,
+  attachmentStorageRoot?: string
 ): ChatSdkThreadLike => ({
-  allMessages: mapMessages(thread.allMessages, workspaceId),
-  channelMessages: mapMessages(thread.channel.messages, workspaceId),
+  allMessages: mapMessages(
+    thread.allMessages,
+    workspaceId,
+    attachmentStorageRoot
+  ),
+  channelId: thread.id.slice(
+    thread.id.indexOf(":") + 1,
+    thread.id.lastIndexOf(":")
+  ),
+  channelMessages: mapMessages(
+    thread.channel.messages,
+    workspaceId,
+    attachmentStorageRoot
+  ),
   id: thread.id,
   isDM: thread.isDM,
   post: (reply) => thread.post(reply),
@@ -432,20 +595,33 @@ const toChatSdkThread = (
   workspaceId,
 });
 
-const toChatSdkContext = (
+const toChatSdkContext = async (
   context: { readonly skipped: readonly LiveMessageLike[] } | undefined,
-  workspaceId: string
-): ChatSdkMessageContextLike => ({
-  skipped:
-    context?.skipped.map((message) => toChatSdkMessage(message, workspaceId)) ??
-    [],
+  workspaceId: string,
+  attachmentStorageRoot?: string
+): Promise<ChatSdkMessageContextLike> => ({
+  skipped: await Promise.all(
+    context?.skipped.map((message) =>
+      toChatSdkMessage(message, workspaceId, attachmentStorageRoot)
+    ) ?? []
+  ),
 });
 
 export const makeLiveChatPlaneLayer = (
   config: LiveChatPlaneConfig,
-  handler: ChatPlaneMessageHandler
+  handler: ChatPlaneMessageHandler,
+  options: {
+    readonly actionHandler?: (
+      action: ChatSdkActionLike
+    ) => Effect.Effect<void, unknown>;
+    readonly onReady?: (service: ChatPlaneShape) => void;
+    readonly attachmentStorageRoot?: (
+      workspaceId: string
+    ) => string | undefined;
+  } = {}
 ): Layer.Layer<ChatPlane, ChatPlaneStartupError> =>
   makeChatPlaneLayer({
+    ...options,
     handler,
     makeSdk: () => {
       if (
@@ -494,6 +670,7 @@ export const makeLiveChatPlaneLayer = (
         state: createSQLiteState({ path: config.statePath }),
         userName: config.userName,
       });
+      const permissionMessages = new Map<string, SentMessage<unknown>>();
 
       return {
         initialize: async () => {
@@ -529,29 +706,83 @@ export const makeLiveChatPlaneLayer = (
           }
         },
         onNewMention: (registeredHandler) => {
-          bot.onNewMention((thread, message, context) => {
+          bot.onNewMention(async (thread, message, context) => {
             const workspaceId = workspaceIdFromRawSlackMessage(
               message.raw,
               configuredWorkspaceIds
             );
+            const storageRoot = options.attachmentStorageRoot?.(workspaceId);
             return registeredHandler(
-              toChatSdkThread(thread, workspaceId),
-              toChatSdkMessage(message, workspaceId),
-              toChatSdkContext(context, workspaceId)
+              toChatSdkThread(thread, workspaceId, storageRoot),
+              await toChatSdkMessage(message, workspaceId, storageRoot),
+              await toChatSdkContext(context, workspaceId, storageRoot)
             );
           });
         },
+        onAction: (registeredHandler) => {
+          bot.onAction(
+            ["laborer_permission_allow_once", "laborer_permission_reject_once"],
+            (event) => {
+              const workspaceId = workspaceIdFromRawSlackMessage(
+                event.raw,
+                configuredWorkspaceIds
+              );
+              const thread = event.thread;
+              if (thread === null || event.value === undefined) {
+                return Promise.resolve();
+              }
+              const channelId = thread.id.slice(
+                thread.id.indexOf(":") + 1,
+                thread.id.lastIndexOf(":")
+              );
+              return registeredHandler({
+                actionId: event.actionId,
+                capability: event.value,
+                channelId,
+                messageTs: event.messageId,
+                rootTs: thread.id.slice(thread.id.lastIndexOf(":") + 1),
+                slackUserId: event.user.userId,
+                workspaceId,
+              });
+            }
+          );
+        },
         onSubscribedMessage: (registeredHandler) => {
-          bot.onSubscribedMessage((thread, message, context) => {
+          bot.onSubscribedMessage(async (thread, message, context) => {
             const workspaceId = workspaceIdFromRawSlackMessage(
               message.raw,
               configuredWorkspaceIds
             );
+            const storageRoot = options.attachmentStorageRoot?.(workspaceId);
             return registeredHandler(
-              toChatSdkThread(thread, workspaceId),
-              toChatSdkMessage(message, workspaceId),
-              toChatSdkContext(context, workspaceId)
+              toChatSdkThread(thread, workspaceId, storageRoot),
+              await toChatSdkMessage(message, workspaceId, storageRoot),
+              await toChatSdkContext(context, workspaceId, storageRoot)
             );
+          });
+        },
+        postPermission: async (request) => {
+          const sent = await bot
+            .thread(`slack:${request.channelId}:${request.rootTs}`)
+            .post({
+              card: permissionCard(request),
+              fallbackText: "Laborer permission requested",
+            });
+          permissionMessages.set(request.presentationMarker, sent);
+          return { messageTs: sent.id };
+        },
+        postToThread: async (channelId, rootTs, output) => {
+          await bot.thread(`slack:${channelId}:${rootTs}`).post(output);
+        },
+        settlePermission: async (request) => {
+          const sent = permissionMessages.get(request.presentationMarker);
+          permissionMessages.delete(request.presentationMarker);
+          if (sent === undefined) {
+            return;
+          }
+          await sent.edit({
+            card: settledPermissionCard(request.state),
+            fallbackText: `Laborer permission ${request.state}`,
           });
         },
         shutdown: () => bot.shutdown(),

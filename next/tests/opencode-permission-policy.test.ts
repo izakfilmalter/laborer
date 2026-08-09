@@ -23,13 +23,13 @@ import {
 } from "@agentclientprotocol/sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Scope } from "effect";
-import { makeAcpAuthorityRepository } from "../src/acp-conversation-prototype/acp-authority.ts";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
-import { makeAcpProcessStateRepository } from "../src/acp-conversation-prototype/acp-process-state.ts";
-import { makeAcpConversationProcessSupervisor } from "../src/acp-conversation-prototype/acp-process-supervisor.ts";
-import { makeLaborerActionMcpBridge } from "../src/acp-conversation-prototype/action-mcp.ts";
-import { prepareAcpAgentContextSources } from "../src/acp-conversation-prototype/agent-context.ts";
-import { laborerMcpServerLauncherArgs } from "../src/acp-conversation-prototype/mcp-server-launcher-config.ts";
+import { makeAcpAuthorityRepository } from "../src/acp-runtime/acp-authority.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
+import { makeAcpProcessStateRepository } from "../src/acp-runtime/acp-process-state.ts";
+import { makeAcpConversationProcessSupervisor } from "../src/acp-runtime/acp-process-supervisor.ts";
+import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
+import { prepareAcpAgentContextSources } from "../src/acp-runtime/agent-context.ts";
+import { laborerMcpServerLauncherArgs } from "../src/acp-runtime/mcp-server-launcher-config.ts";
 import {
   awaitLaborerMemoryMcpReadiness,
   laborerMemoryOpenCodePermission,
@@ -37,11 +37,11 @@ import {
   observeLaborerMemoryToolCall,
   prepareLaborerMemoryMcpRegistration,
   tryAuthorizeLaborerMemoryPermission,
-} from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/memory-mcp.ts";
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
-} from "../src/acp-conversation-prototype/open-code-acp-process.ts";
+} from "../src/acp-runtime/open-code-acp-process.ts";
 import { productionActionCatalog } from "../src/action-catalog.ts";
 import { ParticipantInputEvent } from "../src/application.ts";
 import {

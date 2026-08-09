@@ -21,7 +21,7 @@ import {
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
-} from "../../src/acp-conversation-prototype/open-code-acp-process.ts";
+} from "../../src/acp-runtime/open-code-acp-process.ts";
 import { superviseSubprocess } from "./subprocess-supervisor.ts";
 
 const PROJECT_ROOT = process.cwd();

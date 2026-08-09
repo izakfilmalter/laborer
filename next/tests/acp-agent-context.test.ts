@@ -11,7 +11,7 @@ import {
   pipe,
   Schema,
 } from "effect";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
 import {
   DEFAULT_SOUL,
   loadAcpAgentContextSnapshot,
@@ -21,8 +21,8 @@ import {
   SOUL_FILE_NAME,
   userProfilePath,
   WORKSPACE_MEMORY_FILE_NAME,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeAcpConversationCanary } from "../src/acp-runtime/canary-composition.ts";
 import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
 import {
   makeSlackActivationAcknowledger,

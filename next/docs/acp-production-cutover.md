@@ -1,63 +1,31 @@
-# ACP production cutover gate and rollback
+# ACP production composition
 
-`bun run start:slack` is the only authoritative production receiver. It uses
-durable ACP Conversations through the root-scoped SQLite and Effect Cluster
-runtime, the process supervisor, native Slack stream projection,
-Action/Execution MCP, interactive permissions, adoption, and recovery. There is
-no alternate production receiver or runtime selector.
+`bun run start:slack` is the only authoritative production receiver. The
+Vercel Chat SDK owns Slack Socket Mode ingestion, normalization, subscriptions,
+coalesced queue dispatch, best-effort `thread.post` streaming, attachment
+delivery, and permission block actions. Conversation turns are at-most-once and
+are not routed through the durable Runner or a second scheduler.
 
-Each canonical Laborer root loads one user application, validates its generated
-Action registration, and owns one `runtime.sqlite` plus one SQL-backed Effect
-Cluster `SingleRunner`. Shared-root workspace bindings are clients of that owner
-and retain separate Conversation and Execution partitions. Laborer owns its
-versioned domain tables; Effect owns its private Cluster journal tables. New
-accepted Conversation and Execution work is not written to a second scheduling
-runtime. Compatible pre-cutover state is imported once before readiness;
-ambiguous or incompatible migration and unavailable Action revisions fail
-closed without a legacy fallback.
+`src/acp-runtime/` owns stable-v1 ACP session creation/resume, OpenCode 2
+adaptation, child-process supervision, prompt-epoch protection, Memory MCP,
+Action MCP, participant context, and the `NO_REPLY` public/private output gate.
+The Action/Execution runtime remains durable; Slack publication does not.
 
-## Automated verification
+Permission cards and clicks are best effort. The durable ACP authority
+repository and permission broker still decide each current-prompt capability at
+most once. There is no permission UI outbox or recovery projection in the Chat
+composition.
 
-- Require the final Sandcastle code-review agent to run
-  `bun run --cwd next check` on its final reviewed PR head and report any
-  demonstrably unrelated flaky or infrastructure failure. The runner trusts
-  that agent-owned evidence and does not rerun the suite.
-- Confirm `recovery health` reports every binding as `ready`; investigate bounded
-  reason codes for setup/config incompatibility, quarantine, circuit opening,
-  blocked prompts, uncertain Action/Execution outcomes, stream uncertainty, or
-  outbox backlog.
-- Confirm the normal receiver is the ACP composition and the diagnostic ACP
-  canary uses its isolated Cluster database and is not running with production
-  Slack credentials.
+## Manual canary
 
-## Manual credentialed gate
+`bun run start:acp-canary` uses the same Chat Effect service and promoted ACP
+runtime with the dedicated ACP-canary credentials. Configuration rejects reuse
+of production or Chat-canary credentials. Chat state and workspace runtime state
+use canary-only namespaces. Never run this credentialed gate in automated
+acceptance.
 
-This gate cannot run in Sandcastle's credential-free automated verification and
-must not be reported as automated.
+## Recovery
 
-1. Install the manifest as a dedicated canary Slack app with Socket Mode and
-   interactivity enabled; use isolated canary app/bot credentials.
-2. Stop any existing canary receiver, then run `bun run start:acp-canary`.
-3. In an invited isolated channel, verify an ordinary response uses one native,
-   unedited stream and a follow-up resumes the same durable Conversation.
-4. Request a small `create-feature`; approve any expected one-shot interaction;
-   verify Action acceptance, implementation Execution, and the final ACP result
-   in the owning thread.
-5. Restart during a disposable scene and verify adoption/recovery plus
-   `recovery health --workspace <team>` without exposed content, paths,
-   arguments, tokens, or environment values.
-6. Stop the canary. Stop the existing normal receiver. Start exactly one
-   `bun run start:slack` receiver and repeat steps 3–5 in the production smoke
-   channel.
-
-## Rollback policy
-
-- Never start a simultaneous same-app receiver; Socket Mode may deliver an event
-  to either connection.
-- There is no automatic legacy fallback after ACP accepts a turn and no dual
-  publish. Old Conversation state remains read-only evidence.
-- To roll back, first stop the receiver, preserve all v1–v16 runtime state, and
-  deploy the last known-good ACP build. Do not delete unresolved state or
-  reintroduce a non-ACP Conversation runtime.
-- Resolve or explicitly abandon uncertain prompts and Action/Execution outcomes
-  through the owner-only recovery API before retrying work.
+A failed or interrupted conversational turn is not replayed; a participant
+mentions Laborer again. A partial stream remains partial. Accepted Executions
+retain their durable lifecycle and private event path.

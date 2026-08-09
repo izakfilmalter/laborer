@@ -22,7 +22,7 @@
     "companion:prepare": "node -e \"require('electron')\"",
     "recovery": "bun run src/recovery-cli.ts",
     "dev:slack": "node --env-file-if-exists=.env.local src/development-daemon/dev.ts",
-    "start:acp-canary": "node --env-file-if-exists=.env.local src/acp-conversation-prototype/live.ts",
+    "start:acp-canary": "node --env-file-if-exists=.env.local src/acp-runtime/live.ts",
     "start:chat-canary": "node --env-file-if-exists=.env.local src/chat-plane/live.ts",
     "start:slack": "node --env-file-if-exists=.env.local src/slack/live.ts",
     "slack:oauth-callback:start": "node scripts/slack-oauth-callback.mjs start",

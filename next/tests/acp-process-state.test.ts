@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import {
   AcpProcessStopRecord,
   makeAcpProcessStateRepository,
-} from "../src/acp-conversation-prototype/acp-process-state.ts";
+} from "../src/acp-runtime/acp-process-state.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 describe("issue #252 durable ACP process state", () => {

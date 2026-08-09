@@ -4,21 +4,15 @@
 > not the production Runner. Every file under `src/prototype/` exists only for
 > this tracer.
 >
-> **THROWAWAY ACP STREAMING PROTOTYPE for issues #234 and #236.** The isolated
-> `acp-conversation-prototype` composition uses official stable-v1 ACP over
-> newline-delimited stdio and Emulate Slack. It preserves public ACP message
-> boundaries, filters private activity, reuses sessions, and serializes turns.
-> Emulate 0.9 does not implement Slack's native stream methods, so automated
-> integration retains the `chat.postMessage` then `chat.update` fallback. It is
-> test-only and does not replace the production `start:slack` ACP runtime or
-> user Actions. Streamed Slack messages deliberately remain
-> outside the durable outbox in this proof, so crash retry/replay of a partially
-> delivered stream is not yet guaranteed.
+> **MAINSTREAM ACP RUNTIME.** `src/acp-runtime/` owns stable-v1 ACP sessions,
+> OpenCode 2 adaptation, process supervision, one-shot permission authority,
+> Memory MCP, Action MCP, Agent context, prompt epochs, and the public/private
+> output gate. OpenCode-specific behavior stays behind the ACP adapter.
 >
 > **DEDICATED LIVE ACP CANARY.** `start:acp-canary` composes the production ACP
-> adapter through an isolated SQLite- and Cluster-backed root runtime under
-> dedicated credentials and state. It is a manual gate and must prove native
-> streaming plus one Action/Execution scene.
+> adapter through the same Chat Effect service and promoted runtime as
+> production, under dedicated credentials and separately namespaced Chat,
+> application, ACP, and Action/Execution state. It is a manual gate only.
 >
 > **CHAT SDK CONVERSATION CANARY for issues #328, #331, #332, and #333.**
 > `start:chat-canary` starts a separate multi-workspace Slack Socket Mode
@@ -32,17 +26,19 @@
 > receive one best-effort sanitized operational notice. Subscriptions, dispatch
 > locks, dedupe data, queues, and bounded lists survive daemon restarts. It uses only
 > the dedicated `LABORER_CHAT_CANARY_SLACK_*` credentials and does not alter or
-> replace `start:slack`.
+> replace `start:slack`; it remains a lower-level Chat diagnostic.
 >
-> **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
-> the normal workspace registry, root lock, native Slack streaming, and one
-> SQLite- and Effect Cluster-backed runtime per canonical Laborer root. The
+> **PRODUCTION ACP + CHAT COMPOSITION.** `start:slack` is the only production
+> receiver. Chat SDK owns at-most-once ingestion, coalescing, subscription,
+> best-effort `thread.post` streaming, attachments, and permission block actions.
+> The promoted ACP runtime owns agent sessions and one SQLite- and Effect
+> Cluster-backed Action/Execution runtime per configured workspace. The
 > reference coding application registers its Actions through the same generic
 > user-application API as any other catalog; Laborer core does not dispatch on
 > their names. Each authenticated workspace owns one scoped ACP child and an
-> isolated Conversation partition. Incompatible startup quarantines only that
-> binding. There is no legacy runtime fallback, dual publication, or alternate
-> production entrypoint.
+> isolated Conversation partition. There is no Runner-owned conversational
+> replay, durable Slack publication state, runtime selector, dual publication,
+> or alternate production entrypoint.
 >
 > **THROWAWAY BIDIRECTIONAL COMMUNICATION POC for issues #266–#268.** The
 > OpenCode implementation adapter observes completed, nonblank assistant

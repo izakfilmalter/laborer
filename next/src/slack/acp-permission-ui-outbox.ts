@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Schema, Semaphore } from "effect";
-import { ACP_AUTHORITY_TERMINAL_RETENTION_MILLIS } from "../acp-conversation-prototype/acp-authority.ts";
-import type { AcpPermissionCategory } from "../acp-conversation-prototype/acp-permission-broker.ts";
+import { ACP_AUTHORITY_TERMINAL_RETENTION_MILLIS } from "../acp-runtime/acp-authority.ts";
+import type { AcpPermissionCategory } from "../acp-runtime/acp-permission-broker.ts";
 import { withApplicationFileLock } from "../prototype/application-file-lock.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {

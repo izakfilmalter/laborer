@@ -164,6 +164,7 @@ describe("Chat plane walking skeleton", () => {
 
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([activation]),
+          channelId: "C1",
           channelMessages: asMessages([activation]),
           id: "slack:C123:123.456",
           isDM: false,
@@ -223,6 +224,7 @@ describe("Chat plane walking skeleton", () => {
       Effect.gen(function* () {
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([]),
+          channelId: "C1",
           channelMessages: failingMessages(),
           id: "slack:C123:failure",
           isDM: false,
@@ -375,6 +377,7 @@ describe("Chat plane walking skeleton", () => {
                 await mentionHandler(
                   {
                     allMessages: asMessages([activation]),
+                    channelId: "CSHARED",
                     channelMessages: asMessages([activation]),
                     id: "slack:CSHARED:123.456",
                     isDM: false,
@@ -491,6 +494,7 @@ describe("Chat plane walking skeleton", () => {
           });
           const baseThread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([activation]),
             id: "slack:C1:10.000",
             isDM: false,
@@ -562,6 +566,7 @@ describe("Chat plane walking skeleton", () => {
           const turns: ChatPlaneTurn[] = [];
           const thread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([
               activation,
               contextTwo,
@@ -661,6 +666,7 @@ describe("Chat plane walking skeleton", () => {
             activation,
             message("33.000", "too late"),
           ]),
+          channelId: "C1",
           channelMessages: asMessages([]),
           id: "slack:C1:30.000",
           isDM: false,
@@ -714,6 +720,7 @@ describe("Chat plane walking skeleton", () => {
         const turns: ChatPlaneTurn[] = [];
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([]),
+          channelId: "C1",
           channelMessages: asMessages([]),
           id: "slack:C1:40.000",
           isDM: false,
@@ -773,6 +780,7 @@ describe("Chat plane walking skeleton", () => {
           let shouldFail = true;
           const thread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([activation]),
             id: "slack:C1:50.000",
             isDM: false,

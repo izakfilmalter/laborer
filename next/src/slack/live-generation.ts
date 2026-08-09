@@ -7,6 +7,7 @@ import {
 } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { Effect, Redacted, type Scope } from "effect";
+import { makeAcpSlackWorkspaceRunner } from "../acp-runtime/workspace-runtime.ts";
 import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
 import { makeReferenceCodingRootApplication } from "../durable-runtime/reference-coding-application.ts";
 import {
@@ -16,7 +17,6 @@ import {
 import { slackConversationStreamDeliveryPolicy } from "../prototype/conversation-stream-delivery.ts";
 import { makeSlackGateway } from "../prototype/emulated-slack.ts";
 import { LABORER_VERSION } from "../version.ts";
-import { makeAcpSlackWorkspaceRunner } from "./acp-workspace-runner.ts";
 import type { SlackDaemonConfig } from "./config.ts";
 import { authenticateSlackBot } from "./identity.ts";
 import { makeSlackNativeStreamCapability } from "./native-stream.ts";

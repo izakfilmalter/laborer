@@ -11,7 +11,7 @@ import {
 import type {
   AcpPermissionInteraction,
   AcpPermissionInteractionResult,
-} from "../acp-conversation-prototype/acp-permission-broker.ts";
+} from "../acp-runtime/acp-permission-broker.ts";
 import type { NormalizedInboundEvent } from "../prototype/domain.ts";
 import type { SlackRuntimeIdentity } from "./config.ts";
 import { SocketModeAdapterError } from "./errors.ts";

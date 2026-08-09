@@ -2,9 +2,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber } from "effect";
-import { makeAcpAuthorityRepository } from "../src/acp-conversation-prototype/acp-authority.ts";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
-import { makeLaborerActionMcpBridge } from "../src/acp-conversation-prototype/action-mcp.ts";
+import { makeAcpAuthorityRepository } from "../src/acp-runtime/acp-authority.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
+import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
 import type {
   ConversationAction,
   ConversationAgentRequest,

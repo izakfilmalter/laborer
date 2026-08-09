@@ -7,9 +7,6 @@ import { loadLaborerConfig } from "../src/slack/laborer-config.ts";
 import { prepareSlackRuntimePaths } from "../src/slack/runtime-paths.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
-const isolatedCanaryDatabasePattern =
-  /databasePath:\s*resolve\(dirname\(paths\.applicationState\),\s*"runtime\.sqlite"\)/;
-
 describe("issue #257 ACP production cutover", () => {
   it.effect(
     "rejects removed Conversation configuration with a bounded migration diagnostic",
@@ -183,20 +180,20 @@ describe("issue #257 ACP production cutover", () => {
   );
 
   it("uses the production runtime and interactive manifest for the canary", async () => {
-    const [canary, manifest] = await Promise.all([
+    const [canary, composition, manifest] = await Promise.all([
+      readFile(new URL("../src/acp-runtime/live.ts", import.meta.url), "utf8"),
       readFile(
-        new URL("../src/acp-conversation-prototype/live.ts", import.meta.url),
+        new URL("../src/acp-runtime/chat-live.ts", import.meta.url),
         "utf8"
       ),
       readFile(new URL("../slack-app-manifest.yaml", import.meta.url), "utf8"),
     ]);
-    assert.ok(canary.includes("makeNodeRootDurableRuntime"));
-    assert.ok(canary.includes("makeAcpSlackWorkspaceRunner"));
-    assert.ok(canary.includes("slackConversationStreamDeliveryPolicy"));
-    assert.ok(canary.includes("acp-canary:"));
-    assert.ok(canary.includes("rootRuntime"));
-    assert.match(canary, isolatedCanaryDatabasePattern);
-    assert.ok(!canary.includes("databasePath: paths.runtimeDatabase"));
+    assert.ok(canary.includes("runAcpChatComposition"));
+    assert.ok(canary.includes('workspaceStatePrefix: "acp-canary"'));
+    assert.ok(composition.includes("makeNodeRootDurableRuntime"));
+    assert.ok(composition.includes("makeLiveChatPlaneLayer"));
+    assert.ok(!canary.includes("SocketModeClient"));
+    assert.ok(!canary.includes("slackConversationStreamDeliveryPolicy"));
     assert.ok(!canary.includes("makeAcpConversationCanary"));
     assert.ok(manifest.includes("interactivity:\n    is_enabled: true"));
   });

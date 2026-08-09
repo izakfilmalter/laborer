@@ -16,8 +16,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Effect, Exit, Fiber, Logger, Scope } from "effect";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
-import type { AcpPermissionBroker } from "../src/acp-conversation-prototype/acp-permission-broker.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
+import type { AcpPermissionBroker } from "../src/acp-runtime/acp-permission-broker.ts";
 import {
   acpAgentContextPaths,
   isSlackTeamId,
@@ -25,13 +25,13 @@ import {
   loadAcpSlackParticipantContexts,
   prepareAcpAgentContextSources,
   userProfilePath,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
-import { laborerMcpServerLauncherArgs } from "../src/acp-conversation-prototype/mcp-server-launcher-config.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeAcpConversationCanary } from "../src/acp-runtime/canary-composition.ts";
+import { laborerMcpServerLauncherArgs } from "../src/acp-runtime/mcp-server-launcher-config.ts";
 import {
   framedMemoryEntries,
   renderFramedMemoryEntry,
-} from "../src/acp-conversation-prototype/memory-framing.ts";
+} from "../src/acp-runtime/memory-framing.ts";
 import {
   authorizeLaborerMemoryPermission,
   clearLaborerMemoryPermissionRegistration,
@@ -43,7 +43,7 @@ import {
   prepareLaborerMemoryMcpRegistration,
   recordLaborerMemoryDiagnosticForSources,
   tryAuthorizeLaborerMemoryPermission,
-} from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/memory-mcp.ts";
 import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
 import {
   makeSlackActivationAcknowledger,
@@ -59,10 +59,7 @@ import {
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const projectRoot = process.cwd();
-const serverPath = resolve(
-  projectRoot,
-  "src/acp-conversation-prototype/memory-mcp-server.ts"
-);
+const serverPath = resolve(projectRoot, "src/acp-runtime/memory-mcp-server.ts");
 const OWNER_ONLY_PERMISSION_MODULUS = 0o100;
 const scriptedPeerPath = resolve(
   projectRoot,

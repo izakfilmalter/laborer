@@ -116,15 +116,6 @@ vi.mock('@/components/github-pr-status-badge', () => ({
   GitHubPrStatusBadge: () => null,
 }))
 
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => null,
-}))
-
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => null,
-  useUnresolvedFindingsCount: () => 0,
-}))
-
 vi.mock('@/components/plan-issues-list', () => ({
   PlanIssuesList: () => null,
 }))

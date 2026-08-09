@@ -58,12 +58,6 @@ vi.mock('@/panes/diff-pane', () => ({
   ),
 }))
 
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div data-testid="review-pane" data-workspace-id={workspaceId} />
-  ),
-}))
-
 vi.mock('@/panels/panel-context', () => {
   const actions: PanelActions = {
     assignTerminalToPane: vi.fn(),
@@ -80,7 +74,6 @@ vi.mock('@/panels/panel-context', () => {
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(() => false),
     toggleTreePane: vi.fn(() => false),
     addPanelTab: vi.fn(),
     addWorkspaceToCurrentTab: vi.fn(),

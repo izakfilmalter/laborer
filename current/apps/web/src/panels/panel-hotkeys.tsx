@@ -20,7 +20,6 @@
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
  * - Ctrl+b then d → create diff panel in right-side split
- * - Ctrl+b then r → toggle review pane alongside active terminal pane
  * - Ctrl+b then s → toggle dev server terminal alongside active terminal pane
  * - Ctrl+b then z → toggle fullscreen for active terminal pane (zoom)
  * - Ctrl+b then ArrowLeft → move focus left
@@ -457,28 +456,6 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
       } else if (activeWorkspaceId) {
         // No active pane — add as a new panel tab
         actions.addPanelTab?.(activeWorkspaceId, 'diff')
-      }
-    },
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // Ctrl+b then r → create a new review panel in a right-side split
-  useHotkeySequence(
-    ['Control+B', 'R'],
-    (event) => {
-      event.preventDefault()
-      if (!actions) {
-        return
-      }
-      if (activePaneId && activeWorkspaceId) {
-        // Split right with a review pane inheriting the workspace context
-        actions.splitPane(activePaneId, 'horizontal', {
-          paneType: 'review',
-          workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
-      } else if (activeWorkspaceId) {
-        // No active pane — add as a new panel tab
-        actions.addPanelTab?.(activeWorkspaceId, 'review')
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

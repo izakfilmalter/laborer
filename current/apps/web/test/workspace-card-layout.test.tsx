@@ -1,7 +1,7 @@
 /**
  * Tests for the reorganized workspace card layout.
  *
- * Row 1 (Git): branch name + PR badge + review verdict + findings count
+ * Row 1 (Git): branch name + PR badge
  *
  * Row 2 (Sandbox/Infra): sandbox URL/port + status badge + pause/play
  *
@@ -33,13 +33,6 @@ vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: vi.fn(async () => true),
   terminalRpcUrl: () => 'http://localhost:2101',
-}))
-
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => (
-    <span data-testid="review-findings-count">findings</span>
-  ),
-  useUnresolvedFindingsCount: () => 0,
 }))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
@@ -111,12 +104,6 @@ vi.mock('@/components/terminal-list', () => ({
 
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
-}))
-
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => (
-    <span data-testid="review-verdict-badge">verdict</span>
-  ),
 }))
 
 vi.mock('@/components/plan-issues-list', () => ({
@@ -195,6 +182,8 @@ import { WorkspaceList } from '../src/components/workspace-list'
 // Fixtures
 // ---------------------------------------------------------------------------
 
+const REVIEW_PR_RE = /review pr/i
+const FIX_FINDINGS_RE = /fix findings/i
 const PAUSE_SANDBOX_RE = /pause sandbox/i
 const RESUME_SANDBOX_RE = /resume sandbox/i
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
@@ -272,7 +261,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('shows review findings metadata when the workspace has a PR', () => {
+  it('does not render removed review actions when workspace has a PR', () => {
     mockStore([
       makeWorkspace({
         prNumber: 42,
@@ -284,7 +273,8 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    expect(screen.getByTestId('review-findings-count')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
   })
 })
 

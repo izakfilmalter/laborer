@@ -22,12 +22,6 @@ vi.mock('@/lib/desktop', () => ({
   serverRpcUrl: () => 'http://localhost:2100/rpc',
 }))
 
-// Stub the review findings count hook — the header's ReviewButtonWithCount
-// component needs this, but we don't want real RPC calls in unit tests.
-vi.mock('@/components/review-findings-count', () => ({
-  useUnresolvedFindingsCount: () => 0,
-}))
-
 // Stub tooltip — the @base-ui/react tooltip uses a portal that isn't
 // available in jsdom. We just need the trigger to render its content.
 vi.mock('@/components/ui/tooltip', () => ({
@@ -66,7 +60,6 @@ function mockActions(): PanelActions {
     toggleDevServerPane: vi.fn(),
     toggleDiffPane: vi.fn(),
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(),
     toggleTreePane: vi.fn(() => false),
     addPanelTab: vi.fn(),
     addWorkspaceToCurrentTab: vi.fn(),
@@ -94,8 +87,6 @@ const CLOSED_PR_RE = /#17 closed/i
 const PUSH_COMMITS_RE = /push 2 commits/i
 const PULL_COMMITS_RE = /pull 3 commits/i
 
-const REVIEW_PANE_RE = /review pane/i
-
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
   activePaneId: 'pane-1',
@@ -109,7 +100,6 @@ const BASE_PROPS = {
   prTitle: null,
   prUrl: null,
   projectName: 'my-project',
-  reviewIsOpen: false,
   workspaceId: 'ws-1',
   workspacePath: [] as readonly string[],
 } as const
@@ -209,78 +199,6 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     const button = screen.getByRole('button', { name: 'Close diff viewer' })
-    expect(button).toBeTruthy()
-  })
-
-  // --- Review pane toggle ---
-
-  it('renders the review pane toggle button', () => {
-    const actions = mockActions()
-    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
-    expect(button).toBeTruthy()
-  })
-
-  it('calls toggleReviewPane with the active pane ID when clicked', () => {
-    const actions = mockActions()
-    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
-    fireEvent.click(button)
-
-    expect(actions.toggleReviewPane).toHaveBeenCalledWith('pane-1')
-  })
-
-  it('applies bg-accent class to review toggle when review is open', () => {
-    const actions = mockActions()
-    render(
-      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} reviewIsOpen />
-    )
-
-    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
-    expect(button.className).toContain('bg-accent')
-    expect(button.getAttribute('aria-pressed')).toBe('true')
-  })
-
-  it('does not apply bg-accent class to review toggle when review is closed', () => {
-    const actions = mockActions()
-    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
-    expect(button.className).not.toContain('bg-accent')
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-  })
-
-  it('disables the review toggle button when no pane is active', () => {
-    const actions = mockActions()
-    render(
-      <WorkspaceFrameHeader
-        {...BASE_PROPS}
-        actions={actions}
-        activePaneId={null}
-      />
-    )
-
-    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
-    expect(button).toHaveProperty('disabled', true)
-  })
-
-  it('labels the review button "Open review pane" when review is closed', () => {
-    const actions = mockActions()
-    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-    const button = screen.getByRole('button', { name: 'Open review pane' })
-    expect(button).toBeTruthy()
-  })
-
-  it('labels the review button "Close review pane" when review is open', () => {
-    const actions = mockActions()
-    render(
-      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} reviewIsOpen />
-    )
-
-    const button = screen.getByRole('button', { name: 'Close review pane' })
     expect(button).toBeTruthy()
   })
 
@@ -521,7 +439,7 @@ describe('WorkspaceFrameHeader', () => {
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------
 
-  it('hides diff, review, close workspace, and dev server buttons when minimized', () => {
+  it('hides diff, close workspace, and dev server buttons when minimized', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
@@ -534,7 +452,6 @@ describe('WorkspaceFrameHeader', () => {
 
     // These action buttons should not be present when minimized
     expect(screen.queryByRole('button', { name: DIFF_VIEWER_RE })).toBeNull()
-    expect(screen.queryByRole('button', { name: REVIEW_PANE_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Close workspace' })).toBeNull()
 
     // But the minimize/expand button should still be visible
@@ -555,7 +472,6 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     expect(screen.getByRole('button', { name: DIFF_VIEWER_RE })).toBeTruthy()
-    expect(screen.getByRole('button', { name: REVIEW_PANE_RE })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close workspace' })).toBeTruthy()
     expect(
       screen.getByRole('button', { name: 'Minimize workspace' })

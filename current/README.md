@@ -2,7 +2,7 @@
 
 **Mission control for parallel AI coding agents.**
 
-A local-first desktop application for orchestrating multiple AI coding agents in parallel. Laborer provides a tmux-style panel system where each pane is a live terminal running an AI agent, a diff viewer, a file tree, a review panel, or a raw shell -- enabling you to monitor and interact with many agents working on different branches simultaneously.
+A local-first desktop application for orchestrating multiple AI coding agents in parallel. Laborer provides a tmux-style panel system where each pane is a live terminal running an AI agent, a diff viewer, a file tree, or a raw shell -- enabling you to monitor and interact with many agents working on different branches simultaneously.
 
 ```
 +-------------------+-------------------+-------------------+
@@ -22,7 +22,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 - **No multi-agent visibility** -- Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes with real-time status tracking.
 - **Manual environment management** -- Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace. Each agent gets a fully isolated environment automatically.
-- **Disconnected workflows** -- Unifies the pipeline from PRD writing to issue creation to agent execution to code review in a single interface. No context-switching between Linear, GitHub, terminal, and review tools.
+- **Disconnected workflows** -- Unifies the pipeline from PRD writing to issue creation and agent execution in a single interface. No context-switching between Linear, GitHub, and the terminal.
 - **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent. Laborer saturates your machine with parallel execution.
 
 ## Features
@@ -38,10 +38,9 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 - **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, Codex, and rlph/brrr.
 - **Multi-window support** -- Multiple Electron windows with persistent layout, window state across restarts, and drag-and-drop tab reordering.
 
-### Code Review and Diffs
+### Diffs and GitHub
 - **Live diff viewer** -- Real-time git diffs against the worktree's base SHA with per-hunk accept/reject annotations. Split and unified views. Reactive updates via filesystem watcher.
 - **File tree with git status** -- Lazy per-directory file browser with git status decorations, right-click context menus, and reactive invalidation.
-- **PR review findings** -- GitHub PR comment integration with severity-sorted display (critical/warning/info), checkbox triage, and one-click "Fix Selected" action.
 - **GitHub PR integration** -- Tracks PR state (open/closed/merged) per workspace with ahead/behind counts.
 
 ### Planning and Task Management

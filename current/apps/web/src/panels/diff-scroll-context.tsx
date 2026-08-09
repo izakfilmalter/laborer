@@ -2,10 +2,9 @@
  * DiffScrollContext — cross-pane communication channel for scrolling
  * the diff pane to a specific file and line.
  *
- * When the user clicks a file:line reference in the review pane, this
- * context propagates a "scroll to file:line" event to any open diff pane
- * for the same workspace. If no diff pane is open, the event is silently
- * ignored.
+ * This context propagates a "scroll to file:line" event to any open diff
+ * pane for the same workspace. If no diff pane is open, the event is
+ * silently ignored.
  *
  * ## Architecture
  *

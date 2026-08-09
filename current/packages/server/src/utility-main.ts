@@ -77,7 +77,6 @@ import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
-import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
@@ -304,7 +303,6 @@ const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
 const DeferredGroup2Layers = Layer.mergeAll(
   GithubTaskImporter.layer,
   LinearTaskImporter.layer,
-  ReviewCommentFetcher.layer,
   RepositoryWatchCoordinator.layer
 )
 
@@ -335,8 +333,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     const prWatcher = yield* makeRefDelegatingService(PrWatcher)
     const prdStorageService = yield* makeRefDelegatingService(PrdStorageService)
     const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
-    const reviewCommentFetcher =
-      yield* makeRefDelegatingService(ReviewCommentFetcher)
     const taskManager = yield* makeRefDelegatingService(TaskManager)
     const terminalClient = yield* makeRefDelegatingService(TerminalClient)
     const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
@@ -405,10 +401,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         yield* Ref.set(
           projectRegistry.ref,
           Context.get(stackCtx, ProjectRegistry)
-        )
-        yield* Ref.set(
-          reviewCommentFetcher.ref,
-          Context.get(stackCtx, ReviewCommentFetcher)
         )
         yield* Ref.set(taskManager.ref, Context.get(stackCtx, TaskManager))
         yield* Ref.set(
@@ -488,7 +480,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.add(PrWatcher, prWatcher.proxy),
       Context.add(PrdStorageService, prdStorageService.proxy),
       Context.add(ProjectRegistry, projectRegistry.proxy),
-      Context.add(ReviewCommentFetcher, reviewCommentFetcher.proxy),
       Context.add(TaskManager, taskManager.proxy),
       Context.add(TerminalClient, terminalClient.proxy),
       Context.add(WorkspaceProvider, workspaceProvider.proxy),

@@ -62,12 +62,6 @@ vi.mock('@/panes/dev-server-terminal-pane', () => ({
   ),
 }))
 
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div>review:{workspaceId}</div>
-  ),
-}))
-
 vi.mock('@/panels/panel-context', () => ({
   useActivePaneId: () => activePaneIdRef.current,
   useFullscreenPaneId: () => null,
@@ -409,16 +403,5 @@ describe('PanelRenderer', () => {
     fireEvent.click(screen.getByText('diff:ws-1'))
 
     expect(setActivePaneIdMock).toHaveBeenCalledWith('diff-pane')
-  })
-
-  it('renders review pane type', () => {
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'review-pane',
-      paneType: 'review',
-      workspaceId: 'ws-1',
-    }
-    render(<PanelRenderer node={leaf} />)
-    expect(screen.getByText('review:ws-1')).toBeTruthy()
   })
 })

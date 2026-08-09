@@ -43,10 +43,6 @@ vi.mock('@/panels/panel-manager', () => ({
   ),
 }))
 
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: () => <div data-testid="review-pane" />,
-}))
-
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
@@ -88,7 +84,6 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
       toggleDevServerPane: vi.fn(async () => false),
       toggleDiffPane: vi.fn(() => false),
       toggleFullscreenPane: vi.fn(),
-      toggleReviewPane: vi.fn(() => false),
       toggleTreePane: vi.fn(() => false),
       addPanelTab: vi.fn(),
       addWorkspaceToCurrentTab: vi.fn(),
@@ -111,18 +106,15 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   WorkspaceFrameHeaderContainer: ({
     diffIsOpen,
-    reviewIsOpen,
     treeIsOpen,
     workspaceId,
   }: {
     diffIsOpen?: boolean
-    reviewIsOpen?: boolean
     treeIsOpen?: boolean
     workspaceId: string | undefined
   }) => (
     <div
       data-diff-open={diffIsOpen ? 'true' : 'false'}
-      data-review-open={reviewIsOpen ? 'true' : 'false'}
       data-testid="workspace-frame-header"
       data-tree-open={treeIsOpen ? 'true' : 'false'}
       data-workspace-id={workspaceId}
@@ -325,7 +317,6 @@ describe('Workspace header visibility during fullscreen', () => {
         diffWorkspaceIds={['workspace-1']}
         fullscreenPaneId="pane-1"
         isReconciling={false}
-        reviewWorkspaceIds={['workspace-1']}
         treeWorkspaceIds={['workspace-1']}
         windowLayout={SINGLE_WINDOW_LAYOUT}
         windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
@@ -334,7 +325,6 @@ describe('Workspace header visibility during fullscreen', () => {
 
     expect(screen.getAllByTestId('tree-pane')).toHaveLength(1)
     expect(screen.getAllByTestId('diff-pane')).toHaveLength(1)
-    expect(screen.getAllByTestId('review-pane')).toHaveLength(1)
 
     const header = screen.getByTestId('fullscreen-workspace-header')
     expect(header.getAttribute('data-workspace-id')).toBe('workspace-1')
@@ -344,7 +334,6 @@ describe('Workspace header visibility during fullscreen', () => {
     )
     expect(headerContent?.getAttribute('data-tree-open')).toBe('true')
     expect(headerContent?.getAttribute('data-diff-open')).toBe('true')
-    expect(headerContent?.getAttribute('data-review-open')).toBe('true')
   })
 
   it('does not render the fullscreen workspace header when no pane is fullscreened', () => {

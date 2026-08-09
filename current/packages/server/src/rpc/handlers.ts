@@ -31,7 +31,6 @@ import {
   slugifyPrdTitle,
 } from '../services/prd-storage-service.js'
 import { ProjectRegistry } from '../services/project-registry.js'
-import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { SandboxProvider } from '../services/sandbox-provider.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { TaskManager } from '../services/task-manager.js'
@@ -1338,49 +1337,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const taskManager = yield* TaskManager
         yield* taskManager.removeTask(taskId)
-      }),
-
-    // -------------------------------------------------------------------
-    // Review RPCs
-    // -------------------------------------------------------------------
-    'review.fetchComments': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchComments(workspaceId)
-      }),
-    'review.fetchVerdict': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchVerdict(workspaceId)
-      }),
-    'review.addReaction': ({ workspaceId, commentId, content }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.addReaction(workspaceId, commentId, content)
-      }),
-    'review.removeReaction': ({ workspaceId, commentId, reactionId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        yield* fetcher.removeReaction(workspaceId, commentId, reactionId)
-      }),
-
-    // -------------------------------------------------------------------
-    // Alive-driven individual fetch RPCs
-    // -------------------------------------------------------------------
-    'review.fetchSingleIssueComment': ({ workspaceId, commentId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleIssueComment(workspaceId, commentId)
-      }),
-    'review.fetchSingleReviewComment': ({ workspaceId, commentId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleReviewComment(workspaceId, commentId)
-      }),
-    'review.fetchSingleReview': ({ workspaceId, reviewId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleReview(workspaceId, reviewId)
       }),
 
     // -------------------------------------------------------------------

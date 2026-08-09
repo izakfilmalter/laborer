@@ -4,7 +4,7 @@
  * Verifies that workspaces associated with a plan (branch name `plan/<slug>`)
  * display a scoped PlanIssuesList showing only that plan's issues.
  *
- * @see Issue #193: Plan workspace scoped task list and brrr integration
+ * @see Issue #193: Plan workspace scoped task list
  */
 
 import {
@@ -38,12 +38,6 @@ vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: openExternalUrlMock,
   terminalRpcUrl: () => 'http://localhost:2101',
-}))
-
-// Stub the review findings count — not relevant for plan scope tests.
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => null,
-  useUnresolvedFindingsCount: () => 0,
 }))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
@@ -115,7 +109,6 @@ vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
 }))
 
-// Stub review pr and fix findings forms
 // Stub copy-button
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,

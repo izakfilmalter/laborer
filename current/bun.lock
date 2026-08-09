@@ -5,7 +5,6 @@
     "": {
       "name": "laborer",
       "dependencies": {
-        "@github/alive-client": "^1.2.0",
         "@laborer/env": "workspace:*",
         "dotenv": "catalog:",
         "zod": "catalog:",
@@ -52,7 +51,6 @@
         "@effect/platform": "0.93.8",
         "@effect/platform-browser": "0.73.0",
         "@effect/rpc": "0.72.2",
-        "@github/alive-client": "^1.2.0",
         "@hookform/resolvers": "^5.1.1",
         "@laborer/env": "workspace:*",
         "@laborer/shared": "workspace:*",
@@ -638,12 +636,6 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.8", "", { "dependencies": { "@floating-ui/dom": "^1.7.6" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-cC52bHwM/n/CxS87FH0yWdngEZrjdtLW/qVruo68qg+prK7ZQ4YGdut2GyDVpoGeAYe/h899rVeOVm6Oi40k2A=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
-
-    "@github/alive-client": ["@github/alive-client@1.2.0", "", { "dependencies": { "@github/multimap": "^1.0.0", "@github/stable-socket": "^1.1.0" } }, "sha512-J2ntd+Y+kCoir8uV9cifVs0H3SXZCngVRGnAe8DkbFq7Qc1w40WP9LvcUFMh6/YqG81aHrCz+6c6H2SMfADfbw=="],
-
-    "@github/multimap": ["@github/multimap@1.0.0", "", {}, "sha512-7SQfzFHXSWXcSgKCvHAE2sG7ixseghr8W12VbnKDMY+NYN8t63Aq/l619xTIJMOM/1DHHej16m7WJlBXL/XYhA=="],
-
-    "@github/stable-socket": ["@github/stable-socket@1.1.1", "", {}, "sha512-fIQylCDB+a1dXBSkuggBs+cFEhVYuAoLAOH6mJrYkldcNURJjELS2E1AKdAik6FvLl2CAVo5y1R+HYuze6mpgQ=="],
 
     "@grpc/grpc-js": ["@grpc/grpc-js@1.14.3", "", { "dependencies": { "@grpc/proto-loader": "^0.8.0", "@js-sdsl/ordered-map": "^4.4.2" } }, "sha512-Iq8QQQ/7X3Sac15oB6p0FmUg/klxQvXLeileoqrTRGJYLV+/9tubbr9ipz0GKHjmXVsgFPo/+W+2cA8eNcR+XA=="],
 

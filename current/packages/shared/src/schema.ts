@@ -1,5 +1,5 @@
 import { Events, makeSchema, Schema, State } from '@livestore/livestore'
-import { PrdStatus, WindowLayoutSchema } from './types.js'
+import { PersistedWindowLayoutSchema, PrdStatus } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -142,7 +142,7 @@ export const appSettings = State.SQLite.table({
 export const panelLayout = State.SQLite.clientDocument({
   name: 'panel_layout',
   schema: Schema.Struct({
-    windowLayout: Schema.NullOr(WindowLayoutSchema),
+    windowLayout: Schema.NullOr(PersistedWindowLayoutSchema),
   }),
   default: {
     value: { windowLayout: null },
@@ -558,7 +558,7 @@ export const windowLayoutUpdated = Events.clientOnly({
   name: 'v1.WindowLayoutUpdated',
   schema: Schema.Struct({
     windowId: Schema.String,
-    windowLayout: WindowLayoutSchema,
+    windowLayout: PersistedWindowLayoutSchema,
     reason: Schema.optional(Schema.String),
   }),
 })

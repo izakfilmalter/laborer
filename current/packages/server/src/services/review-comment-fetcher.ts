@@ -26,8 +26,10 @@ import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, Option, pipe } from 'effect'
 import { spawn } from '../lib/spawn.js'
-import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
-import { parseGithubRepo } from './github-repository.js'
+import {
+  parseGithubRepo,
+  runGhPrViewWithOriginFallback,
+} from './github-pr-view.js'
 import { LaborerStore } from './laborer-store.js'
 
 /** Regex for splitting paginated JSON arrays from gh --paginate output */

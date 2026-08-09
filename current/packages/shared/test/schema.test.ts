@@ -799,7 +799,6 @@ describe('LiveStore schema', () => {
           id: 'task-1',
           projectId: 'project-1',
           source: 'manual',
-          prdId: 'prd-1',
           externalId: null,
           title: 'Cover schema compatibility',
           status: 'pending',
@@ -816,7 +815,6 @@ describe('LiveStore schema', () => {
           title: 'MCP planning',
           slug: 'mcp-planning',
           filePath: '/tmp/PRD-mcp-planning.md',
-          status: 'draft',
           createdAt: '2026-03-06T00:00:00.000Z',
         })
       )

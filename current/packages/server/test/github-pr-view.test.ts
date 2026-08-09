@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseGithubRepo } from '../src/services/github-repository.js'
+import { parseGithubRepo } from '../src/services/github-pr-view.js'
 
 describe('parseGithubRepo', () => {
   it.each([

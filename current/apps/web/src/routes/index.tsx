@@ -1187,7 +1187,7 @@ function HomeComponent() {
             </button>
           )}
 
-          {/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
+          {/* Main content — Panel system, dashboard, or welcome empty state */}
           <main className="min-w-0 flex-1">
             {!hasProjects && <WelcomeEmptyState />}
             {hasProjects && (

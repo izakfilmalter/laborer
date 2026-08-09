@@ -834,7 +834,6 @@ Date: 2026-03-14
 - Updated 3 test files with `useActiveWorkspaceId` mock:
   - `workspace-card-layout.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
   - `workspace-list-root-delete.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
-  - `workspace-plan-scope.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
 
 ### Notes
 - The `findTerminalLocation` utility function was already fully implemented and tested in issue #2 (67 tests in `window-tab-utils.test.ts`) — this issue wires it into the actual UI flow.

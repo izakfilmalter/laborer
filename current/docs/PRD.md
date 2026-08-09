@@ -137,7 +137,6 @@ const destroyWorkspace = useAtomSet(LaborerClient.mutation("workspace.destroy"))
 ```
 
 Key RPC methods (all mutations unless noted):
-- `workspace.create(projectId, taskConfig?)` — creates worktree, allocates port, runs setup
 - `workspace.destroy(workspaceId)` — tears down worktree, kills processes, frees port
 - `terminal.spawn(workspaceId, command?)` — creates PTY in workspace directory
 - `terminal.write(terminalId, data)` — sends input to PTY
@@ -368,7 +367,6 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 - **Slack bot integration.** Remote task triggering via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
 - **Docker/Daytona workspace providers.** V1 ships with git worktrees only. The `WorkspaceProvider` interface is designed for future implementations, but they are not built in v1.
-- **Browser preview pane.** Embedding an iframe showing the dev server is a future enhancement. V1 focuses on terminals and diffs.
 - **Authentication / multi-user.** V1 is a single-user, local-only tool with no auth.
 - **Mobile / tablet support.** V1 targets desktop (macOS primarily, with Linux/Windows as secondary).
 - **Peer-to-peer sync.** LiveStore sync in v1 is local server-to-UI only. No multi-device or multi-user sync.

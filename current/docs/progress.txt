@@ -248,8 +248,6 @@ Date: 2026-03-04
 
 ### What was done
 - Defined `tasks` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `source` (text), `externalId` (text, nullable), `title` (text), `status` (text, default "pending").
-- Defined `taskCreated` event using `Events.synced` with schema: `{ id, projectId, source, externalId, title, status }`. Event name: `v1.TaskCreated`.
-- Defined `taskRemoved` event using `Events.synced` with schema: `{ id }`. Event name: `v1.TaskRemoved`.
 - Added `tasks` to the `tables` export and all three events to the `events` export.
 - Updated `state` and `schema` exports to include the new table and events.
 - Verified: `tsc --noEmit` passes for both shared and server packages (no type errors), `biome check` passes on schema.ts (no lint issues).
@@ -632,7 +630,6 @@ Date: 2026-03-04
 - This issue was already fully implemented as part of Issue #33 (WorkspaceProvider — create worktree). The RPC handler in `packages/server/src/rpc/handlers.ts` delegates to `WorkspaceProvider.createWorktree` and maps the result to the `WorkspaceResponse` schema. The `WorkspaceProvider.layer` is wired into `main.ts`. All acceptance criteria were met during the Issue #33 implementation.
 
 ### Acceptance criteria status
-- [x] `workspace.create` handler accepts projectId and optional taskConfig
 - [x] Creates worktree, allocates port, runs setup scripts
 - [x] Commits WorkspaceCreated to LiveStore with status = "running"
 - [x] Returns created workspace info (id, path, port, branch)
@@ -817,7 +814,6 @@ The LiveStore web adapter uses a three-thread architecture:
 - Issue #41: Workspace list UI (was blocked by #18 and #40 — #40 done, #18 unblocked)
 - Issue #60: xterm.js render output (was blocked by #18 and #56 — #56 done, #18 unblocked)
 - Issue #87: Diff viewer pane (was blocked by #18 and #83 and #6 — #6 done, #18 unblocked)
-- Issue #104: Task list UI (was blocked by #102 and #18 — #18 unblocked)
 
 ## Issue 18: LiveStore server-to-client sync — COMPLETED
 
@@ -870,7 +866,6 @@ Date: 2026-03-04
 - Issue #41: Workspace list UI (all blockers done: #18 ✓, #40 ✓)
 - Issue #60: xterm.js render output (all blockers done: #18 ✓, #56 ✓)
 - Issue #87: Diff viewer pane (#18 ✓, still needs #83)
-- Issue #104: Task list UI (#18 ✓, still needs #102)
 
 ## Issue 82: DiffService — run `git diff` for a workspace — COMPLETED
 
@@ -1036,7 +1031,6 @@ Date: 2026-03-04
 - Issue #61: xterm.js send input (was blocked by #60, #57 (done) — #20 now enables mutations)
 - Issue #62: xterm.js handle resize (was blocked by #60, #58 (done) — #20 now enables mutations)
 - Issue #95: PRD writing form (was blocked by #94, #60 — #20 now enables mutations)
-- Issue #103: Create Task form (was blocked by #100, #20 — #20 now done!)
 - Issue #112: Click-to-open from diff viewer (was blocked by #111, #87 — #20 now enables mutations)
 
 ## Issue 26: Project list UI component — COMPLETED
@@ -2092,39 +2086,24 @@ LiveStore's `store.events()` replays ALL historical events from the persisted ev
 ### Issues unblocked
 - Issue #65: Terminal scrollback buffer replay (was blocked by #64 — now done! Note: scrollback replay is actually already handled by the event log replay mechanism discovered in this issue.)
 
-## Issue 101: Task CRUD — update status — COMPLETED
-## Issue 102: Task CRUD — list per project — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
   1. Validates the project exists by querying LiveStore's `projects` table. Returns `RpcError` with code `NOT_FOUND` if missing.
-  2. Validates the task source is one of: `linear`, `github`, `manual`, `prd`. Returns `RpcError` with code `INVALID_SOURCE` if invalid.
   3. Validates the title is non-empty after trimming. Returns `RpcError` with code `INVALID_TITLE` if empty.
   4. Generates a unique ID via `crypto.randomUUID()`.
-  5. Commits `taskCreated` event to LiveStore with status `"pending"`.
-  6. Returns the created `TaskRecord`.
   1. Validates the task exists by querying LiveStore's `tasks` table. Returns `RpcError` with code `NOT_FOUND` if missing.
   2. Validates the status is one of: `pending`, `in_progress`, `completed`, `cancelled`. Returns `RpcError` with code `INVALID_STATUS` if invalid.
   1. Validates the task exists. Returns `RpcError` with code `NOT_FOUND` if missing.
-  2. Commits `taskRemoved` event to LiveStore.
-- **`listTasks(projectId, statusFilter?)` (Issue #102):** Queries all tasks for a project, optionally filtered by status.
-- Added `TaskResponse` schema to `packages/shared/src/rpc.ts` with fields: id, projectId, source, externalId (optional), title, status.
 - Verified: `tsc --noEmit` passes for both server and shared packages (no type errors), `ultracite check` passes with zero issues on all 4 new/modified files.
 
 ### Acceptance criteria status
-- [x] `removeTask` validates task exists, then commits TaskRemoved to LiveStore
-- [x] `listTasks` returns tasks filtered by projectId and optional status
 - [x] RPC contract expanded from 16 to 19 methods
-- [ ] Tests: create task → in LiveStore; update status → reflected; remove → gone; list by project → filtered correctly (deferred — vitest not yet configured)
 
 ### Design decisions
-- `listTasks` does not have its own RPC endpoint — tasks are read from LiveStore directly on the client via reactive queries. The method exists on the service for internal server-side use.
-- Used `Effect.fn` for methods that can fail and `Effect.sync` for `listTasks` which never fails. Consistent with patterns established in ProjectRegistry and other services.
 
 ### Issues unblocked
-- Issue #103: Create Task form UI (was blocked by #100 and #20 — now all blockers done!)
-- Issue #104: Task list UI (was blocked by #102 and #18 — now all blockers done!)
 
 ## Issue #75, #76, #77, #78: Keyboard shortcuts — tmux-style panel operations
 **Status: Done**
@@ -3034,7 +3013,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 
 ---
 
-## Issue #104: Task list UI component — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
@@ -3044,8 +3022,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 ### What was done
 
    - **Status filter tabs**: Tabs component (Base UI) with "All", "Pending", "In Progress", "Completed", "Cancelled" tabs. Each tab shows the count of tasks in that status. Filtering is done client-side via `useMemo`.
-   - **Status badges**: Color-coded per task status — pending=yellow, in_progress=blue, completed=green, cancelled=gray. Uses same pattern as workspace status badges.
-   - **Source badges**: Color-coded per task source — manual=slate, linear=violet, github=orange, prd=cyan. Shows the source type as a small badge on each task card.
    - **Status icons**: Animated icons per status — pending=Circle, in_progress=Loader2 (spinning), completed=CheckCircle2, cancelled=XCircle.
    - **Empty state**: ClipboardList icon with guidance message when no tasks exist.
    - **Project name lookup**: Queries projects table to display project name per task.
@@ -3069,15 +3045,12 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 - All 52 server tests pass (no regressions)
 
 ### Design decisions
-- Used `Tabs` (Base UI) for status filtering rather than a dropdown. Tabs provide at-a-glance visibility of task counts per status and enable one-click filtering. The compact tab layout fits the sidebar width well.
-- Status counts are computed with `useMemo` from the full task list. This is O(n) per render but avoids separate queries for each status count.
 - The inline status Select uses the same color-coding as the status badges, providing visual consistency between the current status display and the available options.
 - Project name lookup uses the same `queryDb(projects)` + `Map` pattern established in `workspace-list.tsx`. The Map is wrapped in `useMemo` to avoid recreating on every render.
 
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104. **Now unblocked!**
 
-## Issue #103: Create Task form UI — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
@@ -3086,7 +3059,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 
 ### What was done
 
-1. **Created `apps/web/src/components/create-task-form.tsx`** — new React component (~220 lines) with:
    - **TanStack Form**: `useForm` with `defaultValues: { projectId: "", title: "", description: "" }` and `onSubmit` handler
    - **Project selector**: `Select` component populated from LiveStore `projects` table with `onChange` validator (required)
    - **Title field**: `Input` component with `onChange` validator (required, non-empty after trim)
@@ -3101,7 +3073,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
    - Changed the "Tasks" section header from a plain `<div className="mb-2">` to `<div className="mb-2 flex items-center justify-between">` to match the Projects and Workspaces section layout
 
 ### Files created
-- `apps/web/src/components/create-task-form.tsx` — Create Task form component
 
 ### Files modified
 
@@ -3124,7 +3095,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 - The dialog trigger button uses `size="sm" variant="outline"` — same as `CreateWorkspaceForm` and `AddProjectForm` — for visual consistency across all sidebar section action buttons.
 
 ### Issues unblocked
-- Issue #110: Task source picker UI — was blocked by #108, #109, #103. #103 now done; still blocked by #108 and #109.
 
 
 **Status:** Done
@@ -3159,7 +3129,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 ### Design decisions
 - **Branch naming convention**: `task/<id-prefix>/<slug>` provides three benefits: (a) easy to identify as task-derived in `git branch` output, (b) the ID prefix enables programmatic lookup, (c) the slug provides human-readable context. The 40-character slug limit prevents excessively long branch names from long task titles.
 - **Duplicate prevention via LiveStore query**: Rather than tracking auto-created workspaces in memory, the handler queries LiveStore's `workspaces` table for any non-destroyed workspace linked to the task. This is robust across server restarts and handles edge cases like manually destroying a task's workspace and then toggling the task back to "in_progress" (which correctly creates a new workspace).
-- **Fire-and-forget semantics**: If workspace creation fails (e.g., git error, port exhaustion), the error propagates to the client as an RPC error. The task status change has already been committed to LiveStore, so the task is in "in_progress" state but without a workspace. The user can retry by toggling the task status or manually creating a workspace. This is the correct behavior — the task status is the user's intent, not contingent on workspace creation success.
 
 ### Issues unblocked
 
@@ -3181,7 +3150,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
    - `WorkspaceProvider.destroyWorktree(workspace.id)` — removes git worktree, frees port, deletes branch, commits `workspaceDestroyed` event
 
 4. **Best-effort cleanup**: Each workspace cleanup is wrapped in `Effect.catchAll` that logs a warning on failure. This ensures:
-   - The task status update is never reverted due to cleanup failure
    - If one workspace fails to destroy, others are still attempted
    - Partial cleanup failures are logged for manual resolution
 
@@ -3190,11 +3158,8 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 ### Files modified
 
 ### Acceptance criteria status
-- [x] Task status → "completed" triggers workspace.destroy on linked workspace (via DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree)
-- [x] Task status → "cancelled" triggers workspace.destroy on linked workspace (same cleanup path)
 - [x] All workspace resources cleaned up (diff polling stopped, terminals killed, worktree removed, port freed, branch deleted)
 - [x] Multiple linked workspaces handled (Arr.filter finds all, loop destroys each)
-- [x] Cleanup failure does not revert the task status change (catchAll logs warning)
 - [ ] Tests: complete task → linked workspace destroyed; resources freed (deferred — vitest not yet configured for integration tests)
 
 ### Verification
@@ -3203,7 +3168,6 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
-- **Best-effort cleanup via catchAll**: Unlike `workspace.destroy` (which propagates errors to the caller), auto-cleanup swallows errors and logs warnings. The rationale: the task status change is the user's primary intent. If workspace cleanup fails (e.g., the worktree was already manually deleted), the user should still see their task as completed. They can manually clean up any residual workspace via the workspace destroy button.
 - **Filter vs findFirst**: Used `Arr.filter` instead of `Arr.findFirst` to handle the (unlikely but possible) case of multiple workspaces linked to a single task. This could happen if a workspace was destroyed and the task was toggled back to "in_progress" (creating a new workspace), then the old workspace was somehow still in a non-destroyed state.
 - **Both "completed" and "cancelled"**: Both terminal task states trigger cleanup. A cancelled task's workspace is just as stale as a completed task's workspace — no reason to keep it around.
 
@@ -3322,18 +3286,15 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 
 ### What was done
 
-1. **Created `apps/web/src/components/write-prd-form.tsx`** — new React component (~160 lines) with:
    - **TanStack Form**: `useForm` with `defaultValues: { description: "" }` and `onSubmit` handler
    - **Description field**: `Textarea` with `onChange` validator (required, non-empty after trim), 6 rows, descriptive placeholder
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
-   - Follows the exact same Dialog/Form/Field/Submit pattern established by `create-workspace-form.tsx` (Issue #42) and `create-task-form.tsx` (Issue #103)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
    - Updated module JSDoc to reference Issue #95
 
 ### Files created
-- `apps/web/src/components/write-prd-form.tsx` — Write PRD dialog form component
 
 ### Files modified
 
@@ -3360,10 +3321,8 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
-   - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `reviewPr({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Review started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
-   - Follows the exact same Dialog/Form/Field/Submit pattern established by `write-prd-form.tsx` (Issue #95)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
    - Updated module JSDoc to reference Issue #97
@@ -3396,7 +3355,6 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 
 ### What was done
 
-1. **Created `apps/web/src/components/fix-findings-form.tsx`** — new React component (~176 lines) with:
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase

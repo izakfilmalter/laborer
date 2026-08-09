@@ -48,7 +48,6 @@ Added `devServer` configuration object to the `laborer.json` schema in `ConfigSe
 
 **Caller updates:**
 - `workspace-provider.ts`: maps `ConfigValidationError` to `RpcError` with `CONFIG_VALIDATION_ERROR` code
-- `prd-storage-service.ts`: uses `Effect.orDie` (config validation is a programmer error in PRD context)
 - `handlers.ts` (`config.get`): maps `ConfigValidationError` to `RpcError`
 
 ### Tests:

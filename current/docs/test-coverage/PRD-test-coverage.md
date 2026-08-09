@@ -36,7 +36,6 @@ All tests follow the project's TDD philosophy: test observable behavior through 
 6. As a developer, I want `config-service.test.ts` rewritten to test through the `ConfigService` public API, so that internal refactoring doesn't break tests.
 7. As a developer, I want `rpc-config-handlers.test.ts` rewritten to use real service layers instead of mocked `ProjectRegistry`/`ConfigService`, so that tests verify actual integration behavior.
 8. As a developer, I want LiveStore schema materializer tests in `packages/shared`, so that the event-to-SQL pipeline is validated where the schema is defined.
-9. As a developer, I want tests for all LiveStore event materializers (project CRUD, workspace lifecycle, diff upsert, task CRUD, PRD CRUD, panel layout operations), so that schema changes are caught by tests.
 10. As a developer, I want tests verifying that deprecated terminal event materializers are no-ops, so that backward compatibility is maintained.
 11. As a developer, I want in-memory RPC integration tests for `workspace.create`, so that worktree creation, port allocation, and setup script execution are verified end-to-end through the RPC contract.
 12. As a developer, I want in-memory RPC integration tests for `workspace.destroy`, so that origin-based destroy behavior (laborer vs. external workspaces) is verified through the RPC contract.

@@ -104,9 +104,7 @@ PRD.md
 
 ### Acceptance criteria
 
-- [x] Tasks created in LiveStore with source = "linear" and externalId
 - [x] Handle API errors gracefully
-- [x] Tests: mock Linear API → tasks imported; API error → handled
 
 ### Blocked by
 
@@ -125,7 +123,6 @@ PRD.md
 
 ### What to build
 
-Implement fetching issues from GitHub's API for the project's repository. Import GitHub issues as tasks in LiveStore with source = "github".
 
 
 ### Blocked by
@@ -138,7 +135,6 @@ Implement fetching issues from GitHub's API for the project's repository. Import
 
 ---
 
-## ~~Issue 110: Task source picker UI~~ ✅ DONE
 
 ### Parent PRD
 
@@ -146,15 +142,12 @@ PRD.md
 
 ### What to build
 
-Create a UI component to select the task source: Linear, GitHub, or Manual. Selecting Linear or GitHub triggers a fetch from that source. Manual shows the create task form.
 
-Added a task source picker above the task list with Manual, Linear, and GitHub tabs. Manual keeps the create-task dialog available, while Linear/GitHub selections auto-import tasks for the active project, expose a manual Sync action, and filter the task list to the selected source. Added helper tests covering source filtering and import gating.
 
 ### Acceptance criteria
 
 - [x] Dropdown or tabs for source selection
 - [x] GitHub → fetches and displays GitHub issues
-- [x] Manual → shows create task form
 - [x] Tests: select source → correct tasks displayed; switch source → list updates
 
 ### Blocked by
@@ -169,7 +162,6 @@ Added a task source picker above the task list with Manual, Linear, and GitHub t
 
 ## ~~Issue 113: Project switcher component~~ ✅ DONE
 
-Created a project switcher Select dropdown at the top of the sidebar. Lists all registered projects plus an "All Projects" option (default). Selecting a specific project filters the Workspace and Task lists to show only items belonging to that project. Controlled component pattern with state lifted to `HomeComponent`. Auto-clears filter if the selected project is removed. Status counts in task tabs reflect the filtered project.
 
 ---
 
@@ -665,7 +657,6 @@ PRD-cmd-w-close-panel.md
 
 ### What to build
 
-When Cmd+W is pressed and no panes exist, show an AlertDialog asking "Close Laborer?" instead of silently doing nothing. The dialog uses the existing `alert-dialog.tsx` component with controlled `open` state (no trigger button — opened programmatically from the Cmd+W handler). Title: "Close Laborer?". Description: "The window will be hidden to the system tray. Your workspaces will continue running." Actions: "Cancel" (dismisses dialog) and "Close" (hides window to tray via Tauri window API). Follow the existing destructive confirmation pattern used by project removal, workspace destruction, and task removal dialogs.
 
 Added a controlled close-app `AlertDialog` opened programmatically from the Cmd+W hotkey path when no active pane exists. The dialog uses the exact copy from the PRD, supports Escape and Cancel dismissal, and the Close action hides the Tauri window to the system tray via `@tauri-apps/api/window`. Ctrl+B, X behavior is unchanged and does not trigger the dialog.
 
@@ -881,7 +872,6 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
 | 88 | ~~Diff viewer — accept/reject annotations~~ | ~~#87~~ | Done |
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
-| 110 | ~~Task source picker UI~~ | ~~#108~~, ~~#109~~, ~~#103~~ | Done |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |

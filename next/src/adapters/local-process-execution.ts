@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { constants as fileSystemConstants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { constants as operatingSystemConstants } from "node:os";
 import { isAbsolute } from "node:path";
 import { finished } from "node:stream/promises";
 import { Context, Effect, Array as EffectArray, Layer, Schema } from "effect";
@@ -38,7 +39,7 @@ export const validateLocalExecutable = (
   }
   return Effect.tryPromise({
     try: async () => {
-      await access(executable, constants.X_OK);
+      await access(executable, fileSystemConstants.X_OK);
       if (!(await stat(executable)).isFile()) {
         throw new Error("not a file");
       }
@@ -103,6 +104,17 @@ interface SupervisorResult {
   readonly spawnFailed: boolean;
 }
 
+const SupervisorResultRecord = Schema.Struct({
+  code: Schema.NullOr(Schema.Int),
+  signal: Schema.NullOr(Schema.String),
+  spawnFailed: Schema.Boolean,
+});
+
+const decodeSupervisorResult = Schema.decodeUnknownSync(SupervisorResultRecord);
+
+const isProcessSignal = (value: string): value is NodeJS.Signals =>
+  Object.hasOwn(operatingSystemConstants.signals, value);
+
 class SupervisorControlError extends Error {}
 
 const validBound = (value: number): boolean =>
@@ -112,14 +124,22 @@ const validTimerBound = (value: number): boolean =>
   validBound(value) && value <= MAX_TIMER_MILLIS;
 
 const requestIsValid = (request: LocalProcessRequest): boolean =>
+  typeof request.executable === "string" &&
+  request.executable.length > 0 &&
+  isAbsolute(request.executable) &&
+  !request.executable.includes("\0") &&
+  request.input instanceof Uint8Array &&
+  Array.isArray(request.arguments) &&
   EffectArray.every(
     request.arguments,
     (argument) => typeof argument === "string" && !argument.includes("\0")
   ) &&
   isAbsolute(request.workingDirectory) &&
   !request.workingDirectory.includes("\0") &&
-  EffectArray.every(request.environmentNames, (name) =>
-    ENVIRONMENT_NAME.test(name)
+  Array.isArray(request.environmentNames) &&
+  EffectArray.every(
+    request.environmentNames,
+    (name) => typeof name === "string" && ENVIRONMENT_NAME.test(name)
   ) &&
   validBound(request.limits.inputBytes) &&
   validBound(request.limits.stdoutBytes) &&
@@ -233,20 +253,20 @@ const readSupervisorResult = async (
     control.once("end", onEnd);
   });
   const line = source.toString("utf8");
-  let value: Partial<SupervisorResult>;
+  let value: typeof SupervisorResultRecord.Type;
   try {
-    value = JSON.parse(line) as Partial<SupervisorResult>;
+    value = decodeSupervisorResult(JSON.parse(line));
   } catch {
     throw new SupervisorControlError();
   }
-  if (
-    typeof value.spawnFailed !== "boolean" ||
-    !(value.code === null || Number.isInteger(value.code)) ||
-    !(value.signal === null || typeof value.signal === "string")
-  ) {
+  if (value.signal !== null && !isProcessSignal(value.signal)) {
     throw new SupervisorControlError();
   }
-  return value as SupervisorResult;
+  return {
+    code: value.code,
+    signal: value.signal,
+    spawnFailed: value.spawnFailed,
+  };
 };
 
 const evidence = (
@@ -258,6 +278,26 @@ const evidence = (
   stderr: stderr ?? Buffer.alloc(0),
   stdout: stdout ?? Buffer.alloc(0),
 });
+
+const preflightResult = (
+  request: LocalProcessRequest,
+  effectSignal: AbortSignal
+): LocalProcessResult | undefined => {
+  if (!requestIsValid(request)) {
+    return { _tag: "SpawnFailure", ...evidence(null, undefined, undefined) };
+  }
+  if (request.input.byteLength > request.limits.inputBytes) {
+    return {
+      _tag: "LimitExceeded",
+      limit: "input",
+      ...evidence(null, undefined, undefined),
+    };
+  }
+  if (effectSignal.aborted || request.interruptSignal?.aborted === true) {
+    return { _tag: "Interrupted", ...evidence(null, undefined, undefined) };
+  }
+  return undefined;
+};
 
 const destroyProcessStreams = (child: ChildProcessWithoutNullStreams): void => {
   child.stdin.destroy();
@@ -358,15 +398,9 @@ const executeProcess = async (
   ambient: NodeJS.ProcessEnv,
   terminate: typeof terminateSupervisedProcess
 ): Promise<LocalProcessResult> => {
-  if (!requestIsValid(request)) {
-    return { _tag: "SpawnFailure", ...evidence(null, undefined, undefined) };
-  }
-  if (request.input.byteLength > request.limits.inputBytes) {
-    return {
-      _tag: "LimitExceeded",
-      limit: "input",
-      ...evidence(null, undefined, undefined),
-    };
+  const preflight = preflightResult(request, effectSignal);
+  if (preflight !== undefined) {
+    return preflight;
   }
 
   let child: ChildProcessWithoutNullStreams;

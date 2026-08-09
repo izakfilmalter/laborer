@@ -245,6 +245,18 @@ describe("LocalProcessExecutor", () => {
     expect(result._tag).toBe("Interrupted");
   });
 
+  it("does not spawn an already interrupted request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await run(
+      await request("echo", {
+        interruptSignal: controller.signal,
+        workingDirectory: resolve(cwd, "missing-cwd"),
+      })
+    );
+    expect(result).toMatchObject({ _tag: "Interrupted", pid: null });
+  });
+
   it("reports cleanup uncertainty when cleanup cannot be confirmed", async () => {
     const value = await request("echo");
     const result = await Effect.runPromise(

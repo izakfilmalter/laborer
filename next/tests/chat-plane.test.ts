@@ -104,6 +104,7 @@ describe("Chat plane walking skeleton", () => {
         const lifecycle: string[] = [];
         const streamedChunks: string[] = [];
         let mentionHandler: ChatSdkMentionHandler | undefined;
+        let subscribedHandler: ChatSdkMentionHandler | undefined;
 
         const thread: ChatSdkThreadLike = {
           id: "slack:C123:123.456",
@@ -125,6 +126,9 @@ describe("Chat plane walking skeleton", () => {
           onNewMention: (handler) => {
             mentionHandler = handler;
           },
+          onSubscribedMessage: (handler) => {
+            subscribedHandler = handler;
+          },
           shutdown: () => {
             lifecycle.push("shutdown");
             return Promise.resolve();
@@ -134,7 +138,10 @@ describe("Chat plane walking skeleton", () => {
         yield* Effect.provide(
           Effect.promise(() => {
             assert.ok(mentionHandler);
-            return mentionHandler(thread, { text: "@laborer hello" });
+            assert.ok(subscribedHandler);
+            return mentionHandler(thread, { text: "@laborer hello" }).then(() =>
+              subscribedHandler?.(thread, { text: "follow-up" })
+            );
           }),
           makeChatPlaneLayer({
             handler: placeholderMentionHandler,
@@ -145,9 +152,12 @@ describe("Chat plane walking skeleton", () => {
         assert.deepStrictEqual(lifecycle, [
           "initialize",
           "subscribe",
+          "subscribe",
           "shutdown",
         ]);
         assert.deepStrictEqual(streamedChunks, [
+          "Hello from ",
+          "the Laborer Chat SDK canary.",
           "Hello from ",
           "the Laborer Chat SDK canary.",
         ]);
@@ -166,6 +176,7 @@ describe("Chat plane walking skeleton", () => {
         const sdk: ChatSdkLike = {
           initialize: () => Promise.resolve(),
           onNewMention: () => undefined,
+          onSubscribedMessage: () => undefined,
           shutdown: () => Promise.resolve(),
         };
 
@@ -212,6 +223,9 @@ describe("Chat plane walking skeleton", () => {
           onNewMention: () => {
             lifecycle.push("register");
           },
+          onSubscribedMessage: () => {
+            lifecycle.push("register-subscribed");
+          },
           shutdown: () => {
             lifecycle.push("shutdown");
             return Promise.resolve();
@@ -233,6 +247,7 @@ describe("Chat plane walking skeleton", () => {
         assert.equal(failure.reason, "Chat SDK startup failed");
         assert.deepStrictEqual(lifecycle, [
           "register",
+          "register-subscribed",
           "initialize",
           "shutdown",
         ]);

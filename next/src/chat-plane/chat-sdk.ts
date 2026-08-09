@@ -1,8 +1,8 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
-import { createMemoryState } from "@chat-adapter/state-memory";
 import { type Adapter, Chat } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
+import { createSQLiteState } from "./sqlite-state-adapter.ts";
 
 export interface ChatSdkMessageLike {
   readonly text: string;
@@ -22,6 +22,7 @@ export type ChatSdkMentionHandler = (
 export interface ChatSdkLike {
   readonly initialize: () => Promise<void>;
   readonly onNewMention: (handler: ChatSdkMentionHandler) => void;
+  readonly onSubscribedMessage: (handler: ChatSdkMentionHandler) => void;
   readonly shutdown: () => Promise<void>;
 }
 
@@ -113,9 +114,10 @@ export const makeChatPlaneLayer = (
 
       yield* Effect.try({
         try: () => {
-          sdk.onNewMention((thread, message) =>
-            inboundRuntime.runPromise(options.handler(thread, message))
-          );
+          const runHandler: ChatSdkMentionHandler = (thread, message) =>
+            inboundRuntime.runPromise(options.handler(thread, message));
+          sdk.onNewMention(runHandler);
+          sdk.onSubscribedMessage(runHandler);
         },
         catch: () => startupFailure("register-mention-handler"),
       });
@@ -131,6 +133,7 @@ export const makeChatPlaneLayer = (
 export interface LiveChatPlaneConfig {
   readonly appToken: string;
   readonly botToken: string;
+  readonly statePath: string;
   readonly userName: string;
 }
 
@@ -158,7 +161,7 @@ export const makeLiveChatPlaneLayer = (
         },
         concurrency: "queue",
         logger: "info",
-        state: createMemoryState(),
+        state: createSQLiteState({ path: config.statePath }),
         userName: config.userName,
       });
 
@@ -174,6 +177,18 @@ export const makeLiveChatPlaneLayer = (
         },
         onNewMention: (registeredHandler) => {
           bot.onNewMention((thread, message) =>
+            registeredHandler(
+              {
+                id: thread.id,
+                post: (reply) => thread.post(reply),
+                subscribe: () => thread.subscribe(),
+              },
+              { text: message.text }
+            )
+          );
+        },
+        onSubscribedMessage: (registeredHandler) => {
+          bot.onSubscribedMessage((thread, message) =>
             registeredHandler(
               {
                 id: thread.id,

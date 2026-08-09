@@ -31,13 +31,15 @@ const signalProcessGroup = (
 };
 
 const processGroupMembers = async (
-  processGroupId: number
+  processGroupId: number,
+  timeoutMillis: number
 ): Promise<readonly number[]> => {
   const { stdout } = await execFilePromise(
     "/bin/ps",
     ["-axo", "pid=,pgid=,stat="],
     {
       maxBuffer: 1024 * 1024,
+      timeout: Math.max(1, timeoutMillis),
     }
   );
   return stdout
@@ -106,7 +108,8 @@ export type ProcessTerminationOutcome = "already_exited" | "kill" | "term";
 
 export interface ProcessSupervisorTestHooks {
   readonly processGroupMembers?: (
-    processGroupId: number
+    processGroupId: number,
+    timeoutMillis: number
   ) => Promise<readonly number[]>;
   readonly signalProcessGroup?: (
     processGroupId: number,
@@ -159,7 +162,10 @@ export const terminateSupervisedProcess = async (
   const deadline = Date.now() + graceMillis;
   while (leaderIsAlive(child) && Date.now() < deadline) {
     try {
-      const members = await groupMembers(processGroupId);
+      const members = await groupMembers(
+        processGroupId,
+        Math.max(1, deadline - Date.now())
+      );
       if (members.every((pid) => pid === processGroupId)) {
         child.kill("SIGKILL");
         if (!(await waitForLeaderExit(child, graceMillis))) {

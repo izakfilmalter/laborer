@@ -55,4 +55,12 @@ if (mode === "echo") {
     descendant.once("message", () => resolveReady());
   });
   process.exit(0);
+} else if (mode === "escaped-output-holder") {
+  const descendant = spawn(
+    process.execPath,
+    ["--input-type=module", "--eval", "setInterval(() => {}, 1000)"],
+    { detached: true, stdio: ["ignore", "inherit", "ignore"] }
+  );
+  process.stdout.write(String(descendant.pid));
+  descendant.unref();
 }

@@ -153,6 +153,34 @@ describe("LocalProcessExecutor", () => {
     });
   });
 
+  it("bounds output draining when a process escapes the supervised group", async () => {
+    const startedAt = Date.now();
+    const result = await run(
+      await request("escaped-output-holder", {
+        limits: {
+          deadlineMillis: 2000,
+          inputBytes: 1024,
+          stderrBytes: 1024,
+          stdoutBytes: 1024,
+          terminationGraceMillis: 100,
+        },
+      })
+    );
+    const escapedPid = Number(Buffer.from(result.stdout).toString());
+    try {
+      expect(result).toMatchObject({
+        _tag: "CleanupUncertain",
+        prior: { _tag: "Success" },
+      });
+      expect(Date.now() - startedAt).toBeLessThan(1500);
+      expect(Number.isSafeInteger(escapedPid)).toBe(true);
+    } finally {
+      if (Number.isSafeInteger(escapedPid)) {
+        process.kill(escapedPid, "SIGKILL");
+      }
+    }
+  });
+
   it("reports an asynchronous spawn failure", async () => {
     const failed = await run(
       await request("echo", { workingDirectory: resolve(cwd, "missing-cwd") })

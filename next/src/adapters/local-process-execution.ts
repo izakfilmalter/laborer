@@ -259,6 +259,38 @@ const evidence = (
   stdout: stdout ?? Buffer.alloc(0),
 });
 
+const destroyProcessStreams = (child: ChildProcessWithoutNullStreams): void => {
+  child.stdin.destroy();
+  child.stdout.destroy();
+  child.stderr.destroy();
+  const control = child.stdio[3];
+  if (control !== undefined && control !== null && "destroy" in control) {
+    control.destroy();
+  }
+};
+
+const collectSettledOutput = async (
+  stdout: BoundedOutput,
+  stderr: BoundedOutput,
+  timeoutMillis: number
+): Promise<readonly [Buffer, Buffer] | undefined> => {
+  let timer: NodeJS.Timeout | undefined;
+  const output = Promise.all([
+    stdout.completion.catch(() => stdout.snapshot()),
+    stderr.completion.catch(() => stderr.snapshot()),
+  ]);
+  const timeout = new Promise<undefined>((resolveTimeout) => {
+    timer = setTimeout(() => resolveTimeout(undefined), timeoutMillis);
+  });
+  try {
+    return await Promise.race([output, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+};
+
 type SettledProcess =
   | { readonly _tag: "report"; readonly report: SupervisorResult }
   | { readonly _tag: "spawn-failure" }
@@ -467,8 +499,7 @@ const executeProcess = async (
     child.pid !== undefined &&
     (child.exitCode !== null || child.signalCode !== null)
   ) {
-    child.stdout.destroy();
-    child.stderr.destroy();
+    destroyProcessStreams(child);
     return {
       _tag: "CleanupUncertain",
       prior: result,
@@ -478,10 +509,29 @@ const executeProcess = async (
 
   try {
     await terminate(child, request.limits.terminationGraceMillis);
-    [stdout, stderr] = await Promise.all([
-      stdoutOutput.completion.catch(() => stdoutOutput.snapshot()),
-      stderrOutput.completion.catch(() => stderrOutput.snapshot()),
-    ]);
+    const output = await collectSettledOutput(
+      stdoutOutput,
+      stderrOutput,
+      request.limits.terminationGraceMillis
+    );
+    if (output === undefined) {
+      destroyProcessStreams(child);
+      result = enforceObservedOutputLimit(
+        result,
+        stdoutOutput.exceeded(),
+        stderrOutput.exceeded()
+      );
+      return {
+        _tag: "CleanupUncertain",
+        prior: result,
+        ...evidence(
+          child.pid ?? null,
+          stdoutOutput.snapshot(),
+          stderrOutput.snapshot()
+        ),
+      };
+    }
+    [stdout, stderr] = output;
     result = enforceObservedOutputLimit(
       result,
       stdoutOutput.exceeded(),
@@ -489,8 +539,7 @@ const executeProcess = async (
     );
     return { ...result, ...evidence(child.pid ?? null, stdout, stderr) };
   } catch {
-    child.stdout.destroy();
-    child.stderr.destroy();
+    destroyProcessStreams(child);
     stdout = stdoutOutput.snapshot();
     stderr = stderrOutput.snapshot();
     result = enforceObservedOutputLimit(

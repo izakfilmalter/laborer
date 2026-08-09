@@ -2,7 +2,7 @@ _metadata:
   major_version: 1
 display_information:
   name: Laborer
-  description: Runs local work handlers from explicitly activated Slack threads.
+  description: Runs registered local applications from activated Slack work threads.
 features:
   bot_user:
     display_name: Laborer

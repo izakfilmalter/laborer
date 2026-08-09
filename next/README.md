@@ -105,7 +105,7 @@ Registered Actions are the extension seam for user-owned operations. The
 Conversation agent chooses when to invoke them; Actions and implementation
 agents never publish directly to Slack. `laborer.json` selects the registered
 application and may configure its Action-facing implementation agent, but it
-does not configure an alternate work handler.
+does not select an alternate conversational runtime.
 
 ## Verify
 

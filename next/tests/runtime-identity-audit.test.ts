@@ -13,6 +13,7 @@ const RETIRED_TERMS = [
   /blue\/green development/i,
   /(?:the|workspace) Runner\b/,
   /Runner's public-output/,
+  /work handler/i,
 ] as const;
 
 const filesBelow = async (root: string): Promise<readonly string[]> => {
@@ -36,6 +37,7 @@ const authoritativeDocuments = [
   resolve(nextRoot, "README.md"),
   resolve(nextRoot, "docs/acp-production-cutover.md"),
   resolve(nextRoot, "docs/acp-runtime-matrix.md"),
+  resolve(nextRoot, "slack-app-manifest.yaml"),
 ] as const;
 
 describe("primary runtime identity audit", () => {
@@ -47,6 +49,10 @@ describe("primary runtime identity audit", () => {
       readonly scripts?: Readonly<Record<string, string>>;
     };
     const readme = await readFile(resolve(nextRoot, "README.md"), "utf8");
+    const slackManifest = await readFile(
+      resolve(nextRoot, "slack-app-manifest.yaml"),
+      "utf8"
+    );
 
     expect(packageJson.name).toBe("@laborer/slack-runtime");
     expect(
@@ -69,6 +75,7 @@ describe("primary runtime identity audit", () => {
     ]) {
       expect(readme).toContain(required);
     }
+    expect(slackManifest).toContain("registered local applications");
   });
 
   it("keeps Chat dependencies inside the Chat Effect boundary", async () => {

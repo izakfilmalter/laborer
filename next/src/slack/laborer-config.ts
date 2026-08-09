@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, isAbsolute, resolve } from "node:path";
 import { Effect, Array as EffectArray, Schema } from "effect";
+import { isSensitiveCredentialEnvironmentName } from "../adapters/sensitive-environment.ts";
 import {
   assertNoSymlinkPathComponents,
   assertSafeFilePath,
@@ -11,7 +12,6 @@ import {
   verifyRetainedDirectory,
 } from "../prototype/path-safety.ts";
 import { LaborerConfigError } from "./errors.ts";
-import { isSensitiveCredentialEnvironmentName } from "./secret-environment.ts";
 
 export interface ProcessCommandConfig {
   readonly args: readonly string[];

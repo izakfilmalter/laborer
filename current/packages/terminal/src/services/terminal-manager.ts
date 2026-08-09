@@ -465,7 +465,7 @@ const classifyAndCollect = (
  * flattened for the existing process-chain presentation.
  */
 const walkProcessTree = (
-  startPid: number,
+  startPids: readonly number[],
   childrenByPid: ReadonlyMap<number, number[]>,
   commByPid: ReadonlyMap<number, string>,
   chain: ForegroundProcess[],
@@ -474,9 +474,8 @@ const walkProcessTree = (
 ): void => {
   const MAX_DEPTH = 10
   const MAX_PROCESSES = 256
-  const queue: Array<{ readonly depth: number; readonly pid: number }> = [
-    { pid: startPid, depth: 0 },
-  ]
+  const queue: Array<{ readonly depth: number; readonly pid: number }> =
+    startPids.slice(0, MAX_PROCESSES).map((pid) => ({ pid, depth: 0 }))
 
   while (queue.length > 0 && visitedPids.size < MAX_PROCESSES) {
     const next = queue.shift()
@@ -541,16 +540,17 @@ const detectForShellPid = (
       }
     }
 
-    for (const childPid of children) {
-      walkProcessTree(
-        childPid,
-        childrenByPid,
-        commByPid,
-        chain,
-        agentProcessIds,
-        visitedPids
-      )
-    }
+    // Seed one breadth-first walk with every direct child. Walking each root
+    // separately would let a single wide first branch consume the process
+    // bound before a later shallow branch (including an agent) was inspected.
+    walkProcessTree(
+      children,
+      childrenByPid,
+      commByPid,
+      chain,
+      agentProcessIds,
+      visitedPids
+    )
 
     return {
       agentProcessIds,

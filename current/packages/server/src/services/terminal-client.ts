@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeSocket } from '@effect/platform-node'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
-import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
+import { AgentStatusSchema, RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { tables } from '@laborer/shared/schema'
 import {
@@ -46,6 +46,7 @@ import {
   Option,
   pipe,
   Ref,
+  Schema,
   Scope,
   Stream,
 } from 'effect'
@@ -116,12 +117,48 @@ export { TerminalRpcPort }
 /**
  * Read the full request body as a string.
  */
+const MAX_AGENT_HOOK_BODY_BYTES = 8 * 1024
+
+class AgentHookBodyTooLarge extends Error {}
+
+const AgentHookRequestSchema = Schema.parseJson(
+  Schema.Struct({
+    terminalId: Schema.String,
+    status: AgentStatusSchema,
+  })
+)
+
 const readBody = (req: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
-    req.on('error', reject)
+    let bodyBytes = 0
+    let settled = false
+
+    req.on('data', (chunk: Buffer) => {
+      if (settled) {
+        return
+      }
+      bodyBytes += chunk.byteLength
+      if (bodyBytes > MAX_AGENT_HOOK_BODY_BYTES) {
+        settled = true
+        chunks.length = 0
+        reject(new AgentHookBodyTooLarge())
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (!settled) {
+        settled = true
+        resolve(Buffer.concat(chunks).toString())
+      }
+    })
+    req.on('error', (error) => {
+      if (!settled) {
+        settled = true
+        reject(error)
+      }
+    })
   })
 
 /**
@@ -150,23 +187,9 @@ const startAgentHookServer = (
 
       readBody(req)
         .then((body) => {
-          const parsed = JSON.parse(body) as {
-            terminalId?: string
-            status?: string
-          }
-          const { terminalId, status } = parsed
-
-          if (
-            typeof terminalId !== 'string' ||
-            (status !== 'working' &&
-              status !== 'needs_input' &&
-              status !== 'idle' &&
-              status !== 'unknown')
-          ) {
-            res.writeHead(400)
-            res.end()
-            return
-          }
+          const { terminalId, status } = Schema.decodeUnknownSync(
+            AgentHookRequestSchema
+          )(body)
 
           // Epoch-based sequences stay newer when this proxy restarts while
           // the terminal service and agent process remain alive.
@@ -190,8 +213,8 @@ const startAgentHookServer = (
               res.end()
             })
         })
-        .catch(() => {
-          res.writeHead(400)
+        .catch((error: unknown) => {
+          res.writeHead(error instanceof AgentHookBodyTooLarge ? 413 : 400)
           res.end()
         })
     })

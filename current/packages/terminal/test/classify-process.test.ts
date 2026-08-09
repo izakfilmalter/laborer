@@ -98,10 +98,27 @@ describe('process-tree walking', () => {
     expect(result.agentProcessIds).toEqual([4])
     expect(result.processChain.map(({ rawName }) => rawName)).toEqual([
       'node',
-      'claude',
       'vite',
+      'claude',
       'esbuild',
     ])
+  })
+
+  it('checks every shallow branch before spending the process bound deeply', () => {
+    const wideBranch = Array.from(
+      { length: 300 },
+      (_, index) => `${index + 10} 2 worker-${index}`
+    ).join('\n')
+    const { childrenByPid, commByPid } = parsePsOutput(`
+      1 0 zsh
+      2 1 node
+      3 1 claude
+      ${wideBranch}
+    `)
+
+    const result = detectForShellPid(1, childrenByPid, commByPid)
+
+    expect(result.agentProcessIds).toEqual([3])
   })
 })
 

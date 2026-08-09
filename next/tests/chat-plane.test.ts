@@ -20,8 +20,7 @@ import {
   loadChatCanarySlackConfig,
 } from "../src/slack/config.ts";
 
-const CHAT_SDK_PACKAGE_IMPORT =
-  /from ["'](?:chat|@chat-adapter\/slack|@chat-adapter\/state-memory)["']/;
+const CHAT_SDK_PACKAGE_IMPORT = /from ["'](?:chat|@chat-adapter\/slack)["']/;
 
 describe("Chat plane walking skeleton", () => {
   it.effect("requires valid credentials dedicated to the Chat SDK canary", () =>

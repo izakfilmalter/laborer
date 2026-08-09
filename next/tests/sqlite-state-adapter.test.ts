@@ -39,19 +39,28 @@ const queueEntry = (id: string, expiresAt = 10_000) => ({
 });
 
 describe("SQLite Chat SDK state adapter", () => {
-  it("persists subscriptions and cache values across adapter restarts", () =>
+  it("persists every durable state category across adapter restarts", () =>
     withAdapter(async ({ adapter, path }) => {
       await adapter.subscribe("slack:C1:thread-1");
       await adapter.set("thread-state", { durable: true });
+      await adapter.appendToList("history", "first", { maxLength: 10 });
+      await adapter.enqueue("queued-thread", queueEntry("pending"), 10);
+      const lock = await adapter.acquireLock("locked-thread", 1000);
+      assert.isNotNull(lock);
       await adapter.disconnect();
 
-      const restarted = new SQLiteStateAdapter({ path });
+      const restarted = new SQLiteStateAdapter({ now: () => 1000, path });
       await restarted.connect();
       try {
         assert.isTrue(await restarted.isSubscribed("slack:C1:thread-1"));
         assert.deepStrictEqual(await restarted.get("thread-state"), {
           durable: true,
         });
+        assert.deepStrictEqual(await restarted.getList("history"), ["first"]);
+        assert.deepNestedInclude(await restarted.dequeue("queued-thread"), {
+          message: { id: "pending" },
+        });
+        assert.isNull(await restarted.acquireLock("locked-thread", 1000));
         await restarted.unsubscribe("slack:C1:thread-1");
         assert.isFalse(await restarted.isSubscribed("slack:C1:thread-1"));
       } finally {

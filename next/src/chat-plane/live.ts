@@ -19,15 +19,14 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
 
 const program = Effect.gen(function* () {
   const config = yield* loadChatCanarySlackConfig();
+  const xdgStateHome = process.env.XDG_STATE_HOME?.trim();
   const layer = makeLiveChatPlaneLayer(
     {
       appToken: Redacted.value(config.appToken),
       botToken: Redacted.value(config.botToken),
       statePath: resolve(
-        process.env.XDG_STATE_HOME !== undefined &&
-          isAbsolute(process.env.XDG_STATE_HOME) &&
-          process.env.XDG_STATE_HOME.trim().length > 0
-          ? process.env.XDG_STATE_HOME
+        xdgStateHome !== undefined && isAbsolute(xdgStateHome)
+          ? xdgStateHome
           : resolve(homedir(), ".local", "state"),
         "laborer",
         "chat-plane.sqlite"

@@ -107,6 +107,15 @@ describe("issue 314 production cutover", () => {
     );
     expect(packageJson.scripts.prototype).toBeUndefined();
     expect(packageJson.scripts.recovery).toBeUndefined();
+
+    const packagedDaemonLauncher = await readFile(
+      new URL("../src/companion/native/laborer-daemon", import.meta.url),
+      "utf8"
+    );
+    expect(packagedDaemonLauncher).toContain(
+      "src/acp-runtime/production-live.ts"
+    );
+    expect(packagedDaemonLauncher).not.toContain("src/slack/live.ts");
   });
 
   it("keeps the retired Slack plane and Runner modules out of live source", async () => {

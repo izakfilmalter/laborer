@@ -129,6 +129,8 @@ const requestIsValid = (request: LocalProcessRequest): boolean =>
   isAbsolute(request.executable) &&
   !request.executable.includes("\0") &&
   request.input instanceof Uint8Array &&
+  (request.interruptSignal === undefined ||
+    request.interruptSignal instanceof AbortSignal) &&
   Array.isArray(request.arguments) &&
   EffectArray.every(
     request.arguments,

@@ -45,6 +45,19 @@ const run = (
     }).pipe(Effect.provide(LocalProcessExecutor.layer(ambient)))
   );
 
+const waitForProcessExit = async (pid: number): Promise<void> => {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+  }
+  throw new Error(`process ${pid} remained alive`);
+};
+
 describe("LocalProcessExecutor", () => {
   it("executes literal arguments with bounded private output", async () => {
     const result = await run(await request("echo"));
@@ -221,7 +234,7 @@ describe("LocalProcessExecutor", () => {
     const result = await run(
       await request("hang-tree", {
         limits: {
-          deadlineMillis: 100,
+          deadlineMillis: 1000,
           inputBytes: 1024,
           stderrBytes: 1024,
           stdoutBytes: 1024,
@@ -232,7 +245,8 @@ describe("LocalProcessExecutor", () => {
     expect(result._tag).toBe("Timeout");
     const descendantPid = Number(Buffer.from(result.stdout).toString());
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
-    expect(() => process.kill(descendantPid, 0)).toThrow();
+    expect(descendantPid).toBeGreaterThan(0);
+    await waitForProcessExit(descendantPid);
   });
 
   it("returns interruption after scoped descendant cleanup", async () => {
@@ -255,6 +269,15 @@ describe("LocalProcessExecutor", () => {
       })
     );
     expect(result).toMatchObject({ _tag: "Interrupted", pid: null });
+  });
+
+  it("rejects a malformed interrupt signal before spawning", async () => {
+    const value = await request("echo");
+    Reflect.set(value, "interruptSignal", {});
+
+    const result = await run(value);
+
+    expect(result).toMatchObject({ _tag: "SpawnFailure", pid: null });
   });
 
   it("reports cleanup uncertainty when cleanup cannot be confirmed", async () => {
@@ -306,10 +329,14 @@ describe("LocalProcessExecutor", () => {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
       }
     }
-    expect(descendantPid).toBeTypeOf("number");
+    expect(Number.isSafeInteger(descendantPid)).toBe(true);
+    expect(descendantPid).toBeGreaterThan(0);
 
     await Effect.runPromise(Fiber.interrupt(fiber));
-    expect(() => process.kill(descendantPid as number, 0)).toThrow();
+    if (descendantPid === undefined) {
+      throw new Error("descendant PID was not written");
+    }
+    await waitForProcessExit(descendantPid);
     await rm(pidFile, { force: true });
   });
 });

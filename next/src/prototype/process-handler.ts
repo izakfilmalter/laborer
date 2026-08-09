@@ -19,6 +19,10 @@ import {
   Schema,
 } from "effect";
 import {
+  processSupervisorProxyPath,
+  terminateSupervisedProcess,
+} from "../adapters/process-supervisor.ts";
+import {
   type ClaimedTurn,
   HandlerInputEnvelope,
   type HandlerInputEnvelope as HandlerInputEnvelopeType,
@@ -33,10 +37,6 @@ import {
   retainTrustedDirectory,
   verifyRetainedDirectory,
 } from "./path-safety.ts";
-import {
-  processSupervisorProxyPath,
-  terminateSupervisedProcess,
-} from "./process-supervisor.ts";
 import {
   ThreadInitializer,
   type ThreadInitializerShape,

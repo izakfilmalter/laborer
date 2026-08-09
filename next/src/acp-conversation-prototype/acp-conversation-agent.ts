@@ -17,16 +17,16 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import { Clock, Effect, Exit, Schema, Scope, Semaphore } from "effect";
+import {
+  type ProcessTerminationOutcome,
+  processSupervisorProxyPath,
+  terminateSupervisedProcess,
+} from "../adapters/process-supervisor.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {
   assertNoSymlinkPathComponents,
   openRegularFileNoFollow,
 } from "../prototype/path-safety.ts";
-import {
-  type ProcessTerminationOutcome,
-  processSupervisorProxyPath,
-  terminateSupervisedProcess,
-} from "../prototype/process-supervisor.ts";
 import type {
   ConversationAgentRequest,
   ConversationAgentSessionBinding,

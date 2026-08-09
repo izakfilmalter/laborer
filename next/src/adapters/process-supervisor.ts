@@ -140,7 +140,13 @@ export const terminateSupervisedProcess = async (
   testHooks: ProcessSupervisorTestHooks = {}
 ): Promise<ProcessTerminationOutcome> => {
   const processGroupId = child.pid;
-  if (!ownsProcessGroup || processGroupId === undefined) {
+  // A failed spawn has no process to own and emits `error` without an `exit`.
+  // Treating that shape as a live direct child would manufacture cleanup
+  // uncertainty while waiting for an exit event that can never arrive.
+  if (processGroupId === undefined) {
+    return "already_exited";
+  }
+  if (!ownsProcessGroup) {
     return await terminateDirectChild(child, graceMillis);
   }
   if (!leaderIsAlive(child)) {

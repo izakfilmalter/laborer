@@ -4,11 +4,11 @@ import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Array as EffectArray, Fiber, pipe, Ref } from "effect";
 import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import { terminateSupervisedProcess } from "../src/adapters/process-supervisor.ts";
 import {
   type EmulatedSlackFixture,
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
-import { terminateSupervisedProcess } from "../src/prototype/process-supervisor.ts";
 import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {

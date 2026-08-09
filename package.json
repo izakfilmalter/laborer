@@ -4,6 +4,6 @@
   "type": "module",
   "packageManager": "bun@1.3.5",
   "scripts": {
-    "sandcastle": "bun run --cwd .sandcastle start"
+    "sandcastle": "bun .sandcastle/main.ts"
   }
 }

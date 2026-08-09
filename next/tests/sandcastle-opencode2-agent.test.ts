@@ -61,6 +61,10 @@ describe("Sandcastle opencode2 agent", () => {
     assert.notProperty(packageJson.devDependencies ?? {}, "@opencode-ai/cli");
     assert.include(sandcastleMain, 'runFile("opencode2", ["--version"])');
     assert.include(sandcastleMain, 'runFile("opencode2", ["run", "--help"])');
+    const rootPackage = JSON.parse(readFileSync("../package.json", "utf8")) as {
+      readonly scripts?: Readonly<Record<string, string>>;
+    };
+    assert.strictEqual(rootPackage.scripts?.sandcastle, "bun .sandcastle/main.ts");
   });
 
   it("uses the host OpenCode service with an encoded variant and preserves JSON events", async () => {

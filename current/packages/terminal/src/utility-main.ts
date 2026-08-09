@@ -325,9 +325,22 @@ function setupAgentStatusReporting(
     readonly agentName: string
     readonly generation: number
     readonly present: boolean
+    readonly processId: number | null
   }
 
   const owners = new Map<string, Owner>()
+  const beginsNewGeneration = (
+    previous: Owner | undefined,
+    processId: number | null,
+    agentName: string
+  ): boolean =>
+    previous === undefined ||
+    (!previous.present && previous.processId !== null) ||
+    (previous.processId !== null &&
+      processId !== null &&
+      previous.processId !== processId) ||
+    previous.agentName !== agentName
+
   interface StatusFact {
     readonly agentId: string
     readonly agentName: string
@@ -344,7 +357,9 @@ function setupAgentStatusReporting(
     previous.status === current.status &&
     previous.workspaceId === current.workspaceId
 
-  const report = (terminal: TerminalInfo): void => {
+  const report = (
+    terminal: TerminalInfo & { readonly agentProcessIds?: readonly number[] }
+  ): void => {
     const detectedAgent =
       terminal.processChain.find((process) => process.category === 'agent') ??
       (terminal.foregroundProcess?.category === 'agent'
@@ -354,10 +369,12 @@ function setupAgentStatusReporting(
     let owner = previousOwner
 
     if (detectedAgent !== null) {
-      const isNewGeneration =
-        previousOwner === undefined ||
-        !previousOwner.present ||
-        previousOwner.agentName !== detectedAgent.label
+      const processId = terminal.agentProcessIds?.[0] ?? null
+      const isNewGeneration = beginsNewGeneration(
+        previousOwner,
+        processId,
+        detectedAgent.label
+      )
       const generation = isNewGeneration
         ? (previousOwner?.generation ?? 0) + 1
         : previousOwner.generation
@@ -365,6 +382,7 @@ function setupAgentStatusReporting(
         agentId: `${terminal.id}:${String(generation)}`,
         agentName: detectedAgent.label,
         generation,
+        processId,
         present: true,
       }
       owners.set(terminal.id, owner)
@@ -378,6 +396,7 @@ function setupAgentStatusReporting(
         agentId: `${terminal.id}:1`,
         agentName: 'Agent',
         generation: 1,
+        processId: null,
         present: false,
       }
       owners.set(terminal.id, owner)

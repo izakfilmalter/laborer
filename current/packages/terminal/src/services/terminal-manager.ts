@@ -137,10 +137,12 @@ interface TerminalSubscriberState {
 }
 
 /**
- * Shape of a terminal record returned by the manager.
- * Matches the TerminalInfo RPC schema fields.
+ * Shape of a terminal record returned by the manager. The RPC encoder strips
+ * the internal process identity before records cross the public RPC boundary.
  */
 interface TerminalRecord {
+  /** Internal process identity used by the utility-process notification feed. */
+  readonly agentProcessIds: readonly number[]
   readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
   readonly command: string
@@ -1408,6 +1410,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         )
 
         const record: TerminalRecord = {
+          agentProcessIds: [],
           id,
           workspaceId,
           command,
@@ -1659,6 +1662,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const agentStatus = statusEngines.get(terminal.id)?.current ?? null
 
         return {
+          agentProcessIds: detected?.agentProcessIds ?? [],
           id: terminal.id,
           workspaceId: terminal.workspaceId,
           command: terminal.command,
@@ -1904,6 +1908,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         statusEngines.delete(terminalId)
 
         const record: TerminalRecord = {
+          agentProcessIds: [],
           id: terminalId,
           workspaceId: terminal.workspaceId,
           command: terminal.command,

@@ -123,7 +123,6 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
         rootIdentity: prepared.laborer.root,
       });
       rootRuntimes.set(workspaceId, rootRuntime);
-      operatorProjection.markWorkspaceReady(workspaceId);
       const workspace = yield* makeProductionAcpWorkspaceApplication(
         {
           applicationConfig,
@@ -195,17 +194,21 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
     const refreshOperatorActivity = Effect.forEach(
       rootRuntimes,
       ([workspaceId, runtime]) =>
-        runtime
-          .workThreadActivity(workspaceId)
-          .pipe(
-            Effect.tap((activity) =>
-              Effect.sync(() =>
-                operatorProjection.observe(workspaceId, activity)
-              )
-            )
+        runtime.workThreadActivity(workspaceId).pipe(
+          Effect.tap((activity) =>
+            Effect.sync(() => {
+              operatorProjection.observe(workspaceId, activity);
+              operatorProjection.markWorkspaceReady(workspaceId);
+            })
           ),
+          Effect.catch(() =>
+            Effect.sync(() =>
+              operatorProjection.markWorkspaceUnavailable(workspaceId)
+            )
+          )
+        ),
       { discard: true }
-    ).pipe(Effect.ignore);
+    );
     yield* refreshOperatorActivity;
     yield* Effect.acquireRelease(
       Effect.tryPromise(() =>

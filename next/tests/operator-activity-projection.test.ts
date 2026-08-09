@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DurableWorkThreadActivity } from "../src/durable-runtime/root-runtime.ts";
-import { makeWorkThreadActivityProjection } from "../src/operator-status/activity-projection.ts";
+import {
+  makePostCutoverOperatorProjection,
+  makeWorkThreadActivityProjection,
+} from "../src/operator-status/activity-projection.ts";
 
 const observation = (
   overrides: Partial<DurableWorkThreadActivity> = {}
@@ -73,6 +76,49 @@ describe("post-cutover operator activity projection", () => {
       expect.objectContaining({
         activity: "dormant",
         stateChangedAtUnixMs: 5000,
+      })
+    );
+  });
+
+  it("refreshes dormant recency when a complete turn happens between polls", () => {
+    let now = 2000;
+    const projection = makeWorkThreadActivityProjection({ now: () => now });
+
+    projection.observe("TTEAM", [observation()]);
+    now = 4000;
+    projection.observe("TTEAM", [observation({ evidenceAtUnixMs: 3000 })]);
+
+    expect(projection.snapshot("TTEAM")[0]?.stateChangedAtUnixMs).toBe(3000);
+  });
+
+  it("fails closed and recovers workspace readiness when activity cannot be read", () => {
+    const projection = makePostCutoverOperatorProjection([
+      { bindingIndex: 0, expectedTeamId: "TTEAM", tokenIsValid: true },
+    ]);
+
+    projection.observe("TTEAM", [observation()]);
+    projection.markWorkspaceReady("TTEAM");
+    expect(projection.snapshot().workspaces[0]).toEqual(
+      expect.objectContaining({
+        readiness: "ready",
+        threads: [expect.anything()],
+      })
+    );
+
+    projection.markWorkspaceUnavailable("TTEAM");
+    expect(projection.snapshot().workspaces[0]).toEqual(
+      expect.objectContaining({
+        detail: "runtime-unavailable",
+        readiness: "unavailable",
+        threads: [],
+      })
+    );
+
+    projection.markWorkspaceReady("TTEAM");
+    expect(projection.snapshot().workspaces[0]).toEqual(
+      expect.objectContaining({
+        readiness: "ready",
+        threads: [expect.anything()],
       })
     );
   });

@@ -3,10 +3,12 @@ import type {
   OperatorWorkspaceBinding,
   OperatorWorkThread,
 } from "./protocol.ts";
+import { MAX_OPERATOR_WORKSPACE_BINDINGS } from "./protocol.ts";
 
 const MAX_EXCERPT_LENGTH = 120;
 const MAX_RECENT_DORMANT_THREADS = 4;
 const CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]+$/;
+const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
 const SLACK_TIMESTAMP_PATTERN = /^\d{1,16}(?:\.\d{1,9})?$/;
 
 const boundedExcerpt = (source: string): string => {
@@ -41,11 +43,14 @@ const stateChangedAt = (
   observedAt: number
 ): number => {
   if (existing === undefined) {
-    return evidenceAt;
+    return evidenceAt || observedAt;
   }
-  return existing.activity === activity
-    ? existing.stateChangedAtUnixMs
-    : observedAt;
+  if (existing.activity !== activity) {
+    return observedAt;
+  }
+  return activity === "dormant" && evidenceAt > existing.stateChangedAtUnixMs
+    ? evidenceAt
+    : existing.stateChangedAtUnixMs;
 };
 
 const activityOrder = (
@@ -136,12 +141,21 @@ export const makePostCutoverOperatorProjection = (
     readonly tokenIsValid: boolean;
   }[]
 ) => {
+  if (bindings.length > MAX_OPERATOR_WORKSPACE_BINDINGS) {
+    throw new Error(
+      "too many Slack workspace bindings for operator projection"
+    );
+  }
   const activity = makeWorkThreadActivityProjection();
   let receiver: "connected" | "connecting" = "connecting";
   const ready = new Set<string>();
+  const unavailable = new Set<string>();
   const workspaces: OperatorWorkspaceBinding[] = bindings.map((binding) => {
     const teamId =
-      binding.tokenIsValid && binding.expectedTeamId !== undefined
+      binding.tokenIsValid &&
+      binding.expectedTeamId !== undefined &&
+      binding.expectedTeamId.length <= 58 &&
+      TEAM_ID_PATTERN.test(binding.expectedTeamId)
         ? binding.expectedTeamId
         : null;
     return {
@@ -162,7 +176,12 @@ export const makePostCutoverOperatorProjection = (
       receiver = "connected";
     },
     markWorkspaceReady: (workspaceId: string): void => {
+      unavailable.delete(workspaceId);
       ready.add(workspaceId);
+    },
+    markWorkspaceUnavailable: (workspaceId: string): void => {
+      ready.delete(workspaceId);
+      unavailable.add(workspaceId);
     },
     observe: (
       workspaceId: string,
@@ -170,16 +189,25 @@ export const makePostCutoverOperatorProjection = (
     ): void => activity.observe(workspaceId, observations),
     snapshot: () => ({
       receiver,
-      workspaces: workspaces.map((workspace) => ({
-        ...workspace,
-        ...(workspace.teamId !== null && ready.has(workspace.teamId)
-          ? { detail: null, readiness: "ready" as const }
-          : {}),
-        threads:
-          workspace.teamId === null
-            ? []
-            : [...activity.snapshot(workspace.teamId)],
-      })),
+      workspaces: workspaces.map((workspace) => {
+        if (workspace.teamId !== null && unavailable.has(workspace.teamId)) {
+          return {
+            ...workspace,
+            detail: "runtime-unavailable" as const,
+            readiness: "unavailable" as const,
+            threads: [],
+          };
+        }
+        if (workspace.teamId !== null && ready.has(workspace.teamId)) {
+          return {
+            ...workspace,
+            detail: null,
+            readiness: "ready" as const,
+            threads: [...activity.snapshot(workspace.teamId)],
+          };
+        }
+        return { ...workspace, threads: [] };
+      }),
     }),
   };
 };

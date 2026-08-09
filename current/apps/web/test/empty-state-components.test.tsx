@@ -193,9 +193,9 @@ describe('EmptyWorkspaceState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('T')
   })
 
-  it('embeds the PanelTypePicker with 4 options', () => {
+  it('embeds the PanelTypePicker with 3 options', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(4)
+    expect(getPickerOptions()).toHaveLength(3)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {
@@ -268,9 +268,9 @@ describe('EmptyPanelTabState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('D')
   })
 
-  it('embeds the PanelTypePicker with 4 options', () => {
+  it('embeds the PanelTypePicker with 3 options', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(4)
+    expect(getPickerOptions()).toHaveLength(3)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {

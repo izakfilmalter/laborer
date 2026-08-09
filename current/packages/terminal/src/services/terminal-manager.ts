@@ -1125,7 +1125,14 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         lastProcessSnapshot.set(terminalId, EMPTY_DETECTION)
         emitEvent({
           _tag: 'ProcessChanged',
-          terminal: toTerminalRecord(terminal, EMPTY_DETECTION),
+          // The PTY has already exited when this callback runs. Publish the
+          // final status in the full replacement record as well as in the
+          // following StatusChanged event, so independent PubSub scheduling
+          // cannot leave a renderer showing this terminal as running.
+          terminal: {
+            ...toTerminalRecord(terminal, EMPTY_DETECTION),
+            status: 'stopped',
+          },
         })
       }
 
@@ -1183,6 +1190,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 return
               }
 
+              // An orphan reap is an explicit lifecycle action, not evidence
+              // that an agent completed. Clear advisory status before the PTY
+              // exit callback runs so it cannot synthesize Done.
+              statusEngines.delete(terminalId)
               ptyHostClient.kill(terminalId)
 
               yield* Ref.update(terminalsRef, (existingMap) => {
@@ -1558,6 +1569,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           })
         }
 
+        // Explicit user termination must not be projected as agent Done.
+        statusEngines.delete(terminalId)
         ptyHostClient.kill(terminalId)
         clearGraceTimeout(terminalId)
 
@@ -1595,6 +1608,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         // If running, kill first
         if (terminal.status === 'running') {
+          statusEngines.delete(terminalId)
           ptyHostClient.kill(terminalId)
         }
         clearGraceTimeout(terminalId)
@@ -1639,10 +1653,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const foregroundProcess = detected?.foregroundProcess ?? null
         const processChain = detected?.processChain ?? []
 
-        const agentStatus =
-          terminal.status === 'running'
-            ? (statusEngines.get(terminal.id)?.current ?? null)
-            : null
+        // Keep a naturally exited one-shot agent's idle snapshot available.
+        // Done is derived from idle + unseen, and must survive the subsequent
+        // StatusChanged event and list hydration until the operator sees it.
+        const agentStatus = statusEngines.get(terminal.id)?.current ?? null
 
         return {
           id: terminal.id,
@@ -1756,6 +1770,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         // If running, kill existing PTY
         if (terminal.status === 'running') {
+          // Restart is explicit replacement, not agent completion. Reset the
+          // old generation before its PTY exit callback can publish Done.
+          statusEngines.delete(terminalId)
           ptyHostClient.kill(terminalId)
         }
         clearGraceTimeout(terminalId)
@@ -1882,7 +1899,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           }
         )
 
-        // Restart creates a new process generation.
+        // Restart creates a new process generation. This also handles a
+        // previously stopped terminal, for which no kill occurred above.
         statusEngines.delete(terminalId)
 
         const record: TerminalRecord = {
@@ -2007,6 +2025,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             runningTerminals,
             (terminal) =>
               Effect.gen(function* () {
+                statusEngines.delete(terminal.id)
                 yield* Effect.sync(() => ptyHostClient.kill(terminal.id))
                 killedCount += 1
               }).pipe(

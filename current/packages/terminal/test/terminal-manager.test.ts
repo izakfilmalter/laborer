@@ -1247,6 +1247,93 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
   })
 
+  it('keeps an unseen completion for a naturally exited one-shot agent', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'sleep',
+          args: ['0.05'],
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        yield* tm.setAgentStatusFromHook(terminal.id, {
+          status: 'working',
+          sequence: 1,
+        })
+        return terminal
+      })
+    )
+
+    await delay(500)
+
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminals = yield* tm.listTerminals()
+        return terminals.find(({ id }) => id === result.id)
+      })
+    )
+
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.deepInclude(terminal?.agentStatus, {
+      status: 'idle',
+      seen: false,
+    })
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  it('does not project an explicit terminal kill as agent completion', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        yield* tm.setAgentStatusFromHook(terminal.id, {
+          status: 'working',
+          sequence: 1,
+        })
+        yield* tm.kill(terminal.id)
+        return terminal
+      })
+    )
+
+    await delay(100)
+
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminals = yield* tm.listTerminals()
+        return terminals.find(({ id }) => id === result.id)
+      })
+    )
+
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
   // -------------------------------------------------------------------------
   // Hook-based agent status overrides
   // -------------------------------------------------------------------------
@@ -2364,23 +2451,20 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
           yield* Fiber.interrupt(collectFiber)
 
-          // Verify a ProcessChanged event was emitted with agentStatus 'active'
+          // A detection event can already be queued when the array is reset,
+          // so identify the hook result by its payload rather than assuming
+          // the first event observed in this window came from the hook.
           const hookEvents = collectedEvents.filter(
-            (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminal.id
+            (event) =>
+              event._tag === 'ProcessChanged' &&
+              event.terminal.id === terminal.id &&
+              event.terminal.agentStatus?.status === 'working'
           )
 
           assert.isTrue(
             hookEvents.length >= 1,
             `Expected at least 1 ProcessChanged from hook, got ${hookEvents.length}`
           )
-
-          const hookEvent = hookEvents[0]
-          if (hookEvent?._tag === 'ProcessChanged') {
-            assert.strictEqual(
-              hookEvent.terminal.agentStatus?.status,
-              'working'
-            )
-          }
 
           // Clean up
           yield* tm.kill(terminal.id)

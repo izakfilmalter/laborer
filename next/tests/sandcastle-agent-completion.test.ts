@@ -3,13 +3,22 @@ import {
   assertAgentCompleted,
   assertNewWorkAfterAcceptedHead,
   assertRecordedRecoveryLineage,
-  classifyBranchRecovery,
+  classifyBranchRecovery as classifyBranchRecoveryRaw,
 } from "../../.sandcastle/agent-completion/index.ts";
 
 const missingCompletionPattern = /did not emit its completion signal/;
 const missingNewWorkPattern = /without work after its accepted head/;
 const unrelatedRecoveryPattern = /does not descend from accepted head/;
-const unrecordedCommitsPattern = /unrecorded commits/;
+const unrecordedCommitsPattern = /unrelated commits/;
+
+const ancestry = (ancestor: string, descendant: string) =>
+  ancestor === "base" ||
+  (ancestor === "progress" && descendant === "review-work");
+
+const recover = (
+  state: Parameters<typeof classifyBranchRecoveryRaw>[0],
+  isAncestor = ancestry
+) => classifyBranchRecoveryRaw(state, isAncestor);
 
 describe("Sandcastle agent completion", () => {
   it("rejects an agent run without the explicit completion signal", () => {
@@ -38,9 +47,9 @@ describe("Sandcastle agent completion", () => {
     );
   });
 
-  it("recovers only runner-recorded completed or in-progress heads", () => {
+  it("recovers exact runner-recorded completed or in-progress heads", () => {
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "base",
@@ -54,7 +63,7 @@ describe("Sandcastle agent completion", () => {
       "build"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: "done",
         currentHead: "done",
@@ -68,7 +77,7 @@ describe("Sandcastle agent completion", () => {
       "publish"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "reviewed",
@@ -82,7 +91,7 @@ describe("Sandcastle agent completion", () => {
       "review"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "agent-reviewed",
@@ -96,7 +105,7 @@ describe("Sandcastle agent completion", () => {
       "complete"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "progress",
@@ -110,7 +119,7 @@ describe("Sandcastle agent completion", () => {
       "review"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "implementation",
@@ -124,7 +133,7 @@ describe("Sandcastle agent completion", () => {
       "ui"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "ui-reviewed",
@@ -138,7 +147,7 @@ describe("Sandcastle agent completion", () => {
       "code-review"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "passed",
@@ -152,7 +161,7 @@ describe("Sandcastle agent completion", () => {
       "complete"
     );
     assert.strictEqual(
-      classifyBranchRecovery({
+      recover({
         acceptedHead: "base",
         completedHead: undefined,
         currentHead: "base",
@@ -167,18 +176,69 @@ describe("Sandcastle agent completion", () => {
     );
     assert.throws(
       () =>
-        classifyBranchRecovery({
+        recover(
+          {
+            acceptedHead: "base",
+            completedHead: "done",
+            currentHead: "unrecorded",
+            gatePassedHead: "passed",
+            gatePendingHead: "reviewed",
+            implementationHead: "implementation",
+            progressHead: "progress",
+            reviewedHead: "agent-reviewed",
+            uiReviewedHead: "ui-reviewed",
+          },
+          () => false
+        ),
+      unrecordedCommitsPattern
+    );
+  });
+
+  it("resumes commits made after the last durable checkpoint", () => {
+    assert.strictEqual(
+      recover({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "review-work",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: "progress",
+        reviewedHead: undefined,
+        uiReviewedHead: undefined,
+      }),
+      "review"
+    );
+    assert.strictEqual(
+      recover({
+        acceptedHead: "base",
+        completedHead: undefined,
+        currentHead: "implementation-work",
+        gatePassedHead: undefined,
+        gatePendingHead: undefined,
+        implementationHead: undefined,
+        progressHead: undefined,
+        reviewedHead: undefined,
+        uiReviewedHead: undefined,
+      }),
+      "build"
+    );
+    assert.strictEqual(
+      recover(
+        {
           acceptedHead: "base",
-          completedHead: "done",
-          currentHead: "unrecorded",
-          gatePassedHead: "passed",
-          gatePendingHead: "reviewed",
+          completedHead: undefined,
+          currentHead: "code-review-work",
+          gatePassedHead: undefined,
+          gatePendingHead: undefined,
           implementationHead: "implementation",
           progressHead: "progress",
-          reviewedHead: "agent-reviewed",
+          reviewedHead: undefined,
           uiReviewedHead: "ui-reviewed",
-        }),
-      unrecordedCommitsPattern
+        },
+        () => true
+      ),
+      "code-review"
     );
   });
 

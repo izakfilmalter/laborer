@@ -1657,8 +1657,13 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         terminal: ManagedTerminal,
         detected: ProcessDetectionResult | undefined
       ): TerminalRecord => {
-        const foregroundProcess = detected?.foregroundProcess ?? null
-        const processChain = detected?.processChain ?? []
+        // Cached process inspection describes a live PTY only. A kill can
+        // mark the terminal stopped before its exit callback clears that
+        // cache, so enforce the stopped-terminal invariant at projection.
+        const liveDetection =
+          terminal.status === 'running' ? detected : undefined
+        const foregroundProcess = liveDetection?.foregroundProcess ?? null
+        const processChain = liveDetection?.processChain ?? []
 
         // Keep a naturally exited one-shot agent's idle snapshot available.
         // Done is derived from idle + unseen, and must survive the subsequent
@@ -1666,7 +1671,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const agentStatus = statusEngines.get(terminal.id)?.current ?? null
 
         return {
-          agentProcessIds: detected?.agentProcessIds ?? [],
+          agentProcessIds: liveDetection?.agentProcessIds ?? [],
           id: terminal.id,
           workspaceId: terminal.workspaceId,
           command: terminal.command,
@@ -1674,7 +1679,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           cwd: terminal.cwd,
           agentStatus,
           foregroundProcess,
-          hasChildProcess: detected?.hasChildProcess ?? false,
+          hasChildProcess: liveDetection?.hasChildProcess ?? false,
           processChain,
           status: terminal.status,
         }

@@ -175,7 +175,7 @@
 /**
  * Markdown body — lightweight prose styles for rendered markdown content.
  * Uses the existing theme CSS custom properties so it adapts to light/dark.
- * Designed for compact panels (review comments, PR descriptions).
+ * Designed for compact panels and descriptions.
  */
 .markdown-body {
   color: var(--foreground);

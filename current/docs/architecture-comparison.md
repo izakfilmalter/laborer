@@ -285,8 +285,7 @@ packages/server/src/utility-main.ts
   |-- Background fiber builds real implementations in groups:
   |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
   |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
-  |                       ReviewCommentFetcher, RepositoryWatchCoordinator, ProjectRegistry,
-  |                       WorkspaceProvider
+  |                       RepositoryWatchCoordinator, ProjectRegistry, WorkspaceProvider
   |     Group 3 (independent): TerminalClient
   |
   |-- As each group completes: Ref.set() swaps proxy with real implementation

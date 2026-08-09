@@ -1016,7 +1016,6 @@ Date: 2026-03-04
 - Issue #48: Destroy Workspace button (was blocked by #47, #41 — #20 now enables mutations)
 - Issue #61: xterm.js send input (was blocked by #60, #57 (done) — #20 now enables mutations)
 - Issue #62: xterm.js handle resize (was blocked by #60, #58 (done) — #20 now enables mutations)
-- Issue #95: PRD writing form (was blocked by #94, #60 — #20 now enables mutations)
 - Issue #112: Click-to-open from diff viewer (was blocked by #111, #87 — #20 now enables mutations)
 
 ## Issue 26: Project list UI component — COMPLETED
@@ -1289,7 +1288,6 @@ Date: 2026-03-04
 - Issue #63: Terminal list per workspace UI (was blocked by #60 and #55 — now all blockers done!)
 - Issue #64: Terminal session reconnection (was blocked by #60 — now done!)
 - Issue #66: PanelManager — single pane (was blocked by #60 — now done!)
-- Issue #95: PRD writing form (was blocked by #94 and #60 — #60 now done, still needs #94)
 - Issue #122: Loading state — terminal spawning (was blocked by #60 — now done!)
 - Issue #124: Terminal fidelity — opencode (was blocked by #60 — now done!)
 - Issue #125: Terminal fidelity — claude (was blocked by #60 — now done!)

@@ -505,7 +505,7 @@ describe('WindowLayoutSchema', () => {
      *           │   └─ PanelTab "Split" (horizontal split: terminal + diff)
      *           └─ WorkspaceTileSplit (vertical)
      *               ├─ WorkspaceTileLeaf ws-2 (devServer tab)
-     *               └─ WorkspaceTileLeaf ws-3 (review tab)
+     *               └─ WorkspaceTileLeaf ws-3 (diff tab)
      */
     const layout: WindowLayout = {
       tabs: [
@@ -530,12 +530,12 @@ describe('WindowLayoutSchema', () => {
                     workspaceId: 'ws-3',
                     panelTabs: [
                       {
-                        id: 'tab-review',
+                        id: 'tab-diff',
                         panelLayout: secondaryDiffLeaf,
                         focusedPaneId: 'pane-3',
                       },
                     ],
-                    activePanelTabId: 'tab-review',
+                    activePanelTabId: 'tab-diff',
                   },
                 ],
                 sizes: [50, 50],

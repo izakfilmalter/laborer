@@ -415,12 +415,6 @@
   - After Phase 4: renders the existing `Suspense` + `DockerStatusContent` (which queries `docker.status` RPC)
   - Prevents SERVICE_INITIALIZING errors from DockerDetection during startup
 
-  - Before Phase 4: shows "Loading review..." spinner placeholder with review header
-
-  - After Phase 4: renders the unresolved findings count badge
-
-  - After Phase 4: renders the verdict badge (approved/needs_fix)
-
 - **Branch ahead/behind counts** — no additional gating needed:
   - `WorkspaceSyncStatus` receives `aheadCount`/`behindCount` as props from LiveStore queries
   - Counts are `null`/`0` until background sync populates the data, handled naturally

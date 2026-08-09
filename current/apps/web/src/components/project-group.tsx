@@ -7,7 +7,6 @@
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
- * @see Issue #170: Tasks nested under each project
  * @see Issue #173: Polish and verification
  */
 

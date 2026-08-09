@@ -300,7 +300,7 @@ Phase 4:             Issue 9
 
 **What was NOT removed (still in use):**
 - `visible-workspaces.ts` — still imported by `pr-watcher.ts`
-- `DiffScrollContext` — still actively used by `diff-pane.tsx` and `review-pane.tsx`
+- `DiffScrollContext` — still actively used by `diff-pane.tsx`
 - `RepositoryWatchCoordinator` — simplified in Issue 8, not fully removed (still coordinates branch detection + worktree reconciliation)
 - `BranchStateTracker` — still in use
 

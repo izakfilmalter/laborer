@@ -84,7 +84,6 @@ vi.mock('@/livestore/store', () => ({
 
 vi.mock('@laborer/shared/schema', () => ({
   workspaces: { name: 'workspaces' },
-  tasks: { name: 'tasks' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -107,33 +106,12 @@ vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
 }))
 
-vi.mock('@/components/review-pr-form', () => ({
-  ReviewPrForm: () => null,
-}))
-
-vi.mock('@/components/fix-findings-form', () => ({
-  FixFindingsForm: () => null,
-}))
-
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
 }))
 
 vi.mock('@/components/github-pr-status-badge', () => ({
   GitHubPrStatusBadge: () => null,
-}))
-
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => null,
-}))
-
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => null,
-  useUnresolvedFindingsCount: () => 0,
-}))
-
-vi.mock('@/components/plan-issues-list', () => ({
-  PlanIssuesList: () => null,
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({

@@ -30,12 +30,7 @@ import {
 /** A panel leaf node for use in fixtures. */
 function makeLeaf(
   id: string,
-  paneType:
-    | 'agent'
-    | 'terminal'
-    | 'diff'
-    | 'review'
-    | 'devServerTerminal' = 'terminal',
+  paneType: 'agent' | 'terminal' | 'diff' | 'devServerTerminal' = 'terminal',
   terminalId?: string
 ): LeafNode {
   return {
@@ -144,8 +139,8 @@ describe('addPanelTab', () => {
 
     for (const paneType of [
       'terminal',
+      'agent',
       'diff',
-      'review',
       'devServerTerminal',
     ] as const) {
       const result = addPanelTab(ws, paneType)
@@ -158,7 +153,7 @@ describe('addPanelTab', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
     const customTab: PanelTab = {
       id: 'custom-tab',
-      panelLayout: makeLeaf('custom-pane', 'review'),
+      panelLayout: makeLeaf('custom-pane', 'agent'),
       focusedPaneId: 'custom-pane',
     }
 
@@ -659,8 +654,8 @@ describe('combined operations', () => {
 
     // Add 4 tabs of different types
     ws = addPanelTab(ws, 'terminal')
+    ws = addPanelTab(ws, 'agent')
     ws = addPanelTab(ws, 'diff')
-    ws = addPanelTab(ws, 'review')
     ws = addPanelTab(ws, 'devServerTerminal')
 
     expect(ws.panelTabs).toHaveLength(4)

@@ -33,7 +33,6 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 10. As a developer, I want each workspace to have its own allocated port for its dev server, so that I can run multiple Next.js (or similar) dev servers simultaneously without port conflicts.
 11. As a developer, I want the workspace setup to automatically run project-specific scripts (install deps, copy .env files, etc.), so that I don't have to manually bootstrap each worktree.
 12. As a developer, I want to manage multiple projects (repos) simultaneously, so that I can work across different codebases in the same session.
-14. As a developer, I want to write a PRD through the app, so that I can start the full workflow (PRD -> issues -> implementation) from within laborer.
 16. As a developer, I want to interact with agents in human-in-the-loop mode (typing directly into the agent's terminal), so that I can guide the agent when needed.
 18. As a developer, I want the entire panel layout, workspace state, and conversation history to persist when I close and reopen the app, so that I can resume exactly where I left off.
 19. As a developer, I want to click a button to open a specific file from the diff viewer in Cursor/VS Code, so that I can quickly jump to code when I need to make manual edits.
@@ -71,7 +70,7 @@ Once the core user stories are implemented, the following checks should be made:
 
 Laborer runs as two processes:
 - **Laborer Server**: A standalone Bun process running Effect TS v3. Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
-- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, TanStack Form, TanStack Hotkeys, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. TanStack Form handles all user input forms (project registration, workspace config, PRD writing). TanStack Hotkeys provides declarative keyboard shortcut management for tmux-style panel operations. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and **effect-atom (`@effect-atom/atom-react`) with `AtomRpc`** for triggering server-side actions (mutations).
+- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, TanStack Form, TanStack Hotkeys, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. TanStack Form handles project and workspace configuration. TanStack Hotkeys provides declarative keyboard shortcut management for tmux-style panel operations. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and **effect-atom (`@effect-atom/atom-react`) with `AtomRpc`** for triggering server-side actions (mutations).
 
 The Tauri 2 desktop shell is embedded directly in `apps/web/src-tauri/`. It opens a webview to the local Vite dev server (port 3001 in dev). It adds native features (system tray, global shortcuts) but the core experience is identical in a browser. Run via `bun run desktop:dev` in the web app.
 

@@ -1,8 +1,7 @@
 /**
  * Tests for the reorganized workspace card layout.
  *
- * Row 1 (Git): branch name + PR badge + review verdict + findings count
- *   + Review/Fix action buttons (hidden when no PR)
+ * Row 1 (Git): branch name + PR badge
  *
  * Row 2 (Sandbox/Infra): sandbox URL/port + status badge + pause/play
  *
@@ -34,13 +33,6 @@ vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: vi.fn(async () => true),
   terminalRpcUrl: () => 'http://localhost:2101',
-}))
-
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => (
-    <span data-testid="review-findings-count">findings</span>
-  ),
-  useUnresolvedFindingsCount: () => 0,
 }))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
@@ -86,7 +78,6 @@ vi.mock('@/livestore/store', () => ({
 
 vi.mock('@laborer/shared/schema', () => ({
   workspaces: { name: 'workspaces' },
-  tasks: { name: 'tasks' },
 }))
 
 vi.mock('sonner', () => ({
@@ -111,16 +102,6 @@ vi.mock('@/components/terminal-list', () => ({
 
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
-}))
-
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => (
-    <span data-testid="review-verdict-badge">verdict</span>
-  ),
-}))
-
-vi.mock('@/components/plan-issues-list', () => ({
-  PlanIssuesList: () => null,
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({

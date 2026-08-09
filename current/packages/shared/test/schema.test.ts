@@ -957,7 +957,7 @@ describe('LiveStore schema', () => {
       },
       {
         id: 'wtab-2',
-        label: 'Review',
+        label: 'Diff',
         workspaceLayout: {
           _tag: 'WorkspaceTileLeaf',
           id: 'tile-2',

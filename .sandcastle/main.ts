@@ -28,6 +28,7 @@ import {
   attemptHostStep,
   canReuseCompletedHead,
   hostCheckoutProblem,
+  mergeFailureNeedsPreparation,
   mergePullRequestArgs,
   refreshDetachedBase,
   reviewedHeadNeedsPush,
@@ -607,7 +608,7 @@ async function publishAndMaybeMergeStandalone(
     console.log(`  Ready for manual merge: ${prUrl}`);
     return;
   }
-  await mergePreparedPullRequest(prUrl, reviewedHead, issue.branch);
+  await mergePreparedPullRequest(issue, prUrl, reviewedHead, issue.branch);
   closeIssueIfOpen(Number(issue.id), prUrl);
   deleteRecordedCompletion(issue);
 }
@@ -635,6 +636,7 @@ async function finalizeSpec(spec: FinalizeIssueSpec) {
     return;
   }
   await mergePreparedPullRequest(
+    issue,
     spec.pullRequest.url,
     reviewedHead,
     spec.branch
@@ -658,9 +660,11 @@ function plannedIssueForFinalize(spec: FinalizeIssueSpec): PlannedIssue {
 }
 
 async function mergePreparedPullRequest(
+  issue: PlannedIssue,
   prUrl: string,
   reviewedHead: string,
-  expectedBranch: string
+  expectedBranch: string,
+  remainingRaceRepairs = MAX_REPAIR_ATTEMPTS
 ) {
   assertCurrentPullRequestTargets(prUrl, expectedBranch);
   const initialStatus = getPrStatus(prUrl);
@@ -674,7 +678,36 @@ async function mergePreparedPullRequest(
       `PR head moved after review: expected ${reviewedHead}, received ${currentHead ?? "none"}.`
     );
   }
-  mergePr(prUrl, reviewedHead);
+  try {
+    mergePr(prUrl, reviewedHead);
+  } catch (error) {
+    const failedStatus = getPrStatus(prUrl);
+    if (failedStatus.state === "MERGED" || failedStatus.mergedAt) {
+      assertMergedPullRequestMatches(prUrl, expectedBranch, reviewedHead);
+      return;
+    }
+    if (
+      remainingRaceRepairs > 0 &&
+      mergeFailureNeedsPreparation(
+        failedStatus.mergeStateStatus,
+        failedStatus.mergeable
+      )
+    ) {
+      const repairedHead = await preparePrForMerge(issue, prUrl);
+      if (repairedHead === undefined) {
+        throw new Error(`PR is not ready after merge-race repair: ${prUrl}`);
+      }
+      markPullRequestReady(prUrl, expectedBranch);
+      return mergePreparedPullRequest(
+        issue,
+        prUrl,
+        repairedHead,
+        expectedBranch,
+        remainingRaceRepairs - 1
+      );
+    }
+    throw error;
+  }
   const deadline = Date.now() + MERGE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const status = getPrStatus(prUrl);

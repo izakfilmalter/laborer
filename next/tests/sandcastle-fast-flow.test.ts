@@ -4,6 +4,7 @@ import {
   attemptHostStep,
   canReuseCompletedHead,
   hostCheckoutProblem,
+  mergeFailureNeedsPreparation,
   mergePullRequestArgs,
   refreshDetachedBase,
   reviewedHeadNeedsPush,
@@ -27,6 +28,13 @@ describe("Sandcastle fast flow", () => {
       "abc123",
     ]);
     assert.notInclude(args, "--delete-branch");
+  });
+
+  it("re-prepares a PR that becomes conflicting during merge", () => {
+    assert.isTrue(mergeFailureNeedsPreparation("DIRTY", "UNKNOWN"));
+    assert.isTrue(mergeFailureNeedsPreparation("CLEAN", "CONFLICTING"));
+    assert.isFalse(mergeFailureNeedsPreparation("BEHIND", "MERGEABLE"));
+    assert.isFalse(mergeFailureNeedsPreparation("CLEAN", "MERGEABLE"));
   });
 
   it("quotes untrusted Git refs as inert shell arguments", () => {

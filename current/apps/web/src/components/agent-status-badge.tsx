@@ -30,17 +30,22 @@ import { cn } from '@/lib/utils'
 /**
  * The status dot. `needs input` pings outward to pull the eye, `working`
  * breathes to read as in-flight, and at-rest states hold still. Stale
- * detection never animates — dimmed uncertainty must not look like activity.
+ * detection never animates and renders hollow — uncertainty must not look
+ * like activity, and the hollow ring says so without relying on colour.
  */
 function AgentStatusDot({
   className,
   motion,
+  staleClassName,
 }: {
   readonly className: string
   readonly motion: AgentStatusMotion
+  readonly staleClassName?: string | undefined
 }) {
+  const isStale = staleClassName !== undefined
+
   return (
-    <span className="relative inline-flex size-1.5 shrink-0">
+    <span aria-hidden="true" className="relative inline-flex size-1.5 shrink-0">
       {motion === 'ping' && (
         <span
           className={cn(
@@ -52,7 +57,7 @@ function AgentStatusDot({
       <span
         className={cn(
           'relative inline-flex size-full rounded-full',
-          className,
+          isStale ? cn('border', staleClassName) : className,
           motion === 'breathe' && 'motion-safe:animate-pulse'
         )}
       />
@@ -86,10 +91,14 @@ function AgentStatusBadge({ className, snapshot }: AgentStatusBadgeProps) {
       <AgentStatusDot
         className={presentation.dotClassName}
         motion={snapshot.stale ? 'none' : presentation.motion}
+        staleClassName={
+          snapshot.stale ? presentation.dotStaleClassName : undefined
+        }
       />
-      <span>{presentation.label}</span>
-      {/* Pointer users get provenance from the tooltip; this gives assistive
-          tech the same sentence without duplicating the visible label. */}
+      {/* The visible label is hidden from assistive tech because the sr-only
+          sentence below already opens with it; otherwise the state would be
+          announced twice before its provenance. */}
+      <span aria-hidden="true">{presentation.label}</span>
       <span className="sr-only">{description}</span>
     </Badge>
   )
@@ -124,8 +133,8 @@ function AggregateAgentStatusBadge({
         className={presentation.dotClassName}
         motion={presentation.motion}
       />
-      <span>{presentation.label}</span>
-      <span className="sr-only">{presentation.meaning}</span>
+      <span aria-hidden="true">{presentation.label}</span>
+      <span className="sr-only">{description}</span>
     </Badge>
   )
 }

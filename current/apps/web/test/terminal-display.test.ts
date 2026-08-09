@@ -38,7 +38,7 @@ describe('getTerminalDisplay', () => {
       status('working', true)
     )
 
-    expect(result.badgeClassName).toContain('opacity-50')
+    expect(result.badgeClassName).toContain('opacity-70')
     expect(result.badgeClassName).toContain('border-dashed')
     expect(result.badgeTitle).toContain('stale')
   })

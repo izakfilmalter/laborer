@@ -10,8 +10,9 @@
  * Motion is meaning here: `needs input` pings (act now), `working` breathes
  * (in flight), `idle` and `unknown` are still (nothing to do). All motion is
  * `motion-safe:` gated so reduced-motion users get the same colour and shape
- * language without animation, and stale detection drops motion entirely
- * because a dimmed status must not look like fresh activity.
+ * language without animation, and stale detection drops motion entirely —
+ * hollowing the dot instead — because a status that may be out of date must
+ * not look like fresh activity.
  *
  * @see apps/web/src/components/agent-status-badge.tsx — shared badge
  * @see apps/web/src/components/terminal-list.tsx — terminal rows
@@ -33,6 +34,12 @@ interface AgentStatusPresentation {
   readonly badgeClassName: string
   /** Fill colour for the status dot. */
   readonly dotClassName: string
+  /**
+   * Border colour for the hollow dot used when detection is stale, so
+   * "possibly out of date" reads as a shape change and not only as dimmer
+   * ink — the one cue that survives both colour-blindness and low contrast.
+   */
+  readonly dotStaleClassName: string
   /** True when the state asks the operator to act now. */
   readonly isAttention: boolean
   /** Human-readable badge text, lower case to match sibling badges. */
@@ -58,6 +65,7 @@ const AGENT_STATUS_PRESENTATION: Record<AgentStatus, AgentStatusPresentation> =
       label: 'working',
       badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
       dotClassName: 'bg-blue-400',
+      dotStaleClassName: 'border-blue-400',
       motion: 'breathe',
       meaning: 'The agent is working.',
       isAttention: false,
@@ -66,6 +74,7 @@ const AGENT_STATUS_PRESENTATION: Record<AgentStatus, AgentStatusPresentation> =
       label: 'needs input',
       badgeClassName: 'border-amber-400/40 bg-amber-400/15 text-amber-400',
       dotClassName: 'bg-amber-400',
+      dotStaleClassName: 'border-amber-400',
       motion: 'ping',
       meaning: 'The agent is waiting on you.',
       isAttention: true,
@@ -74,6 +83,7 @@ const AGENT_STATUS_PRESENTATION: Record<AgentStatus, AgentStatusPresentation> =
       label: 'idle',
       badgeClassName: 'border-success/30 bg-success/10 text-success',
       dotClassName: 'bg-success',
+      dotStaleClassName: 'border-success',
       motion: 'none',
       meaning: 'The agent finished and is idle.',
       isAttention: false,
@@ -83,6 +93,7 @@ const AGENT_STATUS_PRESENTATION: Record<AgentStatus, AgentStatusPresentation> =
       badgeClassName:
         'border-muted-foreground/30 border-dashed bg-muted text-muted-foreground',
       dotClassName: 'bg-muted-foreground/60',
+      dotStaleClassName: 'border-muted-foreground/60',
       motion: 'none',
       meaning: 'The agent state could not be determined.',
       isAttention: false,
@@ -95,8 +106,13 @@ const AGENT_STATUS_SOURCE_LABEL: Record<AgentStatusSource, string> = {
   ps: 'process inspection',
 }
 
-/** Chrome added to a badge whose detection has gone stale. */
-const STALE_BADGE_CLASSNAME = 'border-dashed opacity-50'
+/**
+ * Chrome added to a badge whose detection has gone stale: a dashed edge and
+ * a light dim. The dim stops at 70% because a stale badge still has to be
+ * readable — the stronger stale cues are the dashed edge, the hollow dot,
+ * and the "may be out of date" sentence, none of which depend on contrast.
+ */
+const STALE_BADGE_CLASSNAME = 'border-dashed opacity-70'
 
 function getAgentStatusPresentation(
   status: AgentStatus

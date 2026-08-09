@@ -65,9 +65,18 @@ describe('agent status presentation', () => {
       snapshot('working', { stale: true })
     )
 
-    expect(fresh).not.toContain('opacity-50')
-    expect(stale).toContain('opacity-50')
+    expect(fresh).not.toContain('opacity-70')
+    expect(stale).toContain('opacity-70')
     expect(stale).toContain('border-dashed')
+  })
+
+  it('gives every status a hollow dot treatment for stale detection', () => {
+    for (const status of ALL_STATUSES) {
+      const presentation = getAgentStatusPresentation(status)
+
+      expect(presentation.dotStaleClassName).toContain('border-')
+      expect(presentation.dotStaleClassName).not.toContain('bg-')
+    }
   })
 
   it('describes provenance in operator language', () => {

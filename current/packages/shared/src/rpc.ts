@@ -148,40 +148,13 @@ const ConfigResolvedValueNullableNumber = Schema.Struct({
   source: Schema.String,
 })
 
-export const SandboxProviderTypeSchema = Schema.Literal(
-  'docker',
-  'daytona',
-  'none'
-)
-
-export type SandboxProviderType = typeof SandboxProviderTypeSchema.Type
-
-const SandboxResourcesSchema = Schema.Struct({
-  cpu: Schema.optional(Schema.Number),
-  disk: Schema.optional(Schema.Number),
-  memory: Schema.optional(Schema.Number),
-})
-
-const ConfigResolvedValueNullableSandboxProvider = Schema.Struct({
-  value: Schema.NullOr(SandboxProviderTypeSchema),
-  source: Schema.String,
-})
-
-const ConfigResolvedValueNullableSandboxResources = Schema.Struct({
-  value: Schema.NullOr(SandboxResourcesSchema),
-  source: Schema.String,
-})
-
 const DevServerConfigResponse = Schema.Struct({
   autoOpen: ConfigResolvedValueBoolean,
-  autoStopInterval: ConfigResolvedValueNullableNumber,
   image: ConfigResolvedValueNullableString,
   dockerfile: ConfigResolvedValueNullableString,
   installCommand: ConfigResolvedValueNullableString,
   network: ConfigResolvedValueNullableString,
   port: ConfigResolvedValueNullableNumber,
-  provider: ConfigResolvedValueNullableSandboxProvider,
-  resources: ConfigResolvedValueNullableSandboxResources,
   setupScripts: ConfigResolvedValueStringArray,
   startCommand: ConfigResolvedValueNullableString,
   workdir: ConfigResolvedValueString,
@@ -202,7 +175,6 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
-  defaultSandboxProvider: ConfigResolvedValueNullableSandboxProvider,
   devServer: DevServerConfigResponse,
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
@@ -681,14 +653,11 @@ export class LaborerRpcs extends RpcGroup.make(
         devServer: Schema.optional(
           Schema.Struct({
             autoOpen: Schema.optional(Schema.Boolean),
-            autoStopInterval: Schema.optional(Schema.Number),
             image: Schema.optional(Schema.String),
             dockerfile: Schema.optional(Schema.String),
             installCommand: Schema.optional(Schema.String),
             network: Schema.optional(Schema.String),
             port: Schema.optional(Schema.Number),
-            provider: Schema.optional(SandboxProviderTypeSchema),
-            resources: Schema.optional(SandboxResourcesSchema),
             setupScripts: Schema.optional(Schema.Array(Schema.String)),
             startCommand: Schema.optional(Schema.String),
             workdir: Schema.optional(Schema.String),
@@ -708,7 +677,6 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('globalConfig.get', {
     success: Schema.Struct({
       agent: Schema.optional(AgentProviderSchema),
-      defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
     }),
     error: RpcError,
   }),
@@ -718,7 +686,6 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
-        defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
       }),
     },
   }),

@@ -13,8 +13,8 @@ import waitOn from 'wait-on'
 
 import { desktopDir, resolveElectronPath } from './electron-launcher.mjs'
 
-// Load .env.local from the repo root so env vars (e.g. DAYTONA_API_KEY) are
-// available in process.env before Electron inherits them for utility processes.
+// Load .env.local from the repo root so its variables are available in
+// process.env before Electron inherits them for utility processes.
 const repoRoot = resolve(desktopDir, '..', '..')
 dotenv.config({ path: join(repoRoot, '.env.local') })
 

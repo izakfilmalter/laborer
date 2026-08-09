@@ -216,34 +216,9 @@ const isOptionalString = (v: unknown): boolean =>
 const isOptionalBoolean = (v: unknown): boolean =>
   v === undefined || typeof v === 'boolean'
 
-/** Validate optional positive number field. */
-const isOptionalPositiveNumber = (v: unknown): boolean =>
-  v === undefined || (typeof v === 'number' && v > 0)
-
-/** Validate optional number field. */
-const isOptionalNumber = (v: unknown): boolean =>
-  v === undefined || typeof v === 'number'
-
 /** Validate optional string array field. */
 const isOptionalStringArray = (v: unknown): boolean =>
   v === undefined || (Array.isArray(v) && v.every((s) => typeof s === 'string'))
-
-/** Validate sandbox resources object. */
-const isValidSandboxResources = (
-  r: { cpu?: unknown; disk?: unknown; memory?: unknown } | undefined
-): boolean => {
-  if (r === undefined) {
-    return true
-  }
-  if (typeof r !== 'object') {
-    return false
-  }
-  return (
-    isOptionalNumber(r.cpu) &&
-    isOptionalNumber(r.memory) &&
-    isOptionalNumber(r.disk)
-  )
-}
 
 /**
  * Validate a devServer update payload.
@@ -253,18 +228,9 @@ const validateDevServerUpdate = (
   ds:
     | {
         autoOpen?: boolean | undefined
-        autoStopInterval?: number | undefined
         dockerfile?: string | undefined
         image?: string | undefined
         port?: number | undefined
-        provider?: 'docker' | 'daytona' | 'none' | undefined
-        resources?:
-          | {
-              cpu?: number | undefined
-              disk?: number | undefined
-              memory?: number | undefined
-            }
-          | undefined
         setupScripts?: readonly string[] | undefined
         startCommand?: string | undefined
         workdir?: string | undefined
@@ -277,20 +243,13 @@ const validateDevServerUpdate = (
   if (typeof ds !== 'object') {
     return false
   }
-  const validProviders = ['docker', 'daytona', 'none']
-  const isValidProvider =
-    ds.provider === undefined || validProviders.includes(ds.provider)
-
   return (
     isOptionalBoolean(ds.autoOpen) &&
-    isOptionalPositiveNumber(ds.autoStopInterval) &&
     isOptionalString(ds.image) &&
     isOptionalString(ds.dockerfile) &&
     isOptionalString(ds.startCommand) &&
     isOptionalString(ds.workdir) &&
-    isOptionalStringArray(ds.setupScripts) &&
-    isValidProvider &&
-    isValidSandboxResources(ds.resources)
+    isOptionalStringArray(ds.setupScripts)
   )
 }
 
@@ -304,18 +263,9 @@ export const handleConfigUpdate = ({
     devServer?:
       | {
           autoOpen?: boolean | undefined
-          autoStopInterval?: number | undefined
           dockerfile?: string | undefined
           image?: string | undefined
           port?: number | undefined
-          provider?: 'docker' | 'daytona' | 'none' | undefined
-          resources?:
-            | {
-                cpu?: number | undefined
-                disk?: number | undefined
-                memory?: number | undefined
-              }
-            | undefined
           setupScripts?: readonly string[] | undefined
           startCommand?: string | undefined
           workdir?: string | undefined
@@ -369,7 +319,6 @@ export const handleGlobalConfigGet = () =>
     const globalConfig = yield* configService.readGlobalConfig()
     return {
       agent: globalConfig.agent,
-      defaultSandboxProvider: globalConfig.defaultSandboxProvider,
     }
   })
 
@@ -378,7 +327,6 @@ export const handleGlobalConfigUpdate = ({
 }: {
   config: {
     agent?: AgentProvider | undefined
-    defaultSandboxProvider?: 'docker' | 'daytona' | 'none' | undefined
   }
 }) =>
   Effect.gen(function* () {

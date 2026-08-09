@@ -77,35 +77,13 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'ConfigService'
 
-/** Valid sandbox provider values. */
-type SandboxProviderType = 'docker' | 'daytona' | 'none'
-
-/** All valid sandbox provider values for runtime validation. */
-const VALID_SANDBOX_PROVIDERS: readonly SandboxProviderType[] = [
-  'docker',
-  'daytona',
-  'none',
-]
-
-/** Resource limits for Daytona sandboxes. */
-interface SandboxResources {
-  /** CPU cores (e.g. 2). */
-  readonly cpu?: number | undefined
-  /** Disk size in GB (e.g. 20). */
-  readonly disk?: number | undefined
-  /** Memory in GB (e.g. 4). */
-  readonly memory?: number | undefined
-}
-
 /**
- * Dev server sandbox configuration.
+ * Dev server configuration.
  * `image` and `dockerfile` are mutually exclusive.
  */
 interface DevServerConfig {
   /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
   readonly autoOpen?: boolean | undefined
-  /** Minutes of inactivity before auto-stop (Daytona only, default 15). */
-  readonly autoStopInterval?: number | undefined
   /** Path to a Dockerfile for building the container image. */
   readonly dockerfile?: string | undefined
   /** Base Docker image name (e.g. "node:22"). */
@@ -116,10 +94,6 @@ interface DevServerConfig {
   readonly network?: string | undefined
   /** Port the dev server listens on inside the container. Appended to the .orb.local URL so the workspace card link works. */
   readonly port?: number | undefined
-  /** Sandbox provider for this project ("docker", "daytona", or "none"). */
-  readonly provider?: SandboxProviderType | undefined
-  /** Daytona sandbox resource limits (CPU, memory, disk). */
-  readonly resources?: SandboxResources | undefined
   /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
   readonly setupScripts?: readonly string[] | undefined
   /** Command to start the dev server (e.g. "bun dev"). */
@@ -148,12 +122,6 @@ interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
   readonly brrrConfig?: string
-  /**
-   * Global default sandbox provider.
-   * Per-project `devServer.provider` overrides this.
-   * When neither is set, defaults to `"docker"`.
-   */
-  readonly defaultSandboxProvider?: SandboxProviderType
   readonly devServer?: DevServerConfig
   readonly prdsDir?: string
   readonly setupScripts?: readonly string[]
@@ -165,7 +133,6 @@ interface LaborerConfig {
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
   readonly brrrConfig?: string | undefined
-  readonly defaultSandboxProvider?: SandboxProviderType | undefined
   readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
@@ -190,14 +157,11 @@ interface ResolvedValue<T> {
  */
 interface ResolvedDevServerConfig {
   readonly autoOpen: ResolvedValue<boolean>
-  readonly autoStopInterval: ResolvedValue<number | null>
   readonly dockerfile: ResolvedValue<string | null>
   readonly image: ResolvedValue<string | null>
   readonly installCommand: ResolvedValue<string | null>
   readonly network: ResolvedValue<string | null>
   readonly port: ResolvedValue<number | null>
-  readonly provider: ResolvedValue<SandboxProviderType | null>
-  readonly resources: ResolvedValue<SandboxResources | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
   readonly startCommand: ResolvedValue<string | null>
   readonly workdir: ResolvedValue<string>
@@ -211,12 +175,6 @@ interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
   readonly brrrConfig: ResolvedValue<string | null>
-  /**
-   * Global default sandbox provider.
-   * Resolved from the closest config that sets it; defaults to null
-   * (which means "docker" when no per-project provider is set).
-   */
-  readonly defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
@@ -404,9 +362,6 @@ const mergeDevServerUpdates = (
   if (updates.autoOpen !== undefined) {
     merged.autoOpen = updates.autoOpen
   }
-  if (updates.autoStopInterval !== undefined) {
-    merged.autoStopInterval = updates.autoStopInterval
-  }
   if (updates.image !== undefined) {
     merged.image = updates.image
   }
@@ -421,12 +376,6 @@ const mergeDevServerUpdates = (
   }
   if (updates.port !== undefined) {
     merged.port = updates.port
-  }
-  if (updates.provider !== undefined) {
-    merged.provider = updates.provider
-  }
-  if (updates.resources !== undefined) {
-    merged.resources = updates.resources
   }
   if (updates.setupScripts !== undefined) {
     merged.setupScripts = [...updates.setupScripts]
@@ -456,10 +405,6 @@ const applyConfigUpdates = (
 
   if (updates.agent !== undefined) {
     next.agent = updates.agent
-  }
-
-  if (updates.defaultSandboxProvider !== undefined) {
-    next.defaultSandboxProvider = updates.defaultSandboxProvider
   }
 
   if (updates.prdsDir !== undefined) {
@@ -615,10 +560,6 @@ const mergeDevServerConfig = (
     value: false,
     source: 'default',
   }
-  let autoStopInterval: ResolvedValue<number | null> = {
-    value: null,
-    source: 'default',
-  }
   let image: ResolvedValue<string | null> = {
     value: 'node:lts',
     source: 'default',
@@ -640,14 +581,6 @@ const mergeDevServerConfig = (
     source: 'default',
   }
   let port: ResolvedValue<number | null> = {
-    value: null,
-    source: 'default',
-  }
-  let provider: ResolvedValue<SandboxProviderType | null> = {
-    value: null,
-    source: 'default',
-  }
-  let resources: ResolvedValue<SandboxResources | null> = {
     value: null,
     source: 'default',
   }
@@ -689,9 +622,6 @@ const mergeDevServerConfig = (
     applyOptionalField(ds.autoOpen, (value) => {
       autoOpen = { value, source: path }
     })
-    applyOptionalField(ds.autoStopInterval, (value) => {
-      autoStopInterval = { value, source: path }
-    })
     applyOptionalField(ds.image, (value) => applyImage(value, path))
     applyOptionalField(ds.dockerfile, (value) => applyDockerfile(value, path))
     applyOptionalField(ds.installCommand, (value) => {
@@ -702,12 +632,6 @@ const mergeDevServerConfig = (
     })
     applyOptionalField(ds.port, (value) => {
       port = { value, source: path }
-    })
-    applyOptionalField(ds.provider, (value) => {
-      provider = { value, source: path }
-    })
-    applyOptionalField(ds.resources, (value) => {
-      resources = { value, source: path }
     })
     applyOptionalField(ds.setupScripts, (value) => {
       setupScripts = { value, source: path }
@@ -734,14 +658,11 @@ const mergeDevServerConfig = (
 
   return {
     autoOpen,
-    autoStopInterval,
     dockerfile,
     image,
     installCommand,
     network,
     port,
-    provider,
-    resources,
     setupScripts,
     startCommand,
     workdir,
@@ -761,34 +682,8 @@ const validateDevServerConfig = (
       `image from ${devServer.image.source}, dockerfile from ${devServer.dockerfile.source}`
     )
   }
-  if (
-    devServer.provider.value !== null &&
-    !VALID_SANDBOX_PROVIDERS.includes(devServer.provider.value)
-  ) {
-    return `devServer.provider must be "docker", "daytona", or "none", got "${String(devServer.provider.value)}" from ${devServer.provider.source}`
-  }
   return undefined
 }
-
-/**
- * Apply the global defaultSandboxProvider fallback to devServer.provider:
- * If no per-project devServer.provider is set, fall back to the global
- * defaultSandboxProvider. If that is also null, the effective provider
- * remains null (which downstream code treats as "docker").
- */
-const applyProviderFallback = (
-  devServer: ResolvedDevServerConfig,
-  defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
-): ResolvedDevServerConfig =>
-  devServer.provider.value === null && defaultSandboxProvider.value !== null
-    ? {
-        ...devServer,
-        provider: {
-          value: defaultSandboxProvider.value,
-          source: defaultSandboxProvider.source,
-        },
-      }
-    : devServer
 
 const mergeConfigs = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>,
@@ -820,10 +715,6 @@ const mergeConfigs = (
   }
   let watchIgnore: ResolvedValue<readonly string[]> = {
     value: [],
-    source: 'default',
-  }
-  let defaultSandboxProvider: ResolvedValue<SandboxProviderType | null> = {
-    value: null,
     source: 'default',
   }
 
@@ -883,21 +774,13 @@ const mergeConfigs = (
         source: path,
       }
     }
-
-    if (config.defaultSandboxProvider !== undefined) {
-      defaultSandboxProvider = {
-        value: config.defaultSandboxProvider,
-        source: path,
-      }
-    }
   }
 
   const devServer = mergeDevServerConfig(configLayers)
 
   return {
     agent,
-    defaultSandboxProvider,
-    devServer: applyProviderFallback(devServer, defaultSandboxProvider),
+    devServer,
     prdsDir,
     worktreeDir,
     setupScripts,
@@ -1055,7 +938,6 @@ export {
   ConfigService,
   ConfigValidationError,
   VALID_AGENT_PROVIDERS,
-  VALID_SANDBOX_PROVIDERS,
   // Exported for testing
   CONFIG_FILE_NAME,
   expandTilde,
@@ -1078,6 +960,4 @@ export type {
   ResolvedDevServerConfig,
   ResolvedLaborerConfig,
   ResolvedValue,
-  SandboxProviderType,
-  SandboxResources,
 }

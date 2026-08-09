@@ -366,7 +366,7 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 ## Out of Scope
 
-- **Slack bot integration.** Remote task triggering via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
+- **Slack bot integration.** Remote workspace creation via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
 - **Docker/Daytona workspace providers.** V1 ships with git worktrees only. The `WorkspaceProvider` interface is designed for future implementations, but they are not built in v1.
 - **Browser preview pane.** Embedding an iframe showing the dev server is a future enhancement. V1 focuses on terminals and diffs.
 - **Authentication / multi-user.** V1 is a single-user, local-only tool with no auth.

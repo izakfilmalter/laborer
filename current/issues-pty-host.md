@@ -106,7 +106,6 @@ See PRD-pty-host.md sections: "TerminalManager Refactor", "Layer Composition".
 - [ ] Debug PTY spawn block (the `require("node-pty")` section) is removed
 - [ ] The `ManagedTerminal` interface no longer holds an `IPty` reference
 - [ ] RPC handlers (`terminal.spawn`, `terminal.write`, `terminal.resize`, `terminal.kill`) work end-to-end through the new architecture
-- [ ] `rlph.*` RPC handlers that depend on terminal spawning continue to work
 
 ### Blocked by
 

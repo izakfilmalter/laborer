@@ -101,7 +101,7 @@ src/main.ts (true entry point)
        |   Child ServiceCollection adds 25+ services:
        |     IUpdateService, IWindowsMainService, IDialogMainService,
        |     IStorageMainService, ILocalPtyService, ITelemetryService,
-       |     IExtensionsScannerService, IMcpGatewayService, etc.
+       |     IExtensionsScannerService, etc.
        |   -> mainInstantiationService.createChild(services)
        |
        |-- initChannels() -> register IPC channels
@@ -243,8 +243,8 @@ main.ts (Electron main process)
        |-- Create LifecycleMonitor (health tracking, crash recovery, exponential backoff)
        |-- Wire bootstrap message handler (ready/heartbeat)
        |
-       |-- Fork all 4 utility processes:
-       |     lifecycleMonitor.forkAllAndMonitor(['terminal', 'server', 'file-watcher', 'mcp'])
+       |-- Start the server backend child process
+       |-- Fork terminal and file-watcher utility processes:
        |     Each: utilityProcess.fork(bootstrap.cjs, { env: { LABORER_ENTRYPOINT: path } })
        |
        |-- Register IPC handlers for DesktopBridge
@@ -252,30 +252,29 @@ main.ts (Electron main process)
        |-- Restore saved windows or create initial window
 ```
 
-#### Utility Process Boot (each of the 4)
+#### Utility Process Boot
 
 ```
 utility-process-bootstrap.ts (CJS entry for utilityProcess.fork)
   |-- Read LABORER_ENTRYPOINT env var
-  |-- Dynamic import(entrypoint) -- e.g., packages/server/dist/utility-main.mjs
+  |-- Dynamic import(entrypoint) -- terminal or file-watcher utility entrypoint
   |-- On success: send { type: 'ready' } to parent
   |-- Start heartbeat timer (every 5s)
   |-- On failure: send { type: 'error' }, exit
 ```
 
-#### Inter-Process Port Brokering (after all processes ready)
+#### Backend-to-Utility Connections
 
 ```
-brokerInterProcessPorts():
-  |-- Server <-> Terminal: MessageChannelMain pair, one port to each
-  |-- Server <-> File-watcher: MessageChannelMain pair
-  |-- MCP <-> Server: MessageChannelMain pair
+startServerBackend():
+  |-- Reserve loopback ports for terminal and file-watcher utilities
+  |-- Pass their WebSocket RPC URLs to the server backend through its environment
 ```
 
-#### Server Utility Process Initialization (deferred pattern)
+#### Server Backend Initialization (deferred pattern)
 
 ```
-packages/server/src/utility-main.ts
+packages/server/src/main.ts
   |
   |-- Immediate layer (fast startup):
   |     LaborerStoreLive (SQLite), ConfigService, RepositoryIdentity
@@ -286,11 +285,8 @@ packages/server/src/utility-main.ts
   |
   |-- Background fiber builds real implementations in groups:
   |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
-  |     Group 2 (stack): TaskManager, BranchStateTracker, ContainerService, PrdStorageService,
   |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
-  |                       WorkspaceSyncService, GithubTaskImporter, LinearTaskImporter,
-  |                       ReviewCommentFetcher, RepositoryWatchCoordinator, ProjectRegistry,
-  |                       WorkspaceProvider
+  |                       RepositoryWatchCoordinator, ProjectRegistry, WorkspaceProvider
   |     Group 3 (independent): TerminalClient
   |
   |-- As each group completes: Ref.set() swaps proxy with real implementation
@@ -315,9 +311,9 @@ apps/web/src/main.tsx
 ```
 
 **Key patterns:**
-- **VS Code UtilityProcess pattern:** All backend services as Electron utility processes, not child_process
+- **Split supervision:** The server is a child process; native terminal and file-watcher services are Electron utility processes
 - **Deferred service initialization:** `Ref`-backed proxies allow RPC server to start immediately, real services hot-swapped when ready
-- **Port brokering:** Main process creates `MessageChannelMain` pairs for direct utility-to-utility communication
+- **Loopback RPC:** The backend connects to utility services through reserved loopback WebSocket endpoints
 - **LiveStore event sourcing:** Bidirectional sync between server SQLite and client OPFS SQLite
 - **Effect Layer composition:** Same `Layer.provide`/`Layer.provideMerge` pattern as t3code
 
@@ -411,20 +407,19 @@ Web mode (CLI):
 
 **The one isolation boundary:** In desktop mode, the Electron main process has exponential-backoff restart logic for the server child. If the server crashes, the shell survives and restarts it.
 
-### Laborer: VS Code-Style UtilityProcess Model
+### Laborer: Backend Child + VS Code-Style Utility Processes
 
 ```
 Electron Main Process (hub)
   |
-  |-- [utilityProcess.fork] --> Server Utility Process
+  |-- [child_process.spawn] --> Server Backend Process
   |   |                           |
   |   |                           +-- [in-process] --> Effect fibers (31+ services)
   |   |                           +-- [in-process] --> LiveStore (SQLite)
   |   |                           +-- [in-process] --> Git operations
   |   |
-  |   +-- [MessagePort broker] ---> Server <-> Terminal direct channel
-  |   +-- [MessagePort broker] ---> Server <-> File-watcher direct channel
-  |   +-- [MessagePort broker] ---> MCP <-> Server direct channel
+  |   +-- [loopback WebSocket] ---> Terminal RPC
+  |   +-- [loopback WebSocket] ---> File-watcher RPC
   |
   |-- [utilityProcess.fork] --> Terminal Utility Process
   |                               |
@@ -435,9 +430,7 @@ Electron Main Process (hub)
   |                               |
   |                               +-- [in-process @parcel/watcher] --> native FS events
   |
-  |-- [utilityProcess.fork] --> MCP Utility Process
   |                               |
-  |                               +-- [in-process] --> PRD tools, Issue tools
   |
   |-- [Chromium] --> Renderer
                       +-- [Dedicated Worker] --> LiveStore OPFS SQLite
@@ -447,28 +440,26 @@ Electron Main Process (hub)
 | Process | Count | What it owns | Why isolated |
 |---------|-------|-------------|--------------|
 | **Main** | 1 | Window lifecycle, utility process management, IPC brokering, tray, auto-update | Electron requirement; stays lean |
-| **Server** | 1 | Domain logic: projects, workspaces, tasks, PRDs, diffs, git, containers, review | Core business logic isolation |
+| **Server** | 1 | Domain logic for projects, workspaces, diffs, git, and containers | Core backend isolation and independent restart |
 | **Terminal** | 1 | All PTY management via node-pty, session persistence, flow control | Native addon isolation, crash resilience |
 | **File Watcher** | 1 | Filesystem watching via @parcel/watcher | Native addon isolation, event flooding protection |
-| **MCP** | 1 | Model Context Protocol tools for AI agents | Agent tool isolation |
 | **Renderer** | 1 per window | React UI, LiveStore client, xterm.js rendering | Chromium sandbox |
 
-**Crash resilience:** `LifecycleMonitor` tracks health of all utility processes via heartbeat (5s interval). On crash, exponential-backoff restart. Each utility process can crash independently without taking down others or the Electron shell.
+**Crash resilience:** `LifecycleMonitor` tracks utility-process health via heartbeat, while `BackendProcessManager` supervises the server child. Each backend process can restart without taking down the Electron shell.
 
-**Deferred initialization:** Server utility process starts fast with `Ref`-backed proxy services, then builds real implementations in background fibers. This means the RPC server is ready to accept connections before all domain services are fully initialized.
+**Deferred initialization:** The server backend starts with `Ref`-backed proxy services, then builds real implementations in background fibers. This means the RPC server is ready to accept connections before all domain services are fully initialized.
 
 ### Process Isolation Comparison
 
 | Aspect | VS Code | t3code | Laborer |
 |--------|---------|--------|---------|
-| **Total process types** | 6 | 2-3 | 6 (main + 4 utility + renderer) |
+| **Total process types** | 6 | 2-3 | 5 (main + server + 2 utility + renderer) |
 | **PTY isolation** | Separate PTY host process, auto-restarts 5x | In-server process, no isolation | Separate terminal utility process with health monitoring |
-| **Extension/agent isolation** | Separate process per extension host kind | Codex: child process; Claude: in-process | MCP: separate utility process; Agents run as terminal processes |
 | **File watching** | Dedicated watcher process | In-process | Separate file-watcher utility process |
-| **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server utility process (separated from main) |
+| **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server child process (separated from main) |
 | **Crash granularity** | Per-subsystem | All-or-nothing (server restart) | Per-utility-process |
 | **Concurrency model** | OS processes + event loop | Effect fibers (cooperative, single-threaded) | Effect fibers within isolated utility processes |
-| **Process communication** | MessagePort (direct, after port transfer) | WebSocket JSON | MessagePort (direct, brokered by main) |
+| **Process communication** | MessagePort (direct, after port transfer) | WebSocket JSON | Loopback WebSocket plus direct MessagePort |
 
 ---
 
@@ -769,7 +760,7 @@ User keystroke
 
 | Layer | Mechanism | What's stored |
 |-------|-----------|--------------|
-| **Server** | SQLite via LiveStore (`@livestore/adapter-node`, filesystem) | Event-sourced domain data: projects, workspaces, diffs, tasks, PRDs, app settings, panel layout |
+| **Server** | SQLite via LiveStore (`@livestore/adapter-node`, filesystem) | Event-sourced projects, workspaces, app settings, and durable compatibility events |
 | **Client** | OPFS-backed SQLite via LiveStore (`@livestore/adapter-web`) | Same schema, synced bidirectionally with server |
 | **Client workers** | Dedicated Worker (OPFS SQLite), Shared Worker (leader election) | Canonical client-side database |
 | **Terminal** | In-memory circular replay buffer + temp file on shutdown | Terminal scrollback for session persistence |
@@ -821,20 +812,18 @@ User keystroke
 | Channel | Mechanism | Used for |
 |---------|-----------|----------|
 | Main <-> Renderer | Electron IPC | Window commands, folder picker, context menu, update state, OAuth |
-| Renderer <-> Server utility | MessagePort (RPC via @effect/rpc) | Domain RPCs (40+ handlers) |
+| Renderer <-> Server backend | WebSocket (RPC via @effect/rpc) | Domain RPCs |
 | Renderer <-> Terminal utility | MessagePort (RPC) | Terminal lifecycle RPCs |
 | Renderer <-> Terminal utility | MessagePort (per-terminal data channel) | Raw PTY I/O + flow control |
-| Renderer <-> Server utility | MessagePort (LiveStore sync) | Bidirectional SQLite sync |
-| Server <-> Terminal utility | MessagePort (brokered by main) | TerminalRpcs (server triggers terminal operations) |
-| Server <-> File-watcher utility | MessagePort (brokered by main) | FileWatcherRpcs |
-| MCP <-> Server utility | MessagePort (brokered by main) | LaborerRpcs (MCP tools query domain data) |
+| Renderer <-> Server backend | WebSocket (LiveStore sync) | Bidirectional SQLite sync |
+| Server <-> Terminal utility | Loopback WebSocket | TerminalRpcs (server triggers terminal operations) |
+| Server <-> File-watcher utility | Loopback WebSocket | FileWatcherRpcs |
 | Main -> Utility processes | `parentPort.postMessage` | Bootstrap (ready/heartbeat), port transfers |
 
 **Key patterns:**
-- **Port acquisition (VS Code pattern):** Renderer calls `bridge.ipcSend(ACQUIRE_SERVICE_PORT_CHANNEL)` -> Main creates `MessageChannelMain` pair -> one port to utility, one to renderer via `webContents.postMessage` -> preload relays to renderer world via `window.postMessage`
-- **Port brokering:** Main creates `MessageChannelMain` pairs for utility-to-utility direct communication, avoiding main as bottleneck
-- **Effect RPC:** `RpcServer.Protocol` / `RpcClient.Protocol` backed by MessagePort with unbounded `Queue` bridging
-- **No JSON serialization for IPC:** Structured clone over MessagePort (binary-efficient, handles typed arrays, etc.)
+- **Port acquisition (VS Code pattern):** Renderer calls `bridge.ipcSend(ACQUIRE_SERVICE_PORT_CHANNEL)` -> Main creates a `MessageChannelMain` pair for direct terminal data -> preload relays the renderer port via `window.postMessage`
+- **Effect RPC:** Domain and service RPCs use WebSocket transports; high-throughput terminal data uses direct MessagePorts
+- **Boundary-specific serialization:** RPC uses JSON over WebSocket, while terminal data uses structured clone over MessagePort
 
 ---
 
@@ -856,10 +845,9 @@ User keystroke
 
 | | VS Code | t3code | Laborer |
 |---|---------|--------|---------|
-| **OS processes** | 6 types | 2-3 | 6 (main + 4 utility + renderer) |
+| **OS processes** | 6 types | 2-3 | 5 (main + server + 2 utility + renderer) |
 | **PTY isolation** | Dedicated PTY host | In-server | Dedicated terminal utility |
 | **File watcher** | Dedicated process | In-server | Dedicated file-watcher utility |
-| **Agent/extension isolation** | Dedicated extension host(s) | Codex: child; Claude: in-process | MCP: dedicated utility; agents run in terminals |
 | **Crash granularity** | Per-subsystem | All-or-nothing | Per-utility-process |
 | **Concurrency** | OS processes | Effect fibers (single-threaded) | Effect fibers within isolated utility processes |
 
@@ -867,10 +855,10 @@ User keystroke
 
 | | VS Code | t3code | Laborer |
 |---|---------|--------|---------|
-| **Primary IPC** | MessagePort (Electron) | WebSocket (JSON) | MessagePort (Electron) |
+| **Primary IPC** | MessagePort (Electron) | WebSocket (JSON) | WebSocket + MessagePort |
 | **RPC framework** | Custom ProxyChannel | Custom WS_METHODS routing | @effect/rpc |
-| **Serialization** | Structured clone | JSON | Structured clone |
-| **Direct process-to-process** | Yes (after port transfer) | N/A (single server) | Yes (brokered MessagePorts) |
+| **Serialization** | Structured clone | JSON | JSON + structured clone |
+| **Direct process-to-process** | Yes (after port transfer) | N/A (single server) | Yes (loopback WebSockets) |
 
 ### Terminal
 

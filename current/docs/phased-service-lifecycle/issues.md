@@ -371,7 +371,6 @@ Behaviors to test:
 2. Server dot shows `healthy` state when server status is `healthy`
 3. Server dot shows `error` state when server status is `crashed`
 4. All three services render independently (server healthy, terminal starting, file-watcher error)
-5. MCP service is excluded from the primary indicators (it's not a core service)
 
 Mock: `useServiceStatus()` return values.
 
@@ -659,9 +658,6 @@ The remaining ~16 layers that are not in the core group (Issue #13) are initiali
 - `WorkspaceProvider`, `WorktreeDetector`, `WorktreeReconciler`
 - `PortAllocator`, `BranchStateTracker`, `RepositoryWatchCoordinator`
 - `WorkspaceSyncService`, `PrWatcher`, `BackgroundFetchService`
-- `DiffService`, `PrdStorageService`, `TaskManager`
-- `LinearTaskImporter`, `GithubTaskImporter`, `ReviewCommentFetcher`
-- `McpRegistrar`
 
 RPC handlers for deferred services need to handle the case where their backing service isn't ready yet. They should return a typed "service initializing" error (e.g., a tagged `ServiceInitializing` error in the RPC response) that the renderer can interpret and show appropriate loading states.
 

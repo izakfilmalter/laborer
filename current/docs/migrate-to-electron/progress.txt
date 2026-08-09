@@ -77,15 +77,12 @@
 - All 280 tests pass
 - Formatting clean
 
-### Issue 5: Terminal + MCP Bun-to-Node runtime swap — DONE
 - Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/terminal/src/main.ts`:
   - `BunHttpServer.layer({ port })` → `NodeHttpServer.layer(createServer, { port })`
   - `BunRuntime.runMain(main)` → `NodeRuntime.runMain(main)`
   - Added `import { createServer } from 'node:http'`
   - Updated all comments from "Bun server" to "Node.js server"
-- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/mcp/src/main.ts`:
   - `BunRuntime` → `NodeRuntime`, `BunStream.stdin` → `NodeStream.stdin`, `BunSink.stdout` → `NodeSink.stdout`
-- Updated both `packages/terminal/tsconfig.json` and `packages/mcp/tsconfig.json`: removed `"bun"` from types array (now `["node"]` only)
 - Updated both package.json files:
   - Swapped `@effect/platform-bun` → `@effect/platform-node` in dependencies
   - Removed `@types/bun` from devDependencies
@@ -97,7 +94,6 @@
 - No references to `Bun` namespace remain in either package (source files, package.json, tsconfig)
 - TypeScript compiles without errors in both packages
 - All 73 terminal tests pass (pty-host, terminal-manager, rpc-integration, ring-buffer)
-- All 19 MCP tests pass (project-discovery, issue-tools, prd-tools)
 - All 280 server tests still pass (no regressions)
 - Formatting clean
 
@@ -122,7 +118,6 @@
 - `bun install` — 186 packages installed (Electron + tsdown + wait-on)
 - `tsdown` build produces main.js (1.45 KB) + preload.js (0.32 KB) in dist-electron/
 - TypeScript compiles without errors across all 6 packages
-- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
 - Formatting clean (0 fixes needed)
 
 ### Issue 7: Shell environment probing + port allocation — DONE
@@ -159,7 +154,6 @@
 
 ### Issue 8: Spawn sidecars as child processes — DONE
 - Created `apps/desktop/src/sidecar.ts` — SidecarManager class for child process lifecycle:
-  - `SidecarName` type: `'server' | 'terminal' | 'mcp'`
   - `SidecarManager` class tracks all spawned child processes with a Map
   - `spawn(name)` — spawns a child process with correct entry point and environment
   - `spawnServices()` — spawns terminal first (server depends on it), then server, with startup delays (Issue 9 replaces with health checking)
@@ -193,7 +187,6 @@
 - tsdown build succeeds: main.js 16.14 KB (includes sidecar module)
 - TypeScript compiles without errors
 - All 20 desktop tests pass
-- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
 - Formatting clean (275 files checked, 0 errors)
 
 ## Now Unblocked
@@ -215,7 +208,6 @@
     - `isHealthy(name)` / `areServicesHealthy()` — check health status
     - Status listener callback for forwarding events to the renderer via IPC
   - `SidecarStatus` type union: `starting | healthy | crashed | restarting`
-  - MCP (stdio-based) treated as healthy immediately after spawn (no HTTP endpoint)
 - Updated `apps/desktop/src/sidecar.ts`:
   - Marked `spawnServices()` as `@deprecated` — HealthMonitor is the primary interface
 - Updated `apps/desktop/src/main.ts`:
@@ -240,7 +232,6 @@
 - Created `packages/shared/src/desktop-bridge.ts` — typed contract between preload and renderer:
   - `DesktopBridge` interface with 10 methods: `getServerUrl()`, `getTerminalUrl()`, `pickFolder()`, `confirm()`, `showContextMenu()`, `openExternal()`, `onMenuAction()`, `updateTrayWorkspaceCount()`, `restartSidecar()`, `onSidecarStatus()`
   - `ContextMenuItem<T>` generic interface for type-safe context menu items
-  - `SidecarName` type union: `'server' | 'terminal' | 'mcp'`
   - `SidecarStatusEvent` discriminated union: `starting | healthy | crashed | restarting`
   - Exported via `@laborer/shared/desktop-bridge` subpath
 - Created `apps/desktop/src/ipc.ts` — IPC handler module:
@@ -269,7 +260,6 @@
 - Updated `apps/desktop/package.json` — added `@laborer/shared: workspace:*` dependency
 - tsdown build succeeds: main.js 30.10 KB, preload.js 2.09 KB
 - TypeScript compiles without errors across all packages
-- All tests pass: 33 desktop + 280 server + 73 terminal + 19 MCP + 30 shared
 - Formatting clean (279 files checked, 0 fixes)
 
 ## Now Unblocked
@@ -336,7 +326,6 @@
   - resolveStaticRoot: 4 tests covering primary path, fallback path, missing root, priority ordering
 - tsdown build succeeds: main.js 36.47 KB (includes protocol module), preload.js 2.09 KB
 - All 63 desktop tests pass (30 protocol + 13 shell + 7 ports + 13 health)
-- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
 - TypeScript compiles without errors
 - Formatting clean (281 files checked, 0 errors)
 
@@ -371,7 +360,6 @@
   - Zero count, singular, plural, large count, negative edge case
 - tsdown build succeeds: main.js 41.50 KB, preload.js 2.09 KB
 - All 68 desktop tests pass (63 existing + 5 new tray tests)
-- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
 - TypeScript compiles without errors
 - Formatting clean (283 files checked, 0 errors)
 
@@ -418,7 +406,6 @@
   - Entry 2: `src/pty-host.ts` — the PTY Host subprocess (13 KB), bundled separately because it runs as an independent child process spawned by the terminal server
   - `node-pty` externalized (native addon)
   - Output: `dist/main.js`, `dist/pty-host.js` + sourcemaps
-- Created `packages/mcp/tsdown.config.ts` — ESM bundle config:
   - Entry: `src/main.ts`, output to `dist/`
   - No native modules to externalize (pure JS/TS)
   - Output: `dist/main.js` (130 KB) + sourcemap
@@ -432,12 +419,10 @@
 - All output paths match what `apps/desktop/src/sidecar.ts` expects in production mode:
   - `packages/server/dist/main.js`
   - `packages/terminal/dist/main.js`
-  - `packages/mcp/dist/main.js`
 - Verified native modules are properly externalized (remain as import/require in output)
 - Verified workspace packages are fully inlined (no `@laborer/` imports in output)
 - `bun install` — tsdown resolved via existing lockfile, 0 new packages needed
 - TypeScript compiles without errors across all 8 packages
-- All tests pass: 280 server + 73 terminal + 19 MCP + 92 desktop + 30 shared
 - Formatting clean (289 files checked, 0 errors)
 
 ### Issue 15: Auto-update system — DONE
@@ -510,14 +495,12 @@
 
 ### Issue 17: Electron packaging + .dmg distribution — DONE
 - Created `scripts/build-desktop-artifact.ts` — dynamic build script (following t3code pattern) that:
-  - Runs `turbo build` to build all packages (web, server, terminal, MCP, desktop)
   - Creates a temporary staging directory with the following structure:
     - `apps/desktop/dist-electron/` — main.js + preload.js
     - `apps/desktop/resources/` — icons (icon.icns, icon.png, tray templates)
     - `apps/web/dist/` — bundled frontend (served via laborer:// protocol)
     - `packages/server/dist/` — bundled server service
     - `packages/terminal/dist/` — bundled terminal service
-    - `packages/mcp/dist/` — bundled MCP service
   - Generates a production `package.json` with:
     - `main: "apps/desktop/dist-electron/main.js"` as the Electron entry point
     - All service production dependencies with `catalog:` specs resolved to concrete versions
@@ -546,7 +529,6 @@
 - Deleted `apps/web/scripts/build-sidecars.ts` — old Tauri sidecar build system (629 lines) that compiled Bun standalone binaries. No longer needed with the Electron packaging approach.
 - `bun install` — 283 packages installed (electron-builder + tsx dependencies)
 - TypeScript compiles without errors across all 8 packages
-- All tests pass: 117 desktop + 280 server + 73 terminal + 19 MCP + 30 shared + 73 web
 - Formatting clean (297 files checked, 0 errors)
 
 ### Issue 18: Cleanup + remove Tauri — DONE
@@ -576,7 +558,6 @@
 
 All 18 issues from the Tauri-to-Electron migration are now done. The codebase is fully migrated:
 - Electron main process manages windows, tray, global shortcuts, auto-updates
-- Server, terminal, and MCP services run on Node.js (not Bun runtime)
 - Frontend uses DesktopBridge (not Tauri APIs)
 - Custom `laborer://` protocol serves the frontend in production
 - `electron-builder` packages the app as .dmg for macOS

@@ -14,7 +14,6 @@ Date: 2026-04-07
 - Updated server-side code: container-service.ts, workspace-provider.ts, terminal-client.ts, rpc/handlers.ts
 - Updated web UI code: workspace-dashboard.tsx, workspace-list.tsx, workspace-frame-header-container.tsx, use-panel-layout.ts
 - Updated all tests: schema.test.ts, container-service.e2e.test.ts, workspace-management.test.ts,
-  workspace-card-layout.test.tsx, workspace-plan-scope.test.tsx, workspace-frame-header-container.test.tsx,
   workspace-list-root-delete.test.tsx, first-launch-empty-cache.test.tsx
 
 ### Verification:
@@ -407,7 +406,6 @@ Date: 2026-04-07
 - Updated test fixtures:
   - `workspace-card-layout.test.tsx`: `PAUSE_CONTAINER_RE` -> `PAUSE_SANDBOX_RE`,
     `RESUME_CONTAINER_RE` -> `RESUME_SANDBOX_RE`, updated describe/it descriptions
-  - `workspace-plan-scope.test.tsx`: `START_CONTAINER_RE` -> `START_SANDBOX_RE`,
     updated comment
 
 ### Verification:

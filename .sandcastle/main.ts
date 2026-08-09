@@ -56,6 +56,11 @@ import {
 const SANDCASTLE_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(SANDCASTLE_DIR, "..");
 const FAILURE_LOG = resolve(SANDCASTLE_DIR, "logs", "failures.ndjson");
+const OPENCODE_ATTEMPT_LOG = resolve(
+  SANDCASTLE_DIR,
+  "logs",
+  "opencode-attempts.ndjson"
+);
 
 loadEnv({ path: resolve(SANDCASTLE_DIR, ".env"), quiet: true });
 
@@ -110,10 +115,18 @@ const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
 const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 4);
 const OPENCODE_MAX_ATTEMPTS = positiveIntegerEnv(
   "SANDCASTLE_OPENCODE_MAX_ATTEMPTS",
-  3
+  5
 );
 const OPENCODE_RETRY_DELAY_SECONDS = nonNegativeIntegerEnv(
   "SANDCASTLE_OPENCODE_RETRY_DELAY_SECONDS",
+  15
+);
+const OPENCODE_RETRY_JITTER_SECONDS = nonNegativeIntegerEnv(
+  "SANDCASTLE_OPENCODE_RETRY_JITTER_SECONDS",
+  15
+);
+const OPENCODE_INITIAL_STAGGER_SECONDS = nonNegativeIntegerEnv(
+  "SANDCASTLE_OPENCODE_INITIAL_STAGGER_SECONDS",
   15
 );
 const MAX_REPAIR_ATTEMPTS = nonNegativeIntegerEnv(
@@ -163,16 +176,22 @@ const VERIFICATION_POLICY = [
 const allAroundAgent = () =>
   opencode2Agent("openai/gpt-5.6-sol-fast", {
     dangerouslyAutoApproveHostPermissions: true,
+    diagnosticsPath: OPENCODE_ATTEMPT_LOG,
+    initialStaggerSeconds: OPENCODE_INITIAL_STAGGER_SECONDS,
     maxAttempts: OPENCODE_MAX_ATTEMPTS,
     retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    retryJitterSeconds: OPENCODE_RETRY_JITTER_SECONDS,
     runTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
     variant: "medium",
   });
 const uiAgent = () =>
   opencode2Agent("anthropic/claude-opus-5", {
     dangerouslyAutoApproveHostPermissions: true,
+    diagnosticsPath: OPENCODE_ATTEMPT_LOG,
+    initialStaggerSeconds: OPENCODE_INITIAL_STAGGER_SECONDS,
     maxAttempts: OPENCODE_MAX_ATTEMPTS,
     retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    retryJitterSeconds: OPENCODE_RETRY_JITTER_SECONDS,
     runTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
     variant: "medium",
   });
@@ -327,6 +346,7 @@ if (failures.length > 0) {
     console.error(`  - ${failure}`);
   }
   console.error(`Failure details saved to ${FAILURE_LOG}`);
+  console.error(`OpenCode attempt details saved to ${OPENCODE_ATTEMPT_LOG}`);
 }
 console.log(process.exitCode ? "\nSandcastle stopped with errors." : "\nSandcastle finished.");
 

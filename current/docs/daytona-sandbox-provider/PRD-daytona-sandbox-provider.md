@@ -280,7 +280,6 @@ Good tests verify external behavior through the public service interfaces, not i
 
 ### Prior art
 
-The existing `packages/server/test/config-service.test.ts` demonstrates the pattern for testing config resolution. The workspace plan scope tests in `apps/web/test/` show how to test LiveStore materialization. The `ContainerService` reconciliation logic (startup state sync) is the direct precedent for the Daytona reconciliation tests.
 
 ## Out of Scope
 
@@ -292,7 +291,6 @@ The existing `packages/server/test/config-service.test.ts` demonstrates the patt
 
 - **Other sandbox providers**: Only Docker and Daytona are implemented. The interface is designed for future providers (Fly Machines, E2B, CodeSandbox) but none are built.
 
-- **Daytona MCP server integration**: We do not use Daytona's Go-based MCP server. The agent runs inside the sandbox and uses its own built-in tools natively.
 
 - **Container-to-sandbox migration**: Existing Docker workspaces cannot be converted to Daytona workspaces in-place. Users create new workspaces with the new provider.
 

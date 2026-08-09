@@ -35,9 +35,7 @@
   - Primary API for phase-aware UI — components use this to conditionally enable features
 - Created `apps/web/src/hooks/use-service-status.ts` with:
   - `useServiceStatus(): ServiceStatuses` — returns a reactive map of per-service health states
-  - Aggregates sidecar statuses from `useSidecarStatuses()` (server, terminal, file-watcher, mcp)
   - Adds a `sync` entry for LiveStore sync status (initially `unknown`, to be wired in Issue #2)
-  - Exports `ServiceName` type (`'server' | 'terminal' | 'file-watcher' | 'mcp' | 'sync'`)
   - Exports `ServiceStatuses` type (`Record<ServiceName, ServiceState>`)
 - Created `apps/web/test/lifecycle-phase-hooks.test.tsx` with 7 tests:
   - useWhenPhase:
@@ -134,7 +132,6 @@
   - `ServiceStatusDots` component — compact status dots replacing the old `ServiceStatusPills`
   - `ServiceDot` sub-component — individual dot with tooltip showing service name and state
   - Consumes `useServiceStatus()` from Issue #5 (the higher-level hook that aggregates sidecar + sync statuses)
-  - Shows only core services: Server, Terminal, File Watcher (MCP excluded per acceptance criteria)
   - Each dot renders as a small colored circle: green (healthy), yellow (starting/restarting with pulsing animation), red (crashed), gray (unknown)
   - Tooltip on each dot shows "DisplayName — StatusLabel" on hover
   - `data-testid="service-dot-{name}"` and `data-state="{state}"` attributes for testing
@@ -147,7 +144,6 @@
   2. Shows healthy state for server dot when server health check passes
   3. Shows error state for server dot when server crashes
   4. Renders all three core services independently (server healthy, terminal healthy, file-watcher starting)
-  5. Excludes MCP from primary indicators
   6. Renders within an output element with accessible label
 
 ### Verification
@@ -172,11 +168,9 @@
     - `RepositoryIdentity` — Git repository identification (leaf)
   - **Deferred layers** (heavy I/O, external connections, background services):
     - `DeferredLeafLayers` — FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection, PortAllocator
-    - `DeferredGroup1Layers` — TaskManager, BranchStateTracker, ContainerService, PrdStorageService, DiffService, PrWatcher, WorktreeReconciler
     - `DeferredGroup1WithSync` — WorkspaceSyncService + BackgroundFetchService
-    - `DeferredGroup2Layers` — GithubTaskImporter, LinearTaskImporter, ReviewCommentFetcher, RepositoryWatchCoordinator
     - `DeferredServiceStack` — WorkspaceProvider, ProjectRegistry (bottom-up composition)
-    - `DeferredTopLayers` — TerminalClient, McpRegistrar
+    - `DeferredTopLayers` — TerminalClient
     - `DeferredServicesLive` — All deferred services composed
   - The separation is structural/organizational because `LaborerRpcsLive` captures all handler service requirements at the type level. Issue #14 will add background initialization for deferred layers.
 - Restructured `packages/server/test/rpc/test-layer.ts` to mirror the core/deferred split:
@@ -261,8 +255,6 @@
   - `ContainerPauseButton` — pause/unpause button disabled during Phase 1
   - `TerminalSpawnButtons` — extracted from TerminalList to reduce complexity, New Terminal and Agent buttons disabled with tooltip
   - `ProjectGroup` — create workspace (+) and remove project (trash) buttons disabled with tooltip
-  - `ReviewPrForm` — review PR button disabled during Phase 1
-  - `FixFindingsForm` — fix findings button disabled during Phase 1
   - `ProjectSettingsModal` — save button disabled during Phase 1
 - Extracted `StartRalphLoopButton` from `WorkspaceItem` and `TerminalSpawnButtons` from `TerminalList` to keep function complexity within biome's 20-point limit
 - Created `apps/web/test/disable-write-actions.test.tsx` with 5 tests:
@@ -271,7 +263,6 @@
   3. Disabled buttons have tooltip explaining why they're disabled
   4. Form submission is blocked during Phase 1 (not just visually disabled)
   5. Buttons don't flash between disabled/enabled during fast phase transitions
-- Updated existing tests in `create-plan-workspace.test.tsx` and `create-workspace-form.test.tsx` to wrap components in `LifecyclePhaseProvider` with phase advanced to Ready (since components now gate on phase)
 
 ### Verification
 - All 5 new tests pass
@@ -424,19 +415,6 @@
   - After Phase 4: renders the existing `Suspense` + `DockerStatusContent` (which queries `docker.status` RPC)
   - Prevents SERVICE_INITIALIZING errors from DockerDetection during startup
 
-- **Review pane** (`apps/web/src/panes/review-pane.tsx`) — gated behind Phase 4 (Eventually):
-  - Before Phase 4: shows "Loading review..." spinner placeholder with review header
-  - After Phase 4: renders the full review pane with Suspense + `ReviewPaneContent`
-  - Prevents review.fetchComments RPC calls before PrWatcher/ReviewCommentFetcher are ready
-
-- **Review findings count** (`apps/web/src/components/review-findings-count.tsx`) — gated behind Phase 4 (Eventually):
-  - Returns `null` before Phase 4 (suppresses `review.fetchComments` query result display)
-  - After Phase 4: renders the unresolved findings count badge
-
-- **Review verdict badge** (`apps/web/src/components/review-verdict-badge.tsx`) — gated behind Phase 4 (Eventually):
-  - Returns `null` before Phase 4 (suppresses `review.fetchVerdict` query result display)
-  - After Phase 4: renders the verdict badge (approved/needs_fix)
-
 - **Branch ahead/behind counts** — no additional gating needed:
   - `WorkspaceSyncStatus` receives `aheadCount`/`behindCount` as props from LiveStore queries
   - Counts are `null`/`0` until background sync populates the data, handled naturally
@@ -447,14 +425,9 @@
   2. Terminal pane renders normally after Phase 3 (Restored)
   3. Docker status banner shows placeholder before Phase 4 (Eventually)
   4. Docker status banner shows real status after Phase 4 (Eventually)
-  5. Review pane shows loading placeholder before Phase 4 (Eventually)
-  6. Review pane shows real content after Phase 4 (Eventually)
   7. Features transition smoothly from placeholder to real content without broken UI
 
 - Updated existing tests to work with phase gating:
-  - `apps/web/test/review-pane.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
-  - `apps/web/test/review-pane-alive.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
-  - `apps/web/test/review-verdict-badge.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
 
 ### Verification
 - All 7 new tests pass
@@ -631,7 +604,6 @@ The `Header` component renders **outside** the `LiveStoreProvider` boundary in `
   - `WorkspaceDashboard` — already uses `Empty` component with icon for "No projects" state
   - `PanelManager` — already uses `Empty` component for "No panels" state
   - `PlanList` — already uses `Empty` component with icon and description
-  - `TaskList` — already uses `Empty` component with icon and description
   - `PlanIssuesList` — already uses `Empty` component with icon and description
   - Panel layout system — returns `undefined` for empty store, which `PanelManager` handles gracefully
 

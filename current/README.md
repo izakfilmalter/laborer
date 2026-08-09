@@ -35,7 +35,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 ### Terminal and Agent Orchestration
 - **Tmux-style panel layout** -- Recursive horizontal/vertical splits with keyboard shortcuts (Ctrl+B prefix), drag-and-drop workspace tabs, fullscreen mode, and tabbed window layout (window tabs > workspace tiles > panel tabs > panel splits).
 - **Full terminal emulation** -- Real PTY terminals via node-pty + xterm.js with VS Code-grade flow control, 100k+ line scrollback, per-terminal MessagePort channels for zero-copy data transfer, and crash-resilient session persistence. Multiple terminals per workspace (agent, type checker, test runner, dev server, shell).
-- **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, Codex, and rlph/brrr.
+- **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, and Codex.
 - **Multi-window support** -- Multiple Electron windows with persistent layout, window state across restarts, and drag-and-drop tab reordering.
 
 ### Diffs and GitHub
@@ -125,7 +125,7 @@ Each project managed by Laborer uses a `laborer.json` config file:
 }
 ```
 
-Supported agents: `opencode2`, `claude`, `codex`, `rlph`. Existing
+Supported agents: `opencode2`, `claude`, and `codex`. Existing
 `"agent": "opencode"` configuration is migrated to `opencode2` when read.
 
 ## Available Scripts

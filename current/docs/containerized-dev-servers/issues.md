@@ -404,7 +404,6 @@ PRD-containerized-dev-servers.md
 
 Connect the existing play/pause buttons in the workspace sidebar to the `container.pause`/`container.unpause` RPCs for containerized workspaces.
 
-Currently the play button triggers `rlph.startLoop`. For containerized workspaces, the play/pause buttons should instead call the container pause/unpause RPCs. The workspace status badge should reflect the container state: running = green, paused = yellow/amber.
 
 When paused, the dev server terminal pane freezes (docker exec session is frozen). When unpaused, it resumes. This happens automatically because the terminal is running inside the container.
 

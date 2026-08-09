@@ -40,7 +40,10 @@ import { createTempDir } from './helpers/git-helpers.js'
 // ---------------------------------------------------------------------------
 
 /** Write a laborer.json config file at the given directory. */
-const writeConfig = (dir: string, config: LaborerConfig): string => {
+const writeConfig = (
+  dir: string,
+  config: LaborerConfig & Record<string, unknown>
+): string => {
   const configPath = join(dir, CONFIG_FILE_NAME)
   writeFileSync(configPath, JSON.stringify(config, null, 2))
   return configPath
@@ -77,7 +80,6 @@ const writeProjectConfig = (
         }
       | undefined
     prdsDir?: string | undefined
-    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -149,8 +151,6 @@ describe('ConfigService', () => {
         assert.strictEqual(result.worktreeDir.value, `${projectDir}.worktrees`)
         assert.strictEqual(result.setupScripts.source, 'default')
         assert.deepStrictEqual(result.setupScripts.value, [])
-        assert.strictEqual(result.brrrConfig.source, 'default')
-        assert.isNull(result.brrrConfig.value)
       })
     )
 
@@ -180,7 +180,6 @@ describe('ConfigService', () => {
           prdsDir: '/custom/prds',
           worktreeDir: '/custom/worktrees',
           setupScripts: ['bun install', 'cp .env.example .env'],
-          brrrConfig: 'brrr-config.json',
         })
 
         const result = yield* resolveConfig(projectDir, 'test-project')
@@ -194,8 +193,6 @@ describe('ConfigService', () => {
           'cp .env.example .env',
         ])
         assert.strictEqual(result.setupScripts.source, configPath)
-        assert.strictEqual(result.brrrConfig.value, 'brrr-config.json')
-        assert.strictEqual(result.brrrConfig.source, configPath)
       })
     )
 
@@ -378,8 +375,8 @@ describe('ConfigService', () => {
         const child = join(parent, 'provenance-child')
         mkdirSync(child, { recursive: true })
 
-        const gpPath = writeConfig(grandparent, {
-          brrrConfig: 'grandparent-brrr.json',
+        writeConfig(grandparent, {
+          prdsDir: '/grandparent-prds',
         })
         writeConfig(parent, {
           worktreeDir: '/parent-worktrees',
@@ -391,9 +388,8 @@ describe('ConfigService', () => {
         const result = yield* resolveConfig(child, 'provenance-test')
 
         // Each field's provenance should trace to the config that set it
-        assert.strictEqual(result.prdsDir.source, 'default')
+        assert.strictEqual(result.prdsDir.value, '/grandparent-prds')
         assert.strictEqual(result.setupScripts.source, childPath)
-        assert.strictEqual(result.brrrConfig.source, gpPath)
       })
     )
 
@@ -479,7 +475,7 @@ describe('ConfigService', () => {
 
         writeConfig(projectDir, {
           worktreeDir: '/existing/worktrees',
-          brrrConfig: 'brrr-existing.json',
+          customField: 'preserve-me',
         })
 
         yield* writeProjectConfig(projectDir, {
@@ -489,13 +485,13 @@ describe('ConfigService', () => {
         const written = JSON.parse(
           readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
         ) as {
-          brrrConfig?: string
+          customField?: string
           setupScripts?: string[]
           worktreeDir?: string
         }
 
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
-        assert.strictEqual(written.brrrConfig, 'brrr-existing.json')
+        assert.strictEqual(written.customField, 'preserve-me')
         assert.deepStrictEqual(written.setupScripts, [
           'bun install',
           'bun test',
@@ -523,20 +519,20 @@ describe('ConfigService', () => {
         )
 
         yield* writeProjectConfig(projectDir, {
-          brrrConfig: 'new-brrr.json',
+          setupScripts: ['bun install'],
         })
 
         const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
           customField?: string
           nested?: { hello?: string }
-          brrrConfig?: string
+          setupScripts?: string[]
           worktreeDir?: string
         }
 
         assert.strictEqual(written.customField, 'preserve-me')
         assert.strictEqual(written.nested?.hello, 'world')
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
-        assert.strictEqual(written.brrrConfig, 'new-brrr.json')
+        assert.deepStrictEqual(written.setupScripts, ['bun install'])
       })
     )
 
@@ -551,7 +547,6 @@ describe('ConfigService', () => {
         })
 
         yield* writeProjectConfig(projectDir, {
-          brrrConfig: 'updated-brrr.json',
           setupScripts: undefined,
           worktreeDir: undefined,
         })
@@ -559,12 +554,10 @@ describe('ConfigService', () => {
         const written = JSON.parse(
           readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
         ) as {
-          brrrConfig?: string
           setupScripts?: string[]
           worktreeDir?: string
         }
 
-        assert.strictEqual(written.brrrConfig, 'updated-brrr.json')
         assert.deepStrictEqual(written.setupScripts, ['existing-script'])
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
       })

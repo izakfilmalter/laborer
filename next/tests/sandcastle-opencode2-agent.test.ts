@@ -109,8 +109,9 @@ describe("Sandcastle opencode2 agent", () => {
       });
       assert.include(
         invocation.command,
-        "cp /home/agent/.local/share/opencode/opencode-next.seed.db /home/agent/.local/share/opencode/opencode-next.db"
+        'cp /home/agent/.local/share/opencode/opencode-next.seed.db "$attempt_db"'
       );
+      assert.include(invocation.command, 'OPENCODE_DB="$attempt_db"');
       const stdout = await runCommand(
         invocation.command,
         invocation.stdin ?? "",
@@ -173,12 +174,14 @@ describe("Sandcastle opencode2 agent", () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-retry-"));
     const executable = join(directory, "opencode2");
     const attemptsPath = join(directory, "attempts");
+    const databasesPath = join(directory, "databases");
     const stdinPath = join(directory, "stdin");
     writeFileSync(
       executable,
       [
         "#!/bin/sh",
         '[ -p /dev/stdin ] || { printf "stdin must be a pipe\\n" >&2; exit 2; }',
+        'printf "%s\\n" "$OPENCODE_DB" >> "$FAKE_OPENCODE_DATABASES"',
         'attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
         'printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
         'cat >> "$FAKE_OPENCODE_STDIN"',
@@ -203,12 +206,16 @@ describe("Sandcastle opencode2 agent", () => {
         {
           ...process.env,
           FAKE_OPENCODE_ATTEMPTS: attemptsPath,
+          FAKE_OPENCODE_DATABASES: databasesPath,
           FAKE_OPENCODE_STDIN: stdinPath,
           PATH: `${directory}:${process.env.PATH ?? ""}`,
         }
       );
 
       assert.strictEqual(readFileSync(attemptsPath, "utf8"), "2");
+      const databases = readFileSync(databasesPath, "utf8").trim().split("\n");
+      assert.lengthOf(databases, 2);
+      assert.notStrictEqual(databases[0], databases[1]);
       assert.strictEqual(
         readFileSync(stdinPath, "utf8"),
         "Continue preserved work.\n---attempt---\nContinue preserved work.\n---attempt---\n"

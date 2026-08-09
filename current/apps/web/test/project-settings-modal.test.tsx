@@ -39,10 +39,6 @@ interface ConfigResult {
       readonly value: readonly string[]
       readonly source: string
     }
-    readonly brrrConfig: {
-      readonly value: string | null
-      readonly source: string
-    }
     readonly devServer: {
       readonly autoOpen: { readonly value: boolean; readonly source: string }
       readonly image: { readonly value: string | null; readonly source: string }
@@ -144,7 +140,6 @@ describe('ProjectSettingsModal', () => {
         agent: { value: 'opencode2', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
-        brrrConfig: { value: '.brrr/config.toml', source: 'laborer.json' },
         devServer: {
           autoOpen: { value: false, source: 'default' },
           image: { value: null, source: 'default' },
@@ -185,7 +180,6 @@ describe('ProjectSettingsModal', () => {
     expect(screen.getByText('Project settings')).toBeTruthy()
     expect(screen.getByDisplayValue('/tmp/worktrees')).toBeTruthy()
     expect(screen.getByDisplayValue('bun install')).toBeTruthy()
-    expect(screen.getByDisplayValue('.brrr/config.toml')).toBeTruthy()
   })
 
   it('waits for eventual server readiness before starting the config query', async () => {

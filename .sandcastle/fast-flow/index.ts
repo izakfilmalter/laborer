@@ -11,6 +11,11 @@ export const reviewedHeadNeedsPush = (
   reviewedLocalHead: string
 ) => pullRequestHead !== reviewedLocalHead;
 
+export const mergeFailureNeedsPreparation = (
+  mergeStateStatus: string,
+  mergeable: string
+) => mergeStateStatus === "DIRTY" || mergeable === "CONFLICTING";
+
 export const shouldRefreshUnstartedBranch = (
   branchHead: string,
   baseHead: string,

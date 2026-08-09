@@ -68,7 +68,6 @@ interface ProjectGroupProps {
     readonly id: string
     readonly name: string
     readonly repoPath: string
-    readonly brrrConfig: string | null
   }
   readonly selectedPlanId?: string | null | undefined
 }

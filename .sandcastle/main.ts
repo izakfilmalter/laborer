@@ -28,6 +28,7 @@ import {
   attemptHostStep,
   canReuseCompletedHead,
   hostCheckoutProblem,
+  mergeFailureNeedsPreparation,
   mergePullRequestArgs,
   refreshDetachedBase,
   reviewedHeadNeedsPush,
@@ -109,7 +110,7 @@ interface PlannedIssue extends z.infer<typeof plannedIssueSchema> {
 type Sandbox = Awaited<ReturnType<typeof createSandbox>>;
 
 const MAX_ITERATIONS = positiveIntegerEnv("SANDCASTLE_MAX_ITERATIONS", 10);
-const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 2);
+const MAX_PARALLEL = positiveIntegerEnv("SANDCASTLE_MAX_PARALLEL", 4);
 const OPENCODE_MAX_ATTEMPTS = positiveIntegerEnv(
   "SANDCASTLE_OPENCODE_MAX_ATTEMPTS",
   3
@@ -607,7 +608,7 @@ async function publishAndMaybeMergeStandalone(
     console.log(`  Ready for manual merge: ${prUrl}`);
     return;
   }
-  await mergePreparedPullRequest(prUrl, reviewedHead, issue.branch);
+  await mergePreparedPullRequest(issue, prUrl, reviewedHead, issue.branch);
   closeIssueIfOpen(Number(issue.id), prUrl);
   deleteRecordedCompletion(issue);
 }
@@ -635,6 +636,7 @@ async function finalizeSpec(spec: FinalizeIssueSpec) {
     return;
   }
   await mergePreparedPullRequest(
+    issue,
     spec.pullRequest.url,
     reviewedHead,
     spec.branch
@@ -658,9 +660,11 @@ function plannedIssueForFinalize(spec: FinalizeIssueSpec): PlannedIssue {
 }
 
 async function mergePreparedPullRequest(
+  issue: PlannedIssue,
   prUrl: string,
   reviewedHead: string,
-  expectedBranch: string
+  expectedBranch: string,
+  remainingRaceRepairs = MAX_REPAIR_ATTEMPTS
 ) {
   assertCurrentPullRequestTargets(prUrl, expectedBranch);
   const initialStatus = getPrStatus(prUrl);
@@ -674,7 +678,36 @@ async function mergePreparedPullRequest(
       `PR head moved after review: expected ${reviewedHead}, received ${currentHead ?? "none"}.`
     );
   }
-  mergePr(prUrl, reviewedHead);
+  try {
+    mergePr(prUrl, reviewedHead);
+  } catch (error) {
+    const failedStatus = getPrStatus(prUrl);
+    if (failedStatus.state === "MERGED" || failedStatus.mergedAt) {
+      assertMergedPullRequestMatches(prUrl, expectedBranch, reviewedHead);
+      return;
+    }
+    if (
+      remainingRaceRepairs > 0 &&
+      mergeFailureNeedsPreparation(
+        failedStatus.mergeStateStatus,
+        failedStatus.mergeable
+      )
+    ) {
+      const repairedHead = await preparePrForMerge(issue, prUrl);
+      if (repairedHead === undefined) {
+        throw new Error(`PR is not ready after merge-race repair: ${prUrl}`);
+      }
+      markPullRequestReady(prUrl, expectedBranch);
+      return mergePreparedPullRequest(
+        issue,
+        prUrl,
+        repairedHead,
+        expectedBranch,
+        remainingRaceRepairs - 1
+      );
+    }
+    throw error;
+  }
   const deadline = Date.now() + MERGE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const status = getPrStatus(prUrl);
@@ -1036,9 +1069,12 @@ async function createIssueSandbox(issue: PlannedIssue) {
   try {
     syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
     refreshUnstartedIssueBranch(issue, sandbox.worktreePath);
+    const dependencySetup = worktreeIsDirty(sandbox.worktreePath)
+      ? "test -d current/node_modules && test -d next/node_modules"
+      : "bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile";
     const setup = await sandbox.exec(
       boundedSandboxCommand(
-        "gh auth setup-git && bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile"
+        `gh auth setup-git && ${dependencySetup}`
       ),
       { onLine: (line) => console.log(`  ${line}`) }
     );
@@ -1732,15 +1768,23 @@ function syncPlannerBranchToBase() {
 }
 
 function assertWorktreeClean(worktreePath: string, context: string) {
-  const status = runFile("git", [
+  const status = worktreeStatus(worktreePath);
+  if (status) {
+    throw new Error(`Sandcastle worktree is dirty ${context}:\n${status}`);
+  }
+}
+
+function worktreeIsDirty(worktreePath: string) {
+  return worktreeStatus(worktreePath).length > 0;
+}
+
+function worktreeStatus(worktreePath: string) {
+  return runFile("git", [
     "-C",
     worktreePath,
     "status",
     "--porcelain",
   ]).trim();
-  if (status) {
-    throw new Error(`Sandcastle worktree is dirty ${context}:\n${status}`);
-  }
 }
 
 function worktreeHead(worktreePath: string) {

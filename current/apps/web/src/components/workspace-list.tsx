@@ -73,12 +73,10 @@ import {
   type PendingWorkspaceCreation,
   type PendingWorkspaceCreationChangeHandler,
 } from '@/components/create-workspace-form'
-import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ReviewFindingsCount } from '@/components/review-findings-count'
-import { ReviewPrForm } from '@/components/review-pr-form'
 import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
 import {
@@ -1173,18 +1171,6 @@ function WorkspaceItem({
               <Suspense fallback={null}>
                 <ReviewFindingsCount workspaceId={workspace.id} />
               </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <ReviewPrForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
-            {workspace.prNumber != null && (
-              <FixFindingsForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
             )}
             {!isRootWorkspace && showCreateSubWorkspaceAction && (
               <CreateWorkspaceForm

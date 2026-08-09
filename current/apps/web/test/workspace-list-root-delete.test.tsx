@@ -102,14 +102,6 @@ vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
 }))
 
-vi.mock('@/components/review-pr-form', () => ({
-  ReviewPrForm: () => null,
-}))
-
-vi.mock('@/components/fix-findings-form', () => ({
-  FixFindingsForm: () => null,
-}))
-
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
 }))

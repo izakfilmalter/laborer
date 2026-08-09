@@ -16,8 +16,8 @@
 
 import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
 import { useCallback } from 'react'
+import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
@@ -26,6 +26,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
+import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
+import {
+  getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
+} from '@/lib/agent-status-presentation'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -34,8 +39,8 @@ interface WorkspaceFrameHeaderProps {
   readonly actions: PanelActions | null
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
-  /** Aggregate agent status for the workspace (null, active, or waiting_for_input). */
-  readonly agentStatus?: 'active' | 'waiting_for_input' | null | undefined
+  /** Aggregate semantic Agent status for the workspace. */
+  readonly agentStatus?: AgentDisplayStatus | null | undefined
   /** Number of local commits ahead of upstream. */
   readonly aheadCount: number | null
   /** Number of upstream commits not yet pulled locally. */
@@ -166,7 +171,21 @@ function WorkspaceFrameHeader({
   workspacePath,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
-  const needsAttention = agentStatus === 'waiting_for_input'
+  // The header stays quiet for at-rest states: an idle or unknown agent has
+  // nothing to say at workspace level, while working, done, and needs input
+  // do. The card in the sidebar answers this with the same predicate.
+  const showsAgentStatus = showsWorkspaceAgentStatus(agentStatus)
+  // Attention and an unseen result outrank the active-frame accent; a working
+  // tint is the quietest layer and yields to the frame the operator is
+  // already looking at.
+  const agentAccentClassName =
+    agentStatus === 'working' && isActiveFrame
+      ? ''
+      : getAgentStatusSurface(agentStatus).headerClassName
+  // Exactly one bottom edge is ever coloured. When the agent has something
+  // to say the accent is its own; otherwise the active frame keeps its
+  // primary edge. Two competing borders on one 8px bar read as noise.
+  const hasAgentAccent = agentAccentClassName !== ''
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -187,8 +206,8 @@ function WorkspaceFrameHeader({
     <div
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
-        isActiveFrame && !needsAttention && 'border-b-2 border-b-primary',
-        needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
+        isActiveFrame && !hasAgentAccent && 'border-b-2 border-b-primary',
+        agentAccentClassName,
         isMinimized && 'cursor-pointer'
       )}
       data-testid="workspace-frame-header"
@@ -241,14 +260,12 @@ function WorkspaceFrameHeader({
             workspaceId={workspaceId}
           />
         ) : null}
-        {needsAttention && (
-          <Badge
-            className="shrink-0 animate-pulse border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-400 leading-none"
-            variant="outline"
-          >
-            needs input
-          </Badge>
-        )}
+        {showsAgentStatus ? (
+          <AggregateAgentStatusBadge
+            className="shrink-0"
+            status={agentStatus}
+          />
+        ) : null}
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (

@@ -25,6 +25,7 @@
  */
 
 import {
+  type AgentStatusSnapshot,
   type TerminalLifecycleEventSchema,
   TerminalRpcs,
 } from '@laborer/shared/rpc'
@@ -99,7 +100,7 @@ const toLifecycleEventSchema = (
  * compile time.
  */
 const toTerminalInfo = (record: {
-  readonly agentStatus: 'active' | 'waiting_for_input' | null
+  readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
@@ -215,8 +216,8 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       // -------------------------------------------------------------------
       // terminal.setAgentStatus — external hook status override
       // -------------------------------------------------------------------
-      'terminal.setAgentStatus': ({ id, event }) =>
-        tm.setAgentStatusFromHook(id, event),
+      'terminal.setAgentStatus': ({ id, report }) =>
+        tm.setAgentStatusFromHook(id, report),
 
       // -------------------------------------------------------------------
       // terminal.events — streaming lifecycle events

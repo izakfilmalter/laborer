@@ -551,13 +551,13 @@ describe('WorkspaceFrameHeader', () => {
   // Agent status: needs input indicator
   // ---------------------------------------------------------------------------
 
-  it('shows "needs input" badge when agentStatus is waiting_for_input', () => {
+  it('shows "needs input" badge when agentStatus is needs_input', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="waiting_for_input"
+        agentStatus="needs_input"
       />
     )
 
@@ -578,13 +578,40 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.queryByText('needs input')).toBeNull()
   })
 
+  it('shows a "working" badge when the workspace agent is working', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="working"
+      />
+    )
+
+    expect(screen.getByText('working')).toBeTruthy()
+  })
+
+  it('stays quiet for at-rest agent states', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="idle"
+      />
+    )
+
+    expect(screen.queryByText('idle')).toBeNull()
+    expect(screen.queryByText('needs input')).toBeNull()
+  })
+
   it('does not show "needs input" badge when agentStatus is active', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="active"
+        agentStatus="working"
       />
     )
 
@@ -630,21 +657,61 @@ describe('WorkspaceFrameHeader', () => {
     expect(header.className).not.toContain('border-b-primary')
   })
 
-  it('suppresses accent bottom border when needsAttention overrides active state', () => {
+  it('recolours rather than thins the active edge when the agent needs input', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
         {...BASE_PROPS}
         actions={actions}
-        agentStatus="waiting_for_input"
+        agentStatus="needs_input"
         isActiveFrame
       />
     )
 
     const header = screen.getByTestId('workspace-frame-header')
-    // The amber attention border should take priority over the active accent border
-    expect(header.className).not.toContain('border-b-2')
+    // Attention takes the edge over from the active-frame accent, and keeps
+    // its weight: a blocked frame must never read lighter than the frame the
+    // operator happens to be looking at.
+    expect(header.className).toContain('border-b-2')
     expect(header.className).not.toContain('border-b-primary')
-    expect(header.className).toContain('border-b-amber-400/50')
+    expect(header.className).toContain('border-b-amber-400')
+  })
+
+  it('accents an unseen completion differently from a blocked agent', () => {
+    const actions = mockActions()
+    const { container } = render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="done"
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(screen.getByText('done')).toBeTruthy()
+    expect(header.className).toContain('border-b-2')
+    expect(header.className).toContain('border-b-violet-400')
+    expect(header.className).not.toContain('border-b-primary')
+    expect(header.className).not.toContain('amber')
+    // The check glyph, not hue alone, separates "review" from "act now".
+    expect(
+      container.querySelector('[data-testid="agent-status-check"]')
+    ).not.toBeNull()
+  })
+
+  it('lets the active-frame accent win over a merely working agent', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="working"
+        isActiveFrame
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).toContain('border-b-primary')
+    expect(header.className).not.toContain('bg-blue-400')
   })
 })

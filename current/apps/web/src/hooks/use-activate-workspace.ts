@@ -11,6 +11,7 @@
  * @see apps/desktop/src/ipc.ts — ACTIVATE_WORKSPACE_CHANNEL
  */
 
+import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import { useEffect, useRef } from 'react'
 
 import { getDesktopBridge } from '@/lib/desktop'
@@ -22,7 +23,7 @@ import { getDesktopBridge } from '@/lib/desktop'
  * @param onActivate - Callback receiving the workspaceId to activate
  */
 function useActivateWorkspace(
-  onActivate?: (workspaceId: string) => void
+  onActivate?: (intent: WorkspaceActivationIntent) => void
 ): void {
   const onActivateRef = useRef(onActivate)
   onActivateRef.current = onActivate
@@ -33,8 +34,8 @@ function useActivateWorkspace(
       return
     }
 
-    const unsubscribe = bridge.onActivateWorkspace((workspaceId) => {
-      onActivateRef.current?.(workspaceId)
+    const unsubscribe = bridge.onActivateWorkspace((intent) => {
+      onActivateRef.current?.(intent)
     })
 
     return unsubscribe

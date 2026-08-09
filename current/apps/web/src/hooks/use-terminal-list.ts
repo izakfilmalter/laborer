@@ -23,61 +23,16 @@
 
 import { Atom, Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import type { TerminalLifecycleEventSchema } from '@laborer/shared/rpc'
+import type {
+  TerminalInfo as SharedTerminalInfo,
+  TerminalLifecycleEventSchema,
+} from '@laborer/shared/rpc'
 import { Effect, Ref, Schedule, Stream } from 'effect'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 
-/** Category of a detected foreground process. */
-type ProcessCategory = 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
-
-/** Information about the foreground process running in a terminal. */
-interface ForegroundProcess {
-  readonly category: ProcessCategory
-  readonly label: string
-  readonly rawName: string
-}
-
-/**
- * Agent status for a terminal, derived from foreground process transitions.
- *
- * - `active` — an AI agent is currently the foreground process
- * - `waiting_for_input` — an agent was running but is now idle
- *   (needs user input or has completed its task)
- */
-type AgentStatus = 'active' | 'waiting_for_input'
-
-/** Shape of a terminal from the terminal service's terminal.list RPC. */
-interface TerminalInfo {
-  /**
-   * Agent status derived from foreground process transitions.
-   * Null when no agent has been detected in this terminal.
-   */
-  readonly agentStatus: AgentStatus | null
-  readonly args: readonly string[]
-  readonly command: string
-  readonly cwd: string
-  /**
-   * Information about the foreground process running in the terminal.
-   * Null when the shell is idle at a prompt or the terminal is stopped.
-   */
-  readonly foregroundProcess: ForegroundProcess | null
-  /**
-   * Whether the shell has child processes running (e.g., vim, dev server,
-   * opencode). False when the shell is idle at a prompt.
-   */
-  readonly hasChildProcess: boolean
-  readonly id: string
-  /**
-   * Classified processes along the tree from the shell's first child
-   * down to the deepest leaf. Used by the UI to show the full chain,
-   * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
-   */
-  readonly processChain: readonly ForegroundProcess[]
-  readonly status: 'running' | 'stopped'
-  readonly workspaceId: string
-}
+type TerminalInfo = SharedTerminalInfo
 
 type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 
@@ -538,10 +493,11 @@ export {
   resetTerminalListStore,
   upsertTerminalListItem,
 }
+export type { TerminalInfo, TerminalServiceStatus }
 export type {
   AgentStatus,
+  AgentStatusSnapshot,
+  AgentStatusSource,
   ForegroundProcess,
   ProcessCategory,
-  TerminalInfo,
-  TerminalServiceStatus,
-}
+} from '@laborer/shared/rpc'

@@ -123,6 +123,11 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       setAsDefaultProtocolClient: vi.fn(),
     },
     BrowserWindow,
+    Notification: class {
+      static isSupported = () => true
+      on = vi.fn()
+      show = vi.fn()
+    },
     ipcMain: {
       on: vi.fn(),
       once: vi.fn(),
@@ -156,11 +161,19 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
   vi.doMock('../src/ipc.js', () => ({
+    ACTIVATE_WORKSPACE_CHANNEL: 'desktop:activate-workspace',
     askRenderersBeforeQuit: vi.fn(async () => false),
     closeRendererPortsForService: vi.fn(),
-    getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
+    getWorkspaceWindowRegistry: vi.fn(() => ({
+      branchNameForWorkspace: vi.fn(() => null),
+      findWindowForWorkspace: vi.fn(() => null),
+      hasFocusedWindow: vi.fn(() => false),
+      routeToOrOpenWorkspace: vi.fn(),
+    })),
+    publishWorkspacePresence: vi.fn(),
     QUIT_CONFIRMED_CHANNEL: 'desktop:quit-confirmed',
     registerIpcHandlers: registerIpcHandlersMock,
+    removeWindowPresence: vi.fn(),
     setDownloadUpdateHandler: vi.fn(),
     setGetBackendWsUrlHandler: vi.fn(),
     setGetSidecarStatusesHandler: vi.fn(),
@@ -169,6 +182,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     setRestartSidecarHandler: vi.fn(),
     setTrayCountHandler: vi.fn(),
     setUtilityProcessManager: vi.fn(),
+    setWorkspacePresenceHandler: vi.fn(),
   }))
   vi.doMock('../src/utility-process-manager.js', () => ({
     UtilityProcessManager: class {

@@ -173,7 +173,13 @@ describe('applyEventToList', () => {
   it('Restarted resets process fields and updates status/command', () => {
     const withAgent = {
       ...EXISTING_TERMINAL,
-      agentStatus: 'active' as const,
+      agentStatus: {
+        status: 'working' as const,
+        source: 'ps' as const,
+        changedAt: 0,
+        stale: false,
+        seen: true,
+      },
       hasChildProcess: true,
       foregroundProcess: {
         category: 'agent' as const,

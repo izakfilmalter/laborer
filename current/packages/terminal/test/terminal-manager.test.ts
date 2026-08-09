@@ -1238,6 +1238,94 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     assert.isDefined(terminal)
     assert.strictEqual(terminal?.status, 'stopped')
     assert.strictEqual(terminal?.agentStatus, null)
+    assert.strictEqual(terminal?.hasChildProcess, false)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  it('keeps an unseen completion for a naturally exited one-shot agent', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'sleep',
+          args: ['0.05'],
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        yield* tm.setAgentStatusFromHook(terminal.id, {
+          status: 'working',
+          sequence: 1,
+        })
+        return terminal
+      })
+    )
+
+    await delay(500)
+
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminals = yield* tm.listTerminals()
+        return terminals.find(({ id }) => id === result.id)
+      })
+    )
+
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.deepInclude(terminal?.agentStatus, {
+      status: 'idle',
+      seen: false,
+    })
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  it('does not project an explicit terminal kill as agent completion', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        yield* tm.setAgentStatusFromHook(terminal.id, {
+          status: 'working',
+          sequence: 1,
+        })
+        yield* tm.kill(terminal.id)
+        return terminal
+      })
+    )
+
+    await delay(100)
+
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminals = yield* tm.listTerminals()
+        return terminals.find(({ id }) => id === result.id)
+      })
+    )
+
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.agentStatus, null)
 
     await runEffect(
       Effect.gen(function* () {
@@ -1268,7 +1356,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'working',
+          sequence: 1,
+        })
       })
     )
 
@@ -1281,7 +1372,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
     const terminal = terminals.find((t) => t.id === result.id)
     assert.isDefined(terminal)
-    assert.strictEqual(terminal?.agentStatus, 'active')
+    assert.strictEqual(terminal?.agentStatus?.status, 'working')
 
     await runEffect(
       Effect.gen(function* () {
@@ -1291,7 +1382,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
   })
 
-  it('setAgentStatusFromHook("waiting_for_input") makes listTerminals return agentStatus "waiting_for_input"', async () => {
+  it('setAgentStatusFromHook("needs_input") makes listTerminals return agentStatus "needs_input"', async () => {
     const result = await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
@@ -1308,7 +1399,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'needs_input',
+          sequence: 1,
+        })
       })
     )
 
@@ -1321,7 +1415,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
     const terminal = terminals.find((t) => t.id === result.id)
     assert.isDefined(terminal)
-    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+    assert.strictEqual(terminal?.agentStatus?.status, 'needs_input')
 
     await runEffect(
       Effect.gen(function* () {
@@ -1331,7 +1425,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
   })
 
-  it('setAgentStatusFromHook("clear") reverts to ps-based detection', async () => {
+  it('setAgentStatusFromHook rejects an out-of-order report', async () => {
     const result = await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
@@ -1349,8 +1443,14 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'active')
-        yield* tm.setAgentStatusFromHook(result.id, 'clear')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'working',
+          sequence: 1,
+        })
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'idle',
+          sequence: 0,
+        })
       })
     )
 
@@ -1369,7 +1469,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     // clearing agent status to null.
     const terminal = terminals.find((t) => t.id === result.id)
     assert.isDefined(terminal)
-    assert.strictEqual(terminal?.agentStatus, null)
+    assert.strictEqual(terminal?.agentStatus?.status, 'working')
 
     await runEffect(
       Effect.gen(function* () {
@@ -1379,7 +1479,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
   })
 
-  it('hook status takes priority over ps-based detection', async () => {
+  it('rejects hook evidence after ps confirms there is no agent', async () => {
     const result = await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
@@ -1404,11 +1504,15 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     assert.isDefined(beforeTerminal)
     assert.strictEqual(beforeTerminal?.agentStatus, null)
 
-    // Hook override should take priority
+    // A hook callback arriving after successful no-agent detection belongs to
+    // an exited generation and must not revive status.
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'needs_input',
+          sequence: 1,
+        })
       })
     )
 
@@ -1420,7 +1524,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
     const afterTerminal = afterHook.find((t) => t.id === result.id)
     assert.isDefined(afterTerminal)
-    assert.strictEqual(afterTerminal?.agentStatus, 'waiting_for_input')
+    assert.strictEqual(afterTerminal?.agentStatus, null)
 
     await runEffect(
       Effect.gen(function* () {
@@ -1435,7 +1539,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       Effect.gen(function* () {
         const tm = yield* TerminalManager
         return yield* Effect.either(
-          tm.setAgentStatusFromHook('non-existent-terminal-id', 'active')
+          tm.setAgentStatusFromHook('non-existent-terminal-id', {
+            status: 'working',
+            sequence: 1,
+          })
         )
       })
     )
@@ -1461,7 +1568,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'working',
+          sequence: 1,
+        })
         yield* tm.remove(result.id)
       })
     )
@@ -1517,7 +1627,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.setAgentStatusFromHook(result.id, {
+          status: 'working',
+          sequence: 1,
+        })
       })
     )
 
@@ -2078,18 +2191,22 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         )
       }
 
-      // Also check events: after sleep exits, a ProcessChanged with
-      // hasChildProcess=false should eventually appear (from ps detection).
+      // Also check events: process disappearance is represented either by a
+      // final process snapshot or by the explicit terminal stop event when
+      // the shell exits immediately after its child.
       const transitionEvents = collectedEvents.filter(
         (e) =>
           e._tag === 'ProcessChanged' &&
           e.terminal.id === terminalId &&
           e.terminal.hasChildProcess === false
       )
-      assert.isTrue(
-        transitionEvents.length >= 1,
-        `Expected at least 1 ProcessChanged with hasChildProcess=false after sleep exits, got ${transitionEvents.length}`
+      const stoppedEvents = collectedEvents.filter(
+        (event) =>
+          event._tag === 'StatusChanged' &&
+          event.id === terminalId &&
+          event.status === 'stopped'
       )
+      assert.isTrue(transitionEvents.length >= 1 || stoppedEvents.length >= 1)
 
       // Clean up — terminal may already be stopped after sleep/sh exit
       await runLocalEffect(
@@ -2324,7 +2441,10 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           collectedEvents.length = 0
 
           // Set agent status via hook — should emit ProcessChanged immediately
-          yield* tm.setAgentStatusFromHook(terminal.id, 'active')
+          yield* tm.setAgentStatusFromHook(terminal.id, {
+            status: 'working',
+            sequence: 1,
+          })
 
           // Only wait 50ms — way less than a detection tick (200ms).
           // If ProcessChanged arrives, it came from the hook, not the fiber.
@@ -2332,20 +2452,20 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
           yield* Fiber.interrupt(collectFiber)
 
-          // Verify a ProcessChanged event was emitted with agentStatus 'active'
+          // A detection event can already be queued when the array is reset,
+          // so identify the hook result by its payload rather than assuming
+          // the first event observed in this window came from the hook.
           const hookEvents = collectedEvents.filter(
-            (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminal.id
+            (event) =>
+              event._tag === 'ProcessChanged' &&
+              event.terminal.id === terminal.id &&
+              event.terminal.agentStatus?.status === 'working'
           )
 
           assert.isTrue(
             hookEvents.length >= 1,
             `Expected at least 1 ProcessChanged from hook, got ${hookEvents.length}`
           )
-
-          const hookEvent = hookEvents[0]
-          if (hookEvent?._tag === 'ProcessChanged') {
-            assert.strictEqual(hookEvent.terminal.agentStatus, 'active')
-          }
 
           // Clean up
           yield* tm.kill(terminal.id)

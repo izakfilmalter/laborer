@@ -28,28 +28,30 @@
  * @see Issue #20: Build script update + port reservation removal
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { NodeSocket } from '@effect/platform-node'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
-import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
+import { AgentStatusSchema, RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
   Context,
+  Data,
   Effect,
   Layer,
   Option,
   pipe,
   Ref,
+  Schema,
   Scope,
   Stream,
 } from 'effect'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
+import { writeClaudeStatusHooks } from './claude-status-hooks.js'
 import { LaborerStore } from './laborer-store.js'
+import { installOpenCodeStatusPlugin } from './opencode-status-plugin.js'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -113,12 +115,59 @@ export { TerminalRpcPort }
 /**
  * Read the full request body as a string.
  */
+const MAX_AGENT_HOOK_BODY_BYTES = 8 * 1024
+
+class AgentHookBodyTooLarge extends Error {}
+
+class OpenCodePluginInstallError extends Data.TaggedError(
+  'OpenCodePluginInstallError'
+)<{ readonly cause: unknown }> {}
+
+const AgentHookRequestSchema = Schema.parseJson(
+  Schema.Struct({
+    terminalId: Schema.String,
+    status: AgentStatusSchema,
+    sequence: Schema.optional(
+      Schema.Number.pipe(
+        Schema.int(),
+        Schema.greaterThanOrEqualTo(0),
+        Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
+      )
+    ),
+  })
+)
+
 const readBody = (req: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
-    req.on('error', reject)
+    let bodyBytes = 0
+    let settled = false
+
+    req.on('data', (chunk: Buffer) => {
+      if (settled) {
+        return
+      }
+      bodyBytes += chunk.byteLength
+      if (bodyBytes > MAX_AGENT_HOOK_BODY_BYTES) {
+        settled = true
+        chunks.length = 0
+        reject(new AgentHookBodyTooLarge())
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (!settled) {
+        settled = true
+        resolve(Buffer.concat(chunks).toString())
+      }
+    })
+    req.on('error', (error) => {
+      if (!settled) {
+        settled = true
+        reject(error)
+      }
+    })
   })
 
 /**
@@ -137,6 +186,7 @@ const startAgentHookServer = (
   scope: Scope.Scope
 ): Effect.Effect<number> =>
   Effect.async<number>((resume) => {
+    const reportSequences = new Map<string, number>()
     const server: Server = createServer((req, res) => {
       if (req.method !== 'POST' || req.url !== '/hook/agent-status') {
         res.writeHead(404)
@@ -146,25 +196,36 @@ const startAgentHookServer = (
 
       readBody(req)
         .then((body) => {
-          const parsed = JSON.parse(body) as {
-            terminalId?: string
-            event?: string
-          }
-          const { terminalId, event } = parsed
-
-          if (
-            typeof terminalId !== 'string' ||
-            (event !== 'active' &&
-              event !== 'waiting_for_input' &&
-              event !== 'clear')
-          ) {
+          const {
+            sequence: reportedSequence,
+            terminalId,
+            status,
+          } = Schema.decodeUnknownSync(AgentHookRequestSchema)(body)
+          if (terminalId.length === 0 || terminalId.length > 1000) {
             res.writeHead(400)
             res.end()
             return
           }
 
+          // Epoch-based sequences stay newer when this proxy restarts while
+          // the terminal service and agent process remain alive.
+          const sequence =
+            reportedSequence ??
+            Math.max(
+              Date.now() * 1000,
+              (reportSequences.get(terminalId) ?? -1) + 1
+            )
+          if (sequence <= (reportSequences.get(terminalId) ?? -1)) {
+            res.writeHead(202)
+            res.end()
+            return
+          }
+          reportSequences.set(terminalId, sequence)
           Effect.runPromise(
-            rpcClient.terminal.setAgentStatus({ id: terminalId, event })
+            rpcClient.terminal.setAgentStatus({
+              id: terminalId,
+              report: { status, sequence },
+            })
           )
             .then(() => {
               res.writeHead(200)
@@ -175,8 +236,8 @@ const startAgentHookServer = (
               res.end()
             })
         })
-        .catch(() => {
-          res.writeHead(400)
+        .catch((error: unknown) => {
+          res.writeHead(error instanceof AgentHookBodyTooLarge ? 413 : 400)
           res.end()
         })
     })
@@ -245,6 +306,27 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
       const workspaceProvider = yield* WorkspaceProvider
+
+      if (process.env.NODE_ENV !== 'test') {
+        yield* Effect.try({
+          try: installOpenCodeStatusPlugin,
+          catch: (cause) => new OpenCodePluginInstallError({ cause }),
+        }).pipe(
+          Effect.tap((pluginPath) =>
+            pluginPath === null
+              ? Effect.void
+              : Effect.logInfo(
+                  `Installed OpenCode status plugin at ${pluginPath}`
+                )
+          ),
+          Effect.catchTag('OpenCodePluginInstallError', ({ cause }) =>
+            Effect.logWarning(
+              `Could not install OpenCode status plugin: ${String(cause)}`
+            )
+          ),
+          Effect.annotateLogs('module', logPrefix)
+        )
+      }
 
       // Capture the layer's scope so lazy connection can use it later.
       // The scope lives for the lifetime of this service layer.
@@ -398,84 +480,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const PROMPTABLE_AGENTS = new Set(['opencode', 'opencode2'])
 
       /**
-       * Build the Claude Code `--settings` JSON for agent hook injection.
-       * The hooks fire `curl` to the terminal service's hook endpoint
-       * on lifecycle transitions (SessionStart, Stop, Notification).
-       *
-       * @see .reference/cmux/Resources/bin/claude — cmux's approach
-       */
-      /**
-       * Build the Claude Code hooks settings JSON object.
-       *
-       * The hook commands use curl to POST to the terminal service.
-       * Commands read LABORER_TERMINAL_ID and LABORER_HOOK_URL from the
-       * environment (set on the PTY process), avoiding the need to embed
-       * the terminal ID and URL in the JSON itself.
-       *
-       * @see .reference/cmux/Resources/bin/claude — cmux's approach
-       */
-      const buildClaudeHooksSettings = (): Record<string, unknown> => ({
-        hooks: {
-          SessionStart: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"active\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-          Stop: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-          Notification: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-        },
-      })
-
-      /**
-       * Write a Claude Code settings file with hooks and return the
-       * path. The file is written to a temp location so it persists
-       * for the lifetime of the terminal session.
-       */
-      const writeClaudeSettings = (terminalId: string): string => {
-        const settingsDir = join(tmpdir(), 'laborer-agent-hooks')
-        mkdirSync(settingsDir, { recursive: true })
-        const settingsPath = join(settingsDir, `${terminalId}.json`)
-        writeFileSync(
-          settingsPath,
-          JSON.stringify(buildClaudeHooksSettings()),
-          'utf-8'
-        )
-        return settingsPath
-      }
-
-      /**
        * Build the shell command string for spawning an agent with hooks.
        * Returns the modified command and any extra env vars needed.
        */
@@ -492,7 +496,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         }
 
         if (agentCommand === 'claude') {
-          const settingsPath = writeClaudeSettings(terminalId)
+          const settingsPath = writeClaudeStatusHooks(terminalId)
           return {
             command: `claude --settings ${settingsPath}`,
             extraEnv,
@@ -532,8 +536,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        *
        * When the command is a known agent CLI (claude, opencode2), hook
        * settings are injected so the agent reports its lifecycle state
-       * back to the terminal service. This enables accurate "needs input"
-       * detection for agents that stay running as interactive CLIs.
+       * back to the terminal service. This preserves working, needs-input,
+       * and completion transitions for persistent interactive CLIs.
        */
       const spawnHostTerminal = Effect.fn('TerminalClient.spawnHostTerminal')(
         function* (

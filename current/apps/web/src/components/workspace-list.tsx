@@ -44,6 +44,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CopyButton } from '@/components/copy-button'
 import {
   CreateWorkspaceForm,
@@ -101,6 +102,11 @@ import {
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
+import {
+  getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
+} from '@/lib/agent-status-presentation'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
@@ -639,21 +645,33 @@ function WorkspaceItem({
   projectName,
   showCreateSubWorkspaceAction = true,
 }: WorkspaceItemProps) {
-  const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
-    'active' | 'waiting_for_input' | null
-  >(null)
+  const [workspaceAgentStatus, setWorkspaceAgentStatus] =
+    useState<AgentDisplayStatus | null>(null)
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
 
-  const needsAttention = workspaceAgentStatus === 'waiting_for_input'
+  const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
+  // One card, one coloured edge. When an agent wants the operator the edge
+  // is its own; otherwise the active workspace keeps its primary edge.
+  // Emitting both leaves the winner to stylesheet ordering rather than to
+  // intent.
+  const hasAgentAccent = agentSurface.cardClassName !== ''
+  // Attention and in-flight work surface at card level; acknowledged idle and
+  // unknown stay in the terminal rows that own them. The frame header answers
+  // this with the same predicate, so a card and its header never disagree.
+  const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
 
   return (
     <Card
       className={cn(
-        isActiveWorkspace && 'border-primary',
-        needsAttention &&
-          'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
+        isActiveWorkspace && !hasAgentAccent && 'border-primary',
+        // Steady edges rather than a pulsing card: the whole card animating
+        // made its text hard to read, so the motion now lives only in the
+        // status badge's dot. A blocked agent glows, an unseen result does
+        // not — the sidebar's loudest card should be the one to act on.
+        agentSurface.cardClassName
       )}
+      data-agent-status={workspaceAgentStatus ?? undefined}
       data-testid={`workspace-card-${workspace.branchName}`}
       size="sm"
     >
@@ -676,6 +694,12 @@ function WorkspaceItem({
             </CardTitle>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {showsAgentStatus ? (
+              <AggregateAgentStatusBadge
+                className="shrink-0"
+                status={workspaceAgentStatus}
+              />
+            ) : null}
             <GitHubPrStatusBadge
               prNumber={workspace.prNumber}
               prState={workspace.prState}

@@ -1,5 +1,4 @@
 import type {
-  AgentNotificationPayload,
   BeforeQuitPayload,
   ContextMenuItem,
   DesktopUpdateActionResult,
@@ -10,7 +9,6 @@ import type {
 import {
   BrowserWindow,
   dialog,
-  Notification as ElectronNotification,
   type IpcMainEvent,
   ipcMain,
   Menu,
@@ -20,6 +18,7 @@ import {
   shell,
 } from 'electron'
 import type { UtilityProcessManager } from './utility-process-manager.js'
+import { WindowWorkspacePresenceRegistry } from './window-workspace-presence.js'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match preload.ts)
@@ -33,8 +32,6 @@ export const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 export const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
-export const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
-export const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
 export const REPORT_VISIBLE_WORKSPACES_CHANNEL =
   'desktop:report-visible-workspaces'
 export const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL =
@@ -127,46 +124,10 @@ async function showConfirmDialog(
  * Updated by the renderer via the `reportVisibleWorkspaces` IPC channel.
  * Used by the notification click handler to route clicks to the correct window.
  */
-class WorkspaceWindowRegistry {
-  /** Map from BrowserWindow to the set of workspace IDs visible in it. */
-  readonly #windowWorkspaces = new Map<BrowserWindow, Set<string>>()
-
-  /** Update the visible workspace set for a window. */
-  update(window: BrowserWindow, workspaceIds: readonly string[]): void {
-    if (window.isDestroyed()) {
-      this.#windowWorkspaces.delete(window)
-      return
-    }
-    this.#windowWorkspaces.set(window, new Set(workspaceIds))
-  }
-
-  /** Remove a window's entry (e.g., when it closes). */
-  remove(window: BrowserWindow): void {
-    this.#windowWorkspaces.delete(window)
-  }
-
-  /**
-   * Find the BrowserWindow that has the given workspace visible.
-   * Returns null if no window currently shows that workspace.
-   */
-  findWindowForWorkspace(workspaceId: string): BrowserWindow | null {
-    for (const [window, workspaces] of this.#windowWorkspaces) {
-      if (window.isDestroyed()) {
-        this.#windowWorkspaces.delete(window)
-        continue
-      }
-      if (workspaces.has(workspaceId)) {
-        return window
-      }
-    }
-    return null
-  }
-}
-
-const workspaceRegistry = new WorkspaceWindowRegistry()
+const workspaceRegistry = new WindowWorkspacePresenceRegistry<BrowserWindow>()
 
 /** Access the workspace-to-window registry for external wiring (e.g., cleanup). */
-export function getWorkspaceWindowRegistry(): WorkspaceWindowRegistry {
+export function getWorkspaceWindowRegistry(): WindowWorkspacePresenceRegistry<BrowserWindow> {
   return workspaceRegistry
 }
 
@@ -265,6 +226,7 @@ type GetUpdateStateCallback = () => DesktopUpdateState
 type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type GetBackendWsUrlCallback = () => string | null
+type WorkspacePresenceCallback = (workspaceIds: readonly string[]) => void
 
 let trayCountCallback: TrayCountCallback | null = null
 let restartSidecarCallback: RestartSidecarCallback | null = null
@@ -274,6 +236,23 @@ let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
 let getBackendWsUrlCallback: GetBackendWsUrlCallback | null = null
 let utilityProcessManagerRef: UtilityProcessManager | null = null
+let workspacePresenceCallback: WorkspacePresenceCallback | null = null
+
+export function publishWorkspacePresence(): void {
+  workspacePresenceCallback?.(workspaceRegistry.focusedWorkspaceIds())
+}
+
+export function setWorkspacePresenceHandler(
+  cb: WorkspacePresenceCallback | null
+): void {
+  workspacePresenceCallback = cb
+  publishWorkspacePresence()
+}
+
+export function removeWindowPresence(window: BrowserWindow): void {
+  workspaceRegistry.remove(window)
+  publishWorkspacePresence()
+}
 
 /** Set the callback invoked when the renderer updates the tray workspace count. */
 export function setTrayCountHandler(cb: TrayCountCallback): void {
@@ -608,13 +587,49 @@ export function registerIpcHandlers(
   ipcMain.removeHandler(REPORT_VISIBLE_WORKSPACES_CHANNEL)
   ipcMain.handle(
     REPORT_VISIBLE_WORKSPACES_CHANNEL,
-    (event, workspaceIds: unknown) => {
+    (event, payload: unknown) => {
+      let workspaceIds: unknown = null
+      if (Array.isArray(payload)) {
+        workspaceIds = payload
+      } else if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        'workspaceIds' in payload
+      ) {
+        workspaceIds = payload.workspaceIds
+      }
+      const contexts =
+        typeof payload === 'object' &&
+        payload !== null &&
+        'contexts' in payload &&
+        Array.isArray(payload.contexts)
+          ? payload.contexts
+              .filter(
+                (
+                  context
+                ): context is {
+                  branchName: string
+                  workspaceId: string
+                } =>
+                  typeof context === 'object' &&
+                  context !== null &&
+                  'branchName' in context &&
+                  typeof context.branchName === 'string' &&
+                  context.branchName.length <= 1000 &&
+                  'workspaceId' in context &&
+                  typeof context.workspaceId === 'string' &&
+                  context.workspaceId.length > 0 &&
+                  context.workspaceId.length <= 1000
+              )
+              .slice(0, 1000)
+          : []
       if (!Array.isArray(workspaceIds)) {
         return
       }
 
       const validIds = workspaceIds.filter(
-        (id): id is string => typeof id === 'string' && id.length > 0
+        (id): id is string =>
+          typeof id === 'string' && id.length > 0 && id.length <= 1000
       )
 
       const senderWindow = BrowserWindow.fromWebContents(event.sender)
@@ -622,57 +637,16 @@ export function registerIpcHandlers(
         return
       }
 
-      workspaceRegistry.update(senderWindow, validIds)
+      workspaceRegistry.update(senderWindow, {
+        contexts,
+        // Window focus is a main-process fact. Do not let a renderer-supplied
+        // boolean bypass app-wide notification suppression.
+        focused: senderWindow.isFocused(),
+        workspaceIds: validIds.slice(0, 1000),
+      })
+      publishWorkspacePresence()
     }
   )
-
-  // -- Agent notification ---------------------------------------------------
-  ipcMain.removeHandler(SEND_NOTIFICATION_CHANNEL)
-  ipcMain.handle(SEND_NOTIFICATION_CHANNEL, (_event, payload: unknown) => {
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      !('title' in payload) ||
-      !('body' in payload) ||
-      !('workspaceId' in payload)
-    ) {
-      return
-    }
-
-    const { title, body, workspaceId } = payload as AgentNotificationPayload
-
-    if (
-      typeof title !== 'string' ||
-      typeof body !== 'string' ||
-      typeof workspaceId !== 'string'
-    ) {
-      return
-    }
-
-    if (!ElectronNotification.isSupported()) {
-      return
-    }
-
-    const notification = new ElectronNotification({ title, body })
-
-    notification.on('click', () => {
-      // Prefer the window that already has this workspace visible.
-      // Fall back to the general fallback window if no match is found.
-      const targetWindow =
-        workspaceRegistry.findWindowForWorkspace(workspaceId) ??
-        getFallbackWindow()
-      if (!targetWindow) {
-        return
-      }
-
-      // Focus the selected window and tell the renderer which workspace was clicked.
-      targetWindow.show()
-      targetWindow.focus()
-      targetWindow.webContents.send(NOTIFICATION_CLICKED_CHANNEL, workspaceId)
-    })
-
-    notification.show()
-  })
 
   // -- Focus window for workspace ------------------------------------------
   ipcMain.removeHandler(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)

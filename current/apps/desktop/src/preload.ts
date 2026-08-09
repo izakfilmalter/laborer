@@ -17,8 +17,6 @@ const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
 const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
-const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
-const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
 const REPORT_VISIBLE_WORKSPACES_CHANNEL = 'desktop:report-visible-workspaces'
 const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL = 'desktop:focus-window-for-workspace'
 const ACTIVATE_WORKSPACE_CHANNEL = 'desktop:activate-workspace'
@@ -130,12 +128,28 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   onActivateWorkspace: (listener) => {
     const wrappedListener = (
       _event: Electron.IpcRendererEvent,
-      workspaceId: unknown
+      payload: unknown
     ) => {
-      if (typeof workspaceId !== 'string') {
+      if (typeof payload === 'string') {
+        listener({ workspaceId: payload })
         return
       }
-      listener(workspaceId)
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        !('workspaceId' in payload) ||
+        typeof payload.workspaceId !== 'string'
+      ) {
+        return
+      }
+      const terminalId =
+        'terminalId' in payload && typeof payload.terminalId === 'string'
+          ? payload.terminalId
+          : undefined
+      listener({
+        ...(terminalId === undefined ? {} : { terminalId }),
+        workspaceId: payload.workspaceId,
+      })
     }
 
     ipcRenderer.on(ACTIVATE_WORKSPACE_CHANNEL, wrappedListener)
@@ -166,28 +180,12 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   restartSidecar: (name) => ipcRenderer.invoke(RESTART_SIDECAR_CHANNEL, name),
 
-  reportVisibleWorkspaces: (workspaceIds) =>
-    ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, workspaceIds),
-
-  sendNotification: (payload) =>
-    ipcRenderer.invoke(SEND_NOTIFICATION_CHANNEL, payload),
-
-  onNotificationClicked: (listener) => {
-    const wrappedListener = (
-      _event: Electron.IpcRendererEvent,
-      workspaceId: unknown
-    ) => {
-      if (typeof workspaceId !== 'string') {
-        return
-      }
-      listener(workspaceId)
-    }
-
-    ipcRenderer.on(NOTIFICATION_CLICKED_CHANNEL, wrappedListener)
-    return () => {
-      ipcRenderer.removeListener(NOTIFICATION_CLICKED_CHANNEL, wrappedListener)
-    }
-  },
+  reportVisibleWorkspaces: (workspaceIds, focused = false, contexts = []) =>
+    ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, {
+      contexts,
+      focused,
+      workspaceIds,
+    }),
 
   onSidecarStatus: (listener) => {
     const wrappedListener = (

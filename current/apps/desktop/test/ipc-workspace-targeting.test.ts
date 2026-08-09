@@ -8,6 +8,7 @@ interface MockWindow {
   readonly focus: ReturnType<typeof vi.fn>
   readonly id: number
   isDestroyed: () => boolean
+  readonly isFocused: ReturnType<typeof vi.fn>
   readonly show: ReturnType<typeof vi.fn>
   readonly webContents: { send: ReturnType<typeof vi.fn> }
 }
@@ -19,6 +20,7 @@ function createMockWindow(id: number): MockWindow {
     show: vi.fn(),
     focus: vi.fn(),
     isDestroyed: () => false,
+    isFocused: vi.fn(() => false),
   }
 }
 
@@ -87,58 +89,6 @@ describe('workspace-to-window targeting', () => {
     vi.restoreAllMocks()
   })
 
-  it('routes notification click to the window that reported the target workspace', async () => {
-    const {
-      getWorkspaceWindowRegistry,
-      registerIpcHandlers,
-      REPORT_VISIBLE_WORKSPACES_CHANNEL,
-      SEND_NOTIFICATION_CHANNEL,
-      NOTIFICATION_CLICKED_CHANNEL: _NOTIFICATION_CLICKED_CHANNEL,
-    } = await import('../src/ipc.js')
-
-    const windowA = createMockWindow(1)
-    const windowB = createMockWindow(2)
-    const fallbackWindow = createMockWindow(3)
-
-    registerIpcHandlers(
-      () =>
-        fallbackWindow as unknown as Parameters<
-          typeof registerIpcHandlers
-        >[0] extends () => infer R
-          ? R
-          : never
-    )
-
-    // Simulate window B reporting it has workspace-42 visible
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
-    expect(reportHandler).toBeDefined()
-
-    fromWebContentsMock.mockReturnValue(windowB)
-    reportHandler?.({ sender: windowB.webContents }, [
-      'workspace-42',
-      'workspace-99',
-    ])
-
-    // Now simulate sending a notification for workspace-42
-    const sendHandler = ipcHandlers.get(SEND_NOTIFICATION_CHANNEL)
-    expect(sendHandler).toBeDefined()
-
-    sendHandler?.(
-      { sender: windowA.webContents },
-      { title: 'Test', body: 'Agent done', workspaceId: 'workspace-42' }
-    )
-
-    // The actual notification was created inside sendHandler — we need to
-    // test through the registry directly instead
-    const registry = getWorkspaceWindowRegistry()
-    const found = registry.findWindowForWorkspace('workspace-42')
-    expect(found).toBe(windowB)
-
-    // Verify that an unregistered workspace falls back to null
-    const notFound = registry.findWindowForWorkspace('workspace-unknown')
-    expect(notFound).toBeNull()
-  })
-
   it('updates workspace list when the same window reports different workspaces', async () => {
     const {
       getWorkspaceWindowRegistry,
@@ -176,6 +126,33 @@ describe('workspace-to-window targeting', () => {
     expect(registry.findWindowForWorkspace('workspace-1')).toBeNull()
     expect(registry.findWindowForWorkspace('workspace-2')).toBeNull()
     expect(registry.findWindowForWorkspace('workspace-3')).toBe(window)
+  })
+
+  it('uses main-process focus instead of a renderer-supplied value', async () => {
+    const {
+      getWorkspaceWindowRegistry,
+      registerIpcHandlers,
+      REPORT_VISIBLE_WORKSPACES_CHANNEL,
+    } = await import('../src/ipc.js')
+    const window = createMockWindow(11)
+    window.isFocused.mockReturnValue(true)
+
+    registerIpcHandlers(
+      () =>
+        null as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+    fromWebContentsMock.mockReturnValue(window)
+
+    ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)?.(
+      { sender: window.webContents },
+      { focused: false, workspaceIds: ['workspace-1'] }
+    )
+
+    expect(getWorkspaceWindowRegistry().hasFocusedWindow()).toBe(true)
   })
 
   it('removes workspace entries when a window is destroyed', async () => {

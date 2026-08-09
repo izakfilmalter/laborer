@@ -29,7 +29,10 @@ import {
   utilityProcess,
 } from 'electron'
 
-import type { UtilityProcessBootstrapMessage } from './utility-process-types.js'
+import {
+  isUtilityProcessBootstrapMessage,
+  type UtilityProcessBootstrapMessage,
+} from './utility-process-types.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -361,7 +364,11 @@ export class UtilityProcessManager {
 
     // Listen for messages from the utility process (bootstrap protocol).
     child.on('message', (message: unknown) => {
-      const msg = message as UtilityProcessBootstrapMessage
+      if (!isUtilityProcessBootstrapMessage(message)) {
+        console.warn(`[utility:${name}] Ignoring malformed process message`)
+        return
+      }
+      const msg = message
       if (msg?.type === 'ready') {
         console.info(`[utility:${name}] Service ready`)
         appendLifecycleLog(`[utility:${name}] Service ready`)
@@ -371,9 +378,7 @@ export class UtilityProcessManager {
       }
 
       // Forward all typed messages to the message handler (LifecycleMonitor).
-      if (msg?.type) {
-        this.onMessage?.(name, msg)
-      }
+      this.onMessage?.(name, msg)
     })
 
     // Monitor for exit.

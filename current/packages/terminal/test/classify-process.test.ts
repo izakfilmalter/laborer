@@ -12,7 +12,9 @@ import type { ProcessDetectionResult } from '../src/services/terminal-manager.js
 import {
   buildDetectionFromTitle,
   classifyProcess,
+  detectForShellPid,
   isIdleTitle,
+  parsePsOutput,
 } from '../src/services/terminal-manager.js'
 
 describe('classifyProcess', () => {
@@ -81,6 +83,45 @@ describe('classifyProcess', () => {
   })
 })
 
+describe('process-tree walking', () => {
+  it('finds an agent in any child branch', () => {
+    const { childrenByPid, commByPid } = parsePsOutput(`
+      1 0 zsh
+      2 1 node
+      3 1 vite
+      4 2 claude
+      5 3 esbuild
+    `)
+
+    const result = detectForShellPid(1, childrenByPid, commByPid)
+
+    expect(result.agentProcessIds).toEqual([4])
+    expect(result.processChain.map(({ rawName }) => rawName)).toEqual([
+      'node',
+      'vite',
+      'claude',
+      'esbuild',
+    ])
+  })
+
+  it('checks every shallow branch before spending the process bound deeply', () => {
+    const wideBranch = Array.from(
+      { length: 300 },
+      (_, index) => `${index + 10} 2 worker-${index}`
+    ).join('\n')
+    const { childrenByPid, commByPid } = parsePsOutput(`
+      1 0 zsh
+      2 1 node
+      3 1 claude
+      ${wideBranch}
+    `)
+
+    const result = detectForShellPid(1, childrenByPid, commByPid)
+
+    expect(result.agentProcessIds).toEqual([3])
+  })
+})
+
 describe('isIdleTitle', () => {
   it('returns true for empty string', () => {
     expect(isIdleTitle('')).toBe(true)
@@ -113,6 +154,7 @@ describe('isIdleTitle', () => {
 
 describe('buildDetectionFromTitle', () => {
   const snapshotWithChild: ProcessDetectionResult = {
+    agentProcessIds: [],
     foregroundProcess: {
       category: 'unknown',
       label: 'sleep',
@@ -123,6 +165,7 @@ describe('buildDetectionFromTitle', () => {
   }
 
   const snapshotIdle: ProcessDetectionResult = {
+    agentProcessIds: [],
     foregroundProcess: null,
     hasChildProcess: false,
     processChain: [],

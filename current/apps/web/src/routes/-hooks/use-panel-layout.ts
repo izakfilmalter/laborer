@@ -747,17 +747,18 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
   // Report visible workspaces to the desktop main process.
   // -------------------------------------------------------------------
-  // When the layout changes, extract the set of unique workspace IDs
-  // from all workspace tile leaves and send them to the Electron main
-  // process. The main process uses this to route notification clicks and
-  // other workspace-targeting actions to the correct window.
+  // Report only renderer facts. Electron main owns the shared presence
+  // registry and the terminal service owns Seen policy.
   useEffect(() => {
     const bridge = getDesktopBridge()
     if (!(bridge && persistedWindowLayout)) {
       return
     }
 
-    const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
+    const activeTab = getActiveWindowTab(persistedWindowLayout)
+    const allLeaves = activeTab?.workspaceLayout
+      ? getWorkspaceTileLeaves(activeTab.workspaceLayout)
+      : []
     const workspaceIds = [
       ...new Set(
         allLeaves
@@ -766,10 +767,33 @@ export function usePanelLayout() {
       ),
     ]
 
-    bridge.reportVisibleWorkspaces(workspaceIds).catch(() => {
-      // Silently ignore — reporting is best-effort
-    })
-  }, [persistedWindowLayout])
+    const report = () => {
+      const focused =
+        document.visibilityState === 'visible' && document.hasFocus()
+      bridge
+        .reportVisibleWorkspaces(
+          workspaceIds,
+          focused,
+          workspaceList.map((workspace) => ({
+            branchName: workspace.branchName,
+            workspaceId: workspace.id,
+          }))
+        )
+        .catch(() => {
+          // Silently ignore — reporting is best-effort
+        })
+    }
+
+    report()
+    window.addEventListener('focus', report)
+    window.addEventListener('blur', report)
+    document.addEventListener('visibilitychange', report)
+    return () => {
+      window.removeEventListener('focus', report)
+      window.removeEventListener('blur', report)
+      document.removeEventListener('visibilitychange', report)
+    }
+  }, [persistedWindowLayout, workspaceList])
 
   /**
    * Ref to hold the latest `handleAssignTerminalToPane` callback.

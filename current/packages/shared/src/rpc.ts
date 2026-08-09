@@ -906,16 +906,40 @@ export const ForegroundProcessSchema = Schema.Struct({
 
 export type ForegroundProcess = typeof ForegroundProcessSchema.Type
 
-/**
- * Agent status for a terminal, derived from foreground process transitions.
- *
- * - `active` — an AI agent is currently the foreground process
- * - `waiting_for_input` — an agent was running but is now idle
- *   (needs user input or has completed its task)
- */
-export const AgentStatusSchema = Schema.Literal('active', 'waiting_for_input')
+/** Semantic lifecycle state reported for an agent in a terminal. */
+export const AgentStatusSchema = Schema.Literal(
+  'working',
+  'needs_input',
+  'idle',
+  'unknown'
+)
 
 export type AgentStatus = typeof AgentStatusSchema.Type
+
+/** Detector that supplied the effective agent status. */
+export const AgentStatusSourceSchema = Schema.Literal('hook', 'ps')
+
+export type AgentStatusSource = typeof AgentStatusSourceSchema.Type
+
+/** Ephemeral status together with provenance and diagnostic age. */
+export const AgentStatusSnapshotSchema = Schema.Struct({
+  status: AgentStatusSchema,
+  source: AgentStatusSourceSchema,
+  changedAt: Schema.Number,
+  stale: Schema.Boolean,
+  /** Whether the operator has viewed this terminal since its last completion. */
+  seen: Schema.Boolean,
+})
+
+export type AgentStatusSnapshot = typeof AgentStatusSnapshotSchema.Type
+
+/** Sequence-guarded lifecycle evidence accepted from an agent hook. */
+export const AgentStatusReportSchema = Schema.Struct({
+  status: AgentStatusSchema,
+  sequence: Schema.NonNegativeInt,
+})
+
+export type AgentStatusReport = typeof AgentStatusReportSchema.Type
 
 /**
  * Information about a single terminal instance, returned by spawn, restart,
@@ -932,7 +956,7 @@ export const TerminalInfo = Schema.Struct({
    * Agent status derived from foreground process transitions.
    * Null when no agent has been detected in this terminal.
    */
-  agentStatus: Schema.NullOr(AgentStatusSchema),
+  agentStatus: Schema.NullOr(AgentStatusSnapshotSchema),
   /**
    * Information about the foreground process running in the terminal.
    * Null when the shell is idle at a prompt or the terminal is stopped.
@@ -1086,15 +1110,14 @@ export class TerminalRpcs extends RpcGroup.make(
    * POSTs to a lightweight HTTP endpoint in the server process,
    * which forwards the event here via RPC.
    *
-   * - `'active'` — agent is processing / busy
-   * - `'waiting_for_input'` — agent finished, needs user input
-   * - `'clear'` — remove hook override, revert to ps-based detection
+   * Reports are rejected when their sequence is not newer than the last
+   * accepted report for the terminal.
    */
   Rpc.make('terminal.setAgentStatus', {
     error: TerminalRpcError,
     payload: {
       id: Schema.String,
-      event: Schema.Literal('active', 'waiting_for_input', 'clear'),
+      report: AgentStatusReportSchema,
     },
   }),
 

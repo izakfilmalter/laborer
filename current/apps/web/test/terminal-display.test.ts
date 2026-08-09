@@ -9,7 +9,41 @@
 import { describe, expect, it } from 'vitest'
 import { getTerminalDisplay } from '../src/components/terminal-list'
 
+const status = (
+  value: 'working' | 'needs_input' | 'idle' | 'unknown',
+  stale = false
+) => ({
+  status: value,
+  source: 'ps' as const,
+  changedAt: 0,
+  stale,
+  seen: true,
+})
+
 describe('getTerminalDisplay', () => {
+  it.each([
+    ['idle', 'idle'],
+    ['unknown', 'unknown'],
+  ] as const)('shows the semantic %s state', (agentState, label) => {
+    const result = getTerminalDisplay('claude', null, true, status(agentState))
+
+    expect(result.badgeLabel).toBe(label)
+    expect(result.badgeTitle).toContain('process inspection')
+  })
+
+  it('dims stale status and explains its provenance', () => {
+    const result = getTerminalDisplay(
+      'claude',
+      null,
+      true,
+      status('working', true)
+    )
+
+    expect(result.badgeClassName).toContain('opacity-70')
+    expect(result.badgeClassName).toContain('border-dashed')
+    expect(result.badgeTitle).toContain('stale')
+  })
+
   it('shows "stopped" badge for a stopped terminal', () => {
     const result = getTerminalDisplay('/bin/zsh', null, false, null)
 
@@ -40,11 +74,11 @@ describe('getTerminalDisplay', () => {
         rawName: 'claude',
       },
       true,
-      'active'
+      status('working')
     )
 
     expect(result.label).toBe('Claude')
-    expect(result.badgeLabel).toBe('agent')
+    expect(result.badgeLabel).toBe('working')
   })
 
   it('shows "agent" badge for an agent without a dedicated icon', () => {
@@ -56,11 +90,11 @@ describe('getTerminalDisplay', () => {
         rawName: 'aider',
       },
       true,
-      'active'
+      status('working')
     )
 
     expect(result.label).toBe('Aider')
-    expect(result.badgeLabel).toBe('agent')
+    expect(result.badgeLabel).toBe('working')
   })
 
   it('shows "editor" badge for an editor process', () => {
@@ -128,29 +162,36 @@ describe('getTerminalDisplay', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Agent status: waiting_for_input
+  // Agent status: needs_input
   // -------------------------------------------------------------------------
 
-  it('shows "needs input" badge when agent status is waiting_for_input', () => {
+  it('shows "needs input" badge when agent status is needs_input', () => {
     const result = getTerminalDisplay(
       '/bin/zsh',
       null,
       true,
-      'waiting_for_input'
+      status('needs_input')
     )
 
     expect(result.badgeLabel).toBe('needs input')
-    expect(result.badgeClassName).toContain('animate-pulse')
+    // Amber is reserved for the one state that asks the operator to act.
+    expect(result.badgeClassName).toContain('amber')
+    expect(result.agentStatus?.status).toBe('needs_input')
   })
 
-  it('uses the agent display label when waiting_for_input with no foreground process', () => {
-    const result = getTerminalDisplay('claude', null, true, 'waiting_for_input')
+  it('uses the agent display label when needs_input with no foreground process', () => {
+    const result = getTerminalDisplay(
+      'claude',
+      null,
+      true,
+      status('needs_input')
+    )
 
     expect(result.label).toBe('Claude')
     expect(result.badgeLabel).toBe('needs input')
   })
 
-  it('does not show needs-input badge for active agents', () => {
+  it('does not show needs-input badge for working agents', () => {
     const result = getTerminalDisplay(
       '/bin/zsh',
       {
@@ -159,11 +200,12 @@ describe('getTerminalDisplay', () => {
         rawName: 'claude',
       },
       true,
-      'active'
+      status('working')
     )
 
-    expect(result.badgeLabel).toBe('agent')
-    expect(result.badgeClassName).not.toContain('animate-pulse')
+    expect(result.badgeLabel).toBe('working')
+    // Working must not borrow the attention colour.
+    expect(result.badgeClassName).not.toContain('amber')
   })
 
   it('does not show needs-input for stopped terminals even with waiting status', () => {
@@ -171,7 +213,7 @@ describe('getTerminalDisplay', () => {
       '/bin/zsh',
       null,
       false,
-      'waiting_for_input'
+      status('needs_input')
     )
 
     expect(result.badgeLabel).toBe('stopped')
@@ -187,12 +229,16 @@ describe('getTerminalDisplay', () => {
       label: 'OpenCode',
       rawName: 'opencode',
     }
-    const result = getTerminalDisplay('/bin/zsh', opencode, true, 'active', [
+    const result = getTerminalDisplay(
+      '/bin/zsh',
       opencode,
-    ])
+      true,
+      status('working'),
+      [opencode]
+    )
 
     expect(result.label).toBe('OpenCode')
-    expect(result.badgeLabel).toBe('agent')
+    expect(result.badgeLabel).toBe('working')
   })
 
   it('shows chain label with separator when agent spawns a subprocess', () => {
@@ -261,7 +307,7 @@ describe('getTerminalDisplay', () => {
     expect(result.badgeLabel).toBe('running')
   })
 
-  it('shows root process label when waiting_for_input with a process chain', () => {
+  it('shows root process label when needs_input with a process chain', () => {
     const opencode = {
       category: 'agent' as const,
       label: 'OpenCode',
@@ -271,7 +317,7 @@ describe('getTerminalDisplay', () => {
       '/bin/zsh',
       null,
       true,
-      'waiting_for_input',
+      status('needs_input'),
       [opencode]
     )
 
@@ -320,12 +366,12 @@ describe('getTerminalDisplay', () => {
     expect(result.badgeLabel).toBe('idle')
   })
 
-  it('shows agent label when waiting_for_input with no process chain', () => {
+  it('shows agent label when needs_input with no process chain', () => {
     const result = getTerminalDisplay(
       'opencode',
       null,
       true,
-      'waiting_for_input'
+      status('needs_input')
     )
 
     expect(result.label).toBe('OpenCode')

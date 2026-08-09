@@ -1,7 +1,11 @@
 import { watch } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
+import {
+  AgentNotificationCoordinator,
+  nativeNotificationScheduler,
+} from './agent-notification-coordinator.js'
 import { resolveDesktopAppName } from './app-name.js'
 import {
   broadcastUpdateStateToWindow,
@@ -19,11 +23,14 @@ import { BackendProcessManager } from './backend-process-manager.js'
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
+  ACTIVATE_WORKSPACE_CHANNEL,
   askRenderersBeforeQuit,
   closeRendererPortsForService,
   getWorkspaceWindowRegistry,
+  publishWorkspacePresence,
   QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
+  removeWindowPresence,
   setDownloadUpdateHandler,
   setGetBackendWsUrlHandler,
   setGetSidecarStatusesHandler,
@@ -32,6 +39,7 @@ import {
   setRestartSidecarHandler,
   setTrayCountHandler,
   setUtilityProcessManager,
+  setWorkspacePresenceHandler,
 } from './ipc.js'
 import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
@@ -206,6 +214,11 @@ let backendProcessManager: BackendProcessManager | null = null
 /** Current server backend WebSocket URL exposed to renderer clients. */
 let backendWsUrl: string | null = null
 
+/** Sole app-wide owner of native agent-attention notification policy. */
+let agentNotificationCoordinator: AgentNotificationCoordinator<
+  ReturnType<typeof setTimeout>
+> | null = null
+
 /** System tray icon manager. */
 const trayManager = new TrayManager()
 
@@ -335,7 +348,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   window.on('closed', () => {
     openWindows.delete(window)
-    getWorkspaceWindowRegistry().remove(window)
+    removeWindowPresence(window)
 
     // Remove the persisted record for windows the user intentionally closed.
     // During app quit, only windows that were previously hidden to tray
@@ -415,12 +428,45 @@ app
     // Create the utility process manager for MessagePort-based services.
     // All services run as utility processes in both dev and production.
     utilityProcessManager = new UtilityProcessManager()
+    const workspaceRegistry = getWorkspaceWindowRegistry()
+    agentNotificationCoordinator = new AgentNotificationCoordinator({
+      contextForWorkspace: (workspaceId) =>
+        workspaceRegistry.branchNameForWorkspace(workspaceId) ?? 'Workspace',
+      hasFocusedWindow: () => workspaceRegistry.hasFocusedWindow(),
+      route: (intent) => {
+        workspaceRegistry.routeToOrOpenWorkspace(
+          intent.workspaceId,
+          getMainWindow,
+          (targetWindow) => {
+            targetWindow.show()
+            targetWindow.focus()
+            targetWindow.webContents.send(ACTIVATE_WORKSPACE_CHANNEL, intent)
+          }
+        )
+      },
+      scheduler: nativeNotificationScheduler,
+      show: ({ body, onClick, title }) => {
+        if (!Notification.isSupported()) {
+          return
+        }
+        const notification = new Notification({ body, title })
+        notification.on('click', onClick)
+        notification.show()
+      },
+    })
 
     // Create the lifecycle monitor for utility process health monitoring.
     // Uses native process events and heartbeat messages instead of HTTP
     // health polling.
     lifecycleMonitor = new LifecycleMonitor(utilityProcessManager, {
-      onProcessExit: closeRendererPortsForService,
+      onProcessExit: (name) => {
+        closeRendererPortsForService(name)
+        if (name === 'terminal') {
+          // A dead status source cannot satisfy delivery-time revalidation.
+          // The restored service will hydrate fresh history after restart.
+          agentNotificationCoordinator?.dispose()
+        }
+      },
     })
 
     // Wire bootstrap messages (ready, heartbeat) from utility processes
@@ -428,14 +474,27 @@ app
     utilityProcessManager.setMessageHandler((name, message) => {
       if (message.type === 'ready') {
         lifecycleMonitor?.handleReady(name)
+        if (name === 'terminal') {
+          publishWorkspacePresence()
+        }
       } else if (message.type === 'heartbeat') {
         lifecycleMonitor?.handleHeartbeat(name)
+      } else if (
+        name === 'terminal' &&
+        message.type === 'terminal-agent-status'
+      ) {
+        agentNotificationCoordinator?.observe(message)
       }
     })
 
     // Share the utility process manager with the IPC module so the
     // renderer can acquire direct MessagePort connections to services.
     setUtilityProcessManager(utilityProcessManager)
+    setWorkspacePresenceHandler((workspaceIds) => {
+      utilityProcessManager
+        ?.getProcess('terminal')
+        ?.postMessage({ type: 'workspace-presence', workspaceIds })
+    })
 
     await startServerBackend()
 
@@ -711,6 +770,8 @@ ipcMain.on(QUIT_CONFIRMED_CHANNEL, () => {
 // We preventDefault() and re-quit after cleanup completes.
 app.once('will-quit', (event) => {
   event.preventDefault()
+  agentNotificationCoordinator?.dispose()
+  agentNotificationCoordinator = null
 
   shutdownUtilityProcesses()
     .then(() => {

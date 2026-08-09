@@ -38,6 +38,61 @@ export type UtilityProcessBootstrapMessage =
   | UtilityProcessReadyMessage
   | UtilityProcessErrorMessage
   | UtilityProcessHeartbeatMessage
+  | TerminalAgentStatusMessage
+
+/** Ephemeral per-terminal agent fact forwarded to the main coordinator. */
+export interface TerminalAgentStatusMessage {
+  readonly agentId: string
+  readonly agentName: string
+  readonly status: import('@laborer/shared/rpc').AgentStatus | null
+  readonly terminalId: string
+  readonly type: 'terminal-agent-status'
+  readonly workspaceId: string
+}
+
+const AGENT_STATUSES = new Set(['working', 'needs_input', 'idle', 'unknown'])
+
+/** Decode the child-process boundary before notification facts reach policy. */
+export function isUtilityProcessBootstrapMessage(
+  value: unknown
+): value is UtilityProcessBootstrapMessage {
+  if (typeof value !== 'object' || value === null || !('type' in value)) {
+    return false
+  }
+  if (value.type === 'ready' || value.type === 'heartbeat') {
+    return true
+  }
+  if (value.type === 'error') {
+    return (
+      'message' in value &&
+      typeof value.message === 'string' &&
+      value.message.length <= 10_000
+    )
+  }
+  if (value.type !== 'terminal-agent-status') {
+    return false
+  }
+  return (
+    'agentId' in value &&
+    typeof value.agentId === 'string' &&
+    value.agentId.length > 0 &&
+    value.agentId.length <= 1000 &&
+    'agentName' in value &&
+    typeof value.agentName === 'string' &&
+    value.agentName.length > 0 &&
+    value.agentName.length <= 200 &&
+    'status' in value &&
+    (value.status === null ||
+      (typeof value.status === 'string' && AGENT_STATUSES.has(value.status))) &&
+    'terminalId' in value &&
+    typeof value.terminalId === 'string' &&
+    value.terminalId.length > 0 &&
+    value.terminalId.length <= 1000 &&
+    'workspaceId' in value &&
+    typeof value.workspaceId === 'string' &&
+    value.workspaceId.length <= 1000
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Port transfer messages (parent -> utility process)
@@ -110,6 +165,12 @@ export interface FileWatcherRpcPortMessage {
   readonly type: 'file-watcher-rpc-port'
 }
 
+/** Focused-and-visible workspace facts owned by Electron main. */
+export interface WorkspacePresenceMessage {
+  readonly type: 'workspace-presence'
+  readonly workspaceIds: readonly string[]
+}
+
 /** All messages the main process can send to a utility process. */
 export type UtilityProcessParentMessage =
   | PortTransferMessage
@@ -117,3 +178,4 @@ export type UtilityProcessParentMessage =
   | SyncPortMessage
   | TerminalRpcPortMessage
   | FileWatcherRpcPortMessage
+  | WorkspacePresenceMessage

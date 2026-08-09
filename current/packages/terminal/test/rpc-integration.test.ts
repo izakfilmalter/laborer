@@ -598,7 +598,12 @@ describe(
         readonly _tag: string
         readonly terminal?: {
           readonly id: string
-          readonly agentStatus: string | null
+          readonly agentStatus: {
+            readonly status: 'working' | 'needs_input' | 'idle' | 'unknown'
+            readonly source: 'hook' | 'ps'
+            readonly changedAt: number
+            readonly stale: boolean
+          } | null
           readonly hasChildProcess: boolean
           readonly foregroundProcess: unknown
           readonly processChain: readonly unknown[]

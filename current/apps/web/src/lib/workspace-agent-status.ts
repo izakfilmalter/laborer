@@ -9,34 +9,28 @@
  * @see apps/web/src/components/workspace-frame-header.tsx — panel header
  */
 
-import type { AgentStatus } from '@/hooks/use-terminal-list'
+import type { AgentStatusSnapshot } from '@/hooks/use-terminal-list'
+import {
+  type AgentDisplayStatus,
+  rollupWorkspaceAgentStatus,
+} from '@/lib/agent-attention-projection'
 
 /**
  * Derive the aggregate agent status for a workspace from its terminals.
  *
- * Priority: `waiting_for_input` > `active` > `null`
+ * Priority: `needs_input` > `done` > `working` > `idle` > `unknown` > `null`
  *
- * - Returns `'waiting_for_input'` if any terminal's agent needs input
- * - Returns `'active'` if any terminal has an active agent but none waiting
+ * - Returns `'needs_input'` if any terminal's agent needs input
+ * - Returns `'done'` for an unseen completion unless another agent needs input
+ * - Returns `'working'` if any terminal has a working agent but none need attention
  * - Returns `null` if no agents are detected
  */
 function deriveWorkspaceAgentStatus(
   terminals: ReadonlyArray<{
-    readonly agentStatus: AgentStatus | null
+    readonly agentStatus: AgentStatusSnapshot | null
   }>
-): AgentStatus | null {
-  let hasActive = false
-
-  for (const terminal of terminals) {
-    if (terminal.agentStatus === 'waiting_for_input') {
-      return 'waiting_for_input'
-    }
-    if (terminal.agentStatus === 'active') {
-      hasActive = true
-    }
-  }
-
-  return hasActive ? 'active' : null
+): AgentDisplayStatus | null {
+  return rollupWorkspaceAgentStatus(terminals)
 }
 
 export { deriveWorkspaceAgentStatus }

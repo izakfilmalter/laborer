@@ -228,26 +228,25 @@ describe('acquire service port IPC', () => {
     handler({ sender }, { name: 'terminal', nonce: 'nonce-a' })
     handler({ sender }, { name: 'server', nonce: 'nonce-b' })
     handler({ sender }, { name: 'file-watcher', nonce: 'nonce-c' })
-    handler({ sender }, { name: 'mcp', nonce: 'nonce-d' })
 
     // Each request creates a separate MessageChannelMain.
-    expect(mockMessageChannelInstances).toHaveLength(4)
+    expect(mockMessageChannelInstances).toHaveLength(3)
 
     // Each response has a unique nonce.
     const calls = sender.postMessage.mock.calls
-    expect(calls).toHaveLength(4)
+    expect(calls).toHaveLength(3)
     expect(calls[0]?.[1]).toBe('nonce-a')
     expect(calls[1]?.[1]).toBe('nonce-b')
     expect(calls[2]?.[1]).toBe('nonce-c')
-    expect(calls[3]?.[1]).toBe('nonce-d')
   })
 
-  it('ignores invalid service names', async () => {
+  it('ignores retired and invalid service names', async () => {
     await setup()
     const handler = getPortHandler()
 
     const sender = createMockSender()
 
+    handler({ sender }, { name: 'mcp', nonce: 'nonce-mcp' })
     handler({ sender }, { name: 'invalid-service', nonce: 'nonce-x' })
 
     // No channel created, no response sent.

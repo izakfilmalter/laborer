@@ -561,12 +561,7 @@ export function registerIpcHandlers(
     if (typeof name !== 'string') {
       return
     }
-    if (
-      name !== 'server' &&
-      name !== 'terminal' &&
-      name !== 'file-watcher' &&
-      name !== 'mcp'
-    ) {
+    if (name !== 'server' && name !== 'terminal' && name !== 'file-watcher') {
       return
     }
     await restartSidecarCallback?.(name)
@@ -756,7 +751,6 @@ export function registerIpcHandlers(
       'server',
       'terminal',
       'file-watcher',
-      'mcp',
     ]
     if (!validNames.includes(name as SidecarName)) {
       return

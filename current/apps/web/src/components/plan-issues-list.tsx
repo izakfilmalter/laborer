@@ -199,9 +199,7 @@ function PlanIssuesList({ prdId }: PlanIssuesListProps) {
             <ClipboardList />
           </EmptyMedia>
           <EmptyTitle>No issues</EmptyTitle>
-          <EmptyDescription>
-            Create issues for this plan through the MCP tools or AI agent.
-          </EmptyDescription>
+          <EmptyDescription>This plan has no issues.</EmptyDescription>
         </EmptyHeader>
       </Empty>
     )

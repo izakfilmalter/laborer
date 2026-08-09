@@ -112,11 +112,7 @@ describe('PlanIssuesList', () => {
     render(<PlanIssuesList prdId="prd-1" />)
 
     expect(screen.getByText('No issues')).toBeTruthy()
-    expect(
-      screen.getByText(
-        'Create issues for this plan through the MCP tools or AI agent.'
-      )
-    ).toBeTruthy()
+    expect(screen.getByText('This plan has no issues.')).toBeTruthy()
   })
 
   it('displays status icons consistent with TaskList styling', () => {

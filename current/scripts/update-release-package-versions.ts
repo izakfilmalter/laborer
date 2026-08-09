@@ -10,7 +10,6 @@ const RELEASE_PACKAGE_FILES = [
   'packages/config/package.json',
   'packages/env/package.json',
   'packages/file-watcher/package.json',
-  'packages/mcp/package.json',
   'packages/server/package.json',
   'packages/shared/package.json',
   'packages/terminal/package.json',

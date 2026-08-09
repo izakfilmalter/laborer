@@ -2,7 +2,7 @@
  * Unit tests for the DevWatcher (dev mode hot reload).
  *
  * Tests verify:
- * - File watching is set up for all four sidecar dist directories
+ * - File watching is set up for all three service dist directories
  * - File change events trigger utility process restarts
  * - Debounce prevents rapid restarts during a single rebuild
  * - Shutdown cancels watchers and pending debounce timers
@@ -144,15 +144,14 @@ describe('DevWatcher', () => {
   // -----------------------------------------------------------------------
 
   describe('startWatching', () => {
-    it('watches all four sidecar dist directories', () => {
+    it('watches all three service dist directories', () => {
       devWatcher.startWatching()
 
-      expect(mockWatch.watchers).toHaveLength(4)
+      expect(mockWatch.watchers).toHaveLength(3)
 
       const watchedPaths = mockWatch.watchers.map((w) => w.path).sort()
       expect(watchedPaths).toEqual([
         join(REPO_ROOT, 'packages/file-watcher/dist'),
-        join(REPO_ROOT, 'packages/mcp/dist'),
         join(REPO_ROOT, 'packages/server/dist'),
         join(REPO_ROOT, 'packages/terminal/dist'),
       ])
@@ -164,8 +163,8 @@ describe('DevWatcher', () => {
       // Should not throw — logs a warning and continues.
       devWatcher.startWatching()
 
-      // 3 watchers created (terminal failed).
-      expect(mockWatch.watchers).toHaveLength(3)
+      // 2 watchers created (terminal failed).
+      expect(mockWatch.watchers).toHaveLength(2)
     })
 
     it('does nothing after shutdown', () => {
@@ -211,16 +210,6 @@ describe('DevWatcher', () => {
       vi.advanceTimersByTime(DEBOUNCE_MS + 10)
 
       expect(mockMonitor.manualRestartCalls).toEqual(['file-watcher'])
-    })
-
-    it('restarts the mcp utility process on dist change', () => {
-      devWatcher.startWatching()
-
-      const watcher = findWatcher(mockWatch.watchers, 'mcp')
-      watcher.callback('change', 'utility-main.mjs')
-      vi.advanceTimersByTime(DEBOUNCE_MS + 10)
-
-      expect(mockMonitor.manualRestartCalls).toEqual(['mcp'])
     })
 
     it('does not restart before debounce expires', () => {

@@ -1,8 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const EMPTY_STATE_TEXT =
-  'Create a PRD through the MCP flow to track plan progress here.'
+const EMPTY_STATE_TEXT = 'No plans are available for this project.'
 
 const { queryDbMock, useLaborerStoreMock } = vi.hoisted(() => ({
   queryDbMock: vi.fn((_table, options: { label: string }) => options),

@@ -111,21 +111,6 @@ export interface FileWatcherRpcPortMessage {
 }
 
 /**
- * Sent by the main process to transfer a MessagePort for server RPC
- * to the MCP utility process. The actual MessagePort is in the
- * `ports` array of the MessageEvent.
- *
- * The MCP utility process uses this port as an RPC client to call
- * `LaborerRpcs` on the server utility process, replacing the
- * HTTP-based `LaborerRpcClient` that connects to `http://localhost:PORT/rpc`.
- *
- * @see Issue #15: MCP as utility process
- */
-export interface McpServerRpcPortMessage {
-  readonly type: 'server-rpc-port'
-}
-
-/**
  * Sent by the main process to transfer a per-terminal data channel
  * MessagePort to the server utility process for Daytona PTY sessions.
  * The actual MessagePort is in the `ports` array of the MessageEvent.
@@ -149,5 +134,4 @@ export type UtilityProcessParentMessage =
   | SyncPortMessage
   | TerminalRpcPortMessage
   | FileWatcherRpcPortMessage
-  | McpServerRpcPortMessage
   | DaytonaTerminalDataPortMessage

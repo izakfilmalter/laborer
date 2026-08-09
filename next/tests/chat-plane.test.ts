@@ -12,6 +12,7 @@ import {
   type ChatSdkThreadLike,
   makeChatPlaneLayer,
   makeLocalSlackInstallationProvider,
+  workspaceIdFromRawSlackMessage,
 } from "../src/chat-plane/chat-sdk.ts";
 import {
   type ChatPlaneTurn,
@@ -394,6 +395,43 @@ describe("Chat plane walking skeleton", () => {
         })
       )
   );
+
+  it("fails closed on malformed, conflicting, or unconfigured workspace identity", () => {
+    const configuredWorkspaceIds = new Set(["TFIRST", "TSECOND"]);
+
+    assert.equal(
+      workspaceIdFromRawSlackMessage(
+        { team_id: "TFIRST" },
+        configuredWorkspaceIds
+      ),
+      "TFIRST"
+    );
+    assert.equal(
+      workspaceIdFromRawSlackMessage(
+        { team: "TSECOND" },
+        configuredWorkspaceIds
+      ),
+      "TSECOND"
+    );
+
+    const rejectedPayloads: readonly unknown[] = [
+      { text: "private TOKEN=value" },
+      { team: "TFIRST", team_id: "TSECOND" },
+      { team_id: "TUNKNOWN" },
+      { team_id: 42, text: "private TOKEN=value" },
+    ];
+    for (const payload of rejectedPayloads) {
+      let failure: unknown;
+      try {
+        workspaceIdFromRawSlackMessage(payload, configuredWorkspaceIds);
+      } catch (error) {
+        failure = error;
+      }
+      assert.instanceOf(failure, Error);
+      assert.equal(failure.message, "Slack workspace identity unavailable");
+      assert.notMatch(failure.message, PRIVATE_FAILURE_DETAIL);
+    }
+  });
 
   it.effect("shuts down an SDK whose initialization fails", () =>
     Effect.scoped(

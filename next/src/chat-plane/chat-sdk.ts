@@ -342,17 +342,32 @@ const SlackMessageWorkspace = Schema.Struct({
 });
 const SLACK_TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
 
-const workspaceIdFromRawSlackMessage = (raw: unknown): string => {
-  const decoded = Schema.decodeUnknownSync(SlackMessageWorkspace)(raw);
+export const workspaceIdFromRawSlackMessage = (
+  raw: unknown,
+  configuredWorkspaceIds?: ReadonlySet<string>
+): string => {
+  let decoded: typeof SlackMessageWorkspace.Type;
+  try {
+    decoded = Schema.decodeUnknownSync(SlackMessageWorkspace)(raw);
+  } catch {
+    // Schema parse errors include the rejected value. Keep Slack message
+    // payloads out of the adapter's error logs by replacing them here.
+    throw new Error("Slack workspace identity unavailable");
+  }
   if (
     decoded.team !== undefined &&
     decoded.team_id !== undefined &&
     decoded.team !== decoded.team_id
   ) {
-    throw new Error("Conflicting Slack workspace identity");
+    throw new Error("Slack workspace identity unavailable");
   }
   const workspaceId = decoded.team_id ?? decoded.team;
-  if (workspaceId === undefined || !SLACK_TEAM_ID_PATTERN.test(workspaceId)) {
+  if (
+    workspaceId === undefined ||
+    !SLACK_TEAM_ID_PATTERN.test(workspaceId) ||
+    (configuredWorkspaceIds !== undefined &&
+      !configuredWorkspaceIds.has(workspaceId))
+  ) {
     throw new Error("Slack workspace identity unavailable");
   }
   return workspaceId;
@@ -443,6 +458,12 @@ export const makeLiveChatPlaneLayer = (
       const installationProvider = makeLocalSlackInstallationProvider(
         config.installations ?? []
       );
+      const configuredWorkspaceIds =
+        config.installations === undefined
+          ? undefined
+          : new Set(
+              config.installations.map((installation) => installation.teamId)
+            );
       const slackAdapter = createSlackAdapter(
         config.botToken !== undefined
           ? {
@@ -508,7 +529,10 @@ export const makeLiveChatPlaneLayer = (
         },
         onNewMention: (registeredHandler) => {
           bot.onNewMention((thread, message, context) => {
-            const workspaceId = workspaceIdFromRawSlackMessage(message.raw);
+            const workspaceId = workspaceIdFromRawSlackMessage(
+              message.raw,
+              configuredWorkspaceIds
+            );
             return registeredHandler(
               toChatSdkThread(thread, workspaceId),
               toChatSdkMessage(message, workspaceId),
@@ -518,7 +542,10 @@ export const makeLiveChatPlaneLayer = (
         },
         onSubscribedMessage: (registeredHandler) => {
           bot.onSubscribedMessage((thread, message, context) => {
-            const workspaceId = workspaceIdFromRawSlackMessage(message.raw);
+            const workspaceId = workspaceIdFromRawSlackMessage(
+              message.raw,
+              configuredWorkspaceIds
+            );
             return registeredHandler(
               toChatSdkThread(thread, workspaceId),
               toChatSdkMessage(message, workspaceId),

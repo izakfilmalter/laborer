@@ -390,6 +390,19 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     makeGeneration: (generationContext) =>
       Effect.gen(function* () {
         const actionMcpBridge = yield* makeLaborerActionMcpBridge({
+          // The two reference coding Actions retain their established facade;
+          // every user catalog outside that exact compatibility pair is
+          // projected directly from its validated registrations.
+          ...(options.rootRuntime === undefined ||
+          options.rootRuntime.actions.actions.length === 0 ||
+          (options.rootRuntime.actions.actions.length === 2 &&
+            options.rootRuntime.actions.actions.every(
+              ({ name, revision }) =>
+                (name === "create-feature" || name === "deal-with-bug") &&
+                revision === `reference-coding/${name}/cluster-v1`
+            ))
+            ? {}
+            : { actionCatalog: options.rootRuntime.actions }),
           authorityRepository,
           bootstrapPath: options.paths.acpActionBootstrap,
           processGeneration: generationContext.generation,

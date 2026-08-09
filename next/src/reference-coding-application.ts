@@ -210,7 +210,7 @@ export interface ConversationExecution {
 }
 
 export interface ActionInvocationAccepted {
-  readonly actionName?: ReferenceCodingActionName;
+  readonly actionName?: string;
   readonly deduplicated?: boolean;
   readonly executionId: string;
   readonly status: ConversationExecution["status"];
@@ -235,8 +235,8 @@ export interface ConversationAction {
   readonly invoke: (
     input: unknown,
     trustedInvocation?: TrustedActionInvocation
-  ) => Effect.Effect<ProductionActionResult, HandlerFailure>;
-  readonly name: ReferenceCodingActionName;
+  ) => Effect.Effect<ActionInvocationAccepted, HandlerFailure>;
+  readonly name: string;
 }
 
 export interface ConversationExecutionControl {

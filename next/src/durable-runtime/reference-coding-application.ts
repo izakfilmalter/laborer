@@ -287,16 +287,14 @@ export const conversationCapabilitiesForRootRuntime = (options: {
               })
             ),
             Effect.map((execution) => ({
-              actionName: execution.actionName as
-                | "create-feature"
-                | "deal-with-bug",
+              actionName: execution.actionName,
               deduplicated: false,
               executionId: execution.executionId,
               status: lifecycleStatus(execution.status),
             })),
             Effect.mapError(() => capabilityFailure("Action invocation failed"))
           ),
-        name: tool.name as "create-feature" | "deal-with-bug",
+        name: tool.name,
       })),
     controlsFor: (conversationId) => [
       {

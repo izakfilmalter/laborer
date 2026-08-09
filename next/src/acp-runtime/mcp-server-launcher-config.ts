@@ -47,17 +47,28 @@ const KIND_ENVIRONMENT_NAMES: Readonly<
   ]),
 };
 
+const OPTIONAL_KIND_ENVIRONMENT_NAMES: Readonly<
+  Record<LaborerMcpServerKind, ReadonlySet<string>>
+> = {
+  action: new Set(["LABORER_ACTION_CATALOG_PATH"]),
+  memory: new Set(),
+};
+
 export const laborerMcpEnvironmentIsScrubbed = (
   kind: LaborerMcpServerKind,
   names: readonly string[]
 ): boolean => {
   const required = KIND_ENVIRONMENT_NAMES[kind];
+  const optional = OPTIONAL_KIND_ENVIRONMENT_NAMES[kind];
   const observed = new Set(names);
   return (
     names.length === observed.size &&
     [...required].every((name) => observed.has(name)) &&
     names.every(
-      (name) => required.has(name) || SYSTEM_ENVIRONMENT_NAMES.has(name)
+      (name) =>
+        required.has(name) ||
+        optional.has(name) ||
+        SYSTEM_ENVIRONMENT_NAMES.has(name)
     )
   );
 };

@@ -32,7 +32,7 @@ The live Slack entry point runs on Node because the Socket Mode client depends o
 - Start the live daemon from the repository root with `bun run --cwd next start:slack`.
 - Stop it with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before starting another instance.
 - During daemon-client development, use `bun run --cwd next dev:slack`. It typechecks and prepares a fresh Daemon generation before globally draining and replacing the active Slack/ACP clients; invalid candidates leave blue Active, and failed activation gets one explicit blue reactivation attempt.
-- The development watcher covers TypeScript below `src/slack`, `src/acp-conversation-prototype`, and `src/prototype`. Changes to Cluster-host code, Action registrations, dependencies, environment, package metadata, Node, or the development supervisor require restarting `dev:slack`.
+- The development watcher covers TypeScript below `src/adapters`, `src/slack`, `src/acp-conversation-prototype`, and `src/prototype`. Changes to Cluster-host code, Action registrations, dependencies, environment, package metadata, Node, or the development supervisor require restarting `dev:slack`.
 
 ## Effect 4
 

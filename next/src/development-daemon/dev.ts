@@ -5,6 +5,7 @@ import { makeProcessDaemonGenerationFactory } from "./process-generation-factory
 import { makeDevelopmentDaemonSupervisor } from "./supervisor.ts";
 
 const WATCH_DIRECTORIES = [
+  "src/adapters",
   "src/slack",
   "src/acp-conversation-prototype",
   "src/prototype",

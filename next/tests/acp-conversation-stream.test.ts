@@ -398,17 +398,22 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
       Effect.gen(function* () {
         let directSignals = 0;
         const groupSignals: NodeJS.Signals[] = [];
-        const leader = Object.assign(new EventEmitter(), {
-          exitCode: null as number | null,
+        let exitCode: number | null = null;
+        const leaderEvents = Object.assign(new EventEmitter(), {
           kill: () => {
             directSignals += 1;
-            leader.exitCode = 0;
-            leader.emit("exit", 0, null);
+            exitCode = 0;
+            leaderEvents.emit("exit", 0, null);
             return true;
           },
           pid: 424_245,
-          signalCode: null as NodeJS.Signals | null,
-        }) as unknown as ChildProcessWithoutNullStreams;
+        });
+        Object.defineProperties(leaderEvents, {
+          exitCode: { get: () => exitCode },
+          signalCode: { get: () => null },
+        });
+        const leader =
+          leaderEvents as unknown as ChildProcessWithoutNullStreams;
 
         const outcome = yield* Effect.promise(() =>
           terminateSupervisedProcess(leader, 1, true, {
@@ -416,8 +421,8 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
             signalProcessGroup: (_processGroupId, signal) => {
               groupSignals.push(signal);
               if (signal === "SIGKILL") {
-                leader.exitCode = 0;
-                leader.emit("exit", 0, signal);
+                exitCode = 0;
+                leaderEvents.emit("exit", 0, signal);
               }
               return true;
             },

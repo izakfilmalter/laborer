@@ -20,10 +20,13 @@
 > dedicated credentials and state. It is a manual gate and must prove native
 > streaming plus one Action/Execution scene.
 >
-> **CHAT SDK WALKING-SKELETON CANARY for issue #328.** `start:chat-canary`
+> **CHAT SDK CONVERSATION CANARY for issues #328 and #333.** `start:chat-canary`
 > starts a separate single-workspace Slack Socket Mode composition using the
-> Vercel Chat SDK and in-memory SDK state. A mention subscribes its thread and
-> streams a placeholder reply through an Effect-owned boundary. It uses only
+> Vercel Chat SDK and in-memory SDK state. A non-DM authored mention subscribes
+> its thread, receives one-time bounded history, and streams a placeholder reply
+> through an Effect-owned boundary. Later authored replies use Chat SDK's
+> coalesced queue backlog, and failed turns receive one best-effort sanitized
+> operational notice. It uses only
 > the dedicated `LABORER_CHAT_CANARY_SLACK_*` credentials and does not alter or
 > replace `start:slack`.
 >

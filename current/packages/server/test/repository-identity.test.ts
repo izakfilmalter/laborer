@@ -297,7 +297,6 @@ describe('ProjectRegistry canonical deduplication', () => {
           id: 'legacy-project',
           repoPath,
           name: 'legacy-project',
-          brrrConfig: null,
         })
       )
 
@@ -320,7 +319,6 @@ describe('ProjectRegistry canonical deduplication', () => {
             repoId: resolvedIdentity.repoId,
             canonicalGitCommonDir: resolvedIdentity.canonicalGitCommonDir,
             name: 'legacy-project',
-            brrrConfig: null,
           },
         ]
       )

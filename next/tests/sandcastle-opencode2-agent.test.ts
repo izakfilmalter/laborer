@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   mkdtempSync,
@@ -51,33 +51,16 @@ describe("Sandcastle opencode2 agent", () => {
     assert.notInclude(sandcastleMain, 'opencode2Agent("openai/gpt-5.6-sol",');
   });
 
-  it("matches its command contract to the installed pinned CLI", () => {
+  it("uses the machine-installed CLI and its existing state", () => {
     const packageJson = JSON.parse(
       readFileSync("../.sandcastle/package.json", "utf8")
     ) as {
-      readonly devDependencies: Readonly<Record<string, string>>;
+      readonly devDependencies?: Readonly<Record<string, string>>;
     };
-    const version = packageJson.devDependencies["@opencode-ai/cli"];
-    const executable = "../.sandcastle/node_modules/.bin/opencode2";
-    const reportedVersion = execFileSync(executable, ["--version"], {
-      encoding: "utf8",
-    });
-    const help = execFileSync(executable, ["run", "--help"], {
-      encoding: "utf8",
-    });
 
-    assert.strictEqual(reportedVersion.trim(), `opencode2 v${version}`);
-    for (const contract of [
-      "--standalone",
-      "--format choice",
-      "--model, -m string",
-      "provider/model#variant",
-      "--agent string",
-      "--auto",
-    ]) {
-      assert.include(help, contract);
-    }
-    assert.notInclude(help, "--variant");
+    assert.notProperty(packageJson.devDependencies ?? {}, "@opencode-ai/cli");
+    assert.include(sandcastleMain, 'runFile("opencode2", ["--version"])');
+    assert.include(sandcastleMain, 'runFile("opencode2", ["run", "--help"])');
   });
 
   it("launches standalone opencode2 with an encoded variant and preserves JSON events", async () => {
@@ -107,11 +90,8 @@ describe("Sandcastle opencode2 agent", () => {
         dangerouslySkipPermissions: true,
         prompt: "Implement safely.\nThen test.",
       });
-      assert.include(
-        invocation.command,
-        'cp /home/agent/.local/share/opencode/opencode-next.seed.db "$attempt_db"'
-      );
-      assert.include(invocation.command, 'OPENCODE_DB="$attempt_db"');
+      assert.notInclude(invocation.command, "OPENCODE_DB");
+      assert.notInclude(invocation.command, "/home/agent");
       const stdout = await runCommand(
         invocation.command,
         invocation.stdin ?? "",
@@ -170,18 +150,27 @@ describe("Sandcastle opencode2 agent", () => {
     assert.include(invocation.command, "'anthropic/claude-opus-5'");
   });
 
+  it("makes unattended host auto-approval explicit", () => {
+    const invocation = opencode2Agent("fixture/model", {
+      dangerouslyAutoApproveHostPermissions: true,
+    }).buildPrintCommand({
+      dangerouslySkipPermissions: false,
+      prompt: "Build",
+    });
+
+    assert.include(invocation.command, "--auto");
+  });
+
   it("replays the prompt after a transient process failure", async () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-retry-"));
     const executable = join(directory, "opencode2");
     const attemptsPath = join(directory, "attempts");
-    const databasesPath = join(directory, "databases");
     const stdinPath = join(directory, "stdin");
     writeFileSync(
       executable,
       [
         "#!/bin/sh",
         '[ -p /dev/stdin ] || { printf "stdin must be a pipe\\n" >&2; exit 2; }',
-        'printf "%s\\n" "$OPENCODE_DB" >> "$FAKE_OPENCODE_DATABASES"',
         'attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
         'printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
         'cat >> "$FAKE_OPENCODE_STDIN"',
@@ -206,16 +195,12 @@ describe("Sandcastle opencode2 agent", () => {
         {
           ...process.env,
           FAKE_OPENCODE_ATTEMPTS: attemptsPath,
-          FAKE_OPENCODE_DATABASES: databasesPath,
           FAKE_OPENCODE_STDIN: stdinPath,
           PATH: `${directory}:${process.env.PATH ?? ""}`,
         }
       );
 
       assert.strictEqual(readFileSync(attemptsPath, "utf8"), "2");
-      const databases = readFileSync(databasesPath, "utf8").trim().split("\n");
-      assert.lengthOf(databases, 2);
-      assert.notStrictEqual(databases[0], databases[1]);
       assert.strictEqual(
         readFileSync(stdinPath, "utf8"),
         "Continue preserved work.\n---attempt---\nContinue preserved work.\n---attempt---\n"

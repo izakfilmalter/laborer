@@ -19,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   destroyFn,
   isElectronMock,
-  startLoopFn,
   closeWorkspaceMock,
   mutationMap,
   openExternalUrlMock,
@@ -28,7 +27,6 @@ const {
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
-  startLoopFn: vi.fn(),
   closeWorkspaceMock: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   openExternalUrlMock: vi.fn(async () => true),
@@ -70,9 +68,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       const sentinel = Symbol.for(`mutation:${name}`)
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
-      }
-      if (name === 'brrr.startLoop') {
-        mutationMap.set(sentinel, startLoopFn)
       }
       if (name === 'task.updateStatus') {
         mutationMap.set(sentinel, vi.fn())

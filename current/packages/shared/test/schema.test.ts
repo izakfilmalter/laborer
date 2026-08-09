@@ -28,7 +28,6 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            brrrConfig: null,
           })
         )
 
@@ -43,7 +42,6 @@ describe('LiveStore schema', () => {
           repoId: null,
           canonicalGitCommonDir: null,
           name: 'Project One',
-          brrrConfig: null,
         })
 
         store.commit(events.projectRemoved({ id: 'project-1' }))
@@ -53,6 +51,33 @@ describe('LiveStore schema', () => {
           []
         )
       })
+  )
+
+  it.scoped('decodes historical project events with removed fields', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+      const historicalPayload = {
+        id: 'historical-project',
+        repoPath: '/tmp/historical-project',
+        name: 'Historical Project',
+        removedConfigField: '.removed/config.toml',
+      }
+
+      store.commit(events.projectCreated(historicalPayload))
+
+      assert.deepStrictEqual(
+        store.query(tables.projects.where('id', 'historical-project')),
+        [
+          {
+            id: 'historical-project',
+            repoPath: '/tmp/historical-project',
+            repoId: null,
+            canonicalGitCommonDir: null,
+            name: 'Historical Project',
+          },
+        ]
+      )
+    })
   )
 
   it.scoped(
@@ -66,7 +91,6 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            brrrConfig: null,
           })
         )
         store.commit(
@@ -87,7 +111,6 @@ describe('LiveStore schema', () => {
               repoId: 'repo-1',
               canonicalGitCommonDir: '/private/tmp/project-1/.git',
               name: 'Project One',
-              brrrConfig: null,
             },
           ]
         )
@@ -887,7 +910,6 @@ describe('LiveStore schema', () => {
           id: 'project-1',
           repoPath: '/tmp/project-1',
           name: 'Project One',
-          brrrConfig: null,
         })
       )
       store.commit(

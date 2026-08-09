@@ -106,7 +106,7 @@ function PlanList({
                 </EmptyMedia>
                 <EmptyTitle>No plans</EmptyTitle>
                 <EmptyDescription>
-                  Create a PRD through the MCP flow to track plan progress here.
+                  No plans are available for this project.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>

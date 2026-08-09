@@ -4,15 +4,15 @@ import {
   attemptHostStep,
   canReuseCompletedHead,
   hostCheckoutProblem,
+  mergeFailureNeedsPreparation,
   mergePullRequestArgs,
   refreshDetachedBase,
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
 } from "../../.sandcastle/fast-flow/index.ts";
-
-const divergedRunnerBasePattern = /diverged from the runner base/;
 
 describe("Sandcastle fast flow", () => {
   it("merges without asking gh to delete a checked-out worktree branch", () => {
@@ -27,6 +27,13 @@ describe("Sandcastle fast flow", () => {
       "abc123",
     ]);
     assert.notInclude(args, "--delete-branch");
+  });
+
+  it("re-prepares a PR that becomes conflicting during merge", () => {
+    assert.isTrue(mergeFailureNeedsPreparation("DIRTY", "UNKNOWN"));
+    assert.isTrue(mergeFailureNeedsPreparation("CLEAN", "CONFLICTING"));
+    assert.isFalse(mergeFailureNeedsPreparation("BEHIND", "MERGEABLE"));
+    assert.isFalse(mergeFailureNeedsPreparation("CLEAN", "MERGEABLE"));
   });
 
   it("quotes untrusted Git refs as inert shell arguments", () => {
@@ -118,13 +125,27 @@ describe("Sandcastle fast flow", () => {
   });
 
   it("advances only dormant issue branches when the runner base moves", () => {
-    assert.isTrue(shouldRefreshUnstartedBranch("old", "base", false, true));
-    assert.isFalse(shouldRefreshUnstartedBranch("base", "base", false, true));
-    assert.isFalse(shouldRefreshUnstartedBranch("old", "base", true, true));
-    assert.throws(
-      () => shouldRefreshUnstartedBranch("other", "base", false, false),
-      divergedRunnerBasePattern
+    assert.isTrue(
+      shouldRefreshUnstartedBranch("old", "base", false, false, true)
     );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("base", "base", false, false, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("old", "base", true, false, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("old", "base", false, true, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("other", "base", false, false, false)
+    );
+  });
+
+  it("does not synchronize over preserved work", () => {
+    assert.isTrue(shouldFastForwardPreservedWorktree(false, true));
+    assert.isFalse(shouldFastForwardPreservedWorktree(true, true));
+    assert.isFalse(shouldFastForwardPreservedWorktree(false, false));
   });
 
   it("delegates verification to the final code-review agent", () => {
@@ -155,18 +176,18 @@ describe("Sandcastle fast flow", () => {
     assert.include(main, "bun install --cwd current --frozen-lockfile");
     assert.include(main, "bun install --cwd next --frozen-lockfile");
     assert.include(main, "worktreeIsDirty(sandbox.worktreePath)");
+    assert.include(main, '"merge-base",\n    "HEAD",\n    runnerBaseHead()');
     assert.include(
       main,
       "test -d current/node_modules && test -d next/node_modules"
     );
-    assert.include(main, "prepareOpenCodeCredentialSeed()");
-    assert.include(main, "HOST_ANTHROPIC_PLUGIN_DIST");
+    assert.include(main, "supervisedNoSandbox({");
+    assert.notInclude(main, "prepareOpenCodeCredentialSeed");
     assert.notInclude(main, "BUN_CACHE_DIR");
-    assert.include(
-      main,
-      '"/home/agent/.local/share/opencode/opencode-next.seed.db"'
-    );
-    assert.notInclude(main, 'sandboxPath: "/opt/');
+    assert.notInclude(main, "/home/agent");
+    assert.notInclude(main, "gh auth setup-git");
+    assert.notInclude(main, 'runFile("docker"');
+    assert.include(main, "boundedHostCommand(");
     assert.include(main, "Sandcastle stopped safely ");
   });
 

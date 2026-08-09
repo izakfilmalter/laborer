@@ -118,7 +118,6 @@ export const ProjectResponse = Schema.Struct({
   id: Schema.String,
   repoPath: Schema.String,
   name: Schema.String,
-  brrrConfig: Schema.optional(Schema.String),
 })
 
 export type ProjectResponse = typeof ProjectResponse.Type
@@ -207,7 +206,6 @@ const ConfigResponse = Schema.Struct({
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
-  brrrConfig: ConfigResolvedValueNullableString,
   watchIgnore: ConfigResolvedValueStringArray,
 })
 
@@ -602,7 +600,6 @@ export class LaborerRpcs extends RpcGroup.make(
         prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
-        brrrConfig: Schema.optional(Schema.String),
       }),
     },
   }),
@@ -971,33 +968,6 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       filePath: Schema.optional(Schema.String),
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // brrr RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('brrr.startLoop', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('brrr.review', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('brrr.fix', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
     },
   }),
 

@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { constants as fileSystemConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, lstat } from "node:fs/promises";
 import { constants as operatingSystemConstants } from "node:os";
 import { isAbsolute } from "node:path";
 import { finished } from "node:stream/promises";
@@ -40,7 +40,10 @@ export const validateLocalExecutable = (
   return Effect.tryPromise({
     try: async () => {
       await access(executable, fileSystemConstants.X_OK);
-      if (!(await stat(executable)).isFile()) {
+      // Match the existing configured-command boundary: an executable must be
+      // a regular file itself, not a final symlink whose target can be changed
+      // independently after registration.
+      if (!(await lstat(executable)).isFile()) {
         throw new Error("not a file");
       }
       return executable as ValidatedExecutable;
@@ -281,12 +284,17 @@ const evidence = (
   stdout: stdout ?? Buffer.alloc(0),
 });
 
+const spawnFailureResult = (pid: number | null = null): LocalProcessResult => ({
+  _tag: "SpawnFailure",
+  ...evidence(pid, undefined, undefined),
+});
+
 const preflightResult = (
   request: LocalProcessRequest,
   effectSignal: AbortSignal
 ): LocalProcessResult | undefined => {
   if (!requestIsValid(request)) {
-    return { _tag: "SpawnFailure", ...evidence(null, undefined, undefined) };
+    return spawnFailureResult();
   }
   if (request.input.byteLength > request.limits.inputBytes) {
     return {
@@ -419,7 +427,7 @@ const executeProcess = async (
       }
     ) as ChildProcessWithoutNullStreams;
   } catch {
-    return { _tag: "SpawnFailure", ...evidence(null, undefined, undefined) };
+    return spawnFailureResult();
   }
 
   // `spawn` reports failures such as a missing cwd asynchronously. Always
@@ -613,13 +621,7 @@ export class LocalProcessExecutor extends Context.Service<
             signal,
             ambient,
             terminate
-          ).catch(
-            () =>
-              ({
-                _tag: "SpawnFailure",
-                ...evidence(null, undefined, undefined),
-              }) as LocalProcessResult
-          );
+          ).catch(() => spawnFailureResult());
           execution.then((result) => resume(Effect.succeed(result)));
 
           // Effect interruption aborts the execution and then waits for this

@@ -1,4 +1,11 @@
-import { readFile, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Effect, Fiber } from "effect";
@@ -59,6 +66,31 @@ const waitForProcessExit = async (pid: number): Promise<void> => {
 };
 
 describe("LocalProcessExecutor", () => {
+  it("validates an absolute regular executable without following symlinks", async () => {
+    const directory = await mkdtemp(
+      resolve(tmpdir(), `laborer-local-executable-${process.pid}-`)
+    );
+    const executable = resolve(directory, "handler");
+    const linkedExecutable = resolve(directory, "linked-handler");
+    try {
+      await writeFile(executable, "#!/bin/sh\nexit 0\n");
+      await chmod(executable, 0o700);
+      await symlink(executable, linkedExecutable);
+
+      await expect(
+        Effect.runPromise(validateLocalExecutable(executable))
+      ).resolves.toBe(executable);
+      await expect(
+        Effect.runPromise(validateLocalExecutable(linkedExecutable))
+      ).rejects.toMatchObject({ _tag: "ProcessExecutableValidationError" });
+      await expect(
+        Effect.runPromise(validateLocalExecutable("relative-handler"))
+      ).rejects.toMatchObject({ _tag: "ProcessExecutableValidationError" });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("executes literal arguments with bounded private output", async () => {
     const result = await run(await request("echo"));
     expect(result._tag).toBe("Success");
@@ -105,14 +137,26 @@ describe("LocalProcessExecutor", () => {
     });
     expect(nonzero).toMatchObject({ _tag: "NonZeroExit", exitCode: 9 });
 
-    const missing = await Effect.runPromise(
-      validateLocalExecutable(process.execPath)
+    const directory = await mkdtemp(
+      resolve(tmpdir(), `laborer-missing-executable-${process.pid}-`)
     );
-    const failed = await run({
-      ...(await request("echo")),
-      executable: `${missing}-missing` as typeof missing,
-    });
-    expect(failed._tag).toBe("SpawnFailure");
+    const executable = resolve(directory, "handler");
+    try {
+      await writeFile(executable, "#!/bin/sh\nexit 0\n");
+      await chmod(executable, 0o700);
+      const missing = await Effect.runPromise(
+        validateLocalExecutable(executable)
+      );
+      await rm(executable);
+
+      const failed = await run({
+        ...(await request("echo")),
+        executable: missing,
+      });
+      expect(failed._tag).toBe("SpawnFailure");
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
   });
 
   it("preserves a known nonzero exit when the child closes input early", async () => {

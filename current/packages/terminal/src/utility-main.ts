@@ -341,6 +341,12 @@ function setupAgentStatusReporting(
       previous.processId !== processId) ||
     previous.agentName !== agentName
 
+  const findAgent = (terminal: TerminalInfo) =>
+    terminal.processChain.find((process) => process.category === 'agent') ??
+    (terminal.foregroundProcess?.category === 'agent'
+      ? terminal.foregroundProcess
+      : null)
+
   interface StatusFact {
     readonly agentId: string
     readonly agentName: string
@@ -360,11 +366,7 @@ function setupAgentStatusReporting(
   const report = (
     terminal: TerminalInfo & { readonly agentProcessIds?: readonly number[] }
   ): void => {
-    const detectedAgent =
-      terminal.processChain.find((process) => process.category === 'agent') ??
-      (terminal.foregroundProcess?.category === 'agent'
-        ? terminal.foregroundProcess
-        : null)
+    const detectedAgent = findAgent(terminal)
     const previousOwner = owners.get(terminal.id)
     let owner = previousOwner
 
@@ -377,7 +379,7 @@ function setupAgentStatusReporting(
       )
       const generation = isNewGeneration
         ? (previousOwner?.generation ?? 0) + 1
-        : previousOwner.generation
+        : (previousOwner?.generation ?? 1)
       owner = {
         agentId: `${terminal.id}:${String(generation)}`,
         agentName: detectedAgent.label,

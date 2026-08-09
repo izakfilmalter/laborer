@@ -9,8 +9,8 @@ import { preflightReservedMcpNames } from "../src/acp-runtime/acp-config-source-
 import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
 import { productionActionCatalog } from "../src/action-catalog.ts";
 import { ExternalInputEvent } from "../src/application.ts";
+import { ThreadId } from "../src/core/domain.ts";
 import { productionGeneratedMutationCatalog } from "../src/generated-mutation-catalog.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
 import {
   type ConversationAction,
   type ConversationExecutionControl,

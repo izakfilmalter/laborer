@@ -8,7 +8,7 @@ import {
   type ParseError,
   parseTree,
 } from "jsonc-parser";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import type { AcpAuthorityRepository } from "./acp-authority.ts";
 
 const MAX_CONFIG_SOURCE_DEPTH = 6;

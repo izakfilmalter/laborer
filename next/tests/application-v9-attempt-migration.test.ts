@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { ThreadId } from "../src/prototype/domain.ts";
+import { ThreadId } from "../src/core/domain.ts";
 import {
   makeFileApplicationRepository,
   makeReferenceCodingApplication,

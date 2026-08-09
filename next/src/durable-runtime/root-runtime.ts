@@ -25,7 +25,7 @@ import {
   ExternalInputEvent,
   ParticipantInputEvent,
 } from "../application.ts";
-import { ThreadId } from "../prototype/domain.ts";
+import { ThreadId } from "../core/domain.ts";
 import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
@@ -426,7 +426,7 @@ const makeConversationHandlerRegistry = Effect.gen(function* () {
         waiter = Deferred.makeUnsafe<ConversationHandler>();
         handlerWaiters.set(workspaceId, waiter);
       }
-      // Cluster restoration can begin before the workspace Runner has built
+      // Cluster restoration can begin before the workspace application has built
       // its ACP application. Waiting here keeps the durable workflow pending
       // instead of permanently failing it during that startup window.
       return Deferred.await(waiter);

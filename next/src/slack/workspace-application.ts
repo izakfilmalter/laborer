@@ -11,7 +11,7 @@ import {
   type OpenCodeWorkspaceSessionClientOptions,
 } from "../adapters/opencode-agents.ts";
 import type { ApplicationShape } from "../application.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   type ConversationAgentShape,
   type ImplementationAgentShape,

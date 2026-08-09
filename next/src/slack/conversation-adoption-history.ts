@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
-import type { NormalizedImage } from "../prototype/domain.ts";
+import type { NormalizedImage } from "../core/domain.ts";
 
 // Retained only as an internal application-state schema boundary. The Slack
 // history reader was part of the retired bespoke Slack plane and is gone.

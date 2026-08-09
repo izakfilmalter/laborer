@@ -48,8 +48,8 @@ Use `Schema` at untrusted and persisted boundaries, schema-tagged errors for exp
 
 Treat Slack payloads, handler output, persisted state, filesystem paths, and child-process data as untrusted boundaries.
 
-- Persist accepted input and deliberate output before acknowledging or delivering side effects.
-- Keep replay idempotent and preserve stable event, turn, attempt, reply, and thread identities.
+- Chat conversations are at-most-once and best effort: do not add an acceptance log, replay scheduler, durable Slack outbox, or stream recovery above Chat SDK.
+- Preserve stable workspace, thread, ACP session, Action, Execution, and local-protocol identities.
 - Fail closed on corrupt state, ambiguous ownership, unsafe paths, and malformed protocol records.
 - Preserve bounded reads, writes, records, process output, retries, and shutdown deadlines when changing a boundary.
 - Keep Slack credentials out of source, tests, logs, child environments, handler envelopes, and public replies. Secrets belong only in ignored local environment files or the documented external secret store.

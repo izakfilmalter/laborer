@@ -1,16 +1,16 @@
 import { Effect, Schema, type Scope } from "effect";
 import type { ApplicationShape } from "../application.ts";
+import type { HandlerFailure, StoreError } from "../core/errors.ts";
 import { applicationThroughRootConversationRuntime } from "../durable-runtime/conversation-application.ts";
 import { conversationCapabilitiesForRootRuntime } from "../durable-runtime/reference-coding-application.ts";
 import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
-import type { HandlerFailure, StoreError } from "../prototype/errors.ts";
 import type { ConversationAgentShape } from "../reference-coding-application.ts";
 import type { SlackRuntimePaths } from "../slack/runtime-paths.ts";
 import {
   makeReferenceCodingWorkspaceApplicationWithConversationAgent,
   type ReferenceCodingWorkspaceApplicationDependencies,
-} from "../slack/workspace-runner.ts";
+} from "../slack/workspace-application.ts";
 import {
   type AcpAuthorityRepository,
   makeAcpAuthorityRepository,

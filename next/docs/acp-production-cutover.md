@@ -4,7 +4,7 @@
 Vercel Chat SDK owns Slack Socket Mode ingestion, normalization, subscriptions,
 coalesced queue dispatch, best-effort `thread.post` streaming, attachment
 delivery, and permission block actions. Conversation turns are at-most-once and
-are not routed through the durable Runner or a second scheduler.
+are not routed through a durable conversational scheduler.
 
 `src/acp-runtime/` owns stable-v1 ACP session creation/resume, OpenCode 2
 adaptation, child-process supervision, prompt-epoch protection, Memory MCP,

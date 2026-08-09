@@ -22,7 +22,7 @@ import {
   NormalizedMessage,
   ThreadId,
   TurnId,
-} from "../src/prototype/domain.ts";
+} from "../src/core/domain.ts";
 import {
   CONVERSATION_ADOPTION_MIGRATION_CONTRACT,
   conversationAdoptionId,

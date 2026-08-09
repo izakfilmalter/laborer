@@ -19,7 +19,7 @@ import {
   sep,
 } from "node:path";
 import { Effect, Array as EffectArray, pipe, Schema } from "effect";
-import type { NormalizedMessage } from "../prototype/domain.ts";
+import type { NormalizedMessage } from "../core/domain.ts";
 import {
   assertNoSymlinkPathComponents,
   assertSafeFilePath,
@@ -27,7 +27,7 @@ import {
   openRegularFileNoFollowNonBlocking,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import type { ConversationAgentRequest } from "../reference-coding-application.ts";
 import { withCrossProcessContextLocks } from "./context-lock.ts";
 import { stripMemoryEntryFraming } from "./memory-framing.ts";

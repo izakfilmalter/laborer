@@ -7,7 +7,7 @@ import {
   type SentMessage,
 } from "chat";
 import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
-import type { NormalizedImage } from "../prototype/domain.ts";
+import type { NormalizedImage } from "../core/domain.ts";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
 import { hydrateChatImageAttachments } from "./attachment-hydration.ts";
 import { createSQLiteState } from "./sqlite-state-adapter.ts";

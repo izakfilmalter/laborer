@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import {
   canonicalDirectory,
   ensureOwnerOnlyDirectoryTree,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import { SlackStartupError } from "./errors.ts";
 
 export interface SlackRuntimePaths {
@@ -71,7 +71,7 @@ const removeRetiredRuntimeDirectory = async (
   await rm(retiredRoot, { recursive: true });
 };
 
-/** One-way cutover: remove the obsolete root-local Runner state in place. */
+/** One-way cutover: remove obsolete pre-Chat runtime state in place. */
 export const deleteRetiredSlackRuntimeState = (
   projectRoot: string
 ): Effect.Effect<void, SlackStartupError> =>

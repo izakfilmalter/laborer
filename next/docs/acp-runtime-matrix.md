@@ -1,6 +1,11 @@
-# Supported ACP runtime matrix
+# Supported primary runtime matrix
 
 Issue #243 establishes one exact release-safety contract for `next`.
+
+The authoritative composition is Node-hosted `chat` + `@chat-adapter/slack`
+over Socket Mode, wrapping the ACP stable-v1 boundary to the pinned OpenCode 2
+runtime. The Chat packages and ACP/OpenCode packages therefore move through one
+supported matrix rather than describing separate production receivers.
 
 | Component | Supported version | Enforced by |
 | --- | --- | --- |

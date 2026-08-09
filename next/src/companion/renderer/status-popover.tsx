@@ -361,6 +361,7 @@ const bindingRank: Record<WorkspaceBinding["readiness"], number> = {
   unknown: 0,
 };
 
+// In-progress work outranks dormant history within an equally healthy binding.
 const workspaceActivityRank = (workspace: WorkspaceBinding): number => {
   return workspace.threads.some((thread) => thread.activity === "in-progress")
     ? 0

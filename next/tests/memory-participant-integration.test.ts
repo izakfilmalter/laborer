@@ -13,7 +13,7 @@ import {
   makeSlackParticipantLookup,
   SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT,
 } from "../src/acp-runtime/slack-participant-lookup.ts";
-import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
+import { MessageId, NormalizedMessage } from "../src/core/domain.ts";
 import type { ConversationAgentRequest } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 

@@ -2,14 +2,14 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Array as EffectArray, Schema, Semaphore } from "effect";
-import { withApplicationFileLock } from "../prototype/application-file-lock.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { withApplicationFileLock } from "../core/application-file-lock.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   assertSafeFilePath,
   ensureOwnerOnlyDirectoryTree,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 
 const AUTHORITY_SCHEMA_VERSION = 1;
 const AUTHORITY_KEY_BYTES = 32;

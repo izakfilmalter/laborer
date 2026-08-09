@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { chmod, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Clock, Effect, Schema, Semaphore } from "effect";
-import { withApplicationFileLock } from "../prototype/application-file-lock.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import { withApplicationFileLock } from "../core/application-file-lock.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   assertSafeFilePath,
   openRegularFileNoFollow,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 
 const PROCESS_STATE_SCHEMA_VERSION = 1;
 const MAX_PROCESS_STATE_BYTES = 256 * 1024;

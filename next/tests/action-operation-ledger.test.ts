@@ -10,8 +10,8 @@ import {
   productionActionCatalog,
 } from "../src/action-catalog.ts";
 import { ExternalInputEvent } from "../src/application.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
+import { ThreadId } from "../src/core/domain.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 import {
   type ActionInvocationAccepted,
   type ConversationAgentRequest,

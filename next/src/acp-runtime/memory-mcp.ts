@@ -22,7 +22,7 @@ import {
   openRegularFileNoFollowNonBlocking,
   retainTrustedDirectory,
   verifyRetainedDirectory,
-} from "../prototype/path-safety.ts";
+} from "../core/path-safety.ts";
 import {
   type AcpAgentContextSources,
   isSlackTeamId,

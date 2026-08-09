@@ -15,11 +15,10 @@ The first implementation is deliberately a tracer, not a frozen interaction desi
 3. As a Laborer operator, I want work grouped by Slack workspace so I can understand which installation owns it.
 4. As a Laborer operator, I want every in-progress work thread visible so I can see what Laborer is doing or waiting for.
 5. As a Laborer operator, I want pending Executions nested under their owning work threads so I can see which delegated work is outstanding.
-6. As a Laborer operator, I want blocked work separated as needing attention so it cannot disappear into ordinary history.
-7. As a Laborer operator, I want the four most recently dormant work threads in each workspace so I can verify that recent conversations settled.
-8. As a Laborer operator, I want the dashboard to update without reopening it so its state remains trustworthy while I watch.
-9. As a Laborer operator, I want only a bounded activating-message excerpt—not full prompts, private agent activity, secrets, commands, paths, or diagnostics—to identify each work thread.
-10. As a Laborer operator, I want closing or crashing the companion to leave the daemon and active work running.
+6. As a Laborer operator, I want the four most recently dormant work threads in each workspace so I can verify that recent conversations settled.
+7. As a Laborer operator, I want the dashboard to update without reopening it so its state remains trustworthy while I watch.
+8. As a Laborer operator, I want only a bounded activating-message excerpt—not full prompts, private agent activity, secrets, commands, paths, or diagnostics—to identify each work thread.
+9. As a Laborer operator, I want closing or crashing the companion to leave the daemon and active work running.
 
 ## Product decisions
 
@@ -39,8 +38,7 @@ These architectural decisions are recorded in [ADR 0004](./adr/0004-electron-com
 Clicking the menu-bar item opens a compact React surface. Content is grouped by Slack workspace. Each workspace can contain:
 
 1. **In progress** — work threads with accepted work for which Laborer still owes progress.
-2. **Needs attention** — work threads with an explicit durable blocker that requires intervention.
-3. **Recent** — the four work threads that most recently became dormant in that workspace.
+2. **Recent** — the four work threads that most recently became dormant in that workspace.
 
 The initial work-thread row should try:
 
@@ -55,9 +53,8 @@ These row details are hypotheses to evaluate in the tracer. The specification in
 
 The initial implementation should evaluate this precedence:
 
-1. A work thread **needs attention** when durable state says it cannot progress or settle without intervention.
-2. Otherwise it is **in progress** while participant input or an external event is queued or running, deliberate output is not settled, an Execution is nonterminal, or a terminal Execution event still awaits its Conversation-agent response.
-3. Otherwise it is **dormant** after Laborer's deliberate response has reached Slack and no Execution remains nonterminal.
+1. A work thread is **in progress** while a Chat turn is running or an Execution is nonterminal.
+2. Otherwise it is **dormant**. Conversational delivery is best effort, so Slack delivery settlement is not a durable activity input.
 
 This is a starting projection, not a new source of truth. The first implementation must make state transitions visible enough to reveal where the model is wrong. Refinements belong in the daemon-owned projection rather than ad hoc companion heuristics.
 
@@ -76,10 +73,9 @@ Receiver connectivity alone is not readiness. Workspace bindings initialize and 
 
 ### Authority
 
-- The daemon and its Runners remain authoritative for workspace-binding, work-thread, turn, delivery, and Execution state.
-- The companion receives a bounded operator projection. It does not derive state by reading live snapshot files, scraping logs, probing the Runner lock, or querying Slack independently.
-- The existing Runner lock remains an exclusive-ownership mechanism, not a status or control API.
-- The projection must remain independent of the legacy-versus-ACP Conversation adapter choice tracked by #242.
+- The daemon is authoritative for workspace-binding, work-thread, and Execution state; Chat SDK is authoritative for conversational dispatch and delivery.
+- The companion receives a bounded operator projection. It does not derive state by reading runtime files, scraping logs, or querying Slack independently.
+- The projection remains independent of Chat SDK and ACP implementation details.
 
 ### Local protocol
 
@@ -137,7 +133,7 @@ The first release is observational. It includes:
 
 - the menu-bar item and React surface;
 - live daemon and workspace-binding state;
-- workspace-grouped in-progress, needs-attention, and recent work threads;
+- workspace-grouped in-progress and recent work threads;
 - pending Execution summaries; and
 - clear loading, daemon-unavailable, incompatible, empty, and partial-binding-failure states.
 
@@ -168,7 +164,7 @@ The complete first release is accepted when:
 - the surface reports a real running or unavailable daemon rather than fixture state;
 - workspace groups reflect real binding readiness independently;
 - real work-thread and Execution changes appear without reopening the surface;
-- every in-progress and needs-attention work thread is visible under its owning workspace;
+- every in-progress work thread is visible under its owning workspace;
 - each workspace shows no more than its four most recently dormant work threads;
 - quitting the companion leaves the daemon and active work running;
 - reconnecting or restarting either process converges to a fresh authoritative snapshot;
@@ -178,15 +174,14 @@ The complete first release is accepted when:
 
 ## Relationship to ongoing work
 
-- #242 and its child issues replace the production Conversation adapter while preserving the existing generic Runner, Application, Action, and Execution boundaries.
-- The companion projection must consume those generic boundaries rather than inspect ACP or legacy adapter internals.
-- #218/#225/#226 own the multi-workspace runtime proof and live validation. Companion work should reuse its workspace-binding directory rather than create another registry or receiver.
+- ADR 0007 establishes Chat SDK as the entire Slack plane while ACP, Actions, Executions, and Agent context remain daemon-owned.
+- The companion projection must consume the daemon's local operator boundary rather than inspect Chat, ACP, or persistence internals.
+- Multi-workspace uses the daemon's one Slack adapter and local installation registry; the companion must not create another registry or receiver.
 - The closed #217 canary is prior evidence that one Conversation can remain responsive while an Execution runs and later receive its terminal event.
 
 ## Deliberately unresolved until use
 
 - Exact work-thread ordering within a workspace.
-- Whether needs-attention work is a separate section or a visual treatment within in-progress work.
 - Which safe title is most useful.
 - Row density and which timestamps matter.
 - How much Execution detail fits without becoming diagnostics.

@@ -106,8 +106,11 @@ async function runClaudeStatusHook(
       }
       if (Date.now() - lockStartedAt >= (options.lockTimeoutMs ?? 1000)) {
         let ownerPid: number | undefined
+        let hasSymlinkOwner = false
         try {
-          const parsed = Number(fs.readlinkSync(lockPath))
+          const owner = fs.readlinkSync(lockPath)
+          hasSymlinkOwner = true
+          const parsed = Number(owner)
           if (Number.isSafeInteger(parsed) && parsed > 0) {
             ownerPid = parsed
           }
@@ -134,7 +137,11 @@ async function runClaudeStatusHook(
         }
 
         // Only a dead owner (or a legacy ownerless lock) may be displaced.
-        fs.rmSync(lockPath, { force: true, recursive: true })
+        if (hasSymlinkOwner) {
+          fs.unlinkSync(lockPath)
+        } else {
+          fs.rmSync(lockPath, { force: true, recursive: true })
+        }
         recoveredStaleLock = true
         lockStartedAt = Date.now()
         continue
@@ -161,7 +168,7 @@ async function runClaudeStatusHook(
   } finally {
     try {
       if (fs.readlinkSync(lockPath) === lockOwner) {
-        fs.rmSync(lockPath, { force: true })
+        fs.unlinkSync(lockPath)
       }
     } catch {
       // The lock was already absent or no longer belongs to this invocation.

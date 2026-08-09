@@ -76,15 +76,20 @@ export const hydrateChatImageAttachments = async (
       }
       aggregate += attachment.size;
       try {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
         const data = await Promise.race([
           attachment.fetchData(),
-          new Promise<never>((_, reject) =>
-            setTimeout(
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
               () => reject(new Error("deadline")),
               FETCH_DEADLINE_MILLIS
-            )
-          ),
-        ]);
+            );
+          }),
+        ]).finally(() => {
+          if (deadline !== undefined) {
+            clearTimeout(deadline);
+          }
+        });
         if (
           data.byteLength !== attachment.size ||
           data.byteLength > MAX_IMAGE_BYTES ||

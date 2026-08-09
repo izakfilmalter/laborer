@@ -283,7 +283,11 @@ export class SQLiteStateAdapter implements StateAdapter {
       `INSERT INTO chat_cache (cache_key, value, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET
          value = excluded.value, expires_at = excluded.expires_at`
-    ).run(key, serialize(value), ttlMs ? expirationFrom(now, ttlMs) : null);
+    ).run(
+      key,
+      serialize(value),
+      ttlMs === undefined ? null : expirationFrom(now, ttlMs)
+    );
   }
 
   async setIfNotExists(
@@ -304,7 +308,7 @@ export class SQLiteStateAdapter implements StateAdapter {
     ).run(
       key,
       serialize(value),
-      ttlMs ? expirationFrom(now, ttlMs) : null,
+      ttlMs === undefined ? null : expirationFrom(now, ttlMs),
       now
     );
     return result.changes > 0;
@@ -333,9 +337,10 @@ export class SQLiteStateAdapter implements StateAdapter {
     this.#transaction(database, () => {
       const now = this.#now();
       this.#deleteExpired("chat_lists", now);
-      const expiresAt = options?.ttlMs
-        ? expirationFrom(now, options.ttlMs)
-        : null;
+      const expiresAt =
+        options?.ttlMs === undefined
+          ? null
+          : expirationFrom(now, options.ttlMs);
       this.#prepare(
         "INSERT INTO chat_lists (list_key, value, expires_at) VALUES (?, ?, ?)"
       ).run(key, serialize(value), expiresAt);

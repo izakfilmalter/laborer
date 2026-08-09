@@ -105,24 +105,19 @@ To run the production lifecycle, use:
 bun run start:slack
 ```
 
-For development-time daemon-client replacement, use `bun run dev:slack`.
-Source edits prepare and typecheck a fresh Daemon generation while the current
-generation remains Active. A validated candidate globally quiesces the current
-Slack/ACP clients before taking ownership; preparation failures leave the
-current generation untouched, and activation failures receive one rollback
-attempt. Production `start:slack` does not use the watcher or reload supervisor.
-Cluster-host, Action-registration, dependency, environment, package, Node, and
-supervisor edits require restarting `dev:slack`.
+For development-time restart-on-change, use `bun run dev:slack`. Node watch mode
+restarts the one Chat/ACP composition. In-flight conversational work during a
+restart is intentionally lost and is not drained or replayed. Dependency,
+environment, package, and Node changes require restarting `dev:slack`.
 
-`start:slack` first loads the user application for each canonical Laborer root,
-validates its bounded Action catalog, opens that root's
-`.laborer-runtime/runtime.sqlite`, applies the explicit Laborer migrations, and
-starts one SQL-backed Effect Cluster `SingleRunner`. Workspace bindings that
-share a canonical root share this owner while retaining workspace-partitioned
-Conversations and Executions; distinct roots have distinct databases and
-runtimes. SQLite is the canonical store for new Cluster Conversation and
-Execution acceptance, workflow correlation, controls, events, and their outbox.
-Effect owns its private journal tables, which Laborer never queries directly.
+`start:slack` authenticates each configured workspace, loads its user
+application, validates its bounded Action catalog, and starts the promoted ACP
+runtime. Chat SDK owns conversational ingestion, coalescing, subscriptions, and
+best-effort Slack delivery. Its local SQLite state preserves SDK subscriptions,
+dedupe records, locks, and coalesced queues across daemon restarts, but failed or
+interrupted turns are not replayed. The durable Action/Execution runtime remains
+workspace-partitioned and retains its own acceptance, correlation, controls,
+events, and private outbox.
 
 The shipped `reference-coding` application is an example user registration. Its
 `create-feature` and `deal-with-bug` definitions use ordinary input/result
@@ -134,12 +129,9 @@ Conversation; workers cannot publish to Slack. A host restart replays completed
 Cluster activities, while unfinished non-idempotent implementation work fails
 closed for attention rather than being relaunched blindly.
 
-Startup performs the one-time, restart-safe import of compatible pre-Cluster
-state before advertising readiness. Import conflicts, corrupt state, an
-unavailable registration revision, or SQLite/Cluster recovery failure quarantine
-the affected root; accepted work never silently falls back to a superseded
-runtime. Stop with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before
-starting another receiver.
+Corrupt state, an unavailable registration revision, or ACP/OpenCode startup
+failure fails closed without a fallback receiver. Stop with Ctrl-C and wait for
+`Slack Laborer stopped cleanly.` before starting another receiver.
 
 The daemon also owns a bounded, authenticated local status stream under its
 owner-only `.laborer-runtime` directory. To open the macOS menu-bar companion

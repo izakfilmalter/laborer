@@ -41,6 +41,7 @@ const program = Effect.gen(function* () {
     startupMode: "multi-workspace",
   } satisfies SlackDaemonConfig;
   yield* runAcpChatComposition(config, {
+    botUserIds: new Map([[identity.teamId, identity.botUserId]]),
     stateFile: `acp-canary-${identity.teamId}.sqlite`,
     workspaceStatePrefix: "acp-canary",
   });

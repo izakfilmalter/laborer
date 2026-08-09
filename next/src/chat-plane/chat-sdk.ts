@@ -61,6 +61,7 @@ export interface ChatSdkLike {
     request: ChatPermissionPresentation
   ) => Promise<{ readonly messageTs: string }>;
   readonly postToThread?: (
+    workspaceId: string,
     channelId: string,
     rootTs: string,
     output: string
@@ -123,6 +124,7 @@ export interface ChatPlaneShape {
     request: ChatPermissionPresentation
   ) => Effect.Effect<{ readonly messageTs: string }, ChatPlaneOperationError>;
   readonly postToThread: (
+    workspaceId: string,
     channelId: string,
     rootTs: string,
     output: string
@@ -309,13 +311,13 @@ const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
       },
       catch: () => operationFailure("thread.post-permission"),
     }),
-  postToThread: (channelId, rootTs, output) =>
+  postToThread: (workspaceId, channelId, rootTs, output) =>
     Effect.tryPromise({
       try: () => {
         if (sdk.postToThread === undefined) {
           throw new Error("Chat thread publication unavailable");
         }
-        return sdk.postToThread(channelId, rootTs, output);
+        return sdk.postToThread(workspaceId, channelId, rootTs, output);
       },
       catch: () => operationFailure("thread.post-external-output"),
     }),
@@ -671,6 +673,23 @@ export const makeLiveChatPlaneLayer = (
         userName: config.userName,
       });
       const permissionMessages = new Map<string, SentMessage<unknown>>();
+      const withWorkspaceToken = <A>(
+        workspaceId: string,
+        operation: () => Promise<A>
+      ): Promise<A> => {
+        if (config.installations === undefined) {
+          return operation();
+        }
+        const installation = config.installations.find(
+          (candidate) => candidate.teamId === workspaceId
+        );
+        if (installation === undefined) {
+          return Promise.reject(new Error("Unknown Slack workspace"));
+        }
+        return slackAdapter.withBotToken(installation.botToken, operation, {
+          installationId: workspaceId,
+        });
+      };
 
       return {
         initialize: async () => {
@@ -762,17 +781,19 @@ export const makeLiveChatPlaneLayer = (
           });
         },
         postPermission: async (request) => {
-          const sent = await bot
-            .thread(`slack:${request.channelId}:${request.rootTs}`)
-            .post({
+          const sent = await withWorkspaceToken(request.workspaceId, () =>
+            bot.thread(`slack:${request.channelId}:${request.rootTs}`).post({
               card: permissionCard(request),
               fallbackText: "Laborer permission requested",
-            });
+            })
+          );
           permissionMessages.set(request.presentationMarker, sent);
           return { messageTs: sent.id };
         },
-        postToThread: async (channelId, rootTs, output) => {
-          await bot.thread(`slack:${channelId}:${rootTs}`).post(output);
+        postToThread: async (workspaceId, channelId, rootTs, output) => {
+          await withWorkspaceToken(workspaceId, () =>
+            bot.thread(`slack:${channelId}:${rootTs}`).post(output)
+          );
         },
         settlePermission: async (request) => {
           const sent = permissionMessages.get(request.presentationMarker);
@@ -780,10 +801,12 @@ export const makeLiveChatPlaneLayer = (
           if (sent === undefined) {
             return;
           }
-          await sent.edit({
-            card: settledPermissionCard(request.state),
-            fallbackText: `Laborer permission ${request.state}`,
-          });
+          await withWorkspaceToken(request.workspaceId, () =>
+            sent.edit({
+              card: settledPermissionCard(request.state),
+              fallbackText: `Laborer permission ${request.state}`,
+            })
+          );
         },
         shutdown: () => bot.shutdown(),
       };

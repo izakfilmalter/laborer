@@ -31,13 +31,15 @@ const signalProcessGroup = (
 };
 
 const processGroupMembers = async (
-  processGroupId: number
+  processGroupId: number,
+  timeoutMillis: number
 ): Promise<readonly number[]> => {
   const { stdout } = await execFilePromise(
     "/bin/ps",
     ["-axo", "pid=,pgid=,stat="],
     {
       maxBuffer: 1024 * 1024,
+      timeout: Math.max(1, timeoutMillis),
     }
   );
   return stdout
@@ -106,7 +108,8 @@ export type ProcessTerminationOutcome = "already_exited" | "kill" | "term";
 
 export interface ProcessSupervisorTestHooks {
   readonly processGroupMembers?: (
-    processGroupId: number
+    processGroupId: number,
+    timeoutMillis: number
   ) => Promise<readonly number[]>;
   readonly signalProcessGroup?: (
     processGroupId: number,
@@ -140,7 +143,13 @@ export const terminateSupervisedProcess = async (
   testHooks: ProcessSupervisorTestHooks = {}
 ): Promise<ProcessTerminationOutcome> => {
   const processGroupId = child.pid;
-  if (!ownsProcessGroup || processGroupId === undefined) {
+  // A failed spawn has no process to own and emits `error` without an `exit`.
+  // Treating that shape as a live direct child would manufacture cleanup
+  // uncertainty while waiting for an exit event that can never arrive.
+  if (processGroupId === undefined) {
+    return "already_exited";
+  }
+  if (!ownsProcessGroup) {
     return await terminateDirectChild(child, graceMillis);
   }
   if (!leaderIsAlive(child)) {
@@ -153,8 +162,14 @@ export const terminateSupervisedProcess = async (
   const deadline = Date.now() + graceMillis;
   while (leaderIsAlive(child) && Date.now() < deadline) {
     try {
-      const members = await groupMembers(processGroupId);
-      if (members.every((pid) => pid === processGroupId)) {
+      const members = await groupMembers(
+        processGroupId,
+        Math.max(1, deadline - Date.now())
+      );
+      // An empty or incomplete inspection is not evidence that the sentinel is
+      // the group's only live member. Fail closed to the bounded group KILL so
+      // a successful but malformed `ps` response cannot strand descendants.
+      if (members.length === 1 && members[0] === processGroupId) {
         child.kill("SIGKILL");
         if (!(await waitForLeaderExit(child, graceMillis))) {
           throw new Error("process supervisor did not settle after SIGKILL");

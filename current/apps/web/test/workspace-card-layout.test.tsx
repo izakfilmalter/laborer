@@ -176,6 +176,8 @@ import { WorkspaceList } from '../src/components/workspace-list'
 // Fixtures
 // ---------------------------------------------------------------------------
 
+const REVIEW_PR_RE = /review pr/i
+const FIX_FINDINGS_RE = /fix findings/i
 const PAUSE_SANDBOX_RE = /pause sandbox/i
 const RESUME_SANDBOX_RE = /resume sandbox/i
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
@@ -239,6 +241,33 @@ const mockStore = (workspaces: unknown[]) => {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('Workspace card layout — Row 1 (Git row)', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    isElectronMock.mockReturnValue(false)
+  })
+
+  it('does not render removed review actions when workspace has a PR', () => {
+    mockStore([
+      makeWorkspace({
+        prNumber: 42,
+        prState: 'OPEN',
+        prTitle: 'Add feature',
+        prUrl: 'https://github.com/org/repo/pull/42',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
+  })
+})
 
 describe('Workspace card layout — Row 2 (Sandbox/Infra row)', () => {
   afterEach(() => {

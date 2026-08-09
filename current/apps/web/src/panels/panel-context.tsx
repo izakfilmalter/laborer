@@ -341,7 +341,7 @@ interface PanelActions {
    * tree alongside the main content.
    * When toggled OFF: closes the file tree panel.
    *
-   * The tree panel is forced to the left side, unlike diff on the right.
+   * The tree panel is forced to the left side, unlike diff which is on the right.
    *
    * @param paneId - The ID of the pane (used to inherit workspaceId)
    * @returns Whether the tree pane is now visible (true = toggled on)

@@ -141,7 +141,9 @@ function getStatusLabel(state: ServiceState): string {
   }
 }
 
-/** The services that must be healthy for the app to function. */
+/**
+ * The core services that must be healthy for the app to function.
+ */
 const CORE_SIDECAR_NAMES: readonly SidecarName[] = [
   'server',
   'terminal',

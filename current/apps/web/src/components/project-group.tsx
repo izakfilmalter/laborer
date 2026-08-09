@@ -1,9 +1,9 @@
 /**
  * Project group component for the sidebar.
  *
- * Renders a single project as a collapsible heading with its workspaces
- * nested underneath. The heading shows the project name, a chevron
- * toggle, and project settings/delete actions.
+ * Renders a single project as a collapsible heading with its workspaces.
+ * The heading shows the project name, a chevron toggle, and project
+ * settings/delete actions.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection

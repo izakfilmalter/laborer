@@ -1524,7 +1524,7 @@ export function usePanelLayout() {
    * tree panel state is managed. This hook's version is overridden by
    * the route's gatedPanelActions to provide the full-height behavior.
    *
-   * The tree panel is forced to the left side, unlike diff on the right.
+   * The tree panel is forced to the left side, unlike diff which is on the right.
    *
    * @param _paneId - The pane ID (unused in this stub implementation)
    * @returns Always false since the actual implementation is in index.tsx

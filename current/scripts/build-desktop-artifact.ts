@@ -469,7 +469,6 @@ function stage(stageRoot: string): void {
     join(stageAppDir, 'packages/file-watcher/dist'),
     { recursive: true }
   )
-
   // Resolve dependencies from all service packages.
   const resolvedServerDeps = resolveServiceDeps(serverPkg, 'packages/server')
   const resolvedTerminalDeps = resolveServiceDeps(

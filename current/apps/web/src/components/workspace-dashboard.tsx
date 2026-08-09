@@ -2,17 +2,16 @@
  * Cross-project workspace dashboard component.
  *
  * Provides a high-level overview of all workspaces across all projects
- * with their status and summaries per project. Gives the
- * developer a command-center view of what's happening across their
- * entire development environment.
+ * with their status. Gives the developer a command-center view of what's
+ * happening across their entire development environment.
  *
  * Per-project sections show:
  * - Project name and repo path
  * - All workspaces for that project with status badges, branch names,
  *   and terminal counts
  *
- * Workspace data comes from LiveStore queries. Terminal counts
- * come from the terminal service via the `useTerminalList` polling hook.
+ * Workspace data comes from LiveStore queries. Terminal counts come from
+ * the terminal service via the `useTerminalList` polling hook.
  *
  * @see Issue #114: Cross-project workspace dashboard
  * @see Issue #144: Web app LiveStore terminal query replacement
@@ -254,7 +253,7 @@ interface ProjectSection {
  * Cross-project workspace dashboard.
  *
  * Shows all workspaces across all projects with status badges and
- * per-project workspace summaries. Provides a high-level command-center
+ * per-project status summaries. Provides a high-level command-center
  * overview for developers running multiple agents simultaneously.
  */
 function WorkspaceDashboard() {

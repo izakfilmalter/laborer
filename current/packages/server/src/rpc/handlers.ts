@@ -31,6 +31,7 @@ import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
+
 const getProjectFromStore = (projectId: string) =>
   Effect.gen(function* () {
     const { store } = yield* LaborerStore
@@ -215,7 +216,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional worktreeDir and agent fields, setupScripts as a string array, and devServer settings.',
+          'Invalid config payload. Expected optional string fields for worktreeDir, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional fields.',
       })
     }
 

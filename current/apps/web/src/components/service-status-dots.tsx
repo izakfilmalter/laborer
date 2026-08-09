@@ -40,7 +40,7 @@ import {
 } from '@/lib/sidecar-statuses'
 import { cn } from '@/lib/utils'
 
-/** Core services shown as status badges. */
+/** Core services shown as status badges (excludes sync). */
 const STATUS_DOT_SERVICES: readonly ServiceName[] = [
   'server',
   'terminal',

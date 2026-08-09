@@ -86,6 +86,7 @@ interface WorkspaceRecord {
   readonly origin: 'laborer' | 'external'
   readonly projectId: string
   readonly status: string
+  /** @deprecated Legacy task link retained for persisted workspace compatibility. */
   readonly taskSource: string | null
   readonly worktreePath: string
 }

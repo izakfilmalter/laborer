@@ -3,7 +3,7 @@
  *
  * - **Phase 3 (Restored):** Terminal pane shows a connecting placeholder
  *   before Phase 3, and renders normally after.
- * - **Phase 4 (Eventually):** Docker status banner
+ * - **Phase 4 (Eventually):** Docker status banner is gated behind Phase 4.
  *
  * These tests exercise the public UI: components show appropriate
  * loading/placeholder states in earlier phases and transition smoothly
@@ -212,7 +212,7 @@ describe('Progressive feature enablement for Phases 3-4', () => {
     expect(screen.getByTestId('terminal-connecting-placeholder')).toBeDefined()
     expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()
 
-    // Phase 3 (Restored): terminal renders, docker still placeholder
+    // Phase 3 (Restored): terminal renders, Docker still shows a placeholder
     await user.click(screen.getByTestId('advance-restored'))
     expect(screen.getByTestId('terminal-content')).toBeDefined()
     expect(screen.getByTestId('docker-checking-placeholder')).toBeDefined()

@@ -327,7 +327,7 @@ describe('shouldConfirmCloseWindowTab', () => {
   it('ignores non-terminal pane types', () => {
     const workspace = makeWorkspaceTile('tile-1', 'ws-1', [
       makePanelTab('pt-1', makeLeaf('pane-1', undefined, 'ws-1', 'diff')),
-      makePanelTab('pt-2', makeLeaf('pane-2', undefined, 'ws-1', 'diff')),
+      makePanelTab('pt-2', makeLeaf('pane-2', undefined, 'ws-1', 'agent')),
     ])
     const tab = makeWindowTab('tab-1', workspace)
     expect(shouldConfirmCloseWindowTab(tab, [])).toBe(false)

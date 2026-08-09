@@ -6,7 +6,7 @@
  * group-hover). Keyboard shortcuts are more reliable in e2e tests.
  *
  * Split shortcuts show a PanelTypePicker dialog — we press the number key
- * for the desired pane type (1=Agent, 2=Terminal, 3=Diff).
+ * for the desired pane type (1=Agent, 2=Terminal, 3=Diff, 4=Review, 5=Dev Server).
  *
  * @see apps/web/src/panels/panel-hotkeys.tsx — Keyboard shortcut definitions
  * @see apps/web/src/components/ui/panel-type-picker.tsx — Type picker

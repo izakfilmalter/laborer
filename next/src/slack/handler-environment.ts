@@ -1,5 +1,5 @@
 import { Array as EffectArray, pipe, Record } from "effect";
-import { isSensitiveCredentialEnvironmentName } from "./secret-environment.ts";
+import { isSensitiveCredentialEnvironmentName } from "../adapters/sensitive-environment.ts";
 
 const REQUIRED_RUNTIME_VARIABLES = [
   "HOME",

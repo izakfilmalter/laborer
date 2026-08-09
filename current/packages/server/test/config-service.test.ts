@@ -40,7 +40,10 @@ import { createTempDir } from './helpers/git-helpers.js'
 // ---------------------------------------------------------------------------
 
 /** Write a laborer.json config file at the given directory. */
-const writeConfig = (dir: string, config: LaborerConfig): string => {
+const writeConfig = (
+  dir: string,
+  config: LaborerConfig & Record<string, unknown>
+): string => {
   const configPath = join(dir, CONFIG_FILE_NAME)
   writeFileSync(configPath, JSON.stringify(config, null, 2))
   return configPath
@@ -346,7 +349,6 @@ describe('ConfigService', () => {
         const child = join(parent, 'provenance-child')
         mkdirSync(child, { recursive: true })
 
-        writeConfig(grandparent, {})
         writeConfig(parent, {
           worktreeDir: '/parent-worktrees',
         })
@@ -422,6 +424,7 @@ describe('ConfigService', () => {
 
         writeConfig(projectDir, {
           worktreeDir: '/existing/worktrees',
+          customField: 'preserve-me',
         })
 
         yield* writeProjectConfig(projectDir, {
@@ -431,11 +434,13 @@ describe('ConfigService', () => {
         const written = JSON.parse(
           readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
         ) as {
+          customField?: string
           setupScripts?: string[]
           worktreeDir?: string
         }
 
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
+        assert.strictEqual(written.customField, 'preserve-me')
         assert.deepStrictEqual(written.setupScripts, [
           'bun install',
           'bun test',
@@ -463,7 +468,7 @@ describe('ConfigService', () => {
         )
 
         yield* writeProjectConfig(projectDir, {
-          setupScripts: ['new-script'],
+          setupScripts: ['bun install'],
         })
 
         const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
@@ -476,7 +481,7 @@ describe('ConfigService', () => {
         assert.strictEqual(written.customField, 'preserve-me')
         assert.strictEqual(written.nested?.hello, 'world')
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
-        assert.deepStrictEqual(written.setupScripts, ['new-script'])
+        assert.deepStrictEqual(written.setupScripts, ['bun install'])
       })
     )
 

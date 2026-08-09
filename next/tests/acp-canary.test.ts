@@ -31,6 +31,8 @@ import {
 import {
   ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
   ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+  CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+  CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
   loadAcpCanarySlackConfig,
 } from "../src/slack/config.ts";
 import { environmentForConfiguredHandler } from "../src/slack/handler-environment.ts";
@@ -216,6 +218,22 @@ describe("issue #235 opt-in OpenCode ACP canary", () => {
           assert.strictEqual(
             reusedProduction.failure.reason,
             "matches-production-token"
+          );
+        }
+
+        const reusedChatCanary = yield* Effect.result(
+          loadAcpCanarySlackConfig({
+            [ACP_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+            [ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+            [CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE]: appToken,
+            [CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE]: botToken,
+          })
+        );
+        assert.strictEqual(reusedChatCanary._tag, "Failure");
+        if (reusedChatCanary._tag === "Failure") {
+          assert.strictEqual(
+            reusedChatCanary.failure.reason,
+            "matches-other-canary-token"
           );
         }
 

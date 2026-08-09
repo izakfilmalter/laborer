@@ -9,6 +9,14 @@ import { makeScopedTestRpcContext } from './test-layer.js'
 
 type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
+const cleanupTempRoots = (tempRoots: readonly string[]) => {
+  for (const root of tempRoots) {
+    if (existsSync(root)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+}
+
 const runWithRpcTestContext = <A, E>(
   run: (context: RpcTestContext) => Effect.Effect<A, E, Scope.Scope>
 ): Effect.Effect<A, E, Scope.Scope> =>
@@ -20,9 +28,16 @@ const runWithRpcTestContext = <A, E>(
 const makeWorkspaceFixture = (
   context: RpcTestContext,
   tempRoots: string[]
-): Effect.Effect<string, RpcError, Scope.Scope> =>
+): Effect.Effect<
+  {
+    readonly projectId: string
+    readonly workspaceId: string
+  },
+  RpcError,
+  Scope.Scope
+> =>
   Effect.gen(function* () {
-    const repoPath = initRepo('rpc-terminal', tempRoots)
+    const repoPath = initRepo('rpc-terminal-management', tempRoots)
     const project = yield* context.client.project.add({ repoPath })
     const workspaceId = crypto.randomUUID()
     const worktreePath = join(repoPath, '.worktrees', workspaceId)
@@ -42,7 +57,7 @@ const makeWorkspaceFixture = (
       })
     )
 
-    return workspaceId
+    return { projectId: project.id, workspaceId }
   })
 
 describe('LaborerRpcs terminal management', () => {
@@ -51,16 +66,10 @@ describe('LaborerRpcs terminal management', () => {
       Effect.gen(function* () {
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            for (const root of tempRoots) {
-              if (existsSync(root)) {
-                rmSync(root, { recursive: true, force: true })
-              }
-            }
-          })
+          Effect.sync(() => cleanupTempRoots(tempRoots))
         )
 
-        const workspaceId = yield* makeWorkspaceFixture(
+        const { workspaceId } = yield* makeWorkspaceFixture(
           { client, terminalClientRecorder, ...context },
           tempRoots
         )

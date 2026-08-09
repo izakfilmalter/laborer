@@ -1,14 +1,15 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Array as EffectArray, Fiber, pipe, Ref } from "effect";
 import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import { terminateSupervisedProcess } from "../src/adapters/process-supervisor.ts";
 import {
   type EmulatedSlackFixture,
   startEmulatedSlack,
 } from "../src/prototype/emulated-slack.ts";
-import { terminateSupervisedProcess } from "../src/prototype/process-supervisor.ts";
 import { RECOVERY_NOTICE_TEXT } from "../src/prototype/recovery-notice.ts";
 import { makePrototypeHarness } from "../src/prototype/runtime.ts";
 import {
@@ -387,6 +388,49 @@ describe("issues #234 and #236 ACP Markdown stream", () => {
         );
 
         assert.strictEqual(groupSignals, 0);
+        assert.strictEqual(directSignals, 0);
+      })
+  );
+
+  it.effect(
+    "fails closed when process-group inspection omits the owned leader",
+    () =>
+      Effect.gen(function* () {
+        let directSignals = 0;
+        const groupSignals: NodeJS.Signals[] = [];
+        let exitCode: number | null = null;
+        const leaderEvents = Object.assign(new EventEmitter(), {
+          kill: () => {
+            directSignals += 1;
+            exitCode = 0;
+            leaderEvents.emit("exit", 0, null);
+            return true;
+          },
+          pid: 424_245,
+        });
+        Object.defineProperties(leaderEvents, {
+          exitCode: { get: () => exitCode },
+          signalCode: { get: () => null },
+        });
+        const leader =
+          leaderEvents as unknown as ChildProcessWithoutNullStreams;
+
+        const outcome = yield* Effect.promise(() =>
+          terminateSupervisedProcess(leader, 1, true, {
+            processGroupMembers: async () => [],
+            signalProcessGroup: (_processGroupId, signal) => {
+              groupSignals.push(signal);
+              if (signal === "SIGKILL") {
+                exitCode = 0;
+                leaderEvents.emit("exit", 0, signal);
+              }
+              return true;
+            },
+          })
+        );
+
+        assert.strictEqual(outcome, "kill");
+        assert.deepStrictEqual(groupSignals, ["SIGTERM", "SIGKILL"]);
         assert.strictEqual(directSignals, 0);
       })
   );

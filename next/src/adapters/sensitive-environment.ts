@@ -12,7 +12,7 @@ export const isSlackCredentialEnvironmentName = (name: string): boolean =>
 
 export const isSlackTokenEnvironmentName = isSlackCredentialEnvironmentName;
 
-/** Credentials owned by the Slack adapter or Laborer control plane. */
+/** Credentials owned by an adapter or by Laborer's local control plane. */
 export const isSensitiveCredentialEnvironmentName = (name: string): boolean =>
   isSlackCredentialEnvironmentName(name) ||
   LABORER_PRIVATE_ENVIRONMENT_NAME.test(name) ||

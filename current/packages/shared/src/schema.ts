@@ -1,5 +1,7 @@
 import { Events, makeSchema, Schema, State } from '@livestore/livestore'
-import { WindowLayoutSchema } from './types.js'
+import { PersistedWindowLayoutSchema } from './types.js'
+
+const HistoricalPrdStatus = Schema.Literal('draft', 'active', 'completed')
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -21,6 +23,7 @@ export const workspaces = State.SQLite.table({
   columns: {
     id: State.SQLite.text({ primaryKey: true }),
     projectId: State.SQLite.text(),
+    /** @deprecated — Legacy task link retained while historical workspace events remain materialized. */
     taskSource: State.SQLite.text({ nullable: true }),
     branchName: State.SQLite.text(),
     worktreePath: State.SQLite.text(),
@@ -116,7 +119,7 @@ export const appSettings = State.SQLite.table({
 export const panelLayout = State.SQLite.clientDocument({
   name: 'panel_layout',
   schema: Schema.Struct({
-    windowLayout: Schema.NullOr(WindowLayoutSchema),
+    windowLayout: Schema.NullOr(PersistedWindowLayoutSchema),
   }),
   default: {
     value: { windowLayout: null },
@@ -411,12 +414,9 @@ export const prdCreated = Events.synced({
     title: Schema.String,
     slug: Schema.String,
     filePath: Schema.String,
-    status: Schema.optionalWith(
-      Schema.Literal('draft', 'active', 'completed'),
-      {
-        default: () => 'draft',
-      }
-    ),
+    status: Schema.optionalWith(HistoricalPrdStatus, {
+      default: () => 'draft',
+    }),
     createdAt: Schema.String,
   }),
 })
@@ -425,7 +425,7 @@ export const prdStatusChanged = Events.synced({
   name: 'v1.PrdStatusChanged',
   schema: Schema.Struct({
     id: Schema.String,
-    status: Schema.Literal('draft', 'active', 'completed'),
+    status: HistoricalPrdStatus,
   }),
 })
 
@@ -437,7 +437,7 @@ export const prdUpdated = Events.synced({
     title: Schema.String,
     slug: Schema.String,
     filePath: Schema.String,
-    status: Schema.Literal('draft', 'active', 'completed'),
+    status: HistoricalPrdStatus,
     createdAt: Schema.String,
   }),
 })
@@ -535,7 +535,7 @@ export const windowLayoutUpdated = Events.clientOnly({
   name: 'v1.WindowLayoutUpdated',
   schema: Schema.Struct({
     windowId: Schema.String,
-    windowLayout: WindowLayoutSchema,
+    windowLayout: PersistedWindowLayoutSchema,
     reason: Schema.optional(Schema.String),
   }),
 })

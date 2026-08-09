@@ -379,7 +379,7 @@ function WorkspacePickerItem({
 /**
  * Renders the main content area of a workspace frame. Dispatches between:
  * - Empty workspace state (no panel tabs)
- * - Side panel layout (tree/diff open alongside main content)
+ * - Side panel layout (diff/tree open alongside main content)
  * - Standard panel manager rendering
  */
 function WorkspaceContent({

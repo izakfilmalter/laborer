@@ -485,15 +485,20 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      if (name !== 'terminal' && name !== 'file-watcher') {
+      const validNames = ['terminal', 'file-watcher'] as const
+      type ValidName = (typeof validNames)[number]
+      if (!validNames.includes(name as ValidName)) {
         return
       }
       // Try the lifecycle monitor first (proper health tracking),
       // then fall back to direct restart via the utility process manager.
-      if (lifecycleMonitor && utilityProcessManager?.isRunning(name)) {
-        await lifecycleMonitor.manualRestart(name)
-      } else if (utilityProcessManager?.isRunning(name)) {
-        await utilityProcessManager.restart(name)
+      if (
+        lifecycleMonitor &&
+        utilityProcessManager?.isRunning(name as ValidName)
+      ) {
+        await lifecycleMonitor.manualRestart(name as ValidName)
+      } else if (utilityProcessManager?.isRunning(name as ValidName)) {
+        await utilityProcessManager.restart(name as ValidName)
       }
     })
 

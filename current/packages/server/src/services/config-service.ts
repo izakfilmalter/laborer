@@ -211,7 +211,6 @@ interface ResolvedLaborerConfig {
    */
   readonly defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
   readonly devServer: ResolvedDevServerConfig
-  /** Absolute path with `~` already expanded. */
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -948,7 +947,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}" with agent from ${resolved.agent.source} and worktree directory from ${resolved.worktreeDir.source}`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved

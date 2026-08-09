@@ -32,6 +32,10 @@
     "agent-client-protocol": {
       "repository": "agentclientprotocol/agent-client-protocol",
       "description": "Use for Agent Client Protocol specifications, SDKs, implementation patterns, tests, and examples"
+    },
+    "t3code": {
+      "repository": "pingdotgg/t3code",
+      "description": "Use for T3 Code architecture, implementation patterns, tests, and examples"
     }
   }
 }

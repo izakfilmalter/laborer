@@ -22,7 +22,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 - **No multi-agent visibility** -- Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes with real-time status tracking.
 - **Manual environment management** -- Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace. Each agent gets a fully isolated environment automatically.
-- **Disconnected workflows** -- Brings agent execution, terminal output, workspace state, and code changes into a single interface.
+- **Disconnected workflows** -- Brings workspace execution and GitHub pull requests into one interface.
 - **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent. Laborer saturates your machine with parallel execution.
 
 ## Features
@@ -30,19 +30,20 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 ### Workspace Management
 - **Git worktree-based workspaces** -- Each workspace gets its own branch, directory, and allocated port (range 3100-3999). Automatic setup scripts, port allocation, and full lifecycle management (create/run/stop/destroy). Auto-detects existing worktrees.
 - **Docker container support** -- Optional containerized dev servers via OrbStack with bind-mounted worktrees and stable `.orb.local` URLs. Container pause/unpause and status tracking.
-- **Cross-project dashboard** -- High-level command-center view showing workspaces across all projects with status summaries.
+- **Cross-project dashboard** -- High-level command-center view showing workspace status across all projects.
 
 ### Terminal and Agent Orchestration
 - **Tmux-style panel layout** -- Recursive horizontal/vertical splits with keyboard shortcuts (Ctrl+B prefix), drag-and-drop workspace tabs, fullscreen mode, and tabbed window layout (window tabs > workspace tiles > panel tabs > panel splits).
 - **Full terminal emulation** -- Real PTY terminals via node-pty + xterm.js with VS Code-grade flow control, 100k+ line scrollback, per-terminal MessagePort channels for zero-copy data transfer, and crash-resilient session persistence. Multiple terminals per workspace (agent, type checker, test runner, dev server, shell).
-- **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, and Codex.
+- **Agent status tracking** -- Detects when AI agents are active vs waiting for input via process inspection, with OS-level desktop notifications on status transitions. Supports OpenCode, Claude Code, Codex, and rlph/brrr.
 - **Multi-window support** -- Multiple Electron windows with persistent layout, window state across restarts, and drag-and-drop tab reordering.
 
-### Code Review and Diffs
+### Diffs and GitHub
 - **Live diff viewer** -- Real-time git diffs against the worktree's base SHA with per-hunk accept/reject annotations. Split and unified views. Reactive updates via filesystem watcher.
 - **File tree with git status** -- Lazy per-directory file browser with git status decorations, right-click context menus, and reactive invalidation.
 - **GitHub PR integration** -- Tracks PR state (open/closed/merged) per workspace with ahead/behind counts.
 
+### Desktop Distribution
 - **Auto-updates** -- GitHub Releases-based auto-update keeps the desktop app current.
 
 ## Tech Stack
@@ -124,7 +125,7 @@ Each project managed by Laborer uses a `laborer.json` config file:
 }
 ```
 
-Supported agents: `opencode2`, `claude`, and `codex`. Existing
+Supported agents: `opencode2`, `claude`, `codex`, `rlph`. Existing
 `"agent": "opencode"` configuration is migrated to `opencode2` when read.
 
 ## Available Scripts

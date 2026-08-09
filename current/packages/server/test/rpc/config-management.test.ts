@@ -72,7 +72,7 @@ describe('LaborerRpcs config management', () => {
           mkdirSync(parentDir, { recursive: true })
           initRepoAt(repoPath)
 
-          const parentConfigPath = writeLaborerConfig(parentDir, {
+          const ancestorConfigPath = writeLaborerConfig(parentDir, {
             worktreeDir: '~/ancestor-worktrees',
           })
           const projectConfigPath = writeLaborerConfig(repoPath, {
@@ -85,7 +85,7 @@ describe('LaborerRpcs config management', () => {
           // Config source paths are resolved relative to the
           // canonical project root, so canonicalize expectations.
           const canonicalProjectConfigPath = realpathSync(projectConfigPath)
-          const canonicalParentConfigPath = realpathSync(parentConfigPath)
+          const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
           // Check all resolved fields except defaultSandboxProvider
           // and devServer.provider, which both depend on the real global
@@ -130,7 +130,7 @@ describe('LaborerRpcs config management', () => {
                 value: [],
               },
               worktreeDir: {
-                source: canonicalParentConfigPath,
+                source: canonicalAncestorConfigPath,
                 value: join(homedir(), 'ancestor-worktrees'),
               },
             }

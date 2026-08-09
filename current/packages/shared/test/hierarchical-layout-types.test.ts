@@ -63,10 +63,10 @@ const diffLeaf: LeafNode = {
   workspaceId: 'ws-1',
 }
 
-const secondaryDiffLeaf: LeafNode = {
+const agentLeaf: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-3',
-  paneType: 'diff',
+  paneType: 'agent',
 }
 
 const devServerLeaf: LeafNode = {
@@ -95,7 +95,7 @@ const nestedPanelSplit: SplitNode = {
       _tag: 'SplitNode',
       id: 'panel-split-inner',
       direction: 'vertical',
-      children: [diffLeaf, secondaryDiffLeaf],
+      children: [diffLeaf, agentLeaf],
       sizes: [50, 50],
     },
   ],
@@ -159,7 +159,7 @@ describe('LeafNodeSchema', () => {
     const minimal: LeafNode = {
       _tag: 'LeafNode',
       id: 'pane-min',
-      paneType: 'diff',
+      paneType: 'agent',
     }
     const result = roundTrip(LeafNodeSchema, minimal)
     expect(result).toStrictEqual(minimal)
@@ -180,22 +180,6 @@ describe('LeafNodeSchema', () => {
       const result = roundTrip(LeafNodeSchema, leaf)
       expect(result).toStrictEqual(leaf)
     }
-  })
-
-  it('decodes a persisted review pane as a diff pane', () => {
-    const result = Schema.decodeUnknownSync(LeafNodeSchema)({
-      _tag: 'LeafNode',
-      id: 'legacy-pane',
-      paneType: 'review',
-      workspaceId: 'ws-1',
-    })
-
-    expect(result).toStrictEqual({
-      _tag: 'LeafNode',
-      id: 'legacy-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    })
   })
 })
 
@@ -219,7 +203,7 @@ describe('SplitNodeSchema', () => {
       _tag: 'SplitNode',
       id: 'v-split',
       direction: 'vertical',
-      children: [terminalLeaf, secondaryDiffLeaf],
+      children: [terminalLeaf, agentLeaf],
       sizes: [70, 30],
     }
     const result = roundTrip(SplitNodeSchema, vertical)
@@ -279,7 +263,7 @@ describe('PanelNodeSchema', () => {
                 {
                   _tag: 'LeafNode',
                   id: 'l3-b',
-                  paneType: 'diff',
+                  paneType: 'agent',
                 },
               ],
               sizes: [60, 40],
@@ -381,7 +365,7 @@ describe('WorkspaceTileSplitSchema', () => {
       panelTabs: [
         {
           id: 'tab-4',
-          panelLayout: secondaryDiffLeaf,
+          panelLayout: agentLeaf,
         },
       ],
     }
@@ -505,7 +489,7 @@ describe('WindowLayoutSchema', () => {
      *           │   └─ PanelTab "Split" (horizontal split: terminal + diff)
      *           └─ WorkspaceTileSplit (vertical)
      *               ├─ WorkspaceTileLeaf ws-2 (devServer tab)
-     *               └─ WorkspaceTileLeaf ws-3 (diff tab)
+     *               └─ WorkspaceTileLeaf ws-3 (agent tab)
      */
     const layout: WindowLayout = {
       tabs: [
@@ -530,12 +514,12 @@ describe('WindowLayoutSchema', () => {
                     workspaceId: 'ws-3',
                     panelTabs: [
                       {
-                        id: 'tab-diff',
-                        panelLayout: secondaryDiffLeaf,
+                        id: 'tab-agent',
+                        panelLayout: agentLeaf,
                         focusedPaneId: 'pane-3',
                       },
                     ],
-                    activePanelTabId: 'tab-diff',
+                    activePanelTabId: 'tab-agent',
                   },
                 ],
                 sizes: [50, 50],

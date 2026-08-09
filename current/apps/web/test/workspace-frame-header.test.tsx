@@ -439,7 +439,7 @@ describe('WorkspaceFrameHeader', () => {
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------
 
-  it('hides diff and close workspace buttons when minimized', () => {
+  it('hides diff, close workspace, and dev server buttons when minimized', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader

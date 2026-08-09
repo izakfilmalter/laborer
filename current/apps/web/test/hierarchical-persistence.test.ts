@@ -650,14 +650,9 @@ describe('decodeWindowLayout', () => {
     expect(tile.panelTabs).toHaveLength(0)
   })
 
-  it('decodes a removed review pane as a diff pane', () => {
+  it('drops persisted review panes without crashing', () => {
     const diffLeaf = makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
-    const reviewLeaf = {
-      _tag: 'LeafNode',
-      id: 'pane-review',
-      paneType: 'review',
-      workspaceId: 'ws-1',
-    }
+    const reviewLeaf = makeLeaf('pane-review', undefined, 'ws-1', 'review')
     const tab1 = makePanelTab('tab-1', diffLeaf)
     const tab2 = makePanelTab('tab-2', reviewLeaf)
     const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab1, tab2])
@@ -665,12 +660,9 @@ describe('decodeWindowLayout', () => {
 
     const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
-    const decodedTile = result.windowLayout?.tabs[0]
+    const repairedTile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
-    expect(decodedTile.panelTabs[1]?.panelLayout).toMatchObject({
-      id: 'pane-review',
-      paneType: 'diff',
-    })
+    expect(repairedTile.panelTabs).toEqual([tab1])
   })
 
   it('strips invalid optional fields from panel leaf nodes', () => {

@@ -146,7 +146,7 @@ describe('areCoreServicesHealthy', () => {
     expect(areCoreServicesHealthy(statuses)).toBe(false)
   })
 
-  it('returns true when all services are healthy', () => {
+  it('returns true when all core services are healthy', () => {
     const statuses = deriveSidecarStatuses([
       { state: 'healthy', name: 'server' },
       { state: 'healthy', name: 'terminal' },

@@ -2,7 +2,7 @@
  * Unit tests for the DevWatcher (dev mode hot reload).
  *
  * Tests verify:
- * - File watching is set up for all four sidecar dist directories
+ * - File watching is set up for all three service dist directories
  * - File change events trigger utility process restarts
  * - Debounce prevents rapid restarts during a single rebuild
  * - Shutdown cancels watchers and pending debounce timers
@@ -144,7 +144,7 @@ describe('DevWatcher', () => {
   // -----------------------------------------------------------------------
 
   describe('startWatching', () => {
-    it('watches all three sidecar dist directories', () => {
+    it('watches all three service dist directories', () => {
       devWatcher.startWatching()
 
       expect(mockWatch.watchers).toHaveLength(3)

@@ -137,12 +137,7 @@ describe('addPanelTab', () => {
   it('creates tab with correct panelType for each type', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
 
-    for (const paneType of [
-      'terminal',
-      'agent',
-      'diff',
-      'devServerTerminal',
-    ] as const) {
+    for (const paneType of ['terminal', 'diff', 'devServerTerminal'] as const) {
       const result = addPanelTab(ws, paneType)
       const leaf = result.panelTabs[0]?.panelLayout as LeafNode
       expect(leaf.paneType).toBe(paneType)
@@ -153,7 +148,7 @@ describe('addPanelTab', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
     const customTab: PanelTab = {
       id: 'custom-tab',
-      panelLayout: makeLeaf('custom-pane', 'agent'),
+      panelLayout: makeLeaf('custom-pane', 'diff'),
       focusedPaneId: 'custom-pane',
     }
 
@@ -654,8 +649,8 @@ describe('combined operations', () => {
 
     // Add 4 tabs of different types
     ws = addPanelTab(ws, 'terminal')
-    ws = addPanelTab(ws, 'agent')
     ws = addPanelTab(ws, 'diff')
+    ws = addPanelTab(ws, 'agent')
     ws = addPanelTab(ws, 'devServerTerminal')
 
     expect(ws.panelTabs).toHaveLength(4)

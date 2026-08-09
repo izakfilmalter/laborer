@@ -22,6 +22,7 @@ import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
   type PendingClosePanelTabState,
@@ -288,7 +289,7 @@ function HomeComponent() {
    * Each workspace manages its own file tree, so toggling one workspace
    * does not affect any others.
    *
-   * The tree panel is forced to the left side, unlike the diff panel.
+   * The tree panel is forced to the left side, unlike diff.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the tree panel is now open
@@ -967,7 +968,7 @@ function HomeComponent() {
   // When search is cleared, the stored collapse state is naturally restored.
   const isSearchActive = searchQuery.trim().length > 0
 
-  // Main content view toggle — terminal panels or dashboard
+  // Main content view toggle — panels (terminal panes) or dashboard
   const [mainView, setMainView] = useState<MainView>('panels')
   const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false)
 
@@ -1046,143 +1047,147 @@ function HomeComponent() {
   }, [mainView])
 
   return (
-    <PanelActionsProvider
-      activePaneId={activePaneId}
-      activeWorkspaceId={activeWorkspaceId}
-      fullscreenPaneId={fullscreenPaneId}
-      pendingClose={pendingCloseState}
-      pendingClosePanelTab={pendingClosePanelTabState}
-      pendingCloseWindowTab={pendingCloseWindowTabState}
-      pendingCloseWorkspace={pendingCloseWorkspaceState}
-      pendingDestroyOnCloseWorkspace={pendingDestroyOnCloseWorkspaceState}
-      pendingPicker={pendingPickerState}
-      value={gatedPanelActions}
-    >
-      <CloseAppDialog
-        onOpenChange={setIsCloseAppDialogOpen}
-        open={isCloseAppDialogOpen}
-      />
-      <DestroyWorkspaceOnCloseDialog
-        onCloseAndDestroy={handleDestroyOnCloseConfirm}
-        onConfirm={handleDestroyOnCloseJustClose}
-        onOpenChange={handleDestroyOnCloseDialogOpenChange}
-        open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
-      />
-      <div className="flex h-screen min-w-0">
-        {/* Sidebar — search, project groups, workspace list, health check */}
-        <aside
-          className="min-h-0 shrink-0 overflow-hidden border-r"
-          style={{ width: sidebarCollapsed ? 0 : sidebarWidth.widthPx }}
-        >
-          <div className="flex h-full min-h-0 flex-col">
-            {/* Search bar + Add Project — shared top row */}
-            {hasProjects && (
-              <div className="drag-region flex h-10 shrink-0 items-center gap-2 border-b px-2 pl-[88px]">
-                <SidebarSearch
-                  className="min-w-0 flex-1"
-                  onChange={setSearchQuery}
-                  value={searchQuery}
-                />
-                <AddProjectForm />
-              </div>
-            )}
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="grid gap-4 p-3">
-                {/* Project-grouped tree — each project is a collapsible heading */}
-                {filteredProjects.map((project) => (
-                  <ProjectGroup
-                    expanded={
-                      isSearchActive && matchingProjectIds.has(project.id)
-                        ? true
-                        : collapseState.isExpanded(project.id)
-                    }
-                    key={project.id}
-                    onToggle={() => collapseState.toggle(project.id)}
-                    project={project}
-                  />
-                ))}
-                {projectList.length === 0 && (
-                  <p className="py-2 text-center text-muted-foreground text-xs">
-                    No projects. Add one to get started.
-                  </p>
-                )}
-                {isSearchActive &&
-                  filteredProjects.length === 0 &&
-                  projectList.length > 0 && (
-                    <p className="py-2 text-center text-muted-foreground text-xs">
-                      No matching projects or workspaces.
-                    </p>
-                  )}
-              </div>
-            </ScrollArea>
-            <SidebarFooter />
-          </div>
-        </aside>
-
-        {!sidebarCollapsed && (
-          <button
-            aria-label="Resize sidebar"
-            className="relative z-10 flex w-px shrink-0 cursor-col-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-            onPointerCancel={handleSidebarResizeEnd}
-            onPointerDown={handleSidebarResizeStart}
-            onPointerMove={handleSidebarResizeMove}
-            onPointerUp={handleSidebarResizeEnd}
-            tabIndex={-1}
-            type="button"
+    <DiffScrollProvider>
+      <PanelActionsProvider
+        activePaneId={activePaneId}
+        activeWorkspaceId={activeWorkspaceId}
+        fullscreenPaneId={fullscreenPaneId}
+        pendingClose={pendingCloseState}
+        pendingClosePanelTab={pendingClosePanelTabState}
+        pendingCloseWindowTab={pendingCloseWindowTabState}
+        pendingCloseWorkspace={pendingCloseWorkspaceState}
+        pendingDestroyOnCloseWorkspace={pendingDestroyOnCloseWorkspaceState}
+        pendingPicker={pendingPickerState}
+        value={gatedPanelActions}
+      >
+        <CloseAppDialog
+          onOpenChange={setIsCloseAppDialogOpen}
+          open={isCloseAppDialogOpen}
+        />
+        <DestroyWorkspaceOnCloseDialog
+          onCloseAndDestroy={handleDestroyOnCloseConfirm}
+          onConfirm={handleDestroyOnCloseJustClose}
+          onOpenChange={handleDestroyOnCloseDialogOpenChange}
+          open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
+        />
+        <div className="flex h-screen min-w-0">
+          {/* Sidebar — search, project groups, workspace list, health check */}
+          <aside
+            className="min-h-0 shrink-0 overflow-hidden border-r"
+            style={{ width: sidebarCollapsed ? 0 : sidebarWidth.widthPx }}
           >
-            <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-sm bg-border" />
-          </button>
-        )}
-
-        {/* Main content — panel system, dashboard, or welcome empty state */}
-        <main className="min-w-0 flex-1">
-          {!hasProjects && <WelcomeEmptyState />}
-          {hasProjects && (
-            <div className="flex h-full flex-col">
-              <PanelHeaderBar
-                mainView={mainView}
-                onCloseWindowTab={gatedPanelActions.closeWindowTab}
-                onNewWindowTab={panelActions.addWindowTab}
-                onRenameWindowTab={panelActions.renameWindowTab}
-                onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
-                onSelectWindowTab={panelActions.switchWindowTab}
-                onToggleSidebar={
-                  responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
-                }
-                onViewChange={setMainView}
-                sidebarCollapsed={sidebarCollapsed}
-                windowLayout={panelActions.windowLayout}
-              />
-              {mainView === 'panels' && (
-                <>
-                  <PanelHotkeys
-                    leafPaneIds={leafPaneIds}
-                    onMetaWWithoutPane={handleMetaWWithoutPane}
+            <div className="flex h-full min-h-0 flex-col">
+              {/* Search bar + Add Project — shared top row */}
+              {hasProjects && (
+                <div className="drag-region flex h-10 shrink-0 items-center gap-2 border-b px-2 pl-[88px]">
+                  <SidebarSearch
+                    className="min-w-0 flex-1"
+                    onChange={setSearchQuery}
+                    value={searchQuery}
                   />
-                  <PanelContent
-                    activePaneId={activePaneId}
-                    activeTabId={windowLayout?.activeTabId}
-                    diffWorkspaceIds={diffPaneWorkspaceIds}
-                    fullscreenPaneId={fullscreenPaneId}
-                    isEmptyWindowTab={isEmptyWindowTab}
-                    isReconciling={isReconciling}
-                    treeWorkspaceIds={treePaneWorkspaceIds}
-                    windowLayout={windowLayout}
-                    windowTabs={windowLayout?.tabs}
-                  />
-                </>
-              )}
-              {mainView === 'dashboard' && (
-                <div className="flex h-full flex-col">
-                  <div className="min-h-0 flex-1">
-                    <WorkspaceDashboard />
-                  </div>
+                  <AddProjectForm />
                 </div>
               )}
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="grid gap-4 p-3">
+                  {/* Project-grouped tree — each project is a collapsible heading */}
+                  {filteredProjects.map((project) => (
+                    <ProjectGroup
+                      expanded={
+                        isSearchActive && matchingProjectIds.has(project.id)
+                          ? true
+                          : collapseState.isExpanded(project.id)
+                      }
+                      key={project.id}
+                      onToggle={() => collapseState.toggle(project.id)}
+                      project={project}
+                    />
+                  ))}
+                  {projectList.length === 0 && (
+                    <p className="py-2 text-center text-muted-foreground text-xs">
+                      No projects. Add one to get started.
+                    </p>
+                  )}
+                  {isSearchActive &&
+                    filteredProjects.length === 0 &&
+                    projectList.length > 0 && (
+                      <p className="py-2 text-center text-muted-foreground text-xs">
+                        No matching projects or workspaces.
+                      </p>
+                    )}
+                </div>
+              </ScrollArea>
+              <SidebarFooter />
             </div>
+          </aside>
+
+          {!sidebarCollapsed && (
+            <button
+              aria-label="Resize sidebar"
+              className="relative z-10 flex w-px shrink-0 cursor-col-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              onPointerCancel={handleSidebarResizeEnd}
+              onPointerDown={handleSidebarResizeStart}
+              onPointerMove={handleSidebarResizeMove}
+              onPointerUp={handleSidebarResizeEnd}
+              tabIndex={-1}
+              type="button"
+            >
+              <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-sm bg-border" />
+            </button>
           )}
-        </main>
-      </div>
-    </PanelActionsProvider>
+
+          {/* Main content — Panel system, dashboard, or welcome empty state */}
+          <main className="min-w-0 flex-1">
+            {!hasProjects && <WelcomeEmptyState />}
+            {hasProjects && (
+              <div className="flex h-full flex-col">
+                <PanelHeaderBar
+                  mainView={mainView}
+                  onCloseWindowTab={gatedPanelActions.closeWindowTab}
+                  onNewWindowTab={panelActions.addWindowTab}
+                  onRenameWindowTab={panelActions.renameWindowTab}
+                  onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
+                  onSelectWindowTab={panelActions.switchWindowTab}
+                  onToggleSidebar={
+                    responsiveSizes.canCollapseSidebar
+                      ? toggleSidebar
+                      : undefined
+                  }
+                  onViewChange={setMainView}
+                  sidebarCollapsed={sidebarCollapsed}
+                  windowLayout={panelActions.windowLayout}
+                />
+                {mainView === 'panels' && (
+                  <>
+                    <PanelHotkeys
+                      leafPaneIds={leafPaneIds}
+                      onMetaWWithoutPane={handleMetaWWithoutPane}
+                    />
+                    <PanelContent
+                      activePaneId={activePaneId}
+                      activeTabId={windowLayout?.activeTabId}
+                      diffWorkspaceIds={diffPaneWorkspaceIds}
+                      fullscreenPaneId={fullscreenPaneId}
+                      isEmptyWindowTab={isEmptyWindowTab}
+                      isReconciling={isReconciling}
+                      treeWorkspaceIds={treePaneWorkspaceIds}
+                      windowLayout={windowLayout}
+                      windowTabs={windowLayout?.tabs}
+                    />
+                  </>
+                )}
+                {mainView === 'dashboard' && (
+                  <div className="flex h-full flex-col">
+                    <div className="min-h-0 flex-1">
+                      <WorkspaceDashboard />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+        </div>
+      </PanelActionsProvider>
+    </DiffScrollProvider>
   )
 }

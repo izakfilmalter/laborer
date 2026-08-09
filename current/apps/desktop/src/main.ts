@@ -393,20 +393,6 @@ async function startServerBackend(): Promise<void> {
   backendWsUrl = backendProcessManager.start().wsUrl
 }
 
-/**
- * Broker direct MessagePort channels between utility processes that
- * need to communicate with each other.
- *
- * Called whenever a utility process becomes ready. Checks which pairs
- * of services are both healthy and creates brokered connections for
- * those that are. Each pair is re-brokered after every restart of
- * either service, since old ports die with old processes.
- */
-function brokerInterProcessPorts(): void {
-  // No utility processes require brokered MessagePorts. The backend child
-  // reaches terminal and file-watcher over loopback WebSocket RPC.
-}
-
 app
   .whenReady()
   .then(async () => {
@@ -442,7 +428,6 @@ app
     utilityProcessManager.setMessageHandler((name, message) => {
       if (message.type === 'ready') {
         lifecycleMonitor?.handleReady(name)
-        brokerInterProcessPorts()
       } else if (message.type === 'heartbeat') {
         lifecycleMonitor?.handleHeartbeat(name)
       }
@@ -500,20 +485,15 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['terminal', 'file-watcher'] as const
-      type ValidName = (typeof validNames)[number]
-      if (!validNames.includes(name as ValidName)) {
+      if (name !== 'terminal' && name !== 'file-watcher') {
         return
       }
       // Try the lifecycle monitor first (proper health tracking),
       // then fall back to direct restart via the utility process manager.
-      if (
-        lifecycleMonitor &&
-        utilityProcessManager?.isRunning(name as ValidName)
-      ) {
-        await lifecycleMonitor.manualRestart(name as ValidName)
-      } else if (utilityProcessManager?.isRunning(name as ValidName)) {
-        await utilityProcessManager.restart(name as ValidName)
+      if (lifecycleMonitor && utilityProcessManager?.isRunning(name)) {
+        await lifecycleMonitor.manualRestart(name)
+      } else if (utilityProcessManager?.isRunning(name)) {
+        await utilityProcessManager.restart(name)
       }
     })
 

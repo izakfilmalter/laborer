@@ -28,10 +28,8 @@
  * @see Issue #20: Build script update + port reservation removal
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { NodeSocket } from '@effect/platform-node'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { AgentStatusSchema, RpcError, TerminalRpcs } from '@laborer/shared/rpc'
@@ -52,6 +50,7 @@ import {
   Stream,
 } from 'effect'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
+import { writeClaudeStatusHooks } from './claude-status-hooks.js'
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { installOpenCodeStatusPlugin } from './opencode-status-plugin.js'
@@ -510,84 +509,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const PROMPTABLE_AGENTS = new Set(['opencode', 'opencode2'])
 
       /**
-       * Build the Claude Code `--settings` JSON for agent hook injection.
-       * The hooks fire `curl` to the terminal service's hook endpoint
-       * on lifecycle transitions (SessionStart, Stop, Notification).
-       *
-       * @see .reference/cmux/Resources/bin/claude — cmux's approach
-       */
-      /**
-       * Build the Claude Code hooks settings JSON object.
-       *
-       * The hook commands use curl to POST to the terminal service.
-       * Commands read LABORER_TERMINAL_ID and LABORER_HOOK_URL from the
-       * environment (set on the PTY process), avoiding the need to embed
-       * the terminal ID and URL in the JSON itself.
-       *
-       * @see .reference/cmux/Resources/bin/claude — cmux's approach
-       */
-      const buildClaudeHooksSettings = (): Record<string, unknown> => ({
-        hooks: {
-          SessionStart: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"working\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-          Stop: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"idle\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-          Notification: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"status\\":\\"needs_input\\"}" > /dev/null 2>&1',
-                  timeout: 10,
-                },
-              ],
-            },
-          ],
-        },
-      })
-
-      /**
-       * Write a Claude Code settings file with hooks and return the
-       * path. The file is written to a temp location so it persists
-       * for the lifetime of the terminal session.
-       */
-      const writeClaudeSettings = (terminalId: string): string => {
-        const settingsDir = join(tmpdir(), 'laborer-agent-hooks')
-        mkdirSync(settingsDir, { recursive: true })
-        const settingsPath = join(settingsDir, `${terminalId}.json`)
-        writeFileSync(
-          settingsPath,
-          JSON.stringify(buildClaudeHooksSettings()),
-          'utf-8'
-        )
-        return settingsPath
-      }
-
-      /**
        * Build the shell command string for spawning an agent with hooks.
        * Returns the modified command and any extra env vars needed.
        */
@@ -604,7 +525,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         }
 
         if (agentCommand === 'claude') {
-          const settingsPath = writeClaudeSettings(terminalId)
+          const settingsPath = writeClaudeStatusHooks(terminalId)
           return {
             command: `claude --settings ${settingsPath}`,
             extraEnv,
@@ -838,8 +759,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        *
        * When the command is a known agent CLI (claude, opencode2), hook
        * settings are injected so the agent reports its lifecycle state
-       * back to the terminal service. This enables accurate "needs input"
-       * detection for agents that stay running as interactive CLIs.
+       * back to the terminal service. This preserves working, needs-input,
+       * and completion transitions for persistent interactive CLIs.
        */
       const spawnHostTerminal = Effect.fn('TerminalClient.spawnHostTerminal')(
         function* (

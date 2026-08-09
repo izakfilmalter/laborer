@@ -10,6 +10,7 @@ This makes it impossible to:
 - Develop and iterate on UI features using just `vite dev` in a browser.
 - Run the web app as a standalone browser client connected to backend services over the network (a prerequisite for any future web-only deployment).
 
+VS Code solves this with a layered transport abstraction: services communicate through named channels over an `IMessagePassingProtocol` interface, backed by Electron IPC in the desktop app and WebSocket in the browser. Both Electron and browser share the same service code — only the transport differs. Laborer already has the right RPC contract separation (platform-agnostic schemas in `packages/shared/src/rpc.ts`) and an existence proof of HTTP transport (the MCP package's `LaborerRpcClient.layer`), but the web app hardcodes the Electron path with no fallback.
 
 ## Solution
 
@@ -33,6 +34,7 @@ Backend services (server, terminal) gain HTTP/WebSocket endpoints that run along
 12. As a developer, I want the LiveStore worker to accept either a MessagePort or a WebSocket URL for sync, so that the store initialization path doesn't hardcode Electron assumptions.
 13. As a developer, I want the Playwright E2E global setup to start backend services as standalone Node.js HTTP servers (via `turbo dev`), so that browser-based tests connect over HTTP/WS naturally.
 14. As a developer, I want the existing E2E test specs to pass against the HTTP/WebSocket transport without modification, so that transport compatibility is validated by the same tests that validate the UI.
+15. As a developer, I want the HTTP RPC client protocol to be a reusable layer in `packages/shared`, so that any consumer (web app, MCP, future CLI) can connect to services over HTTP without duplicating transport boilerplate.
 16. As a developer, I want the WebSocket terminal data protocol to be defined in `packages/shared`, so that both the server (terminal process) and client (web app) share the same framing contract.
 17. As a developer, I want JSON serialization to be used for the HTTP transport (matching Effect RPC's `RpcSerialization.layerJson`), so that requests/responses are debuggable with standard browser dev tools.
 18. As a developer, I want the multiplexed terminal WebSocket to handle connection drops gracefully (reconnect, replay buffered output), so that transient network issues don't permanently break terminal panes.
@@ -66,6 +68,7 @@ The web app detects its transport mode at runtime by checking for `window.deskto
 
 ### HTTP RPC Client Protocol (packages/shared)
 
+Extract a reusable HTTP RPC client protocol layer from the MCP package's existing implementation. This layer combines `RpcClient.layerProtocolHttp`, `RpcSerialization.layerJson`, and `FetchHttpClient.layer` into a single composable layer. Both the web app and MCP package consume this shared layer instead of duplicating the setup.
 
 ### WebSocket Terminal Data Transport (packages/shared)
 
@@ -137,6 +140,7 @@ Tests should verify external behavior from the consumer's perspective, not inter
 **HTTP RPC client protocol (packages/shared):**
 - Test that the layer correctly composes `RpcClient.layerProtocolHttp`, `RpcSerialization.layerJson`, and `FetchHttpClient.layer`.
 - Use in-memory mocks (Effect's test utilities) to verify request/response flow without a real HTTP server.
+- Prior art: the existing `rpc-transport-messageport.ts` and `rpc-transport-messageport-client.ts` have no unit tests currently, but the MCP package's usage serves as an integration test. New tests should follow the Effect RPC testing patterns from `.reference/effect/packages/rpc/test/`.
 
 **WebSocket terminal data transport (packages/shared):**
 - Test the framing protocol: encode/decode with terminal ID, message type discrimination (data, input, resize, ack).
@@ -168,6 +172,7 @@ Tests should verify external behavior from the consumer's perspective, not inter
 - **Connection token / authentication**: VS Code's remote connection uses a connection token handshake. For local development and Playwright tests, no authentication is needed. Authentication is a future concern for remote deployment.
 - **Removing the MessagePort transport**: MessagePort remains the primary transport for the Electron app. It is faster (structured clone, zero-copy ArrayBuffer transfer) and should stay as the default.
 - **File watcher HTTP/WS transport**: The file-watcher service (`packages/file-watcher`) is consumed only by the server process (not the web app directly), so it doesn't need an HTTP/WS endpoint for the browser.
+- **MCP HTTP/WS transport refactoring**: The MCP package already has an HTTP transport. It should consume the new shared HTTP client protocol layer, but refactoring MCP is a follow-up task, not a blocker.
 
 ## Further Notes
 
@@ -182,6 +187,7 @@ VS Code's approach is documented in detail from our investigation:
 
 ### Existing code to reuse
 
+- **MCP package's HTTP transport** (`packages/mcp/src/services/laborer-rpc-client.ts:82-98`): Already proves `LaborerRpcs` works over `RpcClient.layerProtocolHttp` + `FetchHttpClient` + `RpcSerialization.layerJson`. Extract into shared layer.
 - **`SyncWsRpc` protocol** (`apps/web/src/livestore/messageport-sync.ts`): Already speaks the right protocol for LiveStore sync. Just needs a WebSocket transport alternative.
 - **`RpcMessagePort` interface** (`packages/shared/src/rpc-transport-messageport.ts:45-55`): Already handles both Node.js and Web MessagePort API styles. The abstraction is clean.
 - **E2E global setup** (`apps/web/e2e/global-setup.ts`): Already starts services via `turbo dev`, creates temp repos, health-checks endpoints. Needs minimal changes.

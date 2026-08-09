@@ -406,6 +406,7 @@ A lightweight popover/dropdown component that appears when creating a new panel 
 
 1. Terminal (pre-selected)
 2. Diff
+3. Review
 4. Dev Server
 
 Interaction:
@@ -477,15 +478,26 @@ Make diff a standalone panel type that can be opened in any panel tab or split, 
 
 ---
 
+## 13. Promote review to first-class panel type
 
 **Status:** done
 
 ### What to build
 
+Make review a standalone panel type, same pattern as diff promotion:
 
+- `PaneContent` already renders `ReviewPane` for `paneType: 'review'` — verify it works correctly in the new tab/split context
+- Remove `toggleReviewPane` from `PanelActions` — replace with creating a review panel tab or split
+- Update `Ctrl+B, R` to create a new review panel (split right) instead of toggling
+- Ensure `ReviewPane` works standalone with correct workspace context
 
 ### Acceptance criteria
 
+- [ ] Review renders correctly as a standalone pane in tabs and splits
+- [ ] `Ctrl+B, R` creates a new review panel in a right-side split
+- [ ] Review appears as option #3 in the panel type picker
+- [ ] ReviewPane receives correct workspace context
+- [ ] Old layouts with review panes continue to work
 
 ### Blocked by
 
@@ -566,6 +578,7 @@ The picker appears as a small popover anchored to the active pane (for splits) o
 
 - Blocked by "Panel type picker component"
 - Blocked by "Promote diff to first-class panel type"
+- Blocked by "Promote review to first-class panel type"
 - Blocked by "Promote dev server terminal to first-class panel type"
 
 ### User stories addressed
@@ -1060,6 +1073,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 10 | Panel tab bar integration | 7, 4, 9 | done |
 | 11 | Panel type picker component | None | done |
 | 12 | Promote diff to first-class panel type | 11, 10 | done |
+| 13 | Promote review to first-class panel type | 11, 10 | done |
 | 14 | Promote dev server terminal to first-class panel type | 11, 10 | done |
 | 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | done |
 | 16 | cmux-style keybindings: pane navigation + zoom | 8, 10 | done |

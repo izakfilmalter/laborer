@@ -8,6 +8,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue 1: Initialize `packages/shared` package** — Created package with exports (`.`, `./types`, `./schema`, `./rpc`), tsconfig extending base, placeholder source files. Unblocked #2, #3, #10.
 
+**Issue 2: Shared domain types** — Defined branded IDs (`ProjectId`, `WorkspaceId`, `TerminalId`, `TaskId`), enum variants (`WorkspaceStatus`, `TerminalStatus`, `TaskSource`, `TaskStatus`, `PaneType`, `SplitDirection`), domain model classes (`Project`, `Workspace`, `Terminal`, `Task`, `Diff`), recursive panel layout tree types (`LeafNode`, `SplitNode`, `PanelNode`). All exported from `@laborer/shared/types`. Unblocked #9.
 
 **Issue 3: LiveStore schema — Projects table** — Defined `projects` table, `projectCreated`/`projectRemoved` events with materializers. Created `state` and `schema` exports. Unblocked #4-#8, #17.
 
@@ -25,6 +26,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue 6: LiveStore schema — Diffs table** — Defined `diffs` table with upsert materializer, `diffUpdated`/`diffCleared` events.
 
+**Issue 8: LiveStore schema — Tasks table** — Defined `tasks` table, `taskCreated`/`taskStatusChanged`/`taskRemoved` events with materializers.
 
 **Issue 7: LiveStore schema — PanelLayout table** — Defined `panelLayout` table with JSON column (`PanelNodeSchema`), 4 layout events (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`) with upsert materializers. All 6 LiveStore tables now complete.
 
@@ -46,6 +48,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue 30: PortAllocator — free** — Added `free(port)` with atomic `Ref.modify` and `PORT_NOT_ALLOCATED` error.
 
+**Issue 33: WorkspaceProvider — create worktree** — Created `WorkspaceProvider` Effect service. `createWorktree(projectId, branchName?, taskId?)` validates project, generates branch name, checks branch exists, allocates port, creates git worktree, verifies, commits `workspaceCreated`. Port cleanup on failure. Wired to `workspace.create` RPC. Unblocked #34-#39, #43.
 
 **Issue 36: WorkspaceProvider — inject PORT env** — Added `getWorkspaceEnv(workspaceId)` returning `PORT`, `LABORER_WORKSPACE_ID`, `LABORER_WORKSPACE_PATH`, `LABORER_BRANCH`. Unblocked #40.
 
@@ -73,6 +76,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue 28: Remove Project button** — AlertDialog confirmation, `LaborerClient.mutation("project.remove")`, trash icon per project card. Extracted `extractErrorMessage` to shared utils.
 
+**Issue 92: rlph.startLoop RPC handler** — Thin wrapper spawning `rlph --once` via `TerminalManager.spawn`.
 
 **Issue 41: Workspace list UI** — Created `WorkspaceList` with status badges (color-coded StatusDot), project name lookup, filtered destroyed workspaces. Unblocked #48, #114, #115, #121.
 
@@ -98,8 +102,11 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue 73: PanelManager — serialize layout to LiveStore** — Refactored `usePanelLayout()` to persist to LiveStore's `panelLayout` table. Split/close actions commit events. Seed logic for initial layout. Also completed Issue #74 (restore layout).
 
+**Issue 94: rlph.writePRD RPC handler** — Thin wrapper spawning `rlph prd [description]` via `TerminalManager.spawn`.
 
+**Issue 96: rlph.review RPC handler** — Thin wrapper spawning `rlph review <prNumber>` via `TerminalManager.spawn`.
 
+**Issue 98: rlph.fix RPC handler** — Thin wrapper spawning `rlph fix <prNumber>` via `TerminalManager.spawn`. All 4 rlph handlers complete.
 
 **Issue 111: editor.open RPC handler** — Opens files in configured editor (`EDITOR_COMMAND` env) via `Bun.spawn`. Last RPC stub removed — all 16 (later 19) RPC methods fully implemented.
 
@@ -125,6 +132,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue #64: Terminal session reconnection** — Implemented terminal reconnection on page reload using LiveStore event log replay for scrollback restoration. Added reactive terminal status tracking, input gating for stopped terminals, read-only status banner, and initial resize on mount.
 
+**Issue 100, 101, 102: Task CRUD** — Created `TaskManager` Effect service with `createTask`, `updateTaskStatus`, `removeTask`, `getTask`, `listTasks`. Added `TaskResponse` schema, 3 new RPC methods (`task.create`, `task.updateStatus`, `task.remove`). Expanded RPC contract to 19 methods.
 
 **Issue 75, 76, 77, 78: Keyboard shortcuts** — Implemented tmux-style keyboard shortcut system using TanStack Hotkeys. Ctrl+B prefix key with H (horizontal split), V (vertical split), X (close pane), O (next pane), P (previous pane). Active pane state persisted to LiveStore.
 
@@ -138,6 +146,7 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue #133: terminal.restart RPC handler** — Added `terminal.restart` RPC, `terminalRestarted` event (resets status to running), `TerminalManager.restart()` method (kills existing, respawns with same command/workspace). RotateCw button for all terminals. xterm.js clears scrollback on restart event.
 
+**Issue #93: "Start Ralph Loop" button** — Added Play icon button per active workspace calling `rlph.startLoop` mutation. Auto-assigns spawned terminal to panel pane. Auto-expands collapsible terminal section.
 
 **Issue #89: Diff viewer — live update** — Enhanced DiffPane with `useTransition` for deferred rendering, MutationObserver for scroll position preservation, "Updated" flash indicator, stable module-level PatchDiff options, last updated timestamp footer.
 
@@ -163,40 +172,59 @@ All entries below this section are compacted summaries of completed work. The la
 
 **Issue #136: IPC buffer optimization** — Replaced O(n²) string concatenation in PTY host stdin reader and PtyHostClient stdout reader with array-based accumulators. Join-once-scan-with-index approach.
 
+**Issue #104: Task list UI** — Created `TaskList` component with status filter tabs (All/Pending/In Progress/Completed/Cancelled with counts), color-coded status and source badges, inline status dropdown, remove button with confirmation, project name lookup. Added to sidebar.
 
+**Issue #103: Create Task form** — Created dialog form with TanStack Form: project selector, title (required), description (optional). Calls `task.create` mutation. ClipboardPlus icon trigger button in Tasks section header.
 
+**Issue #105: Task-driven workspace auto-creation** — `task.updateStatus` handler auto-creates workspace when status → "in_progress". Branch naming: `task/<id-prefix>/<slug>`. Duplicate prevention via LiveStore query. Auto-starts diff polling.
 
+**Issue #106: Task-driven workspace auto-cleanup** — `task.updateStatus` handler auto-destroys linked workspaces when status → "completed" or "cancelled". Full cleanup: stop polling, kill terminals, destroy worktree. Best-effort per workspace.
 
 **Bug fix: Terminal WebSocket route 404** — Changed `return router.addRoute(...)` to `yield* router.addRoute(...)` in `terminal-ws.ts`. The `return` in `Effect.gen` returned the effect as a value instead of executing it.
 
 **Issue #80: Keyboard shortcut scope isolation** — Added `attachCustomKeyEventHandler` to xterm.js Terminal. Ctrl+B enters prefix mode (returns false to let event bubble to TanStack Hotkeys). Next key also passes through as action key. Visual "Ctrl+B" badge indicator. 1500ms auto-exit timeout.
 
+**Issue #95: PRD writing form** — Created "Write PRD" dialog with description textarea. Calls `rlph.writePRD` mutation. FileText icon (blue). Auto-assigns terminal to panel pane.
 
 ---
 
+## Issue #97: "Review PR" button + PR number input — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
+Created a "Review PR" dialog form that allows users to review a pull request from any active workspace. The form has a PR number input field (required, must be a positive integer) and calls `rlph.review` mutation via AtomRpc, which spawns a terminal running `rlph review <prNumber>` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Review PR" button (Eye icon, purple color) is added to each active workspace card in the workspace list, after the "Start Ralph Loop" (Play) button.
 
 ### What was done
 
+1. **Created `apps/web/src/components/review-pr-form.tsx`** — new React component (~170 lines) with:
+   - **Module-level atom declaration**: `reviewPrMutation` (`LaborerClient.mutation("rlph.review")`)
+   - **Props interface**: `ReviewPrFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
+   - **Dialog wrapper**: `Dialog` with trigger button (`Eye` icon, purple color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph review` does, form body, and footer with submit button
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
+   - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `reviewPr({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Review started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
+   - Follows the exact same Dialog/Form/Field/Submit pattern established by `write-prd-form.tsx` (Issue #95)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
+   - Added `import { ReviewPrForm } from "@/components/review-pr-form"` import
+   - Added `<ReviewPrForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, after the "Start Ralph Loop" button. Only shown for active workspaces (`isActive`).
    - Updated module JSDoc to reference Issue #97
 
 ### Files created
+- `apps/web/src/components/review-pr-form.tsx` — Review PR dialog form component
 
 ### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added ReviewPrForm import, button per active workspace, JSDoc update
 
 ### Acceptance criteria status
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
+- [ ] Tests: valid PR -> mutation called; invalid -> validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -204,35 +232,54 @@ All entries below this section are compacted summaries of completed work. The la
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
+- **Eye icon**: Used `Eye` from lucide-react — semantically represents "review/inspect". Purple color (`text-purple-600 dark:text-purple-400`) distinguishes it from the other action buttons: green=start (Play), blue=create/write (FileText), purple=review (Eye), red=destroy (Trash). The color follows a semantic pattern that maps rlph workflow stages to distinct colors.
+- **Dialog form**: Like "Write PRD", "Review PR" needs a parameter (PR number), so a dialog provides the focused input experience. This is consistent with all other parameterized actions in the codebase.
 - **Input type="text" with inputMode="numeric"**: Used `type="text"` instead of `type="number"` to avoid the browser's native number input spinners (which are awkward for PR numbers). `inputMode="numeric"` still triggers the numeric keyboard on mobile. `pattern="[0-9]*"` provides an additional hint to the browser.
 - **String-to-int parsing**: The form stores the PR number as a string (for input handling) and parses it to an integer on submit via `Number.parseInt`. This matches the RPC contract which expects `Schema.Int`.
 - **Validation checks**: Three validations: (1) non-empty, (2) parses to a positive integer (`> 0`), (3) is a whole number (no decimals). This catches "abc", "-1", "0", "3.5", and empty string.
+- **Button placement**: The ReviewPrForm button is placed after the "Start Ralph Loop" button. The visual order follows the rlph workflow: Write PRD → Start Loop → Review PR → Fix Findings. The review step comes after implementation.
+- **onTerminalSpawned callback**: Same pattern as WritePrdForm — auto-expands the collapsible terminal section so the user can see the new terminal in the sidebar.
 
 ### Issues unblocked
+- Issue #99: "Fix Findings" button + PR number input — follows the exact same pattern as #97, just calling `rlph.fix` instead of `rlph.review`. Can be implemented by copying `review-pr-form.tsx` with minor changes.
 
+## Issue #99: "Fix Findings" button + PR number input — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
+Created a "Fix Findings" dialog form that allows users to fix review findings on a pull request from any active workspace. The form has a PR number input field (required, must be a positive integer) and calls `rlph.fix` mutation via AtomRpc, which spawns a terminal running `rlph fix <prNumber>` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Fix Findings" button (Wrench icon, amber color) is added to each active workspace card in the workspace list, after the "Review PR" (Eye) button. This completes the entire rlph workflow pipeline: Write PRD → Start Loop → Review PR → Fix Findings.
 
 ### What was done
 
+1. **Created `apps/web/src/components/fix-findings-form.tsx`** — new React component (~176 lines) with:
+   - **Module-level atom declaration**: `fixFindingsMutation` (`LaborerClient.mutation("rlph.fix")`)
+   - **Props interface**: `FixFindingsFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
+   - **Dialog wrapper**: `Dialog` with trigger button (`Wrench` icon, amber color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph fix` does, form body, and footer with submit button
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
+   - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `fixFindings({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Fix started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
+   - Follows the exact same Dialog/Form/Field/Submit pattern established by `review-pr-form.tsx` (Issue #97)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
+   - Added `import { FixFindingsForm } from "@/components/fix-findings-form"` import
+   - Added `<FixFindingsForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, after the "Review PR" button. Only shown for active workspaces (`isActive`).
    - Updated module JSDoc to reference Issue #99
 
 ### Files created
+- `apps/web/src/components/fix-findings-form.tsx` — Fix Findings dialog form component
 
 ### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added FixFindingsForm import, button per active workspace, JSDoc update
 
 ### Acceptance criteria status
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows fix output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
+- [ ] Tests: valid PR -> mutation called; invalid -> validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -240,9 +287,21 @@ All entries below this section are compacted summaries of completed work. The la
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
+- **Wrench icon**: Used `Wrench` from lucide-react — semantically represents "fix/repair". Amber color (`text-amber-600 dark:text-amber-400`) distinguishes it from the other action buttons: green=start (Play), blue=create/write (FileText), purple=review (Eye), amber=fix (Wrench), red=destroy (Trash). The color follows a semantic pattern that maps rlph workflow stages to distinct colors.
+- **Dialog form**: Like "Review PR", "Fix Findings" needs a parameter (PR number), so a dialog provides the focused input experience. This is consistent with all other parameterized actions in the codebase.
+- **Same validation as Review PR**: Three validations: (1) non-empty, (2) parses to a positive integer (`> 0`), (3) is a whole number (no decimals). Identical to `review-pr-form.tsx` since both accept PR numbers.
+- **Button placement**: The FixFindingsForm button is placed after the "Review PR" button in the workspace card actions. The visual order follows the rlph workflow: Write PRD → Start Loop → Review PR → Fix Findings. This reinforces the logical workflow progression.
+- **onTerminalSpawned callback**: Same pattern as ReviewPrForm and WritePrdForm — auto-expands the collapsible terminal section so the user can see the new terminal in the sidebar.
 
+### rlph workflow pipeline complete
+With Issue #99 done, the entire rlph workflow is now accessible from the workspace card UI:
+- Issue #95: Write PRD (FileText icon, blue) — `rlph prd [description]` ✅
+- Issue #93: Start Ralph Loop (Play icon, green) — `rlph --once` ✅
+- Issue #97: Review PR (Eye icon, purple) — `rlph review <pr>` ✅
+- Issue #99: Fix Findings (Wrench icon, amber) — `rlph fix <pr>` ✅
 
 ### Issues unblocked
+- No direct downstream issues exclusively blocked by #99. This completes the rlph UI integration — all four rlph commands are accessible from the workspace card.
 
 ## Bug fix: Diff pane shows "No changes" for committed changes + PatchDiff crashes on multi-file diffs
 
@@ -355,7 +414,7 @@ Added explicit shutdown finalization and startup restoration logging to the Labo
 
 Modified `packages/server/src/services/laborer-store.ts`:
 
-1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the primary tables and logs their row counts. This confirms state was successfully restored from the previous session.
+1. **Startup entity count logging**: After `createStore()` completes (which materializes state from the persisted SQLite eventlog), queries the 4 primary tables (projects, workspaces, terminals, tasks) and logs their row counts. This confirms state was successfully restored from the previous session. Example output: `[LaborerStore] Store initialized — restored from SQLite: 2 project(s), 5 workspace(s), 3 terminal(s), 8 task(s)`.
 
 2. **Explicit shutdown finalizer via `Effect.addFinalizer`**: When the layer scope is torn down (SIGINT/SIGTERM → `BunRuntime.runMain` interrupts → `Layer.launch` tears down scopes), the finalizer:
    - Logs "Shutdown: flushing LiveStore state to SQLite..."
@@ -393,7 +452,7 @@ This ordering is critical: TerminalManager needs the store to be alive when it c
 ### Design decisions
 - **Explicit finalizer despite upstream handling**: The `@livestore/adapter-node` already registers `Effect.acquireRelease` finalizers that call `db.close()` on both SQLite databases. Our explicit finalizer adds three things: (1) observable logging so shutdown progress is visible in server output, (2) final entity count logging for post-mortem verification, (3) explicit `store.shutdown()` call which flushes pending writes before the adapter's own finalizers run. This belt-and-suspenders approach ensures data integrity.
 - **catchAll around store.shutdown()**: The `store.shutdown()` call is wrapped in `Effect.catchAll` as a defensive measure. During abnormal shutdown (e.g., the store was already in an error state, or the scope is being interrupted), `shutdown()` might throw. The catchAll ensures the finalizer completes and subsequent cleanup (adapter finalizers, server teardown) proceeds.
-- **Entity count logging**: Queries the primary domain tables; transient presentation state is excluded. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
+- **Entity count logging**: Queries the 4 primary domain tables (projects, workspaces, terminals, tasks) — not diffs or panelLayout, which are transient state that's less critical for persistence verification. The startup/shutdown count pair makes it easy to verify in logs that no data was lost during a restart cycle.
 - **No explicit "flush" API**: LiveStore doesn't expose a separate "flush pending writes" API. `store.shutdown()` is the official mechanism for ensuring all pending commits are persisted. The upstream `createStore()` implementation closes the `lifetimeScope` which cascades through the adapter's `acquireRelease` to `db.close()`, and SQLite guarantees that `close()` flushes the WAL to the main database file.
 
 ### Issues unblocked
@@ -502,25 +561,40 @@ With Issue #130 done, all three graceful shutdown tasks for Polishing requiremen
 
 ## Issue #71: PanelManager — navigate between panes — COMPLETED
 
+## Issue #108: Linear task sourcing — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Why this next
+Picked Issue #108 as the highest-priority remaining task because it completes the second backend task-ingestion path (after GitHub), unlocks Issue #110's task-source picker UI, and directly advances the core task-driven workspace flow from user story 7.
 
 ### Summary
+Implemented Linear task import on the server. Laborer can now read a project's rlph config, query Linear's GraphQL API for eligible issues, and import them into LiveStore as `source = "linear"` tasks with stable `externalId`s.
 
 ### What was done
 
+1. **Created `packages/server/src/services/linear-task-importer.ts`**
+   - Added a new `LinearTaskImporter` Effect service with `importProjectIssues(projectId)`.
+   - Resolved the project's effective Laborer config via `ConfigService`, then located the rlph config file using `rlphConfig` from `laborer.json` or the default `.rlph/config.toml` path.
+   - Parsed the rlph TOML needed for Linear sourcing (`label`, `[linear].team`, optional project, API key env, and workflow state names) with a focused parser for the subset Laborer needs.
+   - Queried `https://api.linear.app/graphql` with the rlph-derived team/project/label filters and excluded in-progress / in-review / done / completed / canceled issues to match rlph task-selection semantics.
+   - Deduped against existing `linear` tasks by `externalId` and created new LiveStore tasks through `TaskManager.createTask(..., "linear", identifier)`.
    - Returned typed `RpcError`s for missing project, unreadable config, missing `[linear]` config, missing API key env var, invalid response bodies, and Linear API failures.
 
 2. **Extended the shared/server RPC layer**
+   - Added `task.importLinear` to `packages/shared/src/rpc.ts` using the existing `TaskImportResponse` shape.
    - Wired the new handler in `packages/server/src/rpc/handlers.ts`.
+   - Added `LinearTaskImporter.layer` to the server composition in `packages/server/src/main.ts`.
 
+3. **Added integration tests in `packages/server/test/linear-task-importer.test.ts`**
    - Covered successful Linear import with duplicate skipping.
    - Covered graceful handling of a non-OK Linear API response.
+   - Verified the outgoing GraphQL filter includes the expected label/team/project/state constraints derived from rlph config.
 
 ### Files created
+- `packages/server/src/services/linear-task-importer.ts`
+- `packages/server/test/linear-task-importer.test.ts`
 
 ### Files modified
 - `packages/shared/src/rpc.ts`
@@ -529,44 +603,69 @@ With Issue #130 done, all three graceful shutdown tasks for Polishing requiremen
 - `issues.md`
 
 ### Verification
+- `bun x vitest run test/linear-task-importer.test.ts` (in `packages/server`) ✅
 - `bun run check-types` (in `packages/server`) ✅ — passes with only pre-existing Effect plugin warnings/messages elsewhere in the package
+- `bun x ultracite check packages/shared/src/rpc.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/server/src/services/linear-task-importer.ts packages/server/test/linear-task-importer.test.ts` ✅
 
 ### Acceptance criteria status
+- [x] Fetch tasks from Linear API using project's rlph config
+- [x] Tasks created in LiveStore with source = `"linear"` and externalId
 - [x] Handle API errors gracefully
+- [x] Tests: mock Linear API -> tasks imported; API error -> handled
 
+## Issue #109: GitHub task sourcing — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
+Added server-side GitHub issue importing so projects can pull open GitHub issues into LiveStore tasks with `source = "github"`. The feature is exposed through a new `task.importGithub` RPC endpoint and handles duplicate imports, pull-request filtering, GitHub remote validation, and API failures gracefully.
 
 ### What was done
 
+1. **Created `packages/server/src/services/github-task-importer.ts`**
+   - Added a new `GithubTaskImporter` Effect service with `importProjectIssues(projectId)`.
    - Reads `git remote.origin.url` from the project's repo, supports both SSH and HTTPS GitHub remotes, and rejects non-GitHub remotes with typed `RpcError`s.
    - Fetches up to 100 open issues from `https://api.github.com/repos/:owner/:repo/issues`.
    - Sends GitHub-friendly headers and optionally uses `GITHUB_TOKEN` / `GH_TOKEN` when present.
+   - Skips pull requests (`pull_request` payloads), dedupes against existing `github` tasks by `externalId`, and creates new tasks through `TaskManager` with `externalId = html_url`.
 
 2. **Extended the shared/server RPC layer**
+   - Added `TaskImportResponse` and a new `task.importGithub` RPC definition in `packages/shared/src/rpc.ts`.
    - Wired the new handler in `packages/server/src/rpc/handlers.ts`.
+   - Added `GithubTaskImporter.layer` to the server composition in `packages/server/src/main.ts`.
 
+3. **Added tests in `packages/server/test/github-task-importer.test.ts`**
    - Uses real temporary git repos with configured GitHub remotes.
    - Mocks `fetch` to verify successful import behavior and API failure behavior.
+   - Verifies duplicate skipping, pull request filtering, imported task shape, and graceful failure messaging.
 
 ### Files created
+- `packages/server/src/services/github-task-importer.ts` — GitHub issue import service
+- `packages/server/test/github-task-importer.test.ts` — integration tests for GitHub task importing
 
 ### Files modified
+- `packages/shared/src/rpc.ts` — added `task.importGithub` RPC + import response schema
 - `packages/server/src/rpc/handlers.ts` — wired the new RPC handler
+- `packages/server/src/main.ts` — provided `GithubTaskImporter.layer`
 - `issues.md` — marked Issue #109 done
 
 ### Acceptance criteria status
 - [x] Fetch issues from GitHub API for project repo
+- [x] Tasks created in LiveStore with source = "github" and externalId
 - [x] Handle API errors gracefully
+- [x] Tests: mock GitHub API -> tasks imported; API error -> handled
 
 ### Verification
+- `bun run --cwd packages/server test github-task-importer.test.ts` passes (2/2 tests)
 - `bun run --cwd packages/server test` passes (115 passed, 6 skipped)
 - `bun run --cwd packages/server check-types` passes; output still includes pre-existing Effect plugin warnings/messages in unrelated files
+- `bun x ultracite check packages/server/src/services/github-task-importer.ts packages/server/test/github-task-importer.test.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/shared/src/rpc.ts` passes
 
 ### Design decisions
+- **API-first delivery**: implemented as a server service + RPC endpoint first, which fits Laborer's local-first/API-first architecture and cleanly unblocks the later task-source picker UI.
+- **`externalId = html_url`**: uses the full GitHub issue URL as a globally unique external identifier, which also matches the existing PRD-task GitHub import pattern.
+- **Open issues only**: fetches `state=open` so imported tasks reflect actionable work rather than closed history.
 - **Real git repos in tests**: uses temporary repos with real `remote.origin.url` values instead of mocking child-process internals, which keeps the test closer to production behavior.
 
 ## Issue #71: PanelManager — navigate between panes — COMPLETED
@@ -633,43 +732,65 @@ Tree: `H-Split(A, V-Split(B, H-Split(C, D)))`
 - [x] Focus stops at edges — returns undefined when no neighbor exists, no-op
 - [ ] Tests: multiple panes → focus moves correctly; active pane visually distinct (deferred — web app has no test infrastructure; pure `findPaneInDirection` function could be unit tested if vitest is added to the web app)
 
+## Issue #110: Task source picker UI — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Why this next
+Picked Issue #110 as the highest-priority remaining task because it turns the already-built Linear and GitHub import RPCs into a usable task-ingestion workflow in the app, directly advancing the PRD's task-driven workspace flow.
 
 ### Summary
+Added a task source picker to the sidebar with Manual, Linear, and GitHub tabs. Manual keeps the create-task flow available, while Linear and GitHub selections automatically import tasks for the active project, expose a Sync button, and filter the task list to the selected source.
 
 ### What was done
 
+1. **Created `apps/web/src/components/task-source-picker.tsx`**
    - Added source tabs for `manual`, `linear`, and `github`.
+   - Wired `task.importLinear` and `task.importGithub` mutations through `LaborerClient`.
    - Auto-imports when the user switches to Linear or GitHub with a concrete project selected.
    - Shows a `Sync` button for repeated imports and a guidance message when the user is on "All Projects" and external import is unavailable.
 
+2. **Created `apps/web/src/components/task-source-picker.helpers.ts`**
    - Extracted pure helpers for source filtering and import gating.
    - Keeps the UI component small and gives the feature lightweight test coverage without adding a DOM test stack.
 
+3. **Updated task creation and task list wiring**
+   - `apps/web/src/components/create-task-form.tsx` now accepts an optional `defaultProjectId` so manual creation respects the currently selected project.
+   - `apps/web/src/components/task-list.tsx` now accepts `sourceFilter` and filters tasks by both project and selected source before applying the existing status tabs.
    - Empty-state copy now reflects the currently selected source.
 
 4. **Updated `apps/web/src/routes/index.tsx`**
+   - Replaced the always-visible `CreateTaskForm` action in the Tasks header with the new `TaskSourcePicker`.
+   - Lifted the active task-source state into `HomeComponent` and passed it down to both the picker and the list.
 
+5. **Added tests in `apps/web/test/task-source-picker.test.ts`**
    - Verified filtering by source across all projects.
    - Verified combined project + source filtering.
    - Verified external imports are blocked without a specific project and never triggered for the manual tab.
 
 ### Files created
+- `apps/web/src/components/task-source-picker.tsx`
+- `apps/web/src/components/task-source-picker.helpers.ts`
+- `apps/web/test/task-source-picker.test.ts`
 
 ### Files modified
+- `apps/web/src/components/create-task-form.tsx`
+- `apps/web/src/components/task-list.tsx`
 - `apps/web/src/routes/index.tsx`
 - `issues.md`
 
 ### Acceptance criteria status
 - [x] Dropdown or tabs for source selection
+- [x] Linear -> fetches and displays Linear tasks
 - [x] GitHub -> fetches and displays GitHub issues
+- [x] Manual -> shows create task form
+- [x] Tests: select source -> correct tasks displayed; switch source -> list updates
 
 ### Verification
 - `bun run test` in `apps/web` ✅ (35 tests passed)
+- `bun x ultracite check apps/web/src/components/create-task-form.tsx apps/web/src/components/task-list.tsx apps/web/src/components/task-source-picker.helpers.ts apps/web/src/components/task-source-picker.tsx apps/web/src/routes/index.tsx apps/web/test/task-source-picker.test.ts` ✅
+- `bun run check-types` in `apps/web` ⚠️ still reports the same pre-existing `exactOptionalPropertyTypes` errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new task-source type errors were introduced
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -757,6 +878,7 @@ Plus all existing `process.env` variables (PATH, HOME, etc.).
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
+- **`.laborer.json` over `rlphConfig`**: The PRD mentions setup scripts are "defined per project in rlphConfig", but `rlphConfig` is currently always `null` and has no mechanism for configuration entry. A `.laborer.json` file at the project root is more practical: it's version-controlled, editable by hand, and follows the convention of project-local config files (`.eslintrc.json`, `.prettierrc`, etc.). Future work can add UI for editing this config.
 - **`sh -c` execution**: Scripts are executed via `sh -c <command>` rather than parsing into argv. This allows shell features (pipes, redirects, `&&` chains, env var expansion) which are essential for real setup scripts like `cp .env.example .env && bun install`.
 - **Sequential execution with early exit**: Scripts run one at a time, stopping at the first failure. This is the expected behavior for setup scripts — if `bun install` fails, there's no point running subsequent scripts that depend on installed packages.
 - **Errored status, not rollback**: When a setup script fails, the workspace is created with status "errored" rather than rolled back. This design choice is intentional — Issue #37 will implement full rollback (remove worktree, free port, clean branch). The current behavior lets the user see the workspace was created but setup failed, and they can investigate or retry.
@@ -1020,6 +1142,7 @@ Both empty states disappear reactively when a project is added — the LiveStore
    - Created `WelcomeEmptyState` component: full-height centered empty state with FolderGit2 icon, "Welcome to Laborer" title, descriptive text, and `<AddProjectForm />` CTA
    - Updated `HomeComponent` to query projects via `sidebarProjects$`, derive `hasProjects` boolean
    - Conditionally renders main content panel: `hasProjects` → normal panel system (header + hotkeys + PanelManager); `!hasProjects` → `<WelcomeEmptyState />`
+   - Sidebar always renders (Projects, Workspaces, Tasks, Server Status sections remain visible regardless of project count)
 
 ### Files modified
 - `apps/web/src/components/project-list.tsx` — Added EmptyContent CTA with AddProjectForm, added imports, updated JSDoc
@@ -1039,6 +1162,7 @@ Both empty states disappear reactively when a project is added — the LiveStore
 
 ### Design decisions
 - **Two empty states, not one**: The sidebar ProjectList empty state and the main content WelcomeEmptyState serve different purposes. The sidebar CTA is a contextual "add project here" action adjacent to where projects will appear. The main content welcome state is a prominent, full-page onboarding experience that communicates "this is the starting point." Both contain the AddProjectForm button so the user can take action from whichever area they notice first.
+- **Sidebar always visible**: The sidebar sections (Projects, Workspaces, Tasks, Server Status) are always rendered even when there are no projects. This ensures the user can see the health check status (confirming the server is connected) and discover the app's organizational model (projects → workspaces → tasks) even before adding their first project. Hiding the sidebar would make the app feel like a blank page with no structure.
 - **Panel system hidden when no projects**: The PanelHeaderBar, PanelHotkeys, and PanelManager are all hidden when `!hasProjects`. These components are non-functional without projects — there are no workspaces, terminals, or diffs to show. Rendering them would show a confusing empty panel with split/close buttons that do nothing. The WelcomeEmptyState is a more appropriate use of the space.
 - **Reuse of AddProjectForm**: Rather than duplicating the folder-picker logic, both empty states render the existing `<AddProjectForm />` component directly. This ensures consistent behavior (same Tauri dialog, same mutation, same toast notifications) and avoids code duplication.
 - **Separate LiveStore query label**: Used `sidebarProjects` as the query label (distinct from `projectList` and `headerProjects`) to avoid potential subscription conflicts and to make debugging clearer in LiveStore's internal logs.
@@ -1232,6 +1356,7 @@ Enhanced the Create Workspace form to display distinct, actionable error message
 **Date:** 2026-03-05
 
 ### Summary
+Created a project switcher dropdown that lets users filter the sidebar's workspace and task lists by the active project context. The switcher is a compact `Select` dropdown placed at the top of the sidebar (above the Projects section) with an "All Projects" option (default) and one option per registered project. Selecting a specific project filters the Workspace and Task lists to show only items belonging to that project. Selecting "All Projects" shows everything.
 
 ### What was done
 
@@ -1249,6 +1374,11 @@ Enhanced the Create Workspace form to display distinct, actionable error message
    - Extended the workspace filter to include `(!activeProjectId || ws.projectId === activeProjectId)` alongside the existing `ws.status !== "destroyed"` check
    - Updated module JSDoc to reference Issue #113
 
+3. **Modified `apps/web/src/components/task-list.tsx`**:
+   - Added `TaskListProps` interface with optional `activeProjectId` prop
+   - Updated `TaskList` to accept `{ activeProjectId }` prop
+   - Renamed internal `taskList` to `allTaskList` for clarity, added a `useMemo` that filters by `activeProjectId` when set
+   - The project-filtered `taskList` feeds into the existing status filter, so both filters compose correctly (project filter → status filter → rendered list)
    - Status counts in the tab badges reflect the project-filtered list (not the global list), giving accurate counts per-project
    - Updated module JSDoc to reference Issue #113
 
@@ -1258,16 +1388,19 @@ Enhanced the Create Workspace form to display distinct, actionable error message
    - Added `activeProjectId` state (`useState<string | null>(null)`) in `HomeComponent`
    - Added `useEffect` that clears the active project filter if the selected project is removed (e.g., user deletes the project while it's selected)
    - Rendered `<ProjectSwitcher>` at the top of the sidebar, conditionally shown only when projects exist (`hasProjects`)
+   - Passed `activeProjectId` prop to `<WorkspaceList>` and `<TaskList>`
 
 ### Files created
 - `apps/web/src/components/project-switcher.tsx` — Project switcher Select dropdown component
 
 ### Files modified
 - `apps/web/src/components/workspace-list.tsx` — Added `activeProjectId` prop, project filtering, updated JSDoc
+- `apps/web/src/components/task-list.tsx` — Added `activeProjectId` prop, project filtering, updated JSDoc
 - `apps/web/src/routes/index.tsx` — Added project switcher state, `ProjectSwitcher` component in sidebar, prop wiring, auto-clear on project removal
 
 ### Acceptance criteria status
 - [x] Project dropdown/sidebar shows all registered projects (Select dropdown with all projects from LiveStore)
+- [x] Selecting a project → workspace list and task list filter to that project (via `activeProjectId` prop)
 - [x] "All Projects" option shows everything (null activeProjectId = no filter applied)
 - [ ] Tests: switch project → lists filter; all projects → everything shown (deferred — web app has no component test infrastructure)
 
@@ -1277,10 +1410,15 @@ Enhanced the Create Workspace form to display distinct, actionable error message
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
+- **Controlled component pattern**: The `ProjectSwitcher` is a controlled component — `activeProjectId` and `onProjectChange` are passed as props from `HomeComponent`. This keeps the state lifted to the parent where it can be shared with `WorkspaceList` and `TaskList` via props. No React Context needed since the components are direct children in the sidebar.
+- **`Select` over `Tabs`**: Used `Select` dropdown rather than `Tabs` because: (a) the number of projects can grow unbounded — tabs would overflow with 5+ projects, (b) the Select is already used throughout the codebase (create-workspace-form, create-task-form, task status) so it's a familiar pattern, (c) a dropdown is more compact in the tight sidebar space.
 - **Sentinel value `__all__`**: Base UI's Select doesn't support `null` values natively. The `ALL_PROJECTS` sentinel string maps to/from `null` in the handler. The double-underscore prefix avoids collision with any possible project ID (which are UUIDs).
+- **Filter composition in TaskList**: The project filter is applied before the status filter. This means the status counts in the tab badges accurately reflect the filtered project — if you select "Project A", the "Pending (3)" badge shows 3 pending tasks for Project A, not 3 across all projects. This is the intuitive behavior.
+- **Auto-clear on project removal**: If the user deletes the currently-selected project, the filter automatically resets to "All Projects". Without this, the sidebar would show an empty workspace/task list with a stale filter pointing to a non-existent project.
 - **Conditional rendering**: The switcher is only shown when `hasProjects` is true. When no projects exist, the sidebar shows the empty state with "Add Project" CTA — a switcher with no options would be confusing.
 - **FolderGit2 icon in trigger**: The small icon in the trigger provides visual context that this dropdown relates to git repositories/projects. It matches the FolderGit2 icon used in the ProjectList cards and the WelcomeEmptyState.
 - **No LiveStore persistence for activeProjectId**: The active project filter is ephemeral (React state). It resets on page reload. This is intentional — the filter is a view preference, not application state. Persisting it to LiveStore would add complexity for minimal benefit, and the user might be confused if they return after a session and see a filtered view without remembering they set it.
+- **ProjectList unfiltered**: The ProjectList itself is NOT filtered by the active project — it always shows all projects. This is by design: the user needs to see all projects to switch between them. Only workspaces and tasks are filtered.
 
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104 (done). Not directly blocked by #113, but the project switcher's filtering pattern can be reused or extended for the dashboard's per-project summary view.
@@ -1502,14 +1640,20 @@ Enhanced worktree creation with comprehensive post-creation validation and added
 **Date:** 2026-03-05
 
 ### Summary
+Created a cross-project workspace dashboard that provides a high-level command-center overview of all workspaces across all projects with their status, and task status summaries per project. The dashboard is accessible via a view toggle in the panel header bar — users can switch between the terminal panels view and the dashboard view. Each project section shows the project name, repo path, task summary counts (pending/in progress/completed/cancelled with color-coded icons), workspace count badges, and a list of all active workspaces with status badges, branch names, ports, and terminal counts. A global overview section shows aggregate counts across all projects.
 
 ### What was done
 
 1. **Created `apps/web/src/components/workspace-dashboard.tsx`** — new React component (~380 lines) with:
+   - **Module-level LiveStore queries**: `dashboardProjects$`, `dashboardWorkspaces$`, `dashboardTasks$`, `dashboardTerminals$` for reactive data
+   - **`computeTaskCounts(taskList)`**: Aggregates task status counts (pending, in_progress, completed, cancelled, total)
    - **`computeWorkspaceCounts(wsList)`**: Aggregates workspace status counts (running, creating, stopped, errored, total)
+   - **`TaskSummary` component**: Compact inline display of task counts with color-coded icons (CircleDot=blue/pending, Loader2=yellow/in_progress, CheckCircle2=green/completed, XCircle=gray/cancelled). Only shows non-zero counts.
    - **`WorkspaceStatusSummary` component**: Compact inline display of workspace counts with status dots/spinners. Only shows non-zero counts.
+   - **`ProjectDashboardSection` component**: Per-project card showing project name (FolderGit2 icon), repo path (monospace), workspace/task count badges, task summary, separator, and workspace list
    - **`DashboardWorkspaceRow` component**: Compact workspace row with GitBranch icon, branch name (monospace), port, running terminal count, and status badge (StatusDot + text)
    - **`WorkspaceDashboard` component**: Main dashboard with global overview section (aggregate counts across all projects in a bordered card) and per-project sections. Empty state when no projects exist.
+   - **`ProjectSection` interface**: Structured data type for per-project dashboard data (project, workspaces, taskCounts, workspaceCounts, terminalCountByWorkspace)
    - **Status classes**: Reuses the same `getStatusClasses` and `StatusDot` patterns from workspace-list.tsx for visual consistency
 
 2. **Modified `apps/web/src/routes/index.tsx`** — integrated dashboard into main content area:
@@ -1531,6 +1675,7 @@ Enhanced worktree creation with comprehensive post-creation validation and added
 ### Acceptance criteria status
 - [x] Dashboard shows all workspaces from all projects (per-project sections list all non-destroyed workspaces with status badges, branch names, ports, terminal counts)
 - [x] Workspace status visible (with badges) (StatusDot + getStatusClasses — same visual pattern as sidebar workspace list)
+- [x] Task summary per project (pending/in_progress/completed counts) (TaskSummary component with color-coded icons per status)
 - [ ] Tests: multiple projects → all workspaces visible; counts correct (deferred — web app has no component test infrastructure)
 
 ### Verification
@@ -1543,11 +1688,13 @@ Enhanced worktree creation with comprehensive post-creation validation and added
 - **Terminal and LayoutDashboard icons**: Used `Terminal` (monospace terminal prompt icon) for the panels view and `LayoutDashboard` (grid/cards icon) for the dashboard view. These provide clear visual semantics: Terminal = interactive terminal panes, LayoutDashboard = overview/summary display.
 - **Active view highlight with `bg-accent`**: The active view button uses `bg-accent` background (same pattern as the diff toggle button). This provides a consistent visual pattern for "which mode am I in" across the header bar.
 - **Pane actions disabled in dashboard view**: The split/close/diff buttons in the header are disabled when viewing the dashboard because there's no active terminal pane to operate on. The buttons remain visible (not hidden) to avoid layout shift when switching views and to communicate what actions are available when switching back to panels view.
+- **Per-project sections with cards**: Each project gets its own Card component with task summary and workspace list. This visual grouping makes it clear which workspaces belong to which project. The project card pattern is consistent with how the sidebar organizes information.
 - **Global overview section**: The top-of-dashboard overview card shows aggregate counts across all projects. This gives an at-a-glance answer to "how many things are running right now?" without needing to mentally sum up per-project numbers.
 - **Status classes reuse**: The dashboard's `getStatusClasses` and `StatusDot` functions replicate the ones from workspace-list.tsx rather than importing them (they're not exported). This is pragmatic — the workspace-list component is a feature component, not a utility library. If these patterns need to diverge (e.g., dashboard needs larger status indicators), having separate copies allows independent evolution.
 - **Compact workspace rows**: Dashboard workspace rows are more compact than the sidebar's workspace cards — they show only essential info (branch, port, terminal count, status) in a single horizontal line. The dashboard is a summary view; detailed workspace management happens in the sidebar.
 - **ScrollArea wrapper**: The dashboard uses ScrollArea for the content area, matching the sidebar's scroll behavior. This ensures the dashboard is scrollable when there are many projects/workspaces without breaking the fixed-height layout.
 - **Terminal count per workspace**: Each workspace row shows the count of running terminals. This gives a quick indicator of workspace activity level — a workspace with 5 running terminals is clearly more active than one with 0.
+- **Zero-count suppression**: Both TaskSummary and WorkspaceStatusSummary only show non-zero counts. "0 pending, 3 completed" would be noise — "3 completed" is cleaner and more scannable.
 - **Empty states**: Both the dashboard (no projects) and per-project workspace lists (no active workspaces) have appropriate empty state messages guiding the user.
 
 ### Issues unblocked
@@ -1880,6 +2027,7 @@ Each layer serves a distinct purpose:
 - **Trailing-edge debounce with max wait over throttle**: A pure throttle would emit at regular intervals during rapid changes, causing multiple partial renders. A trailing-edge debounce waits for updates to stop, then emits once — better for the diff viewer use case where we want the "final" state after a burst of changes. The max wait ensures bounded latency so the viewer doesn't appear frozen during sustained rapid changes.
 - **300ms debounce delay**: Chosen as a balance between responsiveness and render reduction. At 300ms, a burst of 10 updates in 1 second produces at most 3-4 renders instead of 10. The user perceives near-instant updates (300ms is below the "noticeable delay" threshold of ~400ms for non-interactive content) while the rendering pipeline does 60-70% less work.
 - **500ms maximum wait**: The acceptance criteria specifies "last update visible within 500ms max". The MAX_DELAY_MS constant enforces this ceiling. Under sustained rapid changes (e.g., agent writing files continuously), the debounce timer never settles (each new value resets it), but the max timer fires at 500ms to show the most recent content. This guarantees bounded latency regardless of update frequency.
+- **Generic hook, not diff-specific**: `useDebouncedValue` is a generic hook that works with any value type. It could be reused for other rapidly-changing values in the app (e.g., terminal output counts, task status updates). The hook is placed in `hooks/` alongside `use-responsive-layout.ts` and `use-terminal-websocket.ts`.
 - **Debounce on raw string, not parsed FileDiffs**: The debounce is applied to the raw `diffContent` string rather than the parsed `FileDiffMetadata[]` array. This means `parsePatchFiles` (which involves string parsing and regex matching) is called only on the debounced value — saving both CPU time and GC pressure from intermediate array allocations.
 - **`rawDiffContent` for empty state**: The "No changes" check uses `rawDiffContent` (un-debounced) rather than `diffContent` (debounced). If we used `diffContent`, there would be a brief flash of the empty state when new content arrives but debounce hasn't settled yet. Using `rawDiffContent` means the empty state disappears instantly when content is available, even before it's rendered.
 - **Combined `isPending` state**: Rather than showing separate "Debouncing..." and "Rendering..." indicators, the two pending states are combined (`isDebouncePending || isTransitionPending`) into a single "Updating..." indicator. This gives the user a single, coherent signal that the viewer is processing new content, without exposing implementation details of the two-stage pipeline.
@@ -2191,12 +2339,15 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
 2. **Updated `apps/web/src/components/workspace-list.tsx`** — Replaced all hard-coded status colors:
    - `getStatusClasses`: creating → `border-warning/30 bg-warning/10 text-warning`, running → `border-success/30 bg-success/10 text-success`, errored → `border-destructive/30 bg-destructive/10 text-destructive`
    - `StatusDot`: creating spinner → `text-warning`, running dot → `bg-success`, errored dot → `bg-destructive`
+   - Start Ralph Loop icon: `text-green-600 dark:text-green-400` → `text-success`
    - Creating workspace message: `text-yellow-600 dark:text-yellow-400` → `text-warning`
 
 3. **Updated `apps/web/src/components/workspace-dashboard.tsx`** — Same status color replacements:
    - `getStatusClasses`, `StatusDot`: same pattern as workspace-list.tsx
+   - `TaskSummary`: pending → `text-info`, in_progress → `text-warning`, completed → `text-success`
    - `WorkspaceStatusSummary`: running → `text-success`/`bg-success`, creating → `text-warning`, errored → `text-destructive`/`bg-destructive`
 
+4. **Updated `apps/web/src/components/task-list.tsx`** — Status and source badge colors:
    - `getStatusClasses`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
    - `StatusIcon`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
    - `getSourceClasses`: manual → `text-muted-foreground`, linear → `text-chart-4` (uses chart palette for brand color), github → `text-foreground/70`, prd → `text-info`
@@ -2216,6 +2367,10 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
 8. **Updated `apps/web/src/routes/index.tsx`** — Health check status:
    - Connected text: `text-green-500` → `text-success`
 
+9. **Updated rlph action button icons**:
+   - `write-prd-form.tsx`: `text-blue-600 dark:text-blue-400` → `text-info`
+   - `review-pr-form.tsx`: `text-purple-600 dark:text-purple-400` → `text-chart-4` (purple via chart palette)
+   - `fix-findings-form.tsx`: `text-amber-600 dark:text-amber-400` → `text-warning`
 
 10. **Fixed `apps/web/src/components/ui/sidebar.tsx`** — Color-space mismatch:
     - `shadow-[0_0_0_1px_hsl(var(--sidebar-border))]` → `shadow-[0_0_0_1px_var(--sidebar-border)]`
@@ -2233,10 +2388,14 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
 - `apps/web/src/index.css` — Added `--success`, `--warning`, `--info` tokens (light + dark), mapped in `@theme inline`
 - `apps/web/src/components/workspace-list.tsx` — Replaced 7 hard-coded color references with theme tokens
 - `apps/web/src/components/workspace-dashboard.tsx` — Replaced 12 hard-coded color references with theme tokens
+- `apps/web/src/components/task-list.tsx` — Replaced 12 hard-coded color references with theme tokens
 - `apps/web/src/components/terminal-list.tsx` — Replaced 2 hard-coded color references with theme tokens
 - `apps/web/src/panes/terminal-pane.tsx` — Replaced `bg-[#09090b]` + reconnecting banner colors
 - `apps/web/src/panes/diff-pane.tsx` — Replaced accept/reject button colors
 - `apps/web/src/routes/index.tsx` — Replaced health check status color
+- `apps/web/src/components/write-prd-form.tsx` — Replaced icon color
+- `apps/web/src/components/review-pr-form.tsx` — Replaced icon color
+- `apps/web/src/components/fix-findings-form.tsx` — Replaced icon color
 - `apps/web/src/components/ui/sidebar.tsx` — Fixed `hsl()` → direct `var()` for oklch values
 - `apps/web/src/components/ui/slider.tsx` — Replaced `bg-white` with `bg-background`
 - `apps/web/src/components/ui/alert-dialog.tsx` — Replaced `bg-black/10` with `bg-foreground/10`
@@ -2264,7 +2423,9 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
 - **No `dark:` variant overrides**: Previously, every status color required both a light and dark variant (e.g., `text-yellow-600 dark:text-yellow-400`). With semantic tokens, a single class like `text-warning` automatically picks the correct value based on the active theme. This eliminates ~48 `dark:` overrides across the codebase.
 - **`bg-foreground/10` for overlays**: `bg-black/10` is always black regardless of theme. `bg-foreground/10` is near-black in light mode (same as `bg-black/10`) and near-white in dark mode. This produces a more appropriate overlay — a subtle darkening on light backgrounds, a subtle lightening on dark backgrounds. The visual difference is minimal but technically correct.
 - **`var()` without `hsl()` wrapper**: The sidebar.tsx `hsl(var(--sidebar-border))` bug occurred because shadcn/ui generated the code when the theme used hsl values. After migrating to oklch, the `hsl()` wrapper produces incorrect colors because it tries to interpret oklch values as hsl. Removing the wrapper and using `var(--sidebar-border)` directly works because CSS custom properties substitute the full oklch value (e.g., `oklch(0.922 0 0)`).
+- **Chart tokens for brand colors**: Linear's brand color is purple, which doesn't have a semantic token. Rather than adding a `--linear` token for one use, the existing `--chart-4` token (a deep purple/indigo) is reused. This keeps the token count minimal while still providing a distinct visual identity for Linear-sourced tasks.
 - **xterm.js ANSI palette left as-is**: The 16 ANSI color values (red, green, blue, yellow, etc.) in the xterm.js theme are terminal standard colors, not UI theme colors. They represent ANSI escape code color slots used by CLI tools. Changing them to match UI theme tokens would break terminal color rendering. The background/foreground/cursor/selection colors could theoretically be derived from CSS custom properties via `getComputedStyle()`, but this adds runtime complexity for minimal benefit — the terminal intentionally has its own visual identity within the app chrome.
+- **Source badge simplification**: The task source badges previously used four distinct color scales (slate, violet, orange, cyan). These are reduced to: manual → muted (no visual emphasis), linear → chart-4 (purple brand color), github → foreground with transparency (neutral), prd → info (blue, matches the write-prd button). This reduces the color palette without losing distinguishability.
 
 ### Remaining hard-coded colors (intentionally preserved)
 - **xterm.js ANSI palette** (21 hex values in terminal-pane.tsx): Terminal standard colors, not UI theme
@@ -2852,7 +3013,9 @@ Created a new `ConfigService` Effect tagged service in the server package that r
 ### What was done
 
 1. **Created `packages/server/src/services/config-service.ts`** — new Effect tagged service (~370 lines) with:
+   - **`LaborerConfig` interface**: `{ worktreeDir?: string, setupScripts?: readonly string[], rlphConfig?: string }` — shape of a `laborer.json` file
    - **`ResolvedValue<T>` interface**: `{ value: T, source: string }` — resolved value with provenance (file path or "default")
+   - **`ResolvedLaborerConfig` interface**: All fields resolved with provenance — `worktreeDir: ResolvedValue<string>`, `setupScripts: ResolvedValue<readonly string[]>`, `rlphConfig: ResolvedValue<string | null>`
    - **`CONFIG_FILE_NAME = "laborer.json"`**: Config file name constant (not `.laborer.json`)
    - **`GLOBAL_CONFIG_DIR`**: `~/.config/laborer/` — global config directory
    - **`GLOBAL_CONFIG_PATH`**: `~/.config/laborer/laborer.json` — global config file path
@@ -3071,7 +3234,9 @@ Replaced the server's in-process terminal management (TerminalManager, PtyHostCl
   - `terminal.spawn` → `TerminalClient.spawnInWorkspace()`
   - `terminal.write/resize/kill/remove` → stub handlers with deprecation warnings (web app talks directly to terminal service)
   - `terminal.restart` → stub with deprecation warning, returns dummy stopped response
+  - `rlph.*` handlers → `TerminalClient.spawnInWorkspace()` with command
   - `workspace.destroy` → `TerminalClient.killAllForWorkspace()`
+  - `task.updateStatus` auto-cleanup → `TerminalClient.killAllForWorkspace()`
 - `packages/server/src/main.ts` — Removed `TerminalManager.layer`, `PtyHostClient.layer`, and `TerminalWsRouteLive` from layer composition; added `TerminalClient.layer`. Removed unnecessary biome-ignore suppression comments.
 - `packages/server/package.json` — Removed `node-pty` dependency
 
@@ -3323,6 +3488,7 @@ Started Issue #145 as the highest-priority ready dependency for terminal extract
 
 2. **Removed terminal table from active LiveStore state** (`packages/shared/src/schema.ts`)
    - Introduced `activeTables` and wired `State.SQLite.makeState({ tables: activeTables, materializers })`.
+   - `activeTables` includes: `projects`, `workspaces`, `diffs`, `tasks`, `panelLayout`.
    - Kept the legacy `terminals` table definition/export for compatibility with older modules/tests, but it is no longer part of active materialization.
 
 3. **Stopped terminal event commits in active server terminal path** (`packages/server/src/services/terminal-client.ts`)
@@ -3474,11 +3640,13 @@ Implemented Issue #157 as the highest-priority ready item in the config track. A
    - Added config response schemas with provenance (`{ value, source }`) for:
      - `worktreeDir` (string)
      - `setupScripts` (string[])
+     - `rlphConfig` (string | null)
    - Added `config.get` RPC:
      - payload: `{ projectId: string }`
      - success: resolved config with provenance
      - error: `RpcError`
    - Added `config.update` RPC:
+     - payload: `{ projectId, config: { worktreeDir?, setupScripts?, rlphConfig? } }`
      - error: `RpcError`
 
 2. **Server RPC handlers** (`packages/server/src/rpc/handlers.ts`)
@@ -3496,6 +3664,7 @@ Implemented Issue #157 as the highest-priority ready item in the config track. A
    - Built editable form fields:
      - Worktree directory input (with placeholder and provenance helper)
      - Setup scripts editable list (add/remove per entry)
+     - rlph config input
    - Save path uses `LaborerClient.mutation("config.update")` and only submits changed fields.
    - Added success/error toasts for save outcomes.
 
@@ -3663,40 +3832,63 @@ Implemented live worktree watching and boot-time reconciliation. The server now 
 - `bun run check-types` (in `packages/server`): passes (pre-existing Effect plugin warnings remain)
 - `bun x ultracite check src/services/worktree-watcher.ts src/services/project-registry.ts src/main.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes
 
+## Issue #107: PRD-generated issues become tasks — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
+Implemented automatic PRD task importing on the server. After `rlph.writePRD` spawns a terminal, Laborer now watches that PRD terminal in the background, waits for it to finish via the terminal service lifecycle stream, fetches the terminal scrollback over the terminal WebSocket, parses created GitHub issue URLs and Linear issue keys from the rlph output, and creates missing LiveStore tasks with `source: "prd"` and the parsed `externalId`.
 
 ### What was done
 
+1. **Created `packages/server/src/services/prd-task-importer.ts`** — new Effect service with two responsibilities:
+   - **`watchPrdTerminal(terminalId, workspaceId)`**: background watcher started from the `rlph.writePRD` RPC handler. It checks whether the spawned terminal is already stopped, otherwise waits for a matching `terminal.events()` lifecycle event (`Exited`, `Removed`, or `StatusChanged -> stopped`). Once complete, it opens a short-lived WebSocket to `ws://localhost:${TERMINAL_PORT}/terminal?id=...`, collects the ring-buffer scrollback, ignores JSON status control frames, and parses the captured rlph output.
+   - **`importParsedTasks(workspaceId, parsedTasks)`**: resolves the workspace's project, checks existing LiveStore tasks for duplicate PRD `externalId`s, and creates only missing tasks through `TaskManager.createTask(projectId, title, "prd", externalId)`.
 
+2. **Added a resilient rlph output parser** in the same service:
    - Parses GitHub markdown issue links like `[Title](https://github.com/org/repo/issues/123)`
    - Parses plain GitHub issue URLs on list lines and derives a title from the surrounding text
    - Parses Linear issue keys from common output shapes like `LAB-12: Add feature` and `Add feature (LAB-13)`
    - Strips ANSI escape codes before parsing so raw terminal color codes do not break extraction
+   - Deduplicates repeated matches within the same rlph output by `externalId`
 
 3. **Wired the importer into `packages/server/src/rpc/handlers.ts`**:
+   - `rlph.writePRD` still spawns the terminal via `TerminalClient.spawnInWorkspace`
+   - After spawn, it now resolves `PrdTaskImporter` and forks `watchPrdTerminal(terminal.id, workspaceId)` as a daemon fiber
    - The RPC still returns immediately with the spawned terminal so the UI behavior is unchanged
 
+4. **Registered the service in `packages/server/src/main.ts`** so it is available to RPC handlers alongside `TaskManager`, `TerminalClient`, and the other server services.
 
+5. **Added server tests in `packages/server/test/prd-task-importer.test.ts`** covering:
    - GitHub issue link parsing + duplicate suppression
    - Linear issue key parsing
    - ANSI-stripped parsing of colored terminal output
+   - Import deduping against existing `prd` tasks in LiveStore
 
 ### Files created
+- `packages/server/src/services/prd-task-importer.ts` — PRD terminal watcher + output parser + task importer
+- `packages/server/test/prd-task-importer.test.ts` — parser/import tests
 
 ### Files modified
+- `packages/server/src/rpc/handlers.ts` — hooks PRD importer into `rlph.writePRD`
+- `packages/server/src/main.ts` — provides `PrdTaskImporter.layer`
 - `issues.md` — marked Issue #107 done
 
 ### Acceptance criteria status
+- [x] After `rlph prd` completes, resulting issues appear as tasks in LiveStore
+- [x] Tasks have `source = "prd"` and correct `externalId`
+- [x] Tests cover parsing/import path for PRD-generated task metadata
 
 ### Verification
+- `bun test packages/server/test/prd-task-importer.test.ts` passes (4 tests)
+- `bun x ultracite check packages/server/src/services/prd-task-importer.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/server/test/prd-task-importer.test.ts` passes
 - `bun run --filter @laborer/server check-types` still exits non-zero because the server package has existing Effect/tsgo diagnostics outside this feature; no new diagnostics referenced the PRD importer files after this change
 
 ### Design decisions
+- **Server-side import instead of client-side parsing**: The server already owns task creation and terminal orchestration, so importing PRD-generated tasks there keeps the behavior deterministic even if no browser tab is open.
 - **Wait for terminal completion, then read scrollback**: Reading the final ring-buffer scrollback avoids racing live terminal output frame-by-frame and reuses the terminal service's existing reconnection buffer.
+- **Conservative parsing**: The importer only creates tasks from strong identifiers (GitHub issue URLs and Linear keys), avoiding brittle heuristics that could turn arbitrary terminal text into tasks.
 - **Duplicate protection in importer**: Deduping by `(projectId, source="prd", externalId)` prevents re-importing the same issue if the watcher reconnects or the PRD command is rerun.
 
 ## Issue #158: Config + settings polish & edge cases — IN PROGRESS
@@ -3788,6 +3980,7 @@ Restructured the workspace card header into a two-row layout so metadata and con
    - Kept project name (`CardDescription`) directly below the info row.
 
 2. **Moved all controls into a wrapping action row**
+   - Action row uses `flex flex-wrap` and includes: Write PRD, Start Ralph Loop, Review PR, Fix Findings, terminal expand/collapse, and destroy.
    - Preserved existing handlers, toasts, and behavior; only layout changed.
 
 3. **Upgraded text overflow handling for branch/path**
@@ -3820,6 +4013,7 @@ Completed detected-worktree feature parity by enabling terminal spawns from stop
 
 1. **Enabled spawn for stopped workspaces in active terminal path**
    - Updated `packages/server/src/services/terminal-client.ts` so `spawnInWorkspace` allows `workspace.status === "stopped"` in addition to `"creating"` and `"running"`.
+   - This directly fixes `+ New` terminal spawn and all workflow buttons (`Write PRD`, `Ralph Loop`, `Review`, `Fix`) for detected workspaces, which are created in `"stopped"` status.
 
 2. **Kept legacy server module behavior aligned**
    - Updated `packages/server/src/services/terminal-manager.ts` with the same stopped-status allowance to preserve parity in the legacy fallback module and avoid inconsistent semantics.
@@ -3842,6 +4036,10 @@ Completed detected-worktree feature parity by enabling terminal spawns from stop
 - [x] Detected worktrees show the expand/collapse chevron
 - [x] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
 - [x] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
+- [x] WritePRD button appears on detected worktrees
+- [x] Ralph Loop button appears on detected worktrees
+- [x] Review PR button appears on detected worktrees
+- [x] Fix Findings button appears on detected worktrees
 - [x] "Detected" label still displays on external worktrees
 - [x] Destroy confirmation still uses the softer message for detected worktrees
 - [x] No regression for Laborer-created workspaces (active workspaces still work as before)
@@ -4283,9 +4481,11 @@ End-to-end verification and polish pass for the sidebar max-width removal (#164)
 
 5. **2-line clamp ellipsis renders correctly** — ✅ `line-clamp-2` is correctly applied to both branch name (`<span className="line-clamp-2 break-all font-mono text-sm">`) and worktree path (`<span className="line-clamp-2 break-all font-mono">`). Short names render on one line without clamping; very long names (3+ lines) get truncated with ellipsis after 2 lines.
 
+6. **Action buttons on Row 2 correctly spaced and aligned** — ✅ Action row uses `flex flex-wrap items-center gap-1`. All 6 action elements (WritePrd, Start Loop, ReviewPr, FixFindings, CollapsibleTrigger, AlertDialog destroy) wrap naturally at narrow widths. `gap-1` provides consistent 4px spacing.
 
 7. **Detected worktree terminal spawning works end-to-end** — ✅ All action buttons render for all non-destroyed workspaces (no `isActive` gate). The `TerminalClient.spawnInWorkspace()` has a worktree existence check (Issue #163) that returns `WORKTREE_NOT_FOUND` if the worktree was removed externally.
 
+8. **Agent workflow buttons function correctly for detected worktrees** — ✅ WritePrd, Start Loop, ReviewPr, FixFindings all render unconditionally. Server-side RPC handlers accept workspace ID regardless of origin. Errors surface via existing toast handling.
 
 9. **Card layout looks correct at narrow/wide sidebar widths** — ✅ Info row uses `flex items-start justify-between gap-2` with `min-w-0` on the branch container for text truncation within flex. Status badge has `shrink-0`. At ~220px min sidebar, the branch text area is constrained but functional (a few characters visible plus `line-clamp-2`). At 800px+ sidebar, the full branch name is visible.
 

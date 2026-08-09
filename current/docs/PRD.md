@@ -2,6 +2,7 @@
 
 ## Problem Statement
 
+Modern AI-assisted development often means running several coding agents across isolated workspaces, but existing tools still force developers into a single-agent view and leave worktree, terminal, port, and dev-server management to the operator.
 
 The core pain points are:
 
@@ -9,8 +10,7 @@ The core pain points are:
 
 2. **Manual environment management.** Setting up isolated workspaces (worktrees, ports, dev servers, file watcher scoping) for each agent is tedious and error-prone. Tearing them down is often forgotten.
 
-
-4. **Wasted local compute.** Developers with $200/month AI subscriptions get near-unlimited usage on their local machine but have no way to fully leverage their hardware for parallel agent execution.
+3. **Wasted local compute.** Developers with $200/month AI subscriptions get near-unlimited usage on their local machine but have no way to fully leverage their hardware for parallel agent execution.
 
 ## Solution
 
@@ -29,22 +29,22 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 4. As a developer, I want to toggle a diff viewer alongside any agent pane, so that I can see what changes the agent is making in real-time as it works.
 5. As a developer, I want the diff viewer to update live as the agent modifies files, so that I can catch issues early without waiting for the agent to finish.
 6. As a developer, I want to open multiple terminals per workspace (agent, type checker, test runner, raw shell), so that I can run supplementary processes alongside the coding agent.
-9. As a developer, I want to also create ad-hoc workspaces for quick one-off tasks that don't warrant an issue, so that the tool doesn't force me through an issue tracker for everything.
-10. As a developer, I want each workspace to have its own allocated port for its dev server, so that I can run multiple Next.js (or similar) dev servers simultaneously without port conflicts.
-11. As a developer, I want the workspace setup to automatically run project-specific scripts (install deps, copy .env files, etc.), so that I don't have to manually bootstrap each worktree.
-12. As a developer, I want to manage multiple projects (repos) simultaneously, so that I can work across different codebases in the same session.
-16. As a developer, I want to interact with agents in human-in-the-loop mode (typing directly into the agent's terminal), so that I can guide the agent when needed.
-18. As a developer, I want the entire panel layout, workspace state, and conversation history to persist when I close and reopen the app, so that I can resume exactly where I left off.
-19. As a developer, I want to click a button to open a specific file from the diff viewer in Cursor/VS Code, so that I can quickly jump to code when I need to make manual edits.
-20. As a developer, I want the app to work in my browser (no desktop app required), so that I can get started without installing anything beyond the server.
-21. As a developer, I want an optional Tauri desktop shell, so that I get a native app experience with system tray, global shortcuts, etc.
-22. As a developer, I want the server to expose an API, so that I can build custom tooling (Slack bots, CLI wrappers, CI integrations) on top of laborer.
-23. As a developer, I want the file watcher load to be isolated per workspace, so that running 10 agents doesn't exhaust the OS file descriptor limit.
-27. As a developer, I want workspaces to be resource-bound (no artificial limit), so that I can spin up as many as my machine can handle.
-28. As a developer, I want to easily re-enter an agent session that was previously running in a workspace, so that I can resume conversation context.
-29. As a developer, I want the server to run without authentication (local-only), so that there's zero friction to get started.
-30. As a developer, I want the app to be keyboard-navigable with discoverable shortcuts, so that I can work efficiently without the mouse.
-31. As a developer, I want to use the accept/reject UI in the diff viewer (@pierre/diffs annotations), so that I can selectively accept or reject agent changes.
+7. As a developer, I want to also create ad-hoc workspaces for quick one-off tasks that don't warrant an issue, so that the tool doesn't force me through an issue tracker for everything.
+8. As a developer, I want each workspace to have its own allocated port for its dev server, so that I can run multiple Next.js (or similar) dev servers simultaneously without port conflicts.
+9. As a developer, I want the workspace setup to automatically run project-specific scripts (install deps, copy .env files, etc.), so that I don't have to manually bootstrap each worktree.
+10. As a developer, I want to manage multiple projects (repos) simultaneously, so that I can work across different codebases in the same session.
+11. As a developer, I want to interact with agents in human-in-the-loop mode (typing directly into the agent's terminal), so that I can guide the agent when needed.
+12. As a developer, I want the entire panel layout, workspace state, and conversation history to persist when I close and reopen the app, so that I can resume exactly where I left off.
+13. As a developer, I want to click a button to open a specific file from the diff viewer in Cursor/VS Code, so that I can quickly jump to code when I need to make manual edits.
+14. As a developer, I want the app to work in my browser (no desktop app required), so that I can get started without installing anything beyond the server.
+15. As a developer, I want an optional Tauri desktop shell, so that I get a native app experience with system tray, global shortcuts, etc.
+16. As a developer, I want the server to expose an API, so that I can build custom tooling (Slack bots, CLI wrappers, CI integrations) on top of laborer.
+17. As a developer, I want the file watcher load to be isolated per workspace, so that running 10 agents doesn't exhaust the OS file descriptor limit.
+18. As a developer, I want workspaces to be resource-bound (no artificial limit), so that I can spin up as many as my machine can handle.
+19. As a developer, I want to easily re-enter an agent session that was previously running in a workspace, so that I can resume conversation context.
+20. As a developer, I want the server to run without authentication (local-only), so that there's zero friction to get started.
+21. As a developer, I want the app to be keyboard-navigable with discoverable shortcuts, so that I can work efficiently without the mouse.
+22. As a developer, I want to use the accept/reject UI in the diff viewer (@pierre/diffs annotations), so that I can selectively accept or reject agent changes.
 
 ## 'Polishing' Requirements
 
@@ -77,11 +77,13 @@ The Tauri 2 desktop shell is embedded directly in `apps/web/src-tauri/`. It open
 ### State Management: LiveStore
 
 All application state lives in LiveStore:
+- **Projects**: id, repository path, name, and repository identity
 - **Workspaces**: id, projectId, taskSource, branchName, worktreePath, port, status (creating/running/stopped/errored/destroyed), createdAt
 - **Terminals**: id, workspaceId, command, status (running/stopped), PTY session reference
 - **Diffs**: workspaceId, diffContent (serialized git diff output), lastUpdated
 - **Panel Layout**: tree structure of splits and panes, pane-to-terminal/diff assignments
 
+Events are committed by the client and server. The server commits durable domain changes resulting from side effects; the client stores presentation state such as panel layout.
 
 ### Action Layer: effect-atom + @effect/rpc
 
@@ -136,6 +138,7 @@ const destroyWorkspace = useAtomSet(LaborerClient.mutation("workspace.destroy"))
 ```
 
 Key RPC methods (all mutations unless noted):
+- `workspace.create(projectId, branchName?)` — creates a local git worktree and runs setup
 - `workspace.destroy(workspaceId)` — tears down worktree, kills processes, frees port
 - `terminal.spawn(workspaceId, command?)` — creates PTY in workspace directory
 - `terminal.write(terminalId, data)` — sends input to PTY
@@ -159,6 +162,7 @@ Responsibilities: worktree creation/destruction, port allocation (via PortAlloca
 Reference: https://github.com/coderabbitai/git-worktree-runner for worktree lifecycle patterns.
 
 **2. TerminalManager (Effect Service)**
+Manages long-lived PTY instances scoped to workspaces. Agent panes, plain terminals, and dev-server terminals share this lifecycle.
 
 Responsibilities: PTY spawning (via PTY Host child process), I/O streaming to LiveStore, terminal lifecycle (start, stop, reconnect), multiple terminals per workspace.
 
@@ -174,6 +178,7 @@ Monitors active workspaces for file changes and produces diffs. V1 uses polling 
 Responsibilities: diff polling, change detection, diff serialization for @pierre/diffs consumption.
 
 **4. ProjectRegistry (Effect Service)**
+Manages the repositories registered with Laborer and supplies their workspace configuration.
 
 Responsibilities: project registration/removal, repo validation, config reading.
 
@@ -193,6 +198,7 @@ The `@effect/rpc` server router that exposes all side-effect operations as RPC h
 Responsibilities: RPC group + schema definitions (shared), server-side handler implementations, client-side `AtomRpc.Tag` setup, request validation via Effect Schema, delegation to services, error handling.
 
 **7. PanelManager (React, App)**
+Owns the tmux-style panel layout. Panes display terminals or workspace diffs, and the layout is persisted independently of terminal processes.
 
 Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts (via TanStack Hotkeys), layout serialization/deserialization, xterm.js integration, @pierre/diffs integration, action invocation via AtomRpc mutations.
 
@@ -289,13 +295,9 @@ laborer/
 
 V1: Poll `git diff` against each active workspace on a 1-2 second interval. `git diff` is fast on worktrees and avoids adding to the file watcher load (which is the exact problem we're trying to solve). The server runs the diff, serializes the output, and commits it to LiveStore. The UI reactively renders via @pierre/diffs.
 
-
 ### Workspace Port Allocation
 
 The PortAllocator service maintains a range of available ports (e.g., 3100-3999) and assigns them to workspaces on creation. Ports are freed on workspace destruction. The allocated port is injected as an environment variable (e.g., `PORT=3142`) when running workspace setup scripts and terminals.
-
-
-
 
 ### Open Editor Integration
 
@@ -366,13 +368,13 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 - **Slack bot integration.** Remote task triggering via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
 - **Docker/Daytona workspace providers.** V1 ships with git worktrees only. The `WorkspaceProvider` interface is designed for future implementations, but they are not built in v1.
+- **Browser preview pane.** Embedding an iframe showing the dev server is a future enhancement. V1 focuses on terminals and diffs.
 - **Authentication / multi-user.** V1 is a single-user, local-only tool with no auth.
+- **Agent-specific tool protocols.** V1 treats agents as terminal processes and does not install a Laborer-owned tool server into them.
 - **Mobile / tablet support.** V1 targets desktop (macOS primarily, with Linux/Windows as secondary).
 - **Peer-to-peer sync.** LiveStore sync in v1 is local server-to-UI only. No multi-device or multi-user sync.
 
 ## Further Notes
-
-
 
 ### Reference Projects
 
@@ -388,11 +390,13 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 ### Design Philosophy
 
+1. **Terminals are the primitive.** Agents, shells, dev servers, and supporting commands all run as terminals. The UI provides workspace and diff context around that primitive.
 
 2. **Local-first, API-first.** Everything runs on the developer's machine. The server is headless-capable. The API is the primary interface; the UI is a client. This enables future Slack bots, CLI wrappers, and CI integrations without architectural changes.
 
 3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
+4. **Progressive complexity.** A developer can start with one project, workspace, and terminal, then add splits, supplementary terminals, and dev servers as needed.
 
 ### Issue Tracking
 

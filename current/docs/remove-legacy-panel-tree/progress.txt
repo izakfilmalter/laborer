@@ -137,6 +137,7 @@
 4. Marked the `flatLayout` parameter on `WorkspaceTileLeafFrame` as unused (renamed to `_flatLayout`) — still in the type signature because callers pass it; will be removed from the call chain in Issues 8/10.
 5. Added 12 new tests to `panel-manager.test.tsx` covering the `PanelManager` and `PanelRenderer` rendering pipeline:
    - `PanelManager`: empty state rendering, accepts `PanelNode` directly without conversion.
+   - `PanelRenderer`: single `LeafNode` with terminal, `SplitNode` horizontal/vertical, nested splits, empty terminal pane CTA, `_tag` dispatch for `LeafNode` and `SplitNode`, dev server terminal pane, diff pane, review pane.
 6. Preserved existing `TerminalPaneWithSidebars` tests (2 tests).
 7. `LeafPaneRenderer` does not directly reference the deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) — those are consumed only by `TerminalPaneWithSidebars`, which will be simplified when dev server/diff toggles are converted to panel tabs in Issue 7.
 8. `bun run check` passes (typecheck + format + all 1264 web tests, 1833 total across all packages).
@@ -257,6 +258,8 @@
    - Added `windowLayout` derived from `panelActions.windowLayout`
    - `getPanePrState` uses `findPaneInActiveTab` instead of `findNodeById`
    - Fullscreen auto-exit uses `findPaneAcrossAllTabs` instead of `findNodeById`
+   - Review/diff auto-close uses `getActiveTabLeafNodes` instead of `getLeafNodes`
+   - `toggleReviewPane` and `toggleDiffPane` use `findPaneInActiveTab`
    - `gatedClosePane` uses hierarchical `computeClosePaneGateAction`
    - `gatedCloseTerminalPane` uses `findLeafByTerminalIdInLayout`
    - `gatedCloseWorkspace` uses hierarchical `computeCloseWorkspaceAction`
@@ -291,6 +294,7 @@
    - Removed `layout` and `workspaceOrder` from the return value
 
 8. Updated test files:
+   - `full-height-review-panel.test.tsx` — replaced `layout`/`workspaceOrder` props with `workspaceTileLayout`, added WorkspaceTileLeaf fixtures
    - `fullscreen-workspace-header.test.tsx` — replaced `layout`/`workspaceOrder` with `windowLayout`/`workspaceTileLayout`, added WindowLayout fixtures
    - `workspace-frames-minimize.test.tsx` — removed `layout`/`workspaceOrder` props, using existing tile fixtures
    - `workspace-frame-header-container.test.tsx` — updated mock from `layout-utils` to `window-layout-utils` for `getScopedActivePaneId`
@@ -312,6 +316,7 @@
 - `apps/web/src/routes/-components/workspace-frame-header-container.tsx` — Made `subLayout` optional, moved `getScopedActivePaneId` import
 - `apps/web/src/routes/-components/panel-content.tsx` — Replaced `layout`/`workspaceOrder` with `windowLayout`/`workspaceTileLayout`
 - `apps/web/src/routes/-hooks/use-panel-layout.ts` — Removed `deriveLegacyTreeFromHierarchical`, `getLeafIds`, `layout` derivation, simplified return value
+- `apps/web/test/full-height-review-panel.test.tsx` — Updated props to hierarchical types
 - `apps/web/test/fullscreen-workspace-header.test.tsx` — Updated props and added WindowLayout fixtures
 - `apps/web/test/workspace-frames-minimize.test.tsx` — Removed legacy layout props
 - `apps/web/test/workspace-frame-header-container.test.tsx` — Updated mock path for `getScopedActivePaneId`
@@ -344,6 +349,7 @@
    - Single-child workspace tile splits collapsed
    - Single-child panel split nodes collapsed
    - Invalid pane types cause panel tab to be dropped
+   - Valid diff/review pane types preserved
    - Invalid optional fields stripped (non-string terminalId)
    - Invalid sizes redistributed as equal
    - Deeply nested hierarchies handled

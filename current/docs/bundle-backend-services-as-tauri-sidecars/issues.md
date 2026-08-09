@@ -1,17 +1,26 @@
 # Issues: Bundle Backend Services as Tauri Sidecars
 
+## Issue 1: Compile MCP service as standalone binary (tracer bullet)
+
 ### What to build
 
+This is the tracer bullet issue — prove the entire `bun build --compile` + sidecar naming + build script pattern works using the simplest service: `@laborer/mcp`. This service has zero native dependencies, making it the ideal first candidate.
 
 Create a build script in `apps/web/scripts/` that:
+1. Compiles `packages/mcp/src/main.ts` into a standalone executable using `bun build --compile`.
 2. Determines the Rust target triple for the current platform (e.g., `aarch64-apple-darwin`).
+3. Copies the compiled binary to `apps/web/src-tauri/sidecars/laborer-mcp-<target-triple>`.
 4. Adds the `sidecars/` directory to `src-tauri/.gitignore`.
 
+This issue does NOT wire the MCP binary into the Tauri app lifecycle — it only establishes the build pipeline that later issues will extend.
 
 ### Acceptance criteria
 
+- [x] A build script exists that compiles `@laborer/mcp` into a standalone binary via `bun build --compile`
+- [x] The compiled binary is placed in `src-tauri/sidecars/laborer-mcp-<target-triple>` with the correct naming convention
 - [x] The build script correctly determines the Rust target triple for macOS (both arm64 and x86_64)
 - [x] `src-tauri/sidecars/` is in `.gitignore`
+- [x] The compiled MCP binary can be executed directly and functions correctly (connects to a running server, responds to MCP protocol over stdio)
 - [x] The build script is reusable — structured so that later issues can extend it for the server and terminal services
 
 ### Blocked by
@@ -33,6 +42,7 @@ None — can start immediately.
 Extend the build script from the tracer bullet to compile `@laborer/server` into a standalone sidecar binary. The server has native dependencies (`@parcel/watcher`, `@livestore/adapter-node`) that require special handling — mark them as `--external` and ship their native modules alongside, or accept graceful fallbacks where they exist.
 
 Key changes beyond compilation:
+1. Fix the `import.meta.url`-based path resolution in `mcp-registrar.ts` so it works in a compiled binary. The `DEFAULT_MCP_ENTRY_PATH` currently resolves to `packages/mcp/src/main.ts` relative to the source file — this needs to use `process.execPath`-relative resolution or an environment variable override when running as a compiled binary.
 2. Handle `@parcel/watcher` — the server already falls back to `fs.watch` if the native addon is unavailable (see `file-watcher.ts`), so marking it external and not shipping it is acceptable.
 3. Handle `@livestore/adapter-node` — this is dynamically imported and has native SQLite transitive dependencies. Either ship the native modules alongside or find an alternative bundling strategy.
 4. Handle `bun:sqlite` — this is a Bun built-in and should work in compiled mode, but verify.
@@ -42,12 +52,14 @@ Key changes beyond compilation:
 - [x] The build script compiles `@laborer/server` into a standalone binary via `bun build --compile`
 - [x] The compiled binary is placed in `src-tauri/sidecars/laborer-server-<target-triple>`
 - [x] The compiled server binary starts successfully and responds to health checks on its configured port
+- [x] The `mcp-registrar.ts` path resolution works correctly when running as a compiled binary (does not crash on `import.meta.url` resolution)
 - [x] The server gracefully handles unavailable `@parcel/watcher` (falls back to `fs.watch`)
 - [x] LiveStore persistence works correctly in the compiled binary (SQLite operations function normally)
 - [x] Native module files that need to be shipped alongside are identified and copied by the build script
 
 ### Blocked by
 
+- Blocked by "Compile MCP service as standalone binary (tracer bullet)" (uses the same build script pattern)
 
 ### User stories addressed
 
@@ -86,6 +98,7 @@ The hardest compilation target. The terminal service has a unique architecture: 
 
 ### Blocked by
 
+- Blocked by "Compile MCP service as standalone binary (tracer bullet)" (uses the same build script pattern)
 
 ### User stories addressed
 
@@ -190,6 +203,7 @@ Extend the `SidecarManager` from the previous issue with health check polling, s
 The integration issue that ties everything together. Configure the Tauri app to bundle the compiled sidecar binaries, spawn them on startup in the correct order, and update the frontend to connect directly to sidecar ports instead of relying on the Vite dev proxy.
 
 #### Tauri configuration
+- Add `bundle.externalBin` entries in `tauri.conf.json` for all three sidecars: `sidecars/laborer-server`, `sidecars/laborer-terminal`, `sidecars/laborer-mcp`.
 - Update `beforeBuildCommand` to run both the Vite frontend build AND the sidecar compilation script (from issues #1-3).
 - Add sidecar-related capabilities if needed.
 
@@ -197,6 +211,7 @@ The integration issue that ties everything together. Configure the Tauri app to 
 Wire the `SidecarManager` (from issues #4-5) into `lib.rs` setup:
 1. Spawn terminal service first (port 2102) and wait for it to become healthy.
 2. Spawn server service (port 2100) — it connects to the terminal service on startup.
+3. MCP is NOT spawned by the app (launched independently by AI agents).
 4. Only after both services are healthy does the app proceed to show the webview.
 
 #### Frontend URL routing
@@ -224,6 +239,7 @@ The `tauri dev` flow must still work. In dev mode, the Vite proxy handles routin
 
 ### Blocked by
 
+- Blocked by "Compile MCP service as standalone binary (tracer bullet)"
 - Blocked by "Compile server service as standalone binary"
 - Blocked by "Compile terminal service + pty-host as standalone binary"
 - Blocked by "SidecarManager — health checks and Tauri events"
@@ -276,11 +292,15 @@ Add frontend handling for sidecar crash events. When a backend service crashes, 
 
 ---
 
+## Issue 8: MCP symlink creation on app launch
 
 ### What to build
 
+When the Tauri app launches, create a symlink at `/usr/local/bin/laborer-mcp` pointing to the compiled MCP binary inside the app bundle. This allows AI agents (Claude Code, Codex, OpenCode) to reference the MCP server by a stable path without knowing the `.app` bundle internals.
 
+1. **Resolve MCP binary path**: Use `tauri::process::current_binary()` to find the main Tauri binary, then resolve the sibling `laborer-mcp` binary in the same directory.
 
+2. **Symlink creation**: On app setup, check if `/usr/local/bin/laborer-mcp` exists:
    - If it's already a symlink pointing to the correct location, skip.
    - If it doesn't exist, create the symlink.
    - If it exists but points elsewhere (e.g., old version), update the symlink.
@@ -290,15 +310,22 @@ Add frontend handling for sidecar crash events. When a backend service crashes, 
    - Do NOT block app startup.
    - The user can manually create the symlink or configure their AI agent to use the full path inside the `.app` bundle.
 
+4. **Update MCP registrar path**: The server's `mcp-registrar.ts` currently writes MCP config pointing to `bun run <path-to-mcp-source>`. When running as a sidecar, it should instead point to `/usr/local/bin/laborer-mcp` (or the binary path inside the bundle). Pass the MCP binary path as an environment variable from the Rust side to the server sidecar.
 
 ### Acceptance criteria
 
+- [x] On app launch, a symlink is created at `/usr/local/bin/laborer-mcp` pointing to the MCP binary inside the app bundle
 - [x] If the symlink already exists and points to the correct location, it is not recreated
 - [x] If the symlink exists but points to a different location, it is updated
 - [x] If symlink creation fails due to permissions, a warning is logged but app startup is not blocked
+- [x] The server sidecar receives the MCP binary path via environment variable and the `mcp-registrar.ts` uses it when writing AI agent configurations
+- [x] AI agent config entries use the symlinked path (e.g., `{ command: "/usr/local/bin/laborer-mcp" }`) instead of `bun run <source-path>`
 
 ### Blocked by
 
 - Blocked by "Wire sidecars into Tauri app setup and frontend routing"
 
 ### User stories addressed
+
+- User story 7: MCP binary available on PATH for AI agents
+- User story 13: MCP symlink updated on each launch

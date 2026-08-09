@@ -3,7 +3,7 @@
  *
  * Verifies rendering of numbered items with icons, keyboard navigation
  * (arrow keys, number keys, Enter, Escape), mouse interaction, and
- * pre-selection of the agent option.
+ * pre-selection of the terminal option.
  *
  * @see apps/web/src/components/ui/panel-type-picker.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #11
@@ -73,10 +73,10 @@ describe('PanelTypePicker', () => {
   // ---- Rendering ----
 
   describe('rendering', () => {
-    it('renders a compact list with 3 items', () => {
+    it('renders a compact list with 4 items', () => {
       renderPicker()
       const options = getOptions()
-      expect(options).toHaveLength(3)
+      expect(options).toHaveLength(4)
     })
 
     it('renders numbered items with correct labels', () => {
@@ -84,15 +84,15 @@ describe('PanelTypePicker', () => {
       expect(screen.getByText('Agent')).toBeTruthy()
       expect(screen.getByText('Terminal')).toBeTruthy()
       expect(screen.getByText('Diff')).toBeTruthy()
-      expect(screen.queryByText('Dev Server')).toBeNull()
+      expect(screen.getByText('Dev Server')).toBeTruthy()
     })
 
-    it('renders number indicators 1-3', () => {
+    it('renders number indicators 1-4', () => {
       renderPicker()
       expect(screen.getByText('1')).toBeTruthy()
       expect(screen.getByText('2')).toBeTruthy()
       expect(screen.getByText('3')).toBeTruthy()
-      expect(screen.queryByText('4')).toBeNull()
+      expect(screen.getByText('4')).toBeTruthy()
     })
 
     it('has role="listbox" on the container', () => {
@@ -103,7 +103,7 @@ describe('PanelTypePicker', () => {
     it('has role="option" on each item', () => {
       renderPicker()
       const options = screen.getAllByRole('option')
-      expect(options).toHaveLength(3)
+      expect(options).toHaveLength(4)
     })
 
     it('applies additional className to the root element', () => {
@@ -167,7 +167,8 @@ describe('PanelTypePicker', () => {
     it('ArrowDown wraps from last to first item', () => {
       renderPicker()
       const picker = getPicker()
-      // Move down 3 times (past the end)
+      // Move down 4 times (past the end)
+      fireEvent.keyDown(picker, { key: 'ArrowDown' })
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
@@ -182,7 +183,7 @@ describe('PanelTypePicker', () => {
       fireEvent.keyDown(picker, { key: 'ArrowUp' })
 
       const options = screen.getAllByRole('option')
-      expect(options[2]?.getAttribute('aria-selected')).toBe('true')
+      expect(options[3]?.getAttribute('aria-selected')).toBe('true')
     })
 
     it('multiple ArrowDown presses navigate sequentially', () => {
@@ -220,11 +221,11 @@ describe('PanelTypePicker', () => {
       expect(onSelect).toHaveBeenCalledWith('diff')
     })
 
-    it('pressing 4 does not call onSelect', () => {
+    it('pressing 4 selects Dev Server and calls onSelect', () => {
       const { onSelect } = renderPicker()
       const picker = getPicker()
       fireEvent.keyDown(picker, { key: '4' })
-      expect(onSelect).not.toHaveBeenCalled()
+      expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
 
     it('pressing 0 does not call onSelect', () => {
@@ -259,7 +260,7 @@ describe('PanelTypePicker', () => {
       const picker = getPicker()
       fireEvent.keyDown(picker, { key: 'ArrowUp' })
       fireEvent.keyDown(picker, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith('diff')
+      expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
   })
 
@@ -285,11 +286,11 @@ describe('PanelTypePicker', () => {
       expect(onSelect).toHaveBeenCalledWith('diff')
     })
 
-    it('clicking the last option selects Diff', () => {
+    it('clicking the last option selects Dev Server', () => {
       const { onSelect } = renderPicker()
       const options = getOptions()
-      fireEvent.click(options[2] as HTMLElement)
-      expect(onSelect).toHaveBeenCalledWith('diff')
+      fireEvent.click(options[3] as HTMLElement)
+      expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
 
     it('hovering an option updates the highlighted index', () => {
@@ -307,9 +308,9 @@ describe('PanelTypePicker', () => {
       const options = getOptions()
       const picker = getPicker()
 
-      fireEvent.mouseEnter(options[2] as HTMLElement) // Hover Diff
+      fireEvent.mouseEnter(options[3] as HTMLElement) // Hover Dev Server
       fireEvent.keyDown(picker, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith('diff')
+      expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
   })
 
@@ -326,8 +327,8 @@ describe('PanelTypePicker', () => {
   // ---- PANEL_TYPE_OPTIONS export ----
 
   describe('PANEL_TYPE_OPTIONS', () => {
-    it('exports 3 panel type options', () => {
-      expect(PANEL_TYPE_OPTIONS).toHaveLength(3)
+    it('exports 4 panel type options', () => {
+      expect(PANEL_TYPE_OPTIONS).toHaveLength(4)
     })
 
     it('has agent as the first option', () => {
@@ -339,6 +340,7 @@ describe('PanelTypePicker', () => {
         'agent',
         'terminal',
         'diff',
+        'devServerTerminal',
       ])
     })
 
@@ -347,6 +349,7 @@ describe('PanelTypePicker', () => {
         'Agent',
         'Terminal',
         'Diff',
+        'Dev Server',
       ])
     })
   })

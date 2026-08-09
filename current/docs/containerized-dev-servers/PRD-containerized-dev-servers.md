@@ -53,6 +53,7 @@ The AI agent's terminal continues to run on the host (in the worktree directory)
 
 13. As a developer, I want to configure the dev server start command in `laborer.json` as a project setting, so that it is consistent across all workspaces for that project.
 
+14. As a developer, I want the AI agent terminal to remain on the host (not inside the container), so that the agent has full access to host tools like git, the Laborer MCP server, and my editor.
 
 15. As a developer, I want changes made by the AI agent on the host to be immediately visible to the dev server inside the container (via bind mounts), so that HMR works seamlessly across the host-container boundary.
 

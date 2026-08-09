@@ -28,6 +28,7 @@ The new architecture has three layers:
 
 3. **Client-side Invalidation (web)** — when a watcher event arrives, the client decides what to reload: if an open file changed, re-fetch its content; if a file was added/removed, refresh the affected parent directory listing. This replaces the server-side full-tree recomputation.
 
+The file watcher sidecar (`@laborer/file-watcher`) remains as a separate utility process for architectural consistency with the terminal and MCP sidecars. The FileWatcherClient on the server continues to bridge events from the sidecar. What changes is everything downstream of the event fan-out.
 
 ## User Stories
 

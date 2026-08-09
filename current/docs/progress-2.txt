@@ -60,6 +60,7 @@ Key changes:
 - `packages/server/src/services/terminal-manager.ts` — REFACTORED (537 → ~460 lines)
 
 ### Public interface
+The public interface of `TerminalManager` is **unchanged** — all existing RPC handlers (`terminal.spawn`, `terminal.write`, `terminal.resize`, `terminal.kill`, `rlph.*`) continue working without modification.
 
 ### Verification
 - `bun run check-types` passes for `@laborer/server` (no new errors)

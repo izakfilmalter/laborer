@@ -243,7 +243,7 @@ main.ts (Electron main process)
        |-- Create LifecycleMonitor (health tracking, crash recovery, exponential backoff)
        |-- Wire bootstrap message handler (ready/heartbeat)
        |
-       |-- Fork all 4 utility processes:
+       |-- Fork 3 utility processes: terminal, server, and file-watcher
        |     Each: utilityProcess.fork(bootstrap.cjs, { env: { LABORER_ENTRYPOINT: path } })
        |
        |-- Register IPC handlers for DesktopBridge
@@ -251,7 +251,7 @@ main.ts (Electron main process)
        |-- Restore saved windows or create initial window
 ```
 
-#### Utility Process Boot (each of the 4)
+#### Utility Process Boot (each utility process)
 
 ```
 utility-process-bootstrap.ts (CJS entry for utilityProcess.fork)
@@ -284,7 +284,7 @@ packages/server/src/utility-main.ts
   |
   |-- Background fiber builds real implementations in groups:
   |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
-  |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
+  |     Group 2 (stack): DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
   |                       RepositoryWatchCoordinator, ProjectRegistry, WorkspaceProvider
   |     Group 3 (independent): TerminalClient
   |
@@ -439,6 +439,7 @@ Electron Main Process (hub)
 | Process | Count | What it owns | Why isolated |
 |---------|-------|-------------|--------------|
 | **Main** | 1 | Window lifecycle, utility process management, IPC brokering, tray, auto-update | Electron requirement; stays lean |
+| **Server** | 1 | Projects, workspaces, diffs, git, configuration, and RPC handlers | Core business logic isolation |
 | **Terminal** | 1 | All PTY management via node-pty, session persistence, flow control | Native addon isolation, crash resilience |
 | **File Watcher** | 1 | Filesystem watching via @parcel/watcher | Native addon isolation, event flooding protection |
 | **Renderer** | 1 per window | React UI, LiveStore client, xterm.js rendering | Chromium sandbox |
@@ -451,7 +452,7 @@ Electron Main Process (hub)
 
 | Aspect | VS Code | t3code | Laborer |
 |--------|---------|--------|---------|
-| **Total process types** | 6 | 2-3 | 6 (main + 4 utility + renderer) |
+| **Total process types** | 6 | 2-3 | 5 (main + 3 utility + renderer) |
 | **PTY isolation** | Separate PTY host process, auto-restarts 5x | In-server process, no isolation | Separate terminal utility process with health monitoring |
 | **File watching** | Dedicated watcher process | In-process | Separate file-watcher utility process |
 | **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server utility process (separated from main) |
@@ -758,6 +759,7 @@ User keystroke
 
 | Layer | Mechanism | What's stored |
 |-------|-----------|--------------|
+| **Server** | SQLite via LiveStore (`@livestore/adapter-node`, filesystem) | Event-sourced projects, workspaces, app settings, and durable compatibility events |
 | **Client** | OPFS-backed SQLite via LiveStore (`@livestore/adapter-web`) | Same schema, synced bidirectionally with server |
 | **Client workers** | Dedicated Worker (OPFS SQLite), Shared Worker (leader election) | Canonical client-side database |
 | **Terminal** | In-memory circular replay buffer + temp file on shutdown | Terminal scrollback for session persistence |
@@ -843,7 +845,7 @@ User keystroke
 
 | | VS Code | t3code | Laborer |
 |---|---------|--------|---------|
-| **OS processes** | 6 types | 2-3 | 6 (main + 4 utility + renderer) |
+| **OS processes** | 6 types | 2-3 | 5 (main + 3 utility + renderer) |
 | **PTY isolation** | Dedicated PTY host | In-server | Dedicated terminal utility |
 | **File watcher** | Dedicated process | In-server | Dedicated file-watcher utility |
 | **Crash granularity** | Per-subsystem | All-or-nothing | Per-utility-process |

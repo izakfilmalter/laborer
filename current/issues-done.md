@@ -64,9 +64,11 @@ PRD.md
 
 ### What to build
 
+Define the LiveStore schema for the Projects table in `packages/shared/src/schema.ts`. Include events for project creation and removal, and a materializer that keeps the Projects table in sync. Projects have: id, repoPath, name, rlphConfig. Reference the PRD's "State Management: LiveStore" section.
 
 ### Acceptance criteria
 
+- [ ] Projects table defined with correct columns (id, repoPath, name, rlphConfig)
 - [ ] Events defined: ProjectCreated, ProjectRemoved
 - [ ] Materializer correctly updates table state from events
 - [ ] Tests: commit ProjectCreated → verify project in table; commit ProjectRemoved → verify project removed
@@ -189,6 +191,33 @@ Define the LiveStore schema for the PanelLayout table. Stores a tree structure o
 
 ---
 
+## Issue 8: LiveStore schema — Tasks table + events + materializer
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Define the LiveStore schema for the Tasks table. Tasks have: id, projectId, source (linear/github/manual/prd), externalId, title, status. Include events for task lifecycle.
+
+### Acceptance criteria
+
+- [x] Tasks table defined with all columns per PRD
+- [x] Events defined: TaskCreated, TaskStatusChanged, TaskRemoved
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Blocked by
+
+- Blocked by #3
+
+### User stories addressed
+
+- Foundation for all user stories
+
+---
+
 ## Issue 9: Effect RPC contract types (RpcGroup + Rpc.make)
 
 ### Parent PRD
@@ -197,6 +226,7 @@ PRD.md
 
 ### What to build
 
+Define the RPC contract in `packages/shared/src/rpc.ts` using `RpcGroup.make` and `Rpc.make` from `@effect/rpc`. Create a `LaborerRpcs` class that extends `RpcGroup.make(...)` with all RPC methods listed in the PRD's "Action Layer" section: workspace.create, workspace.destroy, terminal.spawn, terminal.write, terminal.resize, terminal.kill, diff.refresh, editor.open, rlph.startLoop, rlph.writePRD, rlph.review, rlph.fix, project.add, project.remove, and health. Each `Rpc.make` call defines `payload` and optional `success` schemas using Effect Schema.
 
 Example pattern:
 ```ts
@@ -2140,6 +2170,7 @@ Add a toggle button to terminal panes that shows/hides a diff viewer alongside t
 
 ---
 
+## Issue 92: rlph.startLoop RPC handler
 
 ### Parent PRD
 
@@ -2147,10 +2178,14 @@ PRD.md
 
 ### What to build
 
+Implement the `rlph.startLoop` handler via `RpcGroup.toHandlers`. It spawns a terminal in the workspace running `rlph --once`. This is a convenience wrapper around terminal.spawn with a specific command. Reference the PRD's "rlph Integration" section.
 
 ### Acceptance criteria
 
+- [x] `rlph.startLoop` handler accepts workspaceId and options
+- [x] Spawns terminal with `rlph --once` command
 - [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned running `rlph --once` (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2162,6 +2197,387 @@ PRD.md
 
 ---
 
+## Issue 93: "Start Ralph Loop" button UI
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add a "Start Ralph Loop" button per workspace that calls the `rlph.startLoop` mutation via `useAtomSet(LaborerClient.mutation("rlph.startLoop"))`. After clicking, the user is taken to the terminal pane showing the rlph output.
+
+### Acceptance criteria
+
+- [x] Button visible per workspace in workspace actions (Play icon, only shown for active workspaces)
+- [x] Click → calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet`
+- [x] Terminal pane shows rlph TUI output (auto-assigned to panel pane via `panelActions.assignTerminalToPane`)
+- [ ] Tests: click button → mutation called; terminal output visible in pane (deferred — requires running both server and web app with rlph installed)
+
+### Blocked by
+
+- Blocked by ~~#92~~, ~~#60~~ (both done)
+
+### User stories addressed
+
+- User story 13, 17
+
+---
+
+## Issue 94: rlph.writePRD RPC handler
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement the `rlph.writePRD` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph prd [description]` in the workspace.
+
+### Acceptance criteria
+
+- [x] `rlph.writePRD` handler accepts workspaceId and optional description
+- [x] Spawns terminal with `rlph prd [description]`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with correct rlph prd command (deferred — vitest not yet configured)
+
+### Blocked by
+
+- Blocked by #56
+
+### User stories addressed
+
+- User story 14
+
+---
+
+## Issue 95: PRD writing form + writePRD button
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Create a PRD writing form using TanStack Form with a description textarea. On submit, calls the `rlph.writePRD` mutation via `useAtomSet(LaborerClient.mutation("rlph.writePRD"))`. Shows the resulting terminal pane with rlph prd output.
+
+### Acceptance criteria
+
+- [x] Form with description textarea using TanStack Form (Textarea with onChange validation, 6 rows)
+- [x] Submit → calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows rlph prd output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [x] Form validates (description required — empty/whitespace-only shows error)
+- [ ] Tests: submit form → mutation called; output visible; empty description → validation error (deferred — requires running both server and web app with rlph installed)
+
+### Blocked by
+
+- Blocked by ~~#94~~, ~~#60~~ (both done)
+
+### User stories addressed
+
+- User story 14
+
+---
+
+## Issue 96: rlph.review RPC handler
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement the `rlph.review` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph review <prNumber>` in the workspace.
+
+### Acceptance criteria
+
+- [x] `rlph.review` handler accepts workspaceId and prNumber
+- [x] Spawns terminal with `rlph review <prNumber>`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with `rlph review <pr>` (deferred — vitest not yet configured)
+
+### Blocked by
+
+- Blocked by #56 (done)
+
+### User stories addressed
+
+- User story 25
+
+---
+
+## Issue 97: "Review PR" button + PR number input
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add a "Review PR" action per workspace with a PR number input field. On submit, calls the `rlph.review` mutation via `useAtomSet(LaborerClient.mutation("rlph.review"))` and shows the terminal pane.
+
+### Acceptance criteria
+
+- [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit → calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
+
+### Blocked by
+
+- Blocked by ~~#96~~, ~~#60~~ (both done)
+
+### User stories addressed
+
+- User story 25
+
+---
+
+## Issue 98: rlph.fix RPC handler
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement the `rlph.fix` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph fix <prNumber>` in the workspace.
+
+### Acceptance criteria
+
+- [x] `rlph.fix` handler accepts workspaceId and prNumber
+- [x] Spawns terminal with `rlph fix <prNumber>`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>` (deferred — vitest not yet configured)
+
+### Blocked by
+
+- Blocked by #56
+
+### User stories addressed
+
+- User story 26
+
+---
+
+## Issue 99: "Fix Findings" button + PR number input
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add a "Fix Findings" action per workspace with a PR number input field. On submit, calls the `rlph.fix` mutation via `useAtomSet(LaborerClient.mutation("rlph.fix"))` and shows the terminal pane.
+
+### Acceptance criteria
+
+- [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit → calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows fix output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
+
+### Blocked by
+
+- Blocked by #98, #60
+
+### User stories addressed
+
+- User story 26
+
+---
+
+## Issue 100: Task CRUD — create manual task
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement creating manual tasks on the server. A manual task has a title, description, and is scoped to a project. Commits TaskCreated event to LiveStore.
+
+### Acceptance criteria
+
+- [ ] Create task with title, description, projectId, source = "manual"
+- [ ] TaskCreated event committed to LiveStore
+- [ ] Task appears in Tasks table with "pending" status
+- [ ] Tests: create task → in LiveStore with correct fields and status
+
+### Blocked by
+
+- Blocked by #8, #16
+
+### User stories addressed
+
+- User story 9
+
+---
+
+## Issue 101: Task CRUD — update task status
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement updating a task's status (pending → in_progress → completed/cancelled). Commits TaskStatusChanged event to LiveStore.
+
+### Acceptance criteria
+
+- [ ] Update task status by ID
+- [ ] TaskStatusChanged event committed
+- [ ] LiveStore table reflects new status
+- [ ] Tests: update status → LiveStore reflects change; invalid status transition → error
+
+### Blocked by
+
+- Blocked by #100
+
+### User stories addressed
+
+- User story 24
+
+---
+
+## Issue 102: Task CRUD — list tasks per project
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Implement listing all tasks for a project, with optional status filtering.
+
+### Acceptance criteria
+
+- [ ] List tasks by projectId
+- [ ] Optional status filter
+- [ ] Returns tasks sorted by creation date
+- [ ] Tests: multiple tasks → list returns all; filter by status → correct subset; empty project → empty list
+
+### Blocked by
+
+- Blocked by #100
+
+### User stories addressed
+
+- User story 24
+
+---
+
+## Issue 103: Create Task form UI
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Create a "Create Task" form using TanStack Form. Fields: title (required), description (optional), project (pre-selected from context). Source is set to "manual". On submit, calls the task creation endpoint.
+
+### Acceptance criteria
+
+- [x] Form with title and description fields (title as Input, description as Textarea)
+- [x] Submit → task created via RPC/LiveStore (`LaborerClient.mutation("task.create")` via `useAtomSet`)
+- [x] Task appears in task list (via LiveStore sync — `taskCreated` event materializes into tasks table)
+- [ ] Tests: valid submit → task created; empty title → validation error (deferred — requires running both server and web app)
+
+### Blocked by
+
+- Blocked by ~~#100~~, ~~#20~~ (both done)
+
+### User stories addressed
+
+- User story 9
+
+---
+
+## Issue 104: Task list UI component
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Create a React component that displays all tasks for the current project from LiveStore. Shows task title, source, status (with badges), and allows filtering by status.
+
+### Acceptance criteria
+
+- [x] Component subscribes to Tasks table via LiveStore
+- [x] Renders tasks with title, source badge, status badge
+- [x] Status filter dropdown/tabs
+- [x] Updates reactively
+- [ ] Tests: tasks render with correct badges; filter works; new task → list updates (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
+
+### Blocked by
+
+- Blocked by #102, #18
+
+### User stories addressed
+
+- User story 24
+
+---
+
+## Issue 105: Task-driven workspace auto-creation
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+When a task's status changes to "in_progress", automatically create a workspace for it. The workspace branch name is derived from the task title/ID. This connects the task lifecycle to workspace lifecycle.
+
+### Acceptance criteria
+
+- [x] Task status → "in_progress" triggers workspace.create (via `WorkspaceProvider.createWorktree` in the `task.updateStatus` handler)
+- [x] Workspace branch name derived from task (e.g., `task/<id-prefix>/<slug>`)
+- [x] Workspace linked to task in LiveStore (via `taskSource` field)
+- [x] Duplicate prevention: toggling back to "in_progress" does not create a second workspace
+- [x] Diff polling auto-starts for the new workspace
+- [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link (deferred — vitest not yet configured)
+
+### Blocked by
+
+- Blocked by ~~#100~~, ~~#40~~ (both done)
+
+### User stories addressed
+
+- User story 7, 15
+
+---
+
+## Issue 106: Task-driven workspace auto-cleanup
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+When a task's status changes to "completed" or its associated PR is merged, automatically destroy the linked workspace. This keeps the environment clean.
+
+### Acceptance criteria
+
+- [x] Task status → "completed" triggers workspace.destroy on linked workspace (via DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree)
+- [x] Task status → "cancelled" triggers workspace.destroy on linked workspace (same cleanup path)
+- [x] All workspace resources cleaned up (diff polling stopped, terminals killed, worktree removed, port freed, branch deleted)
+- [ ] Tests: complete task → linked workspace destroyed; resources freed (deferred — vitest not yet configured)
+
+### Blocked by
+
+- Blocked by ~~#105~~ (done), ~~#47~~ (done)
+
+### User stories addressed
+
+- User story 8
+
+---
 
 ## Issue 111: editor.open RPC handler
 
@@ -2695,6 +3111,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 5 | LiveStore schema — Terminals table | #3 | Done |
 | 6 | LiveStore schema — Diffs table | #3 | Done |
 | 7 | LiveStore schema — PanelLayout table | #3 | Done |
+| 8 | LiveStore schema — Tasks table | #3 | Done |
 | 9 | RPC contract types (RpcGroup + Rpc.make) | #2 | Done |
 | 10 | Initialize `packages/server` package | #1 | Done |
 | 11 | Effect TS application bootstrap | #10 | Done |
@@ -2766,6 +3183,21 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Done |
 | 89 | Diff viewer — live update | ~~#87~~ | Done |
 | 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
+| 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
+| 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Done |
+| 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
+| 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Done |
+| 96 | rlph.review RPC handler | ~~#56~~ | Done |
+| 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Done |
+| 98 | rlph.fix RPC handler | ~~#56~~ | Done |
+| 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Done |
+| 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |
+| 101 | Task CRUD — update status | ~~#100~~ | Done |
+| 102 | Task CRUD — list per project | ~~#100~~ | Done |
+| 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Done |
+| 104 | Task list UI | ~~#102~~, ~~#18~~ | Done |
+| 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Done |
+| 106 | Task-driven workspace auto-cleanup | ~~#105~~, ~~#47~~ | Done |
 | 111 | editor.open RPC handler | ~~#19~~, ~~#14~~ | Done |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, ~~#87~~ | Done |
 | 128 | Graceful shutdown — kill terminals | ~~#54~~ | Done |

@@ -4,6 +4,7 @@
 
 Laborer's built desktop app fails to start its backend services. When a user builds the app (`bun build:app`), installs it, and opens it, they see "Terminal service unavailable — RpcClientError: Failed to send HTTP request." The same error appears for the terminal service and potentially other sidecars.
 
+The root cause is architectural: all four sidecar services (server, terminal, file-watcher, mcp) are spawned as child processes using `child_process.spawn()` with `ELECTRON_RUN_AS_NODE=1`, which runs the Electron binary as a plain Node.js process. Native addons like `node-pty` (terminal) and `@parcel/watcher` (file-watcher) are compiled against Bun's or system Node's ABI during `bun install --production` in the build script, but the Electron binary has a different Node.js ABI. This causes the sidecar processes to crash on startup when they attempt to load native modules.
 
 Beyond the immediate crash, the current architecture has several structural issues:
 
@@ -57,6 +58,8 @@ VS Code runs these services as utility processes (reference files in `.reference
 9. As a developer, I want hot reload in dev mode when I change sidecar source code, so that I don't have to manually restart the app to test changes.
 10. As a developer, I want the dev and prod architectures to be the same (both using utility processes), so that bugs in process management are caught in dev, not just after building.
 11. As a developer, I want to force utility process spawning in dev via an env var (`LABORER_FORCE_UTILITY=1`), so that I can test the production process management without building a full artifact.
+12. As a developer, I want the MCP sidecar to communicate via MessagePort with the main process, so that it is consistent with the other three sidecars.
+13. As a developer, I want the MCP sidecar to spawn external MCP servers as child processes internally (with stdin pipe), so that the MCP protocol's stdio transport still works despite utility processes not supporting stdin.
 14. As a developer, I want the terminal utility process to run node-pty directly (flattened architecture, no nested pty-host child process), so that the terminal architecture is simpler and consistent with VS Code's pty host pattern.
 15. As a developer, I want the `dev:web` browser mode removed, so that there is a single IPC transport (MessagePort) and less code to maintain.
 16. As a developer, I want the build script updated to work with utility processes, so that `bun build:app` produces a working artifact without `ELECTRON_RUN_AS_NODE` workarounds.
@@ -140,8 +143,13 @@ When the terminal utility process restarts (dev hot reload or crash recovery), P
 - **State restoration on startup:** On startup, the terminal utility process reads the serialized state, re-spawns PTY processes, and replays the buffer to the renderer so terminals appear to survive the restart.
 - **Graceful degradation:** If the process crashes (no time to serialize), terminals are marked as stopped in the renderer. The renderer shows the last-known output from its local xterm buffer.
 
+### MCP Utility Process
 
+The MCP sidecar migrates to a utility process with MessagePort IPC to the main process. Since `utilityProcess.fork()` does not support stdin, and the MCP protocol requires stdio transport to communicate with external MCP servers:
 
+- The MCP utility process receives commands from the main process via MessagePort
+- Internally, it spawns external MCP servers as `child_process.spawn()` with `stdin: 'pipe'` — the utility process has full access to `child_process` APIs
+- This is a two-level architecture: `main process -> (MessagePort) -> MCP utility process -> (stdin/stdout) -> external MCP servers`
 
 ### Dev Mode: Unified Architecture with Hot Reload
 

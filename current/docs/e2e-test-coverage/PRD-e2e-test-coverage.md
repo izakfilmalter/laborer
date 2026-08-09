@@ -4,6 +4,7 @@
 
 The `apps/web` package (a Tauri + Vite + React SPA) has minimal test coverage. The existing 4 test files consist of:
 
+1. **Pure function unit tests** (`layout-utils.test.ts`, `project-settings-modal.helpers.test.ts`, `task-source-picker.test.ts`) — these are well-written, test through public interfaces, and should be kept.
 2. **A mock-heavy component test** (`project-settings-modal.test.tsx`) — this violates the project's TDD principles by mocking 6 internal modules (`LaborerClient`, `useAtomSet`, `useAtomValue`, `sonner`, `buildConfigUpdates`, `getSettingsLoadErrorMessage`). It tests implementation details rather than observable behavior and would break on any internal refactoring.
 
 There are **zero end-to-end tests** for any user-facing flow: adding projects, creating workspaces, managing panels, interacting with terminals, searching/filtering, or viewing the dashboard. The app is a complex SPA with a panel system, real-time terminal I/O, LiveStore reactive state, and multiple RPC integrations — all untested at the integration level.
@@ -137,6 +138,7 @@ e2e/
 - **Delete:** `test/project-settings-modal.test.tsx` — mock-heavy, violates TDD principles, behavior covered by Playwright E2E tests.
 - **Keep:** `test/layout-utils.test.ts` — pure function tests, no DOM dependency, fast in Vitest.
 - **Keep:** `test/project-settings-modal.helpers.test.ts` — pure function tests for `normalizeSetupScripts`, `buildConfigUpdates`, `getSettingsLoadErrorMessage`.
+- **Keep:** `test/task-source-picker.test.ts` — pure function tests for `filterTasksByProjectAndSource`, `canImportTasks`.
 
 ### Page Object Pattern
 
@@ -166,6 +168,8 @@ A good E2E test:
 - **Pure logic** (layout tree manipulation, helper functions) — these stay in Vitest where they run in milliseconds.
 - **Type-level concerns** (branded IDs, schema shapes) — enforced by TypeScript.
 - **Implementation details** (which RPC was called, what LiveStore event was committed) — test through UI outcomes only.
+- **Task management flows** (create tasks, filter by source, import from Linear/GitHub) — out of scope for this PRD, will be added later.
+- **Agent action flows** (write PRD form, review PR form, fix findings form, start loop) — out of scope for this PRD, will be added later.
 - **Tauri-native features** (system tray, global shortcuts, window state persistence) — requires Tauri WebDriver, out of scope.
 
 ### Modules tested
@@ -180,6 +184,7 @@ A good E2E test:
 | Dashboard view (toggle, summary, badges) | Playwright E2E | `e2e/dashboard.spec.ts` |
 | Panel layout tree utils (pure functions) | Vitest unit | `test/layout-utils.test.ts` (existing, keep) |
 | Settings modal helpers (pure functions) | Vitest unit | `test/project-settings-modal.helpers.test.ts` (existing, keep) |
+| Task source picker helpers (pure functions) | Vitest unit | `test/task-source-picker.test.ts` (existing, keep) |
 
 ### Prior art
 
@@ -188,6 +193,8 @@ A good E2E test:
 
 ## Out of Scope
 
+- **Task management E2E tests** — Create tasks, filter by source (manual/linear/github), import tasks. Will be added in a future PRD once the foundation is solid.
+- **Agent action E2E tests** — Write PRD form, review PR form, fix findings form, start ralph loop. Depends on complex backend orchestration; will be added later.
 - **Tauri-native feature tests** — System tray, global shortcuts (Cmd+Shift+L), window state persistence. Requires Tauri WebDriver setup, which is a separate effort.
 - **Multi-browser testing** — Only WebKit is tested (matching Tauri on macOS). Chromium/Firefox support is not needed for a desktop app.
 - **CI/CD pipeline** — This PRD sets up the test infrastructure for local development. CI integration is a separate concern.

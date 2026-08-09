@@ -240,12 +240,13 @@ describe('acquire service port IPC', () => {
     expect(calls[2]?.[1]).toBe('nonce-c')
   })
 
-  it('ignores invalid service names', async () => {
+  it('ignores retired and invalid service names', async () => {
     await setup()
     const handler = getPortHandler()
 
     const sender = createMockSender()
 
+    handler({ sender }, { name: 'mcp', nonce: 'nonce-mcp' })
     handler({ sender }, { name: 'invalid-service', nonce: 'nonce-x' })
 
     // No channel created, no response sent.

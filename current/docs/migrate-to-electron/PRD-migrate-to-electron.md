@@ -4,11 +4,14 @@
 
 Laborer currently uses Tauri v2 as its desktop shell, which renders the frontend via the platform's native WebView (WebKit on macOS). This causes cross-platform inconsistency — the app behaves differently depending on the OS's WebView engine, and WebKit on macOS introduces cross-origin restrictions that require workarounds (the `tauri-plugin-localhost` hack). The Rust backend code in `src-tauri/` is entirely focused on process lifecycle management (sidecar spawning, health checking, crash monitoring) rather than business logic, making the Rust toolchain an expensive dependency for what is effectively a Node.js-shaped problem.
 
+Additionally, the server, terminal, and MCP packages all run on the Bun runtime, but Electron ships with Node.js built-in. Continuing to compile sidecars into standalone Bun binaries (`bun build --compile`) and shipping them alongside Electron adds unnecessary complexity and binary size. Migrating to Node.js as the runtime for these services allows them to run as child processes of Electron using `ELECTRON_RUN_AS_NODE=1`, eliminating the need for compiled sidecar binaries entirely.
 
 ## Solution
 
+Replace Tauri with Electron as the desktop shell, following the patterns established by the `.reference/t3code/` codebase. Simultaneously migrate the server, terminal, and MCP packages from Bun to Node.js runtime. The result is a unified JavaScript/TypeScript stack where:
 
 - Electron's main process manages window lifecycle, system tray, global shortcuts, and child process spawning
+- The server, terminal, and MCP services run as Node.js child processes via `ELECTRON_RUN_AS_NODE=1`
 - The React frontend loads in Chromium (consistent cross-platform) via a custom `laborer://` protocol in production
 - Auto-updates are handled by `electron-updater`
 - No Rust toolchain is required
@@ -27,7 +30,9 @@ Laborer currently uses Tauri v2 as its desktop shell, which renders the frontend
 10. As a developer, I want the app to capture my shell environment (PATH, etc.) on startup, so that child processes can find tools like `git`, `docker`, and `gh`.
 11. As a developer, I want the terminal WebSocket connections to work without cross-origin issues, so that xterm.js terminals function correctly in production builds.
 12. As a developer, I want LiveStore WebSocket sync to work without cross-origin issues, so that real-time data synchronization is reliable.
+13. As a developer, I want the MCP server binary to be symlinked to a discoverable path (`/usr/local/bin/laborer-mcp`), so that AI agents can find it.
 14. As a developer, I want the dev mode experience to remain fast — Vite HMR in the renderer, watched rebuilds of the main process, and automatic Electron restarts on main process changes.
+15. As a developer, I want the server, terminal, and MCP services to run on Node.js, so that no separate Bun runtime needs to be bundled or compiled.
 16. As a developer, I want Effect RPC, LiveStore sync, and all HTTP endpoints to work identically after migration, so that no business logic changes are required.
 17. As a developer, I want the native context menu, folder picker dialog, and confirmation dialog to be accessible from the renderer via a typed IPC bridge, so that the frontend can invoke native OS features.
 18. As a developer, I want the macOS application menu to include standard items (About, Settings, Services, Hide, Quit), so that the app feels native.
@@ -43,6 +48,7 @@ Once the core migration is complete, verify the following for a refined experien
 3. **Memory usage** — Profile the Electron app's memory footprint. Chromium will use more memory than WebKit; ensure it stays within acceptable bounds.
 4. **Tray icon quality** — Ensure the tray icon is crisp on Retina displays (use template images on macOS).
 5. **Window state edge cases** — Test window state persistence when the window is on an external display that is later disconnected.
+6. **Graceful shutdown** — Ensure all child processes (server, terminal, MCP) are cleanly terminated on app quit. No orphaned processes.
 7. **Error recovery** — Simulate sidecar crashes and verify restart with exponential backoff works correctly, including the `sidecar:error` event to the renderer.
 8. **Dev mode DX** — Ensure `turbo dev` starts Vite, the main process bundler, and Electron in the correct order with proper watching and restart behavior.
 9. **CSP and security** — Review Content Security Policy headers for the custom protocol. Ensure `webSecurity` is not disabled.
@@ -59,6 +65,7 @@ A new `apps/desktop/` package containing the Electron main process, preload scri
 - Window management: BrowserWindow with `titleBarStyle: "hiddenInset"`, `contextIsolation: true`, `sandbox: true`
 - Custom `laborer://` protocol for production (serves static files from bundled `apps/web/dist/`)
 - In development, loads `VITE_DEV_SERVER_URL` (Vite dev server)
+- Child process management: spawn server, terminal, and MCP as Node.js child processes via `ELECTRON_RUN_AS_NODE=1`
 - Health checking: HTTP polling at short intervals with timeout (ported from Rust `sidecar.rs`)
 - Crash monitoring: watch for unexpected child process exits, emit events to renderer, restart with exponential backoff
 - System tray: `Tray` with dynamic tooltip showing workspace count, context menu with "Show Laborer" and "Quit"
@@ -68,6 +75,7 @@ A new `apps/desktop/` package containing the Electron main process, preload scri
 - IPC handlers for native features: folder picker, confirmation dialog, context menu, open external URL
 - Auto-update via `electron-updater` with state machine pattern (ported from t3code's `updateMachine.ts`)
 - Application menu with macOS-standard items
+- MCP symlink creation (`/usr/local/bin/laborer-mcp`)
 
 **Preload script (`src/preload.ts`):**
 - Exposes a typed `DesktopBridge` via `contextBridge.exposeInMainWorld()`
@@ -117,6 +125,7 @@ The renderer accesses this via `window.desktopBridge` (injected by the preload s
 - Remove `@types/bun` dev dependency
 - Update tsconfig
 
+### Module 6: `packages/mcp/` — Bun-to-Node Migration (Modified)
 
 - Replace `@effect/platform-bun` with `@effect/platform-node` (`BunRuntime` -> `NodeRuntime`, `BunStream.stdin` -> `NodeStream.stdin`, `BunSink.stdout` -> `NodeSink.stdout`)
 - Update package.json scripts to use `tsx`
@@ -126,6 +135,7 @@ The renderer accesses this via `window.desktopBridge` (injected by the preload s
 ### Module 7: Build & Packaging Pipeline (New/Modified)
 
 - **`scripts/build-desktop-artifact.ts`** — Dynamic build script (following t3code's pattern) that:
+  - Bundles the server, terminal, and MCP entry points with `tsdown` or `esbuild` (targeting Node.js, not compiling to standalone binaries)
   - Bundles `apps/web/` with Vite
   - Bundles `apps/desktop/` main/preload with tsdown
   - Creates a staging directory with all artifacts
@@ -185,9 +195,11 @@ Tests should verify external behavior and observable outcomes, not implementatio
 ## Out of Scope
 
 - **Linux and Windows support** — macOS only for the initial migration. Cross-platform packaging will be a follow-up.
+- **Migration of Bun as package manager** — Bun will continue to be used for `bun install`, `bun run`, and workspace management. Only the runtime for server/terminal/mcp changes to Node.js.
 - **New features** — This is a like-for-like migration. No new user-facing features are added (auto-updates being the exception, as it's a natural part of the Electron ecosystem).
 - **Docker/OrbStack container features** — These are unchanged; only the `Bun.spawn()` calls to `docker` CLI are replaced with `child_process` equivalents.
 - **LiveStore schema or RPC contract changes** — The data layer is untouched.
+- **MCP protocol changes** — Only the runtime changes (`BunRuntime` -> `NodeRuntime`, `BunStream` -> `NodeStream`).
 - **E2E Playwright tests** — The existing Playwright test infrastructure may need updates for Electron (using `electron` package in Playwright), but writing new E2E tests is out of scope.
 - **Code signing** — macOS code signing and notarization will be addressed in a follow-up.
 

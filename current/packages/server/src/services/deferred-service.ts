@@ -55,8 +55,8 @@ export const serviceInitializingError = (serviceName: string) =>
  * the proxy returns Effect.fail(serviceInitializingError(...)).
  *
  * Methods in `overrides` are used instead of the default error behavior,
- * allowing specific methods to return valid placeholder data (e.g.,
- * DockerDetection.check returning { available: false }).
+ * allowing specific methods to return valid placeholder data while the real
+ * service initializes.
  */
 export const makeServiceProxy = <T extends object>(
   serviceName: string,

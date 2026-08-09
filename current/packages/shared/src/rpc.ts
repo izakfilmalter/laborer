@@ -898,56 +898,8 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
-      /**
-       * When true and the workspace is containerized, auto-types setup scripts
-       * from `laborer.json` followed by the `devServer.startCommand` into the
-       * terminal after spawn. Used for dev server terminals.
-       */
+      /** Identifies a dev-server terminal spawn. */
       autoRun: Schema.optional(Schema.Boolean),
-    },
-  }),
-
-  /**
-   * Resize a Daytona terminal's PTY session.
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local (Docker/host) terminals are resized directly via the terminal
-   * utility process's `TerminalRpcs.terminal.resize`.
-   *
-   * @see Issue #17: Daytona PTY — bridge to xterm.js terminal component
-   */
-  Rpc.make('terminal.resize', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
-      cols: Schema.Int,
-      rows: Schema.Int,
-    },
-  }),
-
-  /**
-   * Kill a Daytona terminal's PTY session (stop the process).
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local terminals are killed via `TerminalRpcs.terminal.kill`.
-   */
-  Rpc.make('terminal.kill', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
-    },
-  }),
-
-  /**
-   * Remove a Daytona terminal — kills the PTY (if running) and cleans up.
-   *
-   * The web app sends this RPC for terminals with the `daytona:` prefix.
-   * Local terminals are removed via `TerminalRpcs.terminal.remove`.
-   */
-  Rpc.make('terminal.remove', {
-    error: RpcError,
-    payload: {
-      id: Schema.String,
     },
   }),
 

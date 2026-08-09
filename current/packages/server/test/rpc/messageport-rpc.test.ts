@@ -46,7 +46,6 @@ import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
-import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -95,13 +94,7 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
   Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
   Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
-  Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
-  Layer.succeed(
-    SandboxProvider,
-    makeServiceProxy<SandboxProvider['Type']>('SandboxProvider', {
-      checkAvailability: () => Effect.succeed({ available: false }),
-    })
-  )
+  Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher'))
 )
 
 // ---------------------------------------------------------------------------

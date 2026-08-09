@@ -13,7 +13,6 @@
     "./types": "./src/types.ts",
     "./schema": "./src/schema.ts",
     "./rpc": "./src/rpc.ts",
-    "./container-name": "./src/container-name.ts",
     "./workspace-tree": "./src/workspace-tree.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",

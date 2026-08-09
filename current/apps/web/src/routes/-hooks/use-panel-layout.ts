@@ -1207,33 +1207,12 @@ export function usePanelLayout() {
     [persistedWindowLayout, persistWindowLayout]
   )
 
-  /**
-   * Check if a workspace is containerized by looking up its LiveStore record.
-   * Used to auto-open dev server panes for containerized workspaces.
-   */
-  const isWorkspaceContainerized = useCallback(
-    (workspaceId: string): boolean => {
-      const wsList = store.query(allWorkspaces$)
-      const ws = wsList.find((w) => w.id === workspaceId)
-      return ws?.sandboxId != null
-    },
-    [store]
-  )
-
-  /**
-   * Schedule auto-open of the dev server terminal for a containerized workspace.
-   * Fire-and-forget: errors are logged but do not block the layout assignment.
-   */
-  const autoOpenDevServerRef = useRef<
-    ((paneId: string) => Promise<boolean>) | null
-  >(null)
-
   const handleAssignTerminalToPane = useCallback(
     async (
       terminalId: string,
       workspaceId: string,
       paneId?: string,
-      options?: AssignTerminalToPaneOptions
+      _options?: AssignTerminalToPaneOptions
     ) => {
       // Gate: if the workspace is already visible in another window,
       // focus that window instead of duplicating the workspace here.
@@ -1265,7 +1244,7 @@ export function usePanelLayout() {
       )
 
       // Assign the terminal directly into the hierarchical layout.
-      const { layout: resultLayout, focusPaneId } = assignTerminalInWorkspace(
+      const { layout: resultLayout } = assignTerminalInWorkspace(
         baseLayout,
         workspaceId,
         terminalId,
@@ -1275,19 +1254,8 @@ export function usePanelLayout() {
       if (resultLayout !== persistedWindowLayout) {
         persistWindowLayout('terminal-assigned', resultLayout)
       }
-
-      // Auto-open dev server for containerized workspaces
-      const shouldAutoOpenDevServer = options?.autoOpenDevServer === true
-      if (shouldAutoOpenDevServer && isWorkspaceContainerized(workspaceId)) {
-        const devPaneId = focusPaneId ?? paneId
-        if (devPaneId) {
-          autoOpenDevServerRef.current?.(devPaneId)?.catch((error) => {
-            console.warn('[auto-open] dev server spawn failed:', error)
-          })
-        }
-      }
     },
-    [persistedWindowLayout, persistWindowLayout, isWorkspaceContainerized]
+    [persistedWindowLayout, persistWindowLayout]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -1447,11 +1415,6 @@ export function usePanelLayout() {
       removeTerminalOptimistically,
     ]
   )
-
-  // Keep the auto-open ref in sync with the latest toggle handler
-  useEffect(() => {
-    autoOpenDevServerRef.current = handleToggleDevServerPane
-  }, [handleToggleDevServerPane])
 
   /**
    * Close a terminal and its associated pane (ungated — no confirmation).

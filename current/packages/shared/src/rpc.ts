@@ -268,17 +268,6 @@ const TerminalResponse = Schema.Struct({
   status: Schema.Literal('running', 'stopped'),
 })
 
-const DockerStatusResponse = Schema.Struct({
-  available: Schema.Boolean,
-  error: Schema.optional(Schema.String),
-})
-
-/**
- * Alias for DockerStatusResponse — used by the new provider-agnostic
- * `sandbox.providerStatus` RPC. Same shape as `docker.status`.
- */
-const ProviderStatusResponse = DockerStatusResponse
-
 const PrStatusResponse = Schema.Struct({
   number: Schema.NullOr(Schema.Int),
   state: Schema.NullOr(Schema.String),
@@ -650,13 +639,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // Docker Prerequisite Detection
-  // -----------------------------------------------------------------------
-  Rpc.make('docker.status', {
-    success: DockerStatusResponse,
-  }),
-
-  // -----------------------------------------------------------------------
   // Project RPCs
   // -----------------------------------------------------------------------
   Rpc.make('project.add', {
@@ -738,23 +720,6 @@ export class LaborerRpcs extends RpcGroup.make(
         agent: Schema.optional(AgentProviderSchema),
         defaultSandboxProvider: Schema.optional(SandboxProviderTypeSchema),
       }),
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Settings RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('settings.getDefaultProvider', {
-    success: Schema.Struct({
-      provider: Schema.NullOr(SandboxProviderTypeSchema),
-    }),
-    error: RpcError,
-  }),
-
-  Rpc.make('settings.setDefaultProvider', {
-    error: RpcError,
-    payload: {
-      provider: SandboxProviderTypeSchema,
     },
   }),
 
@@ -916,96 +881,6 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('workspace.pull', {
     success: WorkspaceSyncStatusResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('workspace.startContainer', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Container RPCs (Issue 10)
-  // -----------------------------------------------------------------------
-  Rpc.make('container.setPort', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** The port number, or null to clear. */
-      port: Schema.NullOr(Schema.Int),
-    },
-  }),
-
-  Rpc.make('container.pause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('container.unpause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Sandbox RPCs (provider-agnostic replacements for container/docker RPCs)
-  //
-  // These are the canonical names going forward. The old container.* and
-  // docker.* names above are kept as backward-compatible aliases.
-  // -----------------------------------------------------------------------
-
-  Rpc.make('sandbox.providerStatus', {
-    success: ProviderStatusResponse,
-  }),
-
-  Rpc.make('workspace.startSandbox', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.setPort', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** The port number, or null to clear. */
-      port: Schema.NullOr(Schema.Int),
-    },
-  }),
-
-  Rpc.make('sandbox.pause', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.resume', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('sandbox.setAutoStop', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      /** Minutes of inactivity before auto-stop (0 disables auto-stop). */
-      interval: Schema.Int,
-    },
-  }),
-
-  Rpc.make('sandbox.openInVsCode', {
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

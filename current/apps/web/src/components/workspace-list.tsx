@@ -44,20 +44,10 @@ import {
   type WorkspaceTreeNode,
 } from '@laborer/shared/workspace-tree'
 import { queryDb } from '@livestore/livestore'
-import {
-  ChevronRight,
-  ExternalLink,
-  GitBranch,
-  GitBranchPlus,
-  Globe,
-  Pause,
-  Play,
-  Trash2,
-} from 'lucide-react'
+import { ChevronRight, GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
-  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -112,13 +102,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
 import { Kbd } from '@/components/ui/kbd'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -135,9 +119,7 @@ import {
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
-import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
@@ -148,20 +130,10 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-const startSandboxMutation = LaborerClient.mutation('workspace.startSandbox')
-const setSandboxPortMutation = LaborerClient.mutation('sandbox.setPort')
-const pauseSandboxMutation = LaborerClient.mutation('sandbox.pause')
-const resumeSandboxMutation = LaborerClient.mutation('sandbox.resume')
-const openInVsCodeMutation = LaborerClient.mutation('sandbox.openInVsCode')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
 
-/**
- * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
- * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
- */
-const FULL_URL_RE = /^https?:\/\//u
 const DIALOG_TEXT_CLASS = 'text-balance text-muted-foreground text-xs/relaxed'
 
 type WorkspaceStatus =
@@ -171,11 +143,6 @@ type WorkspaceStatus =
   | 'stopped'
   | 'errored'
   | 'destroyed'
-
-// getWorktreeSetupLabel and getSandboxSetupLabel are shared with
-// panel-manager.tsx and workspace-dashboard.tsx — see
-// apps/web/src/lib/worktree-setup-labels.ts and
-// apps/web/src/lib/sandbox-setup-labels.ts for the implementations.
 
 /**
  * Returns Tailwind classes for a status badge based on workspace status.
@@ -258,222 +225,6 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
         <CopyButton title={copyLabel} value={value} />
       </span>
     </span>
-  )
-}
-
-/**
- * Pause/resume toggle button for sandboxed workspaces.
- * Calls `sandbox.pause` or `sandbox.resume` RPC based on current state.
- */
-function SandboxPauseButton({
-  workspaceId,
-  isPaused,
-}: {
-  readonly workspaceId: string
-  readonly isPaused: boolean
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-  const [isLoading, setIsLoading] = useState(false)
-  const pauseSandbox = useAtomSet(pauseSandboxMutation, {
-    mode: 'promise',
-  })
-  const resumeSandbox = useAtomSet(resumeSandboxMutation, {
-    mode: 'promise',
-  })
-
-  const handleToggle = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      if (isPaused) {
-        await resumeSandbox({ payload: { workspaceId } })
-        toast.success('Sandbox resumed')
-      } else {
-        await pauseSandbox({ payload: { workspaceId } })
-        toast.success('Sandbox paused')
-      }
-    } catch (error: unknown) {
-      toast.error(
-        `Failed to ${isPaused ? 'resume' : 'pause'} sandbox: ${extractErrorMessage(error)}`
-      )
-    } finally {
-      setIsLoading(false)
-    }
-  }, [isPaused, pauseSandbox, resumeSandbox, workspaceId])
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={isPaused ? 'Resume sandbox' : 'Pause sandbox'}
-            disabled={!isServerReady || isLoading}
-            onClick={handleToggle}
-            size="icon-xs"
-            variant="ghost"
-          />
-        }
-      >
-        {isPaused ? (
-          <Play
-            className={cn(
-              'size-3.5',
-              isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
-            )}
-          />
-        ) : (
-          <Pause
-            className={cn(
-              'size-3.5',
-              isLoading
-                ? 'animate-pulse text-muted-foreground'
-                : 'text-amber-500'
-            )}
-          />
-        )}
-      </TooltipTrigger>
-      <TooltipContent>
-        {isPaused ? 'Resume sandbox' : 'Pause sandbox'}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-function OpenInVsCodeButton({ workspaceId }: { readonly workspaceId: string }) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-  const [isLoading, setIsLoading] = useState(false)
-  const openInVsCode = useAtomSet(openInVsCodeMutation, {
-    mode: 'promise',
-  })
-
-  const handleClick = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      await openInVsCode({ payload: { workspaceId } })
-      toast.success('Opening in VS Code...')
-    } catch (error: unknown) {
-      toast.error(`Failed to open in VS Code: ${extractErrorMessage(error)}`)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [openInVsCode, workspaceId])
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label="Open in VS Code"
-            disabled={!isServerReady || isLoading}
-            onClick={handleClick}
-            size="icon-xs"
-            variant="ghost"
-          />
-        }
-      >
-        <ExternalLink
-          className={cn(
-            'size-3.5',
-            isLoading ? 'animate-pulse text-muted-foreground' : 'text-blue-500'
-          )}
-        />
-      </TooltipTrigger>
-      <TooltipContent>Open in VS Code (SSH)</TooltipContent>
-    </Tooltip>
-  )
-}
-
-function SandboxPortButton({
-  workspaceId,
-  currentPort,
-}: {
-  readonly workspaceId: string
-  readonly currentPort: number | null
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-  const [isOpen, setIsOpen] = useState(false)
-  const [portValue, setPortValue] = useState(
-    currentPort != null ? String(currentPort) : ''
-  )
-  const setSandboxPort = useAtomSet(setSandboxPortMutation, {
-    mode: 'promise',
-  })
-
-  const handleSave = useCallback(async () => {
-    const parsed = portValue.trim() === '' ? null : Number(portValue)
-    if (
-      parsed != null &&
-      (Number.isNaN(parsed) || parsed < 1 || parsed > 65_535)
-    ) {
-      toast.error('Port must be between 1 and 65535')
-      return
-    }
-    try {
-      await setSandboxPort({
-        payload: { workspaceId, port: parsed },
-      })
-      setIsOpen(false)
-      toast.success(parsed != null ? `Port set to ${parsed}` : 'Port cleared')
-    } catch (error: unknown) {
-      toast.error(`Failed to set port: ${extractErrorMessage(error)}`)
-    }
-  }, [portValue, setSandboxPort, workspaceId])
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter') {
-        handleSave()
-      }
-    },
-    [handleSave]
-  )
-
-  return (
-    <Popover onOpenChange={setIsOpen} open={isOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <Button
-                  aria-label="Set sandbox port"
-                  disabled={!isServerReady}
-                  size="icon-xs"
-                  variant="ghost"
-                />
-              }
-            >
-              <Globe
-                className={cn(
-                  'size-3.5',
-                  currentPort != null
-                    ? 'text-foreground'
-                    : 'text-muted-foreground'
-                )}
-              />
-            </PopoverTrigger>
-          }
-        />
-        <TooltipContent>
-          {currentPort != null ? `Port: ${currentPort}` : 'Set sandbox port'}
-        </TooltipContent>
-      </Tooltip>
-      <PopoverContent className="w-48 p-2">
-        <div className="flex items-center gap-1">
-          <Input
-            autoFocus
-            className="h-7 text-xs"
-            onChange={(event) => setPortValue(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="e.g. 3000"
-            type="number"
-            value={portValue}
-          />
-          <Button className="h-7 text-xs" onClick={handleSave} size="sm">
-            Set
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
   )
 }
 
@@ -705,45 +456,6 @@ function InlineDestroyWorkspaceDialog({
   )
 }
 
-/**
- * Start Sandbox button — starts a sandbox for a non-sandboxed
- * workspace, converting it into a laborer-managed workspace.
- */
-function StartSandboxButton({
-  isStarting,
-  onClick,
-}: {
-  readonly isStarting: boolean
-  readonly onClick: () => void
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label="Start sandbox"
-            disabled={!isServerReady || isStarting}
-            onClick={onClick}
-            size="icon-xs"
-            title={isServerReady ? undefined : 'Connecting to server...'}
-            variant="ghost"
-          />
-        }
-      >
-        <Play
-          className={cn(
-            'size-3.5',
-            isStarting ? 'animate-pulse text-muted-foreground' : 'text-success'
-          )}
-        />
-      </TooltipTrigger>
-      <TooltipContent>Start Sandbox</TooltipContent>
-    </Tooltip>
-  )
-}
-
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
@@ -770,11 +482,6 @@ interface WorkspaceItemProps {
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
     readonly taskSource: string | null
-    readonly sandboxId: string | null
-    readonly sandboxUrl: string | null
-    readonly sandboxPort: number | null
-    readonly sandboxStatus: string | null
-    readonly sandboxSetupStep: string | null
     readonly worktreeSetupStep: string | null
     readonly prNumber: number | null
     readonly prUrl: string | null
@@ -949,49 +656,6 @@ function DestroyWorkspaceButton({
   )
 }
 
-function SandboxActions({
-  currentPort,
-  isDaytonaSandbox,
-  isNoSandbox,
-  isPaused,
-  isSandboxed,
-  isStartingSandbox,
-  onStartSandbox,
-  workspaceId,
-}: {
-  readonly currentPort: number | null
-  readonly isDaytonaSandbox: boolean
-  readonly isNoSandbox: boolean
-  readonly isPaused: boolean
-  readonly isSandboxed: boolean
-  readonly isStartingSandbox: boolean
-  readonly onStartSandbox: () => void
-  readonly workspaceId: string
-}) {
-  if (isNoSandbox) {
-    return null
-  }
-
-  if (!isSandboxed) {
-    return (
-      <StartSandboxButton
-        isStarting={isStartingSandbox}
-        onClick={onStartSandbox}
-      />
-    )
-  }
-
-  return (
-    <>
-      {isDaytonaSandbox && !isPaused && (
-        <OpenInVsCodeButton workspaceId={workspaceId} />
-      )}
-      <SandboxPauseButton isPaused={isPaused} workspaceId={workspaceId} />
-      <SandboxPortButton currentPort={currentPort} workspaceId={workspaceId} />
-    </>
-  )
-}
-
 function WorkspaceItem({
   workspace,
   associatedPrdId,
@@ -1000,129 +664,13 @@ function WorkspaceItem({
   projectName,
   showCreateSubWorkspaceAction = true,
 }: WorkspaceItemProps) {
-  const [isStartingSandbox, setIsStartingSandbox] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
     'active' | 'waiting_for_input' | null
   >(null)
-  const startSandbox = useAtomSet(startSandboxMutation, {
-    mode: 'promise',
-  })
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
 
-  const handleStartSandbox = useCallback(async () => {
-    setIsStartingSandbox(true)
-    try {
-      await startSandbox({
-        payload: { workspaceId: workspace.id },
-      })
-      toast.success('Sandbox started')
-    } catch (error: unknown) {
-      toast.error(`Failed to start sandbox: ${extractErrorMessage(error)}`)
-    } finally {
-      setIsStartingSandbox(false)
-    }
-  }, [startSandbox, workspace.id])
-
-  const isSandboxed = workspace.sandboxId != null
-  const isSandboxPaused = workspace.sandboxStatus === 'paused'
-  // sandboxProvider is not in LiveStore's inferred queryDb type (column count limit),
-  // but it IS in the SQLite table and accessible at runtime.
-  const isDaytonaSandbox =
-    (workspace as { sandboxProvider?: string | null }).sandboxProvider ===
-    'daytona'
-  const isNoSandbox =
-    (workspace as { sandboxProvider?: string | null }).sandboxProvider ===
-    'none'
-  const hasSandboxConfig = workspace.sandboxUrl != null
-  // Only show the sandbox link when a sandbox actually exists.
-  // sandboxUrl is intentionally preserved after sandbox destruction
-  // for display purposes, but we don't want to show a clickable link
-  // to a sandbox that no longer exists.
-  const sandboxLink = (() => {
-    if (!(isSandboxed && workspace.sandboxUrl)) {
-      return null
-    }
-    // Daytona preview URLs are stored as full URLs (https://...).
-    // Docker sandbox URLs are hostnames (e.g., branch--project.orb.local).
-    if (FULL_URL_RE.test(workspace.sandboxUrl)) {
-      return workspace.sandboxUrl
-    }
-    return `http://${workspace.sandboxUrl}${workspace.sandboxPort != null ? `:${workspace.sandboxPort}` : ''}`
-  })()
-
-  /**
-   * Derive display status from the sandbox state. The badge reflects
-   * the sandbox lifecycle, not the workspace lifecycle:
-   * - Sandbox running → "running"
-   * - Sandbox paused → "paused"
-   * - Sandbox gone (was sandboxed but sandboxId cleared) → "stopped"
-   * - Never sandboxed → fall back to workspace.status
-   */
-  const displayStatus = (() => {
-    if (isSandboxed) {
-      return isSandboxPaused ? 'paused' : 'running'
-    }
-    if (hasSandboxConfig) {
-      return 'stopped'
-    }
-    return workspace.status
-  })()
-
   const needsAttention = workspaceAgentStatus === 'waiting_for_input'
-
-  const handleSandboxLinkClick = async (
-    event: React.MouseEvent<HTMLAnchorElement>
-  ) => {
-    if (!(isElectron() && sandboxLink)) {
-      return
-    }
-
-    event.preventDefault()
-    await openExternalUrl(sandboxLink)
-  }
-
-  let infraLabel: ReactNode = (
-    <span className="text-muted-foreground/70 text-xs">No sandbox</span>
-  )
-  if (sandboxLink) {
-    infraLabel = (
-      <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-        <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
-          <a
-            className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-            href={sandboxLink}
-            onClick={handleSandboxLinkClick}
-            rel="noopener"
-            target="_blank"
-            title={`Open ${sandboxLink}`}
-          >
-            {FULL_URL_RE.test(workspace.sandboxUrl ?? '')
-              ? (workspace.sandboxUrl ?? '').replace(FULL_URL_RE, '')
-              : workspace.sandboxUrl}
-          </a>
-          <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-            <CopyButton title="Copy URL" value={sandboxLink} />
-            <Tooltip>
-              <TooltipTrigger>
-                <a
-                  aria-label="Open in browser"
-                  className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  href={sandboxLink}
-                  onClick={handleSandboxLinkClick}
-                  rel="noopener"
-                  target="_blank"
-                >
-                  <ExternalLink className="size-3" />
-                </a>
-              </TooltipTrigger>
-              <TooltipContent>Open in browser</TooltipContent>
-            </Tooltip>
-          </span>
-        </span>
-      </CardDescription>
-    )
-  }
 
   return (
     <Card
@@ -1228,52 +776,38 @@ function WorkspaceItem({
             )}
           </div>
         </div>
-        {/* Row 2 — Infra: sandbox URL, status, pause/play (hidden for root workspace) */}
         {!isRootWorkspace && (
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            {infraLabel}
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              {displayStatus === 'errored' && workspace.errorMessage ? (
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Badge
-                      className={cn(
-                        'shrink-0 border',
-                        getStatusClasses(displayStatus)
-                      )}
-                      variant="outline"
-                    >
-                      <StatusDot status={displayStatus} />
-                      {displayStatus}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
-                    {workspace.errorMessage}
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <Badge
-                  className={cn(
-                    'shrink-0 border',
-                    getStatusClasses(displayStatus)
-                  )}
-                  variant="outline"
-                >
-                  <StatusDot status={displayStatus} />
-                  {displayStatus}
-                </Badge>
-              )}
-              <SandboxActions
-                currentPort={workspace.sandboxPort}
-                isDaytonaSandbox={isDaytonaSandbox}
-                isNoSandbox={isNoSandbox}
-                isPaused={isSandboxPaused}
-                isSandboxed={isSandboxed}
-                isStartingSandbox={isStartingSandbox}
-                onStartSandbox={handleStartSandbox}
-                workspaceId={workspace.id}
-              />
-            </div>
+          <div className="flex justify-end">
+            {workspace.status === 'errored' && workspace.errorMessage ? (
+              <Tooltip>
+                <TooltipTrigger>
+                  <Badge
+                    className={cn(
+                      'shrink-0 border',
+                      getStatusClasses(workspace.status)
+                    )}
+                    variant="outline"
+                  >
+                    <StatusDot status={workspace.status} />
+                    {workspace.status}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
+                  {workspace.errorMessage}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Badge
+                className={cn(
+                  'shrink-0 border',
+                  getStatusClasses(workspace.status)
+                )}
+                variant="outline"
+              >
+                <StatusDot status={workspace.status} />
+                {workspace.status}
+              </Badge>
+            )}
           </div>
         )}
       </CardHeader>
@@ -1282,12 +816,6 @@ function WorkspaceItem({
           <div className="mb-2 flex items-center gap-2 text-warning text-xs">
             <Spinner className="size-3 text-warning" />
             {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
-          </div>
-        )}
-        {workspace.sandboxSetupStep != null && (
-          <div className="mb-2 flex items-center gap-2 text-sky-500 text-xs">
-            <Spinner className="size-3 text-sky-500" />
-            {getSandboxSetupLabel(workspace.sandboxSetupStep)}
           </div>
         )}
         <div className="border-t pt-2">

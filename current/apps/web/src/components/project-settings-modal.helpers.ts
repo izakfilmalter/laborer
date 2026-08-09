@@ -1,20 +1,13 @@
+import type { AgentProvider } from '@laborer/shared/rpc'
+
 interface SetupScriptItem {
   readonly id: string
   readonly value: string
 }
 
-type SandboxProviderType = 'docker' | 'daytona' | 'none'
-
 interface ResolvedConfigSnapshot {
   readonly agent: AgentProvider
   readonly brrrConfig: string | null
-  readonly devServerAutoOpen: boolean
-  readonly devServerImage: string | null
-  readonly devServerInstallCommand: string | null
-  readonly devServerNetwork: string | null
-  readonly devServerProvider: SandboxProviderType | null
-  readonly devServerSetupScripts: readonly string[]
-  readonly devServerStartCommand: string | null
   readonly setupScripts: readonly string[]
   readonly worktreeDir: string
 }
@@ -22,15 +15,6 @@ interface ResolvedConfigSnapshot {
 interface ConfigUpdates {
   agent?: AgentProvider
   brrrConfig?: string
-  devServer?: {
-    autoOpen?: boolean
-    image?: string
-    installCommand?: string
-    network?: string
-    provider?: SandboxProviderType
-    setupScripts?: string[]
-    startCommand?: string
-  }
   setupScripts?: string[]
   worktreeDir?: string
 }
@@ -59,96 +43,14 @@ const areStringArraysEqual = (
   return true
 }
 
-/**
- * Diff dev server fields and return a partial devServer update object,
- * or undefined if nothing changed.
- */
-const buildDevServerUpdates = (
-  current: {
-    autoOpen: boolean
-    image: string
-    installCommand: string
-    network: string
-    provider: SandboxProviderType | null
-    setupScripts: string[]
-    startCommand: string
-  },
-  resolved: ResolvedConfigSnapshot
-): ConfigUpdates['devServer'] | undefined => {
-  const autoOpenChanged = current.autoOpen !== resolved.devServerAutoOpen
-  const imageChanged = current.image !== (resolved.devServerImage ?? '')
-  const installCommandChanged =
-    current.installCommand !== (resolved.devServerInstallCommand ?? '')
-  const networkChanged = current.network !== (resolved.devServerNetwork ?? '')
-  const providerChanged = current.provider !== resolved.devServerProvider
-  const setupScriptsChanged = !areStringArraysEqual(
-    current.setupScripts,
-    resolved.devServerSetupScripts
-  )
-  const startCommandChanged =
-    current.startCommand !== (resolved.devServerStartCommand ?? '')
-
-  if (
-    !(
-      autoOpenChanged ||
-      imageChanged ||
-      installCommandChanged ||
-      networkChanged ||
-      providerChanged ||
-      setupScriptsChanged ||
-      startCommandChanged
-    )
-  ) {
-    return undefined
-  }
-
-  const devServer: ConfigUpdates['devServer'] = {}
-  if (autoOpenChanged) {
-    devServer.autoOpen = current.autoOpen
-  }
-  if (imageChanged) {
-    devServer.image = current.image
-  }
-  if (installCommandChanged) {
-    devServer.installCommand = current.installCommand
-  }
-  if (networkChanged) {
-    devServer.network = current.network
-  }
-  if (providerChanged && current.provider !== null) {
-    devServer.provider = current.provider
-  }
-  if (setupScriptsChanged) {
-    devServer.setupScripts = current.setupScripts
-  }
-  if (startCommandChanged) {
-    devServer.startCommand = current.startCommand
-  }
-  return devServer
-}
-
 const buildConfigUpdates = ({
   agent,
-  devServerAutoOpen,
-  devServerImage,
-  devServerInstallCommand,
-  devServerNetwork,
-  devServerProvider,
-  devServerSetupScripts,
-  devServerStartCommand,
   brrrConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
 }: {
   agent: AgentProvider
-  devServerAutoOpen: boolean
-  devServerImage: string
-  devServerInstallCommand: string
-  devServerNetwork: string
-  devServerProvider: SandboxProviderType | null
-  devServerSetupScripts: readonly SetupScriptItem[]
-  devServerStartCommand: string
   brrrConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
@@ -184,22 +86,6 @@ const buildConfigUpdates = ({
     updates.brrrConfig = normalizedBrrrConfig
   }
 
-  const devServerUpdate = buildDevServerUpdates(
-    {
-      autoOpen: devServerAutoOpen,
-      image: devServerImage.trim(),
-      installCommand: devServerInstallCommand.trim(),
-      network: devServerNetwork.trim(),
-      provider: devServerProvider,
-      setupScripts: normalizeSetupScripts(devServerSetupScripts),
-      startCommand: devServerStartCommand.trim(),
-    },
-    resolvedConfig
-  )
-  if (devServerUpdate !== undefined) {
-    updates.devServer = devServerUpdate
-  }
-
   return updates
 }
 
@@ -212,13 +98,6 @@ const getSettingsLoadErrorMessage = (message: string): string => {
     return 'Could not read laborer.json. Fix the JSON syntax and reopen project settings.'
   }
 
-  if (
-    lowercaseMessage.includes('mutually exclusive') &&
-    lowercaseMessage.includes('devserver')
-  ) {
-    return 'devServer.image and devServer.dockerfile cannot both be set. Remove one from your laborer.json.'
-  }
-
   return `Failed to load project settings: ${message}`
 }
 
@@ -228,6 +107,4 @@ export {
   getSettingsLoadErrorMessage,
   normalizeSetupScripts,
 }
-export type { ResolvedConfigSnapshot, SandboxProviderType, SetupScriptItem }
-
-import type { AgentProvider } from '@laborer/shared/rpc'
+export type { ResolvedConfigSnapshot, SetupScriptItem }

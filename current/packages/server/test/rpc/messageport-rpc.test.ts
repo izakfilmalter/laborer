@@ -13,7 +13,7 @@
  *     -> LaborerRpcsLive -> Service implementations
  *
  * Tests cover:
- * - Core RPCs (health.check, lifecycle.initStatus, docker.status)
+ * - Core RPCs (health.check, lifecycle.initStatus)
  * - Deferred service proxy behavior (SERVICE_INITIALIZING errors)
  * - Multiple concurrent requests
  *
@@ -35,13 +35,10 @@ import { afterAll, beforeAll, it } from 'vitest'
 
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
-import { ContainerService } from '../../src/services/container-service.js'
 import {
   DeferredServicesReadyLayer,
   makeServiceProxy,
 } from '../../src/services/deferred-service.js'
-import { DepsImageService } from '../../src/services/deps-image-service.js'
-import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
@@ -85,16 +82,9 @@ function toRpcPort(
 
 /**
  * Placeholder proxy layers for all deferred services.
- * Each proxy returns SERVICE_INITIALIZING errors for method calls,
- * except DockerDetection which returns { available: false }.
+ * Each proxy returns SERVICE_INITIALIZING errors for method calls.
  */
 const DeferredServiceStubs = Layer.mergeAll(
-  Layer.succeed(
-    DockerDetection,
-    makeServiceProxy('DockerDetection', {
-      check: () => Effect.succeed({ available: false }),
-    })
-  ),
   Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry')),
   Layer.succeed(PrdStorageService, makeServiceProxy('PrdStorageService')),
   Layer.succeed(TaskManager, makeServiceProxy('TaskManager')),
@@ -103,11 +93,9 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
-  Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
   Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
   Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
   Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
-  Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
   Layer.succeed(
     SandboxProvider,
     makeServiceProxy<SandboxProvider['Type']>('SandboxProvider', {
@@ -212,17 +200,6 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   })
 
   // -----------------------------------------------------------------------
-  // docker.status — deferred service with placeholder override
-  // -----------------------------------------------------------------------
-
-  it('docker.status returns placeholder data via MessagePort', async () => {
-    const result = await run(client.docker.status())
-
-    // DockerDetection proxy has a placeholder override
-    assert.strictEqual(result.available, false)
-  })
-
-  // -----------------------------------------------------------------------
   // Deferred service — SERVICE_INITIALIZING errors
   // -----------------------------------------------------------------------
 
@@ -250,19 +227,17 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   // -----------------------------------------------------------------------
 
   it('handles multiple concurrent requests via MessagePort', async () => {
-    const [health, initStatus, docker] = await run(
+    const [health, initStatus] = await run(
       Effect.all([
         client.health.check(),
         client.lifecycle
           .initStatus()
           .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow)),
-        client.docker.status(),
       ])
     )
 
     assert.strictEqual(health.status, 'ok')
     assert.strictEqual(initStatus.ready, false)
-    assert.strictEqual(docker.available, false)
   })
 
   // -----------------------------------------------------------------------

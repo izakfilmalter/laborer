@@ -81,7 +81,6 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
-import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
@@ -187,7 +186,7 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   )
 
   // When the pane's workspace is still being set up (worktree creation,
-  // setup scripts, sandbox provisioning), the terminal spawn is deferred
+  // and setup scripts), the terminal spawn is deferred
   // until the workspace reaches 'running'. Show setup progress instead of
   // the manual CTA so the pane reads as a loading state, not a dead end.
   const paneWorkspace = workspaceId
@@ -200,9 +199,6 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     }
     if (paneWorkspace?.worktreeSetupStep) {
       return getWorktreeSetupLabel(paneWorkspace.worktreeSetupStep)
-    }
-    if (paneWorkspace?.sandboxSetupStep) {
-      return getSandboxSetupLabel(paneWorkspace.sandboxSetupStep)
     }
     return 'Preparing workspace...'
   })()

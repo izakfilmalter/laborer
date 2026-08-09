@@ -7,9 +7,7 @@
  * (using the production makeServiceProxy) that return
  * SERVICE_INITIALIZING errors when invoked.
  *
- * Also verifies the deferred service proxy behavior:
- * - DockerDetection returns { available: false } (placeholder override)
- * - Other deferred RPCs return SERVICE_INITIALIZING error
+ * Also verifies deferred RPCs return SERVICE_INITIALIZING errors.
  */
 
 import { RpcTest } from '@effect/rpc'
@@ -18,15 +16,12 @@ import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Chunk, Context, Effect, Layer, Option, Ref, Stream } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
-import { ContainerService } from '../../src/services/container-service.js'
 import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
   makeServiceProxy,
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
-import { DepsImageService } from '../../src/services/deps-image-service.js'
-import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
@@ -46,19 +41,12 @@ import { TestLaborerStore } from '../helpers/test-store.js'
  *
  * Uses the production makeServiceProxy from deferred-service.ts.
  * Each proxy returns RpcError with SERVICE_INITIALIZING code for all
- * method calls, except DockerDetection which has a placeholder override
- * (its RPC has no error channel, so it returns { available: false }).
+ * method calls.
  *
  * This matches the behavior of the production DeferredServicesProxyLive
  * layer before the background fiber completes initialization.
  */
 const DeferredServiceStubs = Layer.mergeAll(
-  Layer.succeed(
-    DockerDetection,
-    makeServiceProxy('DockerDetection', {
-      check: () => Effect.succeed({ available: false }),
-    })
-  ),
   Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry')),
   Layer.succeed(PrdStorageService, makeServiceProxy('PrdStorageService')),
   Layer.succeed(TaskManager, makeServiceProxy('TaskManager')),
@@ -67,11 +55,9 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
-  Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
   Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
   Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
   Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
-  Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
   Layer.succeed(
     SandboxProvider,
     makeServiceProxy<SandboxProvider['Type']>('SandboxProvider', {
@@ -86,8 +72,7 @@ const DeferredServiceStubs = Layer.mergeAll(
  * implementations for all deferred services.
  *
  * This proves the health endpoint responds without building any
- * deferred services — terminal sidecar, file-watcher sidecar, Docker
- * detection, etc. are all placeholders.
+ * deferred services — terminal and file-watcher sidecars are placeholders.
  */
 const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
@@ -138,19 +123,6 @@ describe('Core layers (Issue #13)', () => {
 })
 
 describe('Deferred service proxies (Issue #14)', () => {
-  it.scoped('DockerDetection placeholder returns { available: false }', () =>
-    Effect.gen(function* () {
-      const client = yield* CoreOnlyRpcClient
-
-      // DockerDetection has a placeholder override that returns
-      // { available: false } instead of an error (its RPC has
-      // no error channel).
-      const result = yield* client.docker.status()
-
-      assert.strictEqual(result.available, false)
-    })
-  )
-
   it.scoped(
     'deferred service RPC returns SERVICE_INITIALIZING error before init',
     () =>

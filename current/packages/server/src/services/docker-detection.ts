@@ -2,9 +2,8 @@
  * DockerDetection — Effect Service
  *
  * Checks whether Docker (via OrbStack) is available on the system.
- * Runs on server startup and caches the result. Exposes the status
- * via the `docker.status` RPC so the web UI can show a warning
- * banner when Docker is missing.
+ * Runs on server startup and caches the result for internal consumers
+ * that need to determine whether local container operations are available.
  *
  * Detection logic:
  * 1. Check if `docker` CLI exists on PATH via `which docker`

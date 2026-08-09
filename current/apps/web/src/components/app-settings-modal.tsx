@@ -2,15 +2,7 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { AgentProvider } from '@laborer/shared/rpc'
 import { appSettings, events } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
-import {
-  Check,
-  CircleSlash,
-  Cloud,
-  Container,
-  ExternalLink,
-  Github,
-  Loader2,
-} from 'lucide-react'
+import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
@@ -50,121 +42,6 @@ const AGENT_OPTIONS: ReadonlyArray<{
   { label: 'Codex', value: 'codex' },
 ]
 
-type SandboxProvider = 'docker' | 'daytona' | 'none'
-
-const SANDBOX_PROVIDER_OPTIONS: ReadonlyArray<{
-  readonly label: string
-  readonly value: SandboxProvider
-  readonly description: string
-  readonly Icon: typeof Container
-}> = [
-  {
-    label: 'Docker',
-    value: 'docker',
-    description: 'Local containers via OrbStack',
-    Icon: Container,
-  },
-  {
-    label: 'Daytona',
-    value: 'daytona',
-    description: 'Cloud sandboxes',
-    Icon: Cloud,
-  },
-  {
-    label: 'None',
-    value: 'none',
-    description: 'Local worktrees only',
-    Icon: CircleSlash,
-  },
-]
-
-/** Sub-component extracted to reduce AppSettingsModal complexity. */
-function SandboxProviderSetting({
-  isLoading,
-  initialProvider,
-  onSave,
-}: {
-  isLoading: boolean
-  initialProvider: SandboxProvider
-  onSave: (provider: SandboxProvider) => Promise<void>
-}) {
-  const [sandboxProvider, setSandboxProvider] =
-    useState<SandboxProvider>(initialProvider)
-  const [isSaving, setIsSaving] = useState(false)
-
-  // Sync when the parent re-initializes after modal reopen
-  useEffect(() => {
-    setSandboxProvider(initialProvider)
-  }, [initialProvider])
-
-  const handleSave = useCallback(async () => {
-    setIsSaving(true)
-    try {
-      await onSave(sandboxProvider)
-      toast.success('Saved default sandbox provider')
-    } catch (err: unknown) {
-      toast.error(extractErrorMessage(err))
-    } finally {
-      setIsSaving(false)
-    }
-  }, [sandboxProvider, onSave])
-
-  return (
-    <FieldSet>
-      <Field>
-        <FieldLabel>Default sandbox provider</FieldLabel>
-        {isLoading ? (
-          <div className="flex items-center gap-2 py-2 text-muted-foreground text-sm">
-            <Spinner className="size-4" />
-            Loading...
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <Select
-                onValueChange={(value) =>
-                  setSandboxProvider(value as SandboxProvider)
-                }
-                value={sandboxProvider}
-              >
-                <SelectTrigger>
-                  <SelectValue>
-                    {SANDBOX_PROVIDER_OPTIONS.find(
-                      (o) => o.value === sandboxProvider
-                    )?.label ?? sandboxProvider}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {SANDBOX_PROVIDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      <option.Icon className="size-3.5" />
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              disabled={isSaving}
-              onClick={handleSave}
-              size="sm"
-              variant="outline"
-            >
-              {isSaving && <Spinner className="size-3.5" />}
-              {isSaving ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        )}
-        <FieldDescription>
-          Where new workspaces run by default. Docker uses local containers via
-          OrbStack, Daytona uses cloud sandboxes. Projects can override this in
-          their laborer.json.
-        </FieldDescription>
-      </Field>
-    </FieldSet>
-  )
-}
-
 const GITHUB_OAUTH_SCOPES = 'repo user workflow'
 const GITHUB_OAUTH_CLIENT_ID = '3a723b10ac5575cc5bb9'
 
@@ -184,10 +61,7 @@ const globalConfigGet$ = LaborerClient.query(
 function GlobalConfigInitializer({
   onResolved,
 }: {
-  readonly onResolved: (config: {
-    readonly agent?: string | undefined
-    readonly defaultSandboxProvider?: string | undefined
-  }) => void
+  readonly onResolved: (config: { readonly agent?: string | undefined }) => void
 }) {
   const globalConfigResult = useAtomValue(globalConfigGet$)
 
@@ -221,25 +95,16 @@ export function AppSettingsModal() {
   const csrfStateRef = useRef<string>('')
 
   const [agent, setAgent] = useState<AgentProvider>('opencode2')
-  const [resolvedProvider, setResolvedProvider] =
-    useState<SandboxProvider>('docker')
   const [agentInitialized, setAgentInitialized] = useState(false)
   const [isSavingAgent, setIsSavingAgent] = useState(false)
 
   const handleGlobalConfigResolved = useCallback(
-    (config: {
-      readonly agent?: string | undefined
-      readonly defaultSandboxProvider?: string | undefined
-    }) => {
+    (config: { readonly agent?: string | undefined }) => {
       if (agentInitialized) {
         return
       }
 
       setAgent((config.agent as AgentProvider | undefined) ?? 'opencode2')
-      setResolvedProvider(
-        (config.defaultSandboxProvider as SandboxProvider | undefined) ??
-          'docker'
-      )
       setAgentInitialized(true)
     },
     [agentInitialized]
@@ -270,18 +135,6 @@ export function AppSettingsModal() {
       setIsSavingAgent(false)
     }
   }, [agent, updateGlobalConfig])
-
-  const handleSaveProvider = useCallback(
-    async (provider: SandboxProvider) => {
-      await updateGlobalConfig({
-        payload: {
-          config: { defaultSandboxProvider: provider },
-        },
-      })
-      setResolvedProvider(provider)
-    },
-    [updateGlobalConfig]
-  )
 
   const handleExchangeFromUrl = useCallback(
     async (url: string) => {
@@ -474,13 +327,6 @@ export function AppSettingsModal() {
               </FieldDescription>
             </Field>
           </FieldSet>
-
-          {/* Default Sandbox Provider Section */}
-          <SandboxProviderSetting
-            initialProvider={resolvedProvider}
-            isLoading={isLoadingAgent}
-            onSave={handleSaveProvider}
-          />
 
           {/* GitHub Connection Section */}
           <div className="space-y-4">

@@ -51,7 +51,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useTerminalList } from '@/hooks/use-terminal-list'
-import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
 import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -62,16 +61,9 @@ const dashboardWorkspaces$ = queryDb(workspaces, {
 })
 const dashboardTasks$ = queryDb(tasks, { label: 'dashboardTasks' })
 
-/**
- * Detects whether a sandboxUrl is a full URL (Daytona preview URLs start
- * with https://) vs a Docker hostname (e.g., branch--project.orb.local).
- */
-const FULL_URL_RE = /^https?:\/\//u
-
 type WorkspaceStatus =
   | 'creating'
   | 'running'
-  | 'paused'
   | 'stopped'
   | 'errored'
   | 'destroyed'
@@ -83,8 +75,6 @@ function getStatusClasses(status: string): string {
       return 'border-warning/30 bg-warning/10 text-warning'
     case 'running':
       return 'border-success/30 bg-success/10 text-success'
-    case 'paused':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-500'
     case 'stopped':
       return 'border-muted-foreground/30 bg-muted text-muted-foreground'
     case 'errored':
@@ -106,8 +96,6 @@ function StatusDot({ status }: { readonly status: string }) {
     switch (status as WorkspaceStatus) {
       case 'running':
         return 'bg-success'
-      case 'paused':
-        return 'bg-amber-500'
       case 'stopped':
         return 'bg-muted-foreground/50'
       case 'errored':
@@ -206,55 +194,26 @@ function TaskSummary({ counts }: { readonly counts: TaskCounts }) {
 interface WorkspaceCounts {
   readonly creating: number
   readonly errored: number
-  readonly paused: number
   readonly running: number
   readonly stopped: number
   readonly total: number
 }
 
-/**
- * Derive the display status for a workspace, accounting for
- * container paused state.
- */
-function getDisplayStatus(ws: {
-  readonly status: string
-  readonly sandboxId?: string | null
-  readonly sandboxStatus?: string | null
-  readonly sandboxUrl?: string | null
-}): string {
-  if (ws.sandboxId != null) {
-    return ws.sandboxStatus === 'paused' ? 'paused' : 'running'
-  }
-  if (ws.sandboxUrl != null) {
-    return 'stopped'
-  }
-  return ws.status
-}
-
 /** Aggregate workspace counts from a filtered workspace list. */
 function computeWorkspaceCounts(
-  wsList: ReadonlyArray<{
-    readonly status: string
-    readonly sandboxId?: string | null
-    readonly sandboxStatus?: string | null
-    readonly sandboxUrl?: string | null
-  }>
+  wsList: ReadonlyArray<{ readonly status: string }>
 ): WorkspaceCounts {
   let running = 0
   let creating = 0
-  let paused = 0
   let stopped = 0
   let errored = 0
   for (const ws of wsList) {
-    switch (getDisplayStatus(ws) as WorkspaceStatus) {
+    switch (ws.status as WorkspaceStatus) {
       case 'running':
         running++
         break
       case 'creating':
         creating++
-        break
-      case 'paused':
-        paused++
         break
       case 'stopped':
         stopped++
@@ -266,7 +225,7 @@ function computeWorkspaceCounts(
         break
     }
   }
-  return { running, creating, paused, stopped, errored, total: wsList.length }
+  return { running, creating, stopped, errored, total: wsList.length }
 }
 
 /** Compact workspace status summary. */
@@ -285,12 +244,6 @@ function WorkspaceStatusSummary({
         <span className="flex items-center gap-1 text-success">
           <span className="inline-block size-2 rounded-full bg-success" />
           {counts.running} running
-        </span>
-      )}
-      {counts.paused > 0 && (
-        <span className="flex items-center gap-1 text-amber-500">
-          <span className="inline-block size-2 rounded-full bg-amber-500" />
-          {counts.paused} paused
         </span>
       )}
       {counts.creating > 0 && (
@@ -333,11 +286,6 @@ interface ProjectSection {
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
-    readonly sandboxId: string | null
-    readonly sandboxUrl: string | null
-    readonly sandboxPort: number | null
-    readonly sandboxStatus: string | null
-    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }>
 }
@@ -529,60 +477,6 @@ function ProjectDashboardSection({
   )
 }
 
-/**
- * Builds the sandbox preview URL from the stored sandboxUrl + port.
- * Daytona preview URLs are stored as full URLs (https://...).
- * Docker sandbox URLs are hostnames (e.g., branch--project.orb.local)
- * where the port is appended as :{port}.
- */
-function buildSandboxLink(
-  sandboxUrl: string,
-  sandboxPort: number | null
-): string {
-  if (FULL_URL_RE.test(sandboxUrl)) {
-    return sandboxUrl
-  }
-  return `http://${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
-}
-
-/**
- * Extracts a human-readable display label from a sandbox URL.
- * For full URLs, strips the protocol. For Docker hostnames, shows
- * hostname:port.
- */
-function buildSandboxDisplayLabel(
-  sandboxUrl: string,
-  sandboxPort: number | null
-): string {
-  if (FULL_URL_RE.test(sandboxUrl)) {
-    return sandboxUrl.replace(FULL_URL_RE, '')
-  }
-  return `${sandboxUrl}${sandboxPort != null ? `:${sandboxPort}` : ''}`
-}
-
-/** Renders a sandbox preview URL as a clickable link. */
-function SandboxUrlLink({
-  sandboxUrl,
-  sandboxPort,
-}: {
-  readonly sandboxUrl: string
-  readonly sandboxPort: number | null
-}) {
-  const href = buildSandboxLink(sandboxUrl, sandboxPort)
-  const label = buildSandboxDisplayLabel(sandboxUrl, sandboxPort)
-  return (
-    <a
-      className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-      href={href}
-      rel="noopener"
-      target="_blank"
-      title={`Open ${href}`}
-    >
-      {label}
-    </a>
-  )
-}
-
 /** Compact workspace row in the dashboard. */
 function DashboardWorkspaceRow({
   workspace,
@@ -593,29 +487,12 @@ function DashboardWorkspaceRow({
     readonly branchName: string
     readonly status: string
     readonly origin: WorkspaceOrigin | string
-    readonly sandboxId: string | null
-    readonly sandboxUrl: string | null
-    readonly sandboxPort: number | null
-    readonly sandboxStatus: string | null
-    readonly sandboxSetupStep: string | null
     readonly errorMessage: string | null
   }
   readonly terminalCount: number
 }) {
   const isDetectedWorkspace =
     (workspace.origin as WorkspaceOrigin) === 'external'
-  const isContainerized = workspace.sandboxId != null
-  const isContainerPaused = workspace.sandboxStatus === 'paused'
-  const hasContainerConfig = workspace.sandboxUrl != null
-  const displayStatus = (() => {
-    if (isContainerized) {
-      return isContainerPaused ? 'paused' : 'running'
-    }
-    if (hasContainerConfig) {
-      return 'stopped'
-    }
-    return workspace.status
-  })()
 
   return (
     <div className="flex items-center gap-2 rounded-md border px-3 py-2">
@@ -628,35 +505,23 @@ function DashboardWorkspaceRow({
           Detected
         </span>
       )}
-      {isContainerized && workspace.sandboxUrl ? (
-        <SandboxUrlLink
-          sandboxPort={workspace.sandboxPort}
-          sandboxUrl={workspace.sandboxUrl}
-        />
-      ) : null}
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">
           {terminalCount} terminal{terminalCount !== 1 ? 's' : ''}
         </span>
       )}
-      {workspace.sandboxSetupStep != null && (
-        <span className="flex shrink-0 items-center gap-1 text-sky-500 text-xs">
-          <Spinner className="size-3 text-sky-500" />
-          {getSandboxSetupLabel(workspace.sandboxSetupStep)}
-        </span>
-      )}
-      {displayStatus === 'errored' && workspace.errorMessage ? (
+      {workspace.status === 'errored' && workspace.errorMessage ? (
         <Tooltip>
           <TooltipTrigger>
             <Badge
               className={cn(
                 'ml-auto shrink-0 border',
-                getStatusClasses(displayStatus)
+                getStatusClasses(workspace.status)
               )}
               variant="outline"
             >
-              <StatusDot status={displayStatus} />
-              {displayStatus}
+              <StatusDot status={workspace.status} />
+              {workspace.status}
             </Badge>
           </TooltipTrigger>
           <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
@@ -667,7 +532,7 @@ function DashboardWorkspaceRow({
         <Badge
           className={cn(
             'ml-auto shrink-0 border',
-            getStatusClasses(displayStatus)
+            getStatusClasses(workspace.status)
           )}
           title={
             isDetectedWorkspace && workspace.status === 'stopped'
@@ -676,8 +541,8 @@ function DashboardWorkspaceRow({
           }
           variant="outline"
         >
-          <StatusDot status={displayStatus} />
-          {displayStatus}
+          <StatusDot status={workspace.status} />
+          {workspace.status}
         </Badge>
       )}
     </div>

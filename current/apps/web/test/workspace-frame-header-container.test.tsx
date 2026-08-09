@@ -95,7 +95,6 @@ describe('WorkspaceFrameHeaderContainer', () => {
             id: 'ws-1',
             projectId: 'project-1',
             branchName: 'feature/demo',
-            sandboxId: null,
             prNumber: null,
             prState: null,
             prTitle: null,

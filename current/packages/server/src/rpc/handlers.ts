@@ -17,9 +17,7 @@ import { events, tables } from '@laborer/shared/schema'
 import { Array, Effect, pipe, Schema, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
-import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
-import { DockerDetection } from '../services/docker-detection.js'
 import { FileService } from '../services/file-service.js'
 import { runGhPrViewWithOriginFallback } from '../services/github-pr-view.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
@@ -387,25 +385,6 @@ export const handleGlobalConfigUpdate = ({
   Effect.gen(function* () {
     const configService = yield* ConfigService
     yield* configService.writeGlobalConfig(config)
-  })
-
-export const handleSettingsGetDefaultProvider = () =>
-  Effect.gen(function* () {
-    const configService = yield* ConfigService
-    const globalConfig = yield* configService.readGlobalConfig()
-    return {
-      provider: globalConfig.defaultSandboxProvider ?? null,
-    }
-  })
-
-export const handleSettingsSetDefaultProvider = ({
-  provider,
-}: {
-  provider: 'docker' | 'daytona' | 'none'
-}) =>
-  Effect.gen(function* () {
-    const configService = yield* ConfigService
-    yield* configService.writeGlobalConfig({ defaultSandboxProvider: provider })
   })
 
 export const handlePrdCreate = ({
@@ -849,15 +828,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       ),
 
     // -------------------------------------------------------------------
-    // Docker Prerequisite Detection (Issue 2)
-    // -------------------------------------------------------------------
-    'docker.status': () =>
-      Effect.gen(function* () {
-        const dockerDetection = yield* DockerDetection
-        return yield* dockerDetection.check()
-      }),
-
-    // -------------------------------------------------------------------
     // Project RPCs (Issue #21-25)
     // -------------------------------------------------------------------
     'project.add': ({ repoPath }) =>
@@ -889,12 +859,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'globalConfig.get': handleGlobalConfigGet,
     'globalConfig.update': handleGlobalConfigUpdate,
-
-    // -------------------------------------------------------------------
-    // Settings RPCs
-    // -------------------------------------------------------------------
-    'settings.getDefaultProvider': handleSettingsGetDefaultProvider,
-    'settings.setDefaultProvider': handleSettingsSetDefaultProvider,
 
     // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)
@@ -995,211 +959,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const workspaceSyncService = yield* WorkspaceSyncService
         return yield* workspaceSyncService.pull(workspaceId)
       }),
-    'workspace.startContainer': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const provider = yield* WorkspaceProvider
-        const prWatcher = yield* PrWatcher
-        const workspaceSyncService = yield* WorkspaceSyncService
-        const onReady = (wsId: string) =>
-          Effect.gen(function* () {
-            yield* prWatcher.startPolling(wsId)
-            yield* workspaceSyncService.startPolling(wsId)
-          })
-        yield* provider.startSandbox(workspaceId, onReady)
-      }),
-
-    // -------------------------------------------------------------------
-    // Container RPCs (Issue 10)
-    // -------------------------------------------------------------------
-    'container.setPort': ({ workspaceId, port }) =>
-      Effect.gen(function* () {
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.containerPortChanged({
-            workspaceId,
-            containerPort: port,
-          })
-        )
-      }),
-    'container.pause': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const containerService = yield* ContainerService
-        yield* containerService.pauseContainer(workspaceId)
-      }),
-    'container.unpause': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const containerService = yield* ContainerService
-        yield* containerService.unpauseContainer(workspaceId)
-      }).pipe(
-        Effect.catchIf(
-          (err) =>
-            err._tag === 'RpcError' && err.code === 'CONTAINER_NOT_FOUND',
-          () =>
-            Effect.gen(function* () {
-              yield* Effect.logInfo(
-                `Container not found for workspace "${workspaceId}", recreating`
-              )
-              const provider = yield* WorkspaceProvider
-              const prWatcher = yield* PrWatcher
-              const workspaceSyncService = yield* WorkspaceSyncService
-              const onReady = (wsId: string) =>
-                Effect.gen(function* () {
-                  yield* prWatcher.startPolling(wsId)
-                  yield* workspaceSyncService.startPolling(wsId)
-                })
-              yield* provider.startSandbox(workspaceId, onReady)
-            })
-        )
-      ),
-
-    // -------------------------------------------------------------------
-    // Sandbox RPCs (provider-agnostic — canonical names going forward)
-    //
-    // These delegate to the SandboxProvider abstraction. The old
-    // container.* / docker.* handlers above are kept as backward-compat
-    // aliases that go through the Docker-specific services directly.
-    // -------------------------------------------------------------------
-    'sandbox.providerStatus': () =>
-      Effect.gen(function* () {
-        const sandboxProvider = yield* SandboxProvider
-        return yield* sandboxProvider.checkAvailability()
-      }),
-    'workspace.startSandbox': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const provider = yield* WorkspaceProvider
-        const prWatcher = yield* PrWatcher
-        const workspaceSyncService = yield* WorkspaceSyncService
-        const onReady = (wsId: string) =>
-          Effect.gen(function* () {
-            yield* prWatcher.startPolling(wsId)
-            yield* workspaceSyncService.startPolling(wsId)
-          })
-        yield* provider.startSandbox(workspaceId, onReady)
-      }),
-    'sandbox.setPort': ({ workspaceId, port }) =>
-      Effect.gen(function* () {
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.sandboxPortChanged({
-            workspaceId,
-            sandboxPort: port,
-          })
-        )
-
-        // For Daytona workspaces, refresh the preview URL when the port
-        // changes. Daytona preview URLs are port-specific (e.g.,
-        // https://3000-abc123.preview.daytona.io) unlike Docker URLs
-        // where the port is simply appended to the hostname.
-        if (port !== null) {
-          const allWorkspaces = store.query(tables.workspaces)
-          const workspace = pipe(
-            allWorkspaces,
-            Array.findFirst((w) => w.id === workspaceId)
-          )
-          if (
-            workspace._tag === 'Some' &&
-            workspace.value.sandboxProvider === 'daytona'
-          ) {
-            const sandboxProvider = yield* SandboxProvider
-            yield* sandboxProvider
-              .getPreviewUrl(workspaceId, port)
-              .pipe(Effect.catchAll(() => Effect.void))
-          }
-        }
-      }),
-    'sandbox.pause': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const sandboxProvider = yield* SandboxProvider
-        yield* sandboxProvider.pauseSandbox(workspaceId)
-      }),
-    'sandbox.resume': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const sandboxProvider = yield* SandboxProvider
-        yield* sandboxProvider.resumeSandbox(workspaceId)
-      }).pipe(
-        Effect.catchIf(
-          (err) =>
-            err._tag === 'RpcError' && err.code === 'CONTAINER_NOT_FOUND',
-          () =>
-            Effect.gen(function* () {
-              yield* Effect.logInfo(
-                `Sandbox not found for workspace "${workspaceId}", recreating`
-              )
-              const provider = yield* WorkspaceProvider
-              const prWatcher = yield* PrWatcher
-              const workspaceSyncService = yield* WorkspaceSyncService
-              const onReady = (wsId: string) =>
-                Effect.gen(function* () {
-                  yield* prWatcher.startPolling(wsId)
-                  yield* workspaceSyncService.startPolling(wsId)
-                })
-              yield* provider.startSandbox(workspaceId, onReady)
-            })
-        )
-      ),
-    'sandbox.setAutoStop': ({ workspaceId, interval }) =>
-      Effect.gen(function* () {
-        const sandboxProvider = yield* SandboxProvider
-        yield* sandboxProvider.setAutoStopInterval(workspaceId, interval)
-      }),
-
-    'sandbox.openInVsCode': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const { store } = yield* LaborerStore
-
-        // Look up workspace to verify it exists and uses Daytona
-        const allWorkspaces = store.query(tables.workspaces)
-        const workspaceOpt = pipe(
-          allWorkspaces,
-          Array.findFirst((w) => w.id === workspaceId)
-        )
-
-        if (workspaceOpt._tag === 'None') {
-          return yield* new RpcError({
-            message: `Workspace not found: ${workspaceId}`,
-            code: 'NOT_FOUND',
-          })
-        }
-
-        const workspace = workspaceOpt.value
-        if (workspace.sandboxProvider !== 'daytona') {
-          return yield* new RpcError({
-            message:
-              'Open in VS Code via SSH is only available for Daytona sandboxes',
-            code: 'INVALID_ARGUMENT',
-          })
-        }
-
-        if (
-          workspace.sandboxId === null ||
-          workspace.sandboxStatus !== 'running'
-        ) {
-          return yield* new RpcError({
-            message: 'Sandbox must be running to open in VS Code',
-            code: 'INVALID_ARGUMENT',
-          })
-        }
-
-        // Build and execute the VS Code remote command
-        const hostAlias = `laborer-${workspaceId}`
-        const remoteArg = `ssh-remote+${hostAlias}`
-        const projectDir = '/home/daytona/project'
-
-        yield* Effect.tryPromise({
-          try: async () => {
-            const { exec } = await import('node:child_process')
-            const { promisify } = await import('node:util')
-            const execAsync = promisify(exec)
-            await execAsync(`code --remote ${remoteArg} ${projectDir}`)
-          },
-          catch: (error) =>
-            new RpcError({
-              message: `Failed to open VS Code: ${error instanceof Error ? error.message : String(error)}`,
-              code: 'INTERNAL_ERROR',
-            }),
-        })
-      }),
-
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)
     // terminal.spawn resolves workspace info (cwd, env) before

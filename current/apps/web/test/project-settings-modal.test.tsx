@@ -43,30 +43,6 @@ interface ConfigResult {
       readonly value: string | null
       readonly source: string
     }
-    readonly devServer: {
-      readonly autoOpen: { readonly value: boolean; readonly source: string }
-      readonly image: { readonly value: string | null; readonly source: string }
-      readonly installCommand: {
-        readonly value: string | null
-        readonly source: string
-      }
-      readonly network: {
-        readonly value: string | null
-        readonly source: string
-      }
-      readonly provider: {
-        readonly value: 'docker' | 'daytona' | null
-        readonly source: string
-      }
-      readonly setupScripts: {
-        readonly value: readonly string[]
-        readonly source: string
-      }
-      readonly startCommand: {
-        readonly value: string | null
-        readonly source: string
-      }
-    }
   }
 }
 
@@ -145,15 +121,6 @@ describe('ProjectSettingsModal', () => {
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
         brrrConfig: { value: '.brrr/config.toml', source: 'laborer.json' },
-        devServer: {
-          autoOpen: { value: false, source: 'default' },
-          image: { value: null, source: 'default' },
-          installCommand: { value: null, source: 'default' },
-          network: { value: null, source: 'default' },
-          provider: { value: null, source: 'default' },
-          setupScripts: { value: [], source: 'default' },
-          startCommand: { value: null, source: 'default' },
-        },
       },
     }
 

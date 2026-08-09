@@ -18,28 +18,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   destroyFn,
-  isElectronMock,
   startLoopFn,
   closeWorkspaceMock,
   mutationMap,
-  openExternalUrlMock,
   queryDbMock,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
-  isElectronMock: vi.fn(() => false),
   startLoopFn: vi.fn(),
   closeWorkspaceMock: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  openExternalUrlMock: vi.fn(async () => true),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
   useLaborerStoreMock: vi.fn(),
-}))
-
-vi.mock('@/lib/desktop', () => ({
-  isElectron: isElectronMock,
-  openExternalUrl: openExternalUrlMock,
-  terminalRpcUrl: () => 'http://localhost:2101',
 }))
 
 // Stub the review findings count — not relevant for plan scope tests.
@@ -174,7 +164,6 @@ vi.mock('@/components/ui/alert-dialog', () => ({
 
 import { WorkspaceList } from '../src/components/workspace-list'
 
-const START_SANDBOX_RE = /start sandbox/i
 const DESTROY_ACTION_RE = /destroy ⌘ ↵/i
 
 const WORKSPACE_PLAN = {
@@ -247,7 +236,6 @@ describe('WorkspaceList plan association', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    isElectronMock.mockReturnValue(false)
     destroyFn.mockResolvedValue(undefined)
   })
 
@@ -452,31 +440,6 @@ describe('WorkspaceList plan association', () => {
     expect(screen.getByText('No workspaces')).toBeTruthy()
   })
 
-  it('start container button is present on plan-associated workspace', () => {
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [WORKSPACE_PLAN]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return [PRD]
-        }
-        if (query.label === 'planIssuesList.tasks') {
-          return PRD_TASKS
-        }
-        return []
-      },
-    })
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    // The start sandbox button should be present
-    const startButton = screen.getByRole('button', {
-      name: START_SANDBOX_RE,
-    })
-    expect(startButton).toBeTruthy()
-  })
-
   it('shows the GitHub status badge in the sidebar even when the PR URL is missing', () => {
     useLaborerStoreMock.mockReturnValue({
       useQuery: (query: { label: string }) => {
@@ -494,35 +457,5 @@ describe('WorkspaceList plan association', () => {
 
     expect(screen.getByText('#77')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
-  })
-
-  it('opens container links in the OS browser when running in Electron', () => {
-    isElectronMock.mockReturnValue(true)
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [
-            {
-              ...WORKSPACE_REGULAR,
-              sandboxId: 'container-1',
-              sandboxStatus: 'running',
-              sandboxUrl: 'preview.example.com',
-            },
-          ]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    fireEvent.click(screen.getByRole('link', { name: 'preview.example.com' }))
-
-    expect(openExternalUrlMock).toHaveBeenCalledWith(
-      'http://preview.example.com'
-    )
   })
 })

@@ -1472,8 +1472,7 @@ class DaytonaSandboxProvider extends Context.Tag(
       })
 
       // ── Run availability check eagerly ─────────────────────────
-      // Cache the result during layer construction so it's ready before
-      // the first `sandbox.providerStatus` RPC arrives.
+      // Cache the result during layer construction for internal consumers.
       yield* checkAvailability()
 
       // ── Fork reconciliation daemon ────────────────────────────

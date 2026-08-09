@@ -13,12 +13,6 @@ export type WorkspaceId = typeof WorkspaceId.Type
 export const TerminalId = Schema.String.pipe(Schema.brand('TerminalId'))
 export type TerminalId = typeof TerminalId.Type
 
-export const TaskId = Schema.String.pipe(Schema.brand('TaskId'))
-export type TaskId = typeof TaskId.Type
-
-export const PrdId = Schema.String.pipe(Schema.brand('PrdId'))
-export type PrdId = typeof PrdId.Type
-
 // ---------------------------------------------------------------------------
 // Enums (Variants)
 // ---------------------------------------------------------------------------
@@ -38,22 +32,8 @@ export type WorkspaceOrigin = typeof WorkspaceOrigin.Type
 export const TerminalStatus = Schema.Literal('running', 'stopped')
 export type TerminalStatus = typeof TerminalStatus.Type
 
-export const TaskSource = Schema.Literal('linear', 'github', 'manual', 'prd')
-export type TaskSource = typeof TaskSource.Type
-
-export const TaskStatus = Schema.Literal(
-  'pending',
-  'in_progress',
-  'completed',
-  'cancelled'
-)
-export type TaskStatus = typeof TaskStatus.Type
-
 export const ContainerStatus = Schema.Literal('running', 'paused')
 export type ContainerStatus = typeof ContainerStatus.Type
-
-export const PrdStatus = Schema.Literal('draft', 'active', 'completed')
-export type PrdStatus = typeof PrdStatus.Type
 
 export const PaneType = Schema.Literal(
   'agent',
@@ -81,6 +61,7 @@ export class Project extends Schema.Class<Project>('Project')({
 export class Workspace extends Schema.Class<Workspace>('Workspace')({
   id: WorkspaceId,
   projectId: ProjectId,
+  /** @deprecated Legacy task link retained for persisted workspace compatibility. */
   taskSource: Schema.optional(Schema.String),
   branchName: Schema.String,
   worktreePath: Schema.String,
@@ -95,26 +76,6 @@ export class Terminal extends Schema.Class<Terminal>('Terminal')({
   command: Schema.String,
   status: TerminalStatus,
   ptySessionRef: Schema.optional(Schema.String),
-}) {}
-
-export class Task extends Schema.Class<Task>('Task')({
-  id: TaskId,
-  projectId: ProjectId,
-  source: TaskSource,
-  prdId: Schema.optional(Schema.String),
-  externalId: Schema.optional(Schema.String),
-  title: Schema.String,
-  status: TaskStatus,
-}) {}
-
-export class Prd extends Schema.Class<Prd>('Prd')({
-  id: PrdId,
-  projectId: ProjectId,
-  title: Schema.String,
-  slug: Schema.String,
-  filePath: Schema.String,
-  status: PrdStatus,
-  createdAt: Schema.Date,
 }) {}
 
 export class Diff extends Schema.Class<Diff>('Diff')({

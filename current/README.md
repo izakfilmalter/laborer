@@ -22,7 +22,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 - **No multi-agent visibility** -- Existing tools show one agent at a time. Laborer shows all of them simultaneously in split panes with real-time status tracking.
 - **Manual environment management** -- Laborer automates git worktree creation, port allocation, dev server isolation, and file watcher scoping per workspace. Each agent gets a fully isolated environment automatically.
-- **Disconnected workflows** -- Unifies the pipeline from PRD writing to issue creation and agent execution in a single interface. No context-switching between Linear, GitHub, and the terminal.
+- **Disconnected workflows** -- Brings workspace execution and GitHub pull requests into one interface.
 - **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent. Laborer saturates your machine with parallel execution.
 
 ## Features
@@ -30,7 +30,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 ### Workspace Management
 - **Git worktree-based workspaces** -- Each workspace gets its own branch, directory, and allocated port (range 3100-3999). Automatic setup scripts, port allocation, and full lifecycle management (create/run/stop/destroy). Auto-detects existing worktrees.
 - **Docker container support** -- Optional containerized dev servers via OrbStack with bind-mounted worktrees and stable `.orb.local` URLs. Container pause/unpause and status tracking.
-- **Cross-project dashboard** -- High-level command-center view showing all workspaces and tasks across all projects with status summaries.
+- **Cross-project dashboard** -- High-level command-center view showing workspace status across all projects.
 
 ### Terminal and Agent Orchestration
 - **Tmux-style panel layout** -- Recursive horizontal/vertical splits with keyboard shortcuts (Ctrl+B prefix), drag-and-drop workspace tabs, fullscreen mode, and tabbed window layout (window tabs > workspace tiles > panel tabs > panel splits).
@@ -43,16 +43,14 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 - **File tree with git status** -- Lazy per-directory file browser with git status decorations, right-click context menus, and reactive invalidation.
 - **GitHub PR integration** -- Tracks PR state (open/closed/merged) per workspace with ahead/behind counts.
 
-### Planning and Task Management
-- **PRD editor** -- Plate.js rich text editor for writing product requirements documents with debounced auto-save and integrated issues list.
-- **Task management** -- Import tasks from GitHub Issues or Linear tickets, track PRD plans, and create workspaces directly from tasks.
+### Desktop Distribution
 - **Auto-updates** -- GitHub Releases-based auto-update keeps the desktop app current.
 
 ## Tech Stack
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React 19, TanStack Router, Tailwind CSS v4, shadcn/ui, xterm.js, Platejs, LiveStore (OPFS-backed SQLite) |
+| Frontend | React 19, TanStack Router, Tailwind CSS v4, shadcn/ui, xterm.js, LiveStore (OPFS-backed SQLite) |
 | Desktop | Electron 40, electron-builder, electron-updater |
 | Backend | Effect TS, @effect/rpc, node-pty, @parcel/watcher, LiveStore (better-sqlite3) |
 | Tooling | Bun, Turborepo, Biome (Ultracite), Vitest, Playwright |
@@ -85,7 +83,7 @@ Laborer runs as multiple cooperating services:
 
 | Service | Default Port | Description |
 |---|---|---|
-| Server | 2100 | Main backend — workspaces, projects, tasks, PRDs, diffs, containers |
+| Server | 2100 | Main backend — workspaces, projects, diffs, and containers |
 | Web App | 2101 | React frontend (Vite dev server) |
 | Terminal | 2102 | PTY terminal management and WebSocket I/O |
 | File Watcher | 2104 | Filesystem watching via @parcel/watcher |

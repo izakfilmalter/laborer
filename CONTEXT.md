@@ -124,7 +124,7 @@ An optional durable conversational identity managed by a work handler. The curre
 The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by coding work handlers.
 
 **Project**:
-A git repository registered in the Legacy Laborer app. Owns workspaces, plans, and tasks.
+A git repository registered in the Legacy Laborer app. Owns workspaces.
 
 **Workspace**:
 An isolated working environment for a branch, backed by a git worktree, with its own terminals and PR tracking.

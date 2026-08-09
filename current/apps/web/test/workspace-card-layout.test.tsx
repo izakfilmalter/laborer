@@ -77,9 +77,7 @@ vi.mock('@/livestore/store', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  prds: { name: 'prds' },
   workspaces: { name: 'workspaces' },
-  tasks: { name: 'tasks' },
 }))
 
 vi.mock('sonner', () => ({
@@ -104,10 +102,6 @@ vi.mock('@/components/terminal-list', () => ({
 
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
-}))
-
-vi.mock('@/components/plan-issues-list', () => ({
-  PlanIssuesList: () => null,
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({
@@ -233,14 +227,11 @@ const makeWorkspace = (
   ...overrides,
 })
 
-const mockStore = (workspaces: unknown[], prds: unknown[] = []) => {
+const mockStore = (workspaces: unknown[]) => {
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {
         return workspaces
-      }
-      if (query.label === 'workspaceList.prds') {
-        return prds
       }
       return []
     },

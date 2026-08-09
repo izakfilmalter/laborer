@@ -83,9 +83,7 @@ vi.mock('@/livestore/store', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  prds: { name: 'prds' },
   workspaces: { name: 'workspaces' },
-  tasks: { name: 'tasks' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -114,10 +112,6 @@ vi.mock('@/components/copy-button', () => ({
 
 vi.mock('@/components/github-pr-status-badge', () => ({
   GitHubPrStatusBadge: () => null,
-}))
-
-vi.mock('@/components/plan-issues-list', () => ({
-  PlanIssuesList: () => null,
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({

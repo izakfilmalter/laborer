@@ -16,7 +16,6 @@ import { makeScopedTestRpcContext } from './test-layer.js'
 type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
 const CUSTOM_FIELD_PATTERN = /"customField": "preserve-me"/
-const PRDS_DIR_PATTERN = /"prdsDir": "\/tmp\/existing-prds"/
 const SETUP_SCRIPTS_PATTERN = /"setupScripts": \[\s+"bun install"\s+\]/m
 const WORKTREE_DIR_PATTERN = /"worktreeDir": "~\/updated-worktrees"/
 
@@ -77,7 +76,6 @@ describe('LaborerRpcs config management', () => {
             worktreeDir: '~/ancestor-worktrees',
           })
           const projectConfigPath = writeLaborerConfig(repoPath, {
-            prdsDir: '/tmp/project-prds',
             setupScripts: ['bun install', 'bun test'],
           })
 
@@ -122,10 +120,6 @@ describe('LaborerRpcs config management', () => {
                 },
                 startCommand: { source: 'default', value: null },
                 workdir: { source: 'default', value: '/app' },
-              },
-              prdsDir: {
-                source: canonicalProjectConfigPath,
-                value: '/tmp/project-prds',
               },
               setupScripts: {
                 source: canonicalProjectConfigPath,
@@ -195,7 +189,6 @@ describe('LaborerRpcs config management', () => {
           initRepoAt(repoPath)
           const configPath = writeLaborerConfig(repoPath, {
             customField: 'preserve-me',
-            prdsDir: '/tmp/existing-prds',
           })
 
           const project = yield* client.project.add({ repoPath })
@@ -218,7 +211,6 @@ describe('LaborerRpcs config management', () => {
           const writtenConfig = readFileSync(canonicalConfigPath, 'utf-8')
 
           assert.match(writtenConfig, CUSTOM_FIELD_PATTERN)
-          assert.match(writtenConfig, PRDS_DIR_PATTERN)
           assert.match(writtenConfig, SETUP_SCRIPTS_PATTERN)
           assert.match(writtenConfig, WORKTREE_DIR_PATTERN)
 
@@ -256,10 +248,6 @@ describe('LaborerRpcs config management', () => {
                 },
                 startCommand: { source: 'default', value: null },
                 workdir: { source: 'default', value: '/app' },
-              },
-              prdsDir: {
-                source: canonicalConfigPath,
-                value: '/tmp/existing-prds',
               },
               setupScripts: {
                 source: canonicalConfigPath,

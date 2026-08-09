@@ -46,7 +46,6 @@ Nuke the database and remove the legacy `PanelNode` tree entirely. Make the hier
 14. As a developer, I want the layout to persist correctly across app restarts -- stale terminal IDs should be reconciled and new terminals spawned.
 15. As a developer, I want assigning a terminal from the sidebar to find or create the right pane in the layout.
 16. As a developer, I want fullscreen pane mode to detect when the fullscreened pane no longer exists in the layout.
-17. As a developer, I want the auto-close behavior for review and diff panels to work when a workspace is removed.
 18. As a developer, I want notification clicks to navigate to the correct workspace and focus the right pane.
 19. As a developer, I want a clean fresh tab when starting the app after a DB nuke, so that I can start working immediately.
 20. As a developer, I want drag-and-drop reordering of workspace frames to persist correctly.
@@ -65,7 +64,6 @@ Nuke the database and remove the legacy `PanelNode` tree entirely. Make the hier
 - Verify that fullscreen mode enters and exits cleanly, restoring the pane to its original position.
 - Verify that the dev server toggle creates and removes panel tabs correctly.
 - Ensure no `console.warn` or `console.error` messages related to stale pane IDs, missing nodes, or layout failures during normal operation.
-- Verify all panel tab labels render correctly (Terminal, Agent, Dev Server, Diff, Review).
 - Verify the empty pane CTA still works for newly created empty panes.
 - Confirm that `bun run check` passes (typecheck + format + tests) with zero regressions.
 
@@ -136,7 +134,6 @@ Delete `syncLegacyTreeToHierarchical`, `deriveLegacyTreeFromHierarchical`, all l
 
 Port every consumer of the derived legacy `layout` to use `WindowLayout`:
 
-- **`index.tsx`**: `activeWorkspaceId` derived from workspace tile leaves. Pane-to-workspace lookup via `findTerminalLocation`. Fullscreen auto-exit, auto-close review/diff, close gate logic, notification click handler -- all ported.
 - **`PanelHotkeys`**: Directional navigation walks `PanelNode` (renamed type). Pane cycling uses `getLeafIds` (renamed from `getPanelTreeLeafIds`). No legacy `layout` prop.
 - **`WorkspaceFrames`**: Remove `LegacyWorkspaceFrames`, `flatLayout` prop, `workspaceOrder` prop. The hierarchical tile renderer is the sole path.
 - **`WorkspaceFrameHeaderContainer`**: `getScopedActivePaneId` uses hierarchical leaf list.

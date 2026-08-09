@@ -1233,7 +1233,7 @@ export class TerminalRpcs extends RpcGroup.make(
     success: TerminalInfo,
     error: TerminalRpcError,
     payload: {
-      /** Shell command to execute (e.g., "bash", "opencode", "brrr build --once"). */
+      /** Shell command to execute (e.g., "bash" or "opencode"). */
       command: Schema.String,
       /** Command arguments (optional, default []). */
       args: Schema.optional(Schema.Array(Schema.String)),

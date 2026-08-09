@@ -101,7 +101,6 @@ Dialog content:
 - Description: "The window will be hidden to the system tray. Your workspaces will continue running."
 - Actions: "Cancel" (dismisses) and "Close" (hides window to tray via `window.__TAURI_INTERNALS__` invoke or `@tauri-apps/api/window` hide)
 
-The dialog follows the existing destructive confirmation pattern used by project removal, workspace destruction, and task removal.
 
 ### Module 6: Guaranteed active pane invariant
 

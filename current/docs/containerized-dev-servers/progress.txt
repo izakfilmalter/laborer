@@ -48,8 +48,6 @@ Added `devServer` configuration object to the `laborer.json` schema in `ConfigSe
 
 **Caller updates:**
 - `workspace-provider.ts`: maps `ConfigValidationError` to `RpcError` with `CONFIG_VALIDATION_ERROR` code
-- `prd-storage-service.ts`: uses `Effect.orDie` (config validation is a programmer error in PRD context)
-- `linear-task-importer.ts`: maps `ConfigValidationError` to `RpcError`
 - `handlers.ts` (`config.get`): maps `ConfigValidationError` to `RpcError`
 
 ### Tests:
@@ -328,8 +326,6 @@ Connected the existing play/pause buttons in the workspace sidebar and dashboard
   - Loading state with pulsing animation during RPC calls
   - Error toasts on failure, success toasts on completion
   - Idempotent: delegates to the server's idempotent pause/unpause methods
-- For containerized workspaces, the play button area renders `ContainerPauseButton` instead of "Start Ralph Loop"
-- Non-containerized workspaces retain the existing "Start Ralph Loop" button (no regression)
 - Added `containerId` and `containerStatus` to `WorkspaceItemProps` interface
 - Derived `displayStatus` from container state: shows 'paused' (amber badge) when container is paused, otherwise shows workspace lifecycle status
 - Added 'paused' to `WorkspaceStatus` type with amber color classes in `getStatusClasses` and `StatusDot`
@@ -347,7 +343,6 @@ Connected the existing play/pause buttons in the workspace sidebar and dashboard
 
 ### Key design decisions:
 - The container pause/unpause button is a separate component (`ContainerPauseButton`) to keep cognitive complexity under the 20-point limit enforced by biome
-- For containerized workspaces, the play/pause button replaces the "Start Ralph Loop" button entirely — these are mutually exclusive concerns (containers use pause/unpause, non-containerized use rlph)
 - The `displayStatus` derivation is done at the component level: if a workspace has a `containerId` and `containerStatus === 'paused'`, the badge shows 'paused' instead of the workspace lifecycle status
 - Amber/yellow-500 is used for the paused state to visually distinguish it from running (green) and stopped (gray)
 - Terminal pane freezing when paused is inherent Docker behavior — no additional code needed

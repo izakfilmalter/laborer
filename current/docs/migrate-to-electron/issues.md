@@ -134,30 +134,25 @@ Verify the server starts, RPC endpoints respond, and LiveStore WebSocket sync wo
 
 ---
 
-## Issue 5: Terminal + MCP Bun-to-Node runtime swap
 
 ### What to build
 
-Swap both the terminal and MCP packages from Bun runtime to Node.js:
 
 **Terminal (`packages/terminal/`):**
 - Replace `@effect/platform-bun` with `@effect/platform-node` in `src/main.ts` (`BunHttpServer` -> `NodeHttpServer`, `BunRuntime` -> `NodeRuntime`)
 - Update tsconfig to remove `"bun"` from types
 - Update package.json: swap deps, remove `@types/bun`, update scripts to `tsx`
 
-**MCP (`packages/mcp/`):**
 - Replace `@effect/platform-bun` with `@effect/platform-node` in `src/main.ts` (`BunRuntime` -> `NodeRuntime`, `BunStream.stdin` -> Node stdin stream equivalent, `BunSink.stdout` -> Node stdout sink equivalent)
 - Update tsconfig to remove `"bun"` from types
 - Update package.json: swap deps, remove `@types/bun`, update scripts to `tsx`
 
-The MCP package uses `BunStream.stdin` and `BunSink.stdout` for stdio-based MCP transport, which need Node.js equivalents from `@effect/platform-node`.
 
 ### Acceptance criteria
 
 - [x] Terminal service starts successfully via `tsx src/main.ts`
 - [x] Terminal RPC endpoints respond
 - [x] Terminal WebSocket PTY I/O works (connect xterm.js, type commands, see output)
-- [x] MCP server starts and communicates over stdio
 - [x] `@types/bun` removed from both packages
 - [x] Both tsconfigs no longer reference `"bun"` type
 - [x] Terminal tests pass (pty-host integration tests)
@@ -267,9 +262,7 @@ Reserve two ephemeral ports (for server and terminal) at startup using Node.js `
 
 ### What to build
 
-Add child process spawning to the Electron main process. Spawn the server, terminal, and MCP services as Node.js child processes using `ELECTRON_RUN_AS_NODE=1`. This replaces the Rust `SidecarManager` from `sidecar.rs`.
 
-**For each service (server, terminal, MCP):**
 - Spawn via `child_process.spawn(process.execPath, [entryPath], { env: { ELECTRON_RUN_AS_NODE: '1', ...serviceEnv } })`
 - Entry paths: resolve to the bundled service entry points (in dev: `../../packages/server/src/main.ts` run via tsx; in prod: bundled `dist/` files)
 - Pass environment: ports (from Issue 7), auth token, DATA_DIR, TERMINAL_PORT, etc.
@@ -281,7 +274,6 @@ Add child process spawning to the Electron main process. Spawn the server, termi
 
 - [x] Server child process starts and listens on the allocated port
 - [x] Terminal child process starts and listens on the allocated port
-- [x] MCP child process starts (stdio-based, no port)
 - [x] All child processes receive the correct environment variables
 - [x] stderr is captured in a ring buffer per child process
 - [x] On app quit, all child processes are terminated gracefully (SIGTERM -> SIGKILL)
@@ -292,7 +284,6 @@ Add child process spawning to the Electron main process. Spawn the server, termi
 ### Blocked by
 
 - Blocked by "Server Bun-to-Node runtime swap"
-- Blocked by "Terminal + MCP Bun-to-Node runtime swap"
 - Blocked by "Shell environment probing + port allocation"
 
 ### User stories addressed
@@ -627,9 +618,7 @@ Pure reducer functions managing states: `disabled` -> `idle` -> `checking` -> `a
 
 ### What to build
 
-Create a build step that bundles the server, terminal, and MCP service entry points into distributable Node.js bundles using `tsdown` or `esbuild`. These bundles will run as `ELECTRON_RUN_AS_NODE=1` child processes in the packaged Electron app.
 
-**For each service (server, terminal, MCP):**
 - Bundle with tsdown/esbuild targeting Node.js (`format: 'esm'` or `'cjs'`)
 - Externalize native modules: `better-sqlite3`, `node-pty`, `@parcel/watcher`
 - Handle WASM files: `wa-sqlite.node.wasm` needs to be copied alongside the bundle
@@ -639,13 +628,11 @@ Create a build step that bundles the server, terminal, and MCP service entry poi
 - Run each bundled output via `node dist/index.mjs` (with `ELECTRON_RUN_AS_NODE=1`)
 - Verify the server responds to RPC requests
 - Verify the terminal service manages PTY sessions
-- Verify the MCP server communicates over stdio
 
 ### Acceptance criteria
 
 - [x] Server bundle runs correctly via `node dist/main.js`
 - [x] Terminal bundle runs correctly via `node dist/main.js`
-- [x] MCP bundle runs correctly via `node dist/main.js`
 - [x] Native modules (`better-sqlite3`, `node-pty`, `@parcel/watcher`) are correctly externalized
 - [x] `wa-sqlite.node.wasm` is handled via external `@livestore/adapter-node` (resolved from node_modules at runtime)
 - [x] All RPC endpoints function correctly from bundled builds
@@ -655,7 +642,6 @@ Create a build step that bundles the server, terminal, and MCP service entry poi
 ### Blocked by
 
 - Blocked by "Server Bun-to-Node runtime swap"
-- Blocked by "Terminal + MCP Bun-to-Node runtime swap"
 
 ### User stories addressed
 
@@ -675,7 +661,6 @@ Create `scripts/build-desktop-artifact.ts` — a dynamic build script that packa
    - `apps/desktop/dist-electron/` (main.js, preload.js)
    - `apps/desktop/resources/` (icons: icon.icns, icon.png)
    - `apps/web/dist/` (bundled frontend)
-   - Service bundles from Issue 16 (server, terminal, MCP)
 3. Generate production `package.json` with resolved dependencies (no workspace: links)
 4. Run `bun install --production` in staging directory
 5. Generate electron-builder config:
@@ -683,7 +668,6 @@ Create `scripts/build-desktop-artifact.ts` — a dynamic build script that packa
    - `productName: "Laborer"`
    - macOS: dmg + zip targets, icon.icns, category `public.app-category.developer-tools`
 6. Run `electron-builder` with macOS arm64 target
-7. Create MCP symlink logic: post-install script or first-run hook that creates `/usr/local/bin/laborer-mcp`
 
 **Remove old build artifacts:**
 - Delete `apps/web/scripts/build-sidecars.ts`
@@ -697,7 +681,6 @@ Create `scripts/build-desktop-artifact.ts` — a dynamic build script that packa
 - [x] The custom `laborer://` protocol serves the frontend
 - [x] System tray, global shortcut, and close-to-tray all work in the packaged app
 - [x] Window state persistence works in the packaged app
-- [x] MCP binary is accessible (symlink or PATH discovery)
 - [x] `apps/web/scripts/build-sidecars.ts` is deleted
 - [x] Build script supports `--skip-build` flag for iterating on packaging only
 
@@ -777,7 +760,6 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 2 | Migrate workspace-provider Bun.spawn sites | 1 | Done |
 | 3 | Migrate remaining server Bun.spawn sites | 1 | Done |
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Done |
-| 5 | Terminal + MCP Bun-to-Node runtime swap | None | Done |
 | 6 | Electron shell scaffold + dev tooling | None | Done |
 | 7 | Shell environment probing + port allocation | 6 | Done |
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Done |
@@ -796,7 +778,6 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 
 Three independent starting tracks can run simultaneously:
 - **Track A:** Issues 1 -> 2, 3 -> 4 (server Bun-to-Node)
-- **Track B:** Issue 5 (terminal + MCP Bun-to-Node)
 - **Track C:** Issue 6 -> 7, 14, 15 (Electron scaffold + independent desktop features)
 
 These converge at Issue 8 (spawn sidecars), then proceed sequentially through the integration chain.

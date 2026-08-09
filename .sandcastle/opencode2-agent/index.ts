@@ -126,7 +126,6 @@ export const opencode2Agent = (
     buildPrintCommand({ prompt, dangerouslySkipPermissions }) {
       const args = [
         "run",
-        "--standalone",
         "--format",
         "json",
         "--model",

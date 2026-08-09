@@ -167,6 +167,20 @@ describe("root durable runtime", () => {
               second.outputs.map((output) => output.text),
               ["ACP again", "completed again"]
             );
+            const operatorActivity =
+              yield* runtime.workThreadActivity("T-CONVERSATION");
+            assert.deepStrictEqual(operatorActivity, [
+              {
+                channelId: "C1",
+                conversationId,
+                conversationInProgress: false,
+                evidenceAtUnixMs: 2000,
+                excerpt: "again",
+                executions: [],
+                rootTs: "1.0",
+                workspaceId: "T-CONVERSATION",
+              },
+            ]);
             yield* runtime.attachConversationClient(
               { actionCatalogFingerprint: application.actions.fingerprint },
               "T-OTHER",

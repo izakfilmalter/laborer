@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const OPERATOR_PROTOCOL_VERSION = 5 as const;
+// Version 6 establishes the post-Chat work-thread projection. Keep this local
+// protocol identity stable until its schema changes deliberately again.
+export const OPERATOR_PROTOCOL_VERSION = 6 as const;
 export const MAX_OPERATOR_RECORD_BYTES = 256 * 1024;
 export const MAX_OPERATOR_WORKSPACE_BINDINGS = 64;
 export const MAX_OPERATOR_WORK_THREADS = 512;
@@ -56,7 +58,7 @@ export type OperatorPendingExecution = z.infer<
 
 export const OperatorWorkThreadSchema = z
   .object({
-    activity: z.enum(["in-progress", "needs-attention", "dormant"]),
+    activity: z.enum(["in-progress", "dormant"]),
     executions: z
       .array(OperatorPendingExecutionSchema)
       .max(MAX_OPERATOR_PENDING_EXECUTIONS),

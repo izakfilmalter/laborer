@@ -859,7 +859,7 @@ export function usePanelLayout() {
       }
 
       // Only auto-spawn a terminal for terminal-type and agent-type
-      // panes. Diff, review, and dev server panes handle their own
+      // panes. Diff and dev server panes handle their own
       // content.
       const newPaneType = newPaneContent?.paneType ?? 'terminal'
       if (newPaneType !== 'terminal' && newPaneType !== 'agent') {
@@ -1463,26 +1463,6 @@ export function usePanelLayout() {
   )
 
   /**
-   * Toggle a full-height review panel for a workspace.
-   *
-   * NOTE: This is a placeholder implementation. The actual review panel
-   * toggle is handled at the route level (index.tsx) where the full-height
-   * review panel state is managed. This hook's version is overridden by
-   * the route's gatedPanelActions to provide the full-height behavior.
-   *
-   * The review panel now spans all workspace frames rather than being a
-   * split within a single workspace's layout tree.
-   *
-   * @param _paneId - The pane ID (unused in this stub implementation)
-   * @returns Always false since the actual implementation is in index.tsx
-   */
-  const handleToggleReviewPane = useCallback((_paneId: string): boolean => {
-    // This is overridden by gatedPanelActions in index.tsx
-    // to provide full-height review panel behavior
-    return false
-  }, [])
-
-  /**
    * Toggle a full-height file tree panel for a workspace.
    *
    * NOTE: This is a placeholder implementation. The actual tree panel
@@ -1490,8 +1470,7 @@ export function usePanelLayout() {
    * tree panel state is managed. This hook's version is overridden by
    * the route's gatedPanelActions to provide the full-height behavior.
    *
-   * The tree panel is forced to the left side, unlike diff/review which
-   * are on the right.
+   * The tree panel is forced to the left side, unlike diff which is on the right.
    *
    * @param _paneId - The pane ID (unused in this stub implementation)
    * @returns Always false since the actual implementation is in index.tsx
@@ -2211,7 +2190,6 @@ export function usePanelLayout() {
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
-      toggleReviewPane: handleToggleReviewPane,
       toggleTreePane: handleToggleTreePane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
@@ -2243,7 +2221,6 @@ export function usePanelLayout() {
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,
-      handleToggleReviewPane,
       handleToggleTreePane,
       handleResizePane,
       handleCloseTerminalPane,

@@ -367,7 +367,6 @@ Vertical slices per handler (using mock store, prior art: `use-panel-layout.test
 
 Port every consumer of the derived legacy `layout` (`PanelNode`) to use `WindowLayout`:
 
-- **`index.tsx`**: `activeWorkspaceId` from workspace tile leaves. Pane-to-workspace lookup via `findTerminalLocation`. Fullscreen auto-exit, auto-close review/diff, close gate logic, notification click handler.
 - **`PanelHotkeys`**: Directional navigation walks `PanelNode`. Pane cycling uses `getLeafIds`. Remove legacy `layout` prop.
 - **`WorkspaceFrames`**: Remove `LegacyWorkspaceFrames`, `flatLayout` prop, `workspaceOrder` prop. Hierarchical tile renderer is the sole path.
 - **`WorkspaceFrameHeaderContainer`**: `getScopedActivePaneId` uses hierarchical leaf list.
@@ -408,7 +407,6 @@ Most consumer porting is verified by existing integration tests and typecheck. F
 - User story 11 (pane cycling)
 - User story 13 (close confirmation)
 - User story 16 (fullscreen mode)
-- User story 17 (auto-close review/diff)
 - User story 18 (notification clicks)
 - User story 22 (progressive close)
 

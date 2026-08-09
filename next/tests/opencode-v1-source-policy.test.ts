@@ -26,9 +26,7 @@ const bareOpenCodeRun =
   /(?:^|[;&|$(=:[{,]|\b(?:command|exec|return)\s+|["'`])\s*opencode["']?\s+run\b/m;
 const programmaticOpenCodeRun =
   /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["'`]opencode["'`]\s*,\s*\[\s*["'`]run["'`]/m;
-const pinnedVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const pinnedCliInstall = /npm install -g @opencode-ai\/cli@([^\s]+)/;
-const opencode2Command = /opencode2 \$\{args/;
+const managedOpenCode2Invocation = /"--",\s*"opencode2"/;
 
 const operationalSourcePaths = (): readonly string[] =>
   execFileSync(
@@ -122,24 +120,22 @@ describe("OpenCode V1 operational source policy", () => {
     assert.deepStrictEqual(violations, []);
   });
 
-  it("ties the Sandcastle opencode2 executable and image install to the CLI pin", () => {
+  it("leaves the Sandcastle opencode2 version and configuration machine-managed", () => {
     const sandcastlePackage = JSON.parse(
       readFileSync("../.sandcastle/package.json", "utf8")
     ) as {
       readonly devDependencies?: Readonly<Record<string, string>>;
     };
-    const cliVersion =
-      sandcastlePackage.devDependencies?.["@opencode-ai/cli"] ?? "";
-    const dockerfile = readFileSync("../.sandcastle/Dockerfile", "utf8");
     const agent = readFileSync(
       "../.sandcastle/opencode2-agent/index.ts",
       "utf8"
     );
-    const install = pinnedCliInstall.exec(dockerfile);
-
-    assert.match(cliVersion, pinnedVersion);
-    assert.strictEqual(install?.[1], cliVersion);
-    assert.match(agent, opencode2Command);
+    assert.notProperty(
+      sandcastlePackage.devDependencies ?? {},
+      "@opencode-ai/cli"
+    );
+    assert.match(agent, managedOpenCode2Invocation);
+    assert.notInclude(agent, "OPENCODE_DB");
   });
 
   it("permits intentional V2 and compatibility vocabulary", () => {

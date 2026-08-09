@@ -28,7 +28,6 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            brrrConfig: null,
           })
         )
 
@@ -43,7 +42,6 @@ describe('LiveStore schema', () => {
           repoId: null,
           canonicalGitCommonDir: null,
           name: 'Project One',
-          brrrConfig: null,
         })
 
         store.commit(events.projectRemoved({ id: 'project-1' }))
@@ -53,6 +51,33 @@ describe('LiveStore schema', () => {
           []
         )
       })
+  )
+
+  it.scoped('decodes historical project events with removed fields', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+      const historicalPayload = {
+        id: 'historical-project',
+        repoPath: '/tmp/historical-project',
+        name: 'Historical Project',
+        removedConfigField: '.removed/config.toml',
+      }
+
+      store.commit(events.projectCreated(historicalPayload))
+
+      assert.deepStrictEqual(
+        store.query(tables.projects.where('id', 'historical-project')),
+        [
+          {
+            id: 'historical-project',
+            repoPath: '/tmp/historical-project',
+            repoId: null,
+            canonicalGitCommonDir: null,
+            name: 'Historical Project',
+          },
+        ]
+      )
+    })
   )
 
   it.scoped(
@@ -66,7 +91,6 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            brrrConfig: null,
           })
         )
         store.commit(
@@ -87,7 +111,6 @@ describe('LiveStore schema', () => {
               repoId: 'repo-1',
               canonicalGitCommonDir: '/private/tmp/project-1/.git',
               name: 'Project One',
-              brrrConfig: null,
             },
           ]
         )
@@ -328,90 +351,52 @@ describe('LiveStore schema', () => {
     })
   )
 
-  it.scoped('materializes task lifecycle events into the tasks table', () =>
+  it.scoped('keeps historical task and PRD events as no-ops', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
+
+      assert.isFalse(schema.state.sqlite.tables.has('tasks'))
+      assert.isFalse(schema.state.sqlite.tables.has('prds'))
 
       store.commit(
         events.taskCreated({
           id: 'task-1',
           projectId: 'project-1',
           source: 'manual',
-          prdId: 'prd-1',
+          prdId: null,
           externalId: null,
-          title: 'Cover schema materializers',
+          title: 'Cover schema compatibility',
           status: 'pending',
         })
       )
-
-      assert.deepStrictEqual(store.query(tables.tasks.where('id', 'task-1')), [
-        {
-          id: 'task-1',
-          projectId: 'project-1',
-          source: 'manual',
-          prdId: 'prd-1',
-          externalId: null,
-          title: 'Cover schema materializers',
-          status: 'pending',
-        },
-      ])
-
       store.commit(
         events.taskStatusChanged({ id: 'task-1', status: 'completed' })
       )
-
-      assert.strictEqual(
-        store.query(tables.tasks.where('id', 'task-1'))[0]?.status,
-        'completed'
-      )
-
       store.commit(events.taskRemoved({ id: 'task-1' }))
-
-      assert.deepStrictEqual(
-        store.query(tables.tasks.where('id', 'task-1')),
-        []
-      )
-    })
-  )
-
-  it.scoped('materializes prd lifecycle events into the prds table', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
       store.commit(
         events.prdCreated({
           id: 'prd-1',
           projectId: 'project-1',
-          title: 'MCP planning',
-          slug: 'mcp-planning',
-          filePath: '/tmp/PRD-mcp-planning.md',
+          title: 'Historical planning',
+          slug: 'historical-planning',
+          filePath: '/tmp/PRD-historical-planning.md',
           status: 'draft',
           createdAt: '2026-03-06T00:00:00.000Z',
         })
       )
-
-      assert.deepStrictEqual(store.query(tables.prds.where('id', 'prd-1')), [
-        {
+      store.commit(events.prdStatusChanged({ id: 'prd-1', status: 'active' }))
+      store.commit(
+        events.prdUpdated({
           id: 'prd-1',
           projectId: 'project-1',
-          title: 'MCP planning',
-          slug: 'mcp-planning',
-          filePath: '/tmp/PRD-mcp-planning.md',
-          status: 'draft',
+          title: 'Updated historical planning',
+          slug: 'updated-historical-planning',
+          filePath: '/tmp/PRD-updated-historical-planning.md',
+          status: 'active',
           createdAt: '2026-03-06T00:00:00.000Z',
-        },
-      ])
-
-      store.commit(events.prdStatusChanged({ id: 'prd-1', status: 'active' }))
-
-      assert.strictEqual(
-        store.query(tables.prds.where('id', 'prd-1'))[0]?.status,
-        'active'
+        })
       )
-
       store.commit(events.prdRemoved({ id: 'prd-1' }))
-
-      assert.deepStrictEqual(store.query(tables.prds.where('id', 'prd-1')), [])
     })
   )
 
@@ -428,7 +413,6 @@ describe('LiveStore schema', () => {
           id: 'project-1',
           repoPath: '/tmp/project-1',
           name: 'Project One',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -471,8 +455,6 @@ describe('LiveStore schema', () => {
       const beforeDeprecatedEvents = {
         projects: store.query(tables.projects),
         workspaces: store.query(tables.workspaces),
-        tasks: store.query(tables.tasks),
-        prds: store.query(tables.prds),
       }
 
       store.commit(
@@ -504,8 +486,6 @@ describe('LiveStore schema', () => {
         {
           projects: store.query(tables.projects),
           workspaces: store.query(tables.workspaces),
-          tasks: store.query(tables.tasks),
-          prds: store.query(tables.prds),
         },
         beforeDeprecatedEvents
       )
@@ -586,6 +566,32 @@ describe('LiveStore schema', () => {
     activeTabId: 'wtab-1',
   } as const
 
+  const legacyReviewLayout = {
+    tabs: [
+      {
+        id: 'wtab-review',
+        workspaceLayout: {
+          _tag: 'WorkspaceTileLeaf',
+          id: 'tile-review',
+          workspaceId: 'ws-1',
+          panelTabs: [
+            {
+              id: 'ptab-review',
+              panelLayout: {
+                _tag: 'LeafNode',
+                id: 'pane-review',
+                paneType: 'review',
+                workspaceId: 'ws-1',
+              },
+            },
+          ],
+          activePanelTabId: 'ptab-review',
+        },
+      },
+    ],
+    activeTabId: 'wtab-review',
+  } as const
+
   it.scoped('panelLayout client document stores a valid WindowLayout', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
@@ -632,6 +638,26 @@ describe('LiveStore schema', () => {
         const result = store.query(tables.panelLayout.get('window-1'))
         assert.deepStrictEqual(result.windowLayout, null)
       })
+  )
+
+  it.scoped('historical review layouts remain decodable', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.windowLayoutUpdated({
+          windowId: 'window-1',
+          windowLayout: legacyReviewLayout,
+          reason: 'legacy-review-event',
+        })
+      )
+      store.commit(
+        tables.panelLayout.set({ windowLayout: legacyReviewLayout }, 'window-1')
+      )
+
+      const result = store.query(tables.panelLayout.get('window-1'))
+      assert.deepStrictEqual(result.windowLayout, legacyReviewLayout)
+    })
   )
 
   it.scoped(

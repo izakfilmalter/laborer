@@ -1689,7 +1689,6 @@ function lenientDecodeLeafNode(
     'terminal',
     'diff',
     'devServerTerminal',
-    'review',
   ])
   if (!validPaneTypes.has(raw.paneType)) {
     return undefined

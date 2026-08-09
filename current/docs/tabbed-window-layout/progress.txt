@@ -123,7 +123,6 @@ Date: 2026-03-14
   - `workspace-frames-minimize.test.tsx`
   - `workspace-frame-header.test.tsx`
   - `terminal-overlay-toolbar.test.tsx`
-  - `full-height-review-panel.test.tsx`
   - `fullscreen-portal.test.tsx`
 
 ### Verification
@@ -146,7 +145,6 @@ Date: 2026-03-14
   - **Numbered list**: Shows 4 panel types with number indicators (1-4) and icons:
     1. Terminal (`Terminal` icon from lucide-react)
     2. Diff (`FileCode2` icon)
-    3. Review (`Eye` icon)
     4. Dev Server (`Server` icon)
   - **Pre-selection**: Terminal (first item) is highlighted by default on open
   - **Arrow key navigation**: ArrowUp/ArrowDown move highlight with wrapping
@@ -297,7 +295,6 @@ Date: 2026-03-13
 
 ### Tests
 - 47 tests in `apps/web/test/layout-migration.test.ts` covering:
-  - convertLeafNode: simple terminal, preserves terminalId/workspaceId/both, strips diffOpen/devServerOpen/devServerTerminalId, preserves diff/review/devServerTerminal paneTypes
   - convertPanelTree: single leaf, split with two leaves, preserves sizes, nested splits, strips sidebar flags from nested trees
   - collectSidebarFlags: no flags, diffOpen, devServerOpen with terminalId, aggregation from splits, deeply nested, diffOpen:false
   - migrateToWindowLayout — single workspace: single-leaf tree, split tree, activePaneId→focusedPaneId, null activePaneId fallback, cross-workspace activePaneId fallback
@@ -368,7 +365,6 @@ Date: 2026-03-14
   - Added `WindowTabBar` sub-component that converts `WindowLayout` to `TabBarItem[]` for the shared `TabBar`
   - Tab bar auto-hides when there is only 1 window tab (using `TabBar`'s `autoHide` prop)
   - Tab bar renders in the right side of the header bar alongside the sidebar toggle and view toggle icons
-  - Tab bar only shows when `mainView === 'panels'` (not in dashboard or plan views)
 
 - Extended `PanelActions` interface in `panel-context.tsx` with 7 new window tab actions:
   - `addWindowTab` — creates a new empty window tab and switches to it
@@ -407,7 +403,6 @@ Date: 2026-03-14
   - `workspace-frames-minimize.test.tsx`
   - `workspace-frame-header.test.tsx`
   - `terminal-overlay-toolbar.test.tsx`
-  - `full-height-review-panel.test.tsx`
   - `fullscreen-portal.test.tsx`
 
 ### Verification
@@ -531,18 +526,11 @@ Date: 2026-03-14
 Date: 2026-03-14
 
 ### What was done
-- Verified that `PaneContent` in `apps/web/src/panels/panel-manager.tsx` already renders `ReviewPane` as a standalone pane for `paneType: 'review'` leaf nodes (lines 298-300), so no changes needed there.
 
 - Updated `Ctrl+B, R` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
-  - Changed from calling `actions.toggleReviewPane(activePaneId)` (toggle behavior) to creating a new review panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'review', workspaceId: activeWorkspaceId })` (right-side split)
-  - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'review')` when no active pane exists but a workspace is focused
   - This matches the exact pattern used for `Ctrl+B, D` (diff panel creation) in issue #12
 
 ### Notes
-- Review already appears as option #3 in the panel type picker (configured in issue #11).
-- `PaneContent` already renders `ReviewPane` standalone with correct workspace context — no changes needed.
-- The existing `toggleReviewPane` action remains in the codebase for backward compatibility (used by workspace frame header button and full-height review panel close button). It will be cleaned up when all panel types are fully promoted.
-- Old layouts with review panes continue to work — `PaneContent` handles `paneType: 'review'` correctly.
 
 ### Verification
 - `bun run --filter @laborer/web typecheck` — passes
@@ -565,7 +553,6 @@ Date: 2026-03-14
 - Updated `Ctrl+B, S` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
   - Changed from calling `actions.toggleDevServerPane(activePaneId)` (sidebar toggle) to creating a new dev server terminal panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })` (right-side split)
   - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')` when no active pane exists but a workspace is focused
-  - This matches the exact pattern used for `Ctrl+B, D` (diff) and `Ctrl+B, R` (review) in issues #12 and #13
 
 - Updated dev server button in `apps/web/src/components/workspace-frame-header.tsx`:
   - Changed from `actions?.toggleDevServerPane(paneId)` to `actions?.splitPane(paneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })`
@@ -591,7 +578,6 @@ Date: 2026-03-14
 Date: 2026-03-14
 
 ### What was done
-- Connected the panel type picker component to all panel creation entry points, so users now choose a panel type (Terminal, Diff, Review, Dev Server) before splitting or creating a new tab.
 
 - Added `PickerMode` type to `panel-context.tsx`:
   - `{ kind: 'split-right', paneId, workspaceId }` — split right with chosen type
@@ -625,7 +611,6 @@ Date: 2026-03-14
 - Updated `handleSplitPane` in `use-panel-layout.ts`:
   - Now accepts optional third argument `newPaneContent?: Partial<LeafNode>`
   - Passes `newPaneContent` through to `splitPane` from `layout-utils.ts` (which already supported it)
-  - Only auto-spawns a terminal for `terminal`-type panes — diff, review, and dev server panes handle their own content
   - This fixes a pre-existing bug where `Ctrl+B D/R/S` was silently dropping the `newPaneContent` argument
 
 - Updated keyboard shortcuts in `panel-hotkeys.tsx`:
@@ -643,7 +628,6 @@ Date: 2026-03-14
   - `workspace-frames-minimize.test.tsx`
   - `workspace-frame-header.test.tsx`
   - `terminal-overlay-toolbar.test.tsx`
-  - `full-height-review-panel.test.tsx`
   - `fullscreen-portal.test.tsx`
 
 ### Verification
@@ -711,7 +695,6 @@ Date: 2026-03-14
   - Window tab with no workspace layout: falls back correctly
   - Nested workspace tiles: closes workspace from nested split
   - Full escalation chain: step-by-step verification of all 3 steps in a multi-level hierarchy
-  - Diff/review pane types: correctly identifies multiple panes in a split with non-terminal types
 
 ### Verification
 - `bun run --filter @laborer/web typecheck` — passes
@@ -763,7 +746,6 @@ Date: 2026-03-14
 - 33 tests in `apps/web/test/hierarchical-persistence.test.ts` covering:
   - **getStaleTerminalLeavesHierarchical** (10 tests): no terminals, all live, single stale, multiple panel tabs, multiple window tabs, nested panel splits, empty layout, no workspace layout, workspace tile splits, non-terminal pane types
   - **reconcileWindowLayout** (8 tests): no changes (referential equality), replace stale IDs, clear unmapped stale IDs, multiple panel tabs, multiple window tabs, preserve live terminals, empty layout, workspace tile splits
-  - **repairWindowLayout** (15 tests): non-object input, invalid tabs, all tabs invalid, valid layout no repair, stale activeTabId, drop invalid tabs, invalid panel tabs, stale activePanelTabId, collapse single-child workspace splits, collapse single-child panel splits, invalid pane types, valid diff/review types, strip invalid optional fields, redistribute invalid sizes, deeply nested hierarchies
 
 ### Verification
 - `bun run --filter @laborer/web typecheck` — passes
@@ -852,7 +834,6 @@ Date: 2026-03-14
 - Updated 3 test files with `useActiveWorkspaceId` mock:
   - `workspace-card-layout.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
   - `workspace-list-root-delete.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
-  - `workspace-plan-scope.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
 
 ### Notes
 - The `findTerminalLocation` utility function was already fully implemented and tested in issue #2 (67 tests in `window-tab-utils.test.ts`) — this issue wires it into the actual UI flow.
@@ -895,7 +876,6 @@ Date: 2026-03-14
 
 - **Wired `EmptyWorkspaceState` into the rendering flow:**
   - Extracted `WorkspaceContent` component from `WorkspaceFrame` to reduce cognitive complexity and avoid nested ternary expressions
-  - `WorkspaceContent` dispatches between: empty workspace state (no panel tabs), side panel layout (diff/review open alongside main content), and standard `PanelManager` rendering
   - In `WorkspaceFrame`, added `isEmptyWorkspace` boolean flag: `tileLeaf !== undefined && tileLeaf.panelTabs.length === 0`
   - Updated `effectiveLayout` to return `null` when no active panel tab exists (empty workspace)
   - When `isEmptyWorkspace` is true and workspace is not minimized, renders `EmptyWorkspaceState` instead of `PanelManager`
@@ -910,8 +890,6 @@ Date: 2026-03-14
 
 ### Tests
 - 23 tests in `apps/web/test/empty-state-components.test.tsx` covering:
-  - **EmptyWorkspaceState** (12 tests): renders container, displays "No panel tabs" title, shows Ctrl+T shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/diff/review/devServer, no-op when workspaceId undefined, keyboard selection via number keys, keyboard selection via Enter, renders description text
-  - **EmptyPanelTabState** (9 tests): renders container, displays "Empty tab" title, shows Cmd+D shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/review, no-op when workspaceId undefined, renders description text, keyboard selection via number keys
   - **Visual consistency** (2 tests): both states use the Empty component library (data-slot="empty", "empty-icon", "empty-title", "empty-description")
 
 ### Verification
@@ -971,7 +949,6 @@ Date: 2026-03-14
 
 - Updated 6 test files to include `addWorkspaceToCurrentTab: vi.fn()` mock:
   - `empty-state-components.test.tsx`
-  - `full-height-review-panel.test.tsx`
   - `workspace-frames-minimize.test.tsx`
   - `workspace-frame-header.test.tsx`
   - `terminal-overlay-toolbar.test.tsx`
@@ -979,7 +956,6 @@ Date: 2026-03-14
 
 - Added LiveStore mocks to 3 test files that now need them (because `workspace-frames.tsx` imports `@laborer/shared/schema`):
   - `empty-state-components.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
-  - `full-height-review-panel.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
   - `workspace-frames-minimize.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks, moved `WorkspaceFrames` import after mocks
 
 ### Tests

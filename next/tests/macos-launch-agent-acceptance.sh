@@ -51,7 +51,7 @@ done
 
 launchctl print "gui/$UID/$label" >/dev/null
 service_enabled=1
-daemon_command="$app/Contents/Resources/daemon/app/src/slack/live.ts"
+daemon_command="$app/Contents/Resources/daemon/app/src/acp-runtime/production-live.ts"
 daemon_pid="$(pgrep -f "$daemon_command" | head -n 1)"
 companion_pid="$(pgrep -f "$app/Contents/MacOS/Laborer" | head -n 1)"
 test -n "$daemon_pid"

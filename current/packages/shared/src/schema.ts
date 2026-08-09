@@ -1,5 +1,7 @@
 import { Events, makeSchema, Schema, State } from '@livestore/livestore'
-import { PrdStatus, WindowLayoutSchema } from './types.js'
+import { PersistedWindowLayoutSchema } from './types.js'
+
+const HistoricalPrdStatus = Schema.Literal('draft', 'active', 'completed')
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -13,7 +15,6 @@ export const projects = State.SQLite.table({
     repoId: State.SQLite.text({ nullable: true }),
     canonicalGitCommonDir: State.SQLite.text({ nullable: true }),
     name: State.SQLite.text(),
-    brrrConfig: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -22,6 +23,7 @@ export const workspaces = State.SQLite.table({
   columns: {
     id: State.SQLite.text({ primaryKey: true }),
     projectId: State.SQLite.text(),
+    /** @deprecated — Legacy task link retained while historical workspace events remain materialized. */
     taskSource: State.SQLite.text({ nullable: true }),
     branchName: State.SQLite.text(),
     worktreePath: State.SQLite.text(),
@@ -81,32 +83,6 @@ export const diffs = State.SQLite.table({
   },
 })
 
-export const tasks = State.SQLite.table({
-  name: 'tasks',
-  columns: {
-    id: State.SQLite.text({ primaryKey: true }),
-    projectId: State.SQLite.text(),
-    source: State.SQLite.text(),
-    prdId: State.SQLite.text({ nullable: true }),
-    externalId: State.SQLite.text({ nullable: true }),
-    title: State.SQLite.text(),
-    status: State.SQLite.text({ default: 'pending' }),
-  },
-})
-
-export const prds = State.SQLite.table({
-  name: 'prds',
-  columns: {
-    id: State.SQLite.text({ primaryKey: true }),
-    projectId: State.SQLite.text(),
-    title: State.SQLite.text(),
-    slug: State.SQLite.text(),
-    filePath: State.SQLite.text(),
-    status: State.SQLite.text({ default: 'draft' }),
-    createdAt: State.SQLite.text(),
-  },
-})
-
 /**
  * Global application settings stored as key-value pairs.
  * Used for configuration that applies across all projects/workspaces,
@@ -129,7 +105,7 @@ export const appSettings = State.SQLite.table({
 export const panelLayout = State.SQLite.clientDocument({
   name: 'panel_layout',
   schema: Schema.Struct({
-    windowLayout: Schema.NullOr(WindowLayoutSchema),
+    windowLayout: Schema.NullOr(PersistedWindowLayoutSchema),
   }),
   default: {
     value: { windowLayout: null },
@@ -148,7 +124,6 @@ export const projectCreated = Events.synced({
     repoId: Schema.optional(Schema.NullOr(Schema.String)),
     canonicalGitCommonDir: Schema.optional(Schema.NullOr(Schema.String)),
     name: Schema.String,
-    brrrConfig: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 })
 
@@ -425,7 +400,7 @@ export const prdCreated = Events.synced({
     title: Schema.String,
     slug: Schema.String,
     filePath: Schema.String,
-    status: Schema.optionalWith(PrdStatus, {
+    status: Schema.optionalWith(HistoricalPrdStatus, {
       default: () => 'draft',
     }),
     createdAt: Schema.String,
@@ -436,7 +411,7 @@ export const prdStatusChanged = Events.synced({
   name: 'v1.PrdStatusChanged',
   schema: Schema.Struct({
     id: Schema.String,
-    status: PrdStatus,
+    status: HistoricalPrdStatus,
   }),
 })
 
@@ -448,7 +423,7 @@ export const prdUpdated = Events.synced({
     title: Schema.String,
     slug: Schema.String,
     filePath: Schema.String,
-    status: PrdStatus,
+    status: HistoricalPrdStatus,
     createdAt: Schema.String,
   }),
 })
@@ -546,7 +521,7 @@ export const windowLayoutUpdated = Events.clientOnly({
   name: 'v1.WindowLayoutUpdated',
   schema: Schema.Struct({
     windowId: Schema.String,
-    windowLayout: WindowLayoutSchema,
+    windowLayout: PersistedWindowLayoutSchema,
     reason: Schema.optional(Schema.String),
   }),
 })
@@ -608,7 +583,6 @@ const materializers = State.SQLite.materializers(events, {
     repoId,
     canonicalGitCommonDir,
     name,
-    brrrConfig,
   }) =>
     projects.insert({
       id,
@@ -616,7 +590,6 @@ const materializers = State.SQLite.materializers(events, {
       repoId: repoId ?? null,
       canonicalGitCommonDir: canonicalGitCommonDir ?? null,
       name,
-      brrrConfig: brrrConfig ?? null,
     }),
   'v1.ProjectRepositoryIdentityBackfilled': ({
     id,
@@ -713,67 +686,13 @@ const materializers = State.SQLite.materializers(events, {
   'v1.TerminalRestarted': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.DiffUpdated': () => [], // @deprecated — no-op materializer retained for backward compat (Lazy File Service)
   'v1.DiffCleared': () => [], // @deprecated — no-op materializer retained for backward compat (Lazy File Service)
-  'v1.TaskCreated': ({
-    id,
-    projectId,
-    source,
-    prdId,
-    externalId,
-    title,
-    status,
-  }) =>
-    tasks.insert({
-      id,
-      projectId,
-      source,
-      prdId,
-      externalId,
-      title,
-      status,
-    }),
-  'v1.TaskStatusChanged': ({ id, status }) =>
-    tasks.update({ status }).where({ id }),
-  'v1.TaskRemoved': ({ id }) => tasks.delete().where({ id }),
-  'v1.PrdCreated': ({
-    id,
-    projectId,
-    title,
-    slug,
-    filePath,
-    status,
-    createdAt,
-  }) =>
-    prds.insert({
-      id,
-      projectId,
-      title,
-      slug,
-      filePath,
-      status,
-      createdAt,
-    }),
-  'v1.PrdUpdated': ({
-    id,
-    projectId,
-    title,
-    slug,
-    filePath,
-    status,
-    createdAt,
-  }) =>
-    prds
-      .update({
-        projectId,
-        title,
-        slug,
-        filePath,
-        status,
-        createdAt,
-      })
-      .where({ id }),
-  'v1.PrdStatusChanged': ({ id, status }) =>
-    prds.update({ status }).where({ id }),
-  'v1.PrdRemoved': ({ id }) => prds.delete().where({ id }),
+  'v1.TaskCreated': () => [],
+  'v1.TaskStatusChanged': () => [],
+  'v1.TaskRemoved': () => [],
+  'v1.PrdCreated': () => [],
+  'v1.PrdUpdated': () => [],
+  'v1.PrdStatusChanged': () => [],
+  'v1.PrdRemoved': () => [],
   'v1.AppSettingChanged': ({ key, value }) =>
     appSettings.insert({ key, value }).onConflict('key', 'replace'),
   // Legacy layout events are intentionally ignored. Current layout state is
@@ -790,8 +709,6 @@ export const tables = {
   workspaces,
   terminals,
   diffs,
-  tasks,
-  prds,
   appSettings,
   panelLayout,
 }
@@ -805,8 +722,6 @@ export const tables = {
 const activeTables = {
   projects,
   workspaces,
-  tasks,
-  prds,
   appSettings,
   panelLayout,
 }

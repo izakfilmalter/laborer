@@ -77,9 +77,7 @@ vi.mock('@/livestore/store', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  prds: { name: 'prds' },
   workspaces: { name: 'workspaces' },
-  tasks: { name: 'tasks' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -102,28 +100,12 @@ vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
 }))
 
-vi.mock('@/components/review-pr-form', () => ({
-  ReviewPrForm: () => null,
-}))
-
-vi.mock('@/components/fix-findings-form', () => ({
-  FixFindingsForm: () => null,
-}))
-
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
 }))
 
 vi.mock('@/components/github-pr-status-badge', () => ({
   GitHubPrStatusBadge: () => null,
-}))
-
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => null,
-}))
-
-vi.mock('@/components/plan-issues-list', () => ({
-  PlanIssuesList: () => null,
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({
@@ -242,15 +224,12 @@ const makeWorkspace = (
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Configure the mock store with the given workspaces (and optional PRDs). */
-const mockStore = (workspaces: unknown[], prds: unknown[] = []) => {
+/** Configure the mock store with the given workspaces. */
+const mockStore = (workspaces: unknown[]) => {
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {
         return workspaces
-      }
-      if (query.label === 'workspaceList.prds') {
-        return prds
       }
       return []
     },

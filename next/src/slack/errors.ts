@@ -16,32 +16,8 @@ export class LaborerConfigError extends Schema.TaggedErrorClass<LaborerConfigErr
   }
 ) {}
 
-export class SlackBoundaryError extends Schema.TaggedErrorClass<SlackBoundaryError>()(
-  "SlackBoundaryError",
-  {
-    boundary: Schema.String,
-    reason: Schema.String,
-  }
-) {}
-
 export class SlackStartupError extends Schema.TaggedErrorClass<SlackStartupError>()(
   "SlackStartupError",
-  {
-    operation: Schema.String,
-    reason: Schema.String,
-  }
-) {}
-
-export class SocketModeAdapterError extends Schema.TaggedErrorClass<SocketModeAdapterError>()(
-  "SocketModeAdapterError",
-  {
-    operation: Schema.String,
-    reason: Schema.String,
-  }
-) {}
-
-export class RunnerLockError extends Schema.TaggedErrorClass<RunnerLockError>()(
-  "RunnerLockError",
   {
     operation: Schema.String,
     reason: Schema.String,

@@ -1,15 +1,26 @@
 import type { AgentProvider } from "@ai-hero/sandcastle";
+import { fileURLToPath } from "node:url";
 
 export interface OpenCode2AgentOptions {
   readonly agent?: string;
+  /** Grants unattended OpenCode permissions to a process with full host access. */
+  readonly dangerouslyAutoApproveHostPermissions?: boolean;
   readonly env?: Record<string, string>;
   readonly maxAttempts?: number;
+  readonly diagnosticsPath?: string;
+  readonly initialStaggerSeconds?: number;
+  readonly recoveryPollSeconds?: number;
+  readonly recoveryTimeoutSeconds?: number;
   readonly retryDelaySeconds?: number;
+  readonly retryJitterSeconds?: number;
+  readonly runTimeoutSeconds?: number;
   readonly variant?: string;
 }
 
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'\\''`)}'`;
+
+const runnerPath = fileURLToPath(new URL("./run.ts", import.meta.url));
 
 const toolArgumentFields: Readonly<Record<string, string>> = {
   bash: "command",
@@ -115,6 +126,24 @@ export const opencode2Agent = (
     0,
     Math.floor(options.retryDelaySeconds ?? 15)
   );
+  const retryJitterSeconds = Math.max(
+    0,
+    Math.floor(options.retryJitterSeconds ?? 15)
+  );
+  const initialStaggerSeconds = Math.max(
+    0,
+    Math.floor(options.initialStaggerSeconds ?? 15)
+  );
+  const recoveryPollSeconds = Math.max(
+    0,
+    Math.floor(options.recoveryPollSeconds ?? 5)
+  );
+  const recoveryTimeoutSeconds = Math.max(
+    0,
+    Math.floor(
+      options.recoveryTimeoutSeconds ?? options.runTimeoutSeconds ?? 14_400
+    )
+  );
 
   return {
     name: "opencode2",
@@ -123,7 +152,6 @@ export const opencode2Agent = (
     buildPrintCommand({ prompt, dangerouslySkipPermissions }) {
       const args = [
         "run",
-        "--standalone",
         "--format",
         "json",
         "--model",
@@ -132,27 +160,41 @@ export const opencode2Agent = (
       if (options.agent) {
         args.push("--agent", options.agent);
       }
-      if (dangerouslySkipPermissions) {
+      if (
+        dangerouslySkipPermissions ||
+        options.dangerouslyAutoApproveHostPermissions
+      ) {
         args.push("--auto");
       }
-      const invocation = `opencode2 ${args.map(shellQuote).join(" ")}`;
+      const runnerArgs = [
+        "--max-attempts",
+        String(maxAttempts),
+        "--retry-delay-seconds",
+        String(retryDelaySeconds),
+        "--retry-jitter-seconds",
+        String(retryJitterSeconds),
+        "--initial-stagger-seconds",
+        String(initialStaggerSeconds),
+        "--recovery-poll-seconds",
+        String(recoveryPollSeconds),
+        "--recovery-timeout-seconds",
+        String(recoveryTimeoutSeconds),
+        ...(options.diagnosticsPath === undefined
+          ? []
+          : ["--diagnostics-path", options.diagnosticsPath]),
+        "--",
+        "opencode2",
+        ...args,
+      ];
+      const invocation = `bun ${shellQuote(runnerPath)} ${runnerArgs
+        .map(shellQuote)
+        .join(" ")}`;
       return {
         command: [
-          'prompt_file="$(mktemp)"',
-          'attempt_state="$(mktemp -d)"',
-          'trap \'rm -rf "$attempt_state"; rm -f "$prompt_file"\' EXIT HUP INT TERM',
-          'cat > "$prompt_file"',
-          "attempt=1",
-          "while :; do",
-          '  attempt_db="$attempt_state/opencode-$attempt.db"',
-          '  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db "$attempt_db"; fi',
-          `  cat "$prompt_file" | OPENCODE_DB="$attempt_db" ${invocation} && exit 0`,
-          "  status=$?",
-          `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
-          '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',
-          `  sleep $((attempt * ${retryDelaySeconds}))`,
-          "  attempt=$((attempt + 1))",
-          "done",
+          `# sandcastle-timeout-seconds=${String(
+            Math.max(1, Math.floor(options.runTimeoutSeconds ?? 14_400))
+          )}`,
+          invocation,
         ].join("\n"),
         stdin: prompt,
       };

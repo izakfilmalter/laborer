@@ -2,8 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { OPEN_CODE_COMMAND } from "../src/acp-conversation-prototype/open-code-acp-process.ts";
-import { preflightEffectiveOpenCodeMcpNames } from "../src/acp-conversation-prototype/opencode-config-preflight.ts";
+import { OPEN_CODE_COMMAND } from "../src/acp-runtime/open-code-acp-process.ts";
+import { preflightEffectiveOpenCodeMcpNames } from "../src/acp-runtime/opencode-config-preflight.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const fakeOpenCodePath = resolve(

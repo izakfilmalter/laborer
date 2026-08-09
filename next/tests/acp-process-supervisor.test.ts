@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
-import { makeAcpProcessStateRepository } from "../src/acp-conversation-prototype/acp-process-state.ts";
-import type { AcpGenerationContext } from "../src/acp-conversation-prototype/acp-process-supervisor.ts";
-import { makeAcpConversationProcessSupervisor } from "../src/acp-conversation-prototype/acp-process-supervisor.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
+import { makeAcpProcessStateRepository } from "../src/acp-runtime/acp-process-state.ts";
+import type { AcpGenerationContext } from "../src/acp-runtime/acp-process-supervisor.ts";
+import { makeAcpConversationProcessSupervisor } from "../src/acp-runtime/acp-process-supervisor.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 import type { ConversationAgentShape } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 

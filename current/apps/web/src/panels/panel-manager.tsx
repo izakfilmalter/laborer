@@ -96,7 +96,6 @@ import {
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
-import { ReviewPane } from '@/panes/review-pane'
 import { TerminalPane } from '@/panes/terminal-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
@@ -495,11 +494,6 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   // Diff pane — displays workspace diffs as a standalone panel
   if (node.paneType === 'diff' && node.workspaceId) {
     return <DiffPane workspaceId={node.workspaceId} />
-  }
-
-  // Review pane — displays PR review findings and comments
-  if (node.paneType === 'review' && node.workspaceId) {
-    return <ReviewPane workspaceId={node.workspaceId} />
   }
 
   // Generic empty pane (non-terminal)

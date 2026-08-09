@@ -51,7 +51,6 @@ vi.mock('@/panels/panel-context', () => ({
     toggleDevServerPane: vi.fn(),
     toggleDiffPane: vi.fn(),
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(),
     addPanelTab: addPanelTabMock,
     addWorkspaceToCurrentTab: vi.fn(),
     addWindowTab: vi.fn(),

@@ -39,6 +39,19 @@ import {
   ExternalInputEvent,
   type PublishApplicationOutput,
 } from "./application.ts";
+import { withApplicationFileLock } from "./core/application-file-lock.ts";
+import {
+  NormalizedImage,
+  type NormalizedMessage,
+  ThreadId,
+} from "./core/domain.ts";
+import { HandlerFailure } from "./core/errors.ts";
+import {
+  assertSafeFilePath,
+  openRegularFileNoFollow,
+  retainTrustedDirectory,
+  verifyRetainedDirectory,
+} from "./core/path-safety.ts";
 import { ExecutionEvent } from "./durable-runtime/root-runtime.ts";
 import {
   CancelExecutionInput,
@@ -52,19 +65,6 @@ import {
   productionExecutionControlCatalog,
   SafeExecutionSnapshot,
 } from "./execution-control-catalog.ts";
-import { withApplicationFileLock } from "./prototype/application-file-lock.ts";
-import {
-  NormalizedImage,
-  type NormalizedMessage,
-  ThreadId,
-} from "./prototype/domain.ts";
-import { HandlerFailure } from "./prototype/errors.ts";
-import {
-  assertSafeFilePath,
-  openRegularFileNoFollow,
-  retainTrustedDirectory,
-  verifyRetainedDirectory,
-} from "./prototype/path-safety.ts";
 import type {
   ConversationAdoptionHistoryGateway,
   ConversationAdoptionHistorySnapshot,
@@ -75,10 +75,9 @@ import {
   CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS,
   unavailableConversationAdoptionHistoryGateway,
 } from "./slack/conversation-adoption-history.ts";
-import {
-  MAX_AGGREGATE_IMAGE_BYTES,
-  MAX_IMAGES_PER_MESSAGE,
-} from "./slack/inbound-images.ts";
+
+const MAX_IMAGES_PER_MESSAGE = 4;
+const MAX_AGGREGATE_IMAGE_BYTES = 768 * 1024;
 
 export const ReferenceCodingActionName = ActionHandlerKey;
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;
@@ -210,7 +209,7 @@ export interface ConversationExecution {
 }
 
 export interface ActionInvocationAccepted {
-  readonly actionName?: ReferenceCodingActionName;
+  readonly actionName?: string;
   readonly deduplicated?: boolean;
   readonly executionId: string;
   readonly status: ConversationExecution["status"];
@@ -235,8 +234,8 @@ export interface ConversationAction {
   readonly invoke: (
     input: unknown,
     trustedInvocation?: TrustedActionInvocation
-  ) => Effect.Effect<ProductionActionResult, HandlerFailure>;
-  readonly name: ReferenceCodingActionName;
+  ) => Effect.Effect<ActionInvocationAccepted, HandlerFailure>;
+  readonly name: string;
 }
 
 export interface ConversationExecutionControl {

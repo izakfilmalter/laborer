@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Ref, Schema } from "effect";
 import { ExternalInputEvent } from "../src/application.ts";
+import { ThreadId } from "../src/core/domain.ts";
+import { HandlerFailure } from "../src/core/errors.ts";
 import {
   CancelExecutionResult,
   executionCancelOperationId,
   InspectExecutionsResult,
 } from "../src/execution-control-catalog.ts";
-import { ThreadId } from "../src/prototype/domain.ts";
-import { HandlerFailure } from "../src/prototype/errors.ts";
 import {
   type ConversationExecutionControl,
   ImplementationAgent,

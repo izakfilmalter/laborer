@@ -3,7 +3,7 @@
  *
  * Verifies rendering of numbered items with icons, keyboard navigation
  * (arrow keys, number keys, Enter, Escape), mouse interaction, and
- * pre-selection of the terminal option.
+ * pre-selection of the agent option.
  *
  * @see apps/web/src/components/ui/panel-type-picker.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #11
@@ -73,10 +73,10 @@ describe('PanelTypePicker', () => {
   // ---- Rendering ----
 
   describe('rendering', () => {
-    it('renders a compact list with 5 items', () => {
+    it('renders a compact list with 4 items', () => {
       renderPicker()
       const options = getOptions()
-      expect(options).toHaveLength(5)
+      expect(options).toHaveLength(4)
     })
 
     it('renders numbered items with correct labels', () => {
@@ -84,17 +84,15 @@ describe('PanelTypePicker', () => {
       expect(screen.getByText('Agent')).toBeTruthy()
       expect(screen.getByText('Terminal')).toBeTruthy()
       expect(screen.getByText('Diff')).toBeTruthy()
-      expect(screen.getByText('Review')).toBeTruthy()
       expect(screen.getByText('Dev Server')).toBeTruthy()
     })
 
-    it('renders number indicators 1-5', () => {
+    it('renders number indicators 1-4', () => {
       renderPicker()
       expect(screen.getByText('1')).toBeTruthy()
       expect(screen.getByText('2')).toBeTruthy()
       expect(screen.getByText('3')).toBeTruthy()
       expect(screen.getByText('4')).toBeTruthy()
-      expect(screen.getByText('5')).toBeTruthy()
     })
 
     it('has role="listbox" on the container', () => {
@@ -105,7 +103,7 @@ describe('PanelTypePicker', () => {
     it('has role="option" on each item', () => {
       renderPicker()
       const options = screen.getAllByRole('option')
-      expect(options).toHaveLength(5)
+      expect(options).toHaveLength(4)
     })
 
     it('applies additional className to the root element', () => {
@@ -118,7 +116,7 @@ describe('PanelTypePicker', () => {
   // ---- Pre-selection ----
 
   describe('pre-selection', () => {
-    it('terminal (first item) is pre-selected on open', () => {
+    it('agent (first item) is pre-selected on open', () => {
       renderPicker()
       const options = screen.getAllByRole('option')
       expect(options[0]?.getAttribute('aria-selected')).toBe('true')
@@ -133,7 +131,7 @@ describe('PanelTypePicker', () => {
       expect(selected).toHaveLength(1)
     })
 
-    it('non-terminal items are not pre-selected', () => {
+    it('non-agent items are not pre-selected', () => {
       renderPicker()
       const options = screen.getAllByRole('option')
       for (let i = 1; i < options.length; i++) {
@@ -169,8 +167,7 @@ describe('PanelTypePicker', () => {
     it('ArrowDown wraps from last to first item', () => {
       renderPicker()
       const picker = getPicker()
-      // Move down 5 times (past the end)
-      fireEvent.keyDown(picker, { key: 'ArrowDown' })
+      // Move down 4 times (past the end)
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
       fireEvent.keyDown(picker, { key: 'ArrowDown' })
@@ -186,7 +183,7 @@ describe('PanelTypePicker', () => {
       fireEvent.keyDown(picker, { key: 'ArrowUp' })
 
       const options = screen.getAllByRole('option')
-      expect(options[4]?.getAttribute('aria-selected')).toBe('true')
+      expect(options[3]?.getAttribute('aria-selected')).toBe('true')
     })
 
     it('multiple ArrowDown presses navigate sequentially', () => {
@@ -224,17 +221,10 @@ describe('PanelTypePicker', () => {
       expect(onSelect).toHaveBeenCalledWith('diff')
     })
 
-    it('pressing 4 selects Review and calls onSelect', () => {
+    it('pressing 4 selects Dev Server and calls onSelect', () => {
       const { onSelect } = renderPicker()
       const picker = getPicker()
       fireEvent.keyDown(picker, { key: '4' })
-      expect(onSelect).toHaveBeenCalledWith('review')
-    })
-
-    it('pressing 5 selects Dev Server and calls onSelect', () => {
-      const { onSelect } = renderPicker()
-      const picker = getPicker()
-      fireEvent.keyDown(picker, { key: '5' })
       expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
 
@@ -296,17 +286,17 @@ describe('PanelTypePicker', () => {
       expect(onSelect).toHaveBeenCalledWith('diff')
     })
 
-    it('clicking the last option calls onSelect with devServerTerminal', () => {
+    it('clicking the last option selects Dev Server', () => {
       const { onSelect } = renderPicker()
       const options = getOptions()
-      fireEvent.click(options[4] as HTMLElement) // Click Dev Server
+      fireEvent.click(options[3] as HTMLElement)
       expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
 
     it('hovering an option updates the highlighted index', () => {
       renderPicker()
       const options = getOptions()
-      fireEvent.mouseEnter(options[2] as HTMLElement) // Hover Review
+      fireEvent.mouseEnter(options[2] as HTMLElement) // Hover Diff
 
       const allOptions = screen.getAllByRole('option')
       expect(allOptions[2]?.getAttribute('aria-selected')).toBe('true')
@@ -318,7 +308,7 @@ describe('PanelTypePicker', () => {
       const options = getOptions()
       const picker = getPicker()
 
-      fireEvent.mouseEnter(options[4] as HTMLElement) // Hover Dev Server
+      fireEvent.mouseEnter(options[3] as HTMLElement) // Hover Dev Server
       fireEvent.keyDown(picker, { key: 'Enter' })
       expect(onSelect).toHaveBeenCalledWith('devServerTerminal')
     })
@@ -337,8 +327,8 @@ describe('PanelTypePicker', () => {
   // ---- PANEL_TYPE_OPTIONS export ----
 
   describe('PANEL_TYPE_OPTIONS', () => {
-    it('exports 5 panel type options', () => {
-      expect(PANEL_TYPE_OPTIONS).toHaveLength(5)
+    it('exports 4 panel type options', () => {
+      expect(PANEL_TYPE_OPTIONS).toHaveLength(4)
     })
 
     it('has agent as the first option', () => {
@@ -350,7 +340,6 @@ describe('PanelTypePicker', () => {
         'agent',
         'terminal',
         'diff',
-        'review',
         'devServerTerminal',
       ])
     })
@@ -360,7 +349,6 @@ describe('PanelTypePicker', () => {
         'Agent',
         'Terminal',
         'Diff',
-        'Review',
         'Dev Server',
       ])
     })

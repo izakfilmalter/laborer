@@ -34,7 +34,6 @@ export function WorkspaceFrameHeaderContainer({
   isMinimized,
   onHeaderClick,
   onMinimize,
-  reviewIsOpen,
   treeIsOpen,
 }: {
   readonly workspaceId: string | undefined
@@ -47,7 +46,6 @@ export function WorkspaceFrameHeaderContainer({
   readonly onHeaderClick: () => void
   readonly onMinimize: () => void
   readonly diffIsOpen?: boolean
-  readonly reviewIsOpen?: boolean
   readonly treeIsOpen?: boolean
 }) {
   const store = useLaborerStore()
@@ -165,7 +163,6 @@ export function WorkspaceFrameHeaderContainer({
       prState={workspaceData.prState}
       prTitle={workspaceData.prTitle}
       prUrl={workspaceData.prUrl}
-      reviewIsOpen={reviewIsOpen ?? false}
       treeIsOpen={treeIsOpen ?? false}
       workspaceId={workspaceId}
       workspacePath={workspaceData.workspacePath}

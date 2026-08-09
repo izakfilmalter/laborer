@@ -10,14 +10,6 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes brrr action buttons (Start Ralph Loop, Review PR,
- * Fix Findings) on every non-destroyed workspace for triggering agent
- * workflows.
- *
- * When a workspace is associated with a plan (branch name matches
- * `plan/<slug>`), a scoped task list is shown inside the workspace card
- * displaying only the plan's issues. Status changes propagate to the
- * sidebar plan progress indicator via LiveStore reactivity.
  *
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
@@ -26,18 +18,14 @@
  *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
- * @see Issue #93: "Start Ralph Loop" button UI
- * @see Issue #97: "Review PR" button + PR number input
- * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
  * @see Issue #160: UI for detected workspaces
- * @see Issue #193: Plan workspace scoped task list and brrr integration
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { prds, workspaces } from '@laborer/shared/schema'
+import { workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import {
   buildWorkspaceTree,
@@ -48,7 +36,6 @@ import { ChevronRight, GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -63,13 +50,8 @@ import {
   type PendingWorkspaceCreation,
   type PendingWorkspaceCreationChangeHandler,
 } from '@/components/create-workspace-form'
-import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { PlanIssuesList } from '@/components/plan-issues-list'
-import { ReviewFindingsCount } from '@/components/review-findings-count'
-import { ReviewPrForm } from '@/components/review-pr-form'
-import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
 import {
   AlertDialog,
@@ -127,12 +109,8 @@ import { useLaborerStore } from '@/livestore/store'
 import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
-const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-
-/** Prefix used to associate workspaces with plans by branch name convention. */
-const PLAN_BRANCH_PREFIX = 'plan/'
 
 const DIALOG_TEXT_CLASS = 'text-balance text-muted-foreground text-xs/relaxed'
 
@@ -457,8 +435,6 @@ function InlineDestroyWorkspaceDialog({
 }
 
 interface WorkspaceItemProps {
-  /** The prdId of the plan this workspace is associated with, if any. */
-  readonly associatedPrdId?: string | undefined
   /**
    * Whether this workspace is the root workspace (main git checkout).
    * Root workspaces cannot be destroyed as they represent the original
@@ -658,7 +634,6 @@ function DestroyWorkspaceButton({
 
 function WorkspaceItem({
   workspace,
-  associatedPrdId,
   isRootWorkspace,
   onPendingCreationChange,
   projectName,
@@ -683,7 +658,7 @@ function WorkspaceItem({
       size="sm"
     >
       <CardHeader className="gap-2">
-        {/* Row 1 — Git: branch name, PR info, review/fix actions, destroy */}
+        {/* Row 1 — Git: branch name, PR info, and destroy action */}
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -712,28 +687,6 @@ function WorkspaceItem({
               behindCount={workspace.behindCount}
               workspaceId={workspace.id}
             />
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewVerdictBadge workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewFindingsCount workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <ReviewPrForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
-            {workspace.prNumber != null && (
-              <FixFindingsForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
             {!isRootWorkspace && showCreateSubWorkspaceAction && (
               <CreateWorkspaceForm
                 baseWorkspace={{
@@ -825,14 +778,6 @@ function WorkspaceItem({
             workspaceId={workspace.id}
           />
         </div>
-        {associatedPrdId && (
-          <div className="border-t pt-2">
-            <h4 className="mb-2 font-medium text-muted-foreground text-xs">
-              Plan Issues
-            </h4>
-            <PlanIssuesList prdId={associatedPrdId} />
-          </div>
-        )}
       </CardContent>
     </Card>
   )
@@ -862,7 +807,6 @@ type WorkspaceTreeRow = WorkspaceItemProps['workspace'] & {
 }
 
 interface WorkspaceTreeGroupProps {
-  readonly branchToPrdId: ReadonlyMap<string, string>
   readonly collapseState: CollapseState
   readonly node: WorkspaceTreeNode<WorkspaceTreeRow>
   readonly onPendingCreationChange?:
@@ -885,7 +829,6 @@ interface WorkspaceTreeGroupProps {
  */
 function WorkspaceTreeGroup({
   node,
-  branchToPrdId,
   collapseState,
   onPendingCreationChange,
   projectName,
@@ -895,7 +838,6 @@ function WorkspaceTreeGroup({
 
   const card = (
     <WorkspaceItem
-      associatedPrdId={branchToPrdId.get(workspace.branchName)}
       isRootWorkspace={workspace.worktreePath === repoPath}
       onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
@@ -972,7 +914,6 @@ function WorkspaceTreeGroup({
           {card}
           {children.map((child) => (
             <WorkspaceTreeGroup
-              branchToPrdId={branchToPrdId}
               collapseState={collapseState}
               key={child.workspace.id}
               node={child}
@@ -1035,7 +976,6 @@ function WorkspaceList({
 }: WorkspaceListProps) {
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspaces$)
-  const prdList = store.useQuery(allPrds$)
   const collapseState = useWorkspaceGroupCollapseState()
 
   // Filter out destroyed workspaces, scoped to the given project
@@ -1066,18 +1006,6 @@ function WorkspaceList({
     [activeWorkspaces]
   )
 
-  // Build a map of plan/<slug> branch name → prdId for this project,
-  // so we can detect which workspaces are associated with a plan.
-  const branchToPrdId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const prd of prdList) {
-      if (prd.projectId === projectId) {
-        map.set(`${PLAN_BRANCH_PREFIX}${prd.slug}`, prd.id)
-      }
-    }
-    return map
-  }, [prdList, projectId])
-
   if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {
     return (
       <Empty className="py-4">
@@ -1102,7 +1030,6 @@ function WorkspaceList({
       ))}
       {workspaceTree.map((node) => (
         <WorkspaceTreeGroup
-          branchToPrdId={branchToPrdId}
           collapseState={collapseState}
           key={node.workspace.id}
           node={node}

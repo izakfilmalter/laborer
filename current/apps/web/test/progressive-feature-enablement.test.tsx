@@ -3,8 +3,6 @@
  *
  * - **Phase 3 (Restored):** Terminal pane shows a connecting placeholder
  *   before Phase 3, and renders normally after.
- * - **Phase 4 (Eventually):** Review pane, review findings count, and review
- *   verdict badge are gated behind Phase 4.
  *
  * These tests exercise the public UI: components show appropriate
  * loading/placeholder states in earlier phases and transition smoothly
@@ -47,29 +45,6 @@ function PhaseGatedTerminalPane() {
   return (
     <div data-testid="terminal-content">
       <p>Terminal output here</p>
-    </div>
-  )
-}
-
-/**
- * Simulates the review pane phase gate.
- * Before Phase 4 (Eventually): shows loading skeleton.
- * After Phase 4: shows review content.
- */
-function PhaseGatedReviewPane() {
-  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
-
-  if (!isEventually) {
-    return (
-      <div data-testid="review-loading-placeholder">
-        <p>Loading review...</p>
-      </div>
-    )
-  }
-
-  return (
-    <div data-testid="review-content">
-      <p>Review findings here</p>
     </div>
   )
 }
@@ -154,41 +129,6 @@ describe('Progressive feature enablement for Phases 3-4', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Review pane — Phase 4 (Eventually)
-  // -----------------------------------------------------------------------
-
-  it('review pane shows loading placeholder before Phase 4 (Eventually)', () => {
-    render(
-      <LifecyclePhaseProvider>
-        <TestHarness>
-          <PhaseGatedReviewPane />
-        </TestHarness>
-      </LifecyclePhaseProvider>
-    )
-
-    expect(screen.getByTestId('review-loading-placeholder')).toBeDefined()
-    expect(screen.queryByTestId('review-content')).toBeNull()
-  })
-
-  it('review pane shows real content after Phase 4 (Eventually)', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <LifecyclePhaseProvider>
-        <TestHarness>
-          <PhaseGatedReviewPane />
-        </TestHarness>
-      </LifecyclePhaseProvider>
-    )
-
-    // Advance to Eventually
-    await user.click(screen.getByTestId('advance-eventually'))
-
-    expect(screen.getByTestId('review-content')).toBeDefined()
-    expect(screen.queryByTestId('review-loading-placeholder')).toBeNull()
-  })
-
-  // -----------------------------------------------------------------------
   // Smooth transitions — no broken UI in intermediate phases
   // -----------------------------------------------------------------------
 
@@ -199,32 +139,19 @@ describe('Progressive feature enablement for Phases 3-4', () => {
       <LifecyclePhaseProvider>
         <TestHarness>
           <PhaseGatedTerminalPane />
-          <PhaseGatedReviewPane />
         </TestHarness>
       </LifecyclePhaseProvider>
     )
 
     // Phase 1: both placeholders
     expect(screen.getByTestId('terminal-connecting-placeholder')).toBeDefined()
-    expect(screen.getByTestId('review-loading-placeholder')).toBeDefined()
 
     // Phase 2 (Ready): terminal and review still show placeholders
     await user.click(screen.getByTestId('advance-ready'))
     expect(screen.getByTestId('terminal-connecting-placeholder')).toBeDefined()
-    expect(screen.getByTestId('review-loading-placeholder')).toBeDefined()
-
-    // Phase 3 (Restored): terminal renders, review still shows a placeholder
-    await user.click(screen.getByTestId('advance-restored'))
-    expect(screen.getByTestId('terminal-content')).toBeDefined()
-    expect(screen.getByTestId('review-loading-placeholder')).toBeDefined()
 
     // Phase 4 (Eventually): everything renders
     await user.click(screen.getByTestId('advance-eventually'))
     expect(screen.getByTestId('terminal-content')).toBeDefined()
-    expect(screen.getByTestId('review-content')).toBeDefined()
-
-    // No placeholders remain
-    expect(screen.queryByTestId('terminal-connecting-placeholder')).toBeNull()
-    expect(screen.queryByTestId('review-loading-placeholder')).toBeNull()
   })
 })

@@ -18,8 +18,16 @@ export const ACP_CANARY_SLACK_APP_TOKEN_VARIABLE =
   "LABORER_ACP_CANARY_SLACK_APP_TOKEN";
 export const ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE =
   "LABORER_ACP_CANARY_SLACK_BOT_TOKEN";
+export const CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE =
+  "LABORER_CHAT_CANARY_SLACK_APP_TOKEN";
+export const CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE =
+  "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN";
+export const CHAT_CANARY_SLACK_WORKSPACES_VARIABLE =
+  "LABORER_CHAT_CANARY_SLACK_WORKSPACES";
 const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
 const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
+const CHAT_CANARY_BOT_TOKEN_REFERENCE_PATTERN =
+  /^LABORER_CHAT_CANARY_SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
 
 export interface SlackConfigShape {
   readonly appToken: Redacted.Redacted<string>;
@@ -53,6 +61,25 @@ const SlackWorkspaceConfigFromJson = Schema.Struct({
   root: Schema.optional(Schema.String),
   teamId: Schema.String,
 });
+
+const ChatCanaryWorkspaceConfigFromJson = Schema.Struct({
+  botTokenEnvironment: Schema.String,
+  teamId: Schema.String,
+});
+
+export interface ChatCanaryWorkspaceConfig {
+  readonly botToken: Redacted.Redacted<string>;
+  readonly botTokenEnvironment: string;
+  readonly teamId: string;
+}
+
+export type ChatCanarySlackConfig =
+  | (SlackConfigShape & { readonly mode: "single-workspace" })
+  | {
+      readonly appToken: Redacted.Redacted<string>;
+      readonly installations: readonly ChatCanaryWorkspaceConfig[];
+      readonly mode: "multi-workspace";
+    };
 
 export interface SlackInstallationConfig {
   readonly bindingIndex: number;
@@ -102,6 +129,82 @@ const matchesProductionBotToken = (
     )
   );
 };
+
+const chatCanaryBindingValidationReason = (
+  entry: typeof ChatCanaryWorkspaceConfigFromJson.Type,
+  teamIds: ReadonlySet<string>,
+  tokenReferences: ReadonlySet<string>
+): string | null => {
+  if (!TEAM_ID_PATTERN.test(entry.teamId)) {
+    return "invalid-team-id";
+  }
+  if (teamIds.has(entry.teamId)) {
+    return "duplicate-team-id";
+  }
+  if (
+    !CHAT_CANARY_BOT_TOKEN_REFERENCE_PATTERN.test(entry.botTokenEnvironment)
+  ) {
+    return "invalid-token-reference";
+  }
+  return tokenReferences.has(entry.botTokenEnvironment)
+    ? "duplicate-token-reference"
+    : null;
+};
+
+const loadChatCanaryInstallations = Effect.fn("loadChatCanaryInstallations")(
+  function* (environment: NodeJS.ProcessEnv, source: readonly unknown[]) {
+    const teamIds = new Set<string>();
+    const tokenReferences = new Set<string>();
+    const installations: ChatCanaryWorkspaceConfig[] = [];
+    for (const rawEntry of source) {
+      const decoded = yield* Effect.result(
+        Schema.decodeUnknownEffect(ChatCanaryWorkspaceConfigFromJson)(rawEntry)
+      );
+      if (decoded._tag === "Failure") {
+        return yield* configFailure(
+          CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
+          "invalid-shape"
+        );
+      }
+      const entry = decoded.success;
+      const validationReason = chatCanaryBindingValidationReason(
+        entry,
+        teamIds,
+        tokenReferences
+      );
+      if (validationReason !== null) {
+        return yield* configFailure(
+          CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
+          validationReason
+        );
+      }
+      const botToken = yield* readToken(
+        environment,
+        entry.botTokenEnvironment,
+        BOT_TOKEN_PREFIX
+      );
+      if (matchesProductionBotToken(environment, botToken)) {
+        return yield* configFailure(
+          entry.botTokenEnvironment,
+          "matches-production-token"
+        );
+      }
+      if (
+        Redacted.value(botToken) ===
+        environment[ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE]
+      ) {
+        return yield* configFailure(
+          entry.botTokenEnvironment,
+          "matches-other-canary-token"
+        );
+      }
+      teamIds.add(entry.teamId);
+      tokenReferences.add(entry.botTokenEnvironment);
+      installations.push({ ...entry, botToken });
+    }
+    return installations;
+  }
+);
 
 const invalidInstallation = (
   bindingIndex: number,
@@ -265,33 +368,116 @@ export const loadSlackConfig: Effect.Effect<
   });
 });
 
-export const loadAcpCanarySlackConfig = (
-  environment: NodeJS.ProcessEnv = process.env
+const loadCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv,
+  appTokenVariable: string,
+  botTokenVariable: string,
+  otherCanaryAppTokenVariable: string,
+  otherCanaryBotTokenVariable: string
 ): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
   Effect.gen(function* () {
     const appToken = yield* readToken(
       environment,
-      ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+      appTokenVariable,
       APP_TOKEN_PREFIX
     );
     const botToken = yield* readToken(
       environment,
-      ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+      botTokenVariable,
       BOT_TOKEN_PREFIX
     );
     if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
-      return yield* configFailure(
-        ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
-        "matches-production-token"
-      );
+      return yield* configFailure(appTokenVariable, "matches-production-token");
     }
     if (matchesProductionBotToken(environment, botToken)) {
+      return yield* configFailure(botTokenVariable, "matches-production-token");
+    }
+    if (Redacted.value(appToken) === environment[otherCanaryAppTokenVariable]) {
       return yield* configFailure(
-        ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
-        "matches-production-token"
+        appTokenVariable,
+        "matches-other-canary-token"
+      );
+    }
+    if (Redacted.value(botToken) === environment[otherCanaryBotTokenVariable]) {
+      return yield* configFailure(
+        botTokenVariable,
+        "matches-other-canary-token"
       );
     }
     return SlackConfig.of({ appToken, botToken });
+  });
+
+export const loadAcpCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv = process.env
+): Effect.Effect<SlackConfigShape, SlackConfigValidationError> =>
+  loadCanarySlackConfig(
+    environment,
+    ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+    ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+    CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+    CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE
+  );
+
+export const loadChatCanarySlackConfig = (
+  environment: NodeJS.ProcessEnv = process.env
+): Effect.Effect<ChatCanarySlackConfig, SlackConfigValidationError> =>
+  Effect.gen(function* () {
+    const registrySource = environment[CHAT_CANARY_SLACK_WORKSPACES_VARIABLE];
+    if (registrySource === undefined) {
+      const config = yield* loadCanarySlackConfig(
+        environment,
+        CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+        CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
+        ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
+        ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE
+      );
+      return { ...config, mode: "single-workspace" } as const;
+    }
+
+    const appToken = yield* readToken(
+      environment,
+      CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+      APP_TOKEN_PREFIX
+    );
+    if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
+      return yield* configFailure(
+        CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+        "matches-production-token"
+      );
+    }
+    if (
+      Redacted.value(appToken) ===
+      environment[ACP_CANARY_SLACK_APP_TOKEN_VARIABLE]
+    ) {
+      return yield* configFailure(
+        CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
+        "matches-other-canary-token"
+      );
+    }
+    if (registrySource.trim().length === 0) {
+      return yield* configFailure(
+        CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
+        "blank"
+      );
+    }
+    const source = yield* Effect.try({
+      try: () => JSON.parse(registrySource) as unknown,
+      catch: () =>
+        configFailure(CHAT_CANARY_SLACK_WORKSPACES_VARIABLE, "invalid-json"),
+    });
+    if (!Array.isArray(source) || source.length < 2) {
+      return yield* configFailure(
+        CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
+        "requires-multiple-workspaces"
+      );
+    }
+
+    const installations = yield* loadChatCanaryInstallations(
+      environment,
+      source
+    );
+
+    return { appToken, installations, mode: "multi-workspace" } as const;
   });
 
 export const slackConfigLayer: Layer.Layer<

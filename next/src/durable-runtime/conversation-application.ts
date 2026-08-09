@@ -7,8 +7,8 @@ import type {
   ConversationBlocked,
   PublishApplicationOutput,
 } from "../application.ts";
-import type { StoreError } from "../prototype/errors.ts";
-import { HandlerFailure } from "../prototype/errors.ts";
+import type { StoreError } from "../core/errors.ts";
+import { HandlerFailure } from "../core/errors.ts";
 import {
   ConversationOutput,
   type DurableRuntimeError,
@@ -44,7 +44,7 @@ const unavailableEventAcceptance: AcceptApplicationEvent = () =>
 
 /**
  * Routes participant turns through the root owner while retaining the existing
- * Runner as the only publisher. The same registered handler receives durable
+ * Conversation application as the only publisher. The same registered handler receives durable
  * Execution events from the root runtime; Action workers never publish.
  */
 export const applicationThroughRootConversationRuntime = Effect.fn(
@@ -53,6 +53,11 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   readonly application: ApplicationShape;
   readonly actionCatalogFingerprint: string;
   readonly rootIdentity: string;
+  readonly publishExternalOutput?: (
+    conversationId: string,
+    output: ApplicationPublicOutput
+  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  readonly routeParticipantTurnsThroughDurableRuntime?: boolean;
   readonly runtime: RootDurableRuntimeShape;
   readonly workspaceId: string;
 }) {
@@ -79,8 +84,29 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
       handle: (event) =>
         Effect.gen(function* () {
           if (event._tag === "ExternalInput") {
+            if (options.routeParticipantTurnsThroughDurableRuntime === false) {
+              const outputs: ApplicationPublicOutput[] = [];
+              yield* options.application.handle(
+                event,
+                (output) =>
+                  Effect.sync(() => outputs.push(output)).pipe(
+                    Effect.andThen(
+                      options.publishExternalOutput?.(
+                        event.conversationId,
+                        output
+                      ) ?? Effect.void
+                    )
+                  ),
+                () =>
+                  Effect.succeed({
+                    decision: { _tag: "Accepted", eventId: event.eventId },
+                    scheduling: "AlreadyDurable",
+                  })
+              );
+              return outputs;
+            }
             // The root owner makes the Action event durable before handing it
-            // back to the Runner. The Runner remains responsible for ordering
+            // back to the Conversation application, which remains responsible for ordering
             // the Application invocation and publishing any resulting output.
             const acceptEvent = yield* Deferred.await(runnerEventAcceptance);
             yield* acceptEvent(event);
@@ -90,7 +116,7 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
           handledEvents.add(eventId);
           const outputs: ApplicationPublicOutput[] = [];
           // Account for the surrounding JSON array. Validate and bound every
-          // item before it can cross the Runner's public-output callback.
+          // item before it can cross the Conversation application's public-output callback.
           let encodedOutputsBytes = 2;
           yield* options.application
             .handle(
@@ -146,6 +172,9 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             options.application.handle(event, publish, acceptEvent)
           )
         );
+      }
+      if (options.routeParticipantTurnsThroughDurableRuntime === false) {
+        return options.application.handle(event, publish, acceptEvent);
       }
       return Effect.acquireUseRelease(
         Effect.gen(function* () {

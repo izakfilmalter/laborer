@@ -1,6 +1,6 @@
 import { Rpc, RpcGroup } from '@effect/rpc'
 import { Schema } from 'effect'
-import { PrdStatus, TerminalStatus, WorkspaceStatus } from './types.js'
+import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
@@ -118,7 +118,6 @@ export const ProjectResponse = Schema.Struct({
   id: Schema.String,
   repoPath: Schema.String,
   name: Schema.String,
-  brrrConfig: Schema.optional(Schema.String),
 })
 
 export type ProjectResponse = typeof ProjectResponse.Type
@@ -135,11 +134,6 @@ const ConfigResolvedValueStringArray = Schema.Struct({
 
 const ConfigResolvedValueBoolean = Schema.Struct({
   value: Schema.Boolean,
-  source: Schema.String,
-})
-
-const ConfigResolvedValueNullableString = Schema.Struct({
-  value: Schema.NullOr(Schema.String),
   source: Schema.String,
 })
 
@@ -163,47 +157,9 @@ const ConfigResolvedValueAgent = Schema.Struct({
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
   devServer: DevServerConfigResponse,
-  prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
-  brrrConfig: ConfigResolvedValueNullableString,
   watchIgnore: ConfigResolvedValueStringArray,
-})
-
-const TaskResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  source: Schema.String,
-  prdId: Schema.optional(Schema.String),
-  externalId: Schema.optional(Schema.String),
-  title: Schema.String,
-  status: Schema.String,
-})
-
-const TaskImportResponse = Schema.Struct({
-  importedCount: Schema.Int,
-  totalCount: Schema.Int,
-})
-
-export const PrdResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  title: Schema.String,
-  slug: Schema.String,
-  filePath: Schema.String,
-  status: PrdStatus,
-  createdAt: Schema.String,
-})
-
-const PrdReadResponse = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  title: Schema.String,
-  slug: Schema.String,
-  filePath: Schema.String,
-  status: PrdStatus,
-  createdAt: Schema.String,
-  content: Schema.String,
 })
 
 const WorkspaceResponse = Schema.Struct({
@@ -237,119 +193,6 @@ const PrStatusResponse = Schema.Struct({
 const WorkspaceSyncStatusResponse = Schema.Struct({
   aheadCount: Schema.NullOr(Schema.Int),
   behindCount: Schema.NullOr(Schema.Int),
-})
-
-// ---------------------------------------------------------------------------
-// Review Comment Schemas
-// ---------------------------------------------------------------------------
-
-/**
- * Reaction on a GitHub PR comment (e.g. rocket, thumbs_up, confused).
- * Used to determine triage/resolution state of findings.
- */
-export const PrCommentReaction = Schema.Struct({
-  id: Schema.Number,
-  content: Schema.String,
-  userId: Schema.Number,
-})
-
-export type PrCommentReaction = typeof PrCommentReaction.Type
-
-/**
- * A single PR comment fetched from GitHub.
- * Includes both issue comments and inline review comments.
- * Comments that contain a brrr-finding marker are returned in the
- * `findings` array instead of `comments`.
- */
-export const PrComment = Schema.Struct({
-  /** GitHub comment ID */
-  id: Schema.Number,
-  /** 'issue' for issue comments, 'review' for inline review comments */
-  commentType: Schema.Literal('issue', 'review'),
-  /** GitHub login of the comment author */
-  authorLogin: Schema.String,
-  /** Avatar URL of the comment author */
-  authorAvatarUrl: Schema.String,
-  /** Comment body (markdown) */
-  body: Schema.String,
-  /** File path for inline review comments (null for issue comments) */
-  filePath: Schema.NullOr(Schema.String),
-  /** Line number for inline review comments (null for issue comments) */
-  line: Schema.NullOr(Schema.Number),
-  /** ISO 8601 timestamp */
-  createdAt: Schema.String,
-  /** Reactions on this comment */
-  reactions: Schema.Array(PrCommentReaction),
-})
-
-export type PrComment = typeof PrComment.Type
-
-/**
- * Severity level for a brrr review finding.
- */
-export const ReviewSeverity = Schema.Literal('critical', 'warning', 'info')
-
-export type ReviewSeverity = typeof ReviewSeverity.Type
-
-/**
- * A structured finding extracted from a brrr inline review comment.
- * Parsed from the `<!-- brrr-finding:{json} -->` HTML comment marker.
- */
-export const ReviewFinding = Schema.Struct({
-  /** Short slugified identifier (e.g. "sql-injection") */
-  id: Schema.String,
-  /** File path where the finding applies */
-  file: Schema.String,
-  /** Line number in the file */
-  line: Schema.Number,
-  /** Severity level: critical, warning, or info */
-  severity: ReviewSeverity,
-  /** Human-readable description of the finding */
-  description: Schema.String,
-  /** Suggested fixes (may be empty) */
-  suggestedFixes: Schema.Array(Schema.String),
-  /** Finding category (e.g. "correctness", "security", "style"); null if unset */
-  category: Schema.NullOr(Schema.String),
-  /** IDs of other findings this one depends on (may be empty) */
-  dependsOn: Schema.Array(Schema.String),
-  /** GitHub comment ID of the inline review comment containing this finding */
-  commentId: Schema.Number,
-  /** Reactions on the comment containing this finding */
-  reactions: Schema.Array(PrCommentReaction),
-})
-
-export type ReviewFinding = typeof ReviewFinding.Type
-
-/**
- * Review verdict extracted from the brrr summary comment.
- * The summary comment is identified by the `<!-- brrr-review -->` marker.
- */
-export const ReviewVerdict = Schema.Literal('approved', 'needs_fix')
-
-export type ReviewVerdict = typeof ReviewVerdict.Type
-
-/**
- * Response from review.fetchComments RPC.
- * Comments with brrr-finding markers appear in `findings`, not `comments`.
- * The verdict is extracted from the `<!-- brrr-review -->` summary comment.
- */
-const ReviewFetchCommentsResponse = Schema.Struct({
-  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
-  verdict: Schema.NullOr(ReviewVerdict),
-  /** Structured findings extracted from brrr inline review comments */
-  findings: Schema.Array(ReviewFinding),
-  /** PR comments without brrr-finding markers (human comments + non-finding brrr comments) */
-  comments: Schema.Array(PrComment),
-})
-
-/**
- * Response from review.fetchVerdict RPC.
- * Lightweight response containing only the verdict — used by workspace
- * cards to show a review status badge without fetching all comments.
- */
-const ReviewFetchVerdictResponse = Schema.Struct({
-  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
-  verdict: Schema.NullOr(ReviewVerdict),
 })
 
 // ---------------------------------------------------------------------------
@@ -642,10 +485,8 @@ export class LaborerRpcs extends RpcGroup.make(
             autoOpen: Schema.optional(Schema.Boolean),
           })
         ),
-        prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
-        brrrConfig: Schema.optional(Schema.String),
       }),
     },
   }),
@@ -670,96 +511,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // PRD RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('prd.create', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-      title: Schema.String,
-      content: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.list', {
-    success: Schema.Array(PrdResponse),
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.read', {
-    success: PrdReadResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.remove', {
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.update', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      content: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.updateStatus', {
-    success: PrdResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      status: PrdStatus,
-    },
-  }),
-
-  Rpc.make('prd.createIssue', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-      title: Schema.String,
-      body: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.readIssues', {
-    success: Schema.String,
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.listRemainingIssues', {
-    success: Schema.Array(TaskResponse),
-    error: RpcError,
-    payload: {
-      prdId: Schema.String,
-    },
-  }),
-
-  Rpc.make('prd.updateIssue', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
-      body: Schema.optional(Schema.String),
-      status: Schema.optional(Schema.String),
-    },
-  }),
-
-  // -----------------------------------------------------------------------
   // Workspace RPCs
   // -----------------------------------------------------------------------
   Rpc.make('workspace.create', {
@@ -768,7 +519,6 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       projectId: Schema.String,
       branchName: Schema.optional(Schema.String),
-      taskId: Schema.optional(Schema.String),
       /**
        * Creates a sub-workspace: the new worktree branches from this
        * workspace's current HEAD and its PR targets that workspace's branch.
@@ -861,145 +611,6 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // brrr RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('brrr.startLoop', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('brrr.review', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  Rpc.make('brrr.fix', {
-    success: TerminalResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Task RPCs
-  // -----------------------------------------------------------------------
-  Rpc.make('task.create', {
-    success: TaskResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-      prdId: Schema.optional(Schema.String),
-      title: Schema.String,
-      description: Schema.optional(Schema.String),
-    },
-  }),
-
-  Rpc.make('task.importGithub', {
-    success: TaskImportResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.importLinear', {
-    success: TaskImportResponse,
-    error: RpcError,
-    payload: {
-      projectId: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.updateStatus', {
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
-      status: Schema.String,
-    },
-  }),
-
-  Rpc.make('task.remove', {
-    error: RpcError,
-    payload: {
-      taskId: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Review RPCs
-  // -----------------------------------------------------------------------
-
-  /**
-   * Fetch all PR comments (issue comments + inline review comments) for a
-   * workspace's pull request. Returns raw comment data including author info,
-   * body, file/line references, and reactions.
-   *
-   * @see PRD-review-findings-panel.md — "PR Comment Fetcher" section
-   */
-  Rpc.make('review.fetchComments', {
-    success: ReviewFetchCommentsResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  /**
-   * Fetch only the review verdict for a workspace's PR. This is a
-   * lightweight call that only fetches issue comments (not inline review
-   * comments or reactions) and parses the `<!-- brrr-review -->` marker.
-   * Used by workspace cards to show a verdict badge without the overhead
-   * of fetching all findings and comments.
-   *
-   * @see PRD-review-findings-panel.md — "Verdict Badge Data Source" section
-   */
-  Rpc.make('review.fetchVerdict', {
-    success: ReviewFetchVerdictResponse,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-    },
-  }),
-
-  /**
-   * Add a reaction (e.g. rocket) to an inline review comment on GitHub.
-   * Used by the review pane to queue findings for brrr fix.
-   *
-   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
-   */
-  Rpc.make('review.addReaction', {
-    success: PrCommentReaction,
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      commentId: Schema.Number,
-      content: Schema.String,
-    },
-  }),
-
-  /**
-   * Remove a reaction from an inline review comment on GitHub.
-   * Used by the review pane to unqueue findings from brrr fix.
-   *
-   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
-   */
-  Rpc.make('review.removeReaction', {
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      commentId: Schema.Number,
-      reactionId: Schema.Number,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
   // GitHub OAuth RPCs
   // -----------------------------------------------------------------------
 
@@ -1017,68 +628,6 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       code: Schema.String,
-    },
-  }),
-
-  // -----------------------------------------------------------------------
-  // Alive-driven individual fetch RPCs
-  // -----------------------------------------------------------------------
-
-  /**
-   * Fetch a single issue comment by ID, applying brrr finding/verdict parsing.
-   * Used by Alive event handler when a `pr-comment` (subtype: issue-comment)
-   * event arrives, avoiding a full fetchComments round-trip.
-   */
-  Rpc.make('review.fetchSingleIssueComment', {
-    success: Schema.Struct({
-      comment: PrComment,
-      /** Non-null if this comment is the brrr review summary. */
-      verdict: Schema.NullOr(ReviewVerdict),
-    }),
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      commentId: Schema.Number,
-    },
-  }),
-
-  /**
-   * Fetch a single PR review comment (inline) by ID, applying brrr finding
-   * parsing. Returns either a plain comment or a structured finding.
-   */
-  Rpc.make('review.fetchSingleReviewComment', {
-    success: Schema.Union(
-      Schema.Struct({
-        kind: Schema.Literal('comment'),
-        comment: PrComment,
-      }),
-      Schema.Struct({
-        kind: Schema.Literal('finding'),
-        finding: ReviewFinding,
-      })
-    ),
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      commentId: Schema.Number,
-    },
-  }),
-
-  /**
-   * Fetch a single PR review by ID. Returns the review state which can be
-   * used to update the verdict badge immediately.
-   */
-  Rpc.make('review.fetchSingleReview', {
-    success: Schema.Struct({
-      reviewId: Schema.Number,
-      state: Schema.String,
-      authorLogin: Schema.String,
-      body: Schema.String,
-    }),
-    error: RpcError,
-    payload: {
-      workspaceId: Schema.String,
-      reviewId: Schema.Number,
     },
   }),
 
@@ -1452,7 +1001,7 @@ export class TerminalRpcs extends RpcGroup.make(
     success: TerminalInfo,
     error: TerminalRpcError,
     payload: {
-      /** Shell command to execute (e.g., "bash", "opencode", "brrr build --once"). */
+      /** Shell command to execute (e.g., "bash" or "opencode"). */
       command: Schema.String,
       /** Command arguments (optional, default []). */
       args: Schema.optional(Schema.Array(Schema.String)),

@@ -63,10 +63,10 @@ const diffLeaf: LeafNode = {
   workspaceId: 'ws-1',
 }
 
-const reviewLeaf: LeafNode = {
+const agentLeaf: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-3',
-  paneType: 'review',
+  paneType: 'agent',
 }
 
 const devServerLeaf: LeafNode = {
@@ -95,7 +95,7 @@ const nestedPanelSplit: SplitNode = {
       _tag: 'SplitNode',
       id: 'panel-split-inner',
       direction: 'vertical',
-      children: [diffLeaf, reviewLeaf],
+      children: [diffLeaf, agentLeaf],
       sizes: [50, 50],
     },
   ],
@@ -159,7 +159,7 @@ describe('LeafNodeSchema', () => {
     const minimal: LeafNode = {
       _tag: 'LeafNode',
       id: 'pane-min',
-      paneType: 'review',
+      paneType: 'agent',
     }
     const result = roundTrip(LeafNodeSchema, minimal)
     expect(result).toStrictEqual(minimal)
@@ -171,7 +171,6 @@ describe('LeafNodeSchema', () => {
       'terminal',
       'diff',
       'devServerTerminal',
-      'review',
     ] as const) {
       const leaf: LeafNode = {
         _tag: 'LeafNode',
@@ -204,7 +203,7 @@ describe('SplitNodeSchema', () => {
       _tag: 'SplitNode',
       id: 'v-split',
       direction: 'vertical',
-      children: [terminalLeaf, reviewLeaf],
+      children: [terminalLeaf, agentLeaf],
       sizes: [70, 30],
     }
     const result = roundTrip(SplitNodeSchema, vertical)
@@ -264,7 +263,7 @@ describe('PanelNodeSchema', () => {
                 {
                   _tag: 'LeafNode',
                   id: 'l3-b',
-                  paneType: 'review',
+                  paneType: 'agent',
                 },
               ],
               sizes: [60, 40],
@@ -366,7 +365,7 @@ describe('WorkspaceTileSplitSchema', () => {
       panelTabs: [
         {
           id: 'tab-4',
-          panelLayout: reviewLeaf,
+          panelLayout: agentLeaf,
         },
       ],
     }
@@ -490,7 +489,7 @@ describe('WindowLayoutSchema', () => {
      *           │   └─ PanelTab "Split" (horizontal split: terminal + diff)
      *           └─ WorkspaceTileSplit (vertical)
      *               ├─ WorkspaceTileLeaf ws-2 (devServer tab)
-     *               └─ WorkspaceTileLeaf ws-3 (review tab)
+     *               └─ WorkspaceTileLeaf ws-3 (agent tab)
      */
     const layout: WindowLayout = {
       tabs: [
@@ -515,12 +514,12 @@ describe('WindowLayoutSchema', () => {
                     workspaceId: 'ws-3',
                     panelTabs: [
                       {
-                        id: 'tab-review',
-                        panelLayout: reviewLeaf,
+                        id: 'tab-agent',
+                        panelLayout: agentLeaf,
                         focusedPaneId: 'pane-3',
                       },
                     ],
-                    activePanelTabId: 'tab-review',
+                    activePanelTabId: 'tab-agent',
                   },
                 ],
                 sizes: [50, 50],

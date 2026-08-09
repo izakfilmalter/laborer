@@ -31,10 +31,8 @@ describe('project settings modal helpers', () => {
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
       agent: 'opencode2',
-      brrrConfig: '.brrr/config.toml',
       resolvedConfig: {
         agent: 'claude',
-        brrrConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },
@@ -47,7 +45,6 @@ describe('project settings modal helpers', () => {
 
     expect(result).toEqual({
       agent: 'opencode2',
-      brrrConfig: '.brrr/config.toml',
       setupScripts: ['bun install', 'bun test'],
       worktreeDir: '~/worktrees',
     })
@@ -56,10 +53,8 @@ describe('project settings modal helpers', () => {
   it('builds an OpenCode 2 agent update', () => {
     const result = buildConfigUpdates({
       agent: 'opencode2',
-      brrrConfig: '',
       resolvedConfig: {
         agent: 'claude',
-        brrrConfig: null,
         setupScripts: [],
         worktreeDir: '/tmp/worktrees',
       },
@@ -73,10 +68,8 @@ describe('project settings modal helpers', () => {
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
       agent: 'claude',
-      brrrConfig: '  ',
       resolvedConfig: {
         agent: 'claude',
-        brrrConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },

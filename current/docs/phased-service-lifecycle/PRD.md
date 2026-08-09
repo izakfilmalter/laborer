@@ -6,7 +6,6 @@ The Laborer desktop app has a startup bottleneck caused by a sequential dependen
 
 1. Electron spawns terminal + file-watcher sidecars in parallel, health-polls them (up to 10s timeout each)
 2. Only after both are healthy, spawns the server sidecar
-3. The server blocks its own health endpoint until all Effect layers are built — including PR watchers, task importers, and connections to terminal + file-watcher sidecars
 4. The renderer's `ServerGate` component blocks all meaningful UI until all three sidecars report healthy
 5. Only then does LiveStore begin initializing — opening OPFS, replaying materializers, and performing a **blocking initial sync** with a 5-second timeout
 6. Only after LiveStore sync completes does the actual app content render
@@ -81,7 +80,6 @@ Modeled after VS Code's `LifecyclePhase`, the renderer maintains a forward-only 
 | 1 | **Starting** | App shell renders | Local OPFS data, navigation, panel layouts, cached workspace list. No server. |
 | 2 | **Ready** | Server health check passes | Core RPCs, LiveStore sync begins in background, workspace CRUD, git operations |
 | 3 | **Restored** | All sidecar connections established, LiveStore sync complete | Terminals, file watching, full read/write. UI state fully restored. |
-| 4 | **Eventually** | Deferred services initialized | PR tracking, background fetch, task importers. Everything. |
 
 Phase transitions are forward-only and irreversible. Components use a `when(phase): Promise<void>` API (backed by a `Barrier` pattern, as VS Code does) to defer work until the appropriate phase.
 
@@ -172,12 +170,6 @@ The server's ~25 Effect layers are split into two groups that initialize indepen
 - `PrWatcher` — GitHub PR status polling
 - `BackgroundFetchService` — Periodic git fetch
 - `DiffService` — Git diff computation
-- `PrdStorageService` — PRD file management
-- `TaskManager` — Task tracking
-- `LinearTaskImporter` — Linear integration
-- `GithubTaskImporter` — GitHub issues integration
-- `ReviewCommentFetcher` — PR review comment fetching
-- `McpRegistrar` — MCP server registration
 
 The server uses Effect's `Layer.launch` for deferred layers, forking them as background fibers after the core HTTP server starts. The health endpoint responds as soon as core layers are built. RPC handlers for deferred services return a typed "service initializing" error until their layer is ready.
 

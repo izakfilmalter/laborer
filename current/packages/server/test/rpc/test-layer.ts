@@ -14,16 +14,11 @@ import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
-import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
-import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
-import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
-import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
-import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
@@ -124,9 +119,7 @@ const DeferredLeafLayers = Layer.mergeAll(
  * Deferred Group 1 — services depending on LaborerStore + leaf layers.
  */
 const DeferredGroup1aLayers = Layer.mergeAll(
-  TaskManager.layer,
   BranchStateTracker.layer,
-  PrdStorageService.layer,
   FileService.layer,
   PrWatcher.layer
 )
@@ -153,12 +146,7 @@ const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
 /**
  * Deferred Group 2 — services depending on Group 1.
  */
-const DeferredGroup2Layers = Layer.mergeAll(
-  GithubTaskImporter.layer,
-  LinearTaskImporter.layer,
-  ReviewCommentFetcher.layer,
-  RepositoryWatchCoordinator.layer
-)
+const DeferredGroup2Layers = Layer.mergeAll(RepositoryWatchCoordinator.layer)
 
 /**
  * Full deferred service stack built bottom-up.

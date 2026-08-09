@@ -48,12 +48,6 @@ vi.mock('@/panes/diff-pane', () => ({
   ),
 }))
 
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div data-testid="review-pane" data-workspace-id={workspaceId} />
-  ),
-}))
-
 vi.mock('@/panes/tree-pane', () => ({
   TreePane: ({ workspaceId }: { workspaceId: string }) => (
     <div data-testid="tree-pane" data-workspace-id={workspaceId} />
@@ -76,7 +70,6 @@ vi.mock('@/panels/panel-context', () => {
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(() => false),
     toggleTreePane: vi.fn(() => false),
     addPanelTab: vi.fn(),
     addWorkspaceToCurrentTab: vi.fn(),
@@ -286,7 +279,7 @@ describe('computeSidePanelSizes', () => {
     expect(result.mainPanelSize).toBe('60%')
   })
 
-  it('returns 15%/55% for three side panels (tree + diff + review)', () => {
+  it('returns 15%/55% for three side panels', () => {
     const result = computeSidePanelSizes(3)
     expect(result.sidePanelSize).toBe('15%')
     expect(result.mainPanelSize).toBe('55%')

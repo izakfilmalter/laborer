@@ -83,6 +83,7 @@ interface WorkspaceRecord {
   readonly origin: 'laborer' | 'external'
   readonly projectId: string
   readonly status: string
+  /** @deprecated Legacy task link retained for persisted workspace compatibility. */
   readonly taskSource: string | null
   readonly worktreePath: string
 }
@@ -580,7 +581,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      *
      * @param projectId - ID of the registered project
      * @param branchName - Optional branch name (auto-generated if omitted)
-     * @param taskId - Optional task ID to link workspace to a task
      * @param onReady - Optional effect to run when workspace setup completes
      *   (e.g. start diff polling). Receives the workspace ID. Errors are
      *   logged but do not affect the workspace status.
@@ -592,7 +592,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     readonly createWorktree: (
       projectId: string,
       branchName?: string,
-      taskId?: string,
       onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
       baseWorkspaceId?: string
     ) => Effect.Effect<WorkspaceRecord, RpcError>
@@ -989,7 +988,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         function* (
           projectId: string,
           branchName?: string,
-          taskId?: string,
           onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
           baseWorkspaceId?: string
         ) {
@@ -1056,7 +1054,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const workspace: WorkspaceRecord = {
             id,
             projectId,
-            taskSource: taskId ?? null,
+            taskSource: null,
             branchName: resolvedBranch,
             worktreePath,
             status: 'creating',

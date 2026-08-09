@@ -650,7 +650,7 @@ describe('decodeWindowLayout', () => {
     expect(tile.panelTabs).toHaveLength(0)
   })
 
-  it('preserves valid diff and review pane types', () => {
+  it('drops persisted review panes without crashing', () => {
     const diffLeaf = makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
     const reviewLeaf = makeLeaf('pane-review', undefined, 'ws-1', 'review')
     const tab1 = makePanelTab('tab-1', diffLeaf)
@@ -659,8 +659,10 @@ describe('decodeWindowLayout', () => {
     const layout = makeLayout([makeWindowTab('wt-1', tile)])
 
     const result = decodeWindowLayout(layout)
-    expect(result.wasRepaired).toBe(false)
-    expect(result.windowLayout).toEqual(layout)
+    expect(result.wasRepaired).toBe(true)
+    const repairedTile = result.windowLayout?.tabs[0]
+      ?.workspaceLayout as WorkspaceTileLeaf
+    expect(repairedTile.panelTabs).toEqual([tab1])
   })
 
   it('strips invalid optional fields from panel leaf nodes', () => {

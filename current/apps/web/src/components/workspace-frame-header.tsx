@@ -14,18 +14,9 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import {
-  ClipboardCheck,
-  FileCode2,
-  FolderTree,
-  Minus,
-  Plus,
-  Terminal,
-  X,
-} from 'lucide-react'
-import { Suspense, useCallback } from 'react'
+import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
+import { useCallback } from 'react'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { useUnresolvedFindingsCount } from '@/components/review-findings-count'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
@@ -75,118 +66,12 @@ interface WorkspaceFrameHeaderProps {
   readonly prTitle: string | null
   /** PR URL for linking. */
   readonly prUrl: string | null
-  /** Whether the review pane is currently open for the active workspace. */
-  readonly reviewIsOpen?: boolean | undefined
   /** Whether the file tree pane is currently open for the active workspace. */
   readonly treeIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
   readonly workspaceId: string | undefined
   /** Visible sidebar path for the workspace, excluding the project name. */
   readonly workspacePath: readonly string[]
-}
-
-/**
- * Icon-only review toggle button (default state, no findings count).
- */
-function ReviewIconButton({
-  disabled,
-  onClick,
-  reviewIsOpen,
-}: {
-  readonly disabled: boolean
-  readonly onClick: () => void
-  readonly reviewIsOpen: boolean
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={reviewIsOpen ? 'Close review pane' : 'Open review pane'}
-            aria-pressed={reviewIsOpen}
-            className={reviewIsOpen ? 'bg-accent text-foreground' : ''}
-            disabled={disabled}
-            onClick={onClick}
-            size="icon-sm"
-            variant="ghost"
-          />
-        }
-      >
-        <ClipboardCheck className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipContent>
-        {reviewIsOpen ? 'Close review pane' : 'Open review pane'}
-        <KbdGroup>
-          <Kbd>^</Kbd>
-          <Kbd>B</Kbd>
-          <Kbd>R</Kbd>
-        </KbdGroup>
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-/**
- * Self-fetching review button that shows the count of unresolved findings.
- * Renders a full "Review (N)" button when unresolved findings exist,
- * otherwise falls back to the icon-only button. Must be in a Suspense boundary.
- */
-function ReviewButtonWithCount({
-  disabled,
-  onClick,
-  reviewIsOpen,
-  workspaceId,
-}: {
-  readonly disabled: boolean
-  readonly onClick: () => void
-  readonly reviewIsOpen: boolean
-  readonly workspaceId: string
-}) {
-  const count = useUnresolvedFindingsCount(workspaceId)
-
-  if (count === 0) {
-    return (
-      <ReviewIconButton
-        disabled={disabled}
-        onClick={onClick}
-        reviewIsOpen={reviewIsOpen}
-      />
-    )
-  }
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={`Open review pane — ${count} unresolved`}
-            aria-pressed={reviewIsOpen}
-            className={cn(
-              'h-6 gap-1 px-1.5 text-xs',
-              reviewIsOpen
-                ? 'bg-accent text-foreground'
-                : 'border-orange-500/30 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30'
-            )}
-            disabled={disabled}
-            onClick={onClick}
-            size="sm"
-            variant={reviewIsOpen ? 'ghost' : 'outline'}
-          />
-        }
-      >
-        <ClipboardCheck className="size-3.5" />
-        {count}
-      </TooltipTrigger>
-      <TooltipContent>
-        {count} unresolved finding{count === 1 ? '' : 's'}
-        <KbdGroup>
-          <Kbd>^</Kbd>
-          <Kbd>B</Kbd>
-          <Kbd>R</Kbd>
-        </KbdGroup>
-      </TooltipContent>
-    </Tooltip>
-  )
 }
 
 function WorkspaceFrameTitle({
@@ -276,7 +161,6 @@ function WorkspaceFrameHeader({
   prTitle,
   prUrl,
   projectName,
-  reviewIsOpen = false,
   treeIsOpen = false,
   workspaceId,
   workspacePath,
@@ -294,10 +178,6 @@ function WorkspaceFrameHeader({
       fn(activePaneId)
     },
     [activePaneId, actions]
-  )
-
-  const reviewButtonOnClick = withFocus((paneId) =>
-    actions?.toggleReviewPane(paneId)
   )
 
   return (
@@ -407,30 +287,6 @@ function WorkspaceFrameHeader({
                 </KbdGroup>
               </TooltipContent>
             </Tooltip>
-            {workspaceId && prNumber != null ? (
-              <Suspense
-                fallback={
-                  <ReviewIconButton
-                    disabled={!hasActivePane}
-                    onClick={reviewButtonOnClick}
-                    reviewIsOpen={reviewIsOpen}
-                  />
-                }
-              >
-                <ReviewButtonWithCount
-                  disabled={!hasActivePane}
-                  onClick={reviewButtonOnClick}
-                  reviewIsOpen={reviewIsOpen}
-                  workspaceId={workspaceId}
-                />
-              </Suspense>
-            ) : (
-              <ReviewIconButton
-                disabled={!hasActivePane}
-                onClick={reviewButtonOnClick}
-                reviewIsOpen={reviewIsOpen}
-              />
-            )}
             <Tooltip>
               <TooltipTrigger
                 render={

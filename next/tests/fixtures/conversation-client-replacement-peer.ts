@@ -10,6 +10,12 @@ import {
   ParticipantInputEvent,
 } from "../../src/application.ts";
 import {
+  MessageId,
+  NormalizedMessage,
+  ThreadId,
+  TurnId,
+} from "../../src/core/domain.ts";
+import {
   defineAction,
   defineApplication,
 } from "../../src/durable-runtime/action.ts";
@@ -23,12 +29,6 @@ import {
   attachConversationClientLocally,
   ROOT_RUNTIME_PROTOCOL_VERSION,
 } from "../../src/durable-runtime/rpc.ts";
-import {
-  MessageId,
-  NormalizedMessage,
-  ThreadId,
-  TurnId,
-} from "../../src/prototype/domain.ts";
 
 const root = process.argv[2];
 if (root === undefined) {

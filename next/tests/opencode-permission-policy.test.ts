@@ -23,13 +23,13 @@ import {
 } from "@agentclientprotocol/sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Scope } from "effect";
-import { makeAcpAuthorityRepository } from "../src/acp-conversation-prototype/acp-authority.ts";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
-import { makeAcpProcessStateRepository } from "../src/acp-conversation-prototype/acp-process-state.ts";
-import { makeAcpConversationProcessSupervisor } from "../src/acp-conversation-prototype/acp-process-supervisor.ts";
-import { makeLaborerActionMcpBridge } from "../src/acp-conversation-prototype/action-mcp.ts";
-import { prepareAcpAgentContextSources } from "../src/acp-conversation-prototype/agent-context.ts";
-import { laborerMcpServerLauncherArgs } from "../src/acp-conversation-prototype/mcp-server-launcher-config.ts";
+import { makeAcpAuthorityRepository } from "../src/acp-runtime/acp-authority.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
+import { makeAcpProcessStateRepository } from "../src/acp-runtime/acp-process-state.ts";
+import { makeAcpConversationProcessSupervisor } from "../src/acp-runtime/acp-process-supervisor.ts";
+import { makeLaborerActionMcpBridge } from "../src/acp-runtime/action-mcp.ts";
+import { prepareAcpAgentContextSources } from "../src/acp-runtime/agent-context.ts";
+import { laborerMcpServerLauncherArgs } from "../src/acp-runtime/mcp-server-launcher-config.ts";
 import {
   awaitLaborerMemoryMcpReadiness,
   laborerMemoryOpenCodePermission,
@@ -37,11 +37,11 @@ import {
   observeLaborerMemoryToolCall,
   prepareLaborerMemoryMcpRegistration,
   tryAuthorizeLaborerMemoryPermission,
-} from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/memory-mcp.ts";
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
-} from "../src/acp-conversation-prototype/open-code-acp-process.ts";
+} from "../src/acp-runtime/open-code-acp-process.ts";
 import { productionActionCatalog } from "../src/action-catalog.ts";
 import { ParticipantInputEvent } from "../src/application.ts";
 import {
@@ -49,7 +49,7 @@ import {
   NormalizedMessage,
   ThreadId,
   TurnId,
-} from "../src/prototype/domain.ts";
+} from "../src/core/domain.ts";
 import {
   type ConversationAction,
   makeFileApplicationRepository,
@@ -553,7 +553,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize Action ${policy}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
 
         const sessionIds: string[] = [];
         for (const { actionName, attempt } of [
@@ -914,7 +914,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
     });
     assert.strictEqual(
       version.stdout.trim().replace(OPEN_CODE_2_VERSION_PREFIX, ""),
-      "0.0.0-next-16573"
+      "0.0.0-next-17055"
     );
 
     for (const action of ["allow", "deny"] as const) {
@@ -983,7 +983,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           }),
           `initialize ${action}`
         );
-        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+        assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
         const session = await withTimeout(
           connection.agent.request(methods.agent.session.new, {
             cwd: workspace,
@@ -1160,7 +1160,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         "initialize memory"
       );
       assert.strictEqual(initialized.agentInfo?.name, "OpenCode");
-      assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-16573");
+      assert.strictEqual(initialized.agentInfo?.version, "0.0.0-next-17055");
       const session = await withTimeout(
         connection.agent.request(methods.agent.session.new, {
           cwd: workspace,
@@ -1179,7 +1179,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
         observedFingerprints: new Map(),
         observedToolCallIds: new Set(),
         permission: memoryPermission,
-        pinnedOpenCodeVersion: "0.0.0-next-16573",
+        pinnedOpenCodeVersion: "0.0.0-next-17055",
         rejectedToolCallIds: new Set(),
         rejectUncorrelatedPermissions: false,
       });
@@ -1243,7 +1243,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
     }
   }, 120_000);
 
-  it("restarts real pinned OpenCode 0.0.0-next-16573 and resumes with Memory and Action registrations", async () => {
+  it("restarts real pinned OpenCode 0.0.0-next-17055 and resumes with Memory and Action registrations", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

@@ -5,9 +5,7 @@ import { z } from 'zod'
 
 /**
  * Default data directory for LiveStore persistence.
- * Uses `~/.config/laborer/data` so all worktrees of the same repo share
- * the same database, consistent with how prdsDir defaults to
- * `~/.config/laborer/<project>/prds`.
+ * Uses `~/.config/laborer/data` so all worktrees share the same database.
  */
 const defaultDataDir = join(homedir(), '.config', 'laborer', 'data')
 

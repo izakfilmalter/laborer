@@ -40,7 +40,6 @@ const mockActions: PanelActions = {
   toggleDevServerPane: vi.fn(async () => false),
   toggleDiffPane: vi.fn(() => false),
   toggleFullscreenPane: vi.fn(),
-  toggleReviewPane: vi.fn(() => false),
   toggleTreePane: vi.fn(() => false),
   addPanelTab: vi.fn(),
   addWorkspaceToCurrentTab: vi.fn(),
@@ -106,7 +105,7 @@ vi.mock('@/livestore/store', () => ({
   }),
 }))
 
-// Mock PanelManager, DiffPane, ReviewPane, resizable, and header to avoid
+// Mock PanelManager, DiffPane, resizable, and header to avoid
 // transitive LiveStore / xterm / heavyweight dependency imports
 vi.mock('@/panels/panel-manager', () => ({
   PanelManager: ({ layout }: { layout: unknown }) => (
@@ -117,12 +116,6 @@ vi.mock('@/panels/panel-manager', () => ({
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: ({ workspaceId }: { workspaceId: string }) => (
     <div data-testid="diff-pane" data-workspace-id={workspaceId} />
-  ),
-}))
-
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div data-testid="review-pane" data-workspace-id={workspaceId} />
   ),
 }))
 
@@ -200,9 +193,9 @@ describe('EmptyWorkspaceState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('T')
   })
 
-  it('embeds the PanelTypePicker with 5 options', () => {
+  it('embeds the PanelTypePicker with 4 options', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(5)
+    expect(getPickerOptions()).toHaveLength(4)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {
@@ -223,15 +216,9 @@ describe('EmptyWorkspaceState', () => {
     expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'diff')
   })
 
-  it('calls addPanelTab with review when option 4 is clicked', () => {
+  it('calls addPanelTab with devServerTerminal when option 4 is clicked', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
     fireEvent.click(getOptionAt(3))
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'review')
-  })
-
-  it('calls addPanelTab with devServerTerminal when option 5 is clicked', () => {
-    render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    fireEvent.click(getOptionAt(4))
     expect(mockActions.addPanelTab).toHaveBeenCalledWith(
       'ws-1',
       'devServerTerminal'
@@ -290,9 +277,9 @@ describe('EmptyPanelTabState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('D')
   })
 
-  it('embeds the PanelTypePicker with 5 options', () => {
+  it('embeds the PanelTypePicker with 4 options', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(5)
+    expect(getPickerOptions()).toHaveLength(4)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {
@@ -301,10 +288,13 @@ describe('EmptyPanelTabState', () => {
     expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'agent')
   })
 
-  it('calls addPanelTab with review when option 4 is clicked', () => {
+  it('calls addPanelTab with devServerTerminal when option 4 is clicked', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
     fireEvent.click(getOptionAt(3))
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'review')
+    expect(mockActions.addPanelTab).toHaveBeenCalledWith(
+      'ws-1',
+      'devServerTerminal'
+    )
   })
 
   it('does not call addPanelTab when workspaceId is undefined', () => {
@@ -322,7 +312,10 @@ describe('EmptyPanelTabState', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
     const picker = screen.getByTestId('panel-type-picker')
     fireEvent.keyDown(picker, { key: '4' })
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'review')
+    expect(mockActions.addPanelTab).toHaveBeenCalledWith(
+      'ws-1',
+      'devServerTerminal'
+    )
   })
 })
 

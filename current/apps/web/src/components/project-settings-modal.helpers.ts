@@ -7,14 +7,12 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly agent: AgentProvider
-  readonly brrrConfig: string | null
   readonly setupScripts: readonly string[]
   readonly worktreeDir: string
 }
 
 interface ConfigUpdates {
   agent?: AgentProvider
-  brrrConfig?: string
   setupScripts?: string[]
   worktreeDir?: string
 }
@@ -45,13 +43,11 @@ const areStringArraysEqual = (
 
 const buildConfigUpdates = ({
   agent,
-  brrrConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
 }: {
   agent: AgentProvider
-  brrrConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
@@ -64,7 +60,6 @@ const buildConfigUpdates = ({
 
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
-  const normalizedBrrrConfig = brrrConfig.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -77,13 +72,6 @@ const buildConfigUpdates = ({
     !areStringArraysEqual(normalizedSetupScripts, resolvedConfig.setupScripts)
   ) {
     updates.setupScripts = normalizedSetupScripts
-  }
-
-  if (
-    normalizedBrrrConfig.length > 0 &&
-    normalizedBrrrConfig !== (resolvedConfig.brrrConfig ?? '')
-  ) {
-    updates.brrrConfig = normalizedBrrrConfig
   }
 
   return updates

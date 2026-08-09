@@ -16,8 +16,6 @@ import { makeScopedTestRpcContext } from './test-layer.js'
 type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
 const CUSTOM_FIELD_PATTERN = /"customField": "preserve-me"/
-const PRDS_DIR_PATTERN = /"prdsDir": "\/tmp\/existing-prds"/
-const BRRR_CONFIG_PATTERN = /"brrrConfig": "brrr\/project\.json"/
 const SETUP_SCRIPTS_PATTERN = /"setupScripts": \[\s+"bun install"\s+\]/m
 const WORKTREE_DIR_PATTERN = /"worktreeDir": "~\/updated-worktrees"/
 
@@ -75,11 +73,9 @@ describe('LaborerRpcs config management', () => {
           initRepoAt(repoPath)
 
           const ancestorConfigPath = writeLaborerConfig(parentDir, {
-            brrrConfig: 'ancestor-brrr.json',
             worktreeDir: '~/ancestor-worktrees',
           })
           const projectConfigPath = writeLaborerConfig(repoPath, {
-            prdsDir: '/tmp/project-prds',
             setupScripts: ['bun install', 'bun test'],
           })
 
@@ -96,22 +92,11 @@ describe('LaborerRpcs config management', () => {
             devServer: {
               autoOpen: { source: 'default', value: false },
             },
-            prdsDir: {
-              source: canonicalProjectConfigPath,
-              value: '/tmp/project-prds',
-            },
-            brrrConfig: {
-              source: canonicalAncestorConfigPath,
-              value: 'ancestor-brrr.json',
-            },
             setupScripts: {
               source: canonicalProjectConfigPath,
               value: ['bun install', 'bun test'],
             },
-            watchIgnore: {
-              source: 'default',
-              value: [],
-            },
+            watchIgnore: { source: 'default', value: [] },
             worktreeDir: {
               source: canonicalAncestorConfigPath,
               value: join(homedir(), 'ancestor-worktrees'),
@@ -158,7 +143,6 @@ describe('LaborerRpcs config management', () => {
           initRepoAt(repoPath)
           const configPath = writeLaborerConfig(repoPath, {
             customField: 'preserve-me',
-            prdsDir: '/tmp/existing-prds',
           })
 
           const project = yield* client.project.add({ repoPath })
@@ -170,7 +154,6 @@ describe('LaborerRpcs config management', () => {
               devServer: {
                 autoOpen: true,
               },
-              brrrConfig: 'brrr/project.json',
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
             },
@@ -182,8 +165,6 @@ describe('LaborerRpcs config management', () => {
           const writtenConfig = readFileSync(canonicalConfigPath, 'utf-8')
 
           assert.match(writtenConfig, CUSTOM_FIELD_PATTERN)
-          assert.match(writtenConfig, PRDS_DIR_PATTERN)
-          assert.match(writtenConfig, BRRR_CONFIG_PATTERN)
           assert.match(writtenConfig, SETUP_SCRIPTS_PATTERN)
           assert.match(writtenConfig, WORKTREE_DIR_PATTERN)
 
@@ -194,22 +175,11 @@ describe('LaborerRpcs config management', () => {
             devServer: {
               autoOpen: { source: canonicalConfigPath, value: true },
             },
-            prdsDir: {
-              source: canonicalConfigPath,
-              value: '/tmp/existing-prds',
-            },
-            brrrConfig: {
-              source: canonicalConfigPath,
-              value: 'brrr/project.json',
-            },
             setupScripts: {
               source: canonicalConfigPath,
               value: ['bun install'],
             },
-            watchIgnore: {
-              source: 'default',
-              value: [],
-            },
+            watchIgnore: { source: 'default', value: [] },
             worktreeDir: {
               source: canonicalConfigPath,
               value: join(homedir(), 'updated-worktrees'),

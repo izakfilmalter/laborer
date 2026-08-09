@@ -346,8 +346,8 @@ export function AppSettingsModal() {
             </div>
 
             <p className="text-muted-foreground text-sm">
-              Connect your GitHub account to enable real-time PR status updates,
-              review comments, and other live notifications.
+              Connect your GitHub account to enable real-time PR status updates
+              and other live notifications.
             </p>
 
             {hasToken || success ? (

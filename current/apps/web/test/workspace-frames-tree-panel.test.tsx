@@ -279,7 +279,7 @@ describe('computeSidePanelSizes', () => {
     expect(result.mainPanelSize).toBe('60%')
   })
 
-  it('returns 15%/55% for three side panels (tree + diff + review)', () => {
+  it('returns 15%/55% for three side panels', () => {
     const result = computeSidePanelSizes(3)
     expect(result.sidePanelSize).toBe('15%')
     expect(result.mainPanelSize).toBe('55%')

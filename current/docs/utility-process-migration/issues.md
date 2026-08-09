@@ -363,7 +363,7 @@ Replace the WebSocket-based LiveStore sync channel between the server and the re
 
 - [x] `LaborerClient` atom uses the MessagePort Effect RPC client transport
 - [x] All ~30 `LaborerRpcs` endpoints work over MessagePort
-- [x] Project listing, workspace creation, config updates, PRD operations all function correctly
+- [x] Project listing, workspace creation, and config updates all function correctly
 - [x] The `server-init-status` check (deferred service readiness) works over MessagePort
 - [x] Error handling surfaces meaningful messages when the server utility process is unavailable
 

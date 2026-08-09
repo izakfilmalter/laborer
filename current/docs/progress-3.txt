@@ -2197,10 +2197,6 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
    - `getStatusClasses`, `StatusDot`: same pattern as workspace-list.tsx
    - `WorkspaceStatusSummary`: running → `text-success`/`bg-success`, creating → `text-warning`, errored → `text-destructive`/`bg-destructive`
 
-   - `getStatusClasses`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
-   - `StatusIcon`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
-   - `getSourceClasses`: manual → `text-muted-foreground`, linear → `text-chart-4` (uses chart palette for brand color), github → `text-foreground/70`, prd → `text-info`
-
 5. **Updated `apps/web/src/components/terminal-list.tsx`** — Running terminal colors:
    - Terminal icon: `text-green-500` → `text-success`
    - Running status badge: `border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400` → `border-success/30 bg-success/10 text-success`
@@ -3663,41 +3659,6 @@ Implemented live worktree watching and boot-time reconciliation. The server now 
 - `bun run check-types` (in `packages/server`): passes (pre-existing Effect plugin warnings remain)
 - `bun x ultracite check src/services/worktree-watcher.ts src/services/project-registry.ts src/main.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes
 
-
-**Status:** Done
-**Date:** 2026-03-05
-
-### Summary
-
-### What was done
-
-
-   - Parses GitHub markdown issue links like `[Title](https://github.com/org/repo/issues/123)`
-   - Parses plain GitHub issue URLs on list lines and derives a title from the surrounding text
-   - Parses Linear issue keys from common output shapes like `LAB-12: Add feature` and `Add feature (LAB-13)`
-   - Strips ANSI escape codes before parsing so raw terminal color codes do not break extraction
-
-3. **Wired the importer into `packages/server/src/rpc/handlers.ts`**:
-   - The RPC still returns immediately with the spawned terminal so the UI behavior is unchanged
-
-
-   - GitHub issue link parsing + duplicate suppression
-   - Linear issue key parsing
-   - ANSI-stripped parsing of colored terminal output
-
-### Files created
-
-### Files modified
-- `issues.md` — marked Issue #107 done
-
-### Acceptance criteria status
-
-### Verification
-- `bun run --filter @laborer/server check-types` still exits non-zero because the server package has existing Effect/tsgo diagnostics outside this feature; no new diagnostics referenced the PRD importer files after this change
-
-### Design decisions
-- **Wait for terminal completion, then read scrollback**: Reading the final ring-buffer scrollback avoids racing live terminal output frame-by-frame and reuses the terminal service's existing reconnection buffer.
-- **Duplicate protection in importer**: Deduping by `(projectId, source="prd", externalId)` prevents re-importing the same issue if the watcher reconnects or the PRD command is rerun.
 
 ## Issue #158: Config + settings polish & edge cases — IN PROGRESS
 

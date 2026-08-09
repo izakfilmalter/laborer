@@ -180,6 +180,17 @@ describe("SQLite Chat SDK state adapter", () => {
       assert.deepStrictEqual(await adapter.getList("history"), []);
     }));
 
+  it("does not resurrect expired list entries beyond a cleanup batch", () =>
+    withAdapter(async ({ adapter, advance }) => {
+      for (let index = 0; index < 300; index += 1) {
+        await adapter.appendToList("history", index, { ttlMs: 1 });
+      }
+
+      advance(1);
+      await adapter.appendToList("history", "current");
+      assert.deepStrictEqual(await adapter.getList("history"), ["current"]);
+    }));
+
   it("deletes a bounded list through the adapter's shared delete primitive", () =>
     withAdapter(async ({ adapter }) => {
       await adapter.appendToList("transcript", "message", { maxLength: 10 });

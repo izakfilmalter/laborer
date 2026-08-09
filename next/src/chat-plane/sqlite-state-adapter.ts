@@ -30,6 +30,8 @@ const SCHEMA = `
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chat_lists_key_sequence
     ON chat_lists (list_key, sequence);
+  CREATE INDEX IF NOT EXISTS chat_lists_expiration
+    ON chat_lists (expires_at) WHERE expires_at IS NOT NULL;
   CREATE TABLE IF NOT EXISTS chat_queues (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     thread_id TEXT NOT NULL,
@@ -38,15 +40,19 @@ const SCHEMA = `
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chat_queues_thread_sequence
     ON chat_queues (thread_id, sequence);
+  CREATE INDEX IF NOT EXISTS chat_queues_expiration
+    ON chat_queues (expires_at);
+  CREATE INDEX IF NOT EXISTS chat_cache_expiration
+    ON chat_cache (expires_at) WHERE expires_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS chat_locks_expiration
+    ON chat_locks (expires_at);
 `;
+
+const EXPIRATION_CLEANUP_BATCH_SIZE = 256;
 
 export interface SQLiteStateAdapterOptions {
   readonly now?: () => number;
   readonly path: string;
-}
-
-interface ValueRow {
-  readonly value: unknown;
 }
 
 const readString = (value: unknown, field: string): string => {
@@ -54,6 +60,13 @@ const readString = (value: unknown, field: string): string => {
     throw new Error(`Corrupt SQLite chat state: ${field} is not text`);
   }
   return value;
+};
+
+const readRowValue = (row: unknown, field: string): unknown => {
+  if (typeof row !== "object" || row === null || !("value" in row)) {
+    throw new Error(`Corrupt SQLite chat state: missing ${field}`);
+  }
+  return row.value;
 };
 
 const readInteger = (value: unknown, field: string): number => {
@@ -181,9 +194,10 @@ export class SQLiteStateAdapter implements StateAdapter {
 
   async disconnect(): Promise<void> {
     await this.#connectPromise?.catch(() => undefined);
-    this.#database?.close();
+    const database = this.#database;
     this.#database = undefined;
     this.#connectPromise = undefined;
+    database?.close();
   }
 
   async subscribe(threadId: string): Promise<void> {
@@ -209,6 +223,7 @@ export class SQLiteStateAdapter implements StateAdapter {
   async acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> {
     validateBound(ttlMs, "ttlMs");
     const now = this.#now();
+    this.#deleteExpired("chat_locks", now);
     const token = `sqlite_${randomUUID()}`;
     const expiresAt = expirationFrom(now, ttlMs);
     const result = this.#prepare(
@@ -244,17 +259,17 @@ export class SQLiteStateAdapter implements StateAdapter {
     const database = this.#connectedDatabase();
     return this.#transaction(database, () => {
       const now = this.#now();
-      const row = this.#prepare(
+      const row: unknown = this.#prepare(
         `SELECT value FROM chat_cache
          WHERE cache_key = ? AND (expires_at IS NULL OR expires_at > ?)`
-      ).get(key, now) as ValueRow | undefined;
+      ).get(key, now);
       if (row === undefined) {
         this.#prepare(
           "DELETE FROM chat_cache WHERE cache_key = ? AND expires_at <= ?"
         ).run(key, now);
         return null;
       }
-      return deserialize<T>(row.value);
+      return deserialize<T>(readRowValue(row, "cache value"));
     });
   }
 
@@ -262,15 +277,13 @@ export class SQLiteStateAdapter implements StateAdapter {
     if (ttlMs !== undefined) {
       validateBound(ttlMs, "ttlMs");
     }
+    const now = this.#now();
+    this.#deleteExpired("chat_cache", now);
     this.#prepare(
       `INSERT INTO chat_cache (cache_key, value, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET
          value = excluded.value, expires_at = excluded.expires_at`
-    ).run(
-      key,
-      serialize(value),
-      ttlMs ? expirationFrom(this.#now(), ttlMs) : null
-    );
+    ).run(key, serialize(value), ttlMs ? expirationFrom(now, ttlMs) : null);
   }
 
   async setIfNotExists(
@@ -282,6 +295,7 @@ export class SQLiteStateAdapter implements StateAdapter {
       validateBound(ttlMs, "ttlMs");
     }
     const now = this.#now();
+    this.#deleteExpired("chat_cache", now);
     const result = this.#prepare(
       `INSERT INTO chat_cache (cache_key, value, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET
@@ -318,9 +332,7 @@ export class SQLiteStateAdapter implements StateAdapter {
     const database = this.#connectedDatabase();
     this.#transaction(database, () => {
       const now = this.#now();
-      this.#prepare(
-        "DELETE FROM chat_lists WHERE list_key = ? AND expires_at <= ?"
-      ).run(key, now);
+      this.#deleteExpired("chat_lists", now);
       const expiresAt = options?.ttlMs
         ? expirationFrom(now, options.ttlMs)
         : null;
@@ -328,15 +340,19 @@ export class SQLiteStateAdapter implements StateAdapter {
         "INSERT INTO chat_lists (list_key, value, expires_at) VALUES (?, ?, ?)"
       ).run(key, serialize(value), expiresAt);
       this.#prepare(
-        "UPDATE chat_lists SET expires_at = ? WHERE list_key = ?"
-      ).run(expiresAt, key);
+        `UPDATE chat_lists SET expires_at = ?
+         WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)`
+      ).run(expiresAt, key, now);
       if (options?.maxLength !== undefined) {
         this.#prepare(
-          `DELETE FROM chat_lists WHERE list_key = ? AND sequence NOT IN (
-             SELECT sequence FROM chat_lists WHERE list_key = ?
+          `DELETE FROM chat_lists
+           WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)
+           AND sequence NOT IN (
+             SELECT sequence FROM chat_lists
+             WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)
              ORDER BY sequence DESC LIMIT ?
            )`
-        ).run(key, key, options.maxLength);
+        ).run(key, now, key, now, options.maxLength);
       }
     });
   }
@@ -344,13 +360,14 @@ export class SQLiteStateAdapter implements StateAdapter {
   async getList<T = unknown>(key: string): Promise<T[]> {
     const database = this.#connectedDatabase();
     return this.#transaction(database, () => {
-      this.#prepare(
-        "DELETE FROM chat_lists WHERE list_key = ? AND expires_at <= ?"
-      ).run(key, this.#now());
-      const rows = this.#prepare(
-        "SELECT value FROM chat_lists WHERE list_key = ? ORDER BY sequence ASC"
-      ).all(key) as unknown as ValueRow[];
-      return rows.map((row) => deserialize<T>(row.value));
+      const now = this.#now();
+      this.#deleteExpired("chat_lists", now);
+      const rows: unknown[] = this.#prepare(
+        `SELECT value FROM chat_lists
+         WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY sequence ASC`
+      ).all(key, now);
+      return rows.map((row) => deserialize<T>(readRowValue(row, "list value")));
     });
   }
 
@@ -365,51 +382,54 @@ export class SQLiteStateAdapter implements StateAdapter {
     const database = this.#connectedDatabase();
     return this.#transaction(database, () => {
       const now = this.#now();
-      this.#prepare(
-        "DELETE FROM chat_queues WHERE thread_id = ? AND expires_at <= ?"
-      ).run(threadId, now);
+      this.#deleteExpired("chat_queues", now);
       if (entry.expiresAt > now) {
         this.#prepare(
           "INSERT INTO chat_queues (thread_id, value, expires_at) VALUES (?, ?, ?)"
         ).run(threadId, serialize(entry), entry.expiresAt);
       }
       this.#prepare(
-        `DELETE FROM chat_queues WHERE thread_id = ? AND sequence NOT IN (
-           SELECT sequence FROM chat_queues WHERE thread_id = ?
+        `DELETE FROM chat_queues
+         WHERE thread_id = ? AND expires_at > ? AND sequence NOT IN (
+           SELECT sequence FROM chat_queues
+           WHERE thread_id = ? AND expires_at > ?
            ORDER BY sequence DESC LIMIT ?
          )`
-      ).run(threadId, threadId, maxSize);
-      const row = this.#prepare(
-        "SELECT count(*) AS value FROM chat_queues WHERE thread_id = ?"
-      ).get(threadId) as unknown as ValueRow;
-      return readInteger(row.value, "queue depth");
+      ).run(threadId, now, threadId, now, maxSize);
+      const row: unknown = this.#prepare(
+        `SELECT count(*) AS value FROM chat_queues
+         WHERE thread_id = ? AND expires_at > ?`
+      ).get(threadId, now);
+      return readInteger(readRowValue(row, "queue depth"), "queue depth");
     });
   }
 
   async dequeue(threadId: string): Promise<QueueEntry | null> {
     const database = this.#connectedDatabase();
     return this.#transaction(database, () => {
-      this.#prepare(
-        "DELETE FROM chat_queues WHERE thread_id = ? AND expires_at <= ?"
-      ).run(threadId, this.#now());
-      const row = this.#prepare(
+      const now = this.#now();
+      this.#deleteExpired("chat_queues", now);
+      const row: unknown = this.#prepare(
         `DELETE FROM chat_queues WHERE sequence = (
            SELECT sequence FROM chat_queues WHERE thread_id = ?
+           AND expires_at > ?
            ORDER BY sequence ASC LIMIT 1
          ) RETURNING value`
-      ).get(threadId) as ValueRow | undefined;
-      return row === undefined ? null : deserializeQueueEntry(row.value);
+      ).get(threadId, now);
+      return row === undefined
+        ? null
+        : deserializeQueueEntry(readRowValue(row, "queue value"));
     });
   }
 
   async queueDepth(threadId: string): Promise<number> {
-    this.#prepare(
-      "DELETE FROM chat_queues WHERE thread_id = ? AND expires_at <= ?"
-    ).run(threadId, this.#now());
-    const row = this.#prepare(
-      "SELECT count(*) AS value FROM chat_queues WHERE thread_id = ?"
-    ).get(threadId) as unknown as ValueRow;
-    return readInteger(row.value, "queue depth");
+    const now = this.#now();
+    this.#deleteExpired("chat_queues", now);
+    const row: unknown = this.#prepare(
+      `SELECT count(*) AS value FROM chat_queues
+       WHERE thread_id = ? AND expires_at > ?`
+    ).get(threadId, now);
+    return readInteger(readRowValue(row, "queue depth"), "queue depth");
   }
 
   #connectedDatabase(): DatabaseSync {
@@ -423,6 +443,19 @@ export class SQLiteStateAdapter implements StateAdapter {
 
   #prepare(sql: string): StatementSync {
     return this.#connectedDatabase().prepare(sql);
+  }
+
+  #deleteExpired(
+    table: "chat_cache" | "chat_lists" | "chat_locks" | "chat_queues",
+    now: number
+  ): void {
+    this.#prepare(
+      `DELETE FROM ${table} WHERE rowid IN (
+         SELECT rowid FROM ${table}
+         WHERE expires_at IS NOT NULL AND expires_at <= ?
+         LIMIT ?
+       )`
+    ).run(now, EXPIRATION_CLEANUP_BATCH_SIZE);
   }
 
   #transaction<A>(database: DatabaseSync, operation: () => A): A {

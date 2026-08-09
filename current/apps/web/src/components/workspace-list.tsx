@@ -10,8 +10,6 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes a brrr action button on every non-destroyed workspace for
- * triggering the agent workflow.
  *
  * When a workspace is associated with a plan (branch name matches
  * `plan/<slug>`), a scoped task list is shown inside the workspace card
@@ -25,12 +23,11 @@
  *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
- * @see Issue #93: "Start Ralph Loop" button UI
  * @see Issue #119: Empty state — no workspaces
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
  * @see Issue #160: UI for detected workspaces
- * @see Issue #193: Plan workspace scoped task list and brrr integration
+ * @see Issue #193: Plan workspace scoped task list
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'

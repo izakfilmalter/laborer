@@ -3,7 +3,7 @@
 // host processes; Git worktrees provide change isolation, not a security boundary.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSandbox, Output, run } from "@ai-hero/sandcastle";
@@ -55,6 +55,7 @@ import {
 
 const SANDCASTLE_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(SANDCASTLE_DIR, "..");
+const FAILURE_LOG = resolve(SANDCASTLE_DIR, "logs", "failures.ndjson");
 
 loadEnv({ path: resolve(SANDCASTLE_DIR, ".env"), quiet: true });
 
@@ -179,10 +180,7 @@ const uiAgent = () =>
 const sandboxProvider = () =>
   supervisedNoSandbox({
     defaultTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
-    env: {
-      GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN"),
-      OPENCODE_DISABLE_AUTOUPDATE: "1",
-    },
+    env: { GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN") },
   });
 
 const acquireSlot = createSlotLimiter(MAX_PARALLEL);
@@ -193,6 +191,7 @@ const issueGraphSource = new GitHubCliIssueGraphSource(
 );
 
 const hostReady = prepareHost();
+const failures: string[] = [];
 
 for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
   console.log(
@@ -213,8 +212,9 @@ for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
       madeProgress = true;
     } catch (error) {
       process.exitCode = 1;
-      console.error(
-        `  Spec #${spec.root.number} finalization failed: ${String(error)}`
+      recordFailure(
+        `Spec #${spec.root.number} finalization failed`,
+        error
       );
     }
   }
@@ -237,7 +237,7 @@ for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
       madeProgress = true;
     } catch (error) {
       process.exitCode = 1;
-      console.error(`  Existing PR for #${issue.id} failed: ${String(error)}`);
+      recordFailure(`Existing PR for #${issue.id} failed`, error);
     }
   }
   if (process.exitCode) {
@@ -279,7 +279,7 @@ for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
       }
       if (result.status === "rejected") {
         process.exitCode = 1;
-        console.error(`  Issue #${issue.id} failed: ${String(result.reason)}`);
+        recordFailure(`Issue #${issue.id} failed`, result.reason);
         continue;
       }
       madeProgress = true;
@@ -299,9 +299,7 @@ for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
         );
       } catch (error) {
         process.exitCode = 1;
-        console.error(
-          `  Preparing #${result.value.issue.id} failed: ${String(error)}`
-        );
+        recordFailure(`Preparing #${result.value.issue.id} failed`, error);
       }
     }
   }
@@ -323,11 +321,26 @@ for (let iteration = 1; hostReady && iteration <= MAX_ITERATIONS; iteration++) {
   }
 }
 
-console.log(
-  process.exitCode
-    ? "\nSandcastle stopped with errors."
-    : "\nSandcastle finished."
-);
+if (failures.length > 0) {
+  console.error("\nFailure summary:");
+  for (const failure of failures) {
+    console.error(`  - ${failure}`);
+  }
+  console.error(`Failure details saved to ${FAILURE_LOG}`);
+}
+console.log(process.exitCode ? "\nSandcastle stopped with errors." : "\nSandcastle finished.");
+
+function recordFailure(context: string, error: unknown) {
+  const failure = `${context}: ${String(error)}`;
+  failures.push(failure);
+  console.error(`  ${failure}`);
+  mkdirSync(resolve(SANDCASTLE_DIR, "logs"), { recursive: true });
+  appendFileSync(
+    FAILURE_LOG,
+    `${JSON.stringify({ context, error: String(error), timestamp: new Date().toISOString() })}\n`,
+    { encoding: "utf8", mode: 0o600 }
+  );
+}
 
 async function classifyRunnableIssues(
   runnable: readonly RunnableIssue[]

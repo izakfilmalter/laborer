@@ -182,7 +182,7 @@ describe("Sandcastle fast flow", () => {
       "test -d current/node_modules && test -d next/node_modules"
     );
     assert.include(main, "supervisedNoSandbox({");
-    assert.include(main, 'OPENCODE_DISABLE_AUTOUPDATE: "1"');
+    assert.notInclude(main, "OPENCODE_DISABLE_AUTOUPDATE");
     assert.notInclude(main, "prepareOpenCodeCredentialSeed");
     assert.notInclude(main, "BUN_CACHE_DIR");
     assert.notInclude(main, "/home/agent");
@@ -190,6 +190,17 @@ describe("Sandcastle fast flow", () => {
     assert.notInclude(main, 'runFile("docker"');
     assert.include(main, "boundedHostCommand(");
     assert.include(main, "Sandcastle stopped safely ");
+  });
+
+  it("persists and repeats outer runner failures", () => {
+    const main = readFileSync("../.sandcastle/main.ts", "utf8");
+
+    assert.include(main, '"logs", "failures.ndjson"');
+    assert.include(main, "appendFileSync(");
+    assert.include(main, 'console.error("\\nFailure summary:")');
+    assert.include(main, "Failure details saved to");
+    assert.include(main, "recordFailure(`Issue #");
+    assert.include(main, "recordFailure(`Preparing #");
   });
 
   it("tells modifying agents that verification is agent-owned", () => {

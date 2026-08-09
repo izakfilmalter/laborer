@@ -64,7 +64,10 @@ describe("Sandcastle opencode2 agent", () => {
     const rootPackage = JSON.parse(readFileSync("../package.json", "utf8")) as {
       readonly scripts?: Readonly<Record<string, string>>;
     };
-    assert.strictEqual(rootPackage.scripts?.sandcastle, "bun .sandcastle/main.ts");
+    assert.strictEqual(
+      rootPackage.scripts?.sandcastle,
+      "bun .sandcastle/main.ts"
+    );
   });
 
   it("uses the host OpenCode service with an encoded variant and preserves JSON events", async () => {

@@ -346,6 +346,7 @@ if (failures.length > 0) {
     console.error(`  - ${failure}`);
   }
   console.error(`Failure details saved to ${FAILURE_LOG}`);
+  console.error(`OpenCode attempt details saved to ${OPENCODE_ATTEMPT_LOG}`);
 }
 console.log(process.exitCode ? "\nSandcastle stopped with errors." : "\nSandcastle finished.");
 

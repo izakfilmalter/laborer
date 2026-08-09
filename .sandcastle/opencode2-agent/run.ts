@@ -11,6 +11,8 @@ interface Options {
   readonly diagnosticsPath?: string;
   readonly initialStaggerSeconds: number;
   readonly maxAttempts: number;
+  readonly recoveryPollSeconds: number;
+  readonly recoveryTimeoutSeconds: number;
   readonly retryDelaySeconds: number;
   readonly retryJitterSeconds: number;
   readonly runArgs: readonly string[];
@@ -109,8 +111,7 @@ for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     recovered.errorType?.startsWith("provider.") === true;
   if (attempt >= options.maxAttempts || !retryableProviderFailure) {
     if (recovered?.status === "ambiguous") {
-      lastError =
-        "OpenCode transport failed and the existing session could not be recovered safely; refusing to replay the prompt.";
+      lastError = `OpenCode transport failed and session ${result.sessionId ?? "unknown"} could not be recovered safely; refusing to replay the prompt. Inspect it with: opencode2 api get /api/session/${result.sessionId ?? "SESSION_ID"}`;
     }
     if (lastError !== undefined) {
       process.stdout.write(
@@ -158,6 +159,8 @@ function parseOptions(args: readonly string[]): Options {
       "--initial-stagger-seconds"
     ),
     maxAttempts: numberOption(values, "--max-attempts", 1),
+    recoveryPollSeconds: numberOption(values, "--recovery-poll-seconds"),
+    recoveryTimeoutSeconds: numberOption(values, "--recovery-timeout-seconds"),
     retryDelaySeconds: numberOption(values, "--retry-delay-seconds"),
     retryJitterSeconds: numberOption(values, "--retry-jitter-seconds"),
     runArgs: args.slice(separator + 2),
@@ -247,18 +250,42 @@ function withSession(
 async function recoverSession(
   sessionId: string
 ): Promise<RecoveredSession | undefined> {
-  const wait = await runCaptured([
-    "api",
-    "post",
-    `/api/session/${encodeURIComponent(sessionId)}/wait`,
-  ]);
-  if (wait.exitCode !== 0 || wait.stdout.trim() !== "") {
-    return { status: "ambiguous" };
+  const deadline = Date.now() + options.recoveryTimeoutSeconds * 1000;
+  let consecutiveApiFailures = 0;
+  let lastProgressAt = 0;
+  while (true) {
+    const active = await runCaptured(["api", "get", "/api/session/active"]);
+    const payload = parseRecord(active.stdout);
+    if (
+      active.exitCode !== 0 ||
+      payload === undefined ||
+      !isRecord(payload.data)
+    ) {
+      consecutiveApiFailures += 1;
+      if (consecutiveApiFailures >= 3 || Date.now() >= deadline) {
+        return { status: "ambiguous" };
+      }
+    } else {
+      consecutiveApiFailures = 0;
+      if (!(sessionId in payload.data)) {
+        break;
+      }
+      if (Date.now() >= deadline) {
+        return { status: "ambiguous" };
+      }
+      if (Date.now() - lastProgressAt >= 30_000) {
+        process.stdout.write(
+          `OpenCode event transport disconnected; session ${sessionId} is still running server-side. Waiting for its durable outcome.\n`
+        );
+        lastProgressAt = Date.now();
+      }
+    }
+    await sleep(options.recoveryPollSeconds * 1000);
   }
   const messages = await runCaptured([
     "api",
     "get",
-    `/api/session/${encodeURIComponent(sessionId)}/message?limit=10&order=desc`,
+    `/api/session/${encodeURIComponent(sessionId)}/message?limit=1&order=desc`,
   ]);
   if (messages.exitCode !== 0) {
     return { status: "ambiguous" };

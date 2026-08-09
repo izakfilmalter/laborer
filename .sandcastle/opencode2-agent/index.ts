@@ -9,6 +9,8 @@ export interface OpenCode2AgentOptions {
   readonly maxAttempts?: number;
   readonly diagnosticsPath?: string;
   readonly initialStaggerSeconds?: number;
+  readonly recoveryPollSeconds?: number;
+  readonly recoveryTimeoutSeconds?: number;
   readonly retryDelaySeconds?: number;
   readonly retryJitterSeconds?: number;
   readonly runTimeoutSeconds?: number;
@@ -132,6 +134,16 @@ export const opencode2Agent = (
     0,
     Math.floor(options.initialStaggerSeconds ?? 15)
   );
+  const recoveryPollSeconds = Math.max(
+    0,
+    Math.floor(options.recoveryPollSeconds ?? 5)
+  );
+  const recoveryTimeoutSeconds = Math.max(
+    0,
+    Math.floor(
+      options.recoveryTimeoutSeconds ?? options.runTimeoutSeconds ?? 14_400
+    )
+  );
 
   return {
     name: "opencode2",
@@ -163,6 +175,10 @@ export const opencode2Agent = (
         String(retryJitterSeconds),
         "--initial-stagger-seconds",
         String(initialStaggerSeconds),
+        "--recovery-poll-seconds",
+        String(recoveryPollSeconds),
+        "--recovery-timeout-seconds",
+        String(recoveryTimeoutSeconds),
         ...(options.diagnosticsPath === undefined
           ? []
           : ["--diagnostics-path", options.diagnosticsPath]),

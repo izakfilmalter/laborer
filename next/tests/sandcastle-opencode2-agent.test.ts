@@ -17,7 +17,25 @@ const runCommand = async (
   command: string,
   stdin: string,
   env: NodeJS.ProcessEnv
-): Promise<string> =>
+): Promise<string> => {
+  const result = await runCommandResult(command, stdin, env);
+  if (result.code === 0) {
+    return result.stdout;
+  }
+  throw new Error(
+    `Fake opencode2 exited ${String(result.code)}: ${result.stderr}`
+  );
+};
+
+const runCommandResult = async (
+  command: string,
+  stdin: string,
+  env: NodeJS.ProcessEnv
+): Promise<{
+  readonly code: number | null;
+  readonly stderr: string;
+  readonly stdout: string;
+}> =>
   await new Promise((resolve, reject) => {
     const child = spawn(command, {
       env,
@@ -36,11 +54,7 @@ const runCommand = async (
     });
     child.on("error", reject);
     child.on("close", (code) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(new Error(`Fake opencode2 exited ${String(code)}: ${stderr}`));
+      resolve({ code, stderr, stdout });
     });
     child.stdin.end(stdin);
   });
@@ -192,8 +206,8 @@ describe("Sandcastle opencode2 agent", () => {
         '  printf \'%s\\n\' \'{"type":"text","part":{"type":"text","text":"recovered"}}\'',
         "  exit 0",
         "fi",
-        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then exit 0; fi',
         'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
+        '  if [ "$3" = "/api/session/active" ]; then printf \'%s\\n\' \'{"data":{}}\'; exit 0; fi',
         '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"error":{"type":"provider.internal","message":"temporary provider error"},"content":[]}]}\'',
         "  exit 0",
         "fi",
@@ -206,6 +220,8 @@ describe("Sandcastle opencode2 agent", () => {
       const invocation = opencode2Agent("fixture/model", {
         initialStaggerSeconds: 0,
         maxAttempts: 2,
+        recoveryPollSeconds: 0,
+        recoveryTimeoutSeconds: 1,
         retryDelaySeconds: 0,
         retryJitterSeconds: 0,
       }).buildPrintCommand({
@@ -256,8 +272,8 @@ describe("Sandcastle opencode2 agent", () => {
         '  printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-recovered","part":{}}\'',
         "  exit 1",
         "fi",
-        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then exit 0; fi',
         'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
+        '  if [ "$3" = "/api/session/active" ]; then printf \'%s\\n\' \'{"data":{}}\'; exit 0; fi',
         '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}]}\'',
         "  exit 0",
         "fi",
@@ -271,6 +287,8 @@ describe("Sandcastle opencode2 agent", () => {
         diagnosticsPath,
         initialStaggerSeconds: 0,
         maxAttempts: 3,
+        recoveryPollSeconds: 0,
+        recoveryTimeoutSeconds: 1,
         retryDelaySeconds: 0,
         retryJitterSeconds: 0,
       });
@@ -315,7 +333,7 @@ describe("Sandcastle opencode2 agent", () => {
         '  printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-ambiguous","part":{}}\'',
         "  exit 1",
         "fi",
-        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then',
+        'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
         "  printf '%s\\n' '{\"_tag\":\"ServiceUnavailableError\"}'",
         "  exit 0",
         "fi",
@@ -328,6 +346,8 @@ describe("Sandcastle opencode2 agent", () => {
       const invocation = opencode2Agent("fixture/model", {
         initialStaggerSeconds: 0,
         maxAttempts: 3,
+        recoveryPollSeconds: 0,
+        recoveryTimeoutSeconds: 0,
         retryDelaySeconds: 0,
         retryJitterSeconds: 0,
       }).buildPrintCommand({
@@ -347,6 +367,65 @@ describe("Sandcastle opencode2 agent", () => {
       }
       assert.isTrue(failed);
       assert.strictEqual(readFileSync(runCountPath, "utf8"), "run\n");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("surfaces the retained provider cause instead of only Transport", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-cause-"));
+    const executable = join(directory, "opencode2");
+    writeFileSync(
+      executable,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "run" ]; then',
+        "  cat >/dev/null",
+        '  printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-provider-error","part":{}}\'',
+        '  printf \'%s\\n\' \'{"type":"error","error":{"message":"Transport"}}\'',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
+        '  if [ "$3" = "/api/session/active" ]; then printf \'%s\\n\' \'{"data":{}}\'; exit 0; fi',
+        '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"finish":"error","error":{"type":"provider.internal","message":"server_error request-id-123"},"content":[]}]}\'',
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n")
+    );
+    chmodSync(executable, 0o755);
+
+    try {
+      const agent = opencode2Agent("fixture/model", {
+        initialStaggerSeconds: 0,
+        maxAttempts: 1,
+        recoveryPollSeconds: 0,
+        recoveryTimeoutSeconds: 1,
+        retryDelaySeconds: 0,
+        retryJitterSeconds: 0,
+      });
+      const invocation = agent.buildPrintCommand({
+        dangerouslySkipPermissions: true,
+        prompt: "Diagnose exactly.",
+      });
+      const result = await runCommandResult(
+        invocation.command,
+        invocation.stdin ?? "",
+        {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+        }
+      );
+
+      assert.strictEqual(result.code, 1);
+      const parsed = result.stdout
+        .trimEnd()
+        .split("\n")
+        .flatMap((line) => agent.parseStreamLine(line));
+      assert.deepInclude(parsed, {
+        result: "server_error request-id-123",
+        type: "result",
+      });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

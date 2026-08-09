@@ -146,6 +146,7 @@ const childEnvironment = (
 
 interface BoundedOutput {
   readonly completion: Promise<Buffer>;
+  readonly exceeded: () => boolean;
   readonly snapshot: () => Buffer;
 }
 
@@ -183,6 +184,7 @@ const collect = (
   });
   return {
     completion,
+    exceeded: () => exceeded,
     snapshot: () => Buffer.concat(chunks, bytes),
   };
 };
@@ -298,6 +300,21 @@ const resultFromSettled = (
     exitCode: settled.report.code,
     signal: settled.report.signal,
     ...emptyEvidence,
+  };
+};
+
+const enforceObservedOutputLimit = (
+  result: Exclude<LocalProcessResult, { readonly _tag: "CleanupUncertain" }>,
+  stdoutExceeded: boolean,
+  stderrExceeded: boolean
+): Exclude<LocalProcessResult, { readonly _tag: "CleanupUncertain" }> => {
+  if (!(stdoutExceeded || stderrExceeded)) {
+    return result;
+  }
+  return {
+    _tag: "LimitExceeded",
+    limit: stdoutExceeded ? "stdout" : "stderr",
+    ...evidence(result.pid, undefined, undefined),
   };
 };
 
@@ -421,16 +438,17 @@ const executeProcess = async (
     ]);
     result = resultFromSettled(settled, child.pid ?? null);
   } catch (failure) {
-    result = {
-      _tag:
-        failure instanceof SupervisorControlError
-          ? "LimitExceeded"
-          : "SpawnFailure",
-      ...(failure instanceof SupervisorControlError
-        ? { limit: "protocol" as const }
-        : {}),
-      ...evidence(child.pid ?? null, stdout, stderr),
-    } as typeof result;
+    result =
+      failure instanceof SupervisorControlError
+        ? {
+            _tag: "LimitExceeded",
+            limit: "protocol",
+            ...evidence(child.pid ?? null, stdout, stderr),
+          }
+        : {
+            _tag: "SpawnFailure",
+            ...evidence(child.pid ?? null, stdout, stderr),
+          };
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
@@ -464,12 +482,22 @@ const executeProcess = async (
       stdoutOutput.completion.catch(() => stdoutOutput.snapshot()),
       stderrOutput.completion.catch(() => stderrOutput.snapshot()),
     ]);
+    result = enforceObservedOutputLimit(
+      result,
+      stdoutOutput.exceeded(),
+      stderrOutput.exceeded()
+    );
     return { ...result, ...evidence(child.pid ?? null, stdout, stderr) };
   } catch {
     child.stdout.destroy();
     child.stderr.destroy();
     stdout = stdoutOutput.snapshot();
     stderr = stderrOutput.snapshot();
+    result = enforceObservedOutputLimit(
+      result,
+      stdoutOutput.exceeded(),
+      stderrOutput.exceeded()
+    );
     return {
       _tag: "CleanupUncertain",
       prior: result,

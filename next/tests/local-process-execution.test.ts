@@ -145,6 +145,14 @@ describe("LocalProcessExecutor", () => {
     ).resolves.toMatchObject({ _tag: "LimitExceeded", limit: "stderr" });
   });
 
+  it("enforces output bounds reached during process-tree cleanup", async () => {
+    const result = await run(await request("output-after-exit"));
+    expect(result).toMatchObject({
+      _tag: "LimitExceeded",
+      limit: "stdout",
+    });
+  });
+
   it("reports an asynchronous spawn failure", async () => {
     const failed = await run(
       await request("echo", { workingDirectory: resolve(cwd, "missing-cwd") })

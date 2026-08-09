@@ -37,4 +37,22 @@ if (mode === "echo") {
   await new Promise(() => undefined);
 } else if (mode === "exit-without-input") {
   process.exit(Number(process.argv[3] ?? "7"));
+} else if (mode === "output-after-exit") {
+  const descendant = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `process.on("SIGTERM", () => {
+        process.stdout.write(Buffer.alloc(2048, 0x78));
+      });
+      process.send?.("ready");
+      setInterval(() => {}, 1000);`,
+    ],
+    { stdio: ["ignore", "inherit", "ignore", "ipc"] }
+  );
+  await new Promise<void>((resolveReady) => {
+    descendant.once("message", () => resolveReady());
+  });
+  process.exit(0);
 }

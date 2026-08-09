@@ -97,34 +97,6 @@ export const diffs = State.SQLite.table({
   },
 })
 
-// Historical table definitions remain exported for compatibility with code
-// that can inspect old state. They are intentionally absent from activeTables.
-export const tasks = State.SQLite.table({
-  name: 'tasks',
-  columns: {
-    id: State.SQLite.text({ primaryKey: true }),
-    projectId: State.SQLite.text(),
-    source: State.SQLite.text(),
-    prdId: State.SQLite.text({ nullable: true }),
-    externalId: State.SQLite.text({ nullable: true }),
-    title: State.SQLite.text(),
-    status: State.SQLite.text({ default: 'pending' }),
-  },
-})
-
-export const prds = State.SQLite.table({
-  name: 'prds',
-  columns: {
-    id: State.SQLite.text({ primaryKey: true }),
-    projectId: State.SQLite.text(),
-    title: State.SQLite.text(),
-    slug: State.SQLite.text(),
-    filePath: State.SQLite.text(),
-    status: State.SQLite.text({ default: 'draft' }),
-    createdAt: State.SQLite.text(),
-  },
-})
-
 /**
  * Global application settings stored as key-value pairs.
  * Used for configuration that applies across all projects/workspaces,
@@ -818,8 +790,6 @@ export const tables = {
   workspaces,
   terminals,
   diffs,
-  tasks,
-  prds,
   appSettings,
   panelLayout,
 }

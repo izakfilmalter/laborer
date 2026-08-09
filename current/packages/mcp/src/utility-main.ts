@@ -9,8 +9,7 @@
  * - Runs inside an Electron utility process (forked via bootstrap script)
  * - Receives initial MessagePort from parent for renderer RPC (currently
  *   unused, but reserved for future MCP status/control RPC surface)
- * - Connects to the backend child over WebSocket RPC for `LaborerRpcs` calls
- *   (project listing, PRD CRUD, issue CRUD)
+ * - Connects to the backend child over WebSocket RPC for project discovery
  * - The MCP server (`McpServer.layerStdio`) is NOT used in this mode —
  *   external MCP clients (Claude, OpenCode, Codex) use the standalone
  *   `main.ts` entry point which is registered by the `McpRegistrar`
@@ -34,8 +33,7 @@
  *    `LaborerRpcs` over the same WebSocket RPC endpoint as other clients
  *
  * Layer composition:
- *   PrdToolsLayer + IssueToolsLayer
- *     + ProjectDiscovery.layer
+ *   ProjectDiscovery.layer
  *     + LaborerRpcClient.layer (WebSocket RPC-backed)
  *     + McpServer.layerStdio (stdin/stdout for external MCP clients —
  *       only active if stdin is available, i.e. when spawned by an

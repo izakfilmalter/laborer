@@ -11,8 +11,7 @@
  *   summary comment; the verdict (approved/needs_fix) is extracted from its body.
  * - Comments without markers are returned in the `comments` array.
  *
- * Owner/repo detection reuses the same regex patterns as GithubTaskImporter
- * (parsing from `git remote get-url origin`).
+ * Owner/repo detection parses the project's GitHub origin URL.
  *
  * @see PRD-review-findings-panel.md — "PR Comment Fetcher" section
  */
@@ -28,7 +27,7 @@ import { tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, Option, pipe } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
-import { parseGithubRepo } from './github-task-importer.js'
+import { parseGithubRepo } from './github-repository.js'
 import { LaborerStore } from './laborer-store.js'
 
 /** Regex for splitting paginated JSON arrays from gh --paginate output */

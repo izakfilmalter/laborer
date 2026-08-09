@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { spawn } from '../lib/spawn.js'
-import { parseGithubRepo } from './github-task-importer.js'
+import { parseGithubRepo } from './github-repository.js'
 
 interface GhPrViewResult {
   readonly exitCode: number

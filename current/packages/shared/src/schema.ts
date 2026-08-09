@@ -97,6 +97,8 @@ export const diffs = State.SQLite.table({
   },
 })
 
+// Historical table definitions remain exported for compatibility with code
+// that can inspect old state. They are intentionally absent from activeTables.
 export const tasks = State.SQLite.table({
   name: 'tasks',
   columns: {

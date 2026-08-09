@@ -91,6 +91,8 @@ describe("Sandcastle opencode2 agent", () => {
     try {
       const agent = opencode2Agent("openai/gpt-5.6-sol", {
         agent: "build",
+        initialStaggerSeconds: 0,
+        retryJitterSeconds: 0,
         variant: "medium",
       });
       const invocation = agent.buildPrintCommand({
@@ -167,30 +169,45 @@ describe("Sandcastle opencode2 agent", () => {
     assert.include(invocation.command, "--auto");
   });
 
-  it("replays the prompt after a transient process failure", async () => {
+  it("continues the existing session after a transient provider failure", async () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-retry-"));
     const executable = join(directory, "opencode2");
     const attemptsPath = join(directory, "attempts");
+    const argsPath = join(directory, "args");
     const stdinPath = join(directory, "stdin");
     writeFileSync(
       executable,
       [
         "#!/bin/sh",
-        '[ -p /dev/stdin ] || { printf "stdin must be a pipe\\n" >&2; exit 2; }',
-        'attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
-        'printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
-        'cat >> "$FAKE_OPENCODE_STDIN"',
-        'printf "\\n---attempt---\\n" >> "$FAKE_OPENCODE_STDIN"',
-        '[ "$attempt" -gt 1 ] || exit 1',
-        'printf \'%s\\n\' \'{"type":"text","part":{"type":"text","text":"recovered"}}\'',
+        'if [ "$1" = "run" ]; then',
+        '  printf "%s " "$@" >> "$FAKE_OPENCODE_ARGS"; printf "\\n" >> "$FAKE_OPENCODE_ARGS"',
+        '  attempt=$(($(cat "$FAKE_OPENCODE_ATTEMPTS" 2>/dev/null || echo 0) + 1))',
+        '  printf "%s" "$attempt" > "$FAKE_OPENCODE_ATTEMPTS"',
+        '  cat >> "$FAKE_OPENCODE_STDIN"',
+        '  printf "\\n---attempt---\\n" >> "$FAKE_OPENCODE_STDIN"',
+        '  if [ "$attempt" -eq 1 ]; then',
+        '    printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-failed","part":{}}\'',
+        "    exit 1",
+        "  fi",
+        '  printf \'%s\\n\' \'{"type":"text","part":{"type":"text","text":"recovered"}}\'',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then exit 0; fi',
+        'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
+        '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"error":{"type":"provider.internal","message":"temporary provider error"},"content":[]}]}\'',
+        "  exit 0",
+        "fi",
+        "exit 2",
       ].join("\n")
     );
     chmodSync(executable, 0o755);
 
     try {
       const invocation = opencode2Agent("fixture/model", {
+        initialStaggerSeconds: 0,
         maxAttempts: 2,
         retryDelaySeconds: 0,
+        retryJitterSeconds: 0,
       }).buildPrintCommand({
         dangerouslySkipPermissions: true,
         prompt: "Continue preserved work.",
@@ -201,6 +218,7 @@ describe("Sandcastle opencode2 agent", () => {
         {
           ...process.env,
           FAKE_OPENCODE_ATTEMPTS: attemptsPath,
+          FAKE_OPENCODE_ARGS: argsPath,
           FAKE_OPENCODE_STDIN: stdinPath,
           PATH: `${directory}:${process.env.PATH ?? ""}`,
         }
@@ -209,11 +227,126 @@ describe("Sandcastle opencode2 agent", () => {
       assert.strictEqual(readFileSync(attemptsPath, "utf8"), "2");
       assert.strictEqual(
         readFileSync(stdinPath, "utf8"),
-        "Continue preserved work.\n---attempt---\nContinue preserved work.\n---attempt---\n"
+        "Continue preserved work.\n---attempt---\nThe previous provider call failed transiently. Continue the existing task from this preserved session and worktree. Do not repeat completed side effects.\n---attempt---\n"
+      );
+      assert.include(
+        readFileSync(argsPath, "utf8").split("\n")[1] ?? "",
+        "--session session-failed"
       );
       assert.include(stdout, '"text":"recovered"');
       assert.include(stdout, "retrying preserved worktree");
       assert.notInclude(invocation.command, ">&2");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers a completed session after the shared event stream disconnects", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-recover-"));
+    const executable = join(directory, "opencode2");
+    const diagnosticsPath = join(directory, "attempts.ndjson");
+    const runCountPath = join(directory, "run-count");
+    writeFileSync(
+      executable,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "run" ]; then',
+        "  cat >/dev/null",
+        '  printf "1" > "$FAKE_OPENCODE_RUN_COUNT"',
+        '  printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-recovered","part":{}}\'',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then exit 0; fi',
+        'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
+        '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}]}\'',
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n")
+    );
+    chmodSync(executable, 0o755);
+
+    try {
+      const agent = opencode2Agent("fixture/model", {
+        diagnosticsPath,
+        initialStaggerSeconds: 0,
+        maxAttempts: 3,
+        retryDelaySeconds: 0,
+        retryJitterSeconds: 0,
+      });
+      const invocation = agent.buildPrintCommand({
+        dangerouslySkipPermissions: true,
+        prompt: "Finish the work.",
+      });
+      const stdout = await runCommand(
+        invocation.command,
+        invocation.stdin ?? "",
+        {
+          ...process.env,
+          FAKE_OPENCODE_RUN_COUNT: runCountPath,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+        }
+      );
+
+      assert.strictEqual(readFileSync(runCountPath, "utf8"), "1");
+      assert.include(stdout, "<promise>COMPLETE</promise>");
+      const diagnostic = JSON.parse(
+        readFileSync(diagnosticsPath, "utf8").trim()
+      ) as Record<string, unknown>;
+      assert.strictEqual(diagnostic.sessionId, "session-recovered");
+      assert.strictEqual(diagnostic.recoveredText, 1);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses prompt replay when existing-session recovery is ambiguous", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "laborer-opencode2-ambiguous-")
+    );
+    const executable = join(directory, "opencode2");
+    const runCountPath = join(directory, "run-count");
+    writeFileSync(
+      executable,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "run" ]; then',
+        '  cat >/dev/null; printf "run\\n" >> "$FAKE_OPENCODE_RUN_COUNT"',
+        '  printf \'%s\\n\' \'{"type":"step_start","sessionID":"session-ambiguous","part":{}}\'',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "api" ] && [ "$2" = "post" ]; then',
+        "  printf '%s\\n' '{\"_tag\":\"ServiceUnavailableError\"}'",
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n")
+    );
+    chmodSync(executable, 0o755);
+
+    try {
+      const invocation = opencode2Agent("fixture/model", {
+        initialStaggerSeconds: 0,
+        maxAttempts: 3,
+        retryDelaySeconds: 0,
+        retryJitterSeconds: 0,
+      }).buildPrintCommand({
+        dangerouslySkipPermissions: true,
+        prompt: "Do not duplicate this work.",
+      });
+
+      let failed = false;
+      try {
+        await runCommand(invocation.command, invocation.stdin ?? "", {
+          ...process.env,
+          FAKE_OPENCODE_RUN_COUNT: runCountPath,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+        });
+      } catch {
+        failed = true;
+      }
+      assert.isTrue(failed);
+      assert.strictEqual(readFileSync(runCountPath, "utf8"), "run\n");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

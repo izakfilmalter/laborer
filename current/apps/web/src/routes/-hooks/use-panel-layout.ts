@@ -876,7 +876,7 @@ export function usePanelLayout() {
       }
 
       // Only auto-spawn a terminal for terminal-type and agent-type
-      // panes. Diff, review, and dev server panes handle their own
+      // panes. Diff and dev server panes handle their own
       // content.
       const newPaneType = newPaneContent?.paneType ?? 'terminal'
       if (newPaneType !== 'terminal' && newPaneType !== 'agent') {

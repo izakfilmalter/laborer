@@ -63,7 +63,7 @@ describe("Sandcastle opencode2 agent", () => {
     assert.include(sandcastleMain, 'runFile("opencode2", ["run", "--help"])');
   });
 
-  it("launches standalone opencode2 with an encoded variant and preserves JSON events", async () => {
+  it("uses the host OpenCode service with an encoded variant and preserves JSON events", async () => {
     const directory = mkdtempSync(join(tmpdir(), "laborer-opencode2-"));
     const executable = join(directory, "opencode2");
     const argsPath = join(directory, "args");
@@ -107,7 +107,6 @@ describe("Sandcastle opencode2 agent", () => {
         readFileSync(argsPath, "utf8").trimEnd().split("\n"),
         [
           "run",
-          "--standalone",
           "--format",
           "json",
           "--model",

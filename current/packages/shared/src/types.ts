@@ -61,6 +61,7 @@ export class Project extends Schema.Class<Project>('Project')({
 export class Workspace extends Schema.Class<Workspace>('Workspace')({
   id: WorkspaceId,
   projectId: ProjectId,
+  /** @deprecated Legacy task link retained for persisted workspace compatibility. */
   taskSource: Schema.optional(Schema.String),
   branchName: Schema.String,
   worktreePath: Schema.String,

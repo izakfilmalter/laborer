@@ -231,7 +231,7 @@ function CreateWorkspaceForm({
                 targets that branch.
               </>
             ) : (
-              'Create an isolated git worktree for an agent or task. Each workspace gets its own branch, port, and directory.'
+              'Create an isolated git worktree for a piece of work. Each workspace gets its own branch, port, and directory.'
             )}
           </DialogDescription>
         </DialogHeader>

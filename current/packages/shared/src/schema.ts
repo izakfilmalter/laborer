@@ -23,6 +23,7 @@ export const workspaces = State.SQLite.table({
   columns: {
     id: State.SQLite.text({ primaryKey: true }),
     projectId: State.SQLite.text(),
+    /** @deprecated — Legacy task link retained while historical workspace events remain materialized. */
     taskSource: State.SQLite.text({ nullable: true }),
     branchName: State.SQLite.text(),
     worktreePath: State.SQLite.text(),

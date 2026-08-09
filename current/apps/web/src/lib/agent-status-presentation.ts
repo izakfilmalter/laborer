@@ -108,6 +108,11 @@ interface AgentStatusPresentation {
  * - `done` — violet, still check. Review the completed result.
  * - `idle` — success green, matching the shell-at-prompt badge, still dot.
  * - `unknown` — muted with a dashed edge, signalling "no answer yet".
+ *
+ * Every hued state inks its label at the same `-400` step. The app defaults
+ * to the dark theme but the light one is a switch away, and a lighter step
+ * would read fine on black and wash out on white — so the states share one
+ * ink weight rather than each picking the one that flatters dark mode.
  */
 const AGENT_STATUS_PRESENTATION: Record<
   AgentDisplayStatus,
@@ -145,7 +150,7 @@ const AGENT_STATUS_PRESENTATION: Record<
   },
   done: {
     label: 'done',
-    badgeClassName: 'border-violet-400/40 bg-violet-400/15 text-violet-300',
+    badgeClassName: 'border-violet-400/40 bg-violet-400/15 text-violet-400',
     dotClassName: 'bg-violet-400',
     dotStaleClassName: 'border-violet-400',
     glyph: 'check',
@@ -212,6 +217,24 @@ const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
   },
   idle: QUIET_SURFACE,
   unknown: QUIET_SURFACE,
+}
+
+/**
+ * Whether a status earns a badge on the workspace-level surfaces — the
+ * sidebar card and the frame header — which summarise many terminals in one
+ * line and so can only afford to speak when there is something to say: act
+ * now, review an unseen result, or work in flight. Acknowledged idle and
+ * unknown stay in the terminal rows that own them, so a quiet workspace
+ * looks quiet.
+ *
+ * Both surfaces ask the same question, so they ask it here; expressing the
+ * rule twice is how a card and its header start disagreeing about whether a
+ * workspace has anything to report.
+ */
+function showsWorkspaceAgentStatus(
+  status: AgentDisplayStatus | null | undefined
+): status is AgentDisplayStatus {
+  return status === 'needs_input' || status === 'done' || status === 'working'
 }
 
 /** Detector names in operator language rather than implementation shorthand. */
@@ -284,6 +307,7 @@ export {
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
   getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
 }
 export type {
   AgentStatusGlyphKind,

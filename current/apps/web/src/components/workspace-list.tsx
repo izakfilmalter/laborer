@@ -119,7 +119,10 @@ import {
 } from '@/hooks/use-project-collapse-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
-import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
+import {
+  getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
+} from '@/lib/agent-status-presentation'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { getSandboxSetupLabel } from '@/lib/sandbox-setup-labels'
@@ -1053,11 +1056,9 @@ function WorkspaceItem({
   // intent.
   const hasAgentAccent = agentSurface.cardClassName !== ''
   // Attention and in-flight work surface at card level; acknowledged idle and
-  // unknown stay in the terminal rows that own them.
-  const showsAgentStatus =
-    workspaceAgentStatus === 'needs_input' ||
-    workspaceAgentStatus === 'done' ||
-    workspaceAgentStatus === 'working'
+  // unknown stay in the terminal rows that own them. The frame header answers
+  // this with the same predicate, so a card and its header never disagree.
+  const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
 
   const handleSandboxLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>
@@ -1145,8 +1146,11 @@ function WorkspaceItem({
             </CardTitle>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {showsAgentStatus && workspaceAgentStatus ? (
-              <AggregateAgentStatusBadge status={workspaceAgentStatus} />
+            {showsAgentStatus ? (
+              <AggregateAgentStatusBadge
+                className="shrink-0"
+                status={workspaceAgentStatus}
+              />
             ) : null}
             <GitHubPrStatusBadge
               prNumber={workspace.prNumber}

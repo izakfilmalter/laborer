@@ -35,7 +35,10 @@ import {
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
-import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
+import {
+  getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
+} from '@/lib/agent-status-presentation'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -179,18 +182,15 @@ function WorkspaceFrameHeader({
   workspacePath,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
-  const needsAttention = agentStatus === 'needs_input'
-  const isDone = agentStatus === 'done'
-  const isWorking = agentStatus === 'working'
   // The header stays quiet for at-rest states: an idle or unknown agent has
   // nothing to say at workspace level, while working, done, and needs input
-  // do.
-  const showsAgentStatus = needsAttention || isDone || isWorking
+  // do. The card in the sidebar answers this with the same predicate.
+  const showsAgentStatus = showsWorkspaceAgentStatus(agentStatus)
   // Attention and an unseen result outrank the active-frame accent; a working
   // tint is the quietest layer and yields to the frame the operator is
   // already looking at.
   const agentAccentClassName =
-    isWorking && isActiveFrame
+    agentStatus === 'working' && isActiveFrame
       ? ''
       : getAgentStatusSurface(agentStatus).headerClassName
   // Exactly one bottom edge is ever coloured. When the agent has something
@@ -271,7 +271,7 @@ function WorkspaceFrameHeader({
             workspaceId={workspaceId}
           />
         ) : null}
-        {showsAgentStatus && agentStatus ? (
+        {showsAgentStatus ? (
           <AggregateAgentStatusBadge
             className="shrink-0"
             status={agentStatus}

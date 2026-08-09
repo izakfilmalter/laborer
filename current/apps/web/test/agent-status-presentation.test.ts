@@ -15,6 +15,7 @@ import {
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
   getAgentStatusSurface,
+  showsWorkspaceAgentStatus,
 } from '../src/lib/agent-status-presentation'
 
 const ALL_STATUSES: readonly AgentStatus[] = [
@@ -23,6 +24,9 @@ const ALL_STATUSES: readonly AgentStatus[] = [
   'idle',
   'unknown',
 ]
+
+/** The shared ink weight every hued status label uses. */
+const HUED_LABEL_INK = /text-[a-z]+-400/
 
 const snapshot = (
   status: AgentStatus,
@@ -181,5 +185,29 @@ describe('agent status surface accents', () => {
     expect(working.cardClassName).toBe('')
     expect(working.rowClassName).toBe('')
     expect(working.headerClassName).not.toBe('')
+  })
+
+  it('inks every hued label at the same weight for both themes', () => {
+    // A lighter step reads well on the dark default and washes out the
+    // moment the operator switches to the light theme, so the hued states
+    // share one ink weight instead of each flattering dark mode.
+    for (const status of ['working', 'needs_input', 'done'] as const) {
+      expect(getAgentStatusPresentation(status).badgeClassName).toMatch(
+        HUED_LABEL_INK
+      )
+    }
+  })
+
+  it('surfaces only the workspace-level states worth summarising', () => {
+    for (const status of ['needs_input', 'done', 'working'] as const) {
+      expect(showsWorkspaceAgentStatus(status)).toBe(true)
+    }
+
+    for (const status of ['idle', 'unknown'] as const) {
+      expect(showsWorkspaceAgentStatus(status)).toBe(false)
+    }
+
+    expect(showsWorkspaceAgentStatus(null)).toBe(false)
+    expect(showsWorkspaceAgentStatus(undefined)).toBe(false)
   })
 })

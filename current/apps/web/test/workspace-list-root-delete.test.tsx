@@ -237,15 +237,12 @@ const makeWorkspace = (
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Configure the mock store with the given workspaces (and optional PRDs). */
-const mockStore = (workspaces: unknown[], prds: unknown[] = []) => {
+/** Configure the mock store with the given workspaces. */
+const mockStore = (workspaces: unknown[]) => {
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {
         return workspaces
-      }
-      if (query.label === 'workspaceList.prds') {
-        return prds
       }
       return []
     },

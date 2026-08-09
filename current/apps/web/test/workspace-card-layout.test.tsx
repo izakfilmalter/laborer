@@ -225,14 +225,11 @@ const makeWorkspace = (
   ...overrides,
 })
 
-const mockStore = (workspaces: unknown[], prds: unknown[] = []) => {
+const mockStore = (workspaces: unknown[]) => {
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {
         return workspaces
-      }
-      if (query.label === 'workspaceList.prds') {
-        return prds
       }
       return []
     },

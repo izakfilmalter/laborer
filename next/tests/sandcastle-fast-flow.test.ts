@@ -10,10 +10,9 @@ import {
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
 } from "../../.sandcastle/fast-flow/index.ts";
-
-const divergedRunnerBasePattern = /diverged from the runner base/;
 
 describe("Sandcastle fast flow", () => {
   it("merges without asking gh to delete a checked-out worktree branch", () => {
@@ -126,13 +125,27 @@ describe("Sandcastle fast flow", () => {
   });
 
   it("advances only dormant issue branches when the runner base moves", () => {
-    assert.isTrue(shouldRefreshUnstartedBranch("old", "base", false, true));
-    assert.isFalse(shouldRefreshUnstartedBranch("base", "base", false, true));
-    assert.isFalse(shouldRefreshUnstartedBranch("old", "base", true, true));
-    assert.throws(
-      () => shouldRefreshUnstartedBranch("other", "base", false, false),
-      divergedRunnerBasePattern
+    assert.isTrue(
+      shouldRefreshUnstartedBranch("old", "base", false, false, true)
     );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("base", "base", false, false, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("old", "base", true, false, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("old", "base", false, true, true)
+    );
+    assert.isFalse(
+      shouldRefreshUnstartedBranch("other", "base", false, false, false)
+    );
+  });
+
+  it("does not synchronize over preserved work", () => {
+    assert.isTrue(shouldFastForwardPreservedWorktree(false, true));
+    assert.isFalse(shouldFastForwardPreservedWorktree(true, true));
+    assert.isFalse(shouldFastForwardPreservedWorktree(false, false));
   });
 
   it("delegates verification to the final code-review agent", () => {
@@ -163,6 +176,7 @@ describe("Sandcastle fast flow", () => {
     assert.include(main, "bun install --cwd current --frozen-lockfile");
     assert.include(main, "bun install --cwd next --frozen-lockfile");
     assert.include(main, "worktreeIsDirty(sandbox.worktreePath)");
+    assert.include(main, '"merge-base",\n    "HEAD",\n    runnerBaseHead()');
     assert.include(
       main,
       "test -d current/node_modules && test -d next/node_modules"

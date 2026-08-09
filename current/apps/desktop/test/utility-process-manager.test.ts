@@ -361,12 +361,7 @@ describe('UtilityProcessManager', () => {
     })
 
     it('resolves correct entrypoint for each service', () => {
-      const services: ServiceName[] = [
-        'server',
-        'terminal',
-        'file-watcher',
-        'mcp',
-      ]
+      const services: ServiceName[] = ['server', 'terminal', 'file-watcher']
 
       for (const service of services) {
         manager.fork(service)
@@ -379,7 +374,6 @@ describe('UtilityProcessManager', () => {
       expect(envs[0]).toContain('packages/server/dist/utility-main.mjs')
       expect(envs[1]).toContain('packages/terminal/dist/utility-main.mjs')
       expect(envs[2]).toContain('packages/file-watcher/dist/utility-main.mjs')
-      expect(envs[3]).toContain('packages/mcp/dist/utility-main.mjs')
     })
   })
 

@@ -393,21 +393,6 @@ async function startServerBackend(): Promise<void> {
   backendWsUrl = backendProcessManager.start().wsUrl
 }
 
-/**
- * Broker direct MessagePort channels between utility processes that
- * need to communicate with each other.
- *
- * Called whenever a utility process becomes ready. Checks which pairs
- * of services are both healthy and creates brokered connections for
- * those that are. Each pair is re-brokered after every restart of
- * either service, since old ports die with old processes.
- */
-function brokerInterProcessPorts(): void {
-  // Server no longer runs as a utility process. The backend child reaches
-  // terminal and file-watcher over loopback WebSocket RPC, and standalone MCP
-  // clients reach the backend child's `/rpc` endpoint directly.
-}
-
 app
   .whenReady()
   .then(async () => {
@@ -443,7 +428,6 @@ app
     utilityProcessManager.setMessageHandler((name, message) => {
       if (message.type === 'ready') {
         lifecycleMonitor?.handleReady(name)
-        brokerInterProcessPorts()
       } else if (message.type === 'heartbeat') {
         lifecycleMonitor?.handleHeartbeat(name)
       }
@@ -457,7 +441,7 @@ app
 
     // Fork utility processes via the lifecycle monitor, which handles
     // startup detection, crash recovery, and status events.
-    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher', 'mcp'])
+    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher'])
 
     // No powerMonitor suspend/resume wiring is needed for heartbeats:
     // the lifecycle monitor counts awake time (process-time countdowns),
@@ -501,7 +485,7 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['terminal', 'file-watcher', 'mcp'] as const
+      const validNames = ['terminal', 'file-watcher'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return

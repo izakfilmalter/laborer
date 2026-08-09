@@ -8,7 +8,7 @@
  * Uses Playwright's Electron support (`_electron.launch()`) following
  * VS Code's smoke test pattern. The Electron app is launched once per
  * test and torn down after, providing a real Electron environment with
- * utility processes (server, terminal, file-watcher, mcp) all running.
+ * utility processes (server, terminal, and file-watcher) all running.
  *
  * @see .reference/vscode/test/automation/src/playwrightElectron.ts
  * @see PRD-e2e-test-coverage.md — Page Object Pattern

@@ -33,27 +33,30 @@ export const assertRecordedRecoveryLineage = (
   }
 };
 
-export const classifyBranchRecovery = ({
-  acceptedHead,
-  completedHead,
-  currentHead,
-  gatePassedHead,
-  gatePendingHead,
-  implementationHead,
-  progressHead,
-  reviewedHead,
-  uiReviewedHead,
-}: {
-  readonly acceptedHead: string;
-  readonly completedHead: string | undefined;
-  readonly currentHead: string;
-  readonly gatePassedHead: string | undefined;
-  readonly gatePendingHead: string | undefined;
-  readonly implementationHead: string | undefined;
-  readonly progressHead: string | undefined;
-  readonly reviewedHead: string | undefined;
-  readonly uiReviewedHead: string | undefined;
-}) => {
+export const classifyBranchRecovery = (
+  {
+    acceptedHead,
+    completedHead,
+    currentHead,
+    gatePassedHead,
+    gatePendingHead,
+    implementationHead,
+    progressHead,
+    reviewedHead,
+    uiReviewedHead,
+  }: {
+    readonly acceptedHead: string;
+    readonly completedHead: string | undefined;
+    readonly currentHead: string;
+    readonly gatePassedHead: string | undefined;
+    readonly gatePendingHead: string | undefined;
+    readonly implementationHead: string | undefined;
+    readonly progressHead: string | undefined;
+    readonly reviewedHead: string | undefined;
+    readonly uiReviewedHead: string | undefined;
+  },
+  isAncestor: (ancestor: string, descendant: string) => boolean
+) => {
   if (currentHead === completedHead) {
     return "publish" as const;
   }
@@ -75,7 +78,30 @@ export const classifyBranchRecovery = ({
   if (currentHead === acceptedHead) {
     return "build" as const;
   }
+
+  const descendsFrom = (head: string | undefined) =>
+    head !== undefined && isAncestor(head, currentHead);
+  if (
+    descendsFrom(completedHead) ||
+    descendsFrom(reviewedHead) ||
+    descendsFrom(gatePassedHead) ||
+    descendsFrom(gatePendingHead)
+  ) {
+    return "review" as const;
+  }
+  if (descendsFrom(uiReviewedHead)) {
+    return "code-review" as const;
+  }
+  if (descendsFrom(progressHead)) {
+    return "review" as const;
+  }
+  if (descendsFrom(implementationHead)) {
+    return "ui" as const;
+  }
+  if (isAncestor(acceptedHead, currentHead)) {
+    return "build" as const;
+  }
   throw new Error(
-    `Branch contains unrecorded commits after accepted head ${acceptedHead}.`
+    `Branch contains unrelated commits outside accepted head ${acceptedHead}.`
   );
 };

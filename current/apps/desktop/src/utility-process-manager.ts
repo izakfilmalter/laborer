@@ -59,7 +59,7 @@ const BLOCKED_ENV_VARS = new Set([
 // ---------------------------------------------------------------------------
 
 /** Identifies a utility process service. */
-export type ServiceName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
+export type ServiceName = 'server' | 'terminal' | 'file-watcher'
 
 /** Callback invoked when a utility process exits unexpectedly. */
 export type ProcessExitHandler = (
@@ -143,8 +143,6 @@ function resolveEntryPath(name: ServiceName): string {
       return join(root, 'packages/terminal/dist/utility-main.mjs')
     case 'file-watcher':
       return join(root, 'packages/file-watcher/dist/utility-main.mjs')
-    case 'mcp':
-      return join(root, 'packages/mcp/dist/utility-main.mjs')
     default: {
       const _exhaustive: never = name
       return _exhaustive

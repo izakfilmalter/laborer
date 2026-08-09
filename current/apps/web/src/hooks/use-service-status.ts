@@ -21,7 +21,7 @@ import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
 import type { ServiceState } from '@/lib/sidecar-statuses'
 
 /** Service names that include sidecar services plus LiveStore sync. */
-type ServiceName = 'file-watcher' | 'mcp' | 'server' | 'sync' | 'terminal'
+type ServiceName = 'file-watcher' | 'server' | 'sync' | 'terminal'
 
 /** Map of every tracked service to its current UI state. */
 type ServiceStatuses = Record<ServiceName, ServiceState>

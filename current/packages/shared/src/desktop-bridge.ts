@@ -10,7 +10,7 @@ export interface ContextMenuItem<T extends string = string> {
 /**
  * Sidecar service names managed by the Electron main process.
  */
-export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
+export type SidecarName = 'server' | 'terminal' | 'file-watcher'
 
 /**
  * Sidecar status reported to the renderer.

@@ -25,6 +25,7 @@ import {
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
@@ -746,17 +747,21 @@ async function buildIssue(issue: PlannedIssue) {
     const acceptedHead =
       issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
     const startingHead = worktreeHead(sandbox.worktreePath);
-    const recovery = classifyBranchRecovery({
-      acceptedHead,
-      completedHead: recordedCompletion(issue),
-      currentHead: startingHead,
-      gatePassedHead: recordedGatePassed(issue),
-      gatePendingHead: recordedGatePending(issue),
-      implementationHead: recordedImplementation(issue),
-      progressHead: recordedProgress(issue),
-      reviewedHead: recordedReviewed(issue),
-      uiReviewedHead: recordedUiReview(issue),
-    });
+    const recovery = classifyBranchRecovery(
+      {
+        acceptedHead,
+        completedHead: recordedCompletion(issue),
+        currentHead: startingHead,
+        gatePassedHead: recordedGatePassed(issue),
+        gatePendingHead: recordedGatePending(issue),
+        implementationHead: recordedImplementation(issue),
+        progressHead: recordedProgress(issue),
+        reviewedHead: recordedReviewed(issue),
+        uiReviewedHead: recordedUiReview(issue),
+      },
+      (ancestor, descendant) =>
+        commitIsAncestor(sandbox.worktreePath, ancestor, descendant)
+    );
     if (recovery !== "build") {
       assertRecordedRecoveryLineage(
         issue.latestImplementedHead,
@@ -1056,6 +1061,7 @@ function refreshUnstartedIssueBranch(
     branchHead,
     baseHead,
     hasRecordedWork,
+    worktreeIsDirty(worktreePath),
     commitIsAncestor(worktreePath, branchHead, baseHead)
   );
   if (shouldRefresh) {
@@ -1112,6 +1118,14 @@ function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
     "origin",
     `refs/heads/${branch}:refs/remotes/origin/${branch}`,
   ]);
+  if (
+    !shouldFastForwardPreservedWorktree(
+      worktreeIsDirty(worktreePath),
+      commitIsAncestor(worktreePath, worktreeHead(worktreePath), `origin/${branch}`)
+    )
+  ) {
+    return;
+  }
   runFile("git", [
     "-C",
     worktreePath,
@@ -1754,7 +1768,8 @@ function baseBranchHead(worktreePath: string) {
   return runFile("git", [
     "-C",
     worktreePath,
-    "rev-parse",
+    "merge-base",
+    "HEAD",
     runnerBaseHead(),
   ]).trim();
 }

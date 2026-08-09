@@ -5,7 +5,6 @@
  * Verifies that:
  * - Each core service (Server, Terminal, File Watcher) shows a status dot
  * - Each dot reflects the correct state (starting/healthy/crashed/unknown)
- * - MCP is excluded from primary indicators
  * - Dots consume useServiceStatus() reactively
  * - Pulsing animation for starting state
  *
@@ -150,29 +149,6 @@ describe('ServiceStatusDots', () => {
     expect(terminalDot.dataset.state).toBe('healthy')
     // File-watcher poll fails → stays 'starting' (dev mode emits starting on mount)
     expect(fileWatcherDot.dataset.state).toBe('starting')
-  })
-
-  it('excludes MCP from primary indicators', async () => {
-    mockFetch(() => Promise.reject(new Error('not ready')))
-
-    render(
-      <LifecyclePhaseProvider>
-        <ServiceStatusDots />
-      </LifecyclePhaseProvider>
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    // MCP dot should not be rendered
-    expect(screen.queryByTestId('service-dot-mcp')).toBeNull()
-
-    // Core service dots should be rendered
-    expect(screen.getByTestId('service-dot-server')).toBeTruthy()
-    expect(screen.getByTestId('service-dot-terminal')).toBeTruthy()
-    expect(screen.getByTestId('service-dot-file-watcher')).toBeTruthy()
   })
 
   it('renders within an output element with accessible label', () => {

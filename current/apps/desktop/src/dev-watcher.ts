@@ -48,7 +48,6 @@ const SERVICE_PACKAGES: ReadonlyArray<{
   { name: 'terminal', pkg: 'terminal' },
   { name: 'server', pkg: 'server' },
   { name: 'file-watcher', pkg: 'file-watcher' },
-  { name: 'mcp', pkg: 'mcp' },
 ]
 
 // ---------------------------------------------------------------------------

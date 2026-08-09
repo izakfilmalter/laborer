@@ -1,5 +1,5 @@
-import type { WebClient } from "@slack/web-api";
 import { Deferred, Effect, Exit, Ref, Scope } from "effect";
+import { environmentForAcpConversation } from "../acp-runtime/child-environment.ts";
 import {
   type GitWorktreeManagerOptions,
   makeGitWorktreeManager,
@@ -11,18 +11,7 @@ import {
   type OpenCodeWorkspaceSessionClientOptions,
 } from "../adapters/opencode-agents.ts";
 import type { ApplicationShape } from "../application.ts";
-import {
-  makeSlackActivationAcknowledger,
-  makeSlackCompletionReactor,
-} from "../prototype/emulated-slack.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
-import {
-  makeProcessHandler,
-  makeProcessInitializer,
-} from "../prototype/process-handler.ts";
-import type { SlackGatewayShape } from "../prototype/runtime.ts";
-import { makePrototypeHarness } from "../prototype/runtime.ts";
-import { makeFileStoreLayer } from "../prototype/store.ts";
 import {
   type ConversationAgentShape,
   type ImplementationAgentShape,
@@ -32,13 +21,8 @@ import {
   type WorktreeManagerShape,
 } from "../reference-coding-application.ts";
 import type { ConversationAdoptionHistoryGateway } from "./conversation-adoption-history.ts";
-import { environmentForConfiguredHandler } from "./handler-environment.ts";
-import type {
-  ReferenceCodingApplicationConfig,
-  WorkHandlerConfig,
-} from "./laborer-config.ts";
+import type { ReferenceCodingApplicationConfig } from "./laborer-config.ts";
 import type { SlackRuntimePaths } from "./runtime-paths.ts";
-import type { SlackWorkspaceRuntimeOptions } from "./workspace-startup.ts";
 
 export interface ReferenceCodingWorkspaceApplicationOptions {
   readonly config: ReferenceCodingApplicationConfig;
@@ -109,7 +93,7 @@ const openCodeClientOptions = (
     ...(options.config.implementation?.agent === undefined
       ? {}
       : { agent: options.config.implementation.agent }),
-    environment: environmentForConfiguredHandler(
+    environment: environmentForAcpConversation(
       options.environment,
       options.config.environment
     ),
@@ -310,73 +294,3 @@ export const makeReferenceCodingWorkspaceApplicationWithConversationAgent =
       });
     }
   );
-
-const makeConfiguredProcessRunner = Effect.fn(
-  "makeConfiguredProcessWorkspaceRunner"
-)(function* (
-  options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>,
-  workHandler: WorkHandlerConfig
-) {
-  const processHandler = yield* makeProcessHandler({
-    args: workHandler.args,
-    command: workHandler.command,
-    cwd: options.laborer.root,
-    environment: environmentForConfiguredHandler(
-      process.env,
-      workHandler.environment
-    ),
-    evidence: { mode: "production" },
-    stateRoot: options.paths.workThreads,
-    stateRootAnchor: options.paths.root,
-  });
-  const initializerConfig = workHandler.initialize;
-  const processInitializer =
-    initializerConfig === undefined
-      ? undefined
-      : yield* makeProcessInitializer({
-          args: initializerConfig.args,
-          command: initializerConfig.command,
-          cwd: options.laborer.root,
-          environment: environmentForConfiguredHandler(
-            process.env,
-            initializerConfig.environment
-          ),
-          evidence: { mode: "production" },
-          stateRoot: options.paths.workThreads,
-          stateRootAnchor: options.paths.root,
-        });
-  const harness = yield* makePrototypeHarness({
-    activationAcknowledger: makeSlackActivationAcknowledger(options.client),
-    completionReactor: makeSlackCompletionReactor(options.client),
-    handler: processHandler.handler,
-    ...(processInitializer === undefined
-      ? {}
-      : { initializer: processInitializer.initializer }),
-    laborerSlackId: options.identity.botUserId,
-    slack: options.gateway,
-    storeLayer: makeFileStoreLayer(
-      options.identity.botUserId,
-      options.paths.legacyHandlerState,
-      options.paths.root,
-      undefined,
-      { initializeNewThreads: processInitializer !== undefined }
-    ),
-  });
-  return harness.runner;
-});
-
-export const makeSlackWorkspaceRunner = Effect.fn("makeSlackWorkspaceRunner")(
-  function* (
-    options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>
-  ) {
-    const workHandler = options.laborer.config.workHandler;
-    if (workHandler !== undefined) {
-      return yield* makeConfiguredProcessRunner(options, workHandler);
-    }
-    return yield* Effect.die(
-      new Error(
-        "reference-coding startup requires the production ACP workspace runner"
-      )
-    );
-  }
-);

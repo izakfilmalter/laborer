@@ -8,17 +8,11 @@ describe("OpenCode automatic update boundary", () => {
   it("prevents managed OpenCode servers from replacing the host CLI", async () => {
     const [adapter, preflight] = await Promise.all([
       readFile(
-        resolve(
-          process.cwd(),
-          "src/acp-conversation-prototype/opencode-v2-acp-adapter.ts"
-        ),
+        resolve(process.cwd(), "src/acp-runtime/opencode-v2-acp-adapter.ts"),
         "utf8"
       ),
       readFile(
-        resolve(
-          process.cwd(),
-          "src/acp-conversation-prototype/opencode-config-preflight.ts"
-        ),
+        resolve(process.cwd(), "src/acp-runtime/opencode-config-preflight.ts"),
         "utf8"
       ),
     ]);

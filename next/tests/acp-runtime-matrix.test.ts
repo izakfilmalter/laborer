@@ -68,16 +68,16 @@ describe("issue #243 ACP runtime matrix", () => {
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
     );
     assert.strictEqual(
-      packageJson.dependencies["@slack/socket-mode"],
-      SUPPORTED_ACP_RUNTIME_MATRIX.slackSocketMode
+      packageJson.dependencies.chat,
+      SUPPORTED_ACP_RUNTIME_MATRIX.chat
     );
     assert.strictEqual(
       packageJson.dependencies["@slack/web-api"],
       SUPPORTED_ACP_RUNTIME_MATRIX.slackWebApi
     );
     assert.strictEqual(
-      packageJson.dependencies.emulate,
-      SUPPORTED_ACP_RUNTIME_MATRIX.emulate
+      packageJson.dependencies["@chat-adapter/slack"],
+      SUPPORTED_ACP_RUNTIME_MATRIX.chatSlackAdapter
     );
     assert.strictEqual(
       packageJson.engines.node,

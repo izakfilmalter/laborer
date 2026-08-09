@@ -75,10 +75,9 @@ import {
   CONVERSATION_ADOPTION_HISTORY_MAX_REQUESTS,
   unavailableConversationAdoptionHistoryGateway,
 } from "./slack/conversation-adoption-history.ts";
-import {
-  MAX_AGGREGATE_IMAGE_BYTES,
-  MAX_IMAGES_PER_MESSAGE,
-} from "./slack/inbound-images.ts";
+
+const MAX_IMAGES_PER_MESSAGE = 4;
+const MAX_AGGREGATE_IMAGE_BYTES = 768 * 1024;
 
 export const ReferenceCodingActionName = ActionHandlerKey;
 export type ReferenceCodingActionName = typeof ReferenceCodingActionName.Type;

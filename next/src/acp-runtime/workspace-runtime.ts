@@ -1,43 +1,16 @@
-import { dirname } from "node:path";
-import type { WebClient } from "@slack/web-api";
-import { Effect, type Layer, Schema, type Scope } from "effect";
+import { Effect, Schema, type Scope } from "effect";
 import type { ApplicationShape } from "../application.ts";
 import { applicationThroughRootConversationRuntime } from "../durable-runtime/conversation-application.ts";
 import { conversationCapabilitiesForRootRuntime } from "../durable-runtime/reference-coding-application.ts";
 import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
 import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
-import type { NormalizedMessage, PrototypeState } from "../prototype/domain.ts";
-import {
-  makeSlackActivationAcknowledger,
-  makeSlackCompletionReactor,
-} from "../prototype/emulated-slack.ts";
-import { HandlerFailure, type StoreError } from "../prototype/errors.ts";
-import type {
-  PrototypeHarness,
-  SlackGatewayShape,
-} from "../prototype/runtime.ts";
-import { makePrototypeHarness } from "../prototype/runtime.ts";
-import { makeFileStoreLayer, type PrototypeStore } from "../prototype/store.ts";
+import type { HandlerFailure, StoreError } from "../prototype/errors.ts";
 import type { ConversationAgentShape } from "../reference-coding-application.ts";
-import { makeSlackAcpPermissionPresenter } from "../slack/acp-permission-presenter.ts";
-import { makeAcpPermissionTerminalOutbox } from "../slack/acp-permission-ui-outbox.ts";
-import {
-  makeAcpRecoveryService,
-  startAcpRecoverySocket,
-} from "../slack/acp-recovery.ts";
-import { makeSlackConversationAdoptionHistoryGateway } from "../slack/conversation-adoption-history.ts";
-import { environmentForAcpConversation } from "../slack/handler-environment.ts";
-import {
-  cleanupInboundImageStorage,
-  makeSlackInboundImageResolver,
-} from "../slack/inbound-images.ts";
 import type { SlackRuntimePaths } from "../slack/runtime-paths.ts";
-import { observePrototypeWorkThreads } from "../slack/work-thread-activity-projection.ts";
 import {
   makeReferenceCodingWorkspaceApplicationWithConversationAgent,
   type ReferenceCodingWorkspaceApplicationDependencies,
 } from "../slack/workspace-runner.ts";
-import type { SlackWorkspaceRuntimeOptions } from "../slack/workspace-startup.ts";
 import {
   type AcpAuthorityRepository,
   makeAcpAuthorityRepository,
@@ -64,6 +37,7 @@ import {
   makeLaborerActionMcpBridge,
 } from "./action-mcp.ts";
 import { prepareAcpAgentContextSources } from "./agent-context.ts";
+import { environmentForAcpConversation } from "./child-environment.ts";
 import {
   laborerMemoryOpenCodePermission,
   makeLaborerMemoryMcpServerConfiguration,
@@ -73,10 +47,7 @@ import {
   openCodeAcpProcessOptions,
 } from "./open-code-acp-process.ts";
 import { preflightEffectiveOpenCodeMcpNames } from "./opencode-config-preflight.ts";
-import {
-  makeSlackParticipantLookup,
-  type SlackParticipantLookupShape,
-} from "./slack-participant-lookup.ts";
+import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
 
 export class AcpWorkspaceStartupError extends Schema.TaggedErrorClass<AcpWorkspaceStartupError>()(
   "AcpWorkspaceStartupError",
@@ -94,42 +65,6 @@ export interface AcpWorkspaceHealth
   readonly status: AcpConversationProcessHealth["status"];
   readonly workspaceId: string;
 }
-
-const liveInboundImagePaths = (state: PrototypeState): ReadonlySet<string> => {
-  const paths = new Set<string>();
-  const retainMessages = (messages: readonly NormalizedMessage[]): void => {
-    for (const message of messages) {
-      for (const image of message.images ?? []) {
-        if (!("failureReason" in image)) {
-          paths.add(image.contentPath);
-        }
-      }
-    }
-  };
-  for (const thread of state.threads) {
-    retainMessages(thread.unassigned);
-    const recoverableDeliveryTurns = new Set(
-      thread.outbox
-        .filter(
-          (item) => item.status !== "delivered" && item.status !== "abandoned"
-        )
-        .map((item) => item.turnId)
-    );
-    for (const turn of thread.turns) {
-      if (
-        (turn.status !== "completed" && turn.status !== "failed") ||
-        recoverableDeliveryTurns.has(turn.id)
-      ) {
-        retainMessages(turn.context);
-        retainMessages(turn.messages);
-      }
-    }
-    if (thread.turns.length === 0 && thread.contextStatus === "ready") {
-      retainMessages(thread.context);
-    }
-  }
-  return paths;
-};
 
 const supervisorHealthForProcessStatus = (
   status: AcpConversationProcessHealth["status"]
@@ -159,15 +94,8 @@ const processStatusForSupervisorHealth = (
 };
 
 export interface ProductionAcpWorkspaceApplicationOptions {
-  readonly applicationConfig: NonNullable<
-    SlackWorkspaceRuntimeOptions<
-      WebClient,
-      SlackGatewayShape
-    >["laborer"]["config"]["application"]
-  >;
-  readonly client?: WebClient;
+  readonly applicationConfig: import("../slack/laborer-config.ts").ReferenceCodingApplicationConfig;
   readonly environment: NodeJS.ProcessEnv;
-  readonly laborerBotId?: string;
   readonly laborerSlackId: string;
   readonly paths: SlackRuntimePaths;
   readonly root: string;
@@ -220,9 +148,6 @@ export interface ProductionAcpWorkspaceApplicationDependencies
     conversationId: string,
     output: import("../application.ts").ApplicationPublicOutput
   ) => Effect.Effect<void, HandlerFailure | StoreError>;
-  /** Legacy-only participant scheduling. Chat turns must remain at-most-once. */
-  readonly routeParticipantTurnsThroughDurableRuntime?: boolean;
-  readonly storeLayer?: Layer.Layer<PrototypeStore, StoreError>;
 }
 
 export interface ProductionAcpWorkspaceApplication {
@@ -233,7 +158,6 @@ export interface ProductionAcpWorkspaceApplication {
 
 export const makeProductionAcpWorkspaceApplication = Effect.fn(
   "makeProductionAcpWorkspaceApplication"
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this composition root deliberately makes all runtime ownership visible.
 )(function* (
   options: ProductionAcpWorkspaceApplicationOptions,
   dependencies: ProductionAcpWorkspaceApplicationDependencies = {}
@@ -344,18 +268,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
         trustedRoot: options.paths.root,
       })
     : dependencies.makeAuthorityRepository(options);
-  const permissionPresenter =
-    dependencies.permissionPresenter ??
-    (options.client === undefined
-      ? undefined
-      : makeSlackAcpPermissionPresenter(options.client, {
-          botUserId: options.laborerSlackId,
-          outbox: yield* makeAcpPermissionTerminalOutbox({
-            path: options.paths.acpPermissionUiOutbox,
-            trustedRoot: options.paths.root,
-          }),
-          workspaceId: options.workspaceId,
-        }));
+  const permissionPresenter = dependencies.permissionPresenter;
   if (permissionPresenter === undefined) {
     return yield* AcpWorkspaceStartupError.make({
       reason: "acp-composition-incompatible",
@@ -422,16 +335,11 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
           durableSessionMode: true,
           environment: childEnvironment,
           laborerSlackId: options.laborerSlackId,
-          imageStorageRoot: dirname(options.paths.runnerState),
+          imageStorageRoot: options.paths.attachments,
           memoryMcpServer,
-          participantLookup:
-            dependencies.participantLookup ??
-            (options.client === undefined
-              ? {
-                  lookupVisibleName: (slackUserId) =>
-                    Effect.succeed(slackUserId),
-                }
-              : makeSlackParticipantLookup(options.client)),
+          participantLookup: dependencies.participantLookup ?? {
+            lookupVisibleName: (slackUserId) => Effect.succeed(slackUserId),
+          },
           permissionBroker,
           processCleanupObserver: generationContext.observeCleanup,
           processExitObserver: (code, signal) =>
@@ -463,20 +371,6 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     });
   }
   const conversationAgent = supervisor.agent;
-  const conversationAdoptionHistory =
-    dependencies.conversationAdoptionHistory ??
-    (options.client === undefined
-      ? undefined
-      : makeSlackConversationAdoptionHistoryGateway({
-          botId: options.laborerBotId ?? "",
-          botUserId: options.laborerSlackId,
-          client: options.client,
-          resolveImages: makeSlackInboundImageResolver({
-            client: options.client,
-            storageRoot: dirname(options.paths.runnerState),
-          }),
-          workspaceId: options.workspaceId,
-        }));
   const application =
     yield* makeReferenceCodingWorkspaceApplicationWithConversationAgent(
       {
@@ -488,9 +382,6 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
       conversationAgent,
       {
         ...dependencies,
-        ...(conversationAdoptionHistory === undefined
-          ? {}
-          : { conversationAdoptionHistory }),
         ...(options.rootRuntime === undefined ||
         options.rootRuntime.actions.actions.length === 0
           ? {}
@@ -513,13 +404,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
             ? {}
             : { publishExternalOutput: dependencies.publishExternalOutput }),
           rootIdentity: options.root,
-          ...(dependencies.routeParticipantTurnsThroughDurableRuntime ===
-          undefined
-            ? {}
-            : {
-                routeParticipantTurnsThroughDurableRuntime:
-                  dependencies.routeParticipantTurnsThroughDurableRuntime,
-              }),
+          routeParticipantTurnsThroughDurableRuntime: false,
           runtime: options.rootRuntime,
           workspaceId: options.workspaceId,
         });
@@ -536,123 +421,5 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
       })
     ),
     permissionBroker,
-  };
-});
-
-export interface ProductionAcpSlackWorkspaceRuntime
-  extends ProductionAcpWorkspaceApplication {
-  readonly harness: PrototypeHarness;
-}
-
-export const makeProductionAcpSlackWorkspaceRuntime = Effect.fn(
-  "makeProductionAcpSlackWorkspaceRuntime"
-)(function* (
-  options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>,
-  dependencies: ProductionAcpWorkspaceApplicationDependencies = {}
-): Effect.fn.Return<
-  ProductionAcpSlackWorkspaceRuntime,
-  AcpWorkspaceStartupError | HandlerFailure | StoreError,
-  Scope.Scope
-> {
-  const applicationConfig = options.laborer.config.application;
-  if (applicationConfig === undefined) {
-    return yield* AcpWorkspaceStartupError.make({
-      reason: "acp-composition-incompatible",
-      workspaceId: options.identity.teamId,
-    });
-  }
-  const workspace = yield* makeProductionAcpWorkspaceApplication(
-    {
-      applicationConfig,
-      client: options.client,
-      environment: dependencies.environment ?? process.env,
-      laborerBotId: options.identity.botId,
-      laborerSlackId: options.identity.botUserId,
-      paths: options.paths,
-      root: options.laborer.root,
-      ...(options.rootRuntime === undefined
-        ? {}
-        : { rootRuntime: options.rootRuntime }),
-      workspaceId: options.identity.teamId,
-    },
-    dependencies
-  );
-  const harness = yield* makePrototypeHarness({
-    activationAcknowledger: makeSlackActivationAcknowledger(options.client),
-    application: workspace.application,
-    completionReactor: makeSlackCompletionReactor(options.client),
-    laborerSlackId: options.identity.botUserId,
-    slack: options.gateway,
-    storeLayer:
-      dependencies.storeLayer ??
-      makeFileStoreLayer(
-        options.identity.botUserId,
-        options.paths.runnerState,
-        options.paths.root,
-        undefined,
-        { initializeNewThreads: false }
-      ),
-  });
-  const runnerSnapshot = yield* harness.store.snapshot;
-  yield* cleanupInboundImageStorage({
-    liveContentPaths: liveInboundImagePaths(runnerSnapshot),
-    storageRoot: dirname(options.paths.runnerState),
-  }).pipe(
-    Effect.mapError(() =>
-      HandlerFailure.make({
-        category: "protocol",
-        safeDetail: "Inbound image retention cleanup failed",
-      })
-    )
-  );
-  return { ...workspace, harness };
-});
-
-export const makeAcpSlackWorkspaceRunner = Effect.fn(
-  "makeAcpSlackWorkspaceRunner"
-)(function* (
-  options: SlackWorkspaceRuntimeOptions<WebClient, SlackGatewayShape>,
-  dependencies: ProductionAcpWorkspaceApplicationDependencies = {}
-) {
-  const observeConfiguredHealth = dependencies.observeHealth;
-  const runtime = yield* makeProductionAcpSlackWorkspaceRuntime(options, {
-    ...dependencies,
-    observeHealth: (health) => {
-      observeConfiguredHealth?.(health);
-      options.observeReadiness?.(health.status);
-    },
-  });
-  const recovery = makeAcpRecoveryService({
-    paths: options.paths,
-    runner: runtime.harness.runner,
-    supervisorHealth: runtime.health,
-    workspaceId: options.identity.teamId,
-  });
-  yield* startAcpRecoverySocket({
-    path: options.paths.recoverySocket,
-    service: recovery,
-    trustedRoot: dirname(options.paths.recoverySocket),
-  });
-  return {
-    ...runtime.harness.runner,
-    handleInteraction: runtime.permissionBroker.handleInteraction,
-    health: recovery.health,
-    recovery,
-    workThreadActivity: Effect.all({
-      executions:
-        options.rootRuntime?.nonterminalExecutionActivity?.(
-          options.identity.teamId
-        ) ?? Effect.succeed([]),
-      state: runtime.harness.store.snapshot,
-    }).pipe(
-      Effect.map(({ executions, state }) =>
-        observePrototypeWorkThreads(
-          state,
-          options.identity.teamId,
-          executions,
-          options.identity.botUserId
-        )
-      )
-    ),
   };
 });

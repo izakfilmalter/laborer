@@ -26,6 +26,7 @@ const bareOpenCodeRun =
   /(?:^|[;&|$(=:[{,]|\b(?:command|exec|return)\s+|["'`])\s*opencode["']?\s+run\b/m;
 const programmaticOpenCodeRun =
   /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["'`]opencode["'`]\s*,\s*\[\s*["'`]run["'`]/m;
+const managedOpenCode2Invocation = /"--",\s*"opencode2"/;
 
 const operationalSourcePaths = (): readonly string[] =>
   execFileSync(
@@ -133,7 +134,7 @@ describe("OpenCode V1 operational source policy", () => {
       sandcastlePackage.devDependencies ?? {},
       "@opencode-ai/cli"
     );
-    assert.include(agent, 'const executable = "opencode2";');
+    assert.match(agent, managedOpenCode2Invocation);
     assert.notInclude(agent, "OPENCODE_DB");
   });
 

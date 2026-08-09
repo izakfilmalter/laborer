@@ -18,11 +18,8 @@ const REQUIRED_RUNTIME_VARIABLES = [
   "XDG_STATE_HOME",
 ] as const;
 
-/**
- * Adapter and control-plane credentials must never cross a configured child
- * process boundary. Provider credentials remain explicit operator opt-ins.
- */
-export const environmentForConfiguredHandler = (
+/** Build the minimal ACP child environment plus explicit application opt-ins. */
+export const environmentForAcpConversation = (
   inherited: NodeJS.ProcessEnv,
   optedInNames: readonly string[] = []
 ): NodeJS.ProcessEnv => {
@@ -39,14 +36,3 @@ export const environmentForConfiguredHandler = (
       value !== undefined && EffectArray.contains(allowedNames, name)
   );
 };
-
-/**
- * The production ACP child receives only runtime variables and names the
- * operator explicitly opted into for the reference application. Laborer-owned
- * authority material stays out even if a stale configuration names it.
- */
-export const environmentForAcpConversation = (
-  inherited: NodeJS.ProcessEnv,
-  optedInNames: readonly string[] = []
-): NodeJS.ProcessEnv =>
-  environmentForConfiguredHandler(inherited, optedInNames);

@@ -34,7 +34,6 @@ import {
   type RegisteredActionCatalog,
   type RegisteredActionContext,
 } from "./action.ts";
-import { importExistingDurableState } from "./legacy-import.ts";
 
 const RUNTIME_SCHEMA_VERSION = 6;
 export const RUNTIME_MAX_CONCURRENT_EXECUTIONS = 8;
@@ -2945,9 +2944,7 @@ const clusterLayer = ClusterWorkflowEngine.layer.pipe(
 export const makeRootDurableRuntimeLayer = (
   sqliteLayer: Layer.Layer<SqlClient, unknown>,
   catalog: RegisteredActionCatalog,
-  rootIdentity: string,
-  legacyRuntimeRoot?: string,
-  legacyWorkspaceId?: string
+  rootIdentity: string
 ) => {
   const registryLayer = Layer.succeed(ActionRegistry, catalog);
   const conversationRegistryLayer = Layer.effect(
@@ -2965,21 +2962,11 @@ export const makeRootDurableRuntimeLayer = (
   const migrationsLayer = Layer.effectDiscard(initializeLaborerTables).pipe(
     Layer.provide(sqliteLayer)
   );
-  const legacyImportLayer = Layer.effectDiscard(
-    legacyRuntimeRoot === undefined
-      ? Effect.void
-      : importExistingDurableState(
-          legacyRuntimeRoot,
-          rootIdentity,
-          legacyWorkspaceId
-        ).pipe(Effect.orDie)
-  ).pipe(Layer.provide(sqliteLayer), Layer.provide(migrationsLayer));
   const registrationLayer = Layer.effectDiscard(validateRootRegistration).pipe(
     Layer.provideMerge(registryLayer),
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
-    Layer.provideMerge(migrationsLayer),
-    Layer.provideMerge(legacyImportLayer)
+    Layer.provideMerge(migrationsLayer)
   );
   const workflowLayer = Layer.merge(
     workflowHandlerLayer,
@@ -2993,7 +2980,6 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
-    Layer.provideMerge(legacyImportLayer),
     Layer.provideMerge(registrationLayer)
   );
   return Layer.effect(RootDurableRuntime, makeRuntimeService).pipe(
@@ -3005,7 +2991,6 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(rootIdentityLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
-    Layer.provideMerge(legacyImportLayer),
     Layer.provideMerge(registrationLayer)
   );
 };

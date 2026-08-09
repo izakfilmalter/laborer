@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
 import {
@@ -15,9 +15,12 @@ import {
   type SlackDaemonConfig,
 } from "../slack/config.ts";
 import { authenticateSlackBot } from "../slack/identity.ts";
-import { prepareSlackRuntimePaths } from "../slack/runtime-paths.ts";
+import { loadLaborerConfig } from "../slack/laborer-config.ts";
+import {
+  deleteRetiredSlackRuntimeState,
+  prepareSlackRuntimePaths,
+} from "../slack/runtime-paths.ts";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
-import { prepareSlackWorkspaceRoot } from "../slack/workspace-startup.ts";
 import type { AcpPermissionBroker } from "./acp-permission-broker.ts";
 import {
   handleChatPermissionAction,
@@ -77,20 +80,20 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
         );
       }
       const workspaceId = installation.expectedTeamId;
-      const preparedRoot = yield* prepareSlackWorkspaceRoot(
-        installation,
+      const laborer = yield* loadLaborerConfig({
+        defaultRoot: installation.root,
+        environment: { ...process.env, LABORER_ROOT: installation.root },
+      });
+      yield* deleteRetiredSlackRuntimeState(laborer.root);
+      const stateWorkspaceId =
+        options.workspaceStatePrefix === undefined
+          ? workspaceId
+          : `${options.workspaceStatePrefix}:${workspaceId}`;
+      const paths = yield* prepareSlackRuntimePaths(
+        stateWorkspaceId,
         process.env
       );
-      const prepared =
-        options.workspaceStatePrefix === undefined
-          ? preparedRoot
-          : {
-              ...preparedRoot,
-              paths: yield* prepareSlackRuntimePaths(
-                preparedRoot.laborer.root,
-                `${options.workspaceStatePrefix}:${installation.expectedTeamId}`
-              ),
-            };
+      const prepared = { laborer, paths };
       const applicationConfig = prepared.laborer.config.application;
       if (applicationConfig === undefined) {
         return yield* Effect.die(
@@ -154,7 +157,6 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
               .postToThread(workspaceId, channelId, rootTs, output.text)
               .pipe(Effect.ignore);
           },
-          routeParticipantTurnsThroughDurableRuntime: false,
         }
       );
       workspaces.set(workspaceId, {
@@ -166,7 +168,7 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
         application: workspace.application,
       });
       brokers.set(workspaceId, workspace.permissionBroker);
-      attachmentRoots.set(workspaceId, dirname(prepared.paths.runnerState));
+      attachmentRoots.set(workspaceId, prepared.paths.attachments);
     }
 
     const workHandler = makeAcpChatWorkHandler({

@@ -6,10 +6,10 @@
 
 Laborer is a generic bridge: it accepts Slack work-thread input, invokes a user-controlled local program, and carries deliberate output back to Slack. Preserve these ownership boundaries:
 
-- The Runner owns ingestion, durable turn ordering, process supervision, and delivery.
-- Work handlers own workflow meaning, tools, agent choice, continuation state, and repository policy.
-- Slack and OpenCode details stay in adapters or configured handlers rather than leaking into the generic core.
-- Only explicit public output crosses back to Slack; diagnostics and process output remain private.
+- Chat SDK owns Slack ingestion, ordering, subscription, and best-effort delivery.
+- The ACP Conversation runtime owns agent sessions; registered Actions own workflow-specific execution behavior.
+- Slack and OpenCode details stay behind their adapters rather than leaking into the generic core.
+- Only Conversation output admitted by the public/private gate crosses back to Slack; diagnostics and implementation-agent output remain private.
 
 Keep throwaway work inside its named prototype unless the issue explicitly promotes it into a shared or live path.
 
@@ -25,7 +25,7 @@ Run commands from the repository root:
 
 `check` verifies formatting but does not fix it. Run `format:fix` before the full check.
 
-The live Slack entry point runs on Node because the Socket Mode client depends on Node's Undici WebSocket behavior. Use the package scripts rather than invoking `src/slack/live.ts` with Bun.
+The live Slack entry point runs on Node because the Chat Slack adapter depends on Node behavior. Use the package scripts rather than invoking the source entry point with Bun.
 
 ## Daemon Lifecycle
 

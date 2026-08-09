@@ -6,7 +6,7 @@ The Laborer desktop app has a startup bottleneck caused by a sequential dependen
 
 1. Electron spawns terminal + file-watcher sidecars in parallel, health-polls them (up to 10s timeout each)
 2. Only after both are healthy, spawns the server sidecar
-3. The server blocks its own health endpoint until ALL ~25 Effect layers are built — including Docker detection, PR watchers, task importers, and connections to terminal + file-watcher sidecars
+3. The server blocks its own health endpoint until all Effect layers are built — including PR watchers, task importers, and connections to terminal + file-watcher sidecars
 4. The renderer's `ServerGate` component blocks all meaningful UI until all three sidecars report healthy
 5. Only then does LiveStore begin initializing — opening OPFS, replaying materializers, and performing a **blocking initial sync** with a 5-second timeout
 6. Only after LiveStore sync completes does the actual app content render
@@ -15,7 +15,7 @@ This creates a worst-case startup time of 10+ seconds before any useful UI appea
 
 - **All-or-nothing gating:** The UI treats service readiness as binary — everything must be ready or nothing renders
 - **Blocking LiveStore sync:** The app explicitly opts into `{ _tag: 'Blocking', timeout: 5000 }` even though LiveStore's default is non-blocking (`{ _tag: 'Skip' }`) and the store can serve locally-cached data immediately
-- **Monolithic server layer graph:** The server's health endpoint doesn't respond until every service layer is built, including non-essential ones like Docker detection and PR watchers
+- **Monolithic server layer graph:** The server's health endpoint doesn't respond until every service layer is built, including non-essential ones like task importers and PR watchers
 - **Eager sidecar connections:** The server blocks startup on connecting to terminal and file-watcher sidecars, even though those connections aren't needed until a user interacts with a terminal or watches a file
 
 VS Code solves this with a 4-phase lifecycle (`Starting → Ready → Restored → Eventually`), delayed service instantiation via proxies, and idle-time batching of non-essential work. GitHub Desktop solves it by rendering a loading state immediately and initializing stores asynchronously. Both approaches ensure the user sees a responsive UI within milliseconds of launch.
@@ -30,7 +30,7 @@ Key changes:
 
 1. **LiveStore loads locally-first** — switch to non-blocking sync (`{ _tag: 'Skip' }`), render from OPFS cache immediately, sync in background
 2. **Replace ServerGate with progressive enablement** — remove the blocking gate, render the full UI shell immediately, disable/loading-state features that need unavailable services
-3. **Split server layer graph** — core layers (HTTP, LiveStore, RPC) start fast, deferred layers (Docker, PR watcher, etc.) initialize in the background
+3. **Split server layer graph** — core layers (HTTP, LiveStore, RPC) start fast, while PR tracking and other deferred services initialize in the background
 4. **Lazy sidecar connections** — server doesn't wait for terminal or file-watcher during startup, connects on first use
 5. **Service status in Header** — persistent status indicators showing each service's phase and health
 
@@ -45,13 +45,13 @@ Key changes:
 7. As a user, I want to navigate between workspaces during startup, so that I'm not blocked from basic navigation while services initialize
 8. As a user, I want read-only workspace views to work before the server is fully ready, so that I can see code, diffs, and panel layouts from the local cache
 9. As a user, I want write operations (creating workspaces, spawning terminals) to show a clear "connecting..." state rather than failing silently, so that I understand why an action isn't working yet
-10. As a user, I want terminal interactions to work as soon as the terminal sidecar is healthy, independent of other services, so that I can start working even if Docker detection is still running
+10. As a user, I want terminal interactions to work as soon as the terminal sidecar is healthy, independent of other services, so that I can start working while background services are still initializing
 11. As a user, I want the app to recover gracefully if a sidecar crashes during operation, without losing my UI state, so that crashes feel like temporary blips rather than catastrophic failures
 12. As a user, I want the app to continue working in a degraded mode if the server goes down temporarily, so that my local state (panel layouts, navigation) is preserved
 13. As a user, I want LiveStore to sync in the background after launch, so that my local cache is updated without blocking my workflow
 14. As a user, I want to see a subtle sync indicator when LiveStore is catching up, so that I know my data might be slightly stale
 15. As a user, I want the app to handle the first-ever launch (empty OPFS cache) gracefully, showing a meaningful onboarding state rather than a broken empty UI
-16. As a user, I want Docker-dependent features to appear/enable progressively as Docker detection completes, rather than blocking everything
+16. As a user, I want background-enriched features to appear progressively as their services initialize, rather than blocking everything
 17. As a user, I want PR status, branch tracking, and other background-fetched data to populate progressively, not block the initial render
 18. As a user, I want the header status indicators to animate transitions between states (starting → healthy), so that the experience feels polished rather than jarring
 19. As a user, I want error states in the header to persist with a retry action until I dismiss them, so that I don't miss important service failures
@@ -81,7 +81,7 @@ Modeled after VS Code's `LifecyclePhase`, the renderer maintains a forward-only 
 | 1 | **Starting** | App shell renders | Local OPFS data, navigation, panel layouts, cached workspace list. No server. |
 | 2 | **Ready** | Server health check passes | Core RPCs, LiveStore sync begins in background, workspace CRUD, git operations |
 | 3 | **Restored** | All sidecar connections established, LiveStore sync complete | Terminals, file watching, full read/write. UI state fully restored. |
-| 4 | **Eventually** | Deferred services initialized (Docker, PR watcher, etc.) | Docker status, PR tracking, background fetch, task importers. Everything. |
+| 4 | **Eventually** | Deferred services initialized | PR tracking, background fetch, task importers. Everything. |
 
 Phase transitions are forward-only and irreversible. Components use a `when(phase): Promise<void>` API (backed by a `Barrier` pattern, as VS Code does) to defer work until the appropriate phase.
 
@@ -162,9 +162,6 @@ The server's ~25 Effect layers are split into two groups that initialize indepen
 **Deferred Layers (initialize in background after health endpoint is live):**
 - `TerminalClient` — RPC client to terminal sidecar (lazy connection)
 - `FileWatcherClient` — RPC client to file-watcher sidecar (lazy connection)
-- `DockerDetection` — Docker CLI availability check
-- `DepsImageService` — Docker image management
-- `ContainerService` — Container lifecycle
 - `WorkspaceProvider` — Workspace CRUD (depends on git operations but can initialize after core)
 - `WorktreeDetector` — Git worktree scanning
 - `WorktreeReconciler` — Worktree state reconciliation
@@ -225,8 +222,8 @@ When OPFS has no cached data (first launch or cache cleared):
 | Service State | Available Features | Degraded Features | Unavailable Features |
 |---|---|---|---|
 | **Phase 1 (Starting):** No server | Navigate cached workspaces, view cached diffs/layouts, panel management | — | All server RPCs, terminal, file watching, creating anything |
-| **Phase 2 (Ready):** Server only | + Workspace CRUD, git operations, config, project management | Terminal (shows "connecting"), file watching (stale) | Docker, PR tracking, background fetch |
-| **Phase 3 (Restored):** All sidecars | + Terminal, file watching, full workspace operations | Docker status, PR tracking | Background data enrichment |
+| **Phase 2 (Ready):** Server only | + Workspace CRUD, git operations, config, project management | Terminal (shows "connecting"), file watching (stale) | PR tracking, background fetch |
+| **Phase 3 (Restored):** All sidecars | + Terminal, file watching, full workspace operations | PR tracking | Background data enrichment |
 | **Phase 4 (Eventually):** Everything | All features | — | — |
 
 ## Testing Decisions
@@ -245,7 +242,7 @@ Test that phase transitions happen correctly and that the UI responds appropriat
 
 3. **Phase 2 → 3 transition:** Simulate LiveStore sync completion and sidecar health events. Verify terminal and file-watcher features enable.
 
-4. **Phase 3 → 4 transition:** Simulate server "fully initialized" event. Verify Docker status, PR tracking, and other deferred features appear.
+4. **Phase 3 → 4 transition:** Simulate server "fully initialized" event. Verify PR tracking and other deferred features appear.
 
 5. **Degraded state handling:** Simulate a sidecar crash during Phase 3. Verify the phase doesn't regress, the header shows an error indicator, affected features show error states, and recovery is possible.
 

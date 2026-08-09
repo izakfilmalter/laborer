@@ -95,17 +95,6 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(configWithoutAgent, {
             devServer: {
               autoOpen: { source: 'default', value: false },
-              dockerfile: { source: 'default', value: null },
-              image: { source: 'default', value: 'node:lts' },
-              installCommand: { source: 'default', value: null },
-              network: { source: 'default', value: null },
-              port: { source: 'default', value: null },
-              setupScripts: {
-                source: 'default',
-                value: ['corepack enable', 'pnpm install --force', 'exec bash'],
-              },
-              startCommand: { source: 'default', value: null },
-              workdir: { source: 'default', value: '/app' },
             },
             prdsDir: {
               source: canonicalProjectConfigPath,
@@ -204,17 +193,6 @@ describe('LaborerRpcs config management', () => {
             agent: { source: canonicalConfigPath, value: 'opencode2' },
             devServer: {
               autoOpen: { source: canonicalConfigPath, value: true },
-              dockerfile: { source: 'default', value: null },
-              image: { source: 'default', value: 'node:lts' },
-              installCommand: { source: 'default', value: null },
-              network: { source: 'default', value: null },
-              port: { source: 'default', value: null },
-              setupScripts: {
-                source: 'default',
-                value: ['corepack enable', 'pnpm install --force', 'exec bash'],
-              },
-              startCommand: { source: 'default', value: null },
-              workdir: { source: 'default', value: '/app' },
             },
             prdsDir: {
               source: canonicalConfigPath,

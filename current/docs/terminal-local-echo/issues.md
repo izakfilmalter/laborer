@@ -175,7 +175,7 @@ The addon's `activate()` method registers `terminal.onData` internally (for keys
 - [ ] Incorrect predictions are rolled back cleanly
 - [ ] Predictions are cleared on terminal replay/reconnection
 - [ ] Addon is disposed when terminal unmounts
-- [ ] No visual glitches for Docker terminals (addon remains dormant due to low latency)
+- [ ] No visual glitches for responsive terminals (addon remains dormant below the latency threshold)
 - [ ] No visual glitches during rapid typing
 - [ ] Typecheck passes
 - [ ] Format passes

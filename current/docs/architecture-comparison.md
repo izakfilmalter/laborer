@@ -281,13 +281,13 @@ packages/server/src/utility-main.ts
   |     LaborerStoreLive (SQLite), ConfigService, RepositoryIdentity
   |
   |-- DeferredServicesProxyLive:
-  |     Creates 15 Ref-backed proxy services
+  |     Creates Ref-backed proxy services
   |     Each proxy initially delegates to Effect.die("not initialized")
   |
   |-- Background fiber builds real implementations in groups:
-  |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
-  |     Group 2 (stack): TaskManager, BranchStateTracker, ContainerService, PrdStorageService,
-  |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
+  |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector
+  |     Group 2 (stack): TaskManager, BranchStateTracker, PrdStorageService,
+  |                       FileService, PrWatcher, WorktreeReconciler,
   |                       WorkspaceSyncService, GithubTaskImporter, LinearTaskImporter,
   |                       ReviewCommentFetcher, RepositoryWatchCoordinator, ProjectRegistry,
   |                       WorkspaceProvider

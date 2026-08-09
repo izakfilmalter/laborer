@@ -208,17 +208,9 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
       )
   })
 
-/** Validate optional string field. */
-const isOptionalString = (v: unknown): boolean =>
-  v === undefined || typeof v === 'string'
-
 /** Validate optional boolean field. */
 const isOptionalBoolean = (v: unknown): boolean =>
   v === undefined || typeof v === 'boolean'
-
-/** Validate optional string array field. */
-const isOptionalStringArray = (v: unknown): boolean =>
-  v === undefined || (Array.isArray(v) && v.every((s) => typeof s === 'string'))
 
 /**
  * Validate a devServer update payload.
@@ -228,12 +220,6 @@ const validateDevServerUpdate = (
   ds:
     | {
         autoOpen?: boolean | undefined
-        dockerfile?: string | undefined
-        image?: string | undefined
-        port?: number | undefined
-        setupScripts?: readonly string[] | undefined
-        startCommand?: string | undefined
-        workdir?: string | undefined
       }
     | undefined
 ): boolean => {
@@ -243,14 +229,7 @@ const validateDevServerUpdate = (
   if (typeof ds !== 'object') {
     return false
   }
-  return (
-    isOptionalBoolean(ds.autoOpen) &&
-    isOptionalString(ds.image) &&
-    isOptionalString(ds.dockerfile) &&
-    isOptionalString(ds.startCommand) &&
-    isOptionalString(ds.workdir) &&
-    isOptionalStringArray(ds.setupScripts)
-  )
+  return isOptionalBoolean(ds.autoOpen)
 }
 
 export const handleConfigUpdate = ({
@@ -263,12 +242,6 @@ export const handleConfigUpdate = ({
     devServer?:
       | {
           autoOpen?: boolean | undefined
-          dockerfile?: string | undefined
-          image?: string | undefined
-          port?: number | undefined
-          setupScripts?: readonly string[] | undefined
-          startCommand?: string | undefined
-          workdir?: string | undefined
         }
       | undefined
     prdsDir?: string | undefined

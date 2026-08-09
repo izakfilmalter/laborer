@@ -77,29 +77,10 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'ConfigService'
 
-/**
- * Dev server configuration.
- * `image` and `dockerfile` are mutually exclusive.
- */
+/** Dev-server pane configuration. */
 interface DevServerConfig {
   /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
   readonly autoOpen?: boolean | undefined
-  /** Path to a Dockerfile for building the container image. */
-  readonly dockerfile?: string | undefined
-  /** Base Docker image name (e.g. "node:22"). */
-  readonly image?: string | undefined
-  /** Override the auto-detected install command for cached deps images (e.g. "pnpm install --frozen-lockfile"). */
-  readonly installCommand?: string | undefined
-  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses default bridge networking. Containers can reach other Docker containers via .orb.local domains and host services via host.docker.internal. */
-  readonly network?: string | undefined
-  /** Port the dev server listens on inside the container. Appended to the .orb.local URL so the workspace card link works. */
-  readonly port?: number | undefined
-  /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
-  readonly setupScripts?: readonly string[] | undefined
-  /** Command to start the dev server (e.g. "bun dev"). */
-  readonly startCommand?: string | undefined
-  /** Mount point inside the container. Defaults to "/app". */
-  readonly workdir?: string | undefined
 }
 
 /**
@@ -157,14 +138,6 @@ interface ResolvedValue<T> {
  */
 interface ResolvedDevServerConfig {
   readonly autoOpen: ResolvedValue<boolean>
-  readonly dockerfile: ResolvedValue<string | null>
-  readonly image: ResolvedValue<string | null>
-  readonly installCommand: ResolvedValue<string | null>
-  readonly network: ResolvedValue<string | null>
-  readonly port: ResolvedValue<number | null>
-  readonly setupScripts: ResolvedValue<readonly string[]>
-  readonly startCommand: ResolvedValue<string | null>
-  readonly workdir: ResolvedValue<string>
 }
 
 /**
@@ -362,30 +335,6 @@ const mergeDevServerUpdates = (
   if (updates.autoOpen !== undefined) {
     merged.autoOpen = updates.autoOpen
   }
-  if (updates.image !== undefined) {
-    merged.image = updates.image
-  }
-  if (updates.dockerfile !== undefined) {
-    merged.dockerfile = updates.dockerfile
-  }
-  if (updates.installCommand !== undefined) {
-    merged.installCommand = updates.installCommand
-  }
-  if (updates.network !== undefined) {
-    merged.network = updates.network
-  }
-  if (updates.port !== undefined) {
-    merged.port = updates.port
-  }
-  if (updates.setupScripts !== undefined) {
-    merged.setupScripts = [...updates.setupScripts]
-  }
-  if (updates.startCommand !== undefined) {
-    merged.startCommand = updates.startCommand
-  }
-  if (updates.workdir !== undefined) {
-    merged.workdir = updates.workdir
-  }
 
   return merged
 }
@@ -560,54 +509,6 @@ const mergeDevServerConfig = (
     value: false,
     source: 'default',
   }
-  let image: ResolvedValue<string | null> = {
-    value: 'node:lts',
-    source: 'default',
-  }
-  let dockerfile: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let installCommand: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let setupScripts: ResolvedValue<readonly string[]> = {
-    value: ['corepack enable', 'pnpm install --force', 'exec bash'],
-    source: 'default',
-  }
-  let network: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let port: ResolvedValue<number | null> = {
-    value: null,
-    source: 'default',
-  }
-  let startCommand: ResolvedValue<string | null> = {
-    value: null,
-    source: 'default',
-  }
-  let workdir: ResolvedValue<string> = {
-    value: '/app',
-    source: 'default',
-  }
-
-  const applyImage = (value: string, path: string) => {
-    image = { value, source: path }
-    if (dockerfile.source === path) {
-      return
-    }
-    dockerfile = { value: null, source: 'default' }
-  }
-
-  const applyDockerfile = (value: string, path: string) => {
-    dockerfile = { value, source: path }
-    if (image.source === path) {
-      return
-    }
-    image = { value: null, source: 'default' }
-  }
 
   const applyOptionalField = <T>(
     value: T | undefined,
@@ -621,26 +522,6 @@ const mergeDevServerConfig = (
   const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
     applyOptionalField(ds.autoOpen, (value) => {
       autoOpen = { value, source: path }
-    })
-    applyOptionalField(ds.image, (value) => applyImage(value, path))
-    applyOptionalField(ds.dockerfile, (value) => applyDockerfile(value, path))
-    applyOptionalField(ds.installCommand, (value) => {
-      installCommand = { value, source: path }
-    })
-    applyOptionalField(ds.network, (value) => {
-      network = { value, source: path }
-    })
-    applyOptionalField(ds.port, (value) => {
-      port = { value, source: path }
-    })
-    applyOptionalField(ds.setupScripts, (value) => {
-      setupScripts = { value, source: path }
-    })
-    applyOptionalField(ds.startCommand, (value) => {
-      startCommand = { value, source: path }
-    })
-    applyOptionalField(ds.workdir, (value) => {
-      workdir = { value, source: path }
     })
   }
 
@@ -656,33 +537,7 @@ const mergeDevServerConfig = (
     }
   }
 
-  return {
-    autoOpen,
-    dockerfile,
-    image,
-    installCommand,
-    network,
-    port,
-    setupScripts,
-    startCommand,
-    workdir,
-  }
-}
-
-/**
- * Validate that the resolved devServer config is consistent.
- * Returns an error message string if validation fails, or undefined if valid.
- */
-const validateDevServerConfig = (
-  devServer: ResolvedDevServerConfig
-): string | undefined => {
-  if (devServer.image.value !== null && devServer.dockerfile.value !== null) {
-    return (
-      'devServer.image and devServer.dockerfile are mutually exclusive. ' +
-      `image from ${devServer.image.source}, dockerfile from ${devServer.dockerfile.source}`
-    )
-  }
-  return undefined
+  return { autoOpen }
 }
 
 const mergeConfigs = (
@@ -869,16 +724,8 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         // 5. Merge with closest-wins strategy and apply defaults
         const resolved = mergeConfigs(allLayers, projectName, projectRepoPath)
 
-        // 6. Validate devServer mutual exclusion (image vs dockerfile)
-        const validationError = validateDevServerConfig(resolved.devServer)
-        if (validationError !== undefined) {
-          return yield* new ConfigValidationError({
-            message: validationError,
-          })
-        }
-
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.autoOpen=${resolved.devServer.autoOpen.value} (from ${resolved.devServer.autoOpen.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -947,7 +794,6 @@ export {
   mergeDevServerConfig,
   readConfigFile,
   readRawConfigObject,
-  validateDevServerConfig,
   walkUpForConfigs,
   applyConfigUpdates,
   writeJsonAtomic,

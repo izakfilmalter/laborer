@@ -143,21 +143,8 @@ const ConfigResolvedValueNullableString = Schema.Struct({
   source: Schema.String,
 })
 
-const ConfigResolvedValueNullableNumber = Schema.Struct({
-  value: Schema.NullOr(Schema.Number),
-  source: Schema.String,
-})
-
 const DevServerConfigResponse = Schema.Struct({
   autoOpen: ConfigResolvedValueBoolean,
-  image: ConfigResolvedValueNullableString,
-  dockerfile: ConfigResolvedValueNullableString,
-  installCommand: ConfigResolvedValueNullableString,
-  network: ConfigResolvedValueNullableString,
-  port: ConfigResolvedValueNullableNumber,
-  setupScripts: ConfigResolvedValueStringArray,
-  startCommand: ConfigResolvedValueNullableString,
-  workdir: ConfigResolvedValueString,
 })
 
 export const AgentProviderSchema = Schema.Literal(
@@ -653,14 +640,6 @@ export class LaborerRpcs extends RpcGroup.make(
         devServer: Schema.optional(
           Schema.Struct({
             autoOpen: Schema.optional(Schema.Boolean),
-            image: Schema.optional(Schema.String),
-            dockerfile: Schema.optional(Schema.String),
-            installCommand: Schema.optional(Schema.String),
-            network: Schema.optional(Schema.String),
-            port: Schema.optional(Schema.Number),
-            setupScripts: Schema.optional(Schema.Array(Schema.String)),
-            startCommand: Schema.optional(Schema.String),
-            workdir: Schema.optional(Schema.String),
           })
         ),
         prdsDir: Schema.optional(Schema.String),

@@ -268,7 +268,7 @@ The existing tests for `layout-utils.ts` provide the pattern for testing pure la
 
 To avoid confusion with cmux's terminology (where "Tab" = "Workspace"):
 - **Window Tab**: A top-level tab in the work area's tab bar. Contains an arrangement of workspaces.
-- **Workspace**: A git worktree + container + terminals. Unchanged from current meaning.
+- **Workspace**: An isolated branch environment backed by a local git worktree, with its own terminals.
 - **Panel Tab**: A tab within a workspace's tab bar. Contains a panel type or a split of panels.
 - **Pane**: A leaf node in a split tree — the actual visible content area displaying a panel.
 - **Panel**: The content type (terminal, diff, review, dev server terminal).

@@ -40,6 +40,7 @@ import { tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
   Context,
+  Data,
   Duration,
   Effect,
   Layer,
@@ -53,6 +54,7 @@ import {
 import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
+import { installOpenCodeStatusPlugin } from './opencode-status-plugin.js'
 import { ProjectRegistry } from './project-registry.js'
 import {
   createMessagePortRpcClient,
@@ -121,10 +123,17 @@ const MAX_AGENT_HOOK_BODY_BYTES = 8 * 1024
 
 class AgentHookBodyTooLarge extends Error {}
 
+class OpenCodePluginInstallError extends Data.TaggedError(
+  'OpenCodePluginInstallError'
+)<{ readonly cause: unknown }> {}
+
 const AgentHookRequestSchema = Schema.parseJson(
   Schema.Struct({
     terminalId: Schema.String,
     status: AgentStatusSchema,
+    sequence: Schema.optional(
+      Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(0))
+    ),
   })
 )
 
@@ -187,16 +196,22 @@ const startAgentHookServer = (
 
       readBody(req)
         .then((body) => {
-          const { terminalId, status } = Schema.decodeUnknownSync(
-            AgentHookRequestSchema
-          )(body)
+          const {
+            sequence: reportedSequence,
+            terminalId,
+            status,
+          } = Schema.decodeUnknownSync(AgentHookRequestSchema)(body)
 
           // Epoch-based sequences stay newer when this proxy restarts while
           // the terminal service and agent process remain alive.
-          const sequence = Math.max(
-            Date.now(),
-            (reportSequences.get(terminalId) ?? -1) + 1
-          )
+          const sequence =
+            reportedSequence ??
+            Math.max(Date.now(), (reportSequences.get(terminalId) ?? -1) + 1)
+          if (sequence <= (reportSequences.get(terminalId) ?? -1)) {
+            res.writeHead(202)
+            res.end()
+            return
+          }
           reportSequences.set(terminalId, sequence)
           Effect.runPromise(
             rpcClient.terminal.setAgentStatus({
@@ -314,6 +329,27 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const workspaceProvider = yield* WorkspaceProvider
       const configService = yield* ConfigService
       const registry = yield* ProjectRegistry
+
+      if (process.env.NODE_ENV !== 'test') {
+        yield* Effect.try({
+          try: installOpenCodeStatusPlugin,
+          catch: (cause) => new OpenCodePluginInstallError({ cause }),
+        }).pipe(
+          Effect.tap((pluginPath) =>
+            pluginPath === null
+              ? Effect.void
+              : Effect.logInfo(
+                  `Installed OpenCode status plugin at ${pluginPath}`
+                )
+          ),
+          Effect.catchTag('OpenCodePluginInstallError', ({ cause }) =>
+            Effect.logWarning(
+              `Could not install OpenCode status plugin: ${String(cause)}`
+            )
+          ),
+          Effect.annotateLogs('module', logPrefix)
+        )
+      }
 
       // Capture the layer's scope so lazy connection can use it later.
       // The scope lives for the lifetime of this service layer.

@@ -132,7 +132,11 @@ const AgentHookRequestSchema = Schema.parseJson(
     terminalId: Schema.String,
     status: AgentStatusSchema,
     sequence: Schema.optional(
-      Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(0))
+      Schema.Number.pipe(
+        Schema.int(),
+        Schema.greaterThanOrEqualTo(0),
+        Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
+      )
     ),
   })
 )
@@ -206,7 +210,10 @@ const startAgentHookServer = (
           // the terminal service and agent process remain alive.
           const sequence =
             reportedSequence ??
-            Math.max(Date.now(), (reportSequences.get(terminalId) ?? -1) + 1)
+            Math.max(
+              Date.now() * 1000,
+              (reportSequences.get(terminalId) ?? -1) + 1
+            )
           if (sequence <= (reportSequences.get(terminalId) ?? -1)) {
             res.writeHead(202)
             res.end()

@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentStatus } from '@laborer/shared/rpc'
@@ -117,6 +123,40 @@ function createOpenCodeStatusPluginRuntime(send: SendStatusReport) {
     return rootSessionId === sessionId
   }
 
+  const acceptsSessionEvent = (
+    eventType: string,
+    properties: Record<string, unknown>
+  ): boolean => {
+    const sessionId = sessionIdFrom(properties)
+    const info = properties.info
+    const infoId =
+      isRecord(info) && typeof info.id === 'string' && info.id.length > 0
+        ? info.id
+        : undefined
+    const parentId =
+      isRecord(info) &&
+      typeof info.parentID === 'string' &&
+      info.parentID.length > 0
+        ? info.parentID
+        : undefined
+
+    if (infoId !== undefined && parentId !== undefined) {
+      childSessionIds.add(infoId)
+    } else if (eventType === 'session.created' && infoId !== undefined) {
+      // OpenCode can replace the root session without replacing its process.
+      // Follow that explicit lifecycle event rather than permanently binding
+      // this plugin instance to the first session it observed.
+      childSessionIds.delete(infoId)
+      rootSessionId = infoId
+    }
+
+    const accepted = belongsToRoot(sessionId)
+    if (!accepted && eventType === 'session.deleted' && infoId !== undefined) {
+      childSessionIds.delete(infoId)
+    }
+    return accepted
+  }
+
   return {
     'chat.message': async ({ sessionID }: { readonly sessionID?: string }) => {
       if (belongsToRoot(sessionID)) {
@@ -128,17 +168,7 @@ function createOpenCodeStatusPluginRuntime(send: SendStatusReport) {
         return
       }
       const properties = isRecord(event.properties) ? event.properties : {}
-      const sessionId = sessionIdFrom(properties)
-      const info = properties.info
-
-      if (
-        isRecord(info) &&
-        typeof info.id === 'string' &&
-        typeof info.parentID === 'string'
-      ) {
-        childSessionIds.add(info.id)
-      }
-      if (!belongsToRoot(sessionId)) {
+      if (!acceptsSessionEvent(event.type, properties)) {
         return
       }
 
@@ -165,6 +195,8 @@ function createOpenCodeStatusPluginRuntime(send: SendStatusReport) {
           break
         case 'session.idle':
           await report('idle')
+          break
+        case 'session.deleted':
           break
         default:
           break
@@ -216,8 +248,12 @@ const installOpenCodeStatusPlugin = (
   mkdirSync(pluginsDirectory, { recursive: true })
   const pluginPath = join(pluginsDirectory, 'laborer-agent-status.js')
   const temporaryPath = `${pluginPath}.${String(process.pid)}.tmp`
-  writeFileSync(temporaryPath, openCodePluginSource(), 'utf8')
-  renameSync(temporaryPath, pluginPath)
+  try {
+    writeFileSync(temporaryPath, openCodePluginSource(), 'utf8')
+    renameSync(temporaryPath, pluginPath)
+  } finally {
+    rmSync(temporaryPath, { force: true })
+  }
   return pluginPath
 }
 

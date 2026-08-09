@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -67,6 +73,27 @@ describe('OpenCode status plugin adapter', () => {
     expect(reports.map(({ status }) => status)).toEqual(['working'])
   })
 
+  it('follows an explicitly created replacement root session', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const plugin = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    await plugin.event(
+      nativeEvent('session.status', 'first-root', { status: 'busy' })
+    )
+    await plugin.event(
+      nativeEvent('session.created', 'second-root', {
+        info: { id: 'second-root' },
+      })
+    )
+    await plugin.event(nativeEvent('session.idle', 'first-root'))
+    await plugin.event(nativeEvent('session.idle', 'second-root'))
+
+    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
+  })
+
   it('serializes delivery and coalesces queued reports to the newest fact', async () => {
     const reports: OpenCodeStatusReport[] = []
     let releaseFirst: (() => void) | undefined
@@ -101,24 +128,31 @@ describe('OpenCode status plugin adapter', () => {
 describe('OpenCode status plugin installer', () => {
   it('installs the managed plugin in an existing user config at startup', () => {
     const homeDirectory = mkdtempSync(join(tmpdir(), 'laborer-opencode-'))
-    const configDirectory = join(homeDirectory, '.config', 'opencode')
-    mkdirSync(configDirectory, { recursive: true })
+    try {
+      const configDirectory = join(homeDirectory, '.config', 'opencode')
+      mkdirSync(configDirectory, { recursive: true })
 
-    const pluginPath = installOpenCodeStatusPlugin({ homeDirectory })
+      const pluginPath = installOpenCodeStatusPlugin({ homeDirectory })
 
-    expect(pluginPath).toBe(
-      join(configDirectory, 'plugins', 'laborer-agent-status.js')
-    )
-    expect(pluginPath === null ? false : existsSync(pluginPath)).toBe(true)
-    expect(readFileSync(pluginPath ?? '', 'utf8')).toContain(
-      'export const LaborerAgentStatusPlugin'
-    )
+      expect(pluginPath).toBe(
+        join(configDirectory, 'plugins', 'laborer-agent-status.js')
+      )
+      expect(pluginPath === null ? false : existsSync(pluginPath)).toBe(true)
+      expect(readFileSync(pluginPath ?? '', 'utf8')).toContain(
+        'export const LaborerAgentStatusPlugin'
+      )
+    } finally {
+      rmSync(homeDirectory, { force: true, recursive: true })
+    }
   })
 
   it('does not create OpenCode config for users who have none', () => {
     const homeDirectory = mkdtempSync(join(tmpdir(), 'laborer-opencode-'))
-
-    expect(installOpenCodeStatusPlugin({ homeDirectory })).toBeNull()
-    expect(existsSync(join(homeDirectory, '.config', 'opencode'))).toBe(false)
+    try {
+      expect(installOpenCodeStatusPlugin({ homeDirectory })).toBeNull()
+      expect(existsSync(join(homeDirectory, '.config', 'opencode'))).toBe(false)
+    } finally {
+      rmSync(homeDirectory, { force: true, recursive: true })
+    }
   })
 })

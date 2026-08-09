@@ -1238,6 +1238,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     assert.isDefined(terminal)
     assert.strictEqual(terminal?.status, 'stopped')
     assert.strictEqual(terminal?.agentStatus, null)
+    assert.strictEqual(terminal?.hasChildProcess, false)
 
     await runEffect(
       Effect.gen(function* () {

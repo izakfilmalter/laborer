@@ -1117,14 +1117,18 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       /** Emit semantic completion before the terminal stop clears status. */
       const emitAgentCompletionBeforeStop = (terminalId: string): void => {
         const engine = statusEngines.get(terminalId)
-        if (engine === undefined || engine.processExited(Date.now()) === null) {
-          return
-        }
         const terminal = runSync(Ref.get(terminalsRef)).get(terminalId)
         if (terminal === undefined) {
           return
         }
+        // Every exit invalidates the last live-process sample, including
+        // explicit kills where the status engine was deliberately removed.
+        // Otherwise list hydration can expose a stopped terminal with stale
+        // child-process metadata until another process tick happens.
         lastProcessSnapshot.set(terminalId, EMPTY_DETECTION)
+        if (engine === undefined || engine.processExited(Date.now()) === null) {
+          return
+        }
         emitEvent({
           _tag: 'ProcessChanged',
           // The PTY has already exited when this callback runs. Publish the

@@ -10,6 +10,12 @@ import {
 import { makeConversationHandler } from "../chat-plane/conversation-handler.ts";
 import { makeNodeRootDurableRuntime } from "../durable-runtime/node-root.ts";
 import { makeReferenceCodingRootApplication } from "../durable-runtime/reference-coding-application.ts";
+import type { RootDurableRuntimeShape } from "../durable-runtime/root-runtime.ts";
+import { makePostCutoverOperatorProjection } from "../operator-status/activity-projection.ts";
+import {
+  operatorStatusPaths,
+  startOperatorStatusServer,
+} from "../operator-status/server.ts";
 import {
   loadSlackDaemonConfig,
   type SlackDaemonConfig,
@@ -21,6 +27,7 @@ import {
   prepareSlackRuntimePaths,
 } from "../slack/runtime-paths.ts";
 import { slackWebApiRequestPolicy } from "../slack/web-api-request-policy.ts";
+import { LABORER_VERSION } from "../version.ts";
 import type { AcpPermissionBroker } from "./acp-permission-broker.ts";
 import {
   handleChatPermissionAction,
@@ -66,6 +73,10 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
     const workspaces = new Map<string, AcpChatWorkspaceRuntime>();
     const brokers = new Map<string, AcpPermissionBroker>();
     const attachmentRoots = new Map<string, string>();
+    const rootRuntimes = new Map<string, RootDurableRuntimeShape>();
+    const operatorProjection = makePostCutoverOperatorProjection(
+      config.installations
+    );
     let chat: ChatPlaneShape | undefined;
 
     for (const installation of config.installations) {
@@ -111,6 +122,8 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
         databasePath: prepared.paths.runtimeDatabase,
         rootIdentity: prepared.laborer.root,
       });
+      rootRuntimes.set(workspaceId, rootRuntime);
+      operatorProjection.markWorkspaceReady(workspaceId);
       const workspace = yield* makeProductionAcpWorkspaceApplication(
         {
           applicationConfig,
@@ -179,6 +192,36 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
           : Effect.succeed(workspace);
       },
     });
+    const refreshOperatorActivity = Effect.forEach(
+      rootRuntimes,
+      ([workspaceId, runtime]) =>
+        runtime
+          .workThreadActivity(workspaceId)
+          .pipe(
+            Effect.tap((activity) =>
+              Effect.sync(() =>
+                operatorProjection.observe(workspaceId, activity)
+              )
+            )
+          ),
+      { discard: true }
+    ).pipe(Effect.ignore);
+    yield* refreshOperatorActivity;
+    yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        startOperatorStatusServer({
+          paths: operatorStatusPaths(stateRoot()),
+          projection: operatorProjection.snapshot,
+          version: LABORER_VERSION,
+        })
+      ),
+      (server) => Effect.promise(() => server.close()).pipe(Effect.orDie)
+    );
+    yield* refreshOperatorActivity.pipe(
+      Effect.andThen(Effect.sleep("1 second")),
+      Effect.forever,
+      Effect.forkScoped
+    );
     const layer = makeLiveChatPlaneLayer(
       {
         appToken: Redacted.value(config.appToken),
@@ -223,6 +266,7 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
           ).pipe(Effect.asVoid),
         onReady: (service) => {
           chat = service;
+          operatorProjection.markReceiverConnected();
         },
       }
     );

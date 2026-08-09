@@ -243,7 +243,6 @@ const runningPresentation = (
   status: RunningStatus
 ): (typeof statusPresentation)["running"] => {
   const { pending, unavailable } = bindingCounts(status.workspaces);
-  const blockedThreads = countThreads(status.workspaces, "needs-attention");
   const activeThreads = countThreads(status.workspaces, "in-progress");
   if (status.receiver === "connecting") {
     return {
@@ -265,16 +264,6 @@ const runningPresentation = (
       icon: TriangleAlert,
       indicator: "Attention",
       title: "Workspace attention required",
-      tone: "danger",
-    };
-  }
-  if (blockedThreads > 0) {
-    return {
-      ...statusPresentation.running,
-      description: `Laborer is running while ${plural(blockedThreads, "work thread")} cannot progress without you.`,
-      icon: TriangleAlert,
-      indicator: "Attention",
-      title: "Work needs attention",
       tone: "danger",
     };
   }
@@ -372,16 +361,10 @@ const bindingRank: Record<WorkspaceBinding["readiness"], number> = {
   unknown: 0,
 };
 
-// Actionable work outranks ordinary activity within an equally healthy binding.
 const workspaceActivityRank = (workspace: WorkspaceBinding): number => {
-  if (
-    workspace.threads.some((thread) => thread.activity === "needs-attention")
-  ) {
-    return 0;
-  }
   return workspace.threads.some((thread) => thread.activity === "in-progress")
-    ? 1
-    : 2;
+    ? 0
+    : 1;
 };
 
 // Workspaces that need operator action come first so the actionable bindings
@@ -423,14 +406,6 @@ const activityPresentation: Record<
     rowClassName: "",
     title: "In progress",
     tone: "success",
-  },
-  "needs-attention": {
-    icon: TriangleAlert,
-    iconClassName: "text-danger",
-    labelClassName: "text-foreground",
-    rowClassName: "bg-danger/5",
-    title: "Needs attention",
-    tone: "danger",
   },
   dormant: {
     icon: CircleCheck,
@@ -719,7 +694,7 @@ const WorkThreadSection = ({
   );
   const headingLabel = `${presentation.title}, ${plural(threads.length, "work thread")}`;
   // Settled work is the least actionable, so it stays one disclosure away
-  // while in-progress and needs-attention rows keep the top of the card.
+  // while in-progress rows keep the top of the card.
   if (activity === "dormant") {
     return (
       <details
@@ -771,14 +746,10 @@ const WorkThreadSections = ({
   readonly nowUnixMs: number;
   readonly workspace: WorkspaceBinding;
 }) => {
-  const sections = (["needs-attention", "in-progress", "dormant"] as const).map(
-    (activity) => ({
-      activity,
-      threads: workspace.threads.filter(
-        (thread) => thread.activity === activity
-      ),
-    })
-  );
+  const sections = (["in-progress", "dormant"] as const).map((activity) => ({
+    activity,
+    threads: workspace.threads.filter((thread) => thread.activity === activity),
+  }));
   if (workspace.threads.length === 0) {
     // A binding that is not ready explains itself above; an empty thread list
     // there would read as a second, misleading state.
@@ -821,9 +792,7 @@ const WorkspaceBindingCard = ({
   const tone = bindingTone[workspace.readiness];
   // A card the operator has to act on carries its urgency at the card edge so
   // it is findable in a scroll of otherwise identical cards.
-  const needsAction =
-    tone === "danger" ||
-    workspace.threads.some((thread) => thread.activity === "needs-attention");
+  const needsAction = tone === "danger";
   return (
     <article
       className={`overflow-hidden rounded-xl border bg-surface ${needsAction ? "border-danger/40" : "border-border"}`}

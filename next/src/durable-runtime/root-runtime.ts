@@ -1880,6 +1880,30 @@ export interface RootDurableRuntimeShape {
   readonly startExecution: (
     request: StartExecutionRequest
   ) => Effect.Effect<ExecutionSnapshot, DurableRuntimeError>;
+  /** A bounded, read-only projection of the durable state used by operators. */
+  readonly workThreadActivity: (
+    workspaceId: string
+  ) => Effect.Effect<readonly DurableWorkThreadActivity[], DurableRuntimeError>;
+}
+
+export interface DurableWorkThreadActivity {
+  readonly channelId: string;
+  readonly conversationId: string;
+  readonly conversationInProgress: boolean;
+  readonly evidenceAtUnixMs: number;
+  readonly excerpt: string;
+  readonly executions: readonly {
+    readonly actionName: string;
+    readonly executionId: string;
+    readonly lifecycle:
+      | "allocated"
+      | "cancelling"
+      | "recovery-blocked"
+      | "running";
+    readonly startedAtUnixMs: number | null;
+  }[];
+  readonly rootTs: string;
+  readonly workspaceId: string;
 }
 
 export class RootDurableRuntime extends Context.Service<
@@ -2892,6 +2916,117 @@ const makeRuntimeService = Effect.gen(function* () {
     }));
   });
 
+  const workThreadActivity = Effect.fn("RootDurableRuntime.workThreadActivity")(
+    function* (workspaceId: string) {
+      const validatedWorkspaceId = yield* Schema.decodeUnknownEffect(
+        RuntimeWorkspaceId
+      )(workspaceId).pipe(
+        Effect.mapError(() => runtimeError("invalid-payload"))
+      );
+      const rows = yield* sql<{
+        readonly conversationId: string;
+        readonly inProgress: number;
+        readonly latestParticipantEventJson: string;
+        readonly workspaceId: string;
+      }>`
+      SELECT conversations.conversation_id AS conversationId,
+        conversations.workspace_id AS workspaceId,
+        EXISTS (
+          SELECT 1 FROM laborer_conversation_events AS pending
+          WHERE pending.workspace_id = conversations.workspace_id
+            AND pending.conversation_id = conversations.conversation_id
+            AND pending.status IN ('accepted', 'running')
+        ) AS inProgress,
+        (
+          SELECT participant.event_json
+          FROM laborer_conversation_events AS participant
+          WHERE participant.workspace_id = conversations.workspace_id
+            AND participant.conversation_id = conversations.conversation_id
+            AND json_extract(participant.event_json, '$._tag') = 'ParticipantInput'
+          ORDER BY participant.sequence DESC
+          LIMIT 1
+        ) AS latestParticipantEventJson
+      FROM laborer_conversations AS conversations
+      WHERE conversations.workspace_id = ${validatedWorkspaceId}
+      ORDER BY conversations.conversation_id
+      LIMIT 513
+    `.pipe(Effect.mapError(() => runtimeError("storage-failure")));
+      if (rows.length > 512) {
+        return yield* runtimeError("storage-failure");
+      }
+      const executions =
+        yield* nonterminalExecutionActivity(validatedWorkspaceId);
+      const conversationIds = new Set(rows.map((row) => row.conversationId));
+      if (
+        executions.some(
+          (execution) => !conversationIds.has(execution.conversationId)
+        )
+      ) {
+        return yield* runtimeError("storage-failure");
+      }
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.gen(function* () {
+          if (
+            row.workspaceId !== validatedWorkspaceId ||
+            (row.inProgress !== 0 && row.inProgress !== 1) ||
+            typeof row.latestParticipantEventJson !== "string"
+          ) {
+            return yield* runtimeError("storage-failure");
+          }
+          const event = yield* decodeStoredJson(
+            row.latestParticipantEventJson
+          ).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(ParticipantInputEvent, {
+                onExcessProperty: "error",
+              })
+            ),
+            Effect.mapError(() => runtimeError("storage-failure"))
+          );
+          if (
+            event.conversationId !== row.conversationId ||
+            event.messages.length === 0
+          ) {
+            return yield* runtimeError("storage-failure");
+          }
+          const latest = event.messages.at(-1);
+          if (latest === undefined) {
+            return yield* runtimeError("storage-failure");
+          }
+          const threadExecutions = executions
+            .filter(
+              (execution) => execution.conversationId === row.conversationId
+            )
+            .map((execution) => ({
+              actionName: execution.actionName,
+              executionId: execution.executionId,
+              lifecycle: execution.lifecycle,
+              startedAtUnixMs: execution.startedAtUnixMs,
+            }));
+          const slackSeconds = Number(latest.slackTs);
+          const messageEvidence = Number.isFinite(slackSeconds)
+            ? Math.max(0, Math.floor(slackSeconds * 1000))
+            : 0;
+          return {
+            channelId: event.channelId,
+            conversationId: row.conversationId,
+            conversationInProgress: row.inProgress === 1,
+            evidenceAtUnixMs: Math.max(
+              messageEvidence,
+              ...threadExecutions.map(
+                (execution) => execution.startedAtUnixMs ?? 0
+              )
+            ),
+            excerpt: latest.text,
+            executions: threadExecutions,
+            rootTs: event.rootTs,
+            workspaceId: row.workspaceId,
+          } satisfies DurableWorkThreadActivity;
+        })
+      );
+    }
+  );
+
   return {
     acknowledgeEvent,
     actions: catalog,
@@ -2923,6 +3058,7 @@ const makeRuntimeService = Effect.gen(function* () {
       }),
     runConversation,
     startExecution,
+    workThreadActivity,
   } satisfies RootDurableRuntimeShape;
 });
 

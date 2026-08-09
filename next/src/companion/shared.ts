@@ -119,9 +119,7 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
   }
   const thread = value as Record<string, unknown>;
   return (
-    ["in-progress", "needs-attention", "dormant"].includes(
-      String(thread.activity)
-    ) &&
+    ["in-progress", "dormant"].includes(String(thread.activity)) &&
     Array.isArray(thread.executions) &&
     thread.executions.length <= 512 &&
     thread.executions.every((execution) =>

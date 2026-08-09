@@ -63,7 +63,7 @@ const TestTerminalClient = Layer.effect(
     const recorder = yield* TestTerminalClientRecorder
 
     return TerminalClient.of({
-      spawnInWorkspace: (workspaceId, command, _autoRun) =>
+      spawnInWorkspace: (workspaceId, command) =>
         Effect.gen(function* () {
           yield* Ref.update(recorder.spawnInWorkspaceCalls, (calls) => [
             ...calls,

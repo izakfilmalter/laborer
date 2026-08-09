@@ -9,7 +9,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 Running multiple agents in parallel today means:
 
 - **No visibility** -- Existing tools show one agent at a time. Developers alt-tab between 4-10 terminal windows with no unified view.
-- **Manual environment management** -- Each agent needs its own git branch, working directory, port allocation, dev server, and file watcher. Setting this up by hand for every task is slow and error-prone.
+- **Manual environment management** -- Each agent needs its own git branch, working directory, terminal, and file watcher scope. Setting this up by hand for every task is slow and error-prone.
 - **Disconnected workflows** -- Planning happens in Linear, coding in the terminal, review in GitHub, fixes back in the terminal. Constant context-switching kills throughput.
 - **Wasted local compute** -- High-end dev machines sit idle while developers serialize work through a single agent.
 
@@ -21,13 +21,13 @@ Running multiple agents in parallel today means:
 
 **Laborer is mission control for parallel AI coding agents.**
 
-A local-first desktop app that lets developers orchestrate 4-10+ AI agents simultaneously -- each in an isolated workspace with its own branch, directory, and dev server -- all visible in a single tmux-style interface.
+A local-first desktop app that lets developers orchestrate 4-10+ AI agents simultaneously -- each in a local worktree with its own branch and directory -- all visible in a single tmux-style interface.
 
 ```
 +-------------------+-------------------+-------------------+
 |  Agent: auth-fix  |  Agent: api-v2    |  Agent: tests     |
 |  branch: fix/auth |  branch: feat/api |  branch: test/e2e |
-|  port: 3101       |  port: 3102       |  port: 3103       |
+|  worktree: auth   |  worktree: api    |  worktree: tests  |
 |  [running]        |  [waiting]        |  [running]        |
 +-------------------+-------------------+-------------------+
 |          Diff Viewer          |        File Tree          |
@@ -43,9 +43,8 @@ A local-first desktop app that lets developers orchestrate 4-10+ AI agents simul
 Point Laborer at any git repository. It auto-detects existing worktrees and configures the agent runner.
 
 ### 2. Create workspaces
-Each workspace spins up an isolated environment:
+Each workspace creates a local working environment:
 - Dedicated **git worktree** (own branch and directory)
-- Allocated **dev server port** (range 3100-3999)
 - Automatic **setup scripts** (for example, install dependencies)
 
 ### 3. Launch agents
@@ -61,7 +60,7 @@ Each workspace spins up an isolated environment:
 | Feature | What It Does |
 |---|---|
 | **Tmux-style panel system** | Recursive splits, keyboard shortcuts, drag-and-drop, fullscreen mode. Everything a power user expects. |
-| **Automated workspace isolation** | Git worktrees, port allocation, dev servers, file watchers -- all managed automatically per agent. |
+| **Automated workspace isolation** | Local git worktrees, setup scripts, and file watcher scoping managed per agent. |
 | **Full terminal emulation** | Real PTY terminals (node-pty + xterm.js) with VS Code-grade flow control, 100k+ scrollback, and crash-resilient session persistence. |
 | **Live diff viewer** | Real-time git diffs with per-hunk accept/reject. Split and unified views. Reactive updates via filesystem watcher. |
 | **File tree with git status** | Lazy-loaded directory tree with git status decorations and context menus. |

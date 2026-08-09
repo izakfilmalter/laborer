@@ -132,15 +132,6 @@ const ConfigResolvedValueStringArray = Schema.Struct({
   source: Schema.String,
 })
 
-const ConfigResolvedValueBoolean = Schema.Struct({
-  value: Schema.Boolean,
-  source: Schema.String,
-})
-
-const DevServerConfigResponse = Schema.Struct({
-  autoOpen: ConfigResolvedValueBoolean,
-})
-
 export const AgentProviderSchema = Schema.Literal(
   'opencode2',
   'claude',
@@ -156,7 +147,6 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
-  devServer: DevServerConfigResponse,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
   watchIgnore: ConfigResolvedValueStringArray,
@@ -480,11 +470,6 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
-        devServer: Schema.optional(
-          Schema.Struct({
-            autoOpen: Schema.optional(Schema.Boolean),
-          })
-        ),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
       }),
@@ -594,8 +579,6 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
-      /** Identifies a dev-server terminal spawn. */
-      autoRun: Schema.optional(Schema.Boolean),
     },
   }),
 

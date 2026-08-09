@@ -22,11 +22,6 @@ import { createContext, useContext } from 'react'
 /** Direction for pane resize operations. */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
-interface AssignTerminalToPaneOptions {
-  /** Whether assigning this terminal should auto-open the workspace dev server. */
-  readonly autoOpenDevServer?: boolean | undefined
-}
-
 interface AutoOpenAgentOptions {
   /** Prompt passed to OpenCode when the deferred agent terminal starts. */
   readonly initialPrompt?: string | undefined
@@ -95,8 +90,7 @@ interface PanelActions {
   readonly assignTerminalToPane: (
     terminalId: string,
     workspaceId: string,
-    paneId?: string,
-    options?: AssignTerminalToPaneOptions
+    paneId?: string
   ) => void
 
   /**
@@ -301,7 +295,7 @@ interface PanelActions {
    *
    * When toggled ON: the dev server terminal pane is rendered to the right of
    * the main terminal in a horizontal split. If no dev server terminal session
-   * exists yet, one is spawned via `terminal.spawn` with `autoRun: true`.
+   * exists yet, one local shell is spawned for the user to run it in.
    * When toggled OFF: hides the dev server terminal pane but keeps the
    * terminal session alive for later reconnection.
    *
@@ -735,7 +729,6 @@ export {
   usePendingPicker,
 }
 export type {
-  AssignTerminalToPaneOptions,
   AutoOpenAgentOptions,
   PanelActions,
   PendingCloseState,

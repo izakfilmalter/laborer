@@ -50,7 +50,7 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: () => ({
     _tag: 'Success',
-    value: { devServer: { autoOpen: { value: false } } },
+    value: {},
   }),
 }))
 

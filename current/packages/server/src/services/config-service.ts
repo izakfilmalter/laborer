@@ -75,12 +75,6 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'ConfigService'
 
-/** Dev-server pane configuration. */
-interface DevServerConfig {
-  /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
-  readonly autoOpen?: boolean | undefined
-}
-
 /**
  * Valid agent provider values.
  * Each value is also the CLI command used to launch the agent.
@@ -100,7 +94,6 @@ const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
 interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
-  readonly devServer?: DevServerConfig
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -109,7 +102,6 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
-  readonly devServer?: DevServerConfig | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -127,21 +119,12 @@ interface ResolvedValue<T> {
 }
 
 /**
- * Fully resolved dev server configuration with provenance for each field.
- * All fields have concrete values (no undefined).
- */
-interface ResolvedDevServerConfig {
-  readonly autoOpen: ResolvedValue<boolean>
-}
-
-/**
  * Fully resolved config with provenance for each field.
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
-  readonly devServer: ResolvedDevServerConfig
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -315,22 +298,6 @@ const readRawConfigObject = (
   })
 
 /**
- * Merge devServer update fields into an existing devServer config object.
- */
-const mergeDevServerUpdates = (
-  existing: Record<string, unknown>,
-  updates: NonNullable<ProjectConfigUpdates['devServer']>
-): Record<string, unknown> => {
-  const merged = { ...existing }
-
-  if (updates.autoOpen !== undefined) {
-    merged.autoOpen = updates.autoOpen
-  }
-
-  return merged
-}
-
-/**
  * Apply explicit config updates to an existing config object.
  * Undefined fields in updates are ignored (do not overwrite existing values).
  */
@@ -357,16 +324,6 @@ const applyConfigUpdates = (
 
   if (updates.watchIgnore !== undefined) {
     next.watchIgnore = [...updates.watchIgnore]
-  }
-
-  if (updates.devServer !== undefined) {
-    const existingDevServer =
-      typeof existing.devServer === 'object' &&
-      existing.devServer !== null &&
-      !Array.isArray(existing.devServer)
-        ? (existing.devServer as Record<string, unknown>)
-        : {}
-    next.devServer = mergeDevServerUpdates(existingDevServer, updates.devServer)
   }
 
   return next
@@ -481,48 +438,6 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
  *   closest (project root) to farthest (global). Closest wins.
  * @param projectName - Used to compute the default worktreeDir.
  */
-/**
- * Resolve devServer config from layered configs.
- * Iterates from farthest to closest (closest wins).
- */
-const mergeDevServerConfig = (
-  configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
-): ResolvedDevServerConfig => {
-  let autoOpen: ResolvedValue<boolean> = {
-    value: false,
-    source: 'default',
-  }
-
-  const applyOptionalField = <T>(
-    value: T | undefined,
-    apply: (resolvedValue: T) => void
-  ) => {
-    if (value !== undefined) {
-      apply(value)
-    }
-  }
-
-  const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
-    applyOptionalField(ds.autoOpen, (value) => {
-      autoOpen = { value, source: path }
-    })
-  }
-
-  for (let i = configLayers.length - 1; i >= 0; i--) {
-    const layer = configLayers[i]
-    if (layer === undefined) {
-      continue
-    }
-    const { config, path } = layer
-
-    if (config.devServer !== undefined) {
-      applyDevServerLayer(config.devServer, path)
-    }
-  }
-
-  return { autoOpen }
-}
-
 const mergeConfigs = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>,
   _projectName: string,
@@ -585,11 +500,8 @@ const mergeConfigs = (
     }
   }
 
-  const devServer = mergeDevServerConfig(configLayers)
-
   return {
     agent,
-    devServer,
     worktreeDir,
     setupScripts,
     watchIgnore,
@@ -677,7 +589,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         const resolved = mergeConfigs(allLayers, projectName, projectRepoPath)
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), devServer.autoOpen=${resolved.devServer.autoOpen.value} (from ${resolved.devServer.autoOpen.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -743,7 +655,6 @@ export {
   GLOBAL_CONFIG_DIR,
   GLOBAL_CONFIG_PATH,
   mergeConfigs,
-  mergeDevServerConfig,
   readConfigFile,
   readRawConfigObject,
   walkUpForConfigs,
@@ -752,10 +663,8 @@ export {
 }
 
 export type {
-  DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,
-  ResolvedDevServerConfig,
   ResolvedLaborerConfig,
   ResolvedValue,
 }

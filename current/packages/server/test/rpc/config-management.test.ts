@@ -89,9 +89,6 @@ describe('LaborerRpcs config management', () => {
 
           const { agent: resolvedAgent, ...configWithoutAgent } = config
           assert.deepStrictEqual(configWithoutAgent, {
-            devServer: {
-              autoOpen: { source: 'default', value: false },
-            },
             setupScripts: {
               source: canonicalProjectConfigPath,
               value: ['bun install', 'bun test'],
@@ -151,9 +148,6 @@ describe('LaborerRpcs config management', () => {
             projectId: project.id,
             config: {
               agent: 'opencode2',
-              devServer: {
-                autoOpen: true,
-              },
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
             },
@@ -172,9 +166,6 @@ describe('LaborerRpcs config management', () => {
 
           assert.deepStrictEqual(resolved, {
             agent: { source: canonicalConfigPath, value: 'opencode2' },
-            devServer: {
-              autoOpen: { source: canonicalConfigPath, value: true },
-            },
             setupScripts: {
               source: canonicalConfigPath,
               value: ['bun install'],

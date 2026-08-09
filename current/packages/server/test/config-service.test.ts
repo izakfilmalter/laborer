@@ -69,11 +69,6 @@ const readGlobalConfig = (): Effect.Effect<LaborerConfig> =>
 const writeProjectConfig = (
   projectRepoPath: string,
   updates: {
-    devServer?:
-      | {
-          autoOpen?: boolean | undefined
-        }
-      | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -546,116 +541,6 @@ describe('ConfigService', () => {
             'Source should reference the config file'
           )
         }).pipe(Effect.provide(ConfigService.layer))
-    )
-
-    it.effect('should write and read back devServer pane config', () =>
-      Effect.gen(function* () {
-        const projectDir = join(testRoot, 'write-devserver-roundtrip')
-        mkdirSync(projectDir, { recursive: true })
-
-        yield* writeProjectConfig(projectDir, {
-          devServer: { autoOpen: true },
-        })
-
-        const result = yield* resolveConfig(projectDir, 'devserver-roundtrip')
-
-        assert.strictEqual(result.devServer.autoOpen.value, true)
-      })
-    )
-
-    it.effect(
-      'should merge devServer updates without clobbering existing devServer fields',
-      () =>
-        Effect.gen(function* () {
-          const projectDir = join(testRoot, 'write-devserver-merge')
-          mkdirSync(projectDir, { recursive: true })
-
-          writeConfig(projectDir, {
-            devServer: { autoOpen: false },
-          })
-
-          yield* writeProjectConfig(projectDir, {
-            devServer: { autoOpen: true },
-          })
-
-          const configPath = join(projectDir, CONFIG_FILE_NAME)
-          const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
-            devServer?: { autoOpen?: boolean }
-          }
-
-          assert.strictEqual(written.devServer?.autoOpen, true)
-        })
-    )
-  })
-
-  // ---------------------------------------------------------------------------
-  // devServer config resolution
-  // ---------------------------------------------------------------------------
-
-  describe('devServer config', () => {
-    it.effect('should return defaults when no devServer config exists', () =>
-      Effect.gen(function* () {
-        const projectDir = join(testRoot, 'no-devserver')
-        mkdirSync(projectDir, { recursive: true })
-
-        const result = yield* resolveConfig(projectDir, 'no-devserver')
-
-        assert.strictEqual(result.devServer.autoOpen.value, false)
-        assert.strictEqual(result.devServer.autoOpen.source, 'default')
-      })
-    )
-
-    it.effect('should read devServer.autoOpen from project config', () =>
-      Effect.gen(function* () {
-        const projectDir = join(testRoot, 'devserver-auto-open')
-        mkdirSync(projectDir, { recursive: true })
-        const configPath = writeConfig(projectDir, {
-          devServer: { autoOpen: true },
-        })
-
-        const result = yield* resolveConfig(projectDir, 'devserver-auto-open')
-
-        assert.strictEqual(result.devServer.autoOpen.value, true)
-        assert.strictEqual(result.devServer.autoOpen.source, configPath)
-      })
-    )
-
-    it.effect('should inherit devServer.autoOpen from ancestor config', () =>
-      Effect.gen(function* () {
-        const parent = join(testRoot, 'devserver-inherit-parent')
-        const child = join(parent, 'devserver-inherit-child')
-        mkdirSync(child, { recursive: true })
-
-        writeConfig(parent, {
-          devServer: { autoOpen: true },
-        })
-
-        const result = yield* resolveConfig(child, 'devserver-inherit')
-
-        assert.strictEqual(result.devServer.autoOpen.value, true)
-      })
-    )
-
-    it.effect(
-      'should override ancestor devServer.autoOpen with project config',
-      () =>
-        Effect.gen(function* () {
-          const parent = join(testRoot, 'devserver-override-parent')
-          const child = join(parent, 'devserver-override-child')
-          mkdirSync(child, { recursive: true })
-
-          writeConfig(parent, {
-            devServer: { autoOpen: false },
-          })
-          const childConfigPath = writeConfig(child, {
-            devServer: { autoOpen: true },
-          })
-
-          const result = yield* resolveConfig(child, 'devserver-override')
-
-          assert.strictEqual(result.devServer.autoOpen.value, true)
-          assert.strictEqual(result.devServer.autoOpen.source, childConfigPath)
-        })
     )
   })
 })

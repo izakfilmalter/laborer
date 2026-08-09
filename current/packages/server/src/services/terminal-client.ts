@@ -228,7 +228,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
     readonly spawnInWorkspace: (
       workspaceId: string,
       command?: string,
-      autoRun?: boolean,
       initialPrompt?: string
     ) => Effect.Effect<TerminalRecord, RpcError>
 
@@ -613,7 +612,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         function* (
           workspaceId: string,
           command?: string,
-          _autoRun?: boolean,
           initialPrompt?: string
         ) {
           // 1. Validate workspace exists and get its info from LiveStore

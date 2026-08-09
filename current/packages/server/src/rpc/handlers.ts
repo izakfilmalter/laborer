@@ -73,30 +73,6 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
       )
   })
 
-/** Validate optional boolean field. */
-const isOptionalBoolean = (v: unknown): boolean =>
-  v === undefined || typeof v === 'boolean'
-
-/**
- * Validate a devServer update payload.
- * Returns true if the update is structurally valid (or undefined/absent).
- */
-const validateDevServerUpdate = (
-  ds:
-    | {
-        autoOpen?: boolean | undefined
-      }
-    | undefined
-): boolean => {
-  if (ds === undefined) {
-    return true
-  }
-  if (typeof ds !== 'object') {
-    return false
-  }
-  return isOptionalBoolean(ds.autoOpen)
-}
-
 export const handleConfigUpdate = ({
   projectId,
   config,
@@ -104,11 +80,6 @@ export const handleConfigUpdate = ({
   projectId: string
   config: {
     agent?: AgentProvider | undefined
-    devServer?:
-      | {
-          autoOpen?: boolean | undefined
-        }
-      | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -123,20 +94,17 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
-    const isValidDevServer = validateDevServerUpdate(config.devServer)
-
     const isValidConfig =
       isValidAgent &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
-      isValidSetupScripts &&
-      isValidDevServer
+      isValidSetupScripts
 
     if (!isValidConfig) {
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for worktreeDir, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional fields.',
+          'Invalid config payload. Expected optional worktreeDir, agent (opencode2/claude/codex), and setupScripts as a string array.',
       })
     }
 
@@ -343,15 +311,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // delegating to the terminal service.
     //
     // -------------------------------------------------------------------
-    'terminal.spawn': ({ workspaceId, command, initialPrompt, autoRun }) =>
+    'terminal.spawn': ({ workspaceId, command, initialPrompt }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(
-          workspaceId,
-          command,
-          autoRun,
-          initialPrompt
-        )
+        return yield* tc.spawnInWorkspace(workspaceId, command, initialPrompt)
       }),
 
     // -------------------------------------------------------------------

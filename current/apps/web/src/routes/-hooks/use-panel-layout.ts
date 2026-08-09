@@ -23,10 +23,7 @@ import {
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 
-import type {
-  AssignTerminalToPaneOptions,
-  AutoOpenAgentOptions,
-} from '@/panels/panel-context'
+import type { AutoOpenAgentOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
   addPanelTab,
@@ -780,13 +777,7 @@ export function usePanelLayout() {
    * without creating a circular useCallback dependency.
    */
   const assignTerminalToPaneRef = useRef<
-    | ((
-        terminalId: string,
-        workspaceId: string,
-        paneId?: string,
-        options?: AssignTerminalToPaneOptions
-      ) => void)
-    | null
+    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
   >(null)
 
   const handleSplitPane = useCallback(
@@ -1191,12 +1182,7 @@ export function usePanelLayout() {
   )
 
   const handleAssignTerminalToPane = useCallback(
-    async (
-      terminalId: string,
-      workspaceId: string,
-      paneId?: string,
-      _options?: AssignTerminalToPaneOptions
-    ) => {
+    async (terminalId: string, workspaceId: string, paneId?: string) => {
       // Gate: if the workspace is already visible in another window,
       // focus that window instead of duplicating the workspace here.
       const focusedElsewhere =
@@ -1320,7 +1306,7 @@ export function usePanelLayout() {
    *
    * When toggling ON: creates a new 'devServerTerminal' panel tab in the
    * workspace that contains the given pane, then spawns its local terminal
-   * with `autoRun: true`.
+   * as a local shell.
    *
    * When toggling OFF: removes the dev server panel tab from the workspace.
    * The terminal session is killed.
@@ -1366,12 +1352,9 @@ export function usePanelLayout() {
         return false
       }
 
-      // Toggle ON — spawn a new dev server terminal with autoRun
+      // Toggle ON — spawn a local terminal dedicated to the dev server.
       const result = await spawnTerminal({
-        payload: {
-          workspaceId: wsId,
-          autoRun: true,
-        },
+        payload: { workspaceId: wsId },
       })
 
       // Re-read the layout to avoid overwriting concurrent changes.

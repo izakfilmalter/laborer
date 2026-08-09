@@ -35,13 +35,14 @@ policy. Quitting or crashing the companion does not signal the daemon.
 
 The service uses the launchd user bootstrap environment. Prepare the existing
 `SLACK_APP_TOKEN`, bot-token variables, workspace registry, and `LABORER_ROOT`
-there before registration. `LABORER_ROOT` gives both processes the owner-only
-`.laborer-runtime` status location and prevents the packaged daemon from ever
-trying to store runtime state in its read-only application bundle. Credential
-values must continue to be resolved from Keychain directly into that
-environment; they are never written to the property list, passed as daemon
-arguments, or sent to the companion. The packaged app does not copy
-`.env.local`.
+there before registration. `LABORER_ROOT` selects the default Laborer root and
+prevents the packaged daemon from trying to read configuration from its
+read-only application bundle. Runtime state is stored below
+`$XDG_STATE_HOME/laborer`, or `~/.local/state/laborer` when `XDG_STATE_HOME` is
+not an absolute nonblank path. Credential values must continue to be resolved
+from Keychain directly into that environment; they are never written to the
+property list, passed as daemon arguments, or sent to the companion. The
+packaged app does not copy `.env.local`.
 
 The LaunchAgent invokes only the fixed bundled `laborer-daemon` executable. Its
 launcher adds `NODE_ENV=production` and otherwise preserves launchd's daemon

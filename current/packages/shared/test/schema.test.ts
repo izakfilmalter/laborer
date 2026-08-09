@@ -232,8 +232,8 @@ describe('LiveStore schema', () => {
           })
         )
 
-        const beforeHistoricalEvents = store.query(
-          tables.workspaces.where('id', 'workspace-history')
+        const workspaceBeforeHistoricalEvents = structuredClone(
+          store.query(tables.workspaces.where('id', 'workspace-history'))
         )
 
         store.commit(
@@ -242,7 +242,6 @@ describe('LiveStore schema', () => {
             containerId: 'container-1',
             containerUrl: 'container.example.test',
             containerImage: 'node:22',
-            containerPort: 3000,
           })
         )
         store.commit(
@@ -272,7 +271,6 @@ describe('LiveStore schema', () => {
             sandboxId: 'sandbox-1',
             sandboxUrl: 'sandbox.example.test',
             sandboxImage: 'node:22',
-            sandboxPort: 3000,
             sandboxProvider: 'historical-provider',
           })
         )
@@ -304,7 +302,7 @@ describe('LiveStore schema', () => {
 
         assert.deepStrictEqual(
           store.query(tables.workspaces.where('id', 'workspace-history')),
-          beforeHistoricalEvents
+          workspaceBeforeHistoricalEvents
         )
       })
   )

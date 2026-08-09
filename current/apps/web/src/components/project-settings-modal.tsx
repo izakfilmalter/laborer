@@ -142,7 +142,6 @@ function ProjectSettingsForm({
   const [agent, setAgent] = useState<AgentProvider>('opencode2')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
-  const [brrrConfig, setBrrrConfig] = useState('')
   const [devServerImage, setDevServerImage] = useState('')
   const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
   const [devServerNetwork, setDevServerNetwork] = useState('')
@@ -172,7 +171,6 @@ function ProjectSettingsForm({
     setAgent(configResult.value.agent.value)
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
-    setBrrrConfig(configResult.value.brrrConfig.value ?? '')
     setDevServerAutoOpen(configResult.value.devServer.autoOpen.value)
     setDevServerProvider(configResult.value.devServer.provider.value ?? null)
     setDevServerImage(configResult.value.devServer.image.value ?? '')
@@ -237,7 +235,6 @@ function ProjectSettingsForm({
       devServerProvider,
       devServerSetupScripts,
       devServerStartCommand,
-      brrrConfig,
       resolvedConfig: {
         agent: resolvedConfig.agent.value,
         devServerAutoOpen: resolvedConfig.devServer.autoOpen.value,
@@ -247,7 +244,6 @@ function ProjectSettingsForm({
         devServerProvider: resolvedConfig.devServer.provider.value ?? null,
         devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
-        brrrConfig: resolvedConfig.brrrConfig.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
       },
@@ -423,21 +419,6 @@ function ProjectSettingsForm({
                 Add script
               </Button>
             </div>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor={`brrr-config-${projectId}`}>
-              brrr config
-            </FieldLabel>
-            <Input
-              id={`brrr-config-${projectId}`}
-              onChange={(event) => setBrrrConfig(event.target.value)}
-              placeholder=".brrr/config.toml"
-              value={brrrConfig}
-            />
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.brrrConfig.source}
-            </FieldDescription>
           </Field>
         </FieldSet>
 
@@ -709,8 +690,8 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure sandbox provider, dev server, worktree path, setup
-            scripts, and brrr config for {projectName}.
+            Configure sandbox provider, dev server, worktree path, and setup
+            scripts for {projectName}.
           </DialogDescription>
         </DialogHeader>
         {open && !isServerReady && (

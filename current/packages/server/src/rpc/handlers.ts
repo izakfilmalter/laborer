@@ -14,18 +14,16 @@
 import { join } from 'node:path'
 import { type AgentProvider, LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Schema, Stream } from 'effect'
+import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { FileService } from '../services/file-service.js'
-import { runGhPrViewWithOriginFallback } from '../services/github-pr-view.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
-import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { SandboxProvider } from '../services/sandbox-provider.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { TerminalClient } from '../services/terminal-client.js'
@@ -33,10 +31,6 @@ import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
-
-const GhPrViewOutput = Schema.Struct({
-  number: Schema.optional(Schema.Number),
-})
 
 const getProjectFromStore = (projectId: string) =>
   Effect.gen(function* () {
@@ -52,81 +46,6 @@ const getProjectFromStore = (projectId: string) =>
 
     return project
   })
-
-/**
- * Detect the PR number for a workspace's branch.
- *
- * First checks the LiveStore workspace row for a cached `prNumber`
- * (populated by PrWatcher polling). If not available yet, falls back
- * to running `gh pr view --json number` in the worktree directory.
- *
- * If no PR exists for the branch, yields an RpcError so the caller
- * can surface a clear message to the user.
- */
-const detectPrNumber = Effect.fn('detectPrNumber')(function* (
-  workspaceId: string
-) {
-  const { store } = yield* LaborerStore
-  const allWorkspaces = store.query(tables.workspaces)
-  const workspaceOpt = pipe(
-    allWorkspaces,
-    Array.findFirst((w) => w.id === workspaceId)
-  )
-
-  if (workspaceOpt._tag === 'None') {
-    return yield* new RpcError({
-      message: `Workspace not found: ${workspaceId}`,
-      code: 'NOT_FOUND',
-    })
-  }
-
-  const workspace = workspaceOpt.value
-
-  // Fast path: use cached PR number from PrWatcher polling
-  if (typeof workspace.prNumber === 'number' && workspace.prNumber > 0) {
-    return workspace.prNumber
-  }
-
-  // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
-  const { exitCode, stdout, stderr } = yield* runGhPrViewWithOriginFallback(
-    workspace.worktreePath,
-    workspace.branchName,
-    'number',
-    (error) =>
-      new RpcError({
-        message: `Failed to run gh pr view: ${String(error)}`,
-        code: 'GH_COMMAND_FAILED',
-      })
-  )
-
-  if (exitCode !== 0) {
-    return yield* new RpcError({
-      message: `No pull request found for branch "${workspace.branchName}". Push the branch and open a PR first.\n${stderr.trim()}`,
-      code: 'PR_NOT_FOUND',
-    })
-  }
-
-  const parsed = yield* Schema.decodeUnknown(Schema.parseJson(GhPrViewOutput))(
-    stdout.trim()
-  ).pipe(
-    Effect.mapError(
-      () =>
-        new RpcError({
-          message: `Could not parse PR number from gh output: ${stdout.trim()}`,
-          code: 'PR_NOT_FOUND',
-        })
-    )
-  )
-
-  if (typeof parsed.number !== 'number' || parsed.number <= 0) {
-    return yield* new RpcError({
-      message: `Could not parse PR number from gh output: ${stdout.trim()}`,
-      code: 'PR_NOT_FOUND',
-    })
-  }
-
-  return parsed.number
-})
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
@@ -270,7 +189,6 @@ export const handleConfigUpdate = ({
           workdir?: string | undefined
         }
       | undefined
-    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -291,8 +209,6 @@ export const handleConfigUpdate = ({
       isValidAgent &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
-      (config.brrrConfig === undefined ||
-        typeof config.brrrConfig === 'string') &&
       isValidSetupScripts &&
       isValidDevServer
 
@@ -300,7 +216,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for worktreeDir, brrrConfig, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for worktreeDir, agent (opencode2/claude/codex), setupScripts as string array, and devServer with optional fields.',
       })
     }
 
@@ -360,7 +276,6 @@ export const handleProjectList = () =>
       id: project.id,
       repoPath: project.repoPath,
       name: project.name,
-      brrrConfig: project.brrrConfig ?? undefined,
     }))
   })
 
@@ -377,9 +292,6 @@ export const handleProjectList = () =>
  * - terminal.spawn: delegates to TerminalClient.spawnInWorkspace (Issue #50/#143)
  * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
  * - editor.open: opens file in configured editor (Issue #111)
- * - brrr.startLoop: delegates to TerminalClient.spawnInWorkspace with `brrr build --once` (Issue #92/#143)
- * - brrr.review: delegates to TerminalClient.spawnInWorkspace with `brrr review <prNumber>` (Issue #96/#143)
- * - brrr.fix: delegates to TerminalClient.spawnInWorkspace with `brrr fix <prNumber>` (Issue #98/#143)
  */
 export const LaborerRpcsLive = LaborerRpcs.toLayer(
   LaborerRpcs.of({
@@ -428,7 +340,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          brrrConfig: project.brrrConfig ?? undefined,
         }
       }),
     'project.remove': ({ projectId }) =>
@@ -861,74 +772,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
               code: 'EDITOR_FAILED',
             }),
         })
-      }),
-
-    // -------------------------------------------------------------------
-    // brrr RPCs (Issue #92-98, #143)
-    // Now delegate to TerminalClient.spawnInWorkspace instead of TerminalManager.
-    // -------------------------------------------------------------------
-    'brrr.startLoop': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, 'brrr build --once')
-      }),
-    'brrr.review': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const prNumber = yield* detectPrNumber(workspaceId)
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(
-          workspaceId,
-          `brrr review ${prNumber}`
-        )
-      }),
-    'brrr.fix': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const prNumber = yield* detectPrNumber(workspaceId)
-        const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, `brrr fix ${prNumber}`)
-      }),
-
-    // -------------------------------------------------------------------
-    // Review RPCs
-    // -------------------------------------------------------------------
-    'review.fetchComments': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchComments(workspaceId)
-      }),
-    'review.fetchVerdict': ({ workspaceId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchVerdict(workspaceId)
-      }),
-    'review.addReaction': ({ workspaceId, commentId, content }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.addReaction(workspaceId, commentId, content)
-      }),
-    'review.removeReaction': ({ workspaceId, commentId, reactionId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        yield* fetcher.removeReaction(workspaceId, commentId, reactionId)
-      }),
-
-    // -------------------------------------------------------------------
-    // Alive-driven individual fetch RPCs
-    // -------------------------------------------------------------------
-    'review.fetchSingleIssueComment': ({ workspaceId, commentId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleIssueComment(workspaceId, commentId)
-      }),
-    'review.fetchSingleReviewComment': ({ workspaceId, commentId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleReviewComment(workspaceId, commentId)
-      }),
-    'review.fetchSingleReview': ({ workspaceId, reviewId }) =>
-      Effect.gen(function* () {
-        const fetcher = yield* ReviewCommentFetcher
-        return yield* fetcher.fetchSingleReview(workspaceId, reviewId)
       }),
 
     // -------------------------------------------------------------------

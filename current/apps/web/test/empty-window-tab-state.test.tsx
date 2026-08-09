@@ -43,7 +43,6 @@ const mockActions: PanelActions = {
   toggleDevServerPane: vi.fn(async () => false),
   toggleDiffPane: vi.fn(() => false),
   toggleFullscreenPane: vi.fn(),
-  toggleReviewPane: vi.fn(() => false),
   toggleTreePane: vi.fn(() => false),
   addPanelTab: vi.fn(),
   addWorkspaceToCurrentTab: addWorkspaceToCurrentTabMock,
@@ -138,7 +137,7 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
   reorder: vi.fn(),
 }))
 
-// Mock PanelManager, DiffPane, ReviewPane, resizable, and header
+// Mock PanelManager, DiffPane, resizable, and header
 vi.mock('@/panels/panel-manager', () => ({
   PanelManager: ({ layout }: { layout: unknown }) => (
     <div data-testid="panel-manager">{layout ? 'has-layout' : 'empty'}</div>
@@ -148,12 +147,6 @@ vi.mock('@/panels/panel-manager', () => ({
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: ({ workspaceId }: { workspaceId: string }) => (
     <div data-testid="diff-pane" data-workspace-id={workspaceId} />
-  ),
-}))
-
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
-    <div data-testid="review-pane" data-workspace-id={workspaceId} />
   ),
 }))
 

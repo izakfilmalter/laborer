@@ -1,8 +1,7 @@
 /**
  * Tests for the reorganized workspace card layout.
  *
- * Row 1 (Git): branch name + PR badge + review verdict + findings count
- *   + Review/Fix action buttons (hidden when no PR)
+ * Row 1 (Git): branch name + PR badge
  *
  * Row 2 (Sandbox/Infra): sandbox URL/port + status badge + pause/play
  *
@@ -21,14 +20,12 @@ const {
   isElectronMock,
   mutationMap,
   queryDbMock,
-  startLoopFn,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  startLoopFn: vi.fn(),
   useLaborerStoreMock: vi.fn(),
 }))
 
@@ -36,13 +33,6 @@ vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: vi.fn(async () => true),
   terminalRpcUrl: () => 'http://localhost:2101',
-}))
-
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => (
-    <span data-testid="review-findings-count">findings</span>
-  ),
-  useUnresolvedFindingsCount: () => 0,
 }))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
@@ -71,9 +61,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       const sentinel = Symbol.for(`mutation:${name}`)
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
-      }
-      if (name === 'brrr.startLoop') {
-        mutationMap.set(sentinel, startLoopFn)
       }
       return sentinel
     },
@@ -115,12 +102,6 @@ vi.mock('@/components/terminal-list', () => ({
 
 vi.mock('@/components/copy-button', () => ({
   CopyButton: () => null,
-}))
-
-vi.mock('@/components/review-verdict-badge', () => ({
-  ReviewVerdictBadge: () => (
-    <span data-testid="review-verdict-badge">verdict</span>
-  ),
 }))
 
 vi.mock('@/hooks/use-destroy-workspace-checks', () => ({
@@ -271,16 +252,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('hides Review PR and Fix Findings buttons when workspace has no PR', () => {
-    mockStore([makeWorkspace()])
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
-    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
-  })
-
-  it('shows Review PR and Fix Findings buttons when workspace has a PR', () => {
+  it('does not render removed review actions when workspace has a PR', () => {
     mockStore([
       makeWorkspace({
         prNumber: 42,
@@ -292,8 +264,8 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    expect(screen.getByRole('button', { name: REVIEW_PR_RE })).toBeTruthy()
-    expect(screen.getByRole('button', { name: FIX_FINDINGS_RE })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
   })
 })
 

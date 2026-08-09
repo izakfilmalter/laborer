@@ -2,9 +2,12 @@ import type { AgentProvider } from "@ai-hero/sandcastle";
 
 export interface OpenCode2AgentOptions {
   readonly agent?: string;
+  /** Grants unattended OpenCode permissions to a process with full host access. */
+  readonly dangerouslyAutoApproveHostPermissions?: boolean;
   readonly env?: Record<string, string>;
   readonly maxAttempts?: number;
   readonly retryDelaySeconds?: number;
+  readonly runTimeoutSeconds?: number;
   readonly variant?: string;
 }
 
@@ -123,7 +126,6 @@ export const opencode2Agent = (
     buildPrintCommand({ prompt, dangerouslySkipPermissions }) {
       const args = [
         "run",
-        "--standalone",
         "--format",
         "json",
         "--model",
@@ -132,21 +134,27 @@ export const opencode2Agent = (
       if (options.agent) {
         args.push("--agent", options.agent);
       }
-      if (dangerouslySkipPermissions) {
+      if (
+        dangerouslySkipPermissions ||
+        options.dangerouslyAutoApproveHostPermissions
+      ) {
         args.push("--auto");
       }
-      const invocation = `opencode2 ${args.map(shellQuote).join(" ")}`;
+      const executable = "opencode2";
+      const invocation = `${executable} ${args
+        .map(shellQuote)
+        .join(" ")}`;
       return {
         command: [
+          `# sandcastle-timeout-seconds=${String(
+            Math.max(1, Math.floor(options.runTimeoutSeconds ?? 14_400))
+          )}`,
           'prompt_file="$(mktemp)"',
-          'attempt_state="$(mktemp -d)"',
-          'trap \'rm -rf "$attempt_state"; rm -f "$prompt_file"\' EXIT HUP INT TERM',
+          'trap \'rm -f "$prompt_file"\' EXIT HUP INT TERM',
           'cat > "$prompt_file"',
           "attempt=1",
           "while :; do",
-          '  attempt_db="$attempt_state/opencode-$attempt.db"',
-          '  if [ -f /home/agent/.local/share/opencode/opencode-next.seed.db ]; then cp /home/agent/.local/share/opencode/opencode-next.seed.db "$attempt_db"; fi',
-          `  cat "$prompt_file" | OPENCODE_DB="$attempt_db" ${invocation} && exit 0`,
+          `  cat "$prompt_file" | ${invocation} && exit 0`,
           "  status=$?",
           `  if [ "$attempt" -ge ${maxAttempts} ]; then exit "$status"; fi`,
           '  printf "opencode2 attempt %s failed; retrying preserved worktree.\\n" "$attempt"',

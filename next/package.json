@@ -14,7 +14,6 @@
   "scripts": {
     "prepare": "effect-language-service patch",
     "sandcastle": "bun run --cwd ../.sandcastle start",
-    "sandcastle:build-image": "bun run --cwd ../.sandcastle build-image",
     "prototype": "bun run src/prototype/demo.ts",
     "companion:build": "electron-vite build",
     "companion:acceptance:macos": "sh tests/macos-launch-agent-acceptance.sh",

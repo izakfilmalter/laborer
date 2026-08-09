@@ -1,21 +1,12 @@
 // Laborer adaptation of the parallel planner/reviewer setup from church-work.
-// Run from either implementation with `bun run sandcastle` after building the
-// shared Docker image.
+// Run from either implementation with `bun run sandcastle`. Agents are trusted
+// host processes; Git worktrees provide change isolation, not a security boundary.
 
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSandbox, Output, run } from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import {
@@ -28,14 +19,20 @@ import {
   attemptHostStep,
   canReuseCompletedHead,
   hostCheckoutProblem,
+  mergeFailureNeedsPreparation,
   mergePullRequestArgs,
   refreshDetachedBase,
   reviewedHeadNeedsPush,
   runnerBaseReuseProblem,
   shellQuote,
+  shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
 } from "./fast-flow/index.ts";
 import { GitHubCliIssueGraphSource } from "./github-cli-issue-graph-source/index.ts";
+import {
+  boundedHostCommand,
+  supervisedNoSandbox,
+} from "./host-native-provider/index.ts";
 import {
   type ExistingPullRequest,
   type FinalizeIssueSpec,
@@ -153,31 +150,8 @@ const MERGE_TIMEOUT_MS = positiveIntegerEnv(
 const AUTO_MERGE_PRS = process.env.SANDCASTLE_AUTO_MERGE !== "false";
 const WAIT_FOR_MERGES = process.env.SANDCASTLE_WAIT_FOR_MERGES !== "false";
 const BASE_BRANCH = process.env.SANDCASTLE_BASE_BRANCH || defaultBranch();
-const SANDBOX_IMAGE_NAME =
-  process.env.SANDCASTLE_IMAGE_NAME ?? "sandcastle:laborer";
 const REVIEW_MARKER = PRE_PUBLISH_REVIEW_MARKER;
 const RUNNER_BASE_WORKTREE = resolve(REPO_ROOT, ".sandcastle/base");
-const HOST_OPENCODE_CONFIG = resolve(homedir(), ".config/opencode");
-const HOST_OPENCODE_AUTH = resolve(
-  homedir(),
-  ".local/share/opencode/auth.json"
-);
-const HOST_OPENCODE_ACCOUNT = resolve(
-  homedir(),
-  ".local/share/opencode/account.json"
-);
-const HOST_OPENCODE_DATABASE = resolve(
-  homedir(),
-  ".local/share/opencode/opencode-next.db"
-);
-const HOST_ANTHROPIC_PLUGIN =
-  process.env.SANDCASTLE_OPENCODE_ANTHROPIC_PLUGIN_PATH?.trim() ||
-  resolve(REPO_ROOT, "../opencode-anthropic-auth");
-const HOST_ANTHROPIC_PLUGIN_DIST = resolve(HOST_ANTHROPIC_PLUGIN, "dist");
-const OPENCODE_CREDENTIAL_SEED = resolve(
-  SANDCASTLE_DIR,
-  "opencode-credential-seed.db"
-);
 const VERIFICATION_POLICY = [
   "Run deterministic offline checks only.",
   "Agents own verification; the runner will not rerun checks.",
@@ -185,58 +159,30 @@ const VERIFICATION_POLICY = [
   "Never run live Slack or ACP canaries unless an issue explicitly requires a manual credentialed smoke test.",
 ].join(" ");
 
-prepareOpenCodeCredentialSeed();
-
 const allAroundAgent = () =>
   opencode2Agent("openai/gpt-5.6-sol-fast", {
+    dangerouslyAutoApproveHostPermissions: true,
     maxAttempts: OPENCODE_MAX_ATTEMPTS,
     retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    runTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
     variant: "medium",
   });
 const uiAgent = () =>
   opencode2Agent("anthropic/claude-opus-5", {
+    dangerouslyAutoApproveHostPermissions: true,
     maxAttempts: OPENCODE_MAX_ATTEMPTS,
     retryDelaySeconds: OPENCODE_RETRY_DELAY_SECONDS,
+    runTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
     variant: "medium",
   });
 
 const sandboxProvider = () =>
-  docker({
-    env: { GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN") },
-    imageName: SANDBOX_IMAGE_NAME,
-    mounts: [
-      {
-        hostPath: HOST_OPENCODE_CONFIG,
-        sandboxPath: "/home/agent/.config/opencode",
-        readonly: true,
-      },
-      {
-        hostPath: HOST_OPENCODE_CONFIG,
-        sandboxPath: HOST_OPENCODE_CONFIG,
-        readonly: true,
-      },
-      {
-        hostPath: HOST_ANTHROPIC_PLUGIN,
-        sandboxPath: HOST_ANTHROPIC_PLUGIN,
-        readonly: true,
-      },
-      {
-        hostPath: HOST_OPENCODE_AUTH,
-        sandboxPath: "/home/agent/.local/share/opencode/auth.json",
-        readonly: true,
-      },
-      {
-        hostPath: HOST_OPENCODE_ACCOUNT,
-        sandboxPath: "/home/agent/.local/share/opencode/account.json",
-        readonly: true,
-      },
-      {
-        hostPath: OPENCODE_CREDENTIAL_SEED,
-        sandboxPath:
-          "/home/agent/.local/share/opencode/opencode-next.seed.db",
-        readonly: true,
-      },
-    ],
+  supervisedNoSandbox({
+    defaultTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
+    env: {
+      GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN"),
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+    },
   });
 
 const acquireSlot = createSlotLimiter(MAX_PARALLEL);
@@ -607,7 +553,7 @@ async function publishAndMaybeMergeStandalone(
     console.log(`  Ready for manual merge: ${prUrl}`);
     return;
   }
-  await mergePreparedPullRequest(prUrl, reviewedHead, issue.branch);
+  await mergePreparedPullRequest(issue, prUrl, reviewedHead, issue.branch);
   closeIssueIfOpen(Number(issue.id), prUrl);
   deleteRecordedCompletion(issue);
 }
@@ -635,6 +581,7 @@ async function finalizeSpec(spec: FinalizeIssueSpec) {
     return;
   }
   await mergePreparedPullRequest(
+    issue,
     spec.pullRequest.url,
     reviewedHead,
     spec.branch
@@ -658,9 +605,11 @@ function plannedIssueForFinalize(spec: FinalizeIssueSpec): PlannedIssue {
 }
 
 async function mergePreparedPullRequest(
+  issue: PlannedIssue,
   prUrl: string,
   reviewedHead: string,
-  expectedBranch: string
+  expectedBranch: string,
+  remainingRaceRepairs = MAX_REPAIR_ATTEMPTS
 ) {
   assertCurrentPullRequestTargets(prUrl, expectedBranch);
   const initialStatus = getPrStatus(prUrl);
@@ -674,7 +623,36 @@ async function mergePreparedPullRequest(
       `PR head moved after review: expected ${reviewedHead}, received ${currentHead ?? "none"}.`
     );
   }
-  mergePr(prUrl, reviewedHead);
+  try {
+    mergePr(prUrl, reviewedHead);
+  } catch (error) {
+    const failedStatus = getPrStatus(prUrl);
+    if (failedStatus.state === "MERGED" || failedStatus.mergedAt) {
+      assertMergedPullRequestMatches(prUrl, expectedBranch, reviewedHead);
+      return;
+    }
+    if (
+      remainingRaceRepairs > 0 &&
+      mergeFailureNeedsPreparation(
+        failedStatus.mergeStateStatus,
+        failedStatus.mergeable
+      )
+    ) {
+      const repairedHead = await preparePrForMerge(issue, prUrl);
+      if (repairedHead === undefined) {
+        throw new Error(`PR is not ready after merge-race repair: ${prUrl}`);
+      }
+      markPullRequestReady(prUrl, expectedBranch);
+      return mergePreparedPullRequest(
+        issue,
+        prUrl,
+        repairedHead,
+        expectedBranch,
+        remainingRaceRepairs - 1
+      );
+    }
+    throw error;
+  }
   const deadline = Date.now() + MERGE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const status = getPrStatus(prUrl);
@@ -772,17 +750,21 @@ async function buildIssue(issue: PlannedIssue) {
     const acceptedHead =
       issue.latestImplementedHead ?? baseBranchHead(sandbox.worktreePath);
     const startingHead = worktreeHead(sandbox.worktreePath);
-    const recovery = classifyBranchRecovery({
-      acceptedHead,
-      completedHead: recordedCompletion(issue),
-      currentHead: startingHead,
-      gatePassedHead: recordedGatePassed(issue),
-      gatePendingHead: recordedGatePending(issue),
-      implementationHead: recordedImplementation(issue),
-      progressHead: recordedProgress(issue),
-      reviewedHead: recordedReviewed(issue),
-      uiReviewedHead: recordedUiReview(issue),
-    });
+    const recovery = classifyBranchRecovery(
+      {
+        acceptedHead,
+        completedHead: recordedCompletion(issue),
+        currentHead: startingHead,
+        gatePassedHead: recordedGatePassed(issue),
+        gatePendingHead: recordedGatePending(issue),
+        implementationHead: recordedImplementation(issue),
+        progressHead: recordedProgress(issue),
+        reviewedHead: recordedReviewed(issue),
+        uiReviewedHead: recordedUiReview(issue),
+      },
+      (ancestor, descendant) =>
+        commitIsAncestor(sandbox.worktreePath, ancestor, descendant)
+    );
     if (recovery !== "build") {
       assertRecordedRecoveryLineage(
         issue.latestImplementedHead,
@@ -1040,9 +1022,7 @@ async function createIssueSandbox(issue: PlannedIssue) {
       ? "test -d current/node_modules && test -d next/node_modules"
       : "bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile";
     const setup = await sandbox.exec(
-      boundedSandboxCommand(
-        `gh auth setup-git && ${dependencySetup}`
-      ),
+      boundedSandboxCommand(dependencySetup),
       { onLine: (line) => console.log(`  ${line}`) }
     );
     if (setup.exitCode !== 0) {
@@ -1084,6 +1064,7 @@ function refreshUnstartedIssueBranch(
     branchHead,
     baseHead,
     hasRecordedWork,
+    worktreeIsDirty(worktreePath),
     commitIsAncestor(worktreePath, branchHead, baseHead)
   );
   if (shouldRefresh) {
@@ -1140,6 +1121,14 @@ function syncWorktreeWithOrigin(worktreePath: string, branch: string) {
     "origin",
     `refs/heads/${branch}:refs/remotes/origin/${branch}`,
   ]);
+  if (
+    !shouldFastForwardPreservedWorktree(
+      worktreeIsDirty(worktreePath),
+      commitIsAncestor(worktreePath, worktreeHead(worktreePath), `origin/${branch}`)
+    )
+  ) {
+    return;
+  }
   runFile("git", [
     "-C",
     worktreePath,
@@ -1590,12 +1579,31 @@ function issuePromptArgs(issue: PlannedIssue) {
 function assertHostReady() {
   assertHostCheckoutReady();
   prepareRunnerBaseWorktree();
-  runFile("docker", ["image", "inspect", SANDBOX_IMAGE_NAME]);
+  runFile("bun", ["--version"]);
+  runFile("node", ["--version"]);
+  runFile("git", ["--version"]);
   runFile("gh", ["auth", "status"]);
+  runFile("jq", ["--version"]);
+  assertOpenCodeReady();
   requiredEnv("SANDCASTLE_AGENT_GH_TOKEN");
-  assertDirectoryExists(HOST_OPENCODE_CONFIG);
-  assertFileExists(HOST_OPENCODE_AUTH);
-  assertFileExists(HOST_OPENCODE_ACCOUNT);
+}
+
+function assertOpenCodeReady() {
+  runFile("opencode2", ["--version"]);
+  const help = runFile("opencode2", ["run", "--help"]);
+  for (const requiredFlag of [
+    "--format choice",
+    "--model, -m string",
+    "provider/model#variant",
+    "--agent string",
+    "--auto",
+  ]) {
+    if (!help.includes(requiredFlag)) {
+      throw new Error(
+        `The machine-installed opencode2 does not support ${requiredFlag}.`
+      );
+    }
+  }
 }
 
 function assertHostCheckoutReady() {
@@ -1762,7 +1770,8 @@ function baseBranchHead(worktreePath: string) {
   return runFile("git", [
     "-C",
     worktreePath,
-    "rev-parse",
+    "merge-base",
+    "HEAD",
     runnerBaseHead(),
   ]).trim();
 }
@@ -1784,40 +1793,6 @@ function defaultBranch() {
     throw new Error("Could not determine the repository default branch.");
   }
   return branch;
-}
-
-function prepareOpenCodeCredentialSeed() {
-  for (const [name, path] of [
-    ["OpenCode V2 database", HOST_OPENCODE_DATABASE],
-    ["Anthropic auth plugin build", HOST_ANTHROPIC_PLUGIN_DIST],
-  ] as const) {
-    if (!existsSync(path)) {
-      throw new Error(`${name} is unavailable at ${path}.`);
-    }
-  }
-
-  const temporarySeed = `${OPENCODE_CREDENTIAL_SEED}.tmp`;
-  rmSync(temporarySeed, { force: true });
-  try {
-    const schema = runFile("sqlite3", [HOST_OPENCODE_DATABASE, ".schema"]);
-    runFileWithInput("sqlite3", [temporarySeed], schema);
-    const databasePath = HOST_OPENCODE_DATABASE.replaceAll("'", "''");
-    runFile("sqlite3", [
-      temporarySeed,
-      [
-        `ATTACH DATABASE '${databasePath}' AS source;`,
-        "INSERT INTO credential SELECT * FROM source.credential;",
-        "INSERT INTO migration SELECT * FROM source.migration;",
-        "INSERT INTO data_migration SELECT * FROM source.data_migration;",
-        "DETACH DATABASE source;",
-      ].join(" "),
-    ]);
-    chmodSync(temporarySeed, 0o600);
-    renameSync(temporarySeed, OPENCODE_CREDENTIAL_SEED);
-  } catch (error) {
-    rmSync(temporarySeed, { force: true });
-    throw error;
-  }
 }
 
 function runFile(command: string, args: string[]) {
@@ -1860,31 +1835,13 @@ function requiredEnv(name: string) {
 }
 
 function boundedSandboxCommand(command: string) {
-  return [
-    "timeout",
-    "--signal=TERM",
-    "--kill-after=10s",
-    `${SANDBOX_COMMAND_TIMEOUT_SECONDS}s`,
-    "sh",
-    "-c",
-    shellQuote(command),
-  ].join(" ");
+  return boundedHostCommand(command, SANDBOX_COMMAND_TIMEOUT_SECONDS);
 }
 
 function agentRunSignal() {
-  return AbortSignal.timeout(AGENT_RUN_TIMEOUT_MS);
-}
-
-function assertFileExists(path: string) {
-  if (!(existsSync(path) && statSync(path).isFile())) {
-    throw new Error(`Required Sandcastle credential file is missing: ${path}`);
-  }
-}
-
-function assertDirectoryExists(path: string) {
-  if (!(existsSync(path) && statSync(path).isDirectory())) {
-    throw new Error(`Required Sandcastle directory is missing: ${path}`);
-  }
+  // The command supervisor owns TERM/KILL cleanup. This outer deadline is only
+  // a fail-safe and deliberately allows its ten-second shutdown grace to finish.
+  return AbortSignal.timeout(AGENT_RUN_TIMEOUT_MS + 15_000);
 }
 
 function createSlotLimiter(limit: number) {

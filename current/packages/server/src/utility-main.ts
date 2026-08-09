@@ -48,7 +48,7 @@ import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Context, Effect, Fiber, Layer, pipe, Queue, Ref, Stream } from 'effect'
+import { Context, Effect, Fiber, Layer, pipe, Ref, Stream } from 'effect'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
@@ -74,7 +74,6 @@ import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
-import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
@@ -295,10 +294,7 @@ const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
   Layer.provideMerge(DeferredGroup1Layers)
 )
 
-const DeferredGroup2Layers = Layer.mergeAll(
-  ReviewCommentFetcher.layer,
-  RepositoryWatchCoordinator.layer
-)
+const DeferredGroup2Layers = Layer.mergeAll(RepositoryWatchCoordinator.layer)
 
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
@@ -322,8 +318,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     })
     const prWatcher = yield* makeRefDelegatingService(PrWatcher)
     const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
-    const reviewCommentFetcher =
-      yield* makeRefDelegatingService(ReviewCommentFetcher)
     const terminalClient = yield* makeRefDelegatingService(TerminalClient)
     const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
     const workspaceSyncService =
@@ -379,10 +373,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         yield* Ref.set(
           projectRegistry.ref,
           Context.get(stackCtx, ProjectRegistry)
-        )
-        yield* Ref.set(
-          reviewCommentFetcher.ref,
-          Context.get(stackCtx, ReviewCommentFetcher)
         )
         yield* Ref.set(
           workspaceProvider.ref,
@@ -458,7 +448,6 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.add(DockerDetection, dockerDetection.proxy),
       Context.add(PrWatcher, prWatcher.proxy),
       Context.add(ProjectRegistry, projectRegistry.proxy),
-      Context.add(ReviewCommentFetcher, reviewCommentFetcher.proxy),
       Context.add(TerminalClient, terminalClient.proxy),
       Context.add(WorkspaceProvider, workspaceProvider.proxy),
       Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
@@ -511,22 +500,6 @@ async function main(): Promise<void> {
     Layer.provide(LaborerRpcsLive)
   )
 
-  // Infrastructure layer: real command services + core services.
-  // Built once and shared between the primary RPC server and any
-  // additional RPC servers spawned for inter-process communication.
-  // This avoids creating duplicate LaborerStoreLive instances against
-  // the same SQLite database, which would cause UNIQUE constraint
-  // failures in the eventlog.
-  //
-  // Uses `provideMerge` so core infrastructure services (LaborerStore,
-  // ConfigService, DeferredServicesReady) remain in the output context.
-  // LaborerRpcsLive requires these services directly in its handlers.
-  // Queue for additional RPC ports arriving from the parent process.
-  // Ports are pushed from the synchronous event listener and consumed
-  // inside the Effect scope where the shared infrastructure is live.
-  const additionalPortQueue: RpcMessagePort[] = []
-  let additionalPortHandler: ((port: RpcMessagePort) => void) | null = null
-
   // Listen for additional port messages from the parent process.
   //
   // - `sync-port`: LiveStore sync channel for the renderer's worker.
@@ -540,12 +513,6 @@ async function main(): Promise<void> {
   //   `TerminalRpcPortLive` layer so `TerminalClient` uses MessagePort
   //   RPC instead of HTTP.
   //   @see Issue #13: Server-to-terminal MessagePort channel
-  //
-  // - `port`: Additional RPC port for inter-process communication.
-  //   Serves `LaborerRpcs` on the shared context (same LaborerStore,
-  //   same deferred services) via a new MessagePort. Used by MCP
-  //   utility process to call server RPCs via MessagePort.
-  //   @see Issue #15: MCP as utility process
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
     if (data?.type === 'sync-port' && event.ports.length > 0) {
@@ -603,67 +570,14 @@ async function main(): Promise<void> {
         `[server-utility] Received Daytona terminal data port for terminal "${terminalId}"`
       )
       handleDaytonaTerminalDataPort(dataPort, terminalId)
-    } else if (data?.type === 'port' && event.ports.length > 0) {
-      // Additional RPC port — serve LaborerRpcs on it.
-      // This enables other utility processes (e.g., MCP) to call
-      // server RPCs via a direct MessagePort instead of HTTP.
-      const additionalRpcPort = event.ports[0] as RpcMessagePort
-      additionalRpcPort.start?.()
-      console.log(
-        '[server-utility] Serving LaborerRpcs on additional port (inter-process)'
-      )
-      // Dispatch to the Effect runtime where shared infrastructure is
-      // live, or buffer if the runtime isn't ready yet.
-      if (additionalPortHandler) {
-        additionalPortHandler(additionalRpcPort)
-      } else {
-        additionalPortQueue.push(additionalRpcPort)
-      }
     }
   })
 
-  // Launch the primary RPC server and handle additional ports within
-  // a single Effect scope. The infrastructure layer (LaborerStore,
-  // deferred services, config) is memoized by Effect, so the primary
-  // server and all additional RPC servers share the same instances.
-  const program = Effect.gen(function* () {
-    // Memoize the infrastructure layer so it's built once and shared.
-    const MemoizedInfra = yield* Layer.memoize(InfrastructureLayer)
-
-    // Launch the primary RPC server.
-    yield* RpcLive.pipe(
-      Layer.provide(MemoizedInfra),
-      Layer.launch,
-      Effect.forkScoped
-    )
-
-    // Process additional RPC ports — build an RPC server on each port
-    // backed by the SAME shared infrastructure (single LaborerStore,
-    // same deferred services, no duplicate SQLite connections).
-    const queue = yield* Queue.unbounded<RpcMessagePort>()
-
-    // Wire the sync event handler to the Effect queue.
-    additionalPortHandler = (port) => {
-      Queue.unsafeOffer(queue, port)
-    }
-    // Drain any ports that arrived before the runtime was ready.
-    for (const buffered of additionalPortQueue) {
-      yield* Queue.offer(queue, buffered)
-    }
-
-    // Process additional ports as they arrive.
-    return yield* Queue.take(queue).pipe(
-      Effect.flatMap((additionalRpcPort) => {
-        const AdditionalRpcLive = RpcServer.layer(LaborerRpcs).pipe(
-          Layer.provide(layerProtocolMessagePort(additionalRpcPort)),
-          Layer.provide(LaborerRpcsLive),
-          Layer.provide(MemoizedInfra)
-        )
-        return AdditionalRpcLive.pipe(Layer.launch, Effect.forkScoped)
-      }),
-      Effect.forever
-    )
-  }).pipe(Effect.scoped)
+  const program = RpcLive.pipe(
+    Layer.provide(InfrastructureLayer),
+    Layer.launch,
+    Effect.scoped
+  )
 
   // Use Effect.runPromise instead of NodeRuntime.runMain to avoid
   // installing duplicate signal handlers in the utility process.

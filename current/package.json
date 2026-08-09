@@ -30,7 +30,6 @@
   "type": "module",
   "scripts": {
     "sandcastle": "bun run --cwd ../.sandcastle start",
-    "sandcastle:build-image": "bun run --cwd ../.sandcastle build-image",
     "dev": "turbo dev dev:electron",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
@@ -46,7 +45,6 @@
     "prepare": "effect-language-service patch"
   },
   "dependencies": {
-    "@github/alive-client": "^1.2.0",
     "@laborer/env": "workspace:*",
     "dotenv": "catalog:",
     "zod": "catalog:"

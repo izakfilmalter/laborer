@@ -30,7 +30,6 @@ import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileService } from '../../src/services/file-service.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { SandboxProvider } from '../../src/services/sandbox-provider.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -62,7 +61,6 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
   Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
-  Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
   Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService')),
   Layer.succeed(
     SandboxProvider,

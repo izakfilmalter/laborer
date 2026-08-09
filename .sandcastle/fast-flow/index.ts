@@ -11,22 +11,33 @@ export const reviewedHeadNeedsPush = (
   reviewedLocalHead: string
 ) => pullRequestHead !== reviewedLocalHead;
 
+export const mergeFailureNeedsPreparation = (
+  mergeStateStatus: string,
+  mergeable: string
+) => mergeStateStatus === "DIRTY" || mergeable === "CONFLICTING";
+
 export const shouldRefreshUnstartedBranch = (
   branchHead: string,
   baseHead: string,
   hasRecordedWork: boolean,
+  hasUncommittedChanges: boolean,
   branchIsAncestorOfBase: boolean
 ) => {
-  if (branchHead === baseHead || hasRecordedWork) {
+  if (
+    branchHead === baseHead ||
+    hasRecordedWork ||
+    hasUncommittedChanges ||
+    !branchIsAncestorOfBase
+  ) {
     return false;
-  }
-  if (!branchIsAncestorOfBase) {
-    throw new Error(
-      "Unstarted issue branch has diverged from the runner base branch."
-    );
   }
   return true;
 };
+
+export const shouldFastForwardPreservedWorktree = (
+  hasUncommittedChanges: boolean,
+  localHeadIsAncestorOfRemote: boolean
+) => !hasUncommittedChanges && localHeadIsAncestorOfRemote;
 
 export const hostCheckoutProblem = (
   baseBranch: string,

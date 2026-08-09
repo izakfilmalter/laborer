@@ -13,7 +13,6 @@ import {
 import { PanelManager } from '@/panels/panel-manager'
 import { findPaneAcrossAllTabs } from '@/panels/window-layout-utils'
 import { DiffPane } from '@/panes/diff-pane'
-import { ReviewPane } from '@/panes/review-pane'
 import { TreePane } from '@/panes/tree-pane'
 import { WindowTabCloseConfirmDialog } from './close-dialogs'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
@@ -31,7 +30,6 @@ interface FullscreenWorkspaceOverlayProps {
   readonly fullscreenWorkspaceId: string
   readonly portalRef: (element: HTMLDivElement | null) => void
   readonly showsDiff: boolean
-  readonly showsReview: boolean
   readonly showsTree: boolean
 }
 
@@ -40,12 +38,10 @@ function FullscreenWorkspaceOverlay({
   fullscreenWorkspaceId,
   portalRef,
   showsDiff,
-  showsReview,
   showsTree,
 }: FullscreenWorkspaceOverlayProps) {
   const actions = usePanelActions()
-  const sidePanelCount =
-    (showsTree ? 1 : 0) + (showsDiff ? 1 : 0) + (showsReview ? 1 : 0)
+  const sidePanelCount = (showsTree ? 1 : 0) + (showsDiff ? 1 : 0)
   const sidePanelSizes = useMemo(
     () => computeSidePanelSizes(sidePanelCount),
     [sidePanelCount]
@@ -114,23 +110,6 @@ function FullscreenWorkspaceOverlay({
             </ResizablePanel>
           </>
         )}
-        {showsReview && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSizes.sidePanelSize}
-              minSize="15%"
-            >
-              <ReviewPane
-                onClose={() =>
-                  toggleFullscreenSidePanel(actions?.toggleReviewPane)
-                }
-                workspaceId={fullscreenWorkspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
       </ResizablePanelGroup>
     </div>
   )
@@ -153,14 +132,12 @@ function WindowTabContent({
   isActive,
   activePaneId,
   diffWorkspaceIds,
-  reviewWorkspaceIds,
   treeWorkspaceIds,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
   readonly diffWorkspaceIds: readonly string[]
-  readonly reviewWorkspaceIds: readonly string[]
   readonly treeWorkspaceIds: readonly string[]
 }) {
   const layout = tab.workspaceLayout
@@ -180,7 +157,6 @@ function WindowTabContent({
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
         diffWorkspaceIds={isActive ? diffWorkspaceIds : []}
-        reviewWorkspaceIds={isActive ? reviewWorkspaceIds : []}
         treeWorkspaceIds={isActive ? treeWorkspaceIds : []}
         workspaceTileLayout={layout}
       />
@@ -202,7 +178,6 @@ interface PanelContentProps {
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   /** The hierarchical window layout — used for fullscreen pane workspace resolution. */
   readonly windowLayout?: WindowLayout | undefined
@@ -231,7 +206,6 @@ export function PanelContent({
   windowLayout,
   windowTabs,
   isEmptyWindowTab = false,
-  reviewWorkspaceIds = [],
   treeWorkspaceIds = [],
   diffWorkspaceIds = [],
 }: PanelContentProps) {
@@ -256,9 +230,6 @@ export function PanelContent({
   const fullscreenShowsDiff =
     fullscreenWorkspaceId !== undefined &&
     diffWorkspaceIds.includes(fullscreenWorkspaceId)
-  const fullscreenShowsReview =
-    fullscreenWorkspaceId !== undefined &&
-    reviewWorkspaceIds.includes(fullscreenWorkspaceId)
   const fullscreenShowsTree =
     fullscreenWorkspaceId !== undefined &&
     treeWorkspaceIds.includes(fullscreenWorkspaceId)
@@ -269,12 +240,6 @@ export function PanelContent({
     fullscreenWorkspaceId === undefined
       ? diffWorkspaceIds
       : diffWorkspaceIds.filter(
-          (workspaceId) => workspaceId !== fullscreenWorkspaceId
-        )
-  const inlineReviewWorkspaceIds =
-    fullscreenWorkspaceId === undefined
-      ? reviewWorkspaceIds
-      : reviewWorkspaceIds.filter(
           (workspaceId) => workspaceId !== fullscreenWorkspaceId
         )
   const inlineTreeWorkspaceIds =
@@ -323,7 +288,6 @@ export function PanelContent({
                 isMinimized={false}
                 onHeaderClick={noop}
                 onMinimize={noop}
-                reviewIsOpen={fullscreenShowsReview}
                 treeIsOpen={fullscreenShowsTree}
                 workspaceId={fullscreenWorkspaceId}
               />
@@ -336,7 +300,6 @@ export function PanelContent({
                 diffWorkspaceIds={inlineDiffWorkspaceIds}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
-                reviewWorkspaceIds={inlineReviewWorkspaceIds}
                 tab={tab}
                 treeWorkspaceIds={inlineTreeWorkspaceIds}
               />
@@ -351,7 +314,6 @@ export function PanelContent({
                 fullscreenWorkspaceId={fullscreenWorkspaceId}
                 portalRef={handlePortalRef}
                 showsDiff={fullscreenShowsDiff}
-                showsReview={fullscreenShowsReview}
                 showsTree={fullscreenShowsTree}
               />
             ) : null}

@@ -22,7 +22,6 @@ import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
-import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { SandboxProviderRoutedLayer } from '../../src/services/sandbox-provider-router.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -189,10 +188,7 @@ const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
 /**
  * Deferred Group 2 — services depending on Group 1.
  */
-const DeferredGroup2Layers = Layer.mergeAll(
-  ReviewCommentFetcher.layer,
-  RepositoryWatchCoordinator.layer
-)
+const DeferredGroup2Layers = Layer.mergeAll(RepositoryWatchCoordinator.layer)
 
 /**
  * Full deferred service stack built bottom-up.

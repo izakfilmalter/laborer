@@ -216,12 +216,6 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Review panel state — transient UI mode (not persisted to LiveStore).
-  // Each workspace manages its own review pane visibility independently.
-  const [reviewPaneWorkspaceIds, setReviewPaneWorkspaceIds] = useState<
-    readonly string[]
-  >([])
-
   // Diff panel state — transient UI mode (not persisted to LiveStore).
   // Each workspace manages its own diff viewer visibility independently.
   const [diffPaneWorkspaceIds, setDiffPaneWorkspaceIds] = useState<
@@ -234,14 +228,12 @@ function HomeComponent() {
     readonly string[]
   >([])
 
-  // Auto-close review/diff/tree panels when their workspace no longer exists
+  // Auto-close diff/tree panels when their workspace no longer exists
   // anywhere in the window layout (e.g., if the workspace was closed).
   useEffect(() => {
     if (
       !(
-        (reviewPaneWorkspaceIds.length > 0 ||
-          diffPaneWorkspaceIds.length > 0 ||
-          treePaneWorkspaceIds.length > 0) &&
+        (diffPaneWorkspaceIds.length > 0 || treePaneWorkspaceIds.length > 0) &&
         windowLayout
       )
     ) {
@@ -252,53 +244,13 @@ function HomeComponent() {
       getAllWorkspaceTileLeaves(windowLayout).map((leaf) => leaf.workspaceId)
     )
 
-    setReviewPaneWorkspaceIds((current) =>
-      filterOpenWorkspacePanels(current, openWorkspaceIds)
-    )
     setDiffPaneWorkspaceIds((current) =>
       filterOpenWorkspacePanels(current, openWorkspaceIds)
     )
     setTreePaneWorkspaceIds((current) =>
       filterOpenWorkspacePanels(current, openWorkspaceIds)
     )
-  }, [
-    reviewPaneWorkspaceIds,
-    diffPaneWorkspaceIds,
-    treePaneWorkspaceIds,
-    windowLayout,
-  ])
-
-  /**
-   * Toggle the full-height review panel for the workspace of the given pane.
-   * Each workspace manages its own review pane, so toggling one workspace
-   * does not affect any others.
-   *
-   * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the review panel is now open
-   */
-  const toggleReviewPane = useCallback(
-    (paneId: string): boolean => {
-      if (!windowLayout) {
-        return false
-      }
-
-      const found = findPaneInActiveTab(windowLayout, paneId)
-      if (!found?.workspaceId) {
-        return false
-      }
-
-      const workspaceId = found.workspaceId
-
-      const isOpen = reviewPaneWorkspaceIds.includes(workspaceId)
-
-      setReviewPaneWorkspaceIds((current) =>
-        toggleWorkspacePanel(current, workspaceId)
-      )
-
-      return !isOpen
-    },
-    [windowLayout, reviewPaneWorkspaceIds]
-  )
+  }, [diffPaneWorkspaceIds, treePaneWorkspaceIds, windowLayout])
 
   /**
    * Toggle the full-height diff panel for the workspace of the given pane.
@@ -337,7 +289,7 @@ function HomeComponent() {
    * Each workspace manages its own file tree, so toggling one workspace
    * does not affect any others.
    *
-   * The tree panel is forced to the left side, unlike diff/review.
+   * The tree panel is forced to the left side, unlike diff.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the tree panel is now open
@@ -875,8 +827,7 @@ function HomeComponent() {
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
   // forceCloseWorkspace bypasses the confirmation gate — used by workspace
   // destruction which has its own confirmation dialog.
-  // toggleReviewPane and toggleDiffPane replace the layout-based versions with
-  // full-height versions.
+  // toggleDiffPane replaces the layout-based version with a full-height version.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
@@ -887,7 +838,6 @@ function HomeComponent() {
       removePanelTab: gatedRemovePanelTab,
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
-      toggleReviewPane,
       toggleDiffPane,
       toggleTreePane,
       showPanelTypePicker,
@@ -900,7 +850,6 @@ function HomeComponent() {
       gatedCloseWindowTab,
       gatedRemovePanelTab,
       toggleFullscreenPane,
-      toggleReviewPane,
       toggleDiffPane,
       toggleTreePane,
       showPanelTypePicker,
@@ -1221,7 +1170,6 @@ function HomeComponent() {
                       fullscreenPaneId={fullscreenPaneId}
                       isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
-                      reviewWorkspaceIds={reviewPaneWorkspaceIds}
                       treeWorkspaceIds={treePaneWorkspaceIds}
                       windowLayout={windowLayout}
                       windowTabs={windowLayout?.tabs}

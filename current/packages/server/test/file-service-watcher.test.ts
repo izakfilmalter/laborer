@@ -68,7 +68,6 @@ const seedWorkspace = (
       id: projectId,
       repoPath,
       name: 'test-project',
-      brrrConfig: null,
     })
   )
   store.commit(

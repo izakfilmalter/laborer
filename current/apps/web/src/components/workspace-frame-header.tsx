@@ -193,6 +193,10 @@ function WorkspaceFrameHeader({
     isWorking && isActiveFrame
       ? ''
       : getAgentStatusSurface(agentStatus).headerClassName
+  // Exactly one bottom edge is ever coloured. When the agent has something
+  // to say the accent is its own; otherwise the active frame keeps its
+  // primary edge. Two competing borders on one 8px bar read as noise.
+  const hasAgentAccent = agentAccentClassName !== ''
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -213,7 +217,7 @@ function WorkspaceFrameHeader({
     <div
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
-        isActiveFrame && !needsAttention && 'border-b-2 border-b-primary',
+        isActiveFrame && !hasAgentAccent && 'border-b-2 border-b-primary',
         agentAccentClassName,
         isMinimized && 'cursor-pointer'
       )}

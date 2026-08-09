@@ -63,6 +63,14 @@ interface AgentStatusSurface {
   readonly headerClassName: string
   /** Terminal row in the sidebar. */
   readonly rowClassName: string
+  /**
+   * Hover treatment for the terminal row. Owned here rather than by the row
+   * because the generic `hover:bg-accent` would otherwise wash the accent
+   * away on the one interaction most likely to happen to an accented row:
+   * the operator pointing at it. Accented rows deepen their own hue instead,
+   * so hovering confirms the state rather than erasing it.
+   */
+  readonly rowHoverClassName: string
 }
 
 interface AgentStatusPresentation {
@@ -163,6 +171,7 @@ const QUIET_SURFACE: AgentStatusSurface = {
   cardClassName: '',
   headerClassName: '',
   rowClassName: '',
+  rowHoverClassName: 'hover:bg-accent hover:text-accent-foreground',
 }
 
 /**
@@ -175,23 +184,31 @@ const QUIET_SURFACE: AgentStatusSurface = {
  * that is actually blocked. `working` accents only the frame header, whose
  * bar is already the quietest place a status can live, and never fights the
  * active-frame accent for it.
+ *
+ * On the frame header the two attention states also claim the same
+ * two-pixel edge the active frame uses, so a frame that wants the operator
+ * is never drawn thinner than the frame they happen to be looking at; hue
+ * and tint, not weight, say which of the two it is.
  */
 const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
   needs_input: {
     cardClassName:
       'border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.18)]',
-    headerClassName: 'border-b-amber-400/60 bg-amber-400/10',
+    headerClassName: 'border-b-2 border-b-amber-400/70 bg-amber-400/10',
     rowClassName: 'border-amber-400/50 bg-amber-400/10',
+    rowHoverClassName: 'hover:bg-amber-400/20',
   },
   done: {
     cardClassName: 'border-violet-400/45',
-    headerClassName: 'border-b-violet-400/45 bg-violet-400/5',
+    headerClassName: 'border-b-2 border-b-violet-400/50 bg-violet-400/5',
     rowClassName: 'border-violet-400/35 bg-violet-400/5',
+    rowHoverClassName: 'hover:bg-violet-400/15',
   },
   working: {
     cardClassName: '',
     headerClassName: 'border-b-blue-400/40 bg-blue-400/5',
     rowClassName: '',
+    rowHoverClassName: QUIET_SURFACE.rowHoverClassName,
   },
   idle: QUIET_SURFACE,
   unknown: QUIET_SURFACE,

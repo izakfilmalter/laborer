@@ -678,6 +678,7 @@ function TerminalItem({
   const displayStatus = agentStatus
     ? deriveAgentDisplayStatus(agentStatus)
     : null
+  const agentSurface = getAgentStatusSurface(displayStatus)
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -697,17 +698,20 @@ function TerminalItem({
     <div
       className={cn(
         'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
-        'hover:bg-accent hover:text-accent-foreground',
         // A row that wants something carries a steady edge from the shared
         // vocabulary — amber to act on, violet to review — and the motion
-        // stays in the badge so the label remains readable.
-        getAgentStatusSurface(displayStatus).rowClassName
+        // stays in the badge so the label remains readable. The hover
+        // treatment comes from the same vocabulary so pointing at an
+        // accented row deepens its hue instead of washing it to plain
+        // accent grey.
+        agentSurface.rowClassName,
+        agentSurface.rowHoverClassName
       )}
       data-agent-status={displayStatus ?? undefined}
       data-testid={`terminal-row-${terminal.id}`}
     >
       <button
-        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left focus-visible:outline-none active:cursor-grabbing"
+        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:cursor-grabbing"
         draggable
         onClick={() => onSelect(terminal.id)}
         onDragStart={handleDragStart}

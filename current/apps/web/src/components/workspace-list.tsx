@@ -1047,6 +1047,11 @@ function WorkspaceItem({
   })()
 
   const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
+  // One card, one coloured edge. When an agent wants the operator the edge
+  // is its own; otherwise the active workspace keeps its primary edge.
+  // Emitting both leaves the winner to stylesheet ordering rather than to
+  // intent.
+  const hasAgentAccent = agentSurface.cardClassName !== ''
   // Attention and in-flight work surface at card level; acknowledged idle and
   // unknown stay in the terminal rows that own them.
   const showsAgentStatus =
@@ -1110,7 +1115,7 @@ function WorkspaceItem({
   return (
     <Card
       className={cn(
-        isActiveWorkspace && 'border-primary',
+        isActiveWorkspace && !hasAgentAccent && 'border-primary',
         // Steady edges rather than a pulsing card: the whole card animating
         // made its text hard to read, so the motion now lives only in the
         // status badge's dot. A blocked agent glows, an unseen result does

@@ -658,7 +658,7 @@ describe('WorkspaceFrameHeader', () => {
     expect(header.className).not.toContain('border-b-primary')
   })
 
-  it('suppresses accent bottom border when needsAttention overrides active state', () => {
+  it('recolours rather than thins the active edge when the agent needs input', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
@@ -670,8 +670,10 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     const header = screen.getByTestId('workspace-frame-header')
-    // The amber attention border should take priority over the active accent border
-    expect(header.className).not.toContain('border-b-2')
+    // Attention takes the edge over from the active-frame accent, and keeps
+    // its weight: a blocked frame must never read lighter than the frame the
+    // operator happens to be looking at.
+    expect(header.className).toContain('border-b-2')
     expect(header.className).not.toContain('border-b-primary')
     expect(header.className).toContain('border-b-amber-400')
   })
@@ -688,7 +690,9 @@ describe('WorkspaceFrameHeader', () => {
 
     const header = screen.getByTestId('workspace-frame-header')
     expect(screen.getByText('done')).toBeTruthy()
+    expect(header.className).toContain('border-b-2')
     expect(header.className).toContain('border-b-violet-400')
+    expect(header.className).not.toContain('border-b-primary')
     expect(header.className).not.toContain('amber')
     // The check glyph, not hue alone, separates "review" from "act now".
     expect(

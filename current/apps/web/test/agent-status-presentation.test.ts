@@ -140,6 +140,41 @@ describe('agent status surface accents', () => {
     expect(getAgentStatusSurface('done').cardClassName).not.toContain('shadow-')
   })
 
+  it('keeps an accented row in its own hue on hover', () => {
+    // The generic hover treatment repaints the row in accent grey, which
+    // would erase the one cue telling the operator this row wants them.
+    for (const status of ['needs_input', 'done'] as const) {
+      const surface = getAgentStatusSurface(status)
+
+      expect(surface.rowHoverClassName).not.toContain('bg-accent')
+      expect(surface.rowHoverClassName).toContain('hover:bg-')
+    }
+
+    expect(getAgentStatusSurface('needs_input').rowHoverClassName).not.toBe(
+      getAgentStatusSurface('done').rowHoverClassName
+    )
+  })
+
+  it('leaves quiet rows on the shared hover treatment', () => {
+    for (const status of ['idle', 'unknown', 'working'] as const) {
+      expect(getAgentStatusSurface(status).rowHoverClassName).toContain(
+        'hover:bg-accent'
+      )
+    }
+
+    expect(getAgentStatusSurface(null).rowHoverClassName).toContain(
+      'hover:bg-accent'
+    )
+  })
+
+  it('never draws an attention header lighter than the active frame', () => {
+    for (const status of ['needs_input', 'done'] as const) {
+      expect(getAgentStatusSurface(status).headerClassName).toContain(
+        'border-b-2'
+      )
+    }
+  })
+
   it('keeps working quiet everywhere but the frame header it owns', () => {
     const working = getAgentStatusSurface('working')
 

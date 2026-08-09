@@ -156,13 +156,22 @@ export const makeLiveChatPlaneLayer = (
           slack: slackAdapter as Omit<typeof slackAdapter, "botUserId"> &
             Pick<Adapter, "botUserId">,
         },
+        concurrency: "queue",
         logger: "info",
         state: createMemoryState(),
         userName: config.userName,
       });
 
       return {
-        initialize: () => bot.initialize(),
+        initialize: async () => {
+          await bot.initialize();
+          // The Slack adapter deliberately treats a failed auth.test as a
+          // warning. A single-workspace canary cannot route mentions without
+          // that identity, so fail startup instead of appearing connected.
+          if (slackAdapter.botUserId === undefined) {
+            throw new Error("Slack adapter identity unavailable");
+          }
+        },
         onNewMention: (registeredHandler) => {
           bot.onNewMention((thread, message) =>
             registeredHandler(

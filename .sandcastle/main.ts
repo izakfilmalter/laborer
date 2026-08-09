@@ -179,7 +179,10 @@ const uiAgent = () =>
 const sandboxProvider = () =>
   supervisedNoSandbox({
     defaultTimeoutSeconds: Math.ceil(AGENT_RUN_TIMEOUT_MS / 1000),
-    env: { GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN") },
+    env: {
+      GH_TOKEN: requiredEnv("SANDCASTLE_AGENT_GH_TOKEN"),
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+    },
   });
 
 const acquireSlot = createSlotLimiter(MAX_PARALLEL);
@@ -1589,7 +1592,6 @@ function assertOpenCodeReady() {
   runFile("opencode2", ["--version"]);
   const help = runFile("opencode2", ["run", "--help"]);
   for (const requiredFlag of [
-    "--standalone",
     "--format choice",
     "--model, -m string",
     "provider/model#variant",

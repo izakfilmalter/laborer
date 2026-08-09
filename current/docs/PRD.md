@@ -392,13 +392,13 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 1. **Terminals are the primitive.** Agents, shells, dev servers, and supporting commands all run as terminals. The UI provides workspace and diff context around that primitive.
 
-1. **Terminals are independent resources.** Panes may attach to long-lived terminals, but closing or replacing a pane does not terminate the process it was viewing.
+2. **Terminals are independent resources.** Panes may attach to long-lived terminals, but closing or replacing a pane does not terminate the process it was viewing.
 
-2. **Local-first, API-first.** Everything runs on the developer's machine. The server is headless-capable. The API is the primary interface; the UI is a client. This enables future Slack bots, CLI wrappers, and CI integrations without architectural changes.
+3. **Local-first, API-first.** Everything runs on the developer's machine. The server is headless-capable. The API is the primary interface; the UI is a client. This enables future Slack bots, CLI wrappers, and CI integrations without architectural changes.
 
-3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
+4. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
-4. **Progressive complexity.** A developer can start with one project, workspace, and terminal, then add splits, supplementary terminals, and dev servers as needed.
+5. **Progressive complexity.** A developer can start with one project, workspace, and terminal, then add splits, supplementary terminals, and dev servers as needed.
 
 ### Issue Tracking
 

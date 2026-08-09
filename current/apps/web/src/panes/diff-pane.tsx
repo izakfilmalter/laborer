@@ -96,7 +96,6 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { parseFileDiffEntry } from '@/lib/file-diff'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
-import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 
 // ---------------------------------------------------------------------------
 // Module-level atoms — shared across all DiffPane instances.
@@ -658,27 +657,6 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
       )
     },
     [handleOpenFile]
-  )
-
-  // --- Cross-pane diff scroll ---
-  // File wrappers carry `data-diff-file-path`; resolve by attribute
-  // comparison instead of child index because the Virtualizer inserts
-  // its own content wrapper between the scroll root and the files.
-  useOnDiffScrollRequest(
-    workspaceId,
-    useCallback((target: { file: string; line: number }) => {
-      const container = containerRef.current
-      if (!container) {
-        return
-      }
-      const fileElements = container.querySelectorAll('[data-diff-file-path]')
-      for (const fileElement of fileElements) {
-        if (fileElement.getAttribute('data-diff-file-path') === target.file) {
-          fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          return
-        }
-      }
-    }, [])
   )
 
   // --- Loading state (no data at all yet) ---

@@ -34,7 +34,6 @@ describe('deriveSidecarStatuses', () => {
     expect(result.server).toEqual({ state: 'healthy' })
     expect(result.terminal).toEqual({ state: 'unknown' })
     expect(result['file-watcher']).toEqual({ state: 'unknown' })
-    expect(result.mcp).toEqual({ state: 'unknown' })
   })
 
   it('tracks the starting state', () => {
@@ -58,10 +57,10 @@ describe('deriveSidecarStatuses', () => {
 
   it('tracks restarting state with delay', () => {
     const events: readonly SidecarStatusEvent[] = [
-      { state: 'restarting', name: 'mcp', delayMs: 2000 },
+      { state: 'restarting', name: 'terminal', delayMs: 2000 },
     ]
     const result = deriveSidecarStatuses(events)
-    expect(result.mcp).toEqual({ state: 'restarting', delayMs: 2000 })
+    expect(result.terminal).toEqual({ state: 'restarting', delayMs: 2000 })
   })
 
   it('last event for a service wins when multiple events arrive', () => {
@@ -79,7 +78,6 @@ describe('deriveSidecarStatuses', () => {
       { state: 'healthy', name: 'server' },
       { state: 'starting', name: 'terminal' },
       { state: 'crashed', name: 'file-watcher', error: 'timeout' },
-      { state: 'restarting', name: 'mcp', delayMs: 5000 },
     ]
     const result = deriveSidecarStatuses(events)
     expect(result.server).toEqual({ state: 'healthy' })
@@ -88,7 +86,6 @@ describe('deriveSidecarStatuses', () => {
       state: 'crashed',
       error: 'timeout',
     })
-    expect(result.mcp).toEqual({ state: 'restarting', delayMs: 5000 })
   })
 })
 
@@ -97,7 +94,6 @@ describe('getDisplayName', () => {
     expect(getDisplayName('server')).toBe('Server')
     expect(getDisplayName('terminal')).toBe('Terminal')
     expect(getDisplayName('file-watcher')).toBe('File Watcher')
-    expect(getDisplayName('mcp')).toBe('MCP')
   })
 })
 
@@ -150,21 +146,11 @@ describe('areCoreServicesHealthy', () => {
     expect(areCoreServicesHealthy(statuses)).toBe(false)
   })
 
-  it('returns true when all core services are healthy (MCP irrelevant)', () => {
+  it('returns true when all services are healthy', () => {
     const statuses = deriveSidecarStatuses([
       { state: 'healthy', name: 'server' },
       { state: 'healthy', name: 'terminal' },
       { state: 'healthy', name: 'file-watcher' },
-    ])
-    expect(areCoreServicesHealthy(statuses)).toBe(true)
-  })
-
-  it('returns true even when MCP is not healthy', () => {
-    const statuses = deriveSidecarStatuses([
-      { state: 'healthy', name: 'server' },
-      { state: 'healthy', name: 'terminal' },
-      { state: 'healthy', name: 'file-watcher' },
-      { state: 'crashed', name: 'mcp', error: 'fail' },
     ])
     expect(areCoreServicesHealthy(statuses)).toBe(true)
   })
@@ -190,13 +176,6 @@ describe('hasAnyCoreServiceCrashed', () => {
       { state: 'crashed', name: 'server', error: 'timeout' },
     ])
     expect(hasAnyCoreServiceCrashed(statuses)).toBe(true)
-  })
-
-  it('returns false when only MCP has crashed', () => {
-    const statuses = deriveSidecarStatuses([
-      { state: 'crashed', name: 'mcp', error: 'fail' },
-    ])
-    expect(hasAnyCoreServiceCrashed(statuses)).toBe(false)
   })
 
   it('returns true when file-watcher has crashed among healthy services', () => {

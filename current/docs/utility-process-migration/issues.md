@@ -18,7 +18,6 @@ Parent PRD: [PRD.md](./PRD.md)
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Done |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Done |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Done |
-| 15 | MCP as utility process | #1, #2, #3 | Done |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Done |
 | 18 | Terminal session persistence across restarts | #6, #16 | Done |
@@ -359,7 +358,6 @@ Replace the WebSocket-based LiveStore sync channel between the server and the re
 
 ### What to build
 
-Update the renderer's `LaborerClient` atom to use the MessagePort Effect RPC client transport instead of HTTP. All server RPC calls (project CRUD, workspace management, config, PRD operations, brrr, tasks, reviews, GitHub, etc.) flow through MessagePort.
 
 ### Acceptance criteria
 
@@ -441,23 +439,13 @@ Migrate the file-watcher service from `child_process.spawn()` + HTTP to `utility
 
 ---
 
-## Issue 15: MCP as utility process
 
 ### What to build
 
-Migrate the MCP sidecar from `child_process.spawn()` with stdin pipe to `utilityProcess.fork()` with MessagePort. Since `utilityProcess.fork()` does not support stdin (always `'ignore'`), the MCP utility process receives commands from the main process via MessagePort. Internally, it spawns external MCP servers as `child_process.spawn()` with `stdin: 'pipe'` — the utility process has full access to `child_process` APIs.
 
-The MCP service currently also connects to the main server via HTTP RPC (`LaborerRpcClient`). This should be updated to use a MessagePort brokered by the main process.
 
 ### Acceptance criteria
 
-- [x] MCP forks as a utility process via `UtilityProcessManager.fork('mcp', ...)`
-- [x] The MCP utility process receives commands from the main process via MessagePort (not stdin)
-- [x] The MCP utility process spawns external MCP servers as `child_process` with stdin pipe internally
-- [x] The MCP stdio transport for external servers (JSON-RPC over stdin/stdout) continues to work
-- [x] Main process brokers a MessagePort between MCP and server utility processes for `LaborerRpcClient`
-- [x] The MCP tool surface (PRD tools, project discovery, etc.) works end-to-end
-- [x] Test: fork MCP utility process, send a command via MessagePort, verify it processes correctly
 
 ### Blocked by
 
@@ -467,8 +455,6 @@ The MCP service currently also connects to the main server via HTTP RPC (`Labore
 
 ### User stories addressed
 
-- User story 12 (MCP communicates via MessagePort)
-- User story 13 (MCP spawns external servers with stdin)
 
 ---
 
@@ -591,7 +577,6 @@ With all four services running as utility processes with MessagePort IPC, remove
 - Blocked by "Renderer terminal UI wired to MessagePort" (#9)
 - Blocked by "Renderer server UI wired to MessagePort" (#12)
 - Blocked by "File-watcher as utility process" (#14)
-- Blocked by "MCP as utility process" (#15)
 
 ### User stories addressed
 

@@ -2,11 +2,8 @@
  * Project group component for the sidebar.
  *
  * Renders a single project as a collapsible heading with its workspaces
- * and tasks nested underneath. The heading shows the project name, a chevron
+ * nested underneath. The heading shows the project name, a chevron
  * toggle, and project settings/delete actions.
- *
- * Task source selection (Linear/GitHub) is managed independently
- * per project via local state.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
@@ -24,11 +21,7 @@ import {
   type PendingWorkspaceCreationChangeHandler,
 } from '@/components/create-workspace-form'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { PlanList } from '@/components/plan-list'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
-import { TaskList } from '@/components/task-list'
-import { TaskSourcePicker } from '@/components/task-source-picker'
-import type { TaskSourceFilter } from '@/components/task-source-picker.helpers'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,7 +40,6 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { DialogTrigger } from '@/components/ui/dialog'
-import { Separator } from '@/components/ui/separator'
 import {
   Tooltip,
   TooltipContent,
@@ -62,28 +54,18 @@ const removeProjectMutation = LaborerClient.mutation('project.remove')
 
 interface ProjectGroupProps {
   readonly expanded: boolean
-  readonly onSelectPlan?: ((prdId: string) => void) | undefined
   readonly onToggle: () => void
   readonly project: {
     readonly id: string
     readonly name: string
     readonly repoPath: string
-    readonly brrrConfig: string | null
   }
-  readonly selectedPlanId?: string | null | undefined
 }
 
-function ProjectGroup({
-  project,
-  expanded,
-  onToggle,
-  selectedPlanId,
-  onSelectPlan,
-}: ProjectGroupProps) {
+function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
-  const [taskSource, setTaskSource] = useState<TaskSourceFilter>('linear')
   const [pendingWorkspaceCreations, setPendingWorkspaceCreations] = useState<
     readonly PendingWorkspaceCreation[]
   >([])
@@ -247,22 +229,6 @@ function ProjectGroup({
             projectName={project.name}
             repoPath={project.repoPath}
           />
-          <Separator className="my-2" />
-          <PlanList
-            onSelectPlan={onSelectPlan}
-            projectId={project.id}
-            selectedPlanId={selectedPlanId}
-          />
-          <Separator className="my-2" />
-          <div className="grid gap-2">
-            <h3 className="font-medium text-muted-foreground text-xs">Tasks</h3>
-            <TaskSourcePicker
-              activeSource={taskSource}
-              onSourceChange={setTaskSource}
-              projectId={project.id}
-            />
-            <TaskList projectId={project.id} sourceFilter={taskSource} />
-          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>

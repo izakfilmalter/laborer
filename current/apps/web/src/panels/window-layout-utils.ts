@@ -1288,7 +1288,9 @@ function decodeWindowLayout(input: unknown): RepairWindowLayoutResult {
     // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
     const decoded = decodeResult.right
     const repaired = repairTransforms(decoded)
-    const wasRepaired = !deepEqual(decoded, repaired)
+    const wasRepaired = !(
+      deepEqual(input, decoded) && deepEqual(decoded, repaired)
+    )
     return { windowLayout: repaired, wasRepaired }
   }
 
@@ -1413,10 +1415,10 @@ function resolveActiveId(
 }
 
 /**
- * Simple deep equality check for WindowLayout structures.
+ * Simple deep equality check for JSON-compatible layout structures.
  * Compares JSON serializations for structural equality.
  */
-function deepEqual(a: WindowLayout, b: WindowLayout): boolean {
+function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
@@ -1698,7 +1700,7 @@ function lenientDecodeLeafNode(
   const result: Record<string, unknown> = {
     _tag: 'LeafNode',
     id: raw.id,
-    paneType: raw.paneType,
+    paneType: raw.paneType === 'review' ? 'diff' : raw.paneType,
   }
 
   if (typeof raw.terminalId === 'string') {

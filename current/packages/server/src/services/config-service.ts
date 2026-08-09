@@ -16,9 +16,7 @@
  * ```json
  * {
  *   "worktreeDir": "/path/to/my-project.worktrees",
- *   "prdsDir": "/path/to/my-project.worktrees/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
- *   "brrrConfig": "path/to/brrr/config.toml"
  * }
  * ```
  *
@@ -147,7 +145,6 @@ const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
 interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
-  readonly brrrConfig?: string
   /**
    * Global default sandbox provider.
    * Per-project `devServer.provider` overrides this.
@@ -155,7 +152,6 @@ interface LaborerConfig {
    */
   readonly defaultSandboxProvider?: SandboxProviderType
   readonly devServer?: DevServerConfig
-  readonly prdsDir?: string
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -164,10 +160,8 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
-  readonly brrrConfig?: string | undefined
   readonly defaultSandboxProvider?: SandboxProviderType | undefined
   readonly devServer?: DevServerConfig | undefined
-  readonly prdsDir?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -210,7 +204,6 @@ interface ResolvedDevServerConfig {
 interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
-  readonly brrrConfig: ResolvedValue<string | null>
   /**
    * Global default sandbox provider.
    * Resolved from the closest config that sets it; defaults to null
@@ -219,7 +212,6 @@ interface ResolvedLaborerConfig {
   readonly defaultSandboxProvider: ResolvedValue<SandboxProviderType | null>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
-  readonly prdsDir: ResolvedValue<string>
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -462,20 +454,12 @@ const applyConfigUpdates = (
     next.defaultSandboxProvider = updates.defaultSandboxProvider
   }
 
-  if (updates.prdsDir !== undefined) {
-    next.prdsDir = updates.prdsDir
-  }
-
   if (updates.worktreeDir !== undefined) {
     next.worktreeDir = updates.worktreeDir
   }
 
   if (updates.setupScripts !== undefined) {
     next.setupScripts = [...updates.setupScripts]
-  }
-
-  if (updates.brrrConfig !== undefined) {
-    next.brrrConfig = updates.brrrConfig
   }
 
   if (updates.watchIgnore !== undefined) {
@@ -796,7 +780,6 @@ const mergeConfigs = (
   projectRepoPath: string
 ): ResolvedLaborerConfig => {
   const defaultWorktreeDir = `${projectRepoPath}.worktrees`
-  const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
   let agent: ResolvedValue<AgentProvider> = {
     value: 'opencode2',
@@ -806,16 +789,8 @@ const mergeConfigs = (
     value: defaultWorktreeDir,
     source: 'default',
   }
-  let prdsDir: ResolvedValue<string> = {
-    value: defaultPrdsDir,
-    source: 'default',
-  }
   let setupScripts: ResolvedValue<readonly string[]> = {
     value: [],
-    source: 'default',
-  }
-  let brrrConfig: ResolvedValue<string | null> = {
-    value: null,
     source: 'default',
   }
   let watchIgnore: ResolvedValue<readonly string[]> = {
@@ -848,31 +823,11 @@ const mergeConfigs = (
         value: resolve(expandTilde(config.worktreeDir)),
         source: path,
       }
-      if (prdsDir.source === 'default') {
-        prdsDir = {
-          value: join(worktreeDir.value, 'prds'),
-          source: 'default',
-        }
-      }
-    }
-
-    if (config.prdsDir !== undefined) {
-      prdsDir = {
-        value: resolve(expandTilde(config.prdsDir)),
-        source: path,
-      }
     }
 
     if (config.setupScripts !== undefined) {
       setupScripts = {
         value: config.setupScripts,
-        source: path,
-      }
-    }
-
-    if (config.brrrConfig !== undefined) {
-      brrrConfig = {
-        value: config.brrrConfig,
         source: path,
       }
     }
@@ -898,10 +853,8 @@ const mergeConfigs = (
     agent,
     defaultSandboxProvider,
     devServer: applyProviderFallback(devServer, defaultSandboxProvider),
-    prdsDir,
     worktreeDir,
     setupScripts,
-    brrrConfig,
     watchIgnore,
   }
 }
@@ -995,7 +948,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}" with agent from ${resolved.agent.source} and worktree directory from ${resolved.worktreeDir.source}`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved

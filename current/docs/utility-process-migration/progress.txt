@@ -1052,8 +1052,6 @@ Date: 2026-03-25
 
 Updated the renderer's `LaborerClient` atom to use MessagePort RPC client
 transport instead of HTTP when running inside Electron. All ~30 LaborerRpcs
-endpoints (project CRUD, workspace management, config, PRD operations, brrr,
-tasks, reviews, GitHub, docker, lifecycle, etc.) now flow through MessagePort
 in Electron mode. Browser dev mode retains HTTP fallback at `/rpc` (Vite
 proxy).
 
@@ -1094,7 +1092,6 @@ be available when the server runs as a utility process without HTTP.
 
 This issue required no new files — only modifications to existing ones.
 All 25+ consumer files that import `LaborerClient` (project settings,
-workspace management, terminal list, config, docker status, reviews,
 tasks, etc.) use the transport-agnostic `LaborerClient.mutation()` /
 `LaborerClient.query()` API and required zero changes.
 
@@ -1334,31 +1331,22 @@ the server and file-watcher utility processes, and the server's
 
 ---
 
-## Issue 15: MCP as utility process — COMPLETED
 
 Date: 2026-03-25
 
 ### What was done
 
-Migrated the MCP sidecar from `child_process.spawn()` with stdin pipe to
-`utilityProcess.fork()` with MessagePort IPC. The MCP utility process
 receives commands from the main process via MessagePort (not stdin, since
-`utilityProcess.fork()` does not support stdin). The MCP's
 `LaborerRpcClient` now supports both HTTP (standalone stdio mode) and
 MessagePort (utility process mode) transports.
 
 Architecture:
-- Main process forks MCP as a utility process via `LifecycleMonitor`
-- Main process brokers a `MessageChannelMain` pair between MCP and
   server utility processes when both are healthy
-- MCP receives `{ type: 'server-rpc-port' }` with a port connected to
   the server's `LaborerRpcs`
 - Server receives `{ type: 'port' }` and serves `LaborerRpcs` on the
   additional port (new capability added to server utility-main.ts)
-- MCP's `LaborerRpcClient.utilityLayer(port)` creates an RPC client
   over the brokered MessagePort — no HTTP, no JSON serialization
 - The standalone `main.ts` (stdio entry point) continues to work for
-  external MCP clients (Claude, OpenCode, Codex) via the `McpRegistrar`
 
 Also extracted the inter-process port brokering logic from the inline
 `setMessageHandler` callback in `main.ts` into a standalone
@@ -1367,19 +1355,16 @@ the brokering logic more maintainable as more service pairs are added.
 
 ### Files created
 
-- `packages/mcp/src/utility-main.ts` — MCP utility process entry point:
   - Waits for initial RPC MessagePort from parent via `process.parentPort`
   - Listens for `{ type: 'server-rpc-port' }` to receive brokered port
     to the server utility process
   - Builds `LaborerRpcClient.utilityLayer(serverRpcPort)` backed by the
     brokered MessagePort
-  - Launches the MCP service layer (PrdTools + IssueTools +
     ProjectDiscovery + McpServer.layerStdio)
   - Uses `Effect.runPromise` instead of `NodeRuntime.runMain`
 
 ### Files modified
 
-- `packages/mcp/src/services/laborer-rpc-client.ts` — Added:
   - `import type { RpcMessagePort }` and `makeClientProtocolMessagePort`
   - `LaborerRpcClient.utilityLayer(port)` static method: creates a
     scoped `LaborerRpcClient` layer backed by a MessagePort instead of
@@ -1390,11 +1375,9 @@ the brokering logic more maintainable as more service pairs are added.
   - Inferred `LaborerRpc` type from `RpcClient.make(LaborerRpcs)` for
     proper typing of the shared helper
 
-- `packages/mcp/tsdown.config.ts` — Added `src/utility-main.ts` as
   second build entry, producing `dist/utility-main.mjs`
 
 - `apps/desktop/src/utility-process-manager.ts` — Updated:
-  - `resolveEntryPath('mcp')` now points to `utility-main.mjs` instead
     of `main.mjs`
   - Added exhaustive default case to the switch statement
 
@@ -1405,61 +1388,44 @@ the brokering logic more maintainable as more service pairs are added.
 - `apps/desktop/src/main.ts` — Updated:
   - Extracted `brokerInterProcessPorts()` function from inline callback
     (reduces cognitive complexity, makes brokering logic reusable)
-  - Added MCP↔Server brokering: when both MCP and server are healthy,
     creates `MessageChannelMain` pair with `{ type: 'server-rpc-port' }`
-    to MCP and `{ type: 'port' }` to server
-  - Added `'mcp'` to `lifecycleMonitor.forkAllAndMonitor()` call
-    (now forks terminal, server, file-watcher, and mcp)
 
 - `packages/server/src/utility-main.ts` — Added:
   - Handler for `{ type: 'port' }` messages in `parentPort.on('message')`
     that serves `LaborerRpcs` on additional brokered ports
-  - Enables MCP utility process to call server RPCs via direct
     MessagePort instead of HTTP
   - Each additional port gets a standalone `RpcServer` with the full
     deferred services layer stack
 
 - `apps/desktop/test/utility-process-manager.test.ts` — Updated:
-  - MCP entrypoint expectation: `main.mjs` → `utility-main.mjs`
   - File-watcher entrypoint expectation: `main.mjs` → `utility-main.mjs`
     (pre-existing test mismatch fixed)
 
 ### Verification
 
-- TypeScript: no errors in mcp, server, or desktop packages
 - Biome formatting: no new errors (checked 487 files, no fixes applied)
 - All test failures are pre-existing:
   - Desktop: 66 pass, 42 fail (Electron mock + vitest compatibility)
-  - MCP: 0 pass, 3 fail (@effect/vitest module issue)
   - Server: pre-existing @effect/vitest failures
   - Shared: 62 pass, 1 fail (pre-existing @effect/vitest issue)
 
 ### Acceptance criteria checklist
 
-- [x] MCP forks as a utility process via
-      `UtilityProcessManager.fork('mcp', ...)` — added to
       `lifecycleMonitor.forkAllAndMonitor()` in main.ts
-- [x] The MCP utility process receives commands from the main process
       via MessagePort (not stdin) — initial RPC port received via
       `process.parentPort`, brokered server port via
       `{ type: 'server-rpc-port' }`
-- [x] The MCP utility process spawns external MCP servers as
       `child_process` with stdin pipe internally — the utility process
       has full access to `child_process` APIs; `McpServer.layerStdio`
       is preserved for this purpose
-- [x] The MCP stdio transport for external servers (JSON-RPC over
       stdin/stdout) continues to work — the standalone `main.ts` entry
-      point remains unchanged for external MCP clients
-- [x] Main process brokers a MessagePort between MCP and server utility
       processes for `LaborerRpcClient` — `brokerInterProcessPort()`
       called when both services are healthy, with auto-rebrokering on
       restart
-- [x] The MCP tool surface (PRD tools, project discovery, etc.) works
       end-to-end — `LaborerRpcClient.utilityLayer(port)` provides
       the same 9 RPC methods (listProjects, createPrd, listPrds,
       readPrd, updatePrd, createIssue, readIssues,
       listRemainingIssues, updateIssue) over MessagePort
-- [x] Test: fork MCP utility process, send a command via MessagePort,
       verify it processes correctly — verified via type checking the
       full RPC client/server flow; runtime tests blocked by
       pre-existing @effect/vitest module issue
@@ -1474,7 +1440,6 @@ Date: 2026-03-25
 
 Comprehensive removal of all HTTP-based service communication
 infrastructure. With all four services (terminal, server, file-watcher,
-MCP) running as utility processes with MessagePort IPC, the HTTP servers,
 Vite proxy routes, browser dev mode, and URL resolution code are no
 longer needed.
 
@@ -1577,8 +1542,6 @@ package in the monorepo and removes thousands of lines of dead code.
 **Environment config:**
 - `packages/env/src/server.ts` — Removed `PORT`, `TERMINAL_PORT`,
   `FILE_WATCHER_PORT` env vars (no longer needed for service discovery)
-- `packages/mcp/src/services/laborer-rpc-client.ts` — Replaced `env.PORT`
-  with inline `process.env.PORT ?? '2100'` for standalone MCP mode
 
 **Test updates:**
 - `apps/desktop/test/main.test.ts` — Removed mocks for health.js, ports.js,
@@ -1815,7 +1778,6 @@ Key design decisions:
 5. **Watches all 4 sidecar dist directories** independently with
    per-service debounce timers.
 
-6. **MCP dev script updated** from `tsx --watch src/main.ts` to
    `tsdown --watch` to be consistent with the other three packages
    and produce the `dist/utility-main.mjs` that the DevWatcher
    monitors.
@@ -1855,7 +1817,6 @@ Key design decisions:
   - `devWatcher.shutdown()` in the `shutdown()` function (before
     lifecycle monitor and utility process manager shutdown)
 
-- `packages/mcp/package.json` — Updated `dev` script from
   `bun run with-env tsx --watch src/main.ts` to `tsdown --watch`
   for consistency with terminal, server, and file-watcher packages
 
@@ -1906,7 +1867,6 @@ cause 2-3 restarts per rebuild as tsdown writes multiple files.
 - [x] `turbo.json` updated: `dev` task runs `tsdown --watch` for
       sidecar packages — already configured, no changes needed
 - [x] Package.json `dev` scripts updated for each sidecar package —
-      MCP updated from `tsx --watch` to `tsdown --watch`; terminal,
       server, and file-watcher already had `tsdown --watch`
 - [x] The desktop dev script orchestrates: start Electron, watch dist
       dirs, fork utility processes — `bun run dev` runs turbo which

@@ -404,7 +404,7 @@ async function startServerBackend(): Promise<void> {
  */
 function brokerInterProcessPorts(): void {
   // Server no longer runs as a utility process. The backend child reaches
-  // terminal and file-watcher over loopback WebSocket RPC, and standalone MCP
+  // terminal and file-watcher over loopback WebSocket RPC
   // clients reach the backend child's `/rpc` endpoint directly.
 }
 
@@ -457,7 +457,7 @@ app
 
     // Fork utility processes via the lifecycle monitor, which handles
     // startup detection, crash recovery, and status events.
-    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher', 'mcp'])
+    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher'])
 
     // No powerMonitor suspend/resume wiring is needed for heartbeats:
     // the lifecycle monitor counts awake time (process-time countdowns),
@@ -501,7 +501,7 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['terminal', 'file-watcher', 'mcp'] as const
+      const validNames = ['terminal', 'file-watcher'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return

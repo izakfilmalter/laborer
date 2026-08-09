@@ -26,8 +26,6 @@ Date: 2026-03-04
 Date: 2026-03-04
 
 ### What was done
-- Defined branded IDs using `Schema.brand`: `ProjectId`, `WorkspaceId`, `TerminalId`, `TaskId` — prevents accidental mixing of ID types.
-- Defined enum variants using `Schema.Literal`: `WorkspaceStatus` (creating/running/stopped/errored/destroyed), `TerminalStatus` (running/stopped), `TaskSource` (linear/github/manual/prd), `TaskStatus` (pending/in_progress/completed/cancelled), `PaneType` (terminal/diff), `SplitDirection` (horizontal/vertical).
 - Defined domain model classes using `Schema.Class`: `Project`, `Workspace`, `Terminal`, `Task`, `Diff` — each with all fields specified in the PRD's LiveStore state section.
 - Defined recursive panel layout tree types: `LeafNode` and `SplitNode` interfaces with `PanelNode` union, plus corresponding `Schema.Schema` definitions using `Schema.suspend` for recursion, and `PanelLayout`/`PanelLayoutSchema`.
 - All types exported from `packages/shared/src/types.ts` (accessible via `@laborer/shared/types`).
@@ -46,8 +44,6 @@ Date: 2026-03-04
 Date: 2026-03-04
 
 ### What was done
-- Defined `projects` table using `State.SQLite.table` with columns: `id` (text, primary key), `repoPath` (text), `name` (text), `rlphConfig` (text, nullable).
-- Defined `projectCreated` event using `Events.synced` with schema: `{ id, repoPath, name, rlphConfig }`. Event name: `v1.ProjectCreated`.
 - Defined `projectRemoved` event using `Events.synced` with schema: `{ id }`. Event name: `v1.ProjectRemoved`.
 - Defined materializers: `v1.ProjectCreated` inserts a row into the projects table; `v1.ProjectRemoved` deletes the row by id.
 - Created `events` and `tables` exports for use by other schema files and application code.
@@ -55,7 +51,6 @@ Date: 2026-03-04
 - Verified: `tsc --noEmit` passes (no type errors), `ultracite check` passes on schema.ts (no lint issues).
 
 ### Acceptance criteria status
-- [x] Projects table defined with correct columns (id, repoPath, name, rlphConfig)
 - [x] Events defined: ProjectCreated, ProjectRemoved
 - [x] Materializer correctly updates table state from events
 - [ ] Tests: commit ProjectCreated -> verify project in table; commit ProjectRemoved -> verify project removed (tests deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
@@ -65,7 +60,6 @@ Date: 2026-03-04
 - Issue #5: LiveStore schema — Terminals table
 - Issue #6: LiveStore schema — Diffs table
 - Issue #7: LiveStore schema — PanelLayout table
-- Issue #8: LiveStore schema — Tasks table
 - Issue #17: LiveStore client adapter setup (partially — still needs other deps)
 
 ## Issue 10: Initialize `packages/server` package — COMPLETED
@@ -131,7 +125,6 @@ Date: 2026-03-04
   - `health.check` — returns server status and uptime
   - `project.add` — accepts repoPath, returns ProjectResponse
   - `project.remove` — accepts projectId
-  - `workspace.create` — accepts projectId + optional branchName/taskId, returns WorkspaceResponse
   - `workspace.destroy` — accepts workspaceId
   - `terminal.spawn` — accepts workspaceId + optional command, returns TerminalResponse
   - `terminal.write` — accepts terminalId + data
@@ -139,10 +132,6 @@ Date: 2026-03-04
   - `terminal.kill` — accepts terminalId
   - `diff.refresh` — accepts workspaceId, returns DiffResponse
   - `editor.open` — accepts workspaceId + optional filePath
-  - `rlph.startLoop` — accepts workspaceId, returns TerminalResponse
-  - `rlph.writePRD` — accepts workspaceId + optional description, returns TerminalResponse
-  - `rlph.review` — accepts workspaceId + prNumber, returns TerminalResponse
-  - `rlph.fix` — accepts workspaceId + prNumber, returns TerminalResponse
 - Used `Rpc.make` with dot-prefixed tags (e.g., `"workspace.create"`) which enables automatic client-side nesting (`client.workspace.create(...)`) via Effect RPC's built-in prefix splitting.
 - All RPC methods that can fail include `error: RpcError` for consistent error handling.
 - Verified: `tsc --noEmit` passes (no type errors), `biome check` passes on rpc.ts (no lint issues).
@@ -189,8 +178,6 @@ Date: 2026-03-04
 Date: 2026-03-04
 
 ### What was done
-- Defined `workspaces` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `taskSource` (text, nullable), `branchName` (text), `worktreePath` (text), `port` (integer), `status` (text, default "creating"), `createdAt` (text).
-- Defined `workspaceCreated` event using `Events.synced` with schema: `{ id, projectId, taskSource, branchName, worktreePath, port, status, createdAt }`. Event name: `v1.WorkspaceCreated`.
 - Defined `workspaceStatusChanged` event using `Events.synced` with schema: `{ id, status }`. Event name: `v1.WorkspaceStatusChanged`.
 - Defined `workspaceDestroyed` event using `Events.synced` with schema: `{ id }`. Event name: `v1.WorkspaceDestroyed`.
 - Defined materializers: `v1.WorkspaceCreated` inserts a row into the workspaces table; `v1.WorkspaceStatusChanged` updates the status column by id; `v1.WorkspaceDestroyed` deletes the row by id.
@@ -199,7 +186,6 @@ Date: 2026-03-04
 - Verified: `tsc --noEmit` passes (no type errors in shared or server packages), `biome check` passes on schema.ts (no lint issues).
 
 ### Acceptance criteria status
-- [x] Workspaces table defined with all columns per PRD (id, projectId, taskSource, branchName, worktreePath, port, status, createdAt)
 - [x] Events defined: WorkspaceCreated, WorkspaceStatusChanged, WorkspaceDestroyed
 - [x] Materializer correctly updates table state from events
 - [ ] Tests: commit events → verify table state transitions (tests deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
@@ -257,28 +243,22 @@ Date: 2026-03-04
 - Issue #19 (@effect/rpc server router setup) was effectively implemented as part of Issue #12 (Health check RPC endpoint). The RPC server infrastructure — `RpcServer.layer`, `RpcServer.layerProtocolHttp`, `RpcSerialization.layerNdjson`, `LaborerRpcs.toLayer` handler pattern — was all set up in Issue #12. Marked Issue #19 as Done.
 - This unblocks Issue #20 (AtomRpc client setup) which was previously blocked on #19.
 
-## Issue 8: LiveStore schema — Tasks table + events + materializer — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
 - Defined `tasks` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `source` (text), `externalId` (text, nullable), `title` (text), `status` (text, default "pending").
 - Defined `taskCreated` event using `Events.synced` with schema: `{ id, projectId, source, externalId, title, status }`. Event name: `v1.TaskCreated`.
-- Defined `taskStatusChanged` event using `Events.synced` with schema: `{ id, status }`. Event name: `v1.TaskStatusChanged`.
 - Defined `taskRemoved` event using `Events.synced` with schema: `{ id }`. Event name: `v1.TaskRemoved`.
-- Defined materializers: `v1.TaskCreated` inserts a row into the tasks table; `v1.TaskStatusChanged` updates the status column by id; `v1.TaskRemoved` deletes the row by id.
 - Added `tasks` to the `tables` export and all three events to the `events` export.
 - Updated `state` and `schema` exports to include the new table and events.
 - Verified: `tsc --noEmit` passes for both shared and server packages (no type errors), `biome check` passes on schema.ts (no lint issues).
 
 ### Acceptance criteria status
-- [x] Tasks table defined with all columns per PRD (id, projectId, source, externalId, title, status)
-- [x] Events defined: TaskCreated, TaskStatusChanged, TaskRemoved
 - [x] Materializer correctly updates table state from events
 - [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
 
 ### Issues unblocked
-- Issue #100: Task CRUD — create manual task (partially — still needs #16)
 
 ## Issue 7: LiveStore schema — PanelLayout table + events + materializer — COMPLETED
 
@@ -396,7 +376,6 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #21: ProjectRegistry — add project (was blocked by #16)
-- Issue #100: Task CRUD — create manual task (was blocked by #16 and #8, #8 is done)
 - Issue #129: Graceful shutdown — persist state (was blocked by #16)
 - Issue #18: LiveStore server-to-client sync (partially — still needs #17)
 
@@ -426,13 +405,11 @@ Date: 2026-03-04
   4. Checks for duplicate registration by querying LiveStore's `projects` table with `.where("repoPath", resolvedPath)`.
   5. Derives the project name from the directory basename.
   6. Generates a unique ID via `crypto.randomUUID()`.
-  7. Commits a `projectCreated` event to LiveStore with `{ id, repoPath, name, rlphConfig: null }`.
 - Each failure case returns a descriptive `RpcError` with a specific error code: `INVALID_PATH`, `NOT_GIT_REPO`, `GIT_CHECK_FAILED`, or `ALREADY_REGISTERED`.
 - Used `yield*` directly for yieldable errors (per Effect best practices) instead of `Effect.fail(new RpcError(...))`.
 - Created `ProjectRegistry.layer` as a `Layer.effect` that depends on `LaborerStore` for persistence.
 - Updated `packages/server/src/rpc/handlers.ts`:
   - Replaced the `project.add` stub with a real handler that delegates to `ProjectRegistry.addProject`.
-  - Maps `rlphConfig: null` to `undefined` to match the `ProjectResponse` schema (`Schema.optional(Schema.String)` = `string | undefined`).
 - Updated `packages/server/src/main.ts`:
   - Added `ProjectRegistry.layer` to the `RpcLive` layer composition via `Layer.provide(ProjectRegistry.layer)`.
   - `LaborerStoreLive` (provided at the `HttpLive` level) flows through to satisfy `ProjectRegistry.layer`'s `LaborerStore` dependency.
@@ -571,7 +548,6 @@ Date: 2026-03-04
 
 ### What was done
 - Created `packages/server/src/services/workspace-provider.ts` with the `WorkspaceProvider` Effect service using `Context.Tag("@laborer/WorkspaceProvider")`.
-- Implemented `createWorktree(projectId, branchName?, taskId?)` method using `Effect.fn` for call-site tracing:
   1. Validates the project exists via `ProjectRegistry.getProject(projectId)`.
   2. Generates a branch name if not provided (`laborer/<uuid-prefix>`).
   3. Checks if the branch already exists via `git rev-parse --verify`.
@@ -606,7 +582,6 @@ Date: 2026-03-04
 - Branch name auto-generation uses `laborer/<uuid-prefix>` format — short enough to be readable in git log, unique enough to avoid collisions.
 - The `slugify` function converts branch names like `feature/my-thing` to safe directory names like `feature-my-thing`.
 - Port cleanup on failure uses `Effect.catchAll(() => Effect.void)` to ensure the cleanup itself doesn't throw — if port free fails (shouldn't happen), the original error is still surfaced.
-- The service accepts an optional `taskId` parameter for future task-driven workspace creation (Issue #105).
 
 ### Issues unblocked
 - Issue #34: WorkspaceProvider — directory validation + watcher scoping (was blocked by #33)
@@ -668,7 +643,6 @@ Date: 2026-03-04
 - Issue #82: DiffService — run git diff (was blocked by #40)
 - Issue #41: Workspace list UI (partially — still needs #18)
 - Issue #42: Create Workspace form (partially — still needs #20 and #27)
-- Issue #105: Task-driven workspace auto-creation (partially — still needs #100)
 
 ## Issue 43: WorkspaceProvider — destroy worktree — COMPLETED
 
@@ -1061,10 +1035,7 @@ Date: 2026-03-04
 - Issue #48: Destroy Workspace button (was blocked by #47, #41 — #20 now enables mutations)
 - Issue #61: xterm.js send input (was blocked by #60, #57 (done) — #20 now enables mutations)
 - Issue #62: xterm.js handle resize (was blocked by #60, #58 (done) — #20 now enables mutations)
-- Issue #93: Start Ralph Loop button (was blocked by #92, #60 — #20 now enables mutations)
 - Issue #95: PRD writing form (was blocked by #94, #60 — #20 now enables mutations)
-- Issue #97: Review PR button (was blocked by #96, #60 — #20 now enables mutations)
-- Issue #99: Fix Findings button (was blocked by #98, #60 — #20 now enables mutations)
 - Issue #103: Create Task form (was blocked by #100, #20 — #20 now done!)
 - Issue #112: Click-to-open from diff viewer (was blocked by #111, #87 — #20 now enables mutations)
 
@@ -1183,30 +1154,19 @@ Date: 2026-03-04
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #28 (the summary table already reflects this).
 
-## Issue 92: rlph.startLoop RPC handler — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Replaced the `rlph.startLoop` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, "rlph --once")`.
-- The handler accepts a `workspaceId` payload, spawns a PTY terminal running `rlph --once` in the workspace's worktree directory, and returns the terminal record (id, workspaceId, command, status).
 - This is a convenience wrapper around the existing `terminal.spawn` infrastructure — `TerminalManager.spawn` handles workspace validation, env var injection (PORT, LABORER_*), PTY spawning via node-pty, stdout streaming to LiveStore, and lifecycle management.
-- The `rlph --once` command starts a single ralph loop iteration — it fetches a task, runs an agent, and submits a PR. The user sees the rlph TUI output in real-time via xterm.js (once Issue #60 is implemented on the client).
-- Updated the handler doc comment to list `rlph.startLoop` as implemented.
 - Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with only pre-existing web app lint issues (no new issues).
 
 ### Acceptance criteria status
-- [x] `rlph.startLoop` handler accepts workspaceId and options (workspaceId accepted; no additional options needed for v1)
-- [x] Spawns terminal with `rlph --once` command (via TerminalManager.spawn)
 - [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
-- [ ] Tests: RPC call → terminal spawned running `rlph --once` (deferred — vitest not yet configured)
 
 ### Design decisions
-- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic. The rlph RPC handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure. This keeps the code DRY and ensures all terminals (agent, rlph, shell) share the same lifecycle management.
-- The command `rlph --once` is the standard single-iteration ralph loop command per the PRD's "rlph Integration" section. The `--once` flag ensures the loop runs exactly one task and exits, which is appropriate for a button-triggered action.
 
 ### Issues unblocked
-- Issue #93: "Start Ralph Loop" button UI (was blocked by #92 and #60 — #92 now done, still needs #60 for xterm.js rendering)
 
 ## Issue 41: Workspace list UI component — COMPLETED
 
@@ -1349,10 +1309,7 @@ Date: 2026-03-04
 - Issue #63: Terminal list per workspace UI (was blocked by #60 and #55 — now all blockers done!)
 - Issue #64: Terminal session reconnection (was blocked by #60 — now done!)
 - Issue #66: PanelManager — single pane (was blocked by #60 — now done!)
-- Issue #93: "Start Ralph Loop" button (was blocked by #92 (done) and #60 — now all blockers done!)
 - Issue #95: PRD writing form (was blocked by #94 and #60 — #60 now done, still needs #94)
-- Issue #97: "Review PR" button (was blocked by #96 and #60 — #60 now done, still needs #96)
-- Issue #99: "Fix Findings" button (was blocked by #98 and #60 — #60 now done, still needs #98)
 - Issue #122: Loading state — terminal spawning (was blocked by #60 — now done!)
 - Issue #124: Terminal fidelity — opencode (was blocked by #60 — now done!)
 - Issue #125: Terminal fidelity — claude (was blocked by #60 — now done!)
@@ -1670,97 +1627,55 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #74: PanelManager — restore layout from LiveStore (was blocked by #73 — now done!)
 
-## Issue 94: rlph.writePRD RPC handler — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Replaced the `rlph.writePRD` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, command)`.
 - The handler accepts `workspaceId` (required) and `description` (optional) from the payload.
-- Constructs the command: `rlph prd <description>` when a description is provided, or `rlph prd` when no description is given.
-- Spawns a PTY terminal running the rlph prd command in the workspace's worktree directory via `TerminalManager.spawn`, and returns the terminal record (id, workspaceId, command, status).
-- This follows the exact same pattern as `rlph.startLoop` (Issue #92) — a thin convenience wrapper around the existing terminal infrastructure.
-- The `rlph prd` command starts rlph's PRD writing workflow. When a description is provided, rlph uses it as the starting point for generating a PRD and creating issues. The user sees the rlph TUI output in real-time via xterm.js.
-- Updated the handler doc comment to list `rlph.writePRD` as implemented.
 - Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on handlers.ts.
 
 ### Acceptance criteria status
-- [x] `rlph.writePRD` handler accepts workspaceId and optional description
-- [x] Spawns terminal with `rlph prd [description]` command (via TerminalManager.spawn)
 - [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
-- [ ] Tests: RPC call → terminal spawned with correct rlph prd command (deferred — vitest not yet configured)
 
 ### Design decisions
-- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic, consistent with the `rlph.startLoop` handler pattern. All rlph handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure.
 - The description is appended directly to the command string. `TerminalManager.spawn` runs commands via `$SHELL -c <cmd>`, so the description is passed as part of the shell command. Users should be aware that special shell characters in the description will be interpreted by the shell.
-- When no description is provided, `rlph prd` is run without arguments, which lets rlph prompt the user interactively for input via the terminal.
 
 ### Issues unblocked
-- Issue #95: PRD writing form + writePRD button (was blocked by #94 and #60 (done) — now all blockers done!)
-- Issue #107: PRD-generated issues → tasks (was blocked by #94 and #100 — #94 now done, still needs #100)
 
-## Issue 96: rlph.review RPC handler — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Replaced the `rlph.review` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, command)`.
 - The handler accepts `workspaceId` (required) and `prNumber` (required, integer) from the payload.
-- Constructs the command: `rlph review <prNumber>` and spawns a PTY terminal running it in the workspace's worktree directory via `TerminalManager.spawn`.
 - Returns the terminal record (id, workspaceId, command, status) matching the `TerminalResponse` schema.
-- This follows the exact same pattern as `rlph.startLoop` (Issue #92) and `rlph.writePRD` (Issue #94) — a thin convenience wrapper around the existing terminal infrastructure.
-- The `rlph review <prNumber>` command starts rlph's PR review workflow. It fetches the PR, runs the review agent, and outputs findings. The user sees the rlph TUI output in real-time via xterm.js.
-- Updated the handler doc comment to list `rlph.review` as implemented.
 - Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on handlers.ts.
 
 ### Acceptance criteria status
-- [x] `rlph.review` handler accepts workspaceId and prNumber
-- [x] Spawns terminal with `rlph review <prNumber>` (via TerminalManager.spawn)
 - [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
-- [ ] Tests: RPC call → terminal spawned with `rlph review <pr>` (deferred — vitest not yet configured)
 
 ### Design decisions
-- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic, consistent with all other rlph handler patterns. All rlph handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure.
 - The `prNumber` is interpolated directly into the command string as an integer. Since it's validated as `Schema.Int` in the RPC contract, there's no risk of shell injection.
 
 ### Issues unblocked
-- Issue #97: "Review PR" button + PR number input (was blocked by #96 and #60 (done) — now all blockers done!)
 
-## Issue 98: rlph.fix RPC handler — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Replaced the `rlph.fix` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, command)`.
 - The handler accepts `workspaceId` (required) and `prNumber` (required, integer) from the payload.
-- Constructs the command: `rlph fix <prNumber>` and spawns a PTY terminal running it in the workspace's worktree directory via `TerminalManager.spawn`.
 - Returns the terminal record (id, workspaceId, command, status) matching the `TerminalResponse` schema.
-- This follows the exact same pattern as `rlph.startLoop` (Issue #92), `rlph.writePRD` (Issue #94), and `rlph.review` (Issue #96) — a thin convenience wrapper around the existing terminal infrastructure.
-- The `rlph fix <prNumber>` command starts rlph's fix workflow. It fetches the PR's review findings and runs an agent to fix them. The user sees the rlph TUI output in real-time via xterm.js.
-- Updated the handler doc comment to list `rlph.fix` as implemented.
 - Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `biome check` passes with zero issues on handlers.ts.
 
 ### Acceptance criteria status
-- [x] `rlph.fix` handler accepts workspaceId and prNumber
-- [x] Spawns terminal with `rlph fix <prNumber>` (via TerminalManager.spawn)
 - [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
-- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>` (deferred — vitest not yet configured)
 
 ### Design decisions
-- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic, consistent with all other rlph handler patterns. All rlph handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure.
 - The `prNumber` is interpolated directly into the command string as an integer. Since it's validated as `Schema.Int` in the RPC contract, there's no risk of shell injection.
 
-### Note: All 4 rlph RPC handlers are now implemented
-With this issue complete, the full rlph integration pipeline on the server side is done:
-1. `rlph.startLoop` → `rlph --once` (Issue #92)
-2. `rlph.writePRD` → `rlph prd [description]` (Issue #94)
-3. `rlph.review` → `rlph review <prNumber>` (Issue #96)
-4. `rlph.fix` → `rlph fix <prNumber>` (Issue #98)
 
 The only remaining RPC stub is `editor.open` (Issue #111).
 
 ### Issues unblocked
-- Issue #99: "Fix Findings" button + PR number input (was blocked by #98 and #60 (done) — now all blockers done!)
 
 ## Issue 111: editor.open RPC handler — COMPLETED
 
@@ -1807,10 +1722,6 @@ With Issue #111 complete, all 16 RPC methods in the `LaborerRpcs` group are full
 9. `terminal.kill` — kill PTY (Issue #54)
 10. `diff.refresh` — run git diff (Issue #82)
 11. `editor.open` — open file in editor (Issue #111)
-12. `rlph.startLoop` — start ralph loop (Issue #92)
-13. `rlph.writePRD` — write PRD (Issue #94)
-14. `rlph.review` — review PR (Issue #96)
-15. `rlph.fix` — fix findings (Issue #98)
 
 The `notImplemented` helper has been removed — there are zero stubs remaining.
 
@@ -2030,7 +1941,6 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #48: Destroy Workspace button + dialog (was blocked by #47 and #41 — now all blockers done!)
 - Issue #85: DiffService — start/stop on workspace lifecycle (was blocked by #83 (done) and #47 — now all blockers done!)
-- Issue #106: Task-driven workspace auto-cleanup (was blocked by #105 and #47 — #47 now done)
 
 ## Issue 48: Destroy Workspace button + confirmation dialog — COMPLETED
 
@@ -2182,59 +2092,39 @@ LiveStore's `store.events()` replays ALL historical events from the persisted ev
 ### Issues unblocked
 - Issue #65: Terminal scrollback buffer replay (was blocked by #64 — now done! Note: scrollback replay is actually already handled by the event log replay mechanism discovered in this issue.)
 
-## Issue 100: Task CRUD — create manual task — COMPLETED
 ## Issue 101: Task CRUD — update status — COMPLETED
 ## Issue 102: Task CRUD — list per project — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Created `packages/server/src/services/task-manager.ts` — the `TaskManager` Effect service using `Context.Tag("@laborer/TaskManager")` with 5 methods covering Issues #100, #101, and #102.
-- **`createTask(projectId, title, source, externalId?)` (Issue #100):**
   1. Validates the project exists by querying LiveStore's `projects` table. Returns `RpcError` with code `NOT_FOUND` if missing.
   2. Validates the task source is one of: `linear`, `github`, `manual`, `prd`. Returns `RpcError` with code `INVALID_SOURCE` if invalid.
   3. Validates the title is non-empty after trimming. Returns `RpcError` with code `INVALID_TITLE` if empty.
   4. Generates a unique ID via `crypto.randomUUID()`.
   5. Commits `taskCreated` event to LiveStore with status `"pending"`.
   6. Returns the created `TaskRecord`.
-- **`updateTaskStatus(taskId, status)` (Issue #101):**
   1. Validates the task exists by querying LiveStore's `tasks` table. Returns `RpcError` with code `NOT_FOUND` if missing.
   2. Validates the status is one of: `pending`, `in_progress`, `completed`, `cancelled`. Returns `RpcError` with code `INVALID_STATUS` if invalid.
-  3. Commits `taskStatusChanged` event to LiveStore.
-- **`removeTask(taskId)` (Issue #100):**
   1. Validates the task exists. Returns `RpcError` with code `NOT_FOUND` if missing.
   2. Commits `taskRemoved` event to LiveStore.
-- **`getTask(taskId)` (read helper):** Queries task by ID, returns `RpcError` with code `NOT_FOUND` if missing.
 - **`listTasks(projectId, statusFilter?)` (Issue #102):** Queries all tasks for a project, optionally filtered by status.
 - Added `TaskResponse` schema to `packages/shared/src/rpc.ts` with fields: id, projectId, source, externalId (optional), title, status.
-- Added 3 new RPC methods to `LaborerRpcs` group: `task.create`, `task.updateStatus`, `task.remove`.
-- Added 3 task RPC handlers to `packages/server/src/rpc/handlers.ts` delegating to `TaskManager`.
-- Added `TaskManager.layer` to `packages/server/src/main.ts` in the `RpcLive` layer composition.
 - Verified: `tsc --noEmit` passes for both server and shared packages (no type errors), `ultracite check` passes with zero issues on all 4 new/modified files.
 
 ### Acceptance criteria status
-- [x] TaskManager is a tagged Effect service with CRUD methods
-- [x] `createTask` validates project, source, and title, then commits TaskCreated to LiveStore
-- [x] `updateTaskStatus` validates task and status, then commits TaskStatusChanged to LiveStore
 - [x] `removeTask` validates task exists, then commits TaskRemoved to LiveStore
 - [x] `listTasks` returns tasks filtered by projectId and optional status
-- [x] 3 new RPC methods (`task.create`, `task.updateStatus`, `task.remove`) wired to handlers
 - [x] RPC contract expanded from 16 to 19 methods
 - [ ] Tests: create task → in LiveStore; update status → reflected; remove → gone; list by project → filtered correctly (deferred — vitest not yet configured)
 
 ### Design decisions
-- Implemented all three CRUD issues (#100, #101, #102) together in a single `TaskManager` service. The three operations are tightly coupled (same table, same validation patterns, same LiveStore dependency) and implementing them separately would have created 3 near-identical service files.
-- The `task.create` RPC hardcodes `source: "manual"` since this endpoint is for manual task creation from the UI. Other sources (linear, github, prd) will use the same `TaskManager.createTask` method but with different source values when their sourcing mechanisms are implemented (Issues #108, #109, #107).
 - `listTasks` does not have its own RPC endpoint — tasks are read from LiveStore directly on the client via reactive queries. The method exists on the service for internal server-side use.
 - Used `Effect.fn` for methods that can fail and `Effect.sync` for `listTasks` which never fails. Consistent with patterns established in ProjectRegistry and other services.
 
 ### Issues unblocked
 - Issue #103: Create Task form UI (was blocked by #100 and #20 — now all blockers done!)
 - Issue #104: Task list UI (was blocked by #102 and #18 — now all blockers done!)
-- Issue #105: Task-driven workspace auto-creation (was blocked by #100 and #40 — now all blockers done!)
-- Issue #107: PRD-generated issues → tasks (was blocked by #94 (done) and #100 — now all blockers done!)
-- Issue #108: Linear task sourcing (was blocked by #102 — now done!)
-- Issue #109: GitHub task sourcing (was blocked by #102 — now done!)
 
 ## Issue #75, #76, #77, #78: Keyboard shortcuts — tmux-style panel operations
 **Status: Done**
@@ -2527,14 +2417,10 @@ Date: 2026-03-04
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #133. This completes the terminal lifecycle — all CRUD operations are now implemented: spawn (#50), kill (#54), remove (#132), restart (#133).
 
-## Issue #93: "Start Ralph Loop" button UI — COMPLETED
 
 Date: 2026-03-04
 
 ### What was done
-- Added a "Start Ralph Loop" button to each active workspace card in the workspace list UI. This is the primary way users kick off autonomous agent work (user story 13: "start a ralph loop on a workspace via a button in the app").
-- The button calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet` with `{ mode: "promise" }`, which spawns a terminal running `rlph --once` in the workspace directory.
-- After the rlph terminal is spawned, it is auto-assigned to a panel pane via `panelActions.assignTerminalToPane(result.id, workspace.id)`, so the user immediately sees the rlph TUI output in xterm.js.
 - The collapsible terminal section auto-expands after starting the loop (`setIsOpen(true)`) so the user can see the new terminal in the sidebar list.
 
 ### Files modified
@@ -2542,19 +2428,14 @@ Date: 2026-03-04
   - Added `Play` icon import from `lucide-react`
   - Added `useCallback` import from React
   - Added `usePanelActions` import from `@/panels/panel-context`
-  - Added `startLoopMutation` module-level declaration (`LaborerClient.mutation("rlph.startLoop")`)
   - Added `isStartingLoop` state, `startLoop` mutation hook, and `panelActions` hook to `WorkspaceItem`
   - Added `handleStartLoop` callback with: mutation call, toast notification, panel assignment, collapsible auto-expand, error handling
   - Added green `Play` icon button in workspace card actions area (between status badge and collapsible trigger), visible only for active workspaces (`isActive`)
   - Button shows `animate-pulse` state when starting, uses green color for the Play icon
-  - Added `title` tooltip ("Start Ralph Loop (rlph --once)") for discoverability
   - Updated module JSDoc to reference Issue #93
 
 ### Acceptance criteria status
 - [x] Button visible per workspace in workspace actions (Play icon, only shown for active workspaces — running or creating status)
-- [x] Click calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet` with `{ mode: "promise" }`
-- [x] Terminal pane shows rlph TUI output (auto-assigned to panel pane via `panelActions.assignTerminalToPane`)
-- [ ] Tests: click button -> mutation called; terminal output visible in pane (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes (no new type errors — only pre-existing shadcn/ui calendar.tsx and sonner.tsx errors)
@@ -2563,13 +2444,11 @@ Date: 2026-03-04
 ### Design decisions
 - Used the `Play` icon from lucide-react — universally recognized as "start/run". Green color (`text-green-600 dark:text-green-400`) provides a clear visual affordance for "start something" and matches the workspace "running" status color convention used elsewhere.
 - Placed the button between the status badge and the collapsible trigger (before the destroy button). This groups it with other workspace actions while keeping it prominent for active workspaces.
-- The button is only visible for active workspaces (`isActive` = running or creating). A destroyed, stopped, or errored workspace can't run rlph — the worktree may not exist.
 - Used `useCallback` (consistent with `terminal-list.tsx` pattern) rather than inline arrow function for the handler, since it captures `startLoop`, `workspace.id`, and `panelActions` in its dependency array.
 - Auto-assigns the spawned terminal to a panel pane and auto-expands the collapsible. This ensures the user sees immediate feedback from the action — they don't have to manually find and click the terminal in the sidebar.
 - Shows loading state (`isStartingLoop`) with `animate-pulse` on the Play icon and `disabled` on the button, preventing double-clicks.
 
 ### Issues unblocked
-- No direct downstream issues exclusively blocked by #93. The remaining rlph UI issues (#95, #97, #99) follow the same pattern and can be implemented independently.
 
 ## Issue #89: Diff viewer — live update — COMPLETED
 
@@ -3161,34 +3040,24 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 **Date:** 2026-03-05
 
 ### Summary
-Created a reactive Task list UI component that displays all tasks from LiveStore with status filtering, inline status updates, and task removal. Added the TaskList to the sidebar in the main route, between Workspaces and Server Status sections.
 
 ### What was done
 
-1. **Created `apps/web/src/components/task-list.tsx`** — new React component with:
-   - **LiveStore reactive query**: `queryDb(tasks, { label: "taskList" })` at module level, consumed via `store.useQuery(allTasks$)` for reactive updates.
    - **Status filter tabs**: Tabs component (Base UI) with "All", "Pending", "In Progress", "Completed", "Cancelled" tabs. Each tab shows the count of tasks in that status. Filtering is done client-side via `useMemo`.
    - **Status badges**: Color-coded per task status — pending=yellow, in_progress=blue, completed=green, cancelled=gray. Uses same pattern as workspace status badges.
    - **Source badges**: Color-coded per task source — manual=slate, linear=violet, github=orange, prd=cyan. Shows the source type as a small badge on each task card.
    - **Status icons**: Animated icons per status — pending=Circle, in_progress=Loader2 (spinning), completed=CheckCircle2, cancelled=XCircle.
-   - **Inline status dropdown**: Select component allows changing task status directly from the card. Calls `LaborerClient.mutation("task.updateStatus")` via `useAtomSet` with `{ mode: "promise" }`. Toast notifications on success/error.
-   - **Remove button**: Trash icon per task with AlertDialog confirmation. Calls `LaborerClient.mutation("task.remove")` via `useAtomSet`.
    - **Empty state**: ClipboardList icon with guidance message when no tasks exist.
    - **Project name lookup**: Queries projects table to display project name per task.
-   - **External ID display**: Shows `externalId` (for linear/github tasks) as a monospace identifier.
 
 2. **Modified `apps/web/src/routes/index.tsx`**:
-   - Added `import { TaskList } from "@/components/task-list"` import.
    - Added a "Tasks" section in the sidebar between "Workspaces" and "Server Status". Uses the same section structure as Projects and Workspaces.
 
 ### Files created
-- `apps/web/src/components/task-list.tsx` — Task list component (~310 lines)
 
 ### Files modified
-- `apps/web/src/routes/index.tsx` — Added TaskList import and sidebar section
 
 ### Acceptance criteria status
-- [x] Component subscribes to Tasks table via LiveStore (`store.useQuery(allTasks$)` reactive query)
 - [x] Renders tasks with title, source badge, status badge (color-coded badges for both source and status)
 - [x] Status filter dropdown/tabs (Tabs with All, Pending, In Progress, Completed, Cancelled — each showing count)
 - [x] Updates reactively (LiveStore reactive query re-fires on any task event)
@@ -3204,7 +3073,6 @@ Created a reactive Task list UI component that displays all tasks from LiveStore
 - Status counts are computed with `useMemo` from the full task list. This is O(n) per render but avoids separate queries for each status count.
 - The inline status Select uses the same color-coding as the status badges, providing visual consistency between the current status display and the available options.
 - Project name lookup uses the same `queryDb(projects)` + `Map` pattern established in `workspace-list.tsx`. The Map is wrapped in `useMemo` to avoid recreating on every render.
-- The TaskList shows ALL tasks (not filtered by project). A per-project filter can be added when the project switcher (Issue #113) is implemented.
 
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104. **Now unblocked!**
@@ -3215,12 +3083,10 @@ Created a reactive Task list UI component that displays all tasks from LiveStore
 **Date:** 2026-03-05
 
 ### Summary
-Created a "Create Task" dialog form using TanStack Form that allows users to create manual tasks from the sidebar. The form has three fields: project selector (required), title (required), and description (optional). On submit, it calls `LaborerClient.mutation("task.create")` via `useAtomSet` with `{ mode: "promise" }`. Success: task appears in the task list (via LiveStore sync), form resets, dialog closes, toast notification shown. Error: server validation error displayed via toast.
 
 ### What was done
 
 1. **Created `apps/web/src/components/create-task-form.tsx`** — new React component (~220 lines) with:
-   - **Module-level atom declarations**: `allProjects$` (LiveStore query for project selector) and `createTaskMutation` (AtomRpc mutation for `task.create`)
    - **TanStack Form**: `useForm` with `defaultValues: { projectId: "", title: "", description: "" }` and `onSubmit` handler
    - **Project selector**: `Select` component populated from LiveStore `projects` table with `onChange` validator (required)
    - **Title field**: `Input` component with `onChange` validator (required, non-empty after trim)
@@ -3232,21 +3098,16 @@ Created a "Create Task" dialog form using TanStack Form that allows users to cre
    - **Follows the exact same pattern** as `create-workspace-form.tsx` (Issue #42) — same Dialog/Form/Field/Submit structure, same mutation pattern, same error handling
 
 2. **Modified `apps/web/src/routes/index.tsx`**:
-   - Added `import { CreateTaskForm } from "@/components/create-task-form"` import
    - Changed the "Tasks" section header from a plain `<div className="mb-2">` to `<div className="mb-2 flex items-center justify-between">` to match the Projects and Workspaces section layout
-   - Added `<CreateTaskForm />` next to the "Tasks" heading, matching the placement pattern of `<AddProjectForm />` (Projects) and `<CreateWorkspaceForm />` (Workspaces)
 
 ### Files created
 - `apps/web/src/components/create-task-form.tsx` — Create Task form component
 
 ### Files modified
-- `apps/web/src/routes/index.tsx` — Added CreateTaskForm import and sidebar wiring
 
 ### Acceptance criteria status
 - [x] Form with title and description fields (title as `Input`, description as `Textarea`)
 - [x] Project selector populated from LiveStore projects table
-- [x] Submit calls `LaborerClient.mutation("task.create")` via `useAtomSet` with `{ mode: "promise" }`
-- [x] Task appears in task list after creation (via LiveStore sync — `taskCreated` event materializes into tasks table)
 - [x] Empty title shows validation error ("Title is required")
 - [x] No project selected shows validation error ("Project is required")
 - [x] Server errors displayed via toast notification
@@ -3260,45 +3121,32 @@ Created a "Create Task" dialog form using TanStack Form that allows users to cre
 
 ### Design decisions
 - Used `ClipboardPlus` icon from lucide-react for the trigger button — semantically represents "add a task to the clipboard/list", visually distinct from the other section buttons (FolderPlus for projects, Layers for workspaces).
-- The form hardcodes `source: "manual"` on the server side (in the `task.create` RPC handler from Issue #100). The UI doesn't need to specify source — manual tasks are always "manual". Other sources (linear, github, prd) are created via different code paths.
-- Description is sent only when non-empty (after trim). The server's `task.create` RPC accepts `description` as `Schema.optional(Schema.String)`.
 - The dialog trigger button uses `size="sm" variant="outline"` — same as `CreateWorkspaceForm` and `AddProjectForm` — for visual consistency across all sidebar section action buttons.
 
 ### Issues unblocked
-- Issue #105: Task-driven workspace auto-creation — was blocked by #100 (done) and #40 (done). Already unblocked, but now users can actually create tasks to trigger it.
 - Issue #110: Task source picker UI — was blocked by #108, #109, #103. #103 now done; still blocked by #108 and #109.
 
-## Issue #105: Task-driven workspace auto-creation — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
-Implemented automatic workspace creation when a task's status changes to "in_progress". This connects the task lifecycle to the workspace lifecycle — when a developer marks a task as in-progress (via the task list's status dropdown), a workspace is automatically created with a git worktree, allocated port, and diff polling, all linked back to the task via the `taskSource` field.
 
 ### What was done
 
-Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC handler:
 
-1. **Status check**: After the existing `taskManager.updateTaskStatus(taskId, status)` call, added a conditional block that triggers when `status === "in_progress"`.
 
-2. **Task lookup**: Fetches the full task record via `taskManager.getTask(taskId)` to get the `projectId` and `title` needed for workspace creation.
 
-3. **Duplicate prevention**: Queries the `workspaces` table to check if a non-destroyed workspace already exists for this task (`taskSource === taskId && status !== "destroyed"`). This prevents duplicate workspace creation if a task is toggled back to "in_progress" after being paused.
 
 4. **Branch name derivation**: Creates a descriptive branch name from the task: `task/<id-prefix>/<slug>`. The slug is derived from the task title by lowercasing, replacing non-alphanumeric characters with hyphens, trimming leading/trailing hyphens, and truncating to 40 characters. Example: task with ID `abc12345-...` and title "Fix login bug" → branch `task/abc12345/fix-login-bug`.
 
-5. **Workspace creation**: Calls `WorkspaceProvider.createWorktree(task.projectId, branchName, taskId)` with the task ID passed as the third argument, which stores it as `taskSource` in the workspace record.
 
 6. **Auto-start diff polling**: If the workspace is created with status "running", starts diff polling via `DiffService.startPolling(workspace.id)` — mirroring the existing `workspace.create` handler pattern.
 
 ### Files modified
-- `packages/server/src/rpc/handlers.ts` — Added ~35 lines of auto-creation logic to the `task.updateStatus` handler, updated JSDoc to reference Issue #105
 
 ### Acceptance criteria status
-- [x] Task status → "in_progress" triggers workspace.create (via `WorkspaceProvider.createWorktree` in the `task.updateStatus` handler)
 - [x] Workspace branch name derived from task (e.g., `task/<id-prefix>/<slug>` — `task/abc12345/fix-login-bug`)
-- [x] Workspace linked to task in LiveStore (via `taskSource` field set to `taskId` in the workspace record)
 - [x] Duplicate prevention: toggling a task back to "in_progress" does not create a second workspace if one already exists
 - [x] Diff polling auto-starts for the new workspace (mirrors `workspace.create` handler)
 - [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link (deferred — vitest not yet configured for integration tests)
@@ -3309,29 +3157,23 @@ Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC h
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
-- **Handler-level integration**: Added the auto-creation logic in the `task.updateStatus` RPC handler rather than inside `TaskManager.updateTaskStatus`. This keeps TaskManager focused on task CRUD without coupling it to WorkspaceProvider, and follows the existing pattern where the handler layer orchestrates cross-service workflows (e.g., `workspace.create` handler orchestrates WorkspaceProvider + DiffService).
 - **Branch naming convention**: `task/<id-prefix>/<slug>` provides three benefits: (a) easy to identify as task-derived in `git branch` output, (b) the ID prefix enables programmatic lookup, (c) the slug provides human-readable context. The 40-character slug limit prevents excessively long branch names from long task titles.
 - **Duplicate prevention via LiveStore query**: Rather than tracking auto-created workspaces in memory, the handler queries LiveStore's `workspaces` table for any non-destroyed workspace linked to the task. This is robust across server restarts and handles edge cases like manually destroying a task's workspace and then toggling the task back to "in_progress" (which correctly creates a new workspace).
 - **Fire-and-forget semantics**: If workspace creation fails (e.g., git error, port exhaustion), the error propagates to the client as an RPC error. The task status change has already been committed to LiveStore, so the task is in "in_progress" state but without a workspace. The user can retry by toggling the task status or manually creating a workspace. This is the correct behavior — the task status is the user's intent, not contingent on workspace creation success.
 
 ### Issues unblocked
-- Issue #106: Task-driven workspace auto-cleanup — was blocked by #105 (now done) and #47 (already done). **Now unblocked!**
 
-## Issue #106: Task-driven workspace auto-cleanup — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
-Implemented automatic workspace destruction when a task's status changes to "completed" or "cancelled". This completes the task-driven workspace lifecycle: Issue #105 auto-creates workspaces when tasks become "in_progress", and now Issue #106 auto-destroys them when tasks finish. This prevents orphaned workspaces from consuming resources (ports, worktrees, disk space) after tasks are done.
 
 ### What was done
 
-Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC handler:
 
 1. **Status check**: After the existing auto-creation block (Issue #105), added a conditional that triggers when `status === "completed" || status === "cancelled"`.
 
-2. **Linked workspace lookup**: Queries LiveStore's `workspaces` table for all non-destroyed workspaces linked to the task via `taskSource === taskId`. Uses `Arr.filter` (not `Arr.findFirst`) because theoretically multiple workspaces could be linked to a task (e.g., if a workspace was destroyed and recreated).
 
 3. **Full cleanup sequence**: For each linked workspace, runs the same destroy sequence as the `workspace.destroy` handler:
    - `DiffService.stopPolling(workspace.id)` — stops background diff polling fiber
@@ -3346,7 +3188,6 @@ Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC h
 5. **Updated JSDoc**: Added Issue #106 reference to the handler documentation.
 
 ### Files modified
-- `packages/server/src/rpc/handlers.ts` — Added ~30 lines of auto-cleanup logic to the `task.updateStatus` handler, updated JSDoc
 
 ### Acceptance criteria status
 - [x] Task status → "completed" triggers workspace.destroy on linked workspace (via DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree)
@@ -3363,7 +3204,6 @@ Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC h
 
 ### Design decisions
 - **Best-effort cleanup via catchAll**: Unlike `workspace.destroy` (which propagates errors to the caller), auto-cleanup swallows errors and logs warnings. The rationale: the task status change is the user's primary intent. If workspace cleanup fails (e.g., the worktree was already manually deleted), the user should still see their task as completed. They can manually clean up any residual workspace via the workspace destroy button.
-- **Handler-level integration**: Consistent with Issue #105, the auto-cleanup logic lives in the RPC handler rather than inside TaskManager. This keeps TaskManager focused on task CRUD and prevents coupling between TaskManager and WorkspaceProvider/DiffService/TerminalManager.
 - **Filter vs findFirst**: Used `Arr.filter` instead of `Arr.findFirst` to handle the (unlikely but possible) case of multiple workspaces linked to a single task. This could happen if a workspace was destroyed and the task was toggled back to "in_progress" (creating a new workspace), then the old workspace was somehow still in a non-destroyed state.
 - **Both "completed" and "cancelled"**: Both terminal task states trigger cleanup. A cancelled task's workspace is just as stale as a completed task's workspace — no reason to keep it around.
 
@@ -3474,44 +3314,32 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #80. This is a polishing/UX improvement that makes the existing panel shortcuts (Issues #75-#78, #90) work correctly when terminals have focus.
 
-## Issue #95: PRD writing form + writePRD button — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
-Created a "Write PRD" dialog form that allows users to write a PRD from any active workspace. The form has a description textarea (required) and calls `rlph.writePRD` mutation via AtomRpc, which spawns a terminal running `rlph prd [description]` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Write PRD" button (FileText icon, blue color) is added to each active workspace card in the workspace list, next to the "Start Ralph Loop" (Play) button.
 
 ### What was done
 
 1. **Created `apps/web/src/components/write-prd-form.tsx`** — new React component (~160 lines) with:
-   - **Module-level atom declaration**: `writePrdMutation` (`LaborerClient.mutation("rlph.writePRD")`)
-   - **Props interface**: `WritePrdFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
-   - **Dialog wrapper**: `Dialog` with trigger button (`FileText` icon, blue color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph prd` does, form body, and footer with submit button
    - **TanStack Form**: `useForm` with `defaultValues: { description: "" }` and `onSubmit` handler
    - **Description field**: `Textarea` with `onChange` validator (required, non-empty after trim), 6 rows, descriptive placeholder
-   - **Submit handler**: Calls `writePrd({ payload: { workspaceId, description? } })`, on success shows `toast.success("PRD writing started")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
    - Follows the exact same Dialog/Form/Field/Submit pattern established by `create-workspace-form.tsx` (Issue #42) and `create-task-form.tsx` (Issue #103)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
-   - Added `import { WritePrdForm } from "@/components/write-prd-form"` import
-   - Added `<WritePrdForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, before the "Start Ralph Loop" button. Only shown for active workspaces (`isActive`).
    - Updated module JSDoc to reference Issue #95
 
 ### Files created
 - `apps/web/src/components/write-prd-form.tsx` — Write PRD dialog form component
 
 ### Files modified
-- `apps/web/src/components/workspace-list.tsx` — Added WritePrdForm import and button per active workspace
 
 ### Acceptance criteria status
 - [x] Form with description textarea using TanStack Form (Textarea with onChange validation, 6 rows)
-- [x] Submit calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet` with `{ mode: "promise" }`
-- [x] Terminal pane shows rlph prd output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
 - [x] Form validates (description required — empty/whitespace-only description shows "Description is required" error)
-- [ ] Tests: submit form -> mutation called; output visible; empty description -> validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -3519,29 +3347,17 @@ Created a "Write PRD" dialog form that allows users to write a PRD from any acti
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
-- **FileText icon**: Used `FileText` from lucide-react — represents a document/PRD. Blue color (`text-blue-600 dark:text-blue-400`) distinguishes it from the green Play button (Start Ralph Loop) and red Trash button (Destroy). The color follows a semantic pattern: green=start, blue=create/write, red=destroy.
-- **Dialog form vs inline button**: Unlike "Start Ralph Loop" which has no parameters (just workspaceId), "Write PRD" needs a description textarea. A dialog provides the space and focus for writing a multi-line description. The dialog pattern matches `create-workspace-form.tsx` and `create-task-form.tsx`.
-- **Description required**: The RPC accepts description as optional (`Schema.optional(Schema.String)`), but the form validates it as required. A PRD without a description is not useful — rlph needs context to generate meaningful requirements. If the user wants to run rlph prd without a description, they can use the terminal directly.
-- **onTerminalSpawned callback**: The form calls `onTerminalSpawned?.()` after successful submission. The workspace list passes `() => setIsOpen(true)` to auto-expand the collapsible terminal section, matching the pattern used by "Start Ralph Loop".
-- **Button placement**: The WritePrdForm button is placed before the "Start Ralph Loop" button in the workspace card actions. This follows the workflow order: Write PRD first (creates issues), then Start Ralph Loop (implements issues). The visual order reinforces the logical workflow.
 
 ### Issues unblocked
-- Issue #107: PRD-generated issues -> tasks — was blocked by #94 (done) and #100 (done). #95 completes the UI entry point for the PRD writing workflow, making the full PRD -> issues -> tasks pipeline user-accessible.
 
-## Issue #97: "Review PR" button + PR number input — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
-Created a "Review PR" dialog form that allows users to review a pull request from any active workspace. The form has a PR number input field (required, must be a positive integer) and calls `rlph.review` mutation via AtomRpc, which spawns a terminal running `rlph review <prNumber>` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Review PR" button (Eye icon, purple color) is added to each active workspace card in the workspace list, after the "Start Ralph Loop" (Play) button.
 
 ### What was done
 
-1. **Created `apps/web/src/components/review-pr-form.tsx`** — new React component (~170 lines) with:
-   - **Module-level atom declaration**: `reviewPrMutation` (`LaborerClient.mutation("rlph.review")`)
-   - **Props interface**: `ReviewPrFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
-   - **Dialog wrapper**: `Dialog` with trigger button (`Eye` icon, purple color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph review` does, form body, and footer with submit button
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
    - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `reviewPr({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Review started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
@@ -3550,21 +3366,15 @@ Created a "Review PR" dialog form that allows users to review a pull request fro
    - Follows the exact same Dialog/Form/Field/Submit pattern established by `write-prd-form.tsx` (Issue #95)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
-   - Added `import { ReviewPrForm } from "@/components/review-pr-form"` import
-   - Added `<ReviewPrForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, after the "Start Ralph Loop" button. Only shown for active workspaces (`isActive`).
    - Updated module JSDoc to reference Issue #97
 
 ### Files created
-- `apps/web/src/components/review-pr-form.tsx` — Review PR dialog form component
 
 ### Files modified
-- `apps/web/src/components/workspace-list.tsx` — Added ReviewPrForm import, button per active workspace, JSDoc update
 
 ### Acceptance criteria status
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
-- [x] Submit calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
-- [ ] Tests: valid PR -> mutation called; invalid -> validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -3572,54 +3382,36 @@ Created a "Review PR" dialog form that allows users to review a pull request fro
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
-- **Eye icon**: Used `Eye` from lucide-react — semantically represents "review/inspect". Purple color (`text-purple-600 dark:text-purple-400`) distinguishes it from the other action buttons: green=start (Play), blue=create/write (FileText), purple=review (Eye), red=destroy (Trash). The color follows a semantic pattern that maps rlph workflow stages to distinct colors.
-- **Dialog form**: Like "Write PRD", "Review PR" needs a parameter (PR number), so a dialog provides the focused input experience. This is consistent with all other parameterized actions in the codebase.
 - **Input type="text" with inputMode="numeric"**: Used `type="text"` instead of `type="number"` to avoid the browser's native number input spinners (which are awkward for PR numbers). `inputMode="numeric"` still triggers the numeric keyboard on mobile. `pattern="[0-9]*"` provides an additional hint to the browser.
 - **String-to-int parsing**: The form stores the PR number as a string (for input handling) and parses it to an integer on submit via `Number.parseInt`. This matches the RPC contract which expects `Schema.Int`.
 - **Validation checks**: Three validations: (1) non-empty, (2) parses to a positive integer (`> 0`), (3) is a whole number (no decimals). This catches "abc", "-1", "0", "3.5", and empty string.
-- **Button placement**: The ReviewPrForm button is placed after the "Start Ralph Loop" button. The visual order follows the rlph workflow: Write PRD → Start Loop → Review PR → Fix Findings. The review step comes after implementation.
-- **onTerminalSpawned callback**: Same pattern as WritePrdForm — auto-expands the collapsible terminal section so the user can see the new terminal in the sidebar.
 
 ### Issues unblocked
-- Issue #99: "Fix Findings" button + PR number input — follows the exact same pattern as #97, just calling `rlph.fix` instead of `rlph.review`. Can be implemented by copying `review-pr-form.tsx` with minor changes.
 
-## Issue #99: "Fix Findings" button + PR number input — COMPLETED
 
 **Status:** Done
 **Date:** 2026-03-05
 
 ### Summary
-Created a "Fix Findings" dialog form that allows users to fix review findings on a pull request from any active workspace. The form has a PR number input field (required, must be a positive integer) and calls `rlph.fix` mutation via AtomRpc, which spawns a terminal running `rlph fix <prNumber>` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Fix Findings" button (Wrench icon, amber color) is added to each active workspace card in the workspace list, after the "Review PR" (Eye) button. This completes the entire rlph workflow pipeline: Write PRD → Start Loop → Review PR → Fix Findings.
 
 ### What was done
 
 1. **Created `apps/web/src/components/fix-findings-form.tsx`** — new React component (~176 lines) with:
-   - **Module-level atom declaration**: `fixFindingsMutation` (`LaborerClient.mutation("rlph.fix")`)
-   - **Props interface**: `FixFindingsFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
-   - **Dialog wrapper**: `Dialog` with trigger button (`Wrench` icon, amber color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph fix` does, form body, and footer with submit button
    - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
    - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
-   - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `fixFindings({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Fix started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
    - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
    - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
-   - Follows the exact same Dialog/Form/Field/Submit pattern established by `review-pr-form.tsx` (Issue #97)
 
 2. **Modified `apps/web/src/components/workspace-list.tsx`**:
-   - Added `import { FixFindingsForm } from "@/components/fix-findings-form"` import
-   - Added `<FixFindingsForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, after the "Review PR" button. Only shown for active workspaces (`isActive`).
    - Updated module JSDoc to reference Issue #99
 
 ### Files created
-- `apps/web/src/components/fix-findings-form.tsx` — Fix Findings dialog form component
 
 ### Files modified
-- `apps/web/src/components/workspace-list.tsx` — Added FixFindingsForm import, button per active workspace, JSDoc update
 
 ### Acceptance criteria status
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
-- [x] Submit calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows fix output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
-- [ ] Tests: valid PR -> mutation called; invalid -> validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
@@ -3627,21 +3419,9 @@ Created a "Fix Findings" dialog form that allows users to fix review findings on
 - All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
 
 ### Design decisions
-- **Wrench icon**: Used `Wrench` from lucide-react — semantically represents "fix/repair". Amber color (`text-amber-600 dark:text-amber-400`) distinguishes it from the other action buttons: green=start (Play), blue=create/write (FileText), purple=review (Eye), amber=fix (Wrench), red=destroy (Trash). The color follows a semantic pattern that maps rlph workflow stages to distinct colors.
-- **Dialog form**: Like "Review PR", "Fix Findings" needs a parameter (PR number), so a dialog provides the focused input experience. This is consistent with all other parameterized actions in the codebase.
-- **Same validation as Review PR**: Three validations: (1) non-empty, (2) parses to a positive integer (`> 0`), (3) is a whole number (no decimals). Identical to `review-pr-form.tsx` since both accept PR numbers.
-- **Button placement**: The FixFindingsForm button is placed after the "Review PR" button in the workspace card actions. The visual order follows the rlph workflow: Write PRD → Start Loop → Review PR → Fix Findings. This reinforces the logical workflow progression.
-- **onTerminalSpawned callback**: Same pattern as ReviewPrForm and WritePrdForm — auto-expands the collapsible terminal section so the user can see the new terminal in the sidebar.
 
-### rlph workflow pipeline complete
-With Issue #99 done, the entire rlph workflow is now accessible from the workspace card UI:
-- Issue #95: Write PRD (FileText icon, blue) — `rlph prd [description]` ✅
-- Issue #93: Start Ralph Loop (Play icon, green) — `rlph --once` ✅
-- Issue #97: Review PR (Eye icon, purple) — `rlph review <pr>` ✅
-- Issue #99: Fix Findings (Wrench icon, amber) — `rlph fix <pr>` ✅
 
 ### Issues unblocked
-- No direct downstream issues exclusively blocked by #99. This completes the rlph UI integration — all four rlph commands are accessible from the workspace card.
 
 ## Bug fix: Diff pane shows "No changes" for committed changes + PatchDiff crashes on multi-file diffs
 

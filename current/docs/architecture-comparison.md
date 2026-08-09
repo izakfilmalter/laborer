@@ -244,7 +244,6 @@ main.ts (Electron main process)
        |-- Wire bootstrap message handler (ready/heartbeat)
        |
        |-- Fork all 4 utility processes:
-       |     lifecycleMonitor.forkAllAndMonitor(['terminal', 'server', 'file-watcher', 'mcp'])
        |     Each: utilityProcess.fork(bootstrap.cjs, { env: { LABORER_ENTRYPOINT: path } })
        |
        |-- Register IPC handlers for DesktopBridge
@@ -269,7 +268,6 @@ utility-process-bootstrap.ts (CJS entry for utilityProcess.fork)
 brokerInterProcessPorts():
   |-- Server <-> Terminal: MessageChannelMain pair, one port to each
   |-- Server <-> File-watcher: MessageChannelMain pair
-  |-- MCP <-> Server: MessageChannelMain pair
 ```
 
 #### Server Utility Process Initialization (deferred pattern)
@@ -286,9 +284,7 @@ packages/server/src/utility-main.ts
   |
   |-- Background fiber builds real implementations in groups:
   |     Group 1 (leaf):  FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection
-  |     Group 2 (stack): TaskManager, BranchStateTracker, ContainerService, PrdStorageService,
   |                       DiffService, FileTreeService, PrWatcher, WorktreeReconciler,
-  |                       WorkspaceSyncService, GithubTaskImporter, LinearTaskImporter,
   |                       ReviewCommentFetcher, RepositoryWatchCoordinator, ProjectRegistry,
   |                       WorkspaceProvider
   |     Group 3 (independent): TerminalClient
@@ -424,7 +420,6 @@ Electron Main Process (hub)
   |   |
   |   +-- [MessagePort broker] ---> Server <-> Terminal direct channel
   |   +-- [MessagePort broker] ---> Server <-> File-watcher direct channel
-  |   +-- [MessagePort broker] ---> MCP <-> Server direct channel
   |
   |-- [utilityProcess.fork] --> Terminal Utility Process
   |                               |
@@ -435,9 +430,7 @@ Electron Main Process (hub)
   |                               |
   |                               +-- [in-process @parcel/watcher] --> native FS events
   |
-  |-- [utilityProcess.fork] --> MCP Utility Process
   |                               |
-  |                               +-- [in-process] --> PRD tools, Issue tools
   |
   |-- [Chromium] --> Renderer
                       +-- [Dedicated Worker] --> LiveStore OPFS SQLite
@@ -447,10 +440,8 @@ Electron Main Process (hub)
 | Process | Count | What it owns | Why isolated |
 |---------|-------|-------------|--------------|
 | **Main** | 1 | Window lifecycle, utility process management, IPC brokering, tray, auto-update | Electron requirement; stays lean |
-| **Server** | 1 | Domain logic: projects, workspaces, tasks, PRDs, diffs, git, containers, review | Core business logic isolation |
 | **Terminal** | 1 | All PTY management via node-pty, session persistence, flow control | Native addon isolation, crash resilience |
 | **File Watcher** | 1 | Filesystem watching via @parcel/watcher | Native addon isolation, event flooding protection |
-| **MCP** | 1 | Model Context Protocol tools for AI agents | Agent tool isolation |
 | **Renderer** | 1 per window | React UI, LiveStore client, xterm.js rendering | Chromium sandbox |
 
 **Crash resilience:** `LifecycleMonitor` tracks health of all utility processes via heartbeat (5s interval). On crash, exponential-backoff restart. Each utility process can crash independently without taking down others or the Electron shell.
@@ -463,7 +454,6 @@ Electron Main Process (hub)
 |--------|---------|--------|---------|
 | **Total process types** | 6 | 2-3 | 6 (main + 4 utility + renderer) |
 | **PTY isolation** | Separate PTY host process, auto-restarts 5x | In-server process, no isolation | Separate terminal utility process with health monitoring |
-| **Extension/agent isolation** | Separate process per extension host kind | Codex: child process; Claude: in-process | MCP: separate utility process; Agents run as terminal processes |
 | **File watching** | Dedicated watcher process | In-process | Separate file-watcher utility process |
 | **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server utility process (separated from main) |
 | **Crash granularity** | Per-subsystem | All-or-nothing (server restart) | Per-utility-process |
@@ -769,7 +759,6 @@ User keystroke
 
 | Layer | Mechanism | What's stored |
 |-------|-----------|--------------|
-| **Server** | SQLite via LiveStore (`@livestore/adapter-node`, filesystem) | Event-sourced domain data: projects, workspaces, diffs, tasks, PRDs, app settings, panel layout |
 | **Client** | OPFS-backed SQLite via LiveStore (`@livestore/adapter-web`) | Same schema, synced bidirectionally with server |
 | **Client workers** | Dedicated Worker (OPFS SQLite), Shared Worker (leader election) | Canonical client-side database |
 | **Terminal** | In-memory circular replay buffer + temp file on shutdown | Terminal scrollback for session persistence |
@@ -827,7 +816,6 @@ User keystroke
 | Renderer <-> Server utility | MessagePort (LiveStore sync) | Bidirectional SQLite sync |
 | Server <-> Terminal utility | MessagePort (brokered by main) | TerminalRpcs (server triggers terminal operations) |
 | Server <-> File-watcher utility | MessagePort (brokered by main) | FileWatcherRpcs |
-| MCP <-> Server utility | MessagePort (brokered by main) | LaborerRpcs (MCP tools query domain data) |
 | Main -> Utility processes | `parentPort.postMessage` | Bootstrap (ready/heartbeat), port transfers |
 
 **Key patterns:**
@@ -859,7 +847,6 @@ User keystroke
 | **OS processes** | 6 types | 2-3 | 6 (main + 4 utility + renderer) |
 | **PTY isolation** | Dedicated PTY host | In-server | Dedicated terminal utility |
 | **File watcher** | Dedicated process | In-server | Dedicated file-watcher utility |
-| **Agent/extension isolation** | Dedicated extension host(s) | Codex: child; Claude: in-process | MCP: dedicated utility; agents run in terminals |
 | **Crash granularity** | Per-subsystem | All-or-nothing | Per-utility-process |
 | **Concurrency** | OS processes | Effect fibers (single-threaded) | Effect fibers within isolated utility processes |
 

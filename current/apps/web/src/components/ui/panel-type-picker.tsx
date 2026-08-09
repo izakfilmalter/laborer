@@ -17,7 +17,7 @@
  */
 
 import type { PaneType } from '@laborer/shared/types'
-import { Bot, Eye, FileCode2, Server, Terminal } from 'lucide-react'
+import { Bot, FileCode2, Server, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
@@ -58,7 +58,6 @@ const PANEL_TYPE_OPTIONS: readonly PanelTypeOption[] = [
     icon: <Terminal className="size-4" />,
   },
   { type: 'diff', label: 'Diff', icon: <FileCode2 className="size-4" /> },
-  { type: 'review', label: 'Review', icon: <Eye className="size-4" /> },
   {
     type: 'devServerTerminal',
     label: 'Dev Server',

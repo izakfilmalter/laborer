@@ -10,7 +10,6 @@ PRD-test-coverage.md
 
 Extract the `makeTestStore` / `TestLaborerStore` boilerplate into a shared helper module at `packages/server/test/helpers/test-store.ts`. This 15-line block is currently copy-pasted identically across 9 test files. The helper exports `makeTestStore` (the Effect program that creates an in-memory LiveStore with a unique storeId) and `TestLaborerStore` (the scoped Layer).
 
-Update all 9 consumer test files to import from the new helper instead of inlining the boilerplate: `task-manager.test.ts`, `linear-task-importer.test.ts`, `github-task-importer.test.ts`, `prd-task-importer.test.ts`, `workspace-destroy-origin.test.ts`, `worktree-watcher.test.ts`, `project-registry.worktree-detection.test.ts`, `terminal-manager.test.ts` (server), `worktree-reconciler.test.ts`.
 
 See PRD Implementation Decisions > Shared Test Helpers for details.
 
@@ -18,7 +17,6 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 - [x] `packages/server/test/helpers/test-store.ts` exists and exports `makeTestStore` and `TestLaborerStore`
 - [x] All 9 test files import from the helper -- zero remaining inline `makeTestStore` definitions
-- [x] All modified tests pass (`bunx vitest run test/task-manager.test.ts test/github-task-importer.test.ts test/linear-task-importer.test.ts test/prd-task-importer.test.ts test/workspace-destroy-origin.test.ts test/worktree-reconciler.test.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/terminal-manager.test.ts test/prd-rpc-handlers.test.ts` in `packages/server`)
 - [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
@@ -174,12 +172,7 @@ PRD-test-coverage.md
 
 ### What to build
 
-Migrate 4 task-related test files in `packages/server/test/` from plain vitest to `@effect/vitest` patterns:
 
-1. `task-manager.test.ts`
-2. `github-task-importer.test.ts`
-3. `linear-task-importer.test.ts`
-4. `prd-task-importer.test.ts`
 
 Replace `import { describe, expect, it } from "vitest"` with `import { assert, describe, it } from "@effect/vitest"`. Replace manual `runWithTestServices` / `Effect.runPromise` with `it.effect` or `it.scoped`. Replace `expect` with `assert`.
 
@@ -216,7 +209,6 @@ PRD-test-coverage.md
 Migrate the remaining server test files from plain vitest to `@effect/vitest` patterns:
 
 1. `config-service.test.ts`
-2. `prd-schema.test.ts`
 3. `rpc-config-handlers.test.ts`
 4. `project-registry.worktree-detection.test.ts`
 
@@ -289,7 +281,6 @@ Set up the test infrastructure for `packages/shared` and add the first schema ma
 1. Add `vitest.config.ts` to `packages/shared`
 2. Add `"test": "vitest run"` script to `packages/shared/package.json`
 3. Add `@effect/vitest`, `vitest`, `@livestore/adapter-node` as devDependencies
-4. Move `packages/server/test/prd-schema.test.ts` to `packages/shared/test/schema.test.ts`
 5. Add tests for project events: `ProjectCreated` inserts, `ProjectRemoved` deletes
 6. Add tests for workspace events: `WorkspaceCreated` inserts, `WorkspaceStatusChanged` updates, `WorkspaceDestroyed` deletes
 
@@ -302,7 +293,6 @@ See PRD Implementation Decisions > LiveStore Schema Tests.
 - [x] `packages/shared/vitest.config.ts` exists with correct configuration
 - [x] `packages/shared/package.json` has a `test` script
 - [x] `packages/shared/test/schema.test.ts` exists with project and workspace event tests
-- [x] `prd-schema.test.ts` is removed from `packages/server/test/`
 - [x] All tests pass (`bun run test` in packages/shared)
 - [x] Tests use `@effect/vitest` patterns (`it.effect`, `assert`)
 - [x] `bun x ultracite check` passes
@@ -329,8 +319,6 @@ PRD-test-coverage.md
 Expand `packages/shared/test/schema.test.ts` with materializer tests for the remaining active event groups:
 
 1. **Diff events**: `DiffUpdated` upserts (including conflict resolution), `DiffCleared` deletes
-2. **Task events**: `TaskCreated` inserts, `TaskStatusChanged` updates, `TaskRemoved` deletes
-3. **PRD events**: `PrdCreated` inserts, `PrdStatusChanged` updates, `PrdRemoved` deletes
 4. **Panel layout events**: `LayoutSplit` upserts, `LayoutPaneClosed` upserts, `LayoutPaneAssigned` upserts, `LayoutRestored` upserts
 
 Each test commits an event and verifies the table state via query.
@@ -338,8 +326,6 @@ Each test commits an event and verifies the table state via query.
 ### Acceptance criteria
 
 - [x] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
-- [x] Task event tests (TaskCreated, TaskStatusChanged, TaskRemoved) pass
-- [x] PRD event tests (PrdCreated, PrdStatusChanged, PrdRemoved) pass
 - [x] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
 - [x] All tests use `@effect/vitest` patterns
 - [x] `bun x ultracite check` passes
@@ -569,7 +555,6 @@ Tests use real git repos, real `WorkspaceProvider`, real `PortAllocator`, and a 
 
 ---
 
-## Issue 17: RPC integration tests -- task.create + task.updateStatus + task.remove
 
 ### Parent PRD
 
@@ -577,20 +562,11 @@ PRD-test-coverage.md
 
 ### What to build
 
-Add in-memory RPC integration tests for the basic task management endpoints:
 
-1. `task.create` -- creates a manual task with optional PRD link
-2. `task.updateStatus` -- transitions task status
-3. `task.remove` -- deletes a task
 
-Tests use real `TaskManager` layer backed by `TestLaborerStore`. Verify results through RPC responses and LiveStore state.
 
 ### Acceptance criteria
 
-- [x] `task.create` test verifies task creation with all fields
-- [x] `task.create` test verifies optional prdId linkage
-- [x] `task.updateStatus` test verifies status transition
-- [x] `task.remove` test verifies task deletion
 - [x] Tests use `@effect/vitest` patterns
 - [x] All tests pass
 
@@ -605,7 +581,6 @@ Tests use real `TaskManager` layer backed by `TestLaborerStore`. Verify results 
 
 ---
 
-## Issue 18: RPC integration tests -- task.importGithub + task.importLinear
 
 ### Parent PRD
 
@@ -615,18 +590,10 @@ PRD-test-coverage.md
 
 Add in-memory RPC integration tests for the task import endpoints:
 
-1. `task.importGithub` -- imports GitHub issues with deduplication and PR filtering
-2. `task.importLinear` -- imports Linear issues with deduplication and filter construction
 
-Tests mock `fetch` at the system boundary for GitHub REST API and Linear GraphQL API responses. Use real `GithubTaskImporter`, `LinearTaskImporter`, `TaskManager`, and `ConfigService` layers.
 
 ### Acceptance criteria
 
-- [x] `task.importGithub` test verifies issue import with correct count
-- [x] `task.importGithub` test verifies PR filtering (PRs are skipped)
-- [x] `task.importGithub` test verifies deduplication (existing tasks not re-imported)
-- [x] `task.importLinear` test verifies issue import with correct count
-- [x] `task.importLinear` test verifies deduplication
 - [x] Only `fetch` is mocked (system boundary) -- all internal services are real
 - [x] Tests use `@effect/vitest` patterns
 - [x] All tests pass
@@ -678,7 +645,6 @@ Tests use real git repos with actual file changes for diff testing. Editor tests
 
 ---
 
-## Issue 20: RPC integration tests -- terminal.spawn + rlph endpoints
 
 ### Parent PRD
 
@@ -689,20 +655,12 @@ PRD-test-coverage.md
 Add in-memory RPC integration tests for the endpoints that proxy to the standalone terminal service:
 
 1. `terminal.spawn` -- spawns a terminal in a workspace via TerminalClient
-2. `rlph.startLoop` -- starts an RLPH coding loop
-3. `rlph.writePRD` -- writes a PRD via RLPH
-4. `rlph.review` -- reviews a PR via RLPH
-5. `rlph.fix` -- fixes a PR via RLPH
 
 All 5 endpoints delegate to `TerminalClient`, which is a system boundary (separate HTTP service). Provide a stub `TerminalClient` layer that returns canned responses. This is appropriate boundary mocking per the PRD's testing decisions.
 
 ### Acceptance criteria
 
 - [x] `terminal.spawn` test verifies terminal response through RPC
-- [x] `rlph.startLoop` test verifies terminal response through RPC
-- [x] `rlph.writePRD` test verifies terminal response through RPC
-- [x] `rlph.review` test verifies terminal response through RPC
-- [x] `rlph.fix` test verifies terminal response through RPC
 - [x] Stub TerminalClient is used (system boundary mock)
 - [x] Tests use `@effect/vitest` patterns
 - [x] All tests pass
@@ -778,10 +736,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
 | 15 | RPC integration tests -- config.get + config.update | None | Done |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
-| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
-| 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Done |
-| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
 | 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Done |
 
 **Parallelism opportunities:**

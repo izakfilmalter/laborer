@@ -64,11 +64,9 @@ PRD.md
 
 ### What to build
 
-Define the LiveStore schema for the Projects table in `packages/shared/src/schema.ts`. Include events for project creation and removal, and a materializer that keeps the Projects table in sync. Projects have: id, repoPath, name, rlphConfig. Reference the PRD's "State Management: LiveStore" section.
 
 ### Acceptance criteria
 
-- [ ] Projects table defined with correct columns (id, repoPath, name, rlphConfig)
 - [ ] Events defined: ProjectCreated, ProjectRemoved
 - [ ] Materializer correctly updates table state from events
 - [ ] Tests: commit ProjectCreated → verify project in table; commit ProjectRemoved → verify project removed
@@ -226,7 +224,6 @@ PRD.md
 
 ### What to build
 
-Define the RPC contract in `packages/shared/src/rpc.ts` using `RpcGroup.make` and `Rpc.make` from `@effect/rpc`. Create a `LaborerRpcs` class that extends `RpcGroup.make(...)` with all RPC methods listed in the PRD's "Action Layer" section: workspace.create, workspace.destroy, terminal.spawn, terminal.write, terminal.resize, terminal.kill, diff.refresh, editor.open, rlph.startLoop, rlph.writePRD, rlph.review, rlph.fix, project.add, project.remove, and health. Each `Rpc.make` call defines `payload` and optional `success` schemas using Effect Schema.
 
 Example pattern:
 ```ts
@@ -2170,7 +2167,6 @@ Add a toggle button to terminal panes that shows/hides a diff viewer alongside t
 
 ---
 
-## Issue 92: rlph.startLoop RPC handler
 
 ### Parent PRD
 
@@ -2178,14 +2174,10 @@ PRD.md
 
 ### What to build
 
-Implement the `rlph.startLoop` handler via `RpcGroup.toHandlers`. It spawns a terminal in the workspace running `rlph --once`. This is a convenience wrapper around terminal.spawn with a specific command. Reference the PRD's "rlph Integration" section.
 
 ### Acceptance criteria
 
-- [x] `rlph.startLoop` handler accepts workspaceId and options
-- [x] Spawns terminal with `rlph --once` command
 - [x] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned running `rlph --once` (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2205,14 +2197,10 @@ PRD.md
 
 ### What to build
 
-Add a "Start Ralph Loop" button per workspace that calls the `rlph.startLoop` mutation via `useAtomSet(LaborerClient.mutation("rlph.startLoop"))`. After clicking, the user is taken to the terminal pane showing the rlph output.
 
 ### Acceptance criteria
 
 - [x] Button visible per workspace in workspace actions (Play icon, only shown for active workspaces)
-- [x] Click → calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet`
-- [x] Terminal pane shows rlph TUI output (auto-assigned to panel pane via `panelActions.assignTerminalToPane`)
-- [ ] Tests: click button → mutation called; terminal output visible in pane (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
@@ -2224,7 +2212,6 @@ Add a "Start Ralph Loop" button per workspace that calls the `rlph.startLoop` mu
 
 ---
 
-## Issue 94: rlph.writePRD RPC handler
 
 ### Parent PRD
 
@@ -2232,14 +2219,10 @@ PRD.md
 
 ### What to build
 
-Implement the `rlph.writePRD` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph prd [description]` in the workspace.
 
 ### Acceptance criteria
 
-- [x] `rlph.writePRD` handler accepts workspaceId and optional description
-- [x] Spawns terminal with `rlph prd [description]`
 - [x] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with correct rlph prd command (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2259,15 +2242,11 @@ PRD.md
 
 ### What to build
 
-Create a PRD writing form using TanStack Form with a description textarea. On submit, calls the `rlph.writePRD` mutation via `useAtomSet(LaborerClient.mutation("rlph.writePRD"))`. Shows the resulting terminal pane with rlph prd output.
 
 ### Acceptance criteria
 
 - [x] Form with description textarea using TanStack Form (Textarea with onChange validation, 6 rows)
-- [x] Submit → calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet` with `{ mode: "promise" }`
-- [x] Terminal pane shows rlph prd output (auto-assigned via `panelActions.assignTerminalToPane`)
 - [x] Form validates (description required — empty/whitespace-only shows error)
-- [ ] Tests: submit form → mutation called; output visible; empty description → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
@@ -2279,7 +2258,6 @@ Create a PRD writing form using TanStack Form with a description textarea. On su
 
 ---
 
-## Issue 96: rlph.review RPC handler
 
 ### Parent PRD
 
@@ -2287,14 +2265,10 @@ PRD.md
 
 ### What to build
 
-Implement the `rlph.review` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph review <prNumber>` in the workspace.
 
 ### Acceptance criteria
 
-- [x] `rlph.review` handler accepts workspaceId and prNumber
-- [x] Spawns terminal with `rlph review <prNumber>`
 - [x] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with `rlph review <pr>` (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2314,14 +2288,11 @@ PRD.md
 
 ### What to build
 
-Add a "Review PR" action per workspace with a PR number input field. On submit, calls the `rlph.review` mutation via `useAtomSet(LaborerClient.mutation("rlph.review"))` and shows the terminal pane.
 
 ### Acceptance criteria
 
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
-- [x] Submit → calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane`)
-- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
@@ -2333,7 +2304,6 @@ Add a "Review PR" action per workspace with a PR number input field. On submit, 
 
 ---
 
-## Issue 98: rlph.fix RPC handler
 
 ### Parent PRD
 
@@ -2341,14 +2311,10 @@ PRD.md
 
 ### What to build
 
-Implement the `rlph.fix` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph fix <prNumber>` in the workspace.
 
 ### Acceptance criteria
 
-- [x] `rlph.fix` handler accepts workspaceId and prNumber
-- [x] Spawns terminal with `rlph fix <prNumber>`
 - [x] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>` (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2368,14 +2334,11 @@ PRD.md
 
 ### What to build
 
-Add a "Fix Findings" action per workspace with a PR number input field. On submit, calls the `rlph.fix` mutation via `useAtomSet(LaborerClient.mutation("rlph.fix"))` and shows the terminal pane.
 
 ### Acceptance criteria
 
 - [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
-- [x] Submit → calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet` with `{ mode: "promise" }`
 - [x] Terminal pane shows fix output (auto-assigned via `panelActions.assignTerminalToPane`)
-- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
@@ -3183,13 +3146,9 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Done |
 | 89 | Diff viewer — live update | ~~#87~~ | Done |
 | 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
-| 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Done |
-| 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
 | 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Done |
-| 96 | rlph.review RPC handler | ~~#56~~ | Done |
 | 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Done |
-| 98 | rlph.fix RPC handler | ~~#56~~ | Done |
 | 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Done |
 | 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |
 | 101 | Task CRUD — update status | ~~#100~~ | Done |

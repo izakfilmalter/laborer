@@ -657,7 +657,7 @@ describe('computeProgressiveCloseAction', () => {
     })
   })
 
-  describe('diff/review pane types', () => {
+  describe('diff pane type', () => {
     it('closes pane for diff pane in split', () => {
       const splitLayout = makeSplitLayout('split-1', [
         makeLeaf('pane-1', 'term-1', 'ws-1'),

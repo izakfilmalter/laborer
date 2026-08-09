@@ -275,8 +275,6 @@ Phase 4:             Issue 9
 - Removed `DiffService` and `FileTreeService` imports
 - Removed `diff.refresh` handler
 - Removed `fileTree.subscribe` handler
-- Removed `DiffService.startPolling()` from: workspace.create, workspace.startContainer, container.unpause, task.updateStatus onReady callbacks
-- Removed `DiffService.stopPolling()` from: workspace.destroy, task.updateStatus auto-cleanup
 - Updated JSDoc comments to reflect removal
 
 **Files modified (server entry — `packages/server/src/utility-main.ts`):**
@@ -307,7 +305,6 @@ Phase 4:             Issue 9
 - `BranchStateTracker` — still in use
 
 **Verification:**
-- All typechecks pass (shared, server, web, file-watcher, mcp)
 - Biome format clean (0 fixes applied)
 - Shared tests: 75/75 pass
 - Server tests: 405/411 pass (5 failures are pre-existing in pr-watcher, project-registry, project-management — none related to this change)

@@ -14,7 +14,6 @@
  * A minimum 300ms display duration prevents flickering on fast transitions.
  *
  * Consumes `useServiceStatus()` for reactive per-service health states.
- * MCP is excluded from primary indicators (it's not a core service).
  *
  * @see apps/web/src/hooks/use-service-status.ts — per-service status hook
  * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
@@ -41,7 +40,7 @@ import {
 } from '@/lib/sidecar-statuses'
 import { cn } from '@/lib/utils'
 
-/** Core services shown as status badges (excludes MCP and sync). */
+/** Core services shown as status badges. */
 const STATUS_DOT_SERVICES: readonly ServiceName[] = [
   'server',
   'terminal',
@@ -53,7 +52,6 @@ const DOT_DISPLAY_NAMES: Record<ServiceName, string> = {
   server: 'Server',
   terminal: 'Terminal',
   'file-watcher': 'File Watcher',
-  mcp: 'MCP',
   sync: 'Sync',
 }
 

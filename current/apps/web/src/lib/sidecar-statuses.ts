@@ -15,7 +15,6 @@ const ALL_SIDECAR_NAMES: readonly SidecarName[] = [
   'server',
   'terminal',
   'file-watcher',
-  'mcp',
 ] as const
 
 /** Possible states for a single service in the UI. */
@@ -82,7 +81,6 @@ const DISPLAY_NAMES: Record<SidecarName, string> = {
   server: 'Server',
   terminal: 'Terminal',
   'file-watcher': 'File Watcher',
-  mcp: 'MCP',
 }
 
 /** Get a human-readable display name for a sidecar service. */
@@ -143,11 +141,7 @@ function getStatusLabel(state: ServiceState): string {
   }
 }
 
-/**
- * The core services that must be healthy for the app to function.
- * MCP is excluded because it starts independently and is not required
- * for the main UI to work.
- */
+/** The services that must be healthy for the app to function. */
 const CORE_SIDECAR_NAMES: readonly SidecarName[] = [
   'server',
   'terminal',

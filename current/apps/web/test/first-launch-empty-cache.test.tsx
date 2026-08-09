@@ -26,14 +26,12 @@ const {
   isElectronMock,
   mutationMap,
   queryDbMock,
-  startLoopFn,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  startLoopFn: vi.fn(),
   useLaborerStoreMock: vi.fn(),
 }))
 
@@ -70,9 +68,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
       }
-      if (name === 'brrr.startLoop') {
-        mutationMap.set(sentinel, startLoopFn)
-      }
       return sentinel
     },
     query: () => Symbol.for('query:stub'),
@@ -88,7 +83,6 @@ vi.mock('@/livestore/store', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  prds: { name: 'prds' },
   workspaces: { name: 'workspaces' },
   tasks: { name: 'tasks' },
 }))

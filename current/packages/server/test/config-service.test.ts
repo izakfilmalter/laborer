@@ -76,8 +76,6 @@ const writeProjectConfig = (
           workdir?: string | undefined
         }
       | undefined
-    prdsDir?: string | undefined
-    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -143,14 +141,10 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(projectDir, 'test-project')
 
-        assert.strictEqual(result.prdsDir.source, 'default')
-        assert.strictEqual(result.prdsDir.value, `${projectDir}.worktrees/prds`)
         assert.strictEqual(result.worktreeDir.source, 'default')
         assert.strictEqual(result.worktreeDir.value, `${projectDir}.worktrees`)
         assert.strictEqual(result.setupScripts.source, 'default')
         assert.deepStrictEqual(result.setupScripts.value, [])
-        assert.strictEqual(result.brrrConfig.source, 'default')
-        assert.isNull(result.brrrConfig.value)
       })
     )
 
@@ -177,16 +171,12 @@ describe('ConfigService', () => {
         const projectDir = join(testRoot, 'project-root-config')
         mkdirSync(projectDir, { recursive: true })
         const configPath = writeConfig(projectDir, {
-          prdsDir: '/custom/prds',
           worktreeDir: '/custom/worktrees',
           setupScripts: ['bun install', 'cp .env.example .env'],
-          brrrConfig: 'brrr-config.json',
         })
 
         const result = yield* resolveConfig(projectDir, 'test-project')
 
-        assert.strictEqual(result.prdsDir.value, '/custom/prds')
-        assert.strictEqual(result.prdsDir.source, configPath)
         assert.strictEqual(result.worktreeDir.value, '/custom/worktrees')
         assert.strictEqual(result.worktreeDir.source, configPath)
         assert.deepStrictEqual(result.setupScripts.value, [
@@ -194,8 +184,6 @@ describe('ConfigService', () => {
           'cp .env.example .env',
         ])
         assert.strictEqual(result.setupScripts.source, configPath)
-        assert.strictEqual(result.brrrConfig.value, 'brrr-config.json')
-        assert.strictEqual(result.brrrConfig.source, configPath)
       })
     )
 
@@ -239,10 +227,6 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(child, 'child-project')
 
-        assert.strictEqual(
-          result.prdsDir.value,
-          join(homedir(), 'parent-worktrees', 'prds')
-        )
         // setupScripts from child (closest)
         assert.deepStrictEqual(result.setupScripts.value, ['pnpm install'])
         assert.strictEqual(result.setupScripts.source, childConfigPath)
@@ -271,8 +255,6 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(child, 'child-project')
 
-        // prdsDir defaults to worktreeDir/prds when only worktreeDir is set
-        assert.strictEqual(result.prdsDir.value, '/child-worktrees/prds')
         // worktreeDir from child overrides parent
         assert.strictEqual(result.worktreeDir.value, '/child-worktrees')
         assert.strictEqual(result.worktreeDir.source, childConfigPath)
@@ -296,20 +278,6 @@ describe('ConfigService', () => {
           result.worktreeDir.value,
           join(homedir(), 'my-laborer-worktrees')
         )
-      })
-    )
-
-    it.effect('should expand tilde in prdsDir from config', () =>
-      Effect.gen(function* () {
-        const projectDir = join(testRoot, 'tilde-expansion-prds')
-        mkdirSync(projectDir, { recursive: true })
-        writeConfig(projectDir, {
-          prdsDir: '~/custom-prds',
-        })
-
-        const result = yield* resolveConfig(projectDir, 'test-project')
-
-        assert.strictEqual(result.prdsDir.value, join(homedir(), 'custom-prds'))
       })
     )
 
@@ -378,9 +346,7 @@ describe('ConfigService', () => {
         const child = join(parent, 'provenance-child')
         mkdirSync(child, { recursive: true })
 
-        const gpPath = writeConfig(grandparent, {
-          brrrConfig: 'grandparent-brrr.json',
-        })
+        writeConfig(grandparent, {})
         writeConfig(parent, {
           worktreeDir: '/parent-worktrees',
         })
@@ -391,28 +357,8 @@ describe('ConfigService', () => {
         const result = yield* resolveConfig(child, 'provenance-test')
 
         // Each field's provenance should trace to the config that set it
-        assert.strictEqual(result.prdsDir.source, 'default')
         assert.strictEqual(result.setupScripts.source, childPath)
-        assert.strictEqual(result.brrrConfig.source, gpPath)
       })
-    )
-
-    it.effect(
-      'should default prdsDir to worktreeDir/prds when worktreeDir is set',
-      () =>
-        Effect.gen(function* () {
-          const projectDir = join(testRoot, 'prdsdir-default-from-worktree')
-          mkdirSync(projectDir, { recursive: true })
-          writeConfig(projectDir, {
-            worktreeDir: '/custom/worktrees',
-          })
-
-          const result = yield* resolveConfig(projectDir, 'test-project')
-
-          // prdsDir should default to worktreeDir + "/prds"
-          assert.strictEqual(result.prdsDir.value, '/custom/worktrees/prds')
-          assert.strictEqual(result.prdsDir.source, 'default')
-        })
     )
   })
 
@@ -456,7 +402,6 @@ describe('ConfigService', () => {
         mkdirSync(projectDir, { recursive: true })
 
         yield* writeProjectConfig(projectDir, {
-          prdsDir: '~/custom-prds',
           worktreeDir: '~/custom-worktrees',
         })
 
@@ -464,10 +409,8 @@ describe('ConfigService', () => {
         assert.isTrue(existsSync(configPath))
 
         const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
-          prdsDir?: string
           worktreeDir?: string
         }
-        assert.strictEqual(written.prdsDir, '~/custom-prds')
         assert.strictEqual(written.worktreeDir, '~/custom-worktrees')
       })
     )
@@ -479,7 +422,6 @@ describe('ConfigService', () => {
 
         writeConfig(projectDir, {
           worktreeDir: '/existing/worktrees',
-          brrrConfig: 'brrr-existing.json',
         })
 
         yield* writeProjectConfig(projectDir, {
@@ -489,13 +431,11 @@ describe('ConfigService', () => {
         const written = JSON.parse(
           readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
         ) as {
-          brrrConfig?: string
           setupScripts?: string[]
           worktreeDir?: string
         }
 
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
-        assert.strictEqual(written.brrrConfig, 'brrr-existing.json')
         assert.deepStrictEqual(written.setupScripts, [
           'bun install',
           'bun test',
@@ -523,20 +463,20 @@ describe('ConfigService', () => {
         )
 
         yield* writeProjectConfig(projectDir, {
-          brrrConfig: 'new-brrr.json',
+          setupScripts: ['new-script'],
         })
 
         const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
           customField?: string
           nested?: { hello?: string }
-          brrrConfig?: string
+          setupScripts?: string[]
           worktreeDir?: string
         }
 
         assert.strictEqual(written.customField, 'preserve-me')
         assert.strictEqual(written.nested?.hello, 'world')
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
-        assert.strictEqual(written.brrrConfig, 'new-brrr.json')
+        assert.deepStrictEqual(written.setupScripts, ['new-script'])
       })
     )
 
@@ -551,7 +491,6 @@ describe('ConfigService', () => {
         })
 
         yield* writeProjectConfig(projectDir, {
-          brrrConfig: 'updated-brrr.json',
           setupScripts: undefined,
           worktreeDir: undefined,
         })
@@ -559,12 +498,10 @@ describe('ConfigService', () => {
         const written = JSON.parse(
           readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
         ) as {
-          brrrConfig?: string
           setupScripts?: string[]
           worktreeDir?: string
         }
 
-        assert.strictEqual(written.brrrConfig, 'updated-brrr.json')
         assert.deepStrictEqual(written.setupScripts, ['existing-script'])
         assert.strictEqual(written.worktreeDir, '/existing/worktrees')
       })

@@ -108,7 +108,6 @@ Changes made:
 Verification:
 - All 8 remaining Vitest test files pass (70 tests) with `bun run test`
 - `ultracite check` clean (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
-- The 3 pure function test files are unaffected: `layout-utils.test.ts`, `project-settings-modal.helpers.test.ts`, `task-source-picker.test.ts`
 
 ## Issue 6: E2E — Delete project — COMPLETED
 

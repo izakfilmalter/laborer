@@ -63,10 +63,10 @@ const diffLeaf: LeafNode = {
   workspaceId: 'ws-1',
 }
 
-const reviewLeaf: LeafNode = {
+const secondaryDiffLeaf: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-3',
-  paneType: 'review',
+  paneType: 'diff',
 }
 
 const devServerLeaf: LeafNode = {
@@ -95,7 +95,7 @@ const nestedPanelSplit: SplitNode = {
       _tag: 'SplitNode',
       id: 'panel-split-inner',
       direction: 'vertical',
-      children: [diffLeaf, reviewLeaf],
+      children: [diffLeaf, secondaryDiffLeaf],
       sizes: [50, 50],
     },
   ],
@@ -159,7 +159,7 @@ describe('LeafNodeSchema', () => {
     const minimal: LeafNode = {
       _tag: 'LeafNode',
       id: 'pane-min',
-      paneType: 'review',
+      paneType: 'diff',
     }
     const result = roundTrip(LeafNodeSchema, minimal)
     expect(result).toStrictEqual(minimal)
@@ -171,7 +171,6 @@ describe('LeafNodeSchema', () => {
       'terminal',
       'diff',
       'devServerTerminal',
-      'review',
     ] as const) {
       const leaf: LeafNode = {
         _tag: 'LeafNode',
@@ -181,6 +180,22 @@ describe('LeafNodeSchema', () => {
       const result = roundTrip(LeafNodeSchema, leaf)
       expect(result).toStrictEqual(leaf)
     }
+  })
+
+  it('decodes a persisted review pane as a diff pane', () => {
+    const result = Schema.decodeUnknownSync(LeafNodeSchema)({
+      _tag: 'LeafNode',
+      id: 'legacy-pane',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    })
+
+    expect(result).toStrictEqual({
+      _tag: 'LeafNode',
+      id: 'legacy-pane',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    })
   })
 })
 
@@ -204,7 +219,7 @@ describe('SplitNodeSchema', () => {
       _tag: 'SplitNode',
       id: 'v-split',
       direction: 'vertical',
-      children: [terminalLeaf, reviewLeaf],
+      children: [terminalLeaf, secondaryDiffLeaf],
       sizes: [70, 30],
     }
     const result = roundTrip(SplitNodeSchema, vertical)
@@ -264,7 +279,7 @@ describe('PanelNodeSchema', () => {
                 {
                   _tag: 'LeafNode',
                   id: 'l3-b',
-                  paneType: 'review',
+                  paneType: 'diff',
                 },
               ],
               sizes: [60, 40],
@@ -366,7 +381,7 @@ describe('WorkspaceTileSplitSchema', () => {
       panelTabs: [
         {
           id: 'tab-4',
-          panelLayout: reviewLeaf,
+          panelLayout: secondaryDiffLeaf,
         },
       ],
     }
@@ -516,7 +531,7 @@ describe('WindowLayoutSchema', () => {
                     panelTabs: [
                       {
                         id: 'tab-review',
-                        panelLayout: reviewLeaf,
+                        panelLayout: secondaryDiffLeaf,
                         focusedPaneId: 'pane-3',
                       },
                     ],

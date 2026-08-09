@@ -58,7 +58,6 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-stale',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -104,7 +103,6 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-current',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -150,7 +148,6 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-multi',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -210,7 +207,6 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-destroyed',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -256,7 +252,6 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-detached',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -307,7 +302,6 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-branch-refresh',
-            brrrConfig: null,
           })
         )
 
@@ -387,7 +381,6 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-main-branch-with-linked',
-            brrrConfig: null,
           })
         )
 
@@ -465,7 +458,6 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-linked-branch-refresh',
-            brrrConfig: null,
           })
         )
 
@@ -536,7 +528,6 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-both-triggers',
-            brrrConfig: null,
           })
         )
 

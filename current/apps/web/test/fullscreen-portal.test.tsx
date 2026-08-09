@@ -95,10 +95,6 @@ vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
 
-vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: () => <div data-testid="review-pane" />,
-}))
-
 vi.mock('@/routes/-components/close-dialogs', () => ({
   PaneCloseConfirmDialog: () => null,
 }))
@@ -142,7 +138,6 @@ function mockActions() {
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(() => false),
     toggleTreePane: vi.fn(() => false),
     addPanelTab: vi.fn(),
     addWorkspaceToCurrentTab: vi.fn(),

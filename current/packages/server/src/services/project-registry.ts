@@ -41,7 +41,6 @@ import { WorktreeReconciler } from './worktree-reconciler.js'
  * Matches the LiveStore projects table columns.
  */
 interface ProjectRecord {
-  readonly brrrConfig: string | null
   readonly canonicalGitCommonDir: string | null
   readonly id: string
   readonly name: string
@@ -179,7 +178,6 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
           repoId: identity.repoId,
           canonicalGitCommonDir: identity.canonicalGitCommonDir,
           name,
-          brrrConfig: null,
         }
 
         store.commit(events.projectCreated(project))

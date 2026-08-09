@@ -50,13 +50,10 @@ Each workspace spins up an isolated environment:
 - Automatic **setup scripts** (install dependencies, start dev server)
 
 ### 3. Launch agents
-Spawn AI agents (OpenCode, Claude Code, Codex, rlph) into workspace terminals. Each agent works independently on its assigned task.
 
 ### 4. Monitor everything
-Tmux-style split panes show all agents simultaneously. Live diff viewers, file trees, and review panels provide full context without switching windows.
 
 ### 5. Review and ship
-Accept/reject diffs per hunk. Review PR findings inline. Fix issues with one click. Push and merge without leaving Laborer.
 
 ---
 
@@ -70,10 +67,7 @@ Accept/reject diffs per hunk. Review PR findings inline. Fix issues with one cli
 | **Live diff viewer** | Real-time git diffs with per-hunk accept/reject. Split and unified views. Reactive updates via filesystem watcher. |
 | **File tree with git status** | Lazy-loaded directory tree with git status decorations and context menus. |
 | **Agent status tracking** | Detects active vs. waiting agents. Desktop notifications when an agent needs input. |
-| **PRD-to-code pipeline** | Write PRDs in a rich editor, break them into issues, create workspaces from tasks, and close the loop with review -- all in one place. |
 | **Docker container support** | OrbStack-backed containers with bind-mounted worktrees and stable `.orb.local` URLs. |
-| **GitHub PR integration** | PR status tracking per workspace. Inline review findings with severity triage and one-click fix. |
-| **MCP server** | AI agents can create PRDs, break them into issues, and query remaining work via the Model Context Protocol. |
 | **Multi-window support** | Multiple windows with persistent layout, tabbed workspaces, and drag-and-drop reordering. |
 | **Auto-updates** | Ship new versions via GitHub Releases. Users stay current automatically. |
 
@@ -95,7 +89,6 @@ Laborer is built for reliability and performance, mirroring battle-tested patter
      - Git ops         - WebSocket IO  - Reactive streams
      - Diffs           - Ring buffer
      - Containers      - Flow control
-     - PRDs/Tasks
 +----------------------------------------------------------+
 |                    React 19 Renderer                      |
 |  TanStack Router, LiveStore (OPFS SQLite), xterm.js      |
@@ -133,9 +126,7 @@ Laborer is built for reliability and performance, mirroring battle-tested patter
 | Multi-agent visibility | All agents in split panes simultaneously | Manual window management | Isolated agent windows | Single agent view |
 | Workspace isolation | Automated (worktrees, ports, containers) | Manual setup per session | Automated (containers) | Manual |
 | Diff viewer | Built-in, per-hunk accept/reject | External tool | None | None |
-| PRD-to-code pipeline | Integrated editor + MCP | Separate tools | None | None |
 | Process isolation | VS Code-grade utility processes | N/A | Container-based | Single process |
-| Agent support | OpenCode, Claude, Codex, rlph | Any | Specific agents | Specific agents |
 | Desktop app | Native Electron | Terminal-only | Electron | Electron |
 
 **Laborer is the only tool purpose-built for developers who run multiple AI agents in parallel.**
@@ -163,7 +154,6 @@ Developers with unlimited AI subscriptions have **no tooling to fully leverage t
 
 2. **Local-first, API-first.** Everything runs on the developer's machine. No cloud dependency. The API is the primary interface; the UI is a client. Future integrations (Slack bots, CLI, CI) are architectural no-ops.
 
-3. **Progressive complexity.** A developer can start by creating a workspace and opening a terminal. PRDs, MCP integration, Docker containers, and multi-window layouts are discoverable but never required.
 
 4. **Keyboard-first.** Tmux-style shortcuts (Ctrl+B prefix), vim-inspired navigation, zero mouse dependency for power users.
 
@@ -174,7 +164,6 @@ Developers with unlimited AI subscriptions have **no tooling to fully leverage t
 **Late alpha / early beta.** Core features are implemented and working:
 
 - 886 commits, 65+ issues completed, 28 PRDs written
-- Fully functional panel system, workspace management, terminal emulation, diff viewer, PRD editor, MCP server, Docker support, multi-window, auto-updates
 - Daily-driven by the author for real development work
 - macOS primary, cross-platform architecture
 

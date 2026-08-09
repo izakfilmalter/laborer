@@ -335,29 +335,13 @@ interface PanelActions {
    */
   readonly toggleFullscreenPane: () => void
   /**
-   * Toggle a review pane for a workspace.
-   *
-   * When toggled ON: splits right from the given pane with a new review
-   * pane showing the same workspace's PR review findings and comments.
-   * When toggled OFF: closes the existing review pane for that workspace.
-   *
-   * Unlike diff and dev server panes (which are sidebars on a terminal
-   * pane), the review pane is a standalone pane in the layout tree.
-   *
-   * @param paneId - The ID of the pane to split from (used to inherit workspaceId)
-   * @returns Whether the review pane is now visible (true = toggled on)
-   */
-  readonly toggleReviewPane: (paneId: string) => boolean
-
-  /**
    * Toggle a file tree pane for a workspace.
    *
    * When toggled ON: shows a left-side panel with the workspace's file
    * tree alongside the main content.
    * When toggled OFF: closes the file tree panel.
    *
-   * The tree panel is forced to the left side, unlike diff and review
-   * which are on the right.
+   * The tree panel is forced to the left side, unlike diff on the right.
    *
    * @param paneId - The ID of the pane (used to inherit workspaceId)
    * @returns Whether the tree pane is now visible (true = toggled on)

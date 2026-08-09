@@ -139,7 +139,6 @@ describe('RepositoryWatchCoordinator', () => {
           id: 'project-watch-all-a',
           repoPath: repoA,
           name: 'watch-all-a',
-          brrrConfig: null,
         })
       )
       store.commit(
@@ -147,7 +146,6 @@ describe('RepositoryWatchCoordinator', () => {
           id: 'project-watch-all-b',
           repoPath: repoB,
           name: 'watch-all-b',
-          brrrConfig: null,
         })
       )
 

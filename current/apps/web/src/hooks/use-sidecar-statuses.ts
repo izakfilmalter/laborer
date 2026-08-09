@@ -47,7 +47,6 @@ const useIpcEvents = Boolean(getDesktopBridge()) && import.meta.env.PROD
 /**
  * Health endpoint paths for each service in dev mode.
  * These are proxied by Vite to the respective service's root endpoint.
- * MCP uses stdio and has no HTTP health endpoint.
  */
 const DEV_HEALTH_ENDPOINTS: Partial<Record<SidecarName, string>> = {
   server: '/server-health',

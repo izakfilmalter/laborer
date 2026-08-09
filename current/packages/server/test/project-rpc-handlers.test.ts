@@ -10,7 +10,6 @@ const projects = [
     name: 'laborer',
     repoId: null,
     repoPath: '/repo/laborer',
-    brrrConfig: null,
   },
   {
     canonicalGitCommonDir: null,
@@ -18,7 +17,6 @@ const projects = [
     name: 'website',
     repoId: null,
     repoPath: '/repo/website',
-    brrrConfig: '.brrrrc',
   },
 ] as const
 
@@ -42,13 +40,11 @@ describe('project.list RPC handler', () => {
           id: 'project-1',
           name: 'laborer',
           repoPath: '/repo/laborer',
-          brrrConfig: undefined,
         },
         {
           id: 'project-2',
           name: 'website',
           repoPath: '/repo/website',
-          brrrConfig: '.brrrrc',
         },
       ])
     }).pipe(Effect.provide(ProjectRegistryTestLayer))

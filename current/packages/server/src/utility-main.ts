@@ -69,19 +69,14 @@ import {
   FileWatcherClient,
   FileWatcherRpcPort,
 } from './services/file-watcher-client.js'
-import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStore, LaborerStoreLive } from './services/laborer-store.js'
-import { LinearTaskImporter } from './services/linear-task-importer.js'
 import { PrWatcher } from './services/pr-watcher.js'
-import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
-import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SandboxProvider } from './services/sandbox-provider.js'
 import { SandboxProviderRoutedLayer } from './services/sandbox-provider-router.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
-import { TaskManager } from './services/task-manager.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorkspaceSyncService } from './services/workspace-sync-service.js'
@@ -280,10 +275,8 @@ const DeferredLeafLayers = Layer.mergeAll(
  * Services depending on LaborerStore + leaf layers.
  */
 const DeferredGroup1aLayers = Layer.mergeAll(
-  TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
-  PrdStorageService.layer,
   FileService.layer,
   PrWatcher.layer
 )
@@ -301,12 +294,7 @@ const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
   Layer.provideMerge(DeferredGroup1Layers)
 )
 
-const DeferredGroup2Layers = Layer.mergeAll(
-  GithubTaskImporter.layer,
-  LinearTaskImporter.layer,
-  ReviewCommentFetcher.layer,
-  RepositoryWatchCoordinator.layer
-)
+const DeferredGroup2Layers = Layer.mergeAll(RepositoryWatchCoordinator.layer)
 
 const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
@@ -328,16 +316,8 @@ const DeferredServicesProxyLive = Layer.scopedContext(
     const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
       check: () => Effect.succeed({ available: false }),
     })
-    const githubTaskImporter =
-      yield* makeRefDelegatingService(GithubTaskImporter)
-    const linearTaskImporter =
-      yield* makeRefDelegatingService(LinearTaskImporter)
     const prWatcher = yield* makeRefDelegatingService(PrWatcher)
-    const prdStorageService = yield* makeRefDelegatingService(PrdStorageService)
     const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
-    const reviewCommentFetcher =
-      yield* makeRefDelegatingService(ReviewCommentFetcher)
-    const taskManager = yield* makeRefDelegatingService(TaskManager)
     const terminalClient = yield* makeRefDelegatingService(TerminalClient)
     const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
     const workspaceSyncService =
@@ -389,28 +369,11 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           Context.get(stackCtx, ContainerService)
         )
         yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
-        yield* Ref.set(
-          githubTaskImporter.ref,
-          Context.get(stackCtx, GithubTaskImporter)
-        )
-        yield* Ref.set(
-          linearTaskImporter.ref,
-          Context.get(stackCtx, LinearTaskImporter)
-        )
         yield* Ref.set(prWatcher.ref, Context.get(stackCtx, PrWatcher))
-        yield* Ref.set(
-          prdStorageService.ref,
-          Context.get(stackCtx, PrdStorageService)
-        )
         yield* Ref.set(
           projectRegistry.ref,
           Context.get(stackCtx, ProjectRegistry)
         )
-        yield* Ref.set(
-          reviewCommentFetcher.ref,
-          Context.get(stackCtx, ReviewCommentFetcher)
-        )
-        yield* Ref.set(taskManager.ref, Context.get(stackCtx, TaskManager))
         yield* Ref.set(
           workspaceProvider.ref,
           Context.get(stackCtx, WorkspaceProvider)
@@ -483,13 +446,8 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Context.add(ContainerService, containerService.proxy),
       Context.add(FileService, fileService.proxy),
       Context.add(DockerDetection, dockerDetection.proxy),
-      Context.add(GithubTaskImporter, githubTaskImporter.proxy),
-      Context.add(LinearTaskImporter, linearTaskImporter.proxy),
       Context.add(PrWatcher, prWatcher.proxy),
-      Context.add(PrdStorageService, prdStorageService.proxy),
       Context.add(ProjectRegistry, projectRegistry.proxy),
-      Context.add(ReviewCommentFetcher, reviewCommentFetcher.proxy),
-      Context.add(TaskManager, taskManager.proxy),
       Context.add(TerminalClient, terminalClient.proxy),
       Context.add(WorkspaceProvider, workspaceProvider.proxy),
       Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
@@ -573,10 +531,8 @@ async function main(): Promise<void> {
   //   @see Issue #13: Server-to-terminal MessagePort channel
   //
   // - `port`: Additional RPC port for inter-process communication.
-  //   Serves `LaborerRpcs` on the shared context (same LaborerStore,
-  //   same deferred services) via a new MessagePort. Used by MCP
-  //   utility process to call server RPCs via MessagePort.
-  //   @see Issue #15: MCP as utility process
+  //   Serves `LaborerRpcs` on the shared context (same LaborerStore and
+  //   deferred services) via a new MessagePort.
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
     if (data?.type === 'sync-port' && event.ports.length > 0) {
@@ -636,8 +592,8 @@ async function main(): Promise<void> {
       handleDaytonaTerminalDataPort(dataPort, terminalId)
     } else if (data?.type === 'port' && event.ports.length > 0) {
       // Additional RPC port — serve LaborerRpcs on it.
-      // This enables other utility processes (e.g., MCP) to call
-      // server RPCs via a direct MessagePort instead of HTTP.
+      // This enables other utility processes to call server RPCs via a
+      // direct MessagePort instead of HTTP.
       const additionalRpcPort = event.ports[0] as RpcMessagePort
       additionalRpcPort.start?.()
       console.log(

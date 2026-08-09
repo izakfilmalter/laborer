@@ -57,7 +57,6 @@ import {
 import { computeMinimizedTargetLayout } from '@/panels/workspace-minimize-layout'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
-import { ReviewPane } from '@/panes/review-pane'
 import { TreePane } from '@/panes/tree-pane'
 import {
   PanelTabCloseConfirmDialog,
@@ -380,7 +379,7 @@ function WorkspacePickerItem({
 /**
  * Renders the main content area of a workspace frame. Dispatches between:
  * - Empty workspace state (no panel tabs)
- * - Side panel layout (diff/review open alongside main content)
+ * - Side panel layout (tree/diff open alongside main content)
  * - Standard panel manager rendering
  */
 function WorkspaceContent({
@@ -392,7 +391,6 @@ function WorkspaceContent({
   mainPanelSize,
   sidePanelSize,
   showDiff,
-  showReview,
   showTree,
   closeSidePanel,
   tabBar,
@@ -405,7 +403,6 @@ function WorkspaceContent({
   readonly mainPanelSize: string
   readonly sidePanelSize: string
   readonly showDiff: boolean
-  readonly showReview: boolean
   readonly showTree: boolean
   readonly closeSidePanel: (
     togglePanel: ((paneId: string) => boolean) | undefined
@@ -469,21 +466,6 @@ function WorkspaceContent({
             >
               <DiffPane
                 onClose={() => closeSidePanel(actions?.toggleDiffPane)}
-                workspaceId={workspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
-        {showReview && workspaceId !== undefined && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSize}
-              minSize="15%"
-            >
-              <ReviewPane
-                onClose={() => closeSidePanel(actions?.toggleReviewPane)}
                 workspaceId={workspaceId}
               />
             </ResizablePanel>
@@ -582,7 +564,6 @@ function WorkspaceFrame({
   isMinimized: isMinimizedProp,
   onToggleMinimize,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   tileLeaf,
   parentDirection,
@@ -601,7 +582,6 @@ function WorkspaceFrame({
   /** Toggle callback paired with the controlled `isMinimized` prop. */
   readonly onToggleMinimize?: (() => void) | undefined
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
   readonly parentDirection?: SplitDirection | undefined
@@ -703,11 +683,9 @@ function WorkspaceFrame({
 
   const showDiff =
     workspaceId !== undefined && diffWorkspaceIds.includes(workspaceId)
-  const showReview =
-    workspaceId !== undefined && reviewWorkspaceIds.includes(workspaceId)
   const showTree =
     workspaceId !== undefined && treeWorkspaceIds.includes(workspaceId)
-  const hasSidePanels = showDiff || showReview || showTree
+  const hasSidePanels = showDiff || showTree
   const workspacePaneId = useMemo(() => {
     if (activePaneInFrame) {
       return activePaneId
@@ -729,8 +707,7 @@ function WorkspaceFrame({
   )
 
   // Calculate default sizes based on how many side panels are open
-  const sidePanelCount =
-    (showTree ? 1 : 0) + (showDiff ? 1 : 0) + (showReview ? 1 : 0)
+  const sidePanelCount = (showTree ? 1 : 0) + (showDiff ? 1 : 0)
   const { sidePanelSize, mainPanelSize } = computeSidePanelSizes(sidePanelCount)
 
   // Panel tab bar items and active tab layout (hierarchical mode only)
@@ -861,7 +838,6 @@ function WorkspaceFrame({
         isMinimized={isMinimized}
         onHeaderClick={handleHeaderClick}
         onMinimize={handleMinimize}
-        reviewIsOpen={showReview}
         subLayout={subLayout}
         treeIsOpen={showTree}
         workspaceId={workspaceId}
@@ -875,7 +851,6 @@ function WorkspaceFrame({
           mainPanelSize={mainPanelSize}
           panelTabId={tileLeaf?.activePanelTabId}
           showDiff={showDiff}
-          showReview={showReview}
           showTree={showTree}
           sidePanelSize={sidePanelSize}
           tabBar={tabBarElement}
@@ -907,8 +882,6 @@ function getPanelTabLabel(layout: PanelNode): string {
         return 'Terminal'
       case 'diff':
         return 'Diff'
-      case 'review':
-        return 'Review'
       case 'devServerTerminal':
         return 'Dev Server'
       default:
@@ -939,7 +912,6 @@ function WorkspaceTileLeafFrame({
   activePaneId,
   index,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
   isMinimized,
@@ -949,7 +921,6 @@ function WorkspaceTileLeafFrame({
   readonly activePaneId: string | null
   readonly index: number
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean | undefined
@@ -981,7 +952,6 @@ function WorkspaceTileLeafFrame({
       isMinimized={isMinimized}
       onToggleMinimize={onToggleMinimize}
       parentDirection={parentDirection}
-      reviewWorkspaceIds={reviewWorkspaceIds}
       subLayout={subLayout}
       tileLeaf={leaf}
       treeWorkspaceIds={treeWorkspaceIds}
@@ -1004,7 +974,6 @@ function WorkspaceTileResizableChild({
   defaultSize,
   index,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
   isMinimized = false,
@@ -1016,7 +985,6 @@ function WorkspaceTileResizableChild({
   readonly defaultSize: number
   readonly index: number
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean
@@ -1058,7 +1026,6 @@ function WorkspaceTileResizableChild({
           isMinimized={isLeaf ? isMinimized : undefined}
           onToggleMinimize={isLeaf ? handleToggleMinimize : undefined}
           parentDirection={parentDirection}
-          reviewWorkspaceIds={reviewWorkspaceIds}
           tileNode={tileNode}
           treeWorkspaceIds={treeWorkspaceIds}
         />
@@ -1125,13 +1092,11 @@ function WorkspaceTileSplitGroup({
   tileNode,
   activePaneId,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
 }: {
   readonly tileNode: WorkspaceTileSplit
   readonly activePaneId: string | null
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
 }) {
   const groupRef = useRef<GroupImperativeHandle | null>(null)
@@ -1270,7 +1235,6 @@ function WorkspaceTileSplitGroup({
             onToggleMinimize={handleToggleMinimize}
             parentDirection={tileNode.direction}
             registerPanelHandle={registerPanelHandle}
-            reviewWorkspaceIds={reviewWorkspaceIds}
             tileNode={child}
             treeWorkspaceIds={treeWorkspaceIds}
           />
@@ -1296,7 +1260,6 @@ function WorkspaceTileRenderer({
   activePaneId,
   index = 0,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   parentDirection,
   isMinimized,
@@ -1306,7 +1269,6 @@ function WorkspaceTileRenderer({
   readonly activePaneId: string | null
   readonly index?: number
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean | undefined
@@ -1323,7 +1285,6 @@ function WorkspaceTileRenderer({
           leaf={tileNode}
           onToggleMinimize={onToggleMinimize}
           parentDirection={parentDirection}
-          reviewWorkspaceIds={reviewWorkspaceIds}
           treeWorkspaceIds={treeWorkspaceIds}
         />
       </TabErrorBoundary>
@@ -1339,7 +1300,6 @@ function WorkspaceTileRenderer({
     <WorkspaceTileSplitGroup
       activePaneId={activePaneId}
       diffWorkspaceIds={diffWorkspaceIds}
-      reviewWorkspaceIds={reviewWorkspaceIds}
       tileNode={tileNode}
       treeWorkspaceIds={treeWorkspaceIds}
     />
@@ -1364,13 +1324,11 @@ export function WorkspaceFrames({
   activePaneId,
   workspaceTileLayout,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  reviewWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
 }: {
   readonly activePaneId: string | null
   readonly workspaceTileLayout: WorkspaceTileNode
   readonly diffWorkspaceIds?: readonly string[]
-  readonly reviewWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
 }) {
   // Wire up a monitor for workspace frame drag-and-drop reordering.
@@ -1428,7 +1386,6 @@ export function WorkspaceFrames({
     <WorkspaceTileRenderer
       activePaneId={activePaneId}
       diffWorkspaceIds={diffWorkspaceIds}
-      reviewWorkspaceIds={reviewWorkspaceIds}
       tileNode={workspaceTileLayout}
       treeWorkspaceIds={treeWorkspaceIds}
     />

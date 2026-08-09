@@ -44,15 +44,10 @@ All tests follow the project's TDD philosophy: test observable behavior through 
 14. As a developer, I want in-memory RPC integration tests for `project.remove`, so that project removal and associated data cleanup are verified through the RPC contract.
 15. As a developer, I want in-memory RPC integration tests for `config.get`, so that config resolution (walk-up, global fallback, provenance metadata) is verified through the RPC contract with real service layers.
 16. As a developer, I want in-memory RPC integration tests for `config.update`, so that config writing is verified through the RPC contract with real service layers.
-17. As a developer, I want in-memory RPC integration tests for `task.create`, so that manual task creation (with optional PRD link) is verified through the RPC contract.
-18. As a developer, I want in-memory RPC integration tests for `task.updateStatus` and `task.remove`, so that task state transitions and deletion are verified through the RPC contract.
-19. As a developer, I want in-memory RPC integration tests for `task.importGithub`, so that GitHub issue import (with deduplication and PR filtering) is verified through the RPC contract.
-20. As a developer, I want in-memory RPC integration tests for `task.importLinear`, so that Linear issue import (with deduplication and filter construction) is verified through the RPC contract.
 21. As a developer, I want in-memory RPC integration tests for `diff.refresh`, so that git diff computation and store update are verified through the RPC contract.
 22. As a developer, I want in-memory RPC integration tests for `terminal.spawn`, so that terminal spawning via TerminalClient proxy is verified through the RPC contract.
 23. As a developer, I want in-memory RPC integration tests for `editor.open`, so that editor launch behavior is verified through the RPC contract.
 24. As a developer, I want in-memory RPC integration tests for `health.check`, so that the uptime response is verified through the RPC contract.
-25. As a developer, I want in-memory RPC integration tests for `rlph.startLoop`, `rlph.writePRD`, `rlph.review`, and `rlph.fix`, so that RLPH terminal command orchestration is verified through the RPC contract.
 26. As a developer, I want in-memory RPC integration tests for the 8 `TerminalRpcs` endpoints, so that the terminal service's RPC layer is tested end-to-end.
 27. As a developer, I want all tests to use `assert` from `@effect/vitest` instead of `expect` from vitest (in Effect-based tests), so that the test assertion style is consistent with the Effect ecosystem.
 
@@ -67,7 +62,6 @@ All tests follow the project's TDD philosophy: test observable behavior through 
 7. Confirm no test mocks internal Effect services with `vi.fn()` -- mocking is limited to system boundaries (`fetch` for external APIs, `process.env` for environment).
 8. Verify that all `@effect/vitest` tests use `assert` (not `expect`) for consistency.
 9. Ensure test file naming is consistent: `<module-name>.test.ts` for all test files.
-10. Confirm the `prd-schema.test.ts` has been moved from `packages/server` to `packages/shared` and removed from the server package.
 
 ## Implementation Decisions
 
@@ -106,12 +100,9 @@ New test file `packages/shared/test/schema.test.ts` will test the event-to-mater
 - **Project events**: `ProjectCreated` inserts, `ProjectRemoved` deletes
 - **Workspace events**: `WorkspaceCreated` inserts, `WorkspaceStatusChanged` updates, `WorkspaceDestroyed` deletes
 - **Diff events**: `DiffUpdated` upserts, `DiffCleared` deletes
-- **Task events**: `TaskCreated` inserts, `TaskStatusChanged` updates, `TaskRemoved` deletes
-- **PRD events**: `PrdCreated` inserts, `PrdStatusChanged` updates, `PrdRemoved` deletes
 - **Panel layout events**: `LayoutSplit` upserts, `LayoutPaneClosed` upserts, `LayoutPaneAssigned` upserts, `LayoutRestored` upserts
 - **Deprecated terminal events**: All 6 terminal events produce no-op materializers (empty array)
 
-Each test commits an event, queries the corresponding table, and verifies the expected row state. The `prd-schema.test.ts` file will be moved from `packages/server/test/` to `packages/shared/test/` and expanded.
 
 Vitest configuration will be added to `packages/shared` (`vitest.config.ts`, test script in `package.json`).
 
@@ -128,7 +119,6 @@ const TestRpcClient = Layer.scoped(
 )
 ```
 
-All 19 LaborerRpcs endpoints will be tested through this client. For endpoints that call external APIs (`task.importGithub`, `task.importLinear`), only `fetch` will be mocked (system boundary). For endpoints that proxy to TerminalClient (`terminal.spawn`, `rlph.*`), a stub TerminalClient layer will be provided (system boundary -- it's a separate service communicating over HTTP).
 
 Similarly, a `packages/terminal/test/rpc-integration.test.ts` will test all 8 TerminalRpcs endpoints using the same `RpcTest.makeClient` pattern with the real `TerminalManager.layer` + `PtyHostClient.layer`.
 
@@ -163,7 +153,6 @@ A good test:
 
 | Module | Test Type | Prior Art |
 |--------|-----------|-----------|
-| LiveStore schema materializers (shared) | Event commit + table query | `prd-schema.test.ts` (to be moved/expanded) |
 | LaborerRpcs (19 endpoints, server) | In-memory RPC client + real service layers | Effect reference: `rpc-e2e.ts`, `RpcTest.makeClient` |
 | TerminalRpcs (8 endpoints, terminal) | In-memory RPC client + real PtyHostClient/TerminalManager | Effect reference: `rpc-e2e.ts` |
 | ConfigService (server, rewrite) | Effect service integration with real filesystem | Existing `config-service.test.ts` lines 372-669 |
@@ -192,4 +181,3 @@ A good test:
 - The `ensureBunSpawnForNodeTests` shim pattern in `workspace-destroy-origin.test.ts` may be needed in other test files that use `Bun.spawn` internally but run under Node.js via vitest. This should be included in the shared git helpers if needed.
 - The deprecated terminal events in `packages/shared/schema.ts` have no-op materializers. Testing these no-ops is important for backward compatibility -- if someone accidentally adds SQL operations to these materializers, the test should catch it.
 - The `RpcTest.makeClient` approach from the Effect reference is preferred over spinning up a real HTTP server because it tests the handler + service integration without the overhead and complexity of HTTP transport. The HTTP transport layer is Effect's responsibility, not ours.
-- When writing RPC tests for endpoints that need a `TerminalClient` (like `terminal.spawn`, `rlph.*`), create a minimal stub layer that returns canned responses. This is a system boundary mock (the terminal service is a separate process), not an internal collaborator mock.

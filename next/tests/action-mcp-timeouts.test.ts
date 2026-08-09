@@ -6,7 +6,7 @@ import {
   ACTION_MCP_CONTROL_TIMEOUT_MILLIS,
   ACTION_MCP_EXECUTION_TIMEOUT_MILLIS,
   openCodeMcpConfig,
-} from "../src/acp-conversation-prototype/action-mcp-timeouts.ts";
+} from "../src/acp-runtime/action-mcp-timeouts.ts";
 
 const CONTROL_TIMEOUT_WIRING_PATTERN =
   /AbortSignal\.timeout\(\s*ACTION_MCP_CONTROL_TIMEOUT_MILLIS\s*\)/;
@@ -38,17 +38,11 @@ describe("Action MCP execution timeout", () => {
 
     const [adapterSource, serverSource] = await Promise.all([
       readFile(
-        resolve(
-          process.cwd(),
-          "src/acp-conversation-prototype/opencode-v2-acp-adapter.ts"
-        ),
+        resolve(process.cwd(), "src/acp-runtime/opencode-v2-acp-adapter.ts"),
         "utf8"
       ),
       readFile(
-        resolve(
-          process.cwd(),
-          "src/acp-conversation-prototype/action-mcp-server.ts"
-        ),
+        resolve(process.cwd(), "src/acp-runtime/action-mcp-server.ts"),
         "utf8"
       ),
     ]);

@@ -164,6 +164,7 @@ describe("Chat plane walking skeleton", () => {
 
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([activation]),
+          channelId: "C1",
           channelMessages: asMessages([activation]),
           id: "slack:C123:123.456",
           isDM: false,
@@ -223,6 +224,7 @@ describe("Chat plane walking skeleton", () => {
       Effect.gen(function* () {
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([]),
+          channelId: "C1",
           channelMessages: failingMessages(),
           id: "slack:C123:failure",
           isDM: false,
@@ -281,6 +283,44 @@ describe("Chat plane walking skeleton", () => {
         assert.instanceOf(failures.streamReply, ChatPlaneOperationError);
         assert.equal(failures.streamReply.operation, "thread.post");
         assert.equal(failures.streamReply.reason, "Chat SDK operation failed");
+      })
+    )
+  );
+
+  it.effect("keeps workspace identity on background thread publication", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const publications: string[][] = [];
+        const sdk: ChatSdkLike = {
+          initialize: () => Promise.resolve(),
+          onNewMention: () => undefined,
+          onSubscribedMessage: () => undefined,
+          postToThread: (workspaceId, channelId, rootTs, output) => {
+            publications.push([workspaceId, channelId, rootTs, output]);
+            return Promise.resolve();
+          },
+          shutdown: () => Promise.resolve(),
+        };
+
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const service = yield* ChatPlane;
+            yield* service.postToThread(
+              "TSECOND",
+              "CSHARED",
+              "123.456",
+              "execution complete"
+            );
+          }),
+          makeChatPlaneLayer({
+            handler: placeholderMentionHandler,
+            makeSdk: () => sdk,
+          })
+        );
+
+        assert.deepStrictEqual(publications, [
+          ["TSECOND", "CSHARED", "123.456", "execution complete"],
+        ]);
       })
     )
   );
@@ -375,6 +415,7 @@ describe("Chat plane walking skeleton", () => {
                 await mentionHandler(
                   {
                     allMessages: asMessages([activation]),
+                    channelId: "CSHARED",
                     channelMessages: asMessages([activation]),
                     id: "slack:CSHARED:123.456",
                     isDM: false,
@@ -491,6 +532,7 @@ describe("Chat plane walking skeleton", () => {
           });
           const baseThread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([activation]),
             id: "slack:C1:10.000",
             isDM: false,
@@ -562,6 +604,7 @@ describe("Chat plane walking skeleton", () => {
           const turns: ChatPlaneTurn[] = [];
           const thread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([
               activation,
               contextTwo,
@@ -661,6 +704,7 @@ describe("Chat plane walking skeleton", () => {
             activation,
             message("33.000", "too late"),
           ]),
+          channelId: "C1",
           channelMessages: asMessages([]),
           id: "slack:C1:30.000",
           isDM: false,
@@ -714,6 +758,7 @@ describe("Chat plane walking skeleton", () => {
         const turns: ChatPlaneTurn[] = [];
         const thread: ChatSdkThreadLike = {
           allMessages: asMessages([]),
+          channelId: "C1",
           channelMessages: asMessages([]),
           id: "slack:C1:40.000",
           isDM: false,
@@ -773,6 +818,7 @@ describe("Chat plane walking skeleton", () => {
           let shouldFail = true;
           const thread: ChatSdkThreadLike = {
             allMessages: asMessages([activation]),
+            channelId: "C1",
             channelMessages: asMessages([activation]),
             id: "slack:C1:50.000",
             isDM: false,

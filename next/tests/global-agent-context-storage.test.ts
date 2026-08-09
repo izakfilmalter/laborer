@@ -22,14 +22,14 @@ import {
   USER_PROFILES_DIRECTORY_NAME,
   userProfilePath,
   WORKSPACE_MEMORY_FILE_NAME,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { withCrossProcessContextLocks } from "../src/acp-conversation-prototype/context-lock.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { withCrossProcessContextLocks } from "../src/acp-runtime/context-lock.ts";
 import {
   laborerMemoryMcpAuthority,
   makeLaborerMemoryMcpServerConfiguration,
   makeLaborerMemoryStore,
   prepareLaborerMemoryMcpRegistration,
-} from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/memory-mcp.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const ownerOnly = (mode: number): boolean => mode % 0o100 === 0;

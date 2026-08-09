@@ -7,7 +7,7 @@ import { makeDevelopmentDaemonSupervisor } from "./supervisor.ts";
 const WATCH_DIRECTORIES = [
   "src/adapters",
   "src/slack",
-  "src/acp-conversation-prototype",
+  "src/acp-runtime",
   "src/prototype",
 ] as const;
 const DEBOUNCE_MILLIS = 150;

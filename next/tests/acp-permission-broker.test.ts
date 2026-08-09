@@ -10,7 +10,7 @@ import {
   type AcpAuthorityRepository,
   AcpPermissionAuthorityRecord,
   makeAcpAuthorityRepository,
-} from "../src/acp-conversation-prototype/acp-authority.ts";
+} from "../src/acp-runtime/acp-authority.ts";
 import {
   ACP_PERMISSION_ALLOW_ACTION_ID,
   ACP_PERMISSION_REJECT_ACTION_ID,
@@ -19,7 +19,7 @@ import {
   type AcpPermissionPresenter,
   type AcpPermissionTurnAuthority,
   makeAcpPermissionBroker,
-} from "../src/acp-conversation-prototype/acp-permission-broker.ts";
+} from "../src/acp-runtime/acp-permission-broker.ts";
 import { HandlerFailure } from "../src/prototype/errors.ts";
 import { makeSlackAcpPermissionPresenter } from "../src/slack/acp-permission-presenter.ts";
 import {

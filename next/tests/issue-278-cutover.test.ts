@@ -46,7 +46,7 @@ describe("issue #278 primary Cluster cutover", () => {
         "utf8"
       ),
       readFile(
-        new URL("../src/slack/acp-workspace-runner.ts", import.meta.url),
+        new URL("../src/acp-runtime/workspace-runtime.ts", import.meta.url),
         "utf8"
       ),
     ]);

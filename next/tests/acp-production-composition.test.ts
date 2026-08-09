@@ -14,12 +14,19 @@ import {
   Schema,
   Scope,
 } from "effect";
-import type { AcpPermissionBroker } from "../src/acp-conversation-prototype/acp-permission-broker.ts";
-import { laborerActionMcpServerName } from "../src/acp-conversation-prototype/action-mcp.ts";
+import type { AcpPermissionBroker } from "../src/acp-runtime/acp-permission-broker.ts";
+import { laborerActionMcpServerName } from "../src/acp-runtime/action-mcp.ts";
 import {
   prepareAcpAgentContextSources,
   userProfilePath,
-} from "../src/acp-conversation-prototype/agent-context.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import {
+  type AcpWorkspaceHealth,
+  AcpWorkspaceStartupError,
+  makeAcpSlackWorkspaceRunner,
+  makeProductionAcpSlackWorkspaceRuntime,
+  makeProductionAcpWorkspaceApplication,
+} from "../src/acp-runtime/workspace-runtime.ts";
 import { DealWithBugActionResult } from "../src/action-catalog.ts";
 import type { OpenCodeSessionClient } from "../src/adapters/opencode-agents.ts";
 import { makeNodeRootDurableRuntime } from "../src/durable-runtime/node-root.ts";
@@ -31,13 +38,6 @@ import type { SlackGatewayShape } from "../src/prototype/runtime.ts";
 import { normalizedEvent } from "../src/prototype/scenario.ts";
 import { PrototypeStore } from "../src/prototype/store.ts";
 import type { ImplementationAgentShape } from "../src/reference-coding-application.ts";
-import {
-  type AcpWorkspaceHealth,
-  AcpWorkspaceStartupError,
-  makeAcpSlackWorkspaceRunner,
-  makeProductionAcpSlackWorkspaceRuntime,
-  makeProductionAcpWorkspaceApplication,
-} from "../src/slack/acp-workspace-runner.ts";
 import type {
   SlackDaemonConfig,
   SlackRuntimeIdentity,
@@ -5367,12 +5367,12 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
 
   it.effect("cuts the single normal receiver over to production ACP", () =>
     Effect.gen(function* () {
-      const [packageSource, liveGenerationSource, liveSource] =
+      const [packageSource, chatCompositionSource, liveSource] =
         yield* Effect.promise(() =>
           Promise.all([
             readFile(join(process.cwd(), "package.json"), "utf8"),
             readFile(
-              join(process.cwd(), "src/slack/live-generation.ts"),
+              join(process.cwd(), "src/acp-runtime/chat-live.ts"),
               "utf8"
             ),
             readFile(join(process.cwd(), "src/slack/live.ts"), "utf8"),
@@ -5386,20 +5386,19 @@ describe.concurrent("issues #244-#257 production ACP acceptance", () => {
         "node --env-file-if-exists=.env.local src/slack/live.ts"
       );
       assert.ok(!("start:slack:acp" in packageJson.scripts));
-      assert.ok(liveSource.includes("acquireLiveSlackClientGeneration"));
-      assert.ok(liveGenerationSource.includes("makeAcpSlackWorkspaceRunner"));
+      assert.ok(liveSource.includes("runAcpChatDaemon"));
+      assert.ok(chatCompositionSource.includes("makeLiveChatPlaneLayer"));
+      assert.ok(chatCompositionSource.includes("makeAcpChatWorkHandler"));
       assert.ok(
-        liveGenerationSource.includes("makeSlackNativeStreamCapability")
-      );
-      assert.ok(
-        liveGenerationSource.includes("slackConversationStreamDeliveryPolicy")
-      );
-      assert.ok(!liveGenerationSource.includes("makeSlackWorkspaceRunner"));
-      assert.ok(
-        !liveGenerationSource.includes(
-          "makeReferenceCodingWorkspaceApplication"
+        chatCompositionSource.includes(
+          "routeParticipantTurnsThroughDurableRuntime: false"
         )
       );
+      assert.ok(!chatCompositionSource.includes("makePrototypeHarness"));
+      assert.ok(
+        !chatCompositionSource.includes("makeSlackNativeStreamCapability")
+      );
+      assert.ok(!chatCompositionSource.includes("acpPermissionUiOutbox"));
     })
   );
 }, 60_000);

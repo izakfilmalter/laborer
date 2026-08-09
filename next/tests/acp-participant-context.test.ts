@@ -9,18 +9,18 @@ import {
   pipe,
   Schema,
 } from "effect";
-import { makeAcpConversationAgent } from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+import { makeAcpConversationAgent } from "../src/acp-runtime/acp-conversation-agent.ts";
 import {
   prepareAcpAgentContextSources,
   renderAcpPrompt,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeAcpConversationCanary } from "../src/acp-runtime/canary-composition.ts";
 import {
   makeBoundedSlackParticipantLookup,
   makeSlackParticipantLookup,
   SLACK_PARTICIPANT_LOOKUP_WORKSPACE_CONCURRENCY_LIMIT,
   SLACK_VISIBLE_NAME_CHARACTER_LIMIT,
-} from "../src/acp-conversation-prototype/slack-participant-lookup.ts";
+} from "../src/acp-runtime/slack-participant-lookup.ts";
 import { MessageId, NormalizedMessage } from "../src/prototype/domain.ts";
 import {
   makeSlackActivationAcknowledger,

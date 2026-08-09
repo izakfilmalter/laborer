@@ -53,6 +53,11 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   readonly application: ApplicationShape;
   readonly actionCatalogFingerprint: string;
   readonly rootIdentity: string;
+  readonly publishExternalOutput?: (
+    conversationId: string,
+    output: ApplicationPublicOutput
+  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  readonly routeParticipantTurnsThroughDurableRuntime?: boolean;
   readonly runtime: RootDurableRuntimeShape;
   readonly workspaceId: string;
 }) {
@@ -79,6 +84,27 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
       handle: (event) =>
         Effect.gen(function* () {
           if (event._tag === "ExternalInput") {
+            if (options.routeParticipantTurnsThroughDurableRuntime === false) {
+              const outputs: ApplicationPublicOutput[] = [];
+              yield* options.application.handle(
+                event,
+                (output) =>
+                  Effect.sync(() => outputs.push(output)).pipe(
+                    Effect.andThen(
+                      options.publishExternalOutput?.(
+                        event.conversationId,
+                        output
+                      ) ?? Effect.void
+                    )
+                  ),
+                () =>
+                  Effect.succeed({
+                    decision: { _tag: "Accepted", eventId: event.eventId },
+                    scheduling: "AlreadyDurable",
+                  })
+              );
+              return outputs;
+            }
             // The root owner makes the Action event durable before handing it
             // back to the Runner. The Runner remains responsible for ordering
             // the Application invocation and publishing any resulting output.
@@ -146,6 +172,9 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             options.application.handle(event, publish, acceptEvent)
           )
         );
+      }
+      if (options.routeParticipantTurnsThroughDurableRuntime === false) {
+        return options.application.handle(event, publish, acceptEvent);
       }
       return Effect.acquireUseRelease(
         Effect.gen(function* () {

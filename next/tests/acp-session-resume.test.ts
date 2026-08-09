@@ -6,12 +6,12 @@ import { Effect, Exit, Fiber, Schema, Scope } from "effect";
 import {
   type AcpConversationAgentOptions,
   makeAcpConversationAgent,
-} from "../src/acp-conversation-prototype/acp-conversation-agent.ts";
+} from "../src/acp-runtime/acp-conversation-agent.ts";
 import {
   prepareAcpAgentContextSources,
   userProfilePath,
-} from "../src/acp-conversation-prototype/agent-context.ts";
-import { makeLaborerMemoryMcpServerConfiguration } from "../src/acp-conversation-prototype/memory-mcp.ts";
+} from "../src/acp-runtime/agent-context.ts";
+import { makeLaborerMemoryMcpServerConfiguration } from "../src/acp-runtime/memory-mcp.ts";
 import {
   type ApplicationPublicOutput,
   type ApplicationShape,

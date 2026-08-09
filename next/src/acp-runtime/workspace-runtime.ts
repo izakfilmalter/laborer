@@ -1,44 +1,6 @@
 import { dirname } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { Effect, type Layer, Schema, type Scope } from "effect";
-import {
-  type AcpAuthorityRepository,
-  makeAcpAuthorityRepository,
-} from "../acp-conversation-prototype/acp-authority.ts";
-import { preflightReservedMcpNames } from "../acp-conversation-prototype/acp-config-source-inventory.ts";
-import {
-  type AcpConversationAgentOptions,
-  type AcpConversationProcessHealth,
-  makeAcpConversationAgent,
-} from "../acp-conversation-prototype/acp-conversation-agent.ts";
-import {
-  type AcpPermissionBroker,
-  makeAcpPermissionBroker,
-} from "../acp-conversation-prototype/acp-permission-broker.ts";
-import { makeAcpProcessStateRepository } from "../acp-conversation-prototype/acp-process-state.ts";
-import {
-  type AcpProcessSupervisorTestHooks,
-  type AcpWorkspaceSupervisorHealthSnapshot,
-  makeAcpConversationProcessSupervisor,
-} from "../acp-conversation-prototype/acp-process-supervisor.ts";
-import {
-  laborerActionMcpServerName,
-  makeLaborerActionMcpBridge,
-} from "../acp-conversation-prototype/action-mcp.ts";
-import { prepareAcpAgentContextSources } from "../acp-conversation-prototype/agent-context.ts";
-import {
-  laborerMemoryOpenCodePermission,
-  makeLaborerMemoryMcpServerConfiguration,
-} from "../acp-conversation-prototype/memory-mcp.ts";
-import {
-  OPEN_CODE_COMMAND,
-  openCodeAcpProcessOptions,
-} from "../acp-conversation-prototype/open-code-acp-process.ts";
-import { preflightEffectiveOpenCodeMcpNames } from "../acp-conversation-prototype/opencode-config-preflight.ts";
-import {
-  makeSlackParticipantLookup,
-  type SlackParticipantLookupShape,
-} from "../acp-conversation-prototype/slack-participant-lookup.ts";
 import type { ApplicationShape } from "../application.ts";
 import { applicationThroughRootConversationRuntime } from "../durable-runtime/conversation-application.ts";
 import { conversationCapabilitiesForRootRuntime } from "../durable-runtime/reference-coding-application.ts";
@@ -57,25 +19,64 @@ import type {
 import { makePrototypeHarness } from "../prototype/runtime.ts";
 import { makeFileStoreLayer, type PrototypeStore } from "../prototype/store.ts";
 import type { ConversationAgentShape } from "../reference-coding-application.ts";
-import { makeSlackAcpPermissionPresenter } from "./acp-permission-presenter.ts";
-import { makeAcpPermissionTerminalOutbox } from "./acp-permission-ui-outbox.ts";
+import { makeSlackAcpPermissionPresenter } from "../slack/acp-permission-presenter.ts";
+import { makeAcpPermissionTerminalOutbox } from "../slack/acp-permission-ui-outbox.ts";
 import {
   makeAcpRecoveryService,
   startAcpRecoverySocket,
-} from "./acp-recovery.ts";
-import { makeSlackConversationAdoptionHistoryGateway } from "./conversation-adoption-history.ts";
-import { environmentForAcpConversation } from "./handler-environment.ts";
+} from "../slack/acp-recovery.ts";
+import { makeSlackConversationAdoptionHistoryGateway } from "../slack/conversation-adoption-history.ts";
+import { environmentForAcpConversation } from "../slack/handler-environment.ts";
 import {
   cleanupInboundImageStorage,
   makeSlackInboundImageResolver,
-} from "./inbound-images.ts";
-import type { SlackRuntimePaths } from "./runtime-paths.ts";
-import { observePrototypeWorkThreads } from "./work-thread-activity-projection.ts";
+} from "../slack/inbound-images.ts";
+import type { SlackRuntimePaths } from "../slack/runtime-paths.ts";
+import { observePrototypeWorkThreads } from "../slack/work-thread-activity-projection.ts";
 import {
   makeReferenceCodingWorkspaceApplicationWithConversationAgent,
   type ReferenceCodingWorkspaceApplicationDependencies,
-} from "./workspace-runner.ts";
-import type { SlackWorkspaceRuntimeOptions } from "./workspace-startup.ts";
+} from "../slack/workspace-runner.ts";
+import type { SlackWorkspaceRuntimeOptions } from "../slack/workspace-startup.ts";
+import {
+  type AcpAuthorityRepository,
+  makeAcpAuthorityRepository,
+} from "./acp-authority.ts";
+import { preflightReservedMcpNames } from "./acp-config-source-inventory.ts";
+import {
+  type AcpConversationAgentOptions,
+  type AcpConversationProcessHealth,
+  makeAcpConversationAgent,
+} from "./acp-conversation-agent.ts";
+import {
+  type AcpPermissionBroker,
+  type AcpPermissionPresenter,
+  makeAcpPermissionBroker,
+} from "./acp-permission-broker.ts";
+import { makeAcpProcessStateRepository } from "./acp-process-state.ts";
+import {
+  type AcpProcessSupervisorTestHooks,
+  type AcpWorkspaceSupervisorHealthSnapshot,
+  makeAcpConversationProcessSupervisor,
+} from "./acp-process-supervisor.ts";
+import {
+  laborerActionMcpServerName,
+  makeLaborerActionMcpBridge,
+} from "./action-mcp.ts";
+import { prepareAcpAgentContextSources } from "./agent-context.ts";
+import {
+  laborerMemoryOpenCodePermission,
+  makeLaborerMemoryMcpServerConfiguration,
+} from "./memory-mcp.ts";
+import {
+  OPEN_CODE_COMMAND,
+  openCodeAcpProcessOptions,
+} from "./open-code-acp-process.ts";
+import { preflightEffectiveOpenCodeMcpNames } from "./opencode-config-preflight.ts";
+import {
+  makeSlackParticipantLookup,
+  type SlackParticipantLookupShape,
+} from "./slack-participant-lookup.ts";
 
 export class AcpWorkspaceStartupError extends Schema.TaggedErrorClass<AcpWorkspaceStartupError>()(
   "AcpWorkspaceStartupError",
@@ -164,7 +165,7 @@ export interface ProductionAcpWorkspaceApplicationOptions {
       SlackGatewayShape
     >["laborer"]["config"]["application"]
   >;
-  readonly client: WebClient;
+  readonly client?: WebClient;
   readonly environment: NodeJS.ProcessEnv;
   readonly laborerBotId?: string;
   readonly laborerSlackId: string;
@@ -209,9 +210,18 @@ export interface ProductionAcpWorkspaceApplicationDependencies
   readonly permissionBrokerTestHooks?: {
     readonly afterTerminalPublishBeforeLiveCompletion?: () => Effect.Effect<void>;
   };
+  /** Chat-owned, best-effort permission presentation. Supplying this disables
+   * the legacy durable Slack permission UI outbox. */
+  readonly permissionPresenter?: AcpPermissionPresenter;
   readonly permissionTimeoutMillis?: number;
   readonly process?: ProductionProcessOverrides;
   readonly processSupervisorTestHooks?: AcpProcessSupervisorTestHooks;
+  readonly publishExternalOutput?: (
+    conversationId: string,
+    output: import("../application.ts").ApplicationPublicOutput
+  ) => Effect.Effect<void, HandlerFailure | StoreError>;
+  /** Legacy-only participant scheduling. Chat turns must remain at-most-once. */
+  readonly routeParticipantTurnsThroughDurableRuntime?: boolean;
   readonly storeLayer?: Layer.Layer<PrototypeStore, StoreError>;
 }
 
@@ -223,6 +233,7 @@ export interface ProductionAcpWorkspaceApplication {
 
 export const makeProductionAcpWorkspaceApplication = Effect.fn(
   "makeProductionAcpWorkspaceApplication"
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this composition root deliberately makes all runtime ownership visible.
 )(function* (
   options: ProductionAcpWorkspaceApplicationOptions,
   dependencies: ProductionAcpWorkspaceApplicationDependencies = {}
@@ -333,16 +344,26 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
         trustedRoot: options.paths.root,
       })
     : dependencies.makeAuthorityRepository(options);
-  const permissionUiOutbox = yield* makeAcpPermissionTerminalOutbox({
-    path: options.paths.acpPermissionUiOutbox,
-    trustedRoot: options.paths.root,
-  });
-  const permissionBroker = yield* makeAcpPermissionBroker({
-    presenter: makeSlackAcpPermissionPresenter(options.client, {
-      botUserId: options.laborerSlackId,
-      outbox: permissionUiOutbox,
+  const permissionPresenter =
+    dependencies.permissionPresenter ??
+    (options.client === undefined
+      ? undefined
+      : makeSlackAcpPermissionPresenter(options.client, {
+          botUserId: options.laborerSlackId,
+          outbox: yield* makeAcpPermissionTerminalOutbox({
+            path: options.paths.acpPermissionUiOutbox,
+            trustedRoot: options.paths.root,
+          }),
+          workspaceId: options.workspaceId,
+        }));
+  if (permissionPresenter === undefined) {
+    return yield* AcpWorkspaceStartupError.make({
+      reason: "acp-composition-incompatible",
       workspaceId: options.workspaceId,
-    }),
+    });
+  }
+  const permissionBroker = yield* makeAcpPermissionBroker({
+    presenter: permissionPresenter,
     repository: authorityRepository,
     ...(dependencies.permissionBrokerTestHooks === undefined
       ? {}
@@ -392,7 +413,12 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
           memoryMcpServer,
           participantLookup:
             dependencies.participantLookup ??
-            makeSlackParticipantLookup(options.client),
+            (options.client === undefined
+              ? {
+                  lookupVisibleName: (slackUserId) =>
+                    Effect.succeed(slackUserId),
+                }
+              : makeSlackParticipantLookup(options.client)),
           permissionBroker,
           processCleanupObserver: generationContext.observeCleanup,
           processExitObserver: (code, signal) =>
@@ -424,6 +450,20 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     });
   }
   const conversationAgent = supervisor.agent;
+  const conversationAdoptionHistory =
+    dependencies.conversationAdoptionHistory ??
+    (options.client === undefined
+      ? undefined
+      : makeSlackConversationAdoptionHistoryGateway({
+          botId: options.laborerBotId ?? "",
+          botUserId: options.laborerSlackId,
+          client: options.client,
+          resolveImages: makeSlackInboundImageResolver({
+            client: options.client,
+            storageRoot: dirname(options.paths.runnerState),
+          }),
+          workspaceId: options.workspaceId,
+        }));
   const application =
     yield* makeReferenceCodingWorkspaceApplicationWithConversationAgent(
       {
@@ -435,18 +475,9 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
       conversationAgent,
       {
         ...dependencies,
-        conversationAdoptionHistory:
-          dependencies.conversationAdoptionHistory ??
-          makeSlackConversationAdoptionHistoryGateway({
-            botId: options.laborerBotId ?? "",
-            botUserId: options.laborerSlackId,
-            client: options.client,
-            resolveImages: makeSlackInboundImageResolver({
-              client: options.client,
-              storageRoot: dirname(options.paths.runnerState),
-            }),
-            workspaceId: options.workspaceId,
-          }),
+        ...(conversationAdoptionHistory === undefined
+          ? {}
+          : { conversationAdoptionHistory }),
         ...(options.rootRuntime === undefined ||
         options.rootRuntime.actions.actions.length === 0
           ? {}
@@ -465,7 +496,17 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
       : yield* applicationThroughRootConversationRuntime({
           actionCatalogFingerprint: options.rootRuntime.actions.fingerprint,
           application,
+          ...(dependencies.publishExternalOutput === undefined
+            ? {}
+            : { publishExternalOutput: dependencies.publishExternalOutput }),
           rootIdentity: options.root,
+          ...(dependencies.routeParticipantTurnsThroughDurableRuntime ===
+          undefined
+            ? {}
+            : {
+                routeParticipantTurnsThroughDurableRuntime:
+                  dependencies.routeParticipantTurnsThroughDurableRuntime,
+              }),
           runtime: options.rootRuntime,
           workspaceId: options.workspaceId,
         });

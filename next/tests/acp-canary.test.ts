@@ -10,12 +10,12 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { makeAcpConversationCanary } from "../src/acp-conversation-prototype/canary-composition.ts";
+import { makeAcpConversationCanary } from "../src/acp-runtime/canary-composition.ts";
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
   openCodeAcpProcessOptions,
-} from "../src/acp-conversation-prototype/open-code-acp-process.ts";
+} from "../src/acp-runtime/open-code-acp-process.ts";
 import {
   type EmulatedSlackFixture,
   makeSlackActivationAcknowledger,

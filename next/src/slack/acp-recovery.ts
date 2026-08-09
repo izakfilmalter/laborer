@@ -3,7 +3,7 @@ import { constants, type Stats } from "node:fs";
 import { chmod, lstat, open, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { Effect, Schema, type Scope } from "effect";
-import type { AcpWorkspaceSupervisorHealthSnapshot } from "../acp-conversation-prototype/acp-process-supervisor.ts";
+import type { AcpWorkspaceSupervisorHealthSnapshot } from "../acp-runtime/acp-process-supervisor.ts";
 import type { ConversationRecoveryDecisionResult } from "../application.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {

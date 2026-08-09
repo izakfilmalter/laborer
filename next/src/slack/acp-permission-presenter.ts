@@ -5,7 +5,7 @@ import {
   ACP_PERMISSION_REJECT_ACTION_ID,
   type AcpPermissionCategory,
   type AcpPermissionPresenter,
-} from "../acp-conversation-prototype/acp-permission-broker.ts";
+} from "../acp-runtime/acp-permission-broker.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {
   ACP_PERMISSION_UI_DIAGNOSTIC_RETENTION_MILLIS,

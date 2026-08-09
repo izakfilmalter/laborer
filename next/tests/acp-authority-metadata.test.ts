@@ -12,12 +12,12 @@ import {
   AcpPermissionAuthorityRecord,
   makeAcpAuthorityRepository,
   pendingPermissionCapacityExceeded,
-} from "../src/acp-conversation-prototype/acp-authority.ts";
-import { inventoryAcpConfigSources } from "../src/acp-conversation-prototype/acp-config-source-inventory.ts";
+} from "../src/acp-runtime/acp-authority.ts";
+import { inventoryAcpConfigSources } from "../src/acp-runtime/acp-config-source-inventory.ts";
 import {
   extractAcpEffectiveMetadata,
   signAcpEffectiveMetadata,
-} from "../src/acp-conversation-prototype/acp-effective-metadata.ts";
+} from "../src/acp-runtime/acp-effective-metadata.ts";
 import { makeFileApplicationRepository } from "../src/reference-coding-application.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 

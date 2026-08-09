@@ -25,6 +25,7 @@ import {
   actionInputHash,
   productionActionCatalog,
 } from "../action-catalog.ts";
+import type { RegisteredActionCatalog } from "../durable-runtime/action.ts";
 import {
   CancelExecutionResult,
   executionCancelOperationId,
@@ -33,7 +34,10 @@ import {
   PromptExecutionControlResult,
   productionExecutionControlCatalog,
 } from "../execution-control-catalog.ts";
-import { productionGeneratedMutationCatalog } from "../generated-mutation-catalog.ts";
+import {
+  makeGeneratedMutationCatalog,
+  productionGeneratedMutationCatalog,
+} from "../generated-mutation-catalog.ts";
 import { HandlerFailure } from "../prototype/errors.ts";
 import {
   assertSafeFilePath,
@@ -417,6 +421,8 @@ const pauseForActionCorrelation = (): Effect.Effect<void> =>
 export const makeLaborerActionMcpBridge = Effect.fn(
   "makeLaborerActionMcpBridge"
 )(function* (options: {
+  /** The validated user-application catalog projected into ACP. */
+  readonly actionCatalog?: RegisteredActionCatalog;
   readonly authorityRepository: AcpAuthorityRepository;
   readonly bootstrapPath: string;
   readonly capabilityTtlMillis?: number;
@@ -436,6 +442,38 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   readonly trustedRuntimeRoot: string;
   readonly workspaceId: string;
 }): Effect.fn.Return<LaborerActionMcpBridge, HandlerFailure, Scope.Scope> {
+  const actionCatalog = options.actionCatalog;
+  const actionResultDocument = Schema.toJsonSchemaDocument(
+    PersistedActionResult
+  );
+  const actionResultSchema =
+    Object.keys(actionResultDocument.definitions).length === 0
+      ? actionResultDocument.schema
+      : {
+          ...actionResultDocument.schema,
+          $defs: actionResultDocument.definitions,
+        };
+  const actionProjection =
+    actionCatalog === undefined
+      ? productionActionCatalog
+      : {
+          fingerprint: actionCatalog.fingerprint,
+          tools: actionCatalog.tools.map((tool) => ({
+            annotations: tool.annotations,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            name: tool.name,
+            // The ACP call accepts an Execution immediately. The registered
+            // Action's terminal result remains private durable evidence.
+            outputSchema: actionResultSchema,
+          })),
+        };
+  const generatedMutationCatalog =
+    actionCatalog === undefined
+      ? productionGeneratedMutationCatalog
+      : makeGeneratedMutationCatalog(actionProjection);
+  const registeredActionFor = (name: string) =>
+    actionCatalog?.actions.find((candidate) => candidate.name === name);
   const store = yield* makeCapabilityStore({
     path: options.statePath,
     trustedRoot: options.trustedRuntimeRoot,
@@ -460,6 +498,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   );
   const currentTimeMillis = options.testHooks?.currentTimeMillis ?? Date.now;
   const bootstrap = randomBytes(32).toString("base64url");
+  const catalogPath = `${options.bootstrapPath}.catalog`;
   yield* Effect.tryPromise({
     try: async () => {
       await assertSafeFilePath({
@@ -475,11 +514,33 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       } finally {
         await file.close();
       }
+      await assertSafeFilePath({
+        anchor: options.trustedRuntimeRoot,
+        operation: "write-action-catalog",
+        path: catalogPath,
+      });
+      const catalogFile = await open(catalogPath, "w", 0o600);
+      try {
+        const serialized = JSON.stringify(generatedMutationCatalog);
+        if (Buffer.byteLength(serialized, "utf8") > 1024 * 1024) {
+          throw new Error("Action catalog exceeded its limit");
+        }
+        await catalogFile.writeFile(serialized, "utf8");
+        await catalogFile.sync();
+        await catalogFile.chmod(0o600);
+      } finally {
+        await catalogFile.close();
+      }
     },
     catch: () => bridgeFailure("Action bootstrap is unavailable"),
   });
   yield* Effect.addFinalizer(() =>
-    Effect.promise(() => rm(options.bootstrapPath, { force: true }))
+    Effect.promise(() =>
+      Promise.all([
+        rm(options.bootstrapPath, { force: true }),
+        rm(catalogPath, { force: true }),
+      ])
+    ).pipe(Effect.asVoid)
   );
 
   const serverName = laborerActionMcpServerName(
@@ -907,6 +968,7 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     );
   });
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this is the single fail-closed decoder for generated Actions and controls.
   const decodeInvocation = Effect.fnUntraced(function* (body: unknown) {
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       return yield* bridgeFailure("Action invocation is invalid");
@@ -917,40 +979,56 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     if (
       typeof actionName !== "string" ||
       candidate.serverName !== serverName ||
-      candidate.catalogFingerprint !==
-        productionGeneratedMutationCatalog.fingerprint ||
+      candidate.catalogFingerprint !== generatedMutationCatalog.fingerprint ||
       !Number.isSafeInteger(generation) ||
       generation !== currentActionServerGeneration ||
       Object.keys(candidate).length !== 5
     ) {
       return yield* bridgeFailure("Action invocation is invalid");
     }
-    const action = actionDefinition(actionName);
+    const registeredAction = registeredActionFor(actionName);
+    const productionAction = actionDefinition(actionName);
+    const actionExists =
+      actionCatalog === undefined
+        ? productionAction !== undefined
+        : registeredAction !== undefined;
     const control = executionControlDefinition(actionName);
-    const definition = action ?? control;
-    if (definition === undefined) {
+    if (!actionExists && control === undefined) {
       return yield* bridgeFailure("Action invocation is unsupported");
     }
-    const decoded =
-      action !== undefined
-        ? yield* action
-            .decodeInput(candidate.input)
-            .pipe(
-              Effect.mapError(() =>
-                bridgeFailure("Action invocation is invalid")
+    let decodeInput: Effect.Effect<unknown, HandlerFailure>;
+    if (actionExists) {
+      decodeInput =
+        actionCatalog === undefined
+          ? (productionAction as NonNullable<typeof productionAction>)
+              .decodeInput(candidate.input)
+              .pipe(
+                Effect.mapError(() =>
+                  bridgeFailure("Action invocation is invalid")
+                )
               )
-            )
-        : yield* (control as NonNullable<typeof control>)
-            .decodeInput(candidate.input)
-            .pipe(
-              Effect.mapError(() =>
-                bridgeFailure("Action invocation is invalid")
-              )
-            );
-    const schemaFingerprint =
-      action === undefined
-        ? productionExecutionControlCatalog.fingerprint
-        : productionActionCatalog.fingerprint;
+          : (registeredAction as NonNullable<typeof registeredAction>)
+              .decodeInput(candidate.input)
+              .pipe(
+                Effect.mapError(() =>
+                  bridgeFailure("Action invocation is invalid")
+                )
+              );
+    } else {
+      decodeInput = (control as NonNullable<typeof control>)
+        .decodeInput(candidate.input)
+        .pipe(
+          Effect.mapError(() => bridgeFailure("Action invocation is invalid"))
+        );
+    }
+    const decoded = yield* decodeInput;
+    let schemaFingerprint = productionExecutionControlCatalog.fingerprint;
+    if (actionExists) {
+      schemaFingerprint =
+        actionCatalog === undefined
+          ? productionActionCatalog.fingerprint
+          : (registeredAction?.fingerprint ?? actionCatalog.fingerprint);
+    }
     const inputHash = yield* actionInputHash(
       actionName,
       schemaFingerprint,
@@ -958,37 +1036,57 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     ).pipe(
       Effect.mapError(() => bridgeFailure("Action invocation is invalid"))
     );
+    const decodeResult = (
+      result: unknown
+    ): Effect.Effect<unknown, HandlerFailure> => {
+      if (!actionExists) {
+        return (control as NonNullable<typeof control>)
+          .decodeResult(result)
+          .pipe(
+            Effect.mapError(() => bridgeFailure("Action result is invalid"))
+          );
+      }
+      if (actionCatalog === undefined) {
+        return (productionAction as NonNullable<typeof productionAction>)
+          .decodeResult(result)
+          .pipe(
+            Effect.mapError(() => bridgeFailure("Action result is invalid"))
+          );
+      }
+      return Schema.decodeUnknownEffect(PersistedActionResult, {
+        onExcessProperty: "error",
+      })(result).pipe(
+        Effect.mapError(() => bridgeFailure("Action result is invalid"))
+      );
+    };
+    const encodeResult = (
+      result: unknown
+    ): Effect.Effect<unknown, HandlerFailure> => {
+      if (!actionExists) {
+        return (control as NonNullable<typeof control>)
+          .encodeResult(result)
+          .pipe(
+            Effect.mapError(() => bridgeFailure("Action result is invalid"))
+          );
+      }
+      if (actionCatalog === undefined) {
+        return (productionAction as NonNullable<typeof productionAction>)
+          .encodeResult(result)
+          .pipe(
+            Effect.mapError(() => bridgeFailure("Action result is invalid"))
+          );
+      }
+      return Schema.decodeUnknownEffect(PersistedActionResult, {
+        onExcessProperty: "error",
+      })(result).pipe(
+        Effect.mapError(() => bridgeFailure("Action result is invalid"))
+      );
+    };
     return {
       actionName,
       decoded,
-      decodeResult: (
-        result: unknown
-      ): Effect.Effect<unknown, HandlerFailure> =>
-        action !== undefined
-          ? action
-              .decodeResult(result)
-              .pipe(
-                Effect.mapError(() => bridgeFailure("Action result is invalid"))
-              )
-          : (control as NonNullable<typeof control>)
-              .decodeResult(result)
-              .pipe(
-                Effect.mapError(() => bridgeFailure("Action result is invalid"))
-              ),
-      encodeResult: (
-        result: unknown
-      ): Effect.Effect<unknown, HandlerFailure> =>
-        action !== undefined
-          ? action
-              .encodeResult(result)
-              .pipe(
-                Effect.mapError(() => bridgeFailure("Action result is invalid"))
-              )
-          : (control as NonNullable<typeof control>)
-              .encodeResult(result)
-              .pipe(
-                Effect.mapError(() => bridgeFailure("Action result is invalid"))
-              ),
+      decodeResult,
+      encodeResult,
       generation,
       inputHash,
       schemaFingerprint,
@@ -1139,10 +1237,8 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     const valid =
       ready !== undefined &&
       value.serverName === serverName &&
-      value.catalogFingerprint ===
-        productionGeneratedMutationCatalog.fingerprint &&
-      canonical(value.tools) ===
-        canonical(productionGeneratedMutationCatalog.tools) &&
+      value.catalogFingerprint === generatedMutationCatalog.fingerprint &&
+      canonical(value.tools) === canonical(generatedMutationCatalog.tools) &&
       Array.isArray(value.environmentNames) &&
       value.environmentNames.every((name) => typeof name === "string") &&
       laborerMcpEnvironmentIsScrubbed(
@@ -1244,12 +1340,15 @@ export const makeLaborerActionMcpBridge = Effect.fn(
     readiness.set(actionServerGeneration, ready);
     return {
       actionServerGeneration,
-      catalogFingerprint: productionGeneratedMutationCatalog.fingerprint,
+      catalogFingerprint: generatedMutationCatalog.fingerprint,
       server: {
         args: [...laborerMcpServerLauncherArgs("action")],
         command: process.execPath,
         env: [
           { name: "LABORER_ACTION_CONTROL_URL", value: controlUrl },
+          ...(actionCatalog === undefined
+            ? []
+            : [{ name: "LABORER_ACTION_CATALOG_PATH", value: catalogPath }]),
           {
             name: "LABORER_ACTION_BOOTSTRAP_PATH",
             value: options.bootstrapPath,
@@ -1332,15 +1431,43 @@ export const makeLaborerActionMcpBridge = Effect.fn(
   });
 
   const recognizedActionFor = (update: ObservableActionToolCallUpdate) => {
-    const action = productionActionCatalog.actions.find(
+    const productionAction = productionActionCatalog.actions.find(
       (candidate) =>
         update.name === actionPermission(serverName, candidate.name) ||
         update.title === actionPermission(serverName, candidate.name)
     );
-    if (action !== undefined) {
+    const registeredAction = actionCatalog?.actions.find(
+      (candidate) =>
+        update.name === actionPermission(serverName, candidate.name) ||
+        update.title === actionPermission(serverName, candidate.name)
+    );
+    if (actionCatalog === undefined && productionAction !== undefined) {
       return {
         catalogFingerprint: productionActionCatalog.fingerprint,
-        definition: action,
+        definition: {
+          decodeInput: (input: unknown) =>
+            productionAction
+              .decodeInput(input)
+              .pipe(
+                Effect.mapError(() => bridgeFailure("Action input is invalid"))
+              ),
+          name: productionAction.name,
+        },
+        kind: "action" as const,
+      };
+    }
+    if (actionCatalog !== undefined && registeredAction !== undefined) {
+      return {
+        catalogFingerprint: registeredAction.fingerprint,
+        definition: {
+          decodeInput: (input: unknown) =>
+            registeredAction
+              .decodeInput(input)
+              .pipe(
+                Effect.mapError(() => bridgeFailure("Action input is invalid"))
+              ),
+          name: registeredAction.name,
+        },
         kind: "action" as const,
       };
     }
@@ -1353,7 +1480,17 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       ? undefined
       : {
           catalogFingerprint: productionExecutionControlCatalog.fingerprint,
-          definition: control,
+          definition: {
+            decodeInput: (input: unknown) =>
+              control
+                .decodeInput(input)
+                .pipe(
+                  Effect.mapError(() =>
+                    bridgeFailure("Control input is invalid")
+                  )
+                ),
+            name: control.name,
+          },
           kind: "control" as const,
         };
   };
@@ -1396,14 +1533,9 @@ export const makeLaborerActionMcpBridge = Effect.fn(
       rejectedToolCalls.add(key);
       return;
     }
-    const decoded =
-      recognizedAction.kind === "action"
-        ? yield* Effect.result(
-            recognizedAction.definition.decodeInput(update.rawInput)
-          )
-        : yield* Effect.result(
-            recognizedAction.definition.decodeInput(update.rawInput)
-          );
+    const decoded = yield* Effect.result(
+      recognizedAction.definition.decodeInput(update.rawInput)
+    );
     if (decoded._tag === "Failure") {
       rejectedToolCalls.add(key);
       return;

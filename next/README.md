@@ -129,6 +129,13 @@ Conversation; workers cannot publish to Slack. A host restart replays completed
 Cluster activities, while unfinished non-idempotent implementation work fails
 closed for attention rather than being relaunched blindly.
 
+`durable-runtime/local-command-action.ts` is the non-coding extension tracer. It
+registers a harmless literal command with bounded schemas, explicit fail-closed
+recovery, a selected working directory, no inherited environment, and the
+generic process adapter. Its stdout, stderr, and outcome are stored only as
+private Execution evidence; the owning Conversation alone can turn a wake-up
+into best-effort Chat output.
+
 Corrupt state, an unavailable registration revision, or ACP/OpenCode startup
 failure fails closed without a fallback receiver. Stop with Ctrl-C and wait for
 `Slack Laborer stopped cleanly.` before starting another receiver.

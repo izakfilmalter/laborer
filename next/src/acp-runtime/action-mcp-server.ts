@@ -13,6 +13,7 @@ import { ACTION_MCP_CONTROL_TIMEOUT_MILLIS } from "./action-mcp-timeouts.ts";
 
 const controlUrl = process.env.LABORER_ACTION_CONTROL_URL;
 const bootstrapPath = process.env.LABORER_ACTION_BOOTSTRAP_PATH;
+const catalogPath = process.env.LABORER_ACTION_CATALOG_PATH;
 const serverName = process.env.LABORER_ACTION_SERVER_NAME;
 const serverGeneration = process.env.LABORER_ACTION_SERVER_GENERATION;
 
@@ -26,6 +27,36 @@ if (
   process.exitCode = 1;
 } else {
   const bootstrap = (await readFile(bootstrapPath, "utf8")).trim();
+  const catalog = (
+    catalogPath === undefined
+      ? productionGeneratedMutationCatalog
+      : JSON.parse(await readFile(catalogPath, "utf8"))
+  ) as {
+    readonly fingerprint: string;
+    readonly tools: readonly {
+      readonly name: string;
+      readonly [key: string]: unknown;
+    }[];
+  };
+  const catalogSource = JSON.stringify(catalog);
+  if (Buffer.byteLength(catalogSource, "utf8") > 1024 * 1024) {
+    throw new Error("Action catalog is oversized");
+  }
+  if (
+    typeof catalog.fingerprint !== "string" ||
+    !Array.isArray(catalog.tools) ||
+    catalog.tools.length > 256 ||
+    catalog.tools.some(
+      (tool) =>
+        typeof tool !== "object" ||
+        tool === null ||
+        typeof tool.name !== "string" ||
+        tool.name.length === 0
+    )
+  ) {
+    throw new Error("Action catalog is invalid");
+  }
+  const toolNames = new Set(catalog.tools.map((tool) => tool.name));
   const callControl = async (
     path: string,
     body: unknown,
@@ -59,13 +90,15 @@ if (
     { capabilities: { tools: {} } }
   );
   server.setRequestHandler(ListToolsRequestSchema, () =>
-    Promise.resolve({ tools: productionGeneratedMutationCatalog.tools })
+    Promise.resolve({ tools: catalog.tools })
   );
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const action = actionDefinition(request.params.name);
+    const productionAction =
+      catalog.fingerprint === productionGeneratedMutationCatalog.fingerprint
+        ? actionDefinition(request.params.name)
+        : undefined;
     const control = executionControlDefinition(request.params.name);
-    const definition = action ?? control;
-    if (definition === undefined) {
+    if (!toolNames.has(request.params.name)) {
       return {
         content: [{ text: "Unsupported Action.", type: "text" as const }],
         isError: true,
@@ -75,21 +108,26 @@ if (
       const result = await callControl(
         "/invoke",
         {
-          catalogFingerprint: productionGeneratedMutationCatalog.fingerprint,
+          catalogFingerprint: catalog.fingerprint,
           input: request.params.arguments ?? {},
           serverGeneration,
           serverName,
-          toolName: definition.name,
+          toolName: request.params.name,
         },
         extra.signal
       );
       let encoded: unknown;
-      if (action !== undefined) {
-        encoded = await Effect.runPromise(action.encodeResult(result));
+      if (productionAction !== undefined) {
+        encoded = await Effect.runPromise(
+          productionAction.encodeResult(result)
+        );
       } else if (control !== undefined) {
         encoded = await Effect.runPromise(control.encodeResult(result));
       } else {
-        throw new Error("Unsupported generated tool");
+        // The parent validates the generic Execution receipt before returning
+        // it. Registered terminal results and command evidence never cross
+        // this capability process.
+        encoded = result;
       }
       return {
         content: [{ text: JSON.stringify(encoded), type: "text" as const }],
@@ -110,11 +148,11 @@ if (
   server.oninitialized = async () => {
     try {
       await callControl("/ready", {
-        catalogFingerprint: productionGeneratedMutationCatalog.fingerprint,
+        catalogFingerprint: catalog.fingerprint,
         environmentNames: Object.keys(process.env).sort(),
         serverGeneration,
         serverName,
-        tools: productionGeneratedMutationCatalog.tools,
+        tools: catalog.tools,
       });
     } catch {
       process.stderr.write("[laborer-actions] readiness failed\n");

@@ -29,7 +29,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 ### Workspace Management
 - **Git worktree-based workspaces** -- Each workspace gets its own branch, directory, and allocated port (range 3100-3999). Automatic setup scripts, port allocation, and full lifecycle management (create/run/stop/destroy). Auto-detects existing worktrees.
-- **Docker container support** -- Optional containerized dev servers via OrbStack with bind-mounted worktrees and stable `.orb.local` URLs. Container pause/unpause and status tracking.
+- **Local worktree isolation** -- Every workspace runs in its own local git worktree with independent setup scripts and filesystem watcher scope.
 - **Cross-project dashboard** -- High-level command-center view showing all workspaces and tasks across all projects with status summaries.
 
 ### Terminal and Agent Orchestration
@@ -87,7 +87,7 @@ Laborer runs as multiple cooperating services:
 
 | Service | Default Port | Description |
 |---|---|---|
-| Server | 2100 | Main backend — workspaces, projects, tasks, PRDs, diffs, containers |
+| Server | 2100 | Main backend — workspaces, projects, tasks, PRDs, and diffs |
 | Web App | 2101 | React frontend (Vite dev server) |
 | Terminal | 2102 | PTY terminal management and WebSocket I/O |
 | File Watcher | 2104 | Filesystem watching via @parcel/watcher |
@@ -121,11 +121,6 @@ Each project managed by Laborer uses a `laborer.json` config file:
 
 ```json
 {
-  "devServer": {
-    "startCommand": "bun dev",
-    "image": "node:22",
-    "autoOpen": true
-  },
   "setupScripts": ["bun install"],
   "agent": "opencode2"
 }

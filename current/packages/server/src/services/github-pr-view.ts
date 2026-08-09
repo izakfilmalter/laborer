@@ -5,6 +5,7 @@ const GITHUB_HTTPS_REMOTE_REGEX =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
 const GITHUB_SSH_REMOTE_REGEX = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/
 
+/** Parse a GitHub owner and repository from a supported origin URL. */
 const parseGithubRepo = (
   remoteUrl: string
 ): { readonly owner: string; readonly repo: string } | null => {

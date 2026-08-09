@@ -1067,6 +1067,32 @@ describe('LiveStore schema', () => {
     activeTabId: 'wtab-1',
   } as const
 
+  const legacyReviewLayout = {
+    tabs: [
+      {
+        id: 'wtab-review',
+        workspaceLayout: {
+          _tag: 'WorkspaceTileLeaf',
+          id: 'tile-review',
+          workspaceId: 'ws-1',
+          panelTabs: [
+            {
+              id: 'ptab-review',
+              panelLayout: {
+                _tag: 'LeafNode',
+                id: 'pane-review',
+                paneType: 'review',
+                workspaceId: 'ws-1',
+              },
+            },
+          ],
+          activePanelTabId: 'ptab-review',
+        },
+      },
+    ],
+    activeTabId: 'wtab-review',
+  } as const
+
   it.scoped('panelLayout client document stores a valid WindowLayout', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore
@@ -1113,6 +1139,26 @@ describe('LiveStore schema', () => {
         const result = store.query(tables.panelLayout.get('window-1'))
         assert.deepStrictEqual(result.windowLayout, null)
       })
+  )
+
+  it.scoped('historical review layouts remain decodable', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.windowLayoutUpdated({
+          windowId: 'window-1',
+          windowLayout: legacyReviewLayout,
+          reason: 'legacy-review-event',
+        })
+      )
+      store.commit(
+        tables.panelLayout.set({ windowLayout: legacyReviewLayout }, 'window-1')
+      )
+
+      const result = store.query(tables.panelLayout.get('window-1'))
+      assert.deepStrictEqual(result.windowLayout, legacyReviewLayout)
+    })
   )
 
   it.scoped(

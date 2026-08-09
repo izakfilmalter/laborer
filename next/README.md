@@ -20,6 +20,13 @@
 > dedicated credentials and state. It is a manual gate and must prove native
 > streaming plus one Action/Execution scene.
 >
+> **CHAT SDK WALKING-SKELETON CANARY for issue #328.** `start:chat-canary`
+> starts a separate single-workspace Slack Socket Mode composition using the
+> Vercel Chat SDK and in-memory SDK state. A mention subscribes its thread and
+> streams a placeholder reply through an Effect-owned boundary. It uses only
+> the dedicated `LABORER_CHAT_CANARY_SLACK_*` credentials and does not alter or
+> replace `start:slack`.
+>
 > **PRODUCTION ACP COMPOSITION for issue #257.** `start:slack` uses
 > the normal workspace registry, root lock, native Slack streaming, and one
 > SQLite- and Effect Cluster-backed runtime per canonical Laborer root. The

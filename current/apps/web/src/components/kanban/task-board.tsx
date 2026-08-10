@@ -397,74 +397,76 @@ function TaskBoardCard({
       onClick={openDetail}
     >
       <CardContent className="flex flex-col gap-2 px-3 py-2.5">
-        {/* Title row: source chip + slack link pinned right */}
-        <div className="flex items-start justify-between gap-2">
+        {/* Title row: title takes the slack, card actions grouped hard right */}
+        <div className="flex items-start gap-2">
           <p
             className={cn(
-              'line-clamp-2 min-w-0 font-medium text-sm leading-snug',
+              'line-clamp-2 min-w-0 flex-1 font-medium text-sm leading-snug',
               // An unnamed Slack card is a stand-in until the planner names it.
               title.isPlaceholder && 'text-muted-foreground italic'
             )}
           >
             {title.text}
           </p>
-          {task.slackPermalink && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    aria-label="Open Slack thread"
-                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onClick={openSlack}
-                    type="button"
-                  />
-                }
-              >
-                <ExternalLink className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Open Slack thread</TooltipContent>
-            </Tooltip>
-          )}
-          {!isOverlay && onOpen && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    aria-label={`Card details for ${title.text}`}
-                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onOpen(task)
-                    }}
-                    type="button"
-                  />
-                }
-              >
-                <Pencil className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Card details</TooltipContent>
-            </Tooltip>
-          )}
-          {!isOverlay && task.source !== 'execution' && onCancel && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    aria-label={`Cancel ${title.text}`}
-                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onCancel(task)
-                    }}
-                    type="button"
-                  />
-                }
-              >
-                <X className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Cancel task</TooltipContent>
-            </Tooltip>
-          )}
+          <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
+            {task.slackPermalink && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Open Slack thread"
+                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      onClick={openSlack}
+                      type="button"
+                    />
+                  }
+                >
+                  <ExternalLink className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>Open Slack thread</TooltipContent>
+              </Tooltip>
+            )}
+            {!isOverlay && onOpen && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label={`Card details for ${title.text}`}
+                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onOpen(task)
+                      }}
+                      type="button"
+                    />
+                  }
+                >
+                  <Pencil className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>Card details</TooltipContent>
+              </Tooltip>
+            )}
+            {!isOverlay && task.source !== 'execution' && onCancel && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label={`Cancel ${title.text}`}
+                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onCancel(task)
+                      }}
+                      type="button"
+                    />
+                  }
+                >
+                  <X className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>Cancel task</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         </div>
 
         {/* Branch row */}

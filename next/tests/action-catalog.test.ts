@@ -33,6 +33,7 @@ describe("production Action catalog", () => {
         assert.strictEqual(tool.inputSchema.additionalProperties, false);
         assert.deepStrictEqual(tool.inputSchema.required, [
           "prompt",
+          "title",
           "worktreeName",
         ]);
         assert.strictEqual(tool.outputSchema.additionalProperties, false);
@@ -56,6 +57,7 @@ describe("production Action catalog", () => {
 
       const valid = {
         prompt: "  Build a feature.  ",
+        title: "Build a feature",
         worktreeName: "feature-246",
       };
       assert.deepStrictEqual(
@@ -66,6 +68,9 @@ describe("production Action catalog", () => {
         { ...valid, extra: true },
         { ...valid, prompt: " \n\t " },
         { ...valid, prompt: "x".repeat(ACTION_PROMPT_MAX_LENGTH + 1) },
+        { ...valid, title: " \n\t " },
+        { ...valid, title: "x".repeat(101) },
+        { prompt: valid.prompt, worktreeName: valid.worktreeName },
         { ...valid, worktreeName: "../escape" },
         { ...valid, worktreeName: "branch.lock" },
       ]) {
@@ -137,17 +142,17 @@ describe("production Action catalog", () => {
       const first = yield* actionInputHash(
         "create-feature",
         productionActionCatalog.fingerprint,
-        { prompt: "  e\u0301  ", worktreeName: "nfc" }
+        { prompt: "  e\u0301  ", title: "Execution task", worktreeName: "nfc" }
       );
       const normalized = yield* actionInputHash(
         "create-feature",
         productionActionCatalog.fingerprint,
-        { worktreeName: "nfc", prompt: "  é  " }
+        { worktreeName: "nfc", title: "Execution task", prompt: "  é  " }
       );
       const trimmed = yield* actionInputHash(
         "create-feature",
         productionActionCatalog.fingerprint,
-        { prompt: "é", worktreeName: "nfc" }
+        { prompt: "é", title: "Execution task", worktreeName: "nfc" }
       );
       assert.strictEqual(first, normalized);
       assert.notStrictEqual(first, trimmed);

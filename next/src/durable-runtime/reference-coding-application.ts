@@ -139,7 +139,7 @@ export const makeReferenceCodingRootApplication = Effect.fn(
       input,
       name: actionName,
       result: ReferenceCodingActionResult,
-      revision: `reference-coding/${actionName}/cluster-v1`,
+      revision: `reference-coding/${actionName}/cluster-v2`,
       run: (request, context) =>
         Effect.gen(function* () {
           const worktree = yield* worktreeManager.create({

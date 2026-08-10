@@ -37,6 +37,7 @@ describe("uncertain worktree provisioning", () => {
                 return action
                   .invoke({
                     prompt: "Recover an ambiguously created checkout.",
+                    title: "Execution task",
                     worktreeName: "ambiguous-create",
                   })
                   .pipe(
@@ -123,6 +124,7 @@ describe("uncertain worktree provisioning", () => {
                     return Effect.result(
                       action.invoke({
                         prompt: "Persist uncertain worktree ownership.",
+                        title: "Execution task",
                         worktreeName: "uncertain-restart",
                       })
                     ).pipe(Effect.as([] as const));
@@ -257,6 +259,7 @@ describe("uncertain worktree provisioning", () => {
                 return Effect.result(
                   action.invoke({
                     prompt: "Do not adopt the collided checkout.",
+                    title: "Execution task",
                     worktreeName: "existing-foreign-checkout",
                   })
                 ).pipe(Effect.as([] as const));

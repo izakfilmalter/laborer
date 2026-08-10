@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { WebClient } from "@slack/web-api";
 import { Console, Effect, Redacted } from "effect";
+import { resolveGitRepositoryPath } from "../adapters/git-worktree-manager.ts";
 import {
   ChatPlane,
   type ChatPlaneShape,
@@ -77,6 +78,7 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
     const operatorProjection = makePostCutoverOperatorProjection(
       config.installations
     );
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     let chat: ChatPlaneShape | undefined;
 
     for (const installation of config.installations) {
@@ -117,9 +119,19 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
         paths: prepared.paths,
         root: prepared.laborer.root,
       });
+      const repositoryPath = yield* resolveGitRepositoryPath(
+        prepared.laborer.root
+      );
       const rootRuntime = yield* makeNodeRootDurableRuntime({
         application: rootApplication,
         databasePath: prepared.paths.runtimeDatabase,
+        resolveSlackPermalink: ({ channelId, rootTs, workspaceId }) => {
+          if (chat === undefined) {
+            return Promise.reject(new Error("Chat plane is not ready"));
+          }
+          return runPromise(chat.getPermalink(workspaceId, channelId, rootTs));
+        },
+        repositoryPath,
         rootIdentity: prepared.laborer.root,
       });
       rootRuntimes.set(workspaceId, rootRuntime);

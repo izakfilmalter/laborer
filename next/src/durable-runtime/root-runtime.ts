@@ -27,6 +27,11 @@ import {
 } from "../application.ts";
 import { ThreadId } from "../core/domain.ts";
 import {
+  ExecutionTaskEmission,
+  type ExecutionTaskEmitter,
+  noopExecutionTaskEmitter,
+} from "../task-db/execution-task-emitter.ts";
+import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
   ActionRegistrationError,
@@ -997,18 +1002,25 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
       const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
       const executionGate = yield* ExecutionGate;
       const executionControlGate = yield* ExecutionControlGate;
+      const taskEmission = yield* ExecutionTaskEmission;
       const statuses = yield* sql<{
+        readonly acceptedAtUnixMs: number | null;
         readonly failureCategory: string | null;
         readonly status: string;
       }>`
-        SELECT status, failure_category AS failureCategory
+        SELECT status, failure_category AS failureCategory,
+          accepted_at_unix_ms AS acceptedAtUnixMs
         FROM laborer_executions
         WHERE execution_id = ${executionId}
       `.pipe(Effect.orDie);
       const durableExecution = pipe(
         statuses,
         EffectArray.head,
-        Option.getOrElse(() => ({ failureCategory: null, status: "missing" }))
+        Option.getOrElse(() => ({
+          acceptedAtUnixMs: null,
+          failureCategory: null,
+          status: "missing",
+        }))
       );
       if (
         durableExecution.status === "completed" ||
@@ -1059,6 +1071,22 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
         SET status = 'running'
         WHERE execution_id = ${executionId} AND status = 'queued'
       `.pipe(Effect.orDie);
+      const started = yield* sql<{ readonly count: number }>`
+        SELECT changes() AS count
+      `.pipe(Effect.orDie);
+      if (started[0]?.count === 1) {
+        yield* taskEmission.emit({
+          acceptedAtUnixMs: durableExecution.acceptedAtUnixMs ?? 0,
+          actionName: payload.actionName,
+          conversationId: payload.conversationId,
+          executionId,
+          input: yield* decodeStoredJson(payload.encodedInput).pipe(
+            Effect.orDie
+          ),
+          status: "running",
+          workspaceId: payload.workspaceId,
+        });
+      }
       const context: RegisteredActionContext = {
         conversationId: payload.conversationId,
         executionId,
@@ -1122,6 +1150,15 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
         )
         .pipe(Effect.orDie);
       if (completedEvent !== undefined) {
+        yield* taskEmission.emit({
+          acceptedAtUnixMs: durableExecution.acceptedAtUnixMs ?? 0,
+          actionName: payload.actionName,
+          conversationId: payload.conversationId,
+          executionId,
+          input: decodedInput,
+          status: "completed",
+          workspaceId: payload.workspaceId,
+        });
         yield* acceptExecutionEventIntoConversation(
           completedEvent,
           payload.rootIdentity,
@@ -1141,6 +1178,7 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
             const sql = yield* SqlClient;
             const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
             const executionControlGate = yield* ExecutionControlGate;
+            const taskEmission = yield* ExecutionTaskEmission;
             const terminalStatus =
               failure.category === "needs-attention"
                 ? "needs-attention"
@@ -1150,8 +1188,11 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
                 executionId,
                 sql.withTransaction(
                   Effect.gen(function* () {
-                    const statuses = yield* sql<{ readonly status: string }>`
-                    SELECT status
+                    const statuses = yield* sql<{
+                      readonly acceptedAtUnixMs: number | null;
+                      readonly status: string;
+                    }>`
+                    SELECT status, accepted_at_unix_ms AS acceptedAtUnixMs
                     FROM laborer_executions
                     WHERE execution_id = ${executionId}
                   `;
@@ -1190,6 +1231,24 @@ const workflowHandlerLayer = RegisteredActionExecutionWorkflow.toLayer(
               )
               .pipe(Effect.orDie);
             if (failedEvent !== undefined) {
+              const accepted = yield* sql<{
+                readonly acceptedAtUnixMs: number | null;
+              }>`
+                SELECT accepted_at_unix_ms AS acceptedAtUnixMs
+                FROM laborer_executions
+                WHERE execution_id = ${executionId}
+              `.pipe(Effect.orDie);
+              yield* taskEmission.emit({
+                acceptedAtUnixMs: accepted[0]?.acceptedAtUnixMs ?? 0,
+                actionName: payload.actionName,
+                conversationId: payload.conversationId,
+                executionId,
+                input: yield* decodeStoredJson(payload.encodedInput).pipe(
+                  Effect.orDie
+                ),
+                status: terminalStatus,
+                workspaceId: payload.workspaceId,
+              });
               yield* acceptExecutionEventIntoConversation(
                 failedEvent,
                 payload.rootIdentity,
@@ -1917,6 +1976,7 @@ const makeRuntimeService = Effect.gen(function* () {
   const rootIdentity = yield* RootIdentity;
   const conversationHandlers = yield* ConversationHandlerRegistry;
   const executionControlGate = yield* ExecutionControlGate;
+  const taskEmission = yield* ExecutionTaskEmission;
   const workflowEngine = yield* WorkflowEngine.WorkflowEngine;
 
   const deliverPendingExecutionEvents = Effect.fn(
@@ -2441,6 +2501,19 @@ const makeRuntimeService = Effect.gen(function* () {
                 }
               })
             );
+            if (kind === "cancel") {
+              yield* taskEmission.emit({
+                acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
+                actionName: row.actionName,
+                conversationId: row.conversationId,
+                executionId: row.executionId,
+                input: yield* decodeStoredJson(row.inputJson).pipe(
+                  Effect.orDie
+                ),
+                status: "cancelling",
+                workspaceId: row.workspaceId,
+              });
+            }
             const controlContext = {
               controlId: request.controlId,
               conversationId: request.conversationId,
@@ -2481,6 +2554,19 @@ const makeRuntimeService = Effect.gen(function* () {
                   }
                 })
               );
+              if (kind === "cancel") {
+                yield* taskEmission.emit({
+                  acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
+                  actionName: row.actionName,
+                  conversationId: row.conversationId,
+                  executionId: row.executionId,
+                  input: yield* decodeStoredJson(row.inputJson).pipe(
+                    Effect.orDie
+                  ),
+                  status: "running",
+                  workspaceId: row.workspaceId,
+                });
+              }
               return yield* runtimeError("control-failed");
             }
             let cancelledEvent: ExecutionEvent | undefined;
@@ -2526,6 +2612,17 @@ const makeRuntimeService = Effect.gen(function* () {
                  AND status = 'accepted'
             `;
             if (cancelledEvent !== undefined) {
+              yield* taskEmission.emit({
+                acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
+                actionName: row.actionName,
+                conversationId: row.conversationId,
+                executionId: row.executionId,
+                input: yield* decodeStoredJson(row.inputJson).pipe(
+                  Effect.orDie
+                ),
+                status: "cancelled",
+                workspaceId: row.workspaceId,
+              });
               yield* acceptExecutionEventIntoConversation(
                 cancelledEvent,
                 rootIdentity,
@@ -2594,11 +2691,14 @@ const makeRuntimeService = Effect.gen(function* () {
                   ${encodedInput}, 'queued', ${Date.now()}, ${validatedRequest.workspaceId}
                 )
               `;
+                const changes = yield* sql<{ readonly count: number }>`
+                  SELECT changes() AS count
+                `;
                 const rows = yield* sql.unsafe<StoredExecutionRow>(
                   `${executionSelect} WHERE invocation_id = ? AND workspace_id = ?`,
                   [validatedRequest.invocationId, validatedRequest.workspaceId]
                 );
-                return yield* pipe(
+                const accepted = yield* pipe(
                   rows,
                   EffectArray.head,
                   Option.match({
@@ -2609,26 +2709,38 @@ const makeRuntimeService = Effect.gen(function* () {
                     onSome: Effect.succeed,
                   })
                 );
+                return { accepted, inserted: changes[0]?.count === 1 };
               })
             )
             .pipe(Effect.mapError(() => runtimeError("storage-failure")));
           if (
-            row.inputHash !== inputHash ||
-            row.actionName !== action.name ||
-            row.actionRevision !== action.revision ||
-            row.actionFingerprint !== action.fingerprint ||
-            row.conversationId !== validatedRequest.conversationId ||
-            row.workspaceId !== validatedRequest.workspaceId ||
-            row.executionId !== executionId
+            row.accepted.inputHash !== inputHash ||
+            row.accepted.actionName !== action.name ||
+            row.accepted.actionRevision !== action.revision ||
+            row.accepted.actionFingerprint !== action.fingerprint ||
+            row.accepted.conversationId !== validatedRequest.conversationId ||
+            row.accepted.workspaceId !== validatedRequest.workspaceId ||
+            row.accepted.executionId !== executionId
           ) {
             return yield* runtimeError("conflicting-invocation");
+          }
+          if (row.inserted && row.accepted.acceptedAtUnixMs !== null) {
+            yield* taskEmission.emit({
+              acceptedAtUnixMs: row.accepted.acceptedAtUnixMs,
+              actionName: action.name,
+              conversationId: validatedRequest.conversationId,
+              executionId,
+              input: validatedRequest.input,
+              status: "queued",
+              workspaceId: validatedRequest.workspaceId,
+            });
           }
           yield* RegisteredActionExecutionWorkflow.execute(payload, {
             discard: true,
           }).pipe(
             Effect.provideService(WorkflowEngine.WorkflowEngine, workflowEngine)
           );
-          return row;
+          return row.accepted;
         })
       );
       return yield* getExecution(
@@ -2840,6 +2952,42 @@ const makeRuntimeService = Effect.gen(function* () {
       }
     );
     recoveryCursor = recoverable.at(-1)?.executionId ?? recoveryCursor;
+  }
+
+  // The private runtime row is the source of truth. Reconcile only after the
+  // recovery submissions so a process death between either database commit
+  // converges on the next startup without an outbox or polling loop.
+  let taskCursor = "";
+  let taskBatchSize = 128;
+  while (taskBatchSize === 128) {
+    const executions = yield* sql.unsafe<StoredExecutionRow>(
+      `${executionSelect}
+       WHERE execution_id > ?
+       ORDER BY execution_id
+       LIMIT 128`,
+      [taskCursor]
+    );
+    taskBatchSize = executions.length;
+    yield* Effect.forEach(
+      executions,
+      (row) =>
+        decodeStoredJson(row.inputJson).pipe(
+          Effect.flatMap((input) =>
+            taskEmission.emit({
+              acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
+              actionName: row.actionName,
+              conversationId: row.conversationId,
+              executionId: row.executionId,
+              input,
+              status: row.status as ExecutionStatus,
+              workspaceId: row.workspaceId,
+            })
+          ),
+          Effect.ignore
+        ),
+      { concurrency: 1, discard: true }
+    );
+    taskCursor = executions.at(-1)?.executionId ?? taskCursor;
   }
 
   const checkConversationClientCompatibility = Effect.fn(
@@ -3080,7 +3228,8 @@ const clusterLayer = ClusterWorkflowEngine.layer.pipe(
 export const makeRootDurableRuntimeLayer = (
   sqliteLayer: Layer.Layer<SqlClient, unknown>,
   catalog: RegisteredActionCatalog,
-  rootIdentity: string
+  rootIdentity: string,
+  taskEmitter: ExecutionTaskEmitter = noopExecutionTaskEmitter
 ) => {
   const registryLayer = Layer.succeed(ActionRegistry, catalog);
   const conversationRegistryLayer = Layer.effect(
@@ -3095,12 +3244,14 @@ export const makeRootDurableRuntimeLayer = (
     makeExecutionControlGate
   );
   const rootIdentityLayer = Layer.succeed(RootIdentity, rootIdentity);
+  const taskEmissionLayer = Layer.succeed(ExecutionTaskEmission, taskEmitter);
   const migrationsLayer = Layer.effectDiscard(initializeLaborerTables).pipe(
     Layer.provide(sqliteLayer)
   );
   const registrationLayer = Layer.effectDiscard(validateRootRegistration).pipe(
     Layer.provideMerge(registryLayer),
     Layer.provideMerge(rootIdentityLayer),
+    Layer.provideMerge(taskEmissionLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer)
   );
@@ -3114,6 +3265,7 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(executionGateLayer),
     Layer.provideMerge(executionControlGateLayer),
     Layer.provideMerge(rootIdentityLayer),
+    Layer.provideMerge(taskEmissionLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
     Layer.provideMerge(registrationLayer)
@@ -3125,6 +3277,7 @@ export const makeRootDurableRuntimeLayer = (
     Layer.provideMerge(executionGateLayer),
     Layer.provideMerge(executionControlGateLayer),
     Layer.provideMerge(rootIdentityLayer),
+    Layer.provideMerge(taskEmissionLayer),
     Layer.provideMerge(sqliteLayer),
     Layer.provideMerge(migrationsLayer),
     Layer.provideMerge(registrationLayer)

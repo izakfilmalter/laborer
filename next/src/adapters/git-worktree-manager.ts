@@ -1050,3 +1050,16 @@ export const makeGitWorktreeManager = (
       try: (signal) => validateWorktree(options, request, signal),
     }),
 });
+
+/** Resolves the repository identity used by deterministic worktree paths. */
+export const resolveGitRepositoryPath = (
+  configuredDirectory: string
+): Effect.Effect<string, HandlerFailure> =>
+  Effect.tryPromise({
+    catch: (error) =>
+      mapHandlerFailure(error, "Git repository resolution failed"),
+    try: (signal) =>
+      repositoryContext(configuredDirectory, signal).then(
+        (context) => context.repository
+      ),
+  });

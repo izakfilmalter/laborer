@@ -28,10 +28,16 @@ describe("NativeTaskDatabase", () => {
   it("migrates a fresh database once and a second writer adopts it", () => {
     const path = temporaryDatabasePath();
     const first = NativeTaskDatabase.open(path);
-    expect(first.migrationNames()).toEqual(["0000_shared_task_db"]);
+    expect(first.migrationNames()).toEqual([
+      "0000_shared_task_db",
+      "0001_execution_lifecycle_statuses",
+    ]);
 
     const second = NativeTaskDatabase.open(path);
-    expect(second.migrationNames()).toEqual(["0000_shared_task_db"]);
+    expect(second.migrationNames()).toEqual([
+      "0000_shared_task_db",
+      "0001_execution_lifecycle_statuses",
+    ]);
 
     second.close();
     first.close();

@@ -17,7 +17,14 @@ export type TaskStatus =
   | 'done'
   | 'cancelled'
 export type TaskSource = 'execution' | 'manual' | 'slack_url'
-export type ExecutionStatus = 'running' | 'failed' | 'needs_attention'
+export type ExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'needs-attention'
 
 export interface Task {
   readonly actionName: string | null
@@ -207,9 +214,13 @@ const taskSource = (value: unknown): TaskSource => {
 const executionStatus = (value: unknown): ExecutionStatus | null => {
   switch (value) {
     case null:
+    case 'queued':
     case 'running':
+    case 'cancelling':
+    case 'completed':
     case 'failed':
-    case 'needs_attention':
+    case 'cancelled':
+    case 'needs-attention':
       return value
     default:
       return invalidColumn('execution_status')

@@ -1,5 +1,11 @@
 import { layer as makeSqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Layer } from "effect";
+import {
+  noopExecutionTaskEmitter,
+  openExecutionTaskEmitter,
+  TaskEmissionDiagnostic,
+} from "../task-db/execution-task-emitter.ts";
+import { taskDatabasePath } from "../task-db/task-database.ts";
 import { defineApplication, type LaborerApplication } from "./action.ts";
 import {
   makeRootDurableRuntimeLayer,
@@ -16,17 +22,47 @@ export const makeNodeRootDurableRuntime = Effect.fn(
 )(function* (options: {
   readonly databasePath: string;
   readonly application?: LaborerApplication;
+  readonly resolveSlackPermalink?: (request: {
+    readonly channelId: string;
+    readonly rootTs: string;
+    readonly workspaceId: string;
+  }) => Promise<string>;
+  readonly repositoryPath?: string;
   readonly rootIdentity: string;
+  readonly taskDatabasePath?: string;
 }): Effect.fn.Return<
   RootDurableRuntimeShape,
   unknown,
   import("effect").Scope.Scope
 > {
+  const taskEmitter = yield* Effect.acquireRelease(
+    Effect.try({
+      try: () =>
+        openExecutionTaskEmitter({
+          databasePath: options.taskDatabasePath ?? taskDatabasePath(),
+          ...(options.resolveSlackPermalink === undefined
+            ? {}
+            : { resolveSlackPermalink: options.resolveSlackPermalink }),
+          ...(options.repositoryPath === undefined
+            ? {}
+            : { repositoryPath: options.repositoryPath }),
+          rootPath: options.rootIdentity,
+        }),
+      catch: (cause) => new TaskEmissionDiagnostic(null, cause),
+    }).pipe(
+      Effect.catch((diagnostic) =>
+        Effect.logError(diagnostic).pipe(Effect.as(noopExecutionTaskEmitter))
+      )
+    ),
+    (emitter) =>
+      "close" in emitter ? Effect.sync(() => emitter.close()) : Effect.void
+  );
   const context = yield* Layer.build(
     makeRootDurableRuntimeLayer(
       makeSqliteLayer({ filename: options.databasePath }),
       options.application?.actions ?? conversationOnlyApplication.actions,
-      options.rootIdentity
+      options.rootIdentity,
+      taskEmitter
     )
   );
   return yield* RootDurableRuntime.pipe(Effect.provide(context));

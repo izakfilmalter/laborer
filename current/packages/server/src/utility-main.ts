@@ -77,7 +77,11 @@ import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { serverDiscoveryLayer } from './services/server-discovery.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
-import { TaskMcpProtocolLayer, TaskMcpToolsLayer } from './services/task-mcp.js'
+import {
+  mcpOriginGuard,
+  TaskMcpProtocolLayer,
+  TaskMcpToolsLayer,
+} from './services/task-mcp.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorkspaceSyncService } from './services/workspace-sync-service.js'
@@ -464,7 +468,7 @@ const makeMcpHttpLayer = (port: number) => {
   const config = { host: '127.0.0.1', port } as const
   return Layer.mergeAll(
     TaskMcpToolsLayer,
-    HttpRouter.Default.serve(),
+    HttpRouter.Default.serve(mcpOriginGuard),
     serverDiscoveryLayer(config)
   ).pipe(
     Layer.provide(TaskMcpProtocolLayer),

@@ -8,9 +8,16 @@ import {
 import { dirname, join } from 'node:path'
 import { HttpServer } from '@effect/platform'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
 
 const discoveryFile = join(dirname(taskDatabasePath()), 'server.json')
+const DiscoveryRecord = Schema.Struct({
+  host: Schema.String,
+  pid: Schema.Int,
+  port: Schema.Int,
+  url: Schema.String,
+})
+const DiscoveryJson = Schema.parseJson(DiscoveryRecord)
 
 export const serverDiscoveryLayer = (fallback: {
   readonly host: string
@@ -26,9 +33,15 @@ export const serverDiscoveryLayer = (fallback: {
       yield* Effect.sync(() => {
         mkdirSync(dirname(discoveryFile), { recursive: true })
         const temporary = `${discoveryFile}.${String(process.pid)}.tmp`
+        const record = {
+          host,
+          pid: process.pid,
+          port,
+          url: `http://${host}:${String(port)}/mcp`,
+        }
         writeFileSync(
           temporary,
-          `${JSON.stringify({ host, port, url: `http://${host}:${String(port)}/mcp` })}\n`,
+          `${Schema.encodeSync(DiscoveryJson)(record)}\n`,
           { mode: 0o600 }
         )
         renameSync(temporary, discoveryFile)
@@ -36,10 +49,10 @@ export const serverDiscoveryLayer = (fallback: {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           try {
-            const current = JSON.parse(readFileSync(discoveryFile, 'utf8')) as {
-              port?: unknown
-            }
-            if (current.port === port) {
+            const current = Schema.decodeUnknownSync(DiscoveryJson)(
+              readFileSync(discoveryFile, 'utf8')
+            )
+            if (current.pid === process.pid && current.port === port) {
               rmSync(discoveryFile, { force: true })
             }
           } catch {

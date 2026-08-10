@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,25 +8,28 @@ import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { AgentTaskService } from '../src/services/agent-task-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
+import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import {
+  mcpOriginGuard,
   TaskMcpProtocolLayer,
   TaskMcpToolsLayer,
 } from '../src/services/task-mcp.js'
 
-const rpc = (port: number, body: unknown) =>
+const rpc = (port: number, body: unknown, origin?: string) =>
   Effect.promise(() =>
     fetch(`http://127.0.0.1:${String(port)}/mcp`, {
       body: JSON.stringify(body),
       headers: {
         accept: 'application/json, text/event-stream',
         'content-type': 'application/json',
+        ...(origin === undefined ? {} : { origin }),
       },
       method: 'POST',
     }).then(async (response) => ({ response, text: await response.text() }))
   )
 
 describe('task MCP HTTP endpoint', () => {
-  it('advertises the task tools over streamable HTTP', async () => {
+  it('executes task CRUD over streamable HTTP and rejects web origins', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-task-mcp-')))
     const databasePath = join(root, 'tasks.sqlite')
     const port = 40_000 + (process.pid % 10_000)
@@ -37,7 +40,7 @@ describe('task MCP HTTP endpoint', () => {
     })
     const serverLayer = Layer.mergeAll(
       TaskMcpToolsLayer,
-      HttpRouter.Default.serve()
+      HttpRouter.Default.serve(mcpOriginGuard)
     ).pipe(
       Layer.provide(TaskMcpProtocolLayer),
       Layer.provide(AgentTaskService.layer(databasePath)),
@@ -74,8 +77,74 @@ describe('task MCP HTTP endpoint', () => {
           expect(listed.text).toContain('create_task')
           expect(listed.text).toContain('delete_task')
           expect(listed.text).toContain('list_projects')
+
+          const forbidden = yield* rpc(
+            port,
+            { id: 3, jsonrpc: '2.0', method: 'tools/list', params: {} },
+            'https://example.com'
+          )
+          expect(forbidden.response.status).toBe(403)
+
+          const created = yield* rpc(port, {
+            id: 4,
+            jsonrpc: '2.0',
+            method: 'tools/call',
+            params: {
+              arguments: {
+                description: 'Investigate the race',
+                path: root,
+                title: 'Follow up',
+              },
+              name: 'create_task',
+            },
+          })
+          expect(created.response.status).toBe(200)
+          expect(created.text).toContain('Investigate the race')
+
+          const database = NodeTaskBoardDatabase.open(databasePath)
+          const task = database.snapshot().tasks[0]
+          database.close()
+          expect(task).toMatchObject({ revision: 1, source: 'agent' })
+          if (task === undefined) {
+            throw new Error('create_task did not persist a task')
+          }
+
+          const updated = yield* rpc(port, {
+            id: 5,
+            jsonrpc: '2.0',
+            method: 'tools/call',
+            params: {
+              arguments: {
+                expected_revision: 1,
+                id: task.id,
+                title: 'Refined follow-up',
+              },
+              name: 'update_task',
+            },
+          })
+          expect(updated.text).toContain('Refined follow-up')
+
+          const deleted = yield* rpc(port, {
+            id: 6,
+            jsonrpc: '2.0',
+            method: 'tools/call',
+            params: {
+              arguments: { expected_revision: 2, id: task.id },
+              name: 'delete_task',
+            },
+          })
+          expect(deleted.text).toContain('cancelled')
+
+          const persisted = NodeTaskBoardDatabase.open(databasePath)
+          expect(persisted.find(task.id)).toMatchObject({
+            revision: 3,
+            status: 'cancelled',
+          })
+          expect(persisted.readChanges(0).cursor).toBe(3)
+          persisted.close()
         })
       )
     )
+    rmSync(root, { force: true, recursive: true })
   })
 })

@@ -1,5 +1,10 @@
 import { McpServer, Tool, Toolkit } from '@effect/ai'
-import { Effect, Layer, Schema } from 'effect'
+import {
+  HttpMiddleware,
+  HttpServerRequest,
+  HttpServerResponse,
+} from '@effect/platform'
+import { Effect, Layer, Option, Schema } from 'effect'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 
 const TaskStatus = Schema.Literal(
@@ -148,3 +153,41 @@ export const TaskMcpProtocolLayer = McpServer.layerHttp({
   path: '/mcp',
   version: '1.0.0',
 })
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
+
+export const isAllowedMcpOrigin = (origin: string): boolean => {
+  try {
+    const url = new URL(origin)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      LOOPBACK_HOSTS.has(url.hostname)
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Streamable HTTP requires Origin validation to keep an arbitrary web page
+ * from using a visitor's browser to mutate this deliberately token-free local
+ * endpoint. Native MCP clients normally omit Origin and remain unaffected.
+ */
+export const mcpOriginGuard = HttpMiddleware.make((app) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const url = HttpServerRequest.toURL(request)
+    const origin = request.headers.origin
+    if (
+      Option.isSome(url) &&
+      url.value.pathname === '/mcp' &&
+      origin !== undefined &&
+      !isAllowedMcpOrigin(origin)
+    ) {
+      return yield* HttpServerResponse.text('Forbidden MCP origin', {
+        status: 403,
+      })
+    }
+    return yield* app
+  })
+)

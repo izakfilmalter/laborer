@@ -91,7 +91,10 @@ describe('AgentTaskService', () => {
         expect(locked.code).toBe('LOCKED_TASK')
 
         const missing = yield* Effect.flip(
-          service.createTask({ path: tmpdir(), title: 'Orphan' })
+          service.createTask({
+            path: join(root, 'path-that-does-not-exist'),
+            title: 'Orphan',
+          })
         )
         expect(missing.code).toBe('UNKNOWN_PROJECT')
 

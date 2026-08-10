@@ -387,8 +387,13 @@ async function startServerBackend(): Promise<void> {
     host: DESKTOP_LOOPBACK_HOST,
     requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
     startPort: Number(
-      process.env.LABORER_DESKTOP_BACKEND_PORT ?? DEFAULT_DESKTOP_BACKEND_PORT
+      process.env.LABORER_SERVER_PORT ??
+        process.env.LABORER_DESKTOP_BACKEND_PORT ??
+        DEFAULT_DESKTOP_BACKEND_PORT
     ),
+    ...(process.env.LABORER_SERVER_PORT === undefined
+      ? {}
+      : { maxPort: Number(process.env.LABORER_SERVER_PORT) }),
   })
   const terminalPort = await reserveLoopbackPort()
   const fileWatcherPort = await reserveLoopbackPort()

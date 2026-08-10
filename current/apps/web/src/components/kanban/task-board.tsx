@@ -27,6 +27,7 @@ import {
   FolderGit2,
   GitBranch,
   MessageSquare,
+  Pencil,
   Plus,
   Search,
   Slack,
@@ -380,6 +381,26 @@ function TaskBoardCard({
                 <ExternalLink className="size-3.5" />
               </TooltipTrigger>
               <TooltipContent>Open Slack thread</TooltipContent>
+            </Tooltip>
+          )}
+          {!isOverlay && onOpen && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    aria-label={`Edit ${task.title}`}
+                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpen(task)
+                    }}
+                    type="button"
+                  />
+                }
+              >
+                <Pencil className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Edit task details</TooltipContent>
             </Tooltip>
           )}
           {!isOverlay && task.source !== 'execution' && onCancel && (

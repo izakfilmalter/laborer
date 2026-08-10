@@ -19,7 +19,11 @@ import {
   SyncRpcHandlersLive,
   SyncWsRpc,
 } from './services/sync-backend.js'
-import { TaskMcpProtocolLayer, TaskMcpToolsLayer } from './services/task-mcp.js'
+import {
+  mcpOriginGuard,
+  TaskMcpProtocolLayer,
+  TaskMcpToolsLayer,
+} from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
 const PortSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 65_535))
@@ -270,9 +274,9 @@ export const makeServerLayer = Layer.unwrapEffect(
     )
 
     return Layer.mergeAll(
-      HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
-        Layer.provide(makeRoutesLayer)
-      ),
+      HttpRouter.Default.serve((app) =>
+        mcpOriginGuard(HttpMiddleware.cors()(app))
+      ).pipe(Layer.provide(makeRoutesLayer)),
       listeningLogLayer,
       serverDiscoveryLayer(config)
     ).pipe(

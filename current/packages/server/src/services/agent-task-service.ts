@@ -159,7 +159,14 @@ export class AgentTaskService extends Context.Tag(
           })
         const resolveProject = (candidate: string) =>
           Effect.gen(function* () {
-            const canonical = yield* serviceTry(() => realpathSync(candidate))
+            const canonical = yield* Effect.try({
+              try: () => realpathSync(candidate),
+              catch: () =>
+                new AgentTaskError({
+                  code: 'UNKNOWN_PROJECT',
+                  message: `Path does not belong to a registered Laborer project: ${candidate}`,
+                }),
+            })
             const projects = yield* listProjects()
             const project = nearestProject(canonical, projects)
             if (!project) {

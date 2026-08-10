@@ -65,7 +65,7 @@ import {
 } from '@/components/ui/tooltip'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
-import { cn, extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { TerminalPane } from '@/panes/terminal-pane'
 
@@ -455,6 +455,7 @@ function TaskBoard({
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
+  const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
     readonly botOwned: boolean
     readonly id: string
@@ -511,9 +512,12 @@ function TaskBoard({
       closeTerminal()
       return
     }
-    if (attachingTaskId !== null) {
+    // State disables the controls visually; the ref closes the same-render
+    // double-click window before React has committed that state.
+    if (attachingTaskIdRef.current !== null) {
       return
     }
+    attachingTaskIdRef.current = task.id
     setAttachingTaskId(task.id)
     attachTaskTerminal({ payload: { taskId: task.id } })
       .then(({ botOwned, terminal }) => {
@@ -538,29 +542,41 @@ function TaskBoard({
         })
       })
       .catch((error: unknown) => {
-        setBoardTasks((current) =>
-          current.map((candidate) =>
-            candidate.id === task.id && candidate.worktreeState === 'exists'
-              ? {
-                  ...candidate,
-                  worktreeBotOwned: false,
-                  worktreeExists: false,
-                  worktreeState: 'gone',
-                }
-              : candidate
+        if (extractErrorCode(error) === 'WORKTREE_NOT_FOUND') {
+          setBoardTasks((current) =>
+            current.map((candidate) =>
+              candidate.id === task.id
+                ? {
+                    ...candidate,
+                    worktreeBotOwned: false,
+                    worktreeExists: false,
+                    worktreeState:
+                      candidate.worktreeState === 'provisioning'
+                        ? 'provisioning'
+                        : 'gone',
+                  }
+                : candidate
+            )
           )
-        )
-        if (task.worktreeState === 'provisioning') {
-          toast.info('Worktree is still provisioning', {
-            description: 'The terminal opens once it lands on disk.',
-          })
+          if (task.worktreeState === 'provisioning') {
+            toast.info('Worktree is still provisioning', {
+              description: 'The terminal opens once it lands on disk.',
+            })
+          } else {
+            toast.error(`Could not open a terminal for ${task.title}`, {
+              description: 'The task worktree is no longer available on disk.',
+            })
+          }
         } else {
           toast.error(`Could not open a terminal for ${task.title}`, {
             description: extractErrorMessage(error),
           })
         }
       })
-      .finally(() => setAttachingTaskId(null))
+      .finally(() => {
+        attachingTaskIdRef.current = null
+        setAttachingTaskId(null)
+      })
   }
 
   const query = searchQuery.trim().toLowerCase()
@@ -688,7 +704,10 @@ function TaskBoard({
             </Tooltip>
           </header>
           <div className="min-h-0 flex-1">
-            <TerminalPane terminalId={attachedTerminal.id} />
+            <TerminalPane
+              onTerminalExit={closeTerminal}
+              terminalId={attachedTerminal.id}
+            />
           </div>
         </section>
       )}

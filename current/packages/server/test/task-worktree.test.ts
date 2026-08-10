@@ -7,14 +7,21 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { inspectTaskWorktree } from '../src/services/task-worktree.js'
 
+const temporaryRoots: string[] = []
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
 const worktree = (): string => {
-  const path = join(
-    mkdtempSync(join(tmpdir(), 'laborer-task-worktree-')),
-    'tree'
-  )
+  const root = mkdtempSync(join(tmpdir(), 'laborer-task-worktree-'))
+  temporaryRoots.push(root)
+  const path = join(root, 'tree')
   mkdirSync(path)
   return path
 }

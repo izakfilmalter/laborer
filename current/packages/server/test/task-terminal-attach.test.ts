@@ -3,14 +3,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Effect, Layer } from 'effect'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { handleTaskTerminalAttach } from '../src/rpc/handlers.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { TerminalClient } from '../src/services/terminal-client.js'
 
+const temporaryRoots: string[] = []
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
 describe('task terminal attach', () => {
   it('passes the shared-db worktree path directly to the terminal sidecar seam', async () => {
     const root = mkdtempSync(join(tmpdir(), 'laborer-task-attach-'))
+    temporaryRoots.push(root)
     const databasePath = join(root, 'tasks.sqlite')
     const worktreePath = join(root, 'next-worktree')
     mkdirSync(worktreePath)
@@ -64,13 +73,14 @@ describe('task terminal attach', () => {
     expect(result.botOwned).toBe(false)
 
     rmSync(worktreePath, { recursive: true })
-    await expect(
-      Effect.runPromise(
-        handleTaskTerminalAttach({ taskId: 'task-1' }, databasePath).pipe(
-          Effect.provide(terminalLayer)
-        )
+    const missing = await Effect.runPromise(
+      handleTaskTerminalAttach({ taskId: 'task-1' }, databasePath).pipe(
+        Effect.provide(terminalLayer),
+        Effect.flip
       )
-    ).rejects.toThrow('The task worktree is not available on disk')
+    )
+    expect(missing.message).toBe('The task worktree is not available on disk')
+    expect(missing.code).toBe('WORKTREE_NOT_FOUND')
     expect(spawnInDirectory).toHaveBeenCalledTimes(1)
   })
 })

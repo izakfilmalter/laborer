@@ -26,7 +26,7 @@ import type {
 import { openCodeMcpConfig } from "./action-mcp-timeouts.ts";
 import { OPEN_CODE_COMMAND } from "./open-code-acp-process.ts";
 
-const OPEN_CODE_VERSION = "0.0.0-next-17055";
+const OPEN_CODE_VERSION = "0.0.0-next-17074";
 const STARTUP_TIMEOUT_MILLIS = 30_000;
 const SHUTDOWN_TIMEOUT_MILLIS = 3000;
 const MAX_STARTUP_LINE_BYTES = 64 * 1024;

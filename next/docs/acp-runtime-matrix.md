@@ -13,8 +13,8 @@ supported matrix rather than describing separate production receivers.
 | Bun | `1.3.5` | package manager pin, Sandcastle image and local tests |
 | ACP wire protocol | stable v1 (`1`) | initialization validator and compatibility suite |
 | `@agentclientprotocol/sdk` | `1.3.0` | exact dependency and lockfile |
-| `@opencode-ai/cli` (`opencode2`) | `0.0.0-next-17055` | exact dev dependency, Sandcastle image, CLI assertion |
-| `@opencode-ai/client` | `0.0.0-next-17055` | exact dependency and lockfile |
+| `@opencode-ai/cli` (`opencode2`) | `0.0.0-next-17074` | exact dev dependency, Sandcastle image, CLI assertion |
+| `@opencode-ai/client` | `0.0.0-next-17074` | exact dependency and lockfile |
 | `@slack/web-api` | `8.0.0` | exact dependency and lockfile |
 | `chat` | `4.37.0` | exact dependency and lockfile |
 | `@chat-adapter/slack` | `4.37.0` | exact dependency and lockfile |

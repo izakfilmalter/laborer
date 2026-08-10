@@ -1190,7 +1190,7 @@ export interface LaborerMemoryPermissionRegistration {
   >;
   readonly observedToolCallIds: Set<string>;
   readonly permission: string;
-  readonly pinnedOpenCodeVersion: "0.0.0-next-17055" | null;
+  readonly pinnedOpenCodeVersion: "0.0.0-next-17074" | null;
   readonly rejectedToolCallIds: Set<string>;
   rejectUncorrelatedPermissions: boolean;
 }

@@ -114,8 +114,8 @@ describe('task provisioning', () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)
     database.insert({
+      description: 'Implement the queued work',
       id: 'task-1',
-      initialPrompt: 'Implement the queued work',
       rootPath: '/repo',
       source: 'manual',
       status: 'todo',

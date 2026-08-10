@@ -1,5 +1,6 @@
 import { Rpc, RpcGroup } from '@effect/rpc'
 import { Schema } from 'effect'
+import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -215,6 +216,7 @@ const WorkspaceResponse = Schema.Struct({
 const SlackWorkspacePlanResponse = Schema.Struct({
   branchName: Schema.String,
   initialPrompt: Schema.String,
+  title: Schema.String,
   workType: Schema.Literal('bug', 'feature'),
 })
 
@@ -515,6 +517,20 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
   }),
 
+  Rpc.make('task.create', {
+    success: Schema.Struct({
+      id: Schema.String,
+      source: Schema.Literal('manual', 'slack_url'),
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+    }),
+    error: RpcError,
+    payload: {
+      projectId: Schema.String,
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      text: Schema.String.pipe(Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)),
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Config RPCs
   // -----------------------------------------------------------------------
@@ -578,7 +594,9 @@ export class LaborerRpcs extends RpcGroup.make(
     success: SlackWorkspacePlanResponse,
     error: RpcError,
     payload: {
-      slackUrl: Schema.String,
+      slackUrl: Schema.String.pipe(
+        Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)
+      ),
     },
   }),
 

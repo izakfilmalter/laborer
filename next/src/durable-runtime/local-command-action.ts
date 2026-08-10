@@ -5,7 +5,7 @@ import {
   type LocalProcessResult,
   validateLocalExecutable,
 } from "../adapters/local-process-execution.ts";
-import { ActionTitle } from "../task-db/execution-task-emitter.ts";
+import { ActionTitle } from "../task-db/task-schemas.ts";
 import { defineAction } from "./action.ts";
 
 export const RenderLocalTextActionInput = Schema.Struct({

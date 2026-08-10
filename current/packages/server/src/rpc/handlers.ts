@@ -31,6 +31,7 @@ import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
+import { createTaskCard } from '../services/task-card-creator.js'
 import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -304,6 +305,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       subscribeToTaskBoard().pipe(
         Stream.tap(({ tasks }) => ensureTaskProjects(tasks))
       ),
+    'task.create': ({ projectId, status, text }) =>
+      Effect.gen(function* () {
+        const project = yield* getProjectFromStore(projectId)
+        return yield* createTaskCard({
+          rootPath: project.repoPath,
+          status,
+          text,
+        })
+      }),
 
     'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 

@@ -122,6 +122,49 @@ export const ProjectResponse = Schema.Struct({
 
 export type ProjectResponse = typeof ProjectResponse.Type
 
+export const BoardTask = Schema.Struct({
+  actionName: Schema.NullOr(Schema.String),
+  branchName: Schema.NullOr(Schema.String),
+  createdAt: Schema.Int,
+  executionId: Schema.NullOr(Schema.String),
+  executionStatus: Schema.NullOr(
+    Schema.Literal('running', 'failed', 'needs_attention')
+  ),
+  id: Schema.String,
+  initialPrompt: Schema.NullOr(Schema.String),
+  revision: Schema.Int,
+  rootPath: Schema.String,
+  slackPermalink: Schema.NullOr(Schema.String),
+  source: Schema.Literal('execution', 'manual', 'slack_url'),
+  status: Schema.Literal(
+    'todo',
+    'in_progress',
+    'in_review',
+    'done',
+    'cancelled'
+  ),
+  title: Schema.String,
+  updatedAt: Schema.Int,
+  worktreeExists: Schema.Boolean,
+  worktreePath: Schema.NullOr(Schema.String),
+})
+
+export type BoardTask = typeof BoardTask.Type
+
+export const TaskBoardEvent = Schema.Union(
+  Schema.TaggedStruct('snapshot', {
+    cursor: Schema.Int,
+    tasks: Schema.Array(BoardTask),
+  }),
+  Schema.TaggedStruct('delta', {
+    cursor: Schema.Int,
+    deletedTaskIds: Schema.Array(Schema.String),
+    tasks: Schema.Array(BoardTask),
+  })
+)
+
+export type TaskBoardEvent = typeof TaskBoardEvent.Type
+
 const ConfigResolvedValueString = Schema.Struct({
   value: Schema.String,
   source: Schema.String,
@@ -451,6 +494,16 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('project.list', {
     success: Schema.Array(ProjectResponse),
     error: RpcError,
+  }),
+
+  /**
+   * Streams a full shared-task-db snapshot followed by ledger-driven deltas.
+   * The server is the only SQLite reader; ending the subscription ends polling.
+   */
+  Rpc.make('task.board.subscribe', {
+    success: TaskBoardEvent,
+    error: RpcError,
+    stream: true,
   }),
 
   // -----------------------------------------------------------------------

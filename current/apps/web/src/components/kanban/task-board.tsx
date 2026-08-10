@@ -1,5 +1,5 @@
 /**
- * Prototype kanban board — a new MainView alongside panels/dashboard.
+ * Shared-task-db kanban board — a MainView alongside panels/dashboard.
  *
  * One global board where each LiveStore project is a collapsible swim
  * lane (Todo / In Progress / In Review / Done per lane). Lane collapse
@@ -9,12 +9,14 @@
  * reui kanban (dnd-kit); each lane is its own Kanban root so cards can
  * never cross projects.
  *
- * Throwaway prototype for wayfinder ticket #354 — no persistence, no RPC.
- * Fake tasks are mapped onto real projects by index via FAKE_ROOT_PATHS.
+ * The renderer subscribes to typed snapshots/deltas and never opens SQLite.
  */
 
+import { Result } from '@effect-atom/atom'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { projects } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
+import { Cause, Effect, Stream } from 'effect'
 import {
   Bot,
   ChevronDown,
@@ -24,19 +26,19 @@ import {
   FolderX,
   GitBranch,
   MessageSquare,
-  Plus,
   Search,
   SquarePen,
   X,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
+  applyTaskBoardEvents,
   type BoardTask,
   type BoardTaskStatus,
-  FAKE_ROOT_PATHS,
-  FAKE_TASKS,
+  projectForTask,
 } from '@/components/kanban/board-data'
 import {
   Kanban,
@@ -64,6 +66,7 @@ import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
+const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 /** The four rendered columns, in board order. Cancelled never renders. */
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -88,11 +91,13 @@ function buildColumnTasks(
   for (const column of BOARD_COLUMNS) {
     byColumn[column.id] = []
   }
-  const sorted = [...tasks].sort((a, b) =>
-    b.createdAt.localeCompare(a.createdAt)
-  )
+  const doneCutoff = Date.now() - DONE_RETENTION_MS
+  const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
   for (const task of sorted) {
-    if (task.status === 'cancelled') {
+    if (
+      task.status === 'cancelled' ||
+      (task.status === 'done' && task.updatedAt < doneCutoff)
+    ) {
       continue
     }
     byColumn[task.status]?.push(task)
@@ -196,17 +201,6 @@ function ExecutionMirrorBadge({
 }: {
   readonly mirror: BoardTask['executionMirror']
 }) {
-  if (mirror === 'running') {
-    return (
-      <Badge
-        className="gap-1 border-success/30 bg-success/10 text-success"
-        variant="outline"
-      >
-        <Spinner className="size-3" />
-        Running
-      </Badge>
-    )
-  }
   if (mirror === 'needs_attention') {
     return (
       <Badge
@@ -251,7 +245,7 @@ function WorktreeChip({ task }: { readonly task: BoardTask }) {
   return null
 }
 
-/** Map fake PR state onto the existing badge's uppercase vocabulary. */
+/** Map PR state onto the existing badge's uppercase vocabulary. */
 function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
   return state.toUpperCase()
 }
@@ -349,46 +343,11 @@ function TaskBoardCard({
   )
 }
 
-/** Per-column "+" that prepends a fake manual card (prototype only). */
-function AddTaskButton({
-  columnTitle,
-  onAddTask,
-}: {
-  readonly columnTitle: string
-  readonly onAddTask: () => void
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={`Add task to ${columnTitle}`}
-            className="ml-auto text-muted-foreground"
-            onClick={onAddTask}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        <Plus className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipContent>Add task</TooltipContent>
-    </Tooltip>
-  )
-}
-
 /**
  * One project lane's 4-column kanban. Its own Kanban root, so drags can
  * never cross projects.
  */
-function LaneBoard({
-  rootPath,
-  tasks,
-}: {
-  readonly rootPath: string
-  readonly tasks: readonly BoardTask[]
-}) {
+function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
@@ -404,29 +363,9 @@ function LaneBoard({
     return byId
   }, [columnTasks])
 
-  const addTask = (status: Exclude<BoardTaskStatus, 'cancelled'>) => {
-    const task: BoardTask = {
-      id: crypto.randomUUID(),
-      rootPath,
-      title: 'New task',
-      status,
-      source: 'manual',
-      slackPermalink: null,
-      branch: null,
-      worktreePath: null,
-      worktreeState: 'none',
-      executionMirror: null,
-      pr: null,
-      createdAt: new Date().toISOString(),
-    }
-    setColumnTasks((prev) => ({
-      ...prev,
-      [status]: [task, ...(prev[status] ?? [])],
-    }))
-  }
-
-  // No onMove handler: the real board writes a CAS status update to the
-  // shared db on cross-column drops. The prototype just keeps local state.
+  // Persistence for human moves is intentionally a later slice. Keeping the
+  // controlled local value preserves the prototype's reorder behavior without
+  // claiming a durable write occurred.
   return (
     <Kanban
       className="w-full min-w-0"
@@ -451,10 +390,6 @@ function LaneBoard({
                 <span className="text-muted-foreground text-sm tabular-nums">
                   {(columnTasks[column.id] ?? []).length}
                 </span>
-                <AddTaskButton
-                  columnTitle={column.title}
-                  onAddTask={() => addTask(column.id)}
-                />
               </div>
               <KanbanColumnContent
                 className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
@@ -507,6 +442,35 @@ function TaskBoard({
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
   const [searchQuery, setSearchQuery] = useState('')
+  const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
+  const taskEventsAtom = useMemo(
+    () =>
+      LaborerClient.runtime.pull(
+        LaborerClient.pipe(
+          Effect.map((client) =>
+            // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+            client('task.board.subscribe', undefined as void)
+          ),
+          Stream.unwrap
+        ),
+        { disableAccumulation: true }
+      ),
+    []
+  )
+  const rpcResult = useAtomValue(taskEventsAtom)
+  const pullNext = useAtomSet(taskEventsAtom)
+
+  useEffect(() => {
+    if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
+      setBoardTasks((current) =>
+        applyTaskBoardEvents(rpcResult.value.items, current)
+      )
+      // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
+      pullNext(undefined as void)
+    } else if (Result.isFailure(rpcResult)) {
+      setBoardTasks([])
+    }
+  }, [pullNext, rpcResult])
 
   const query = searchQuery.trim().toLowerCase()
   const searching = query.length > 0
@@ -514,17 +478,20 @@ function TaskBoard({
   // Lanes with zero matches are hidden while searching; matches force-
   // expand their lane without mutating the stored collapse state.
   const lanes = projectList
-    .map((project, index) => {
-      const laneRoot = FAKE_ROOT_PATHS[index]
-      const laneTasks = laneRoot
-        ? FAKE_TASKS.filter((task) => task.rootPath === laneRoot)
-        : []
+    .map((project) => {
+      const laneTasks = boardTasks.filter(
+        (task) => projectForTask(task, projectList)?.id === project.id
+      )
       const visibleTasks = laneTasks.filter(
         (task) =>
           task.status !== 'cancelled' &&
+          !(
+            task.status === 'done' &&
+            task.updatedAt < Date.now() - DONE_RETENTION_MS
+          ) &&
           (!searching || matchesQuery(task, query))
       )
-      return { project, laneRoot: laneRoot ?? '', visibleTasks }
+      return { project, visibleTasks }
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
@@ -535,7 +502,7 @@ function TaskBoard({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          {lanes.map(({ project, laneRoot, visibleTasks }) => {
+          {lanes.map(({ project, visibleTasks }) => {
             const expanded = searching || collapseState.isExpanded(project.id)
 
             return (
@@ -560,8 +527,7 @@ function TaskBoard({
                 </Button>
                 {expanded && (
                   <LaneBoard
-                    key={query}
-                    rootPath={laneRoot}
+                    key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
                     tasks={visibleTasks}
                   />
                 )}
@@ -571,6 +537,11 @@ function TaskBoard({
           {searching && lanes.length === 0 && (
             <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
               No matching cards
+            </div>
+          )}
+          {Result.isFailure(rpcResult) && (
+            <div className="flex items-center justify-center p-8 text-destructive text-sm">
+              Task board unavailable: {String(Cause.squash(rpcResult.cause))}
             </div>
           )}
         </div>

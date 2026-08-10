@@ -128,6 +128,78 @@ describe('NativeTaskDatabase', () => {
     database.close()
   })
 
+  it('reads a consistent snapshot and affected rows after its cursor', () => {
+    const database = NativeTaskDatabase.open(temporaryDatabasePath())
+    const first = database.insert(
+      {
+        id: 'task-first',
+        rootPath: '/repo',
+        title: 'First',
+        status: 'in_progress',
+        source: 'execution',
+      },
+      10
+    ).task
+    database.insert(
+      {
+        id: 'task-second',
+        rootPath: '/repo',
+        title: 'Second',
+        status: 'todo',
+        source: 'manual',
+      },
+      20
+    )
+
+    const snapshot = database.snapshot()
+    expect(snapshot.cursor).toBe(2)
+    expect(snapshot.tasks.map(({ id }) => id)).toEqual([
+      'task-first',
+      'task-second',
+    ])
+
+    database.update(first.id, first.revision, { status: 'in_review' }, 30)
+    expect(database.readChanges(snapshot.cursor)).toMatchObject({
+      _tag: 'delta',
+      cursor: 3,
+      deletedTaskIds: [],
+      tasks: [{ id: first.id, status: 'in_review', revision: 2 }],
+    })
+    database.close()
+  })
+
+  it('requests a snapshot when a cursor was pruned or is ahead', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    database.insert({
+      id: 'task-reset',
+      rootPath: '/repo',
+      title: 'Reset',
+      status: 'todo',
+      source: 'manual',
+    })
+
+    const raw = new Database(path)
+    raw.query('DELETE FROM task_changes WHERE sequence = 1').run()
+    raw
+      .query(
+        'INSERT INTO task_changes (sequence, task_id, changed_at) VALUES (?, ?, ?)'
+      )
+      .run(5, 'task-reset', 50)
+    raw.close()
+
+    expect(database.readChanges(1)).toMatchObject({
+      _tag: 'snapshot',
+      cursor: 5,
+      tasks: [{ id: 'task-reset' }],
+    })
+    expect(database.readChanges(99)).toMatchObject({
+      _tag: 'snapshot',
+      cursor: 5,
+    })
+    database.close()
+  })
+
   it('enforces persisted task enums', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)

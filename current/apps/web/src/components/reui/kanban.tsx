@@ -1,6 +1,3 @@
-// @ts-nocheck — vendored as-is from church-work; written against a looser
-// tsconfig (no noUncheckedIndexedAccess/exactOptionalPropertyTypes). A real
-// adoption would harden these index accesses instead.
 /** biome-ignore-all lint: vendored reui kanban component (https://v1.reui.io/docs/kanban) */
 /** biome-ignore-all format: vendored reui kanban component */
 
@@ -8,20 +5,20 @@ import { mergeProps } from '@base-ui/react/merge-props'
 import { useRender } from '@base-ui/react/use-render'
 import {
   DndContext,
-  DragEndEvent,
+  type DragEndEvent,
   type DraggableAttributes,
   type DraggableSyntheticListeners,
-  DragOverEvent,
+  type DragOverEvent,
   DragOverlay,
-  DragStartEvent,
-  DropAnimation,
+  type DragStartEvent,
+  type DropAnimation,
   defaultDropAnimationSideEffects,
   KeyboardSensor,
   MeasuringStrategy,
-  Modifiers,
+  type Modifiers,
   MouseSensor,
   TouchSensor,
-  UniqueIdentifier,
+  type UniqueIdentifier,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
@@ -38,9 +35,9 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import * as React from 'react'
 import {
-  CSSProperties,
+  type CSSProperties,
   createContext,
-  ReactNode,
+  type ReactNode,
   useCallback,
   useContext,
   useLayoutEffect,
@@ -59,7 +56,7 @@ interface KanbanContextProps<T> {
   findContainer: (id: UniqueIdentifier) => string | undefined
   getItemId: (item: T) => string
   isColumn: (id: UniqueIdentifier) => boolean
-  modifiers?: Modifiers
+  modifiers: Modifiers | undefined
   setActiveId: (id: UniqueIdentifier | null) => void
   setColumns: (columns: Record<string, T[]>) => void
 }
@@ -79,8 +76,8 @@ const KanbanContext = createContext<KanbanContextProps<any>>({
 const ColumnContext = createContext<{
   attributes: DraggableAttributes
   listeners: DraggableSyntheticListeners | undefined
-  isDragging?: boolean
-  disabled?: boolean
+  isDragging: boolean | undefined
+  disabled: boolean | undefined
 }>({
   attributes: {} as DraggableAttributes,
   listeners: undefined,
@@ -90,8 +87,8 @@ const ColumnContext = createContext<{
 
 const ItemContext = createContext<{
   listeners: DraggableSyntheticListeners | undefined
-  isDragging?: boolean
-  disabled?: boolean
+  isDragging: boolean | undefined
+  disabled: boolean | undefined
 }>({
   listeners: undefined,
   isDragging: false,
@@ -173,7 +170,9 @@ function Kanban<T>({
   const findContainer = useCallback(
     (id: UniqueIdentifier) => {
       if (isColumn(id)) return id as string
-      return columnIds.find((key) => columns[key].some((item) => getItemValue(item) === id))
+      return columnIds.find((key) =>
+        (columns[key] ?? []).some((item) => getItemValue(item) === id)
+      )
     },
     [columns, columnIds, getItemValue, isColumn],
   )
@@ -204,8 +203,8 @@ function Kanban<T>({
       }
 
       if (activeContainer !== overContainer) {
-        const activeItems = columns[activeContainer]
-        const overItems = columns[overContainer]
+        const activeItems = columns[activeContainer] ?? []
+        const overItems = columns[overContainer] ?? []
 
         const activeIndex = activeItems.findIndex((item: T) => getItemValue(item) === active.id)
         let overIndex = overItems.findIndex((item: T) => getItemValue(item) === over.id)
@@ -218,6 +217,7 @@ function Kanban<T>({
         const newActiveItems = [...activeItems]
         const newOverItems = [...overItems]
         const [movedItem] = newActiveItems.splice(activeIndex, 1)
+        if (movedItem === undefined) return
         newOverItems.splice(overIndex, 0, movedItem)
 
         setColumns({
@@ -227,20 +227,21 @@ function Kanban<T>({
         })
       } else {
         const container = activeContainer
-        const activeIndex = columns[container].findIndex(
+        const containerItems = columns[container] ?? []
+        const activeIndex = containerItems.findIndex(
           (item: T) => getItemValue(item) === active.id,
         )
-        const overIndex = columns[container].findIndex((item: T) => getItemValue(item) === over.id)
+        const overIndex = containerItems.findIndex((item: T) => getItemValue(item) === over.id)
 
         if (activeIndex !== overIndex) {
           setColumns({
             ...columns,
-            [container]: arrayMove(columns[container], activeIndex, overIndex),
+            [container]: arrayMove(containerItems, activeIndex, overIndex),
           })
         }
       }
     },
-    [findContainer, getItemValue, isColumn, setColumns, columns, onMove],
+    [findContainer, getItemValue, isColumn, setColumns, columns],
   )
 
   const handleDragCancel = useCallback(() => {
@@ -263,12 +264,14 @@ function Kanban<T>({
         const overContainer = findContainer(over.id)
 
         if (activeContainer && overContainer) {
-          const activeIndex = columns[activeContainer].findIndex(
+          const activeItems = columns[activeContainer] ?? []
+          const overItems = columns[overContainer] ?? []
+          const activeIndex = activeItems.findIndex(
             (item: T) => getItemValue(item) === active.id,
           )
           const overIndex = isColumn(over.id)
-            ? columns[overContainer].length
-            : columns[overContainer].findIndex((item: T) => getItemValue(item) === over.id)
+            ? overItems.length
+            : overItems.findIndex((item: T) => getItemValue(item) === over.id)
 
           onMove({
             event,
@@ -289,7 +292,7 @@ function Kanban<T>({
           const newOrder = arrayMove(Object.keys(columns), activeIndex, overIndex)
           const newColumns: Record<string, T[]> = {}
           newOrder.forEach((key) => {
-            newColumns[key] = columns[key]
+            newColumns[key] = columns[key] ?? []
           })
           setColumns(newColumns)
         }
@@ -302,15 +305,16 @@ function Kanban<T>({
       // Handle item reordering within the same column
       if (activeContainer && overContainer && activeContainer === overContainer) {
         const container = activeContainer
-        const activeIndex = columns[container].findIndex(
+        const containerItems = columns[container] ?? []
+        const activeIndex = containerItems.findIndex(
           (item: T) => getItemValue(item) === active.id,
         )
-        const overIndex = columns[container].findIndex((item: T) => getItemValue(item) === over.id)
+        const overIndex = containerItems.findIndex((item: T) => getItemValue(item) === over.id)
 
         if (activeIndex !== overIndex) {
           setColumns({
             ...columns,
-            [container]: arrayMove(columns[container], activeIndex, overIndex),
+            [container]: arrayMove(containerItems, activeIndex, overIndex),
           })
         }
       }
@@ -348,7 +352,7 @@ function Kanban<T>({
             strategy: MeasuringStrategy.Always,
           },
         }}
-        modifiers={modifiers}
+        {...(modifiers === undefined ? {} : { modifiers })}
         onDragCancel={handleDragCancel}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
@@ -461,7 +465,12 @@ function KanbanColumn({ value, className, render, disabled, ...props }: KanbanCo
 
   return (
     <ColumnContext.Provider
-      value={{ attributes, listeners, isDragging: isColumnDragging, disabled }}
+      value={{
+        attributes,
+        listeners,
+        isDragging: isColumnDragging,
+        disabled,
+      }}
     >
       {useRender({
         defaultTagName: 'div',
@@ -568,7 +577,9 @@ function KanbanItem({ value, className, render, disabled, ...props }: KanbanItem
   }
 
   return (
-    <ItemContext.Provider value={{ listeners, isDragging: isItemDragging, disabled }}>
+    <ItemContext.Provider
+      value={{ listeners, isDragging: isItemDragging, disabled }}
+    >
       {useRender({
         defaultTagName: 'div',
         render,
@@ -608,7 +619,10 @@ export interface KanbanColumnContentProps extends useRender.ComponentProps<'div'
 function KanbanColumnContent({ value, className, render, ...props }: KanbanColumnContentProps) {
   const { columns, getItemId } = useContext(KanbanContext)
 
-  const itemIds = useMemo(() => columns[value].map(getItemId), [columns, getItemId, value])
+  const itemIds = useMemo(
+    () => (columns[value] ?? []).map(getItemId),
+    [columns, getItemId, value]
+  )
 
   const defaultProps = {
     'data-slot': 'kanban-column-content',
@@ -657,7 +671,7 @@ function KanbanOverlay({ children, className, ...props }: KanbanOverlayProps) {
     <DragOverlay
       className={cn('z-50', activeId && 'cursor-grabbing', className)}
       dropAnimation={dropAnimationConfig}
-      modifiers={modifiers}
+      {...(modifiers === undefined ? {} : { modifiers })}
       {...props}
     >
       <IsOverlayContext.Provider value={true}>{content}</IsOverlayContext.Provider>

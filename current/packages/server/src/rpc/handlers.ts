@@ -19,6 +19,7 @@ import {
   RpcError,
 } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
+import type { TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
@@ -196,6 +197,43 @@ export const handleProjectList = () =>
     }))
   })
 
+export const handleTaskMove = ({
+  expectedRevision,
+  status,
+  taskId,
+}: {
+  readonly expectedRevision: number
+  readonly status: TaskStatus
+  readonly taskId: string
+}) =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => NodeTaskBoardDatabase.open(taskDatabasePath()),
+      catch: () =>
+        new RpcError({
+          code: 'TASK_MOVE_FAILED',
+          message: 'Unable to open the task database',
+        }),
+    }),
+    (database) =>
+      Effect.try({
+        try: () => database.move(taskId, expectedRevision, status),
+        catch: (cause) =>
+          new RpcError({
+            code: 'TASK_MOVE_FAILED',
+            message:
+              cause instanceof Error ? cause.message : 'Unable to move task',
+          }),
+      }).pipe(
+        Effect.map((task) => ({
+          revision: task.revision,
+          status: task.status,
+          updatedAt: task.updatedAt,
+        }))
+      ),
+    (database) => Effect.sync(() => database.close())
+  )
+
 export const handleTaskTerminalAttach = (
   { taskId }: { readonly taskId: string },
   databasePath = taskDatabasePath()
@@ -314,6 +352,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           text,
         })
       }),
+    'task.move': handleTaskMove,
 
     'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 

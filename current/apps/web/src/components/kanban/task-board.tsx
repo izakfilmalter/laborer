@@ -84,6 +84,7 @@ import { TerminalPane } from '@/panes/terminal-pane'
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
+const moveTaskMutation = LaborerClient.mutation('task.move')
 const attachTaskTerminalMutation = LaborerClient.mutation(
   'task.terminal.attach'
 )
@@ -298,6 +299,7 @@ function TaskBoardCard({
   attaching = false,
   isOverlay = false,
   onAttach,
+  onCancel,
 }: {
   readonly task: BoardTask
   readonly attachBlocked?: boolean
@@ -305,6 +307,7 @@ function TaskBoardCard({
   readonly attaching?: boolean
   readonly isOverlay?: boolean
   readonly onAttach?: (task: BoardTask) => void
+  readonly onCancel?: (task: BoardTask) => void
 }) {
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -351,6 +354,26 @@ function TaskBoardCard({
                 <ExternalLink className="size-3.5" />
               </TooltipTrigger>
               <TooltipContent>Open Slack thread</TooltipContent>
+            </Tooltip>
+          )}
+          {!isOverlay && task.source !== 'execution' && onCancel && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    aria-label={`Cancel ${task.title}`}
+                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onCancel(task)
+                    }}
+                    type="button"
+                  />
+                }
+              >
+                <X className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Cancel task</TooltipContent>
             </Tooltip>
           )}
         </div>
@@ -623,12 +646,19 @@ function LaneBoard({
   attachedTaskId,
   attachingTaskId,
   onAttach,
+  onCancelTask,
+  onMoveTask,
   projectId,
   tasks,
 }: {
   readonly attachedTaskId: string | null
   readonly attachingTaskId: string | null
   readonly onAttach: (task: BoardTask) => void
+  readonly onCancelTask: (task: BoardTask) => void
+  readonly onMoveTask: (
+    task: BoardTask,
+    status: Exclude<BoardTaskStatus, 'cancelled'>
+  ) => Promise<void>
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
 }) {
@@ -665,13 +695,26 @@ function LaneBoard({
     return byId
   }, [columnTasks])
 
-  // Persistence for human moves is intentionally a later slice. Keeping the
-  // controlled local value preserves the prototype's reorder behavior without
-  // claiming a durable write occurred.
   return (
     <Kanban
       className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
+      onMove={({ event, activeContainer, overContainer }) => {
+        if (activeContainer === overContainer) {
+          return
+        }
+        const task = tasksById.get(String(event.active.id))
+        const status = BOARD_COLUMNS.find(
+          (column) => column.id === overContainer
+        )?.id
+        if (!(task && status)) {
+          setColumnTasks(buildColumnTasks(tasks))
+          return
+        }
+        onMoveTask(task, status).catch(() => {
+          setColumnTasks(buildColumnTasks(tasks))
+        })
+      }}
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
@@ -736,6 +779,7 @@ function LaneBoard({
                           attached={attachedTaskId === task.id}
                           attaching={attachingTaskId === task.id}
                           onAttach={onAttach}
+                          onCancel={onCancelTask}
                           task={task}
                         />
                       </KanbanItemHandle>
@@ -805,6 +849,7 @@ function TaskBoard({
   const attachTaskTerminal = useAtomSet(attachTaskTerminalMutation, {
     mode: 'promise',
   })
+  const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
   const taskEventsAtom = useMemo(
     () =>
       LaborerClient.runtime.pull(
@@ -941,6 +986,45 @@ function TaskBoard({
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
+  const persistMove = async (
+    task: BoardTask,
+    status: Exclude<BoardTaskStatus, 'cancelled'>
+  ) => {
+    try {
+      await moveTask({
+        payload: {
+          expectedRevision: task.revision,
+          status,
+          taskId: task.id,
+        },
+      })
+    } catch (error) {
+      toast.error(`Could not move “${task.title}”`, {
+        description: extractErrorMessage(error),
+      })
+      throw error
+    }
+  }
+
+  const cancelTask = (task: BoardTask) => {
+    // Hide immediately; the subscription delta confirms the durable state.
+    setBoardTasks((current) => current.filter(({ id }) => id !== task.id))
+    moveTask({
+      payload: {
+        expectedRevision: task.revision,
+        status: 'cancelled',
+        taskId: task.id,
+      },
+    }).catch((error) => {
+      setBoardTasks((current) =>
+        current.some(({ id }) => id === task.id) ? current : [...current, task]
+      )
+      toast.error(`Could not cancel “${task.title}”`, {
+        description: extractErrorMessage(error),
+      })
+    })
+  }
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center border-b px-3">
@@ -976,6 +1060,8 @@ function TaskBoard({
                     attachedTaskId={attachedTerminal?.taskId ?? null}
                     attachingTaskId={attachingTaskId}
                     onAttach={handleAttach}
+                    onCancelTask={cancelTask}
+                    onMoveTask={persistMove}
                     projectId={project.id}
                     tasks={visibleTasks}
                   />

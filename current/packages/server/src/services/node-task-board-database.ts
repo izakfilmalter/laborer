@@ -368,6 +368,52 @@ export class NodeTaskBoardDatabase {
   }
 
   /**
+   * Persist a human status declaration. A stale caller revision is compared
+   * with the row under the write lock: an already-applied declaration is
+   * idempotent, while a different winning status is left untouched.
+   */
+  move(
+    id: string,
+    expectedRevision: number,
+    status: TaskStatus,
+    changedAt = Date.now()
+  ): Task {
+    if (!(Number.isSafeInteger(expectedRevision) && expectedRevision >= 1)) {
+      throw new Error('A task move requires a positive expected revision')
+    }
+    return this.#writeTransaction(() => {
+      const initial = this.find(id)
+      if (initial === null) {
+        throw new Error(`Task not found: ${id}`)
+      }
+      if (status === 'cancelled' && initial.source === 'execution') {
+        throw new Error('Execution tasks cannot be cancelled from the board')
+      }
+      if (initial.status === status) {
+        return initial
+      }
+      if (initial.revision !== expectedRevision) {
+        throw new Error(`Task changed while moving: ${id}`)
+      }
+
+      const result = this.#database
+        .prepare(`UPDATE tasks
+          SET status = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(status, changedAt, id, expectedRevision)
+      if (result.changes === 0) {
+        throw new Error(`Task changed while moving: ${id}`)
+      }
+      this.#appendChange(id, changedAt)
+      const moved = this.find(id)
+      if (moved === null) {
+        throw new Error(`Moved task could not be read: ${id}`)
+      }
+      return moved
+    })
+  }
+
+  /**
    * Move the newest task bound to a branch when its PR lifecycle requires it.
    * Selection and the revision-CAS write share a short IMMEDIATE transaction;
    * the ledger append is committed atomically with the task update.

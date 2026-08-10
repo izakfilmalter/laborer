@@ -30,35 +30,43 @@ export const serverDiscoveryLayer = (fallback: {
       const host =
         address._tag === 'TcpAddress' ? address.hostname : fallback.host
       const port = address._tag === 'TcpAddress' ? address.port : fallback.port
-      yield* Effect.sync(() => {
-        mkdirSync(dirname(discoveryFile), { recursive: true })
-        const temporary = `${discoveryFile}.${String(process.pid)}.tmp`
-        const record = {
-          host,
-          pid: process.pid,
-          port,
-          url: `http://${host}:${String(port)}/mcp`,
-        }
-        writeFileSync(
-          temporary,
-          `${Schema.encodeSync(DiscoveryJson)(record)}\n`,
-          { mode: 0o600 }
-        )
-        renameSync(temporary, discoveryFile)
-      })
-      yield* Effect.addFinalizer(() =>
+      const urlHost =
+        host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+      yield* Effect.acquireRelease(
         Effect.sync(() => {
-          try {
-            const current = Schema.decodeUnknownSync(DiscoveryJson)(
-              readFileSync(discoveryFile, 'utf8')
-            )
-            if (current.pid === process.pid && current.port === port) {
-              rmSync(discoveryFile, { force: true })
-            }
-          } catch {
-            // Another process may have replaced or removed the discovery file.
+          mkdirSync(dirname(discoveryFile), { recursive: true })
+          const temporary = `${discoveryFile}.${String(process.pid)}.tmp`
+          const record = {
+            host,
+            pid: process.pid,
+            port,
+            url: `http://${urlHost}:${String(port)}/mcp`,
           }
-        })
+          try {
+            writeFileSync(
+              temporary,
+              `${Schema.encodeSync(DiscoveryJson)(record)}\n`,
+              { mode: 0o600 }
+            )
+            renameSync(temporary, discoveryFile)
+          } catch (error) {
+            rmSync(temporary, { force: true })
+            throw error
+          }
+        }),
+        () =>
+          Effect.sync(() => {
+            try {
+              const current = Schema.decodeUnknownSync(DiscoveryJson)(
+                readFileSync(discoveryFile, 'utf8')
+              )
+              if (current.pid === process.pid && current.port === port) {
+                rmSync(discoveryFile, { force: true })
+              }
+            } catch {
+              // Another process may have replaced or removed the discovery file.
+            }
+          })
       )
     })
   )

@@ -53,6 +53,9 @@ describe('AgentTaskService', () => {
 
         const deleted = yield* service.deleteTask(updated.id, updated.revision)
         expect(deleted.status).toBe('cancelled')
+        expect(yield* service.deleteTask(updated.id, updated.revision)).toEqual(
+          deleted
+        )
         expect(yield* service.listTasks({})).toEqual([])
         expect(
           yield* service.listTasks({ includeCancelled: true })
@@ -89,6 +92,11 @@ describe('AgentTaskService', () => {
           })
         )
         expect(locked.code).toBe('LOCKED_TASK')
+
+        const deleteLocked = yield* Effect.flip(
+          service.deleteTask('execution-task', 1)
+        )
+        expect(deleteLocked.code).toBe('LOCKED_TASK')
 
         const missing = yield* Effect.flip(
           service.createTask({

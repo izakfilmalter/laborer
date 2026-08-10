@@ -96,7 +96,8 @@ const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
         : new AgentTaskError({
             code:
               cause instanceof Error &&
-              cause.message.toLowerCase().includes('stale revision')
+              (cause.message.toLowerCase().includes('stale revision') ||
+                cause.message.toLowerCase().includes('changed while moving'))
                 ? 'CAS_CONFLICT'
                 : 'TASK_DATABASE_ERROR',
             message:
@@ -263,15 +264,21 @@ export class AgentTaskService extends Context.Tag(
             }),
           deleteTask: (id, expectedRevision) =>
             withDatabase((database) => {
-              if (!database.find(id)) {
+              const current = database.find(id)
+              if (!current) {
                 throw new AgentTaskError({
                   code: 'NOT_FOUND',
                   message: `Task not found: ${id}`,
                 })
               }
-              return database.update(id, expectedRevision, {
-                status: 'cancelled',
-              })
+              if (current.source === 'execution') {
+                throw new AgentTaskError({
+                  code: 'LOCKED_TASK',
+                  message:
+                    'Execution-source tasks are read-only to delete_task',
+                })
+              }
+              return database.move(id, expectedRevision, 'cancelled')
             }),
         })
       })

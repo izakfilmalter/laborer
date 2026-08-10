@@ -17,14 +17,7 @@ export type TaskStatus =
   | 'done'
   | 'cancelled'
 export type TaskSource = 'execution' | 'manual' | 'slack_url'
-export type ExecutionStatus =
-  | 'queued'
-  | 'running'
-  | 'cancelling'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'needs-attention'
+export type ExecutionStatus = 'running' | 'failed' | 'needs_attention'
 
 export interface Task {
   readonly actionName: string | null
@@ -91,6 +84,17 @@ export class TaskDatabaseSchemaTooNewError extends Error {
   }
 }
 
+export class TaskDatabaseBusyError extends Error {
+  readonly _tag = 'TaskDatabaseBusyError'
+  override readonly cause: unknown
+  readonly attempts: number
+  constructor(attempts: number, cause: unknown) {
+    super(`Task database remained busy after ${attempts} attempts`)
+    this.attempts = attempts
+    this.cause = cause
+  }
+}
+
 export class TaskStaleRevisionError extends Error {
   readonly _tag = 'TaskStaleRevisionError'
   readonly taskId: string
@@ -125,6 +129,14 @@ const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
 }
 
 type SqliteRow = Record<string, unknown>
+const isSqliteRow = (value: unknown): value is SqliteRow =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const sqliteRow = (value: unknown): SqliteRow => {
+  if (!isSqliteRow(value)) {
+    throw new Error('Task database returned an invalid row')
+  }
+  return value
+}
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
 
 const isBusy = (error: unknown): boolean => {
@@ -143,28 +155,90 @@ const sleepSync = (milliseconds: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
-const rowToTask = (row: SqliteRow): Task => ({
-  id: String(row.id),
-  rootPath: String(row.root_path),
-  title: String(row.title),
-  status: String(row.status) as TaskStatus,
-  source: String(row.source) as TaskSource,
-  executionId: row.execution_id === null ? null : String(row.execution_id),
-  actionName: row.action_name === null ? null : String(row.action_name),
-  executionStatus:
-    row.execution_status === null
-      ? null
-      : (String(row.execution_status) as ExecutionStatus),
-  slackPermalink:
-    row.slack_permalink === null ? null : String(row.slack_permalink),
-  worktreePath: row.worktree_path === null ? null : String(row.worktree_path),
-  branchName: row.branch_name === null ? null : String(row.branch_name),
-  initialPrompt:
-    row.initial_prompt === null ? null : String(row.initial_prompt),
-  createdAt: Number(row.created_at),
-  updatedAt: Number(row.updated_at),
-  revision: Number(row.revision),
-})
+const invalidColumn = (column: string): never => {
+  throw new Error(`Task database contains an invalid ${column}`)
+}
+
+const requiredString = (value: unknown, column: string): string => {
+  if (typeof value !== 'string') {
+    return invalidColumn(column)
+  }
+  return value
+}
+
+const nullableString = (value: unknown, column: string): string | null => {
+  if (value === null) {
+    return null
+  }
+  return requiredString(value, column)
+}
+
+const safeInteger = (value: unknown, column: string): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    return invalidColumn(column)
+  }
+  return value
+}
+
+const taskStatus = (value: unknown): TaskStatus => {
+  switch (value) {
+    case 'todo':
+    case 'in_progress':
+    case 'in_review':
+    case 'done':
+    case 'cancelled':
+      return value
+    default:
+      return invalidColumn('status')
+  }
+}
+
+const taskSource = (value: unknown): TaskSource => {
+  switch (value) {
+    case 'execution':
+    case 'manual':
+    case 'slack_url':
+      return value
+    default:
+      return invalidColumn('source')
+  }
+}
+
+const executionStatus = (value: unknown): ExecutionStatus | null => {
+  switch (value) {
+    case null:
+    case 'running':
+    case 'failed':
+    case 'needs_attention':
+      return value
+    default:
+      return invalidColumn('execution_status')
+  }
+}
+
+const rowToTask = (row: SqliteRow): Task => {
+  const revision = safeInteger(row.revision, 'revision')
+  if (revision < 1) {
+    return invalidColumn('revision')
+  }
+  return {
+    id: requiredString(row.id, 'id'),
+    rootPath: requiredString(row.root_path, 'root_path'),
+    title: requiredString(row.title, 'title'),
+    status: taskStatus(row.status),
+    source: taskSource(row.source),
+    executionId: nullableString(row.execution_id, 'execution_id'),
+    actionName: nullableString(row.action_name, 'action_name'),
+    executionStatus: executionStatus(row.execution_status),
+    slackPermalink: nullableString(row.slack_permalink, 'slack_permalink'),
+    worktreePath: nullableString(row.worktree_path, 'worktree_path'),
+    branchName: nullableString(row.branch_name, 'branch_name'),
+    initialPrompt: nullableString(row.initial_prompt, 'initial_prompt'),
+    createdAt: safeInteger(row.created_at, 'created_at'),
+    updatedAt: safeInteger(row.updated_at, 'updated_at'),
+    revision,
+  }
+}
 
 export const taskDatabasePath = (
   environment: NodeJS.ProcessEnv = process.env,
@@ -186,9 +260,21 @@ export class NativeTaskDatabase {
   private constructor(database: Database, retry: RetryOptions) {
     this.#database = database
     this.drizzle = drizzle(database, { schema })
+    const attempts = retry.attempts ?? 5
+    const baseDelayMs = retry.baseDelayMs ?? 10
+    if (!(Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= 10)) {
+      throw new Error('Task database retry attempts must be between 1 and 10')
+    }
+    if (
+      !(Number.isFinite(baseDelayMs) && baseDelayMs >= 0 && baseDelayMs <= 1000)
+    ) {
+      throw new Error(
+        'Task database retry base delay must be between 0 and 1000ms'
+      )
+    }
     this.#retry = {
-      attempts: retry.attempts ?? 5,
-      baseDelayMs: retry.baseDelayMs ?? 10,
+      attempts,
+      baseDelayMs,
       random: retry.random ?? Math.random,
     }
   }
@@ -200,11 +286,11 @@ export class NativeTaskDatabase {
     mkdirSync(dirname(path), { recursive: true })
     const database = new Database(path, { create: true, strict: true })
     try {
-      database.exec('PRAGMA journal_mode = WAL')
-      database.exec('PRAGMA synchronous = NORMAL')
-      database.exec('PRAGMA busy_timeout = 5000')
-      database.exec('PRAGMA foreign_keys = ON')
       const result = new NativeTaskDatabase(database, retry)
+      database.exec('PRAGMA busy_timeout = 5000')
+      result.#withBusyRetry(() => database.exec('PRAGMA journal_mode = WAL'))
+      database.exec('PRAGMA synchronous = NORMAL')
+      database.exec('PRAGMA foreign_keys = ON')
       result.#migrate()
       return result
     } catch (error) {
@@ -220,8 +306,8 @@ export class NativeTaskDatabase {
   find(id: string): Task | null {
     const row = this.#database
       .query(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
-      .get(id) as SqliteRow | undefined
-    return row ? rowToTask(row) : null
+      .get(id)
+    return row == null ? null : rowToTask(sqliteRow(row))
   }
 
   insert(
@@ -275,10 +361,19 @@ export class NativeTaskDatabase {
     patch: TaskPatch,
     changedAt = Date.now()
   ): Task {
-    const entries = Object.entries(patch) as [
-      keyof TaskPatch,
-      TaskPatch[keyof TaskPatch],
-    ][]
+    const entries = (
+      [
+        'title',
+        'status',
+        'executionStatus',
+        'slackPermalink',
+        'worktreePath',
+        'branchName',
+        'initialPrompt',
+      ] as const
+    )
+      .filter((field) => Object.hasOwn(patch, field))
+      .map((field) => [field, patch[field]] as const)
     if (entries.length === 0) {
       throw new Error('A task update requires at least one field')
     }
@@ -304,32 +399,45 @@ export class NativeTaskDatabase {
     })
   }
 
-  changesFor(
-    taskId: string
-  ): readonly { sequence: number; changedAt: number }[] {
+  changesAfter(
+    sequence: number,
+    limit = 1000
+  ): readonly { sequence: number; taskId: string; changedAt: number }[] {
+    if (!(Number.isSafeInteger(sequence) && sequence >= 0)) {
+      throw new Error('A task change cursor must be a nonnegative integer')
+    }
+    if (!(Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000)) {
+      throw new Error('A task change limit must be between 1 and 1000')
+    }
     const rows = this.#database
       .query(
-        'SELECT sequence, changed_at FROM task_changes WHERE task_id = ? ORDER BY sequence'
+        'SELECT sequence, task_id, changed_at FROM task_changes WHERE sequence > ? ORDER BY sequence LIMIT ?'
       )
-      .all(taskId) as SqliteRow[]
-    return rows.map((row) => ({
-      sequence: Number(row.sequence),
-      changedAt: Number(row.changed_at),
-    }))
+      .all(sequence, limit)
+    return rows.map((value) => {
+      const row = sqliteRow(value)
+      return {
+        sequence: safeInteger(row.sequence, 'task_changes.sequence'),
+        taskId: requiredString(row.task_id, 'task_changes.task_id'),
+        changedAt: safeInteger(row.changed_at, 'task_changes.changed_at'),
+      }
+    })
   }
 
   migrationNames(): readonly string[] {
     const rows = this.#database
       .query('SELECT name FROM __drizzle_migrations ORDER BY id')
-      .all() as SqliteRow[]
-    return rows.map((row) => String(row.name))
+      .all()
+    return rows.map((value) =>
+      requiredString(sqliteRow(value).name, 'migration name')
+    )
   }
 
   #findByExecutionId(executionId: string): Task | null {
     const row = this.#database
       .query(`SELECT ${TASK_COLUMNS} FROM tasks WHERE execution_id = ?`)
-      .get(executionId) as SqliteRow | undefined
-    return row ? rowToTask(row) : null
+      .get(executionId)
+    return row == null ? null : rowToTask(sqliteRow(row))
   }
 
   #appendChange(taskId: string, changedAt: number): void {
@@ -348,25 +456,32 @@ export class NativeTaskDatabase {
       )`)
       const applied = this.#database
         .query('SELECT name, hash FROM __drizzle_migrations ORDER BY id')
-        .all() as { name: string; hash: string }[]
-      for (const row of applied) {
-        const migration = taskDbMigrations.find(({ name }) => name === row.name)
-        if (!migration) {
-          console.error('[task-db] Refusing newer task database schema', {
-            migration: row.name,
-          })
+        .all()
+        .map((value) => {
+          const row = sqliteRow(value)
+          return {
+            name: requiredString(row.name, 'migration name'),
+            hash: requiredString(row.hash, 'migration hash'),
+          }
+        })
+      for (const [index, row] of applied.entries()) {
+        const migration = taskDbMigrations[index]
+        if (
+          !(migration && taskDbMigrations.some(({ name }) => name === row.name))
+        ) {
           throw new TaskDatabaseSchemaTooNewError(row.name)
+        }
+        if (migration.name !== row.name) {
+          throw new Error(
+            `Task database migration ledger is out of order: expected ${migration.name}, found ${row.name}`
+          )
         }
         const hash = createHash('sha256').update(migration.sql).digest('hex')
         if (hash !== row.hash) {
           throw new Error(`Task database migration hash mismatch: ${row.name}`)
         }
       }
-      const completed = new Set(applied.map(({ name }) => name))
-      for (const migration of taskDbMigrations) {
-        if (completed.has(migration.name)) {
-          continue
-        }
+      for (const migration of taskDbMigrations.slice(applied.length)) {
         this.#database.exec(
           migration.sql.replaceAll('--> statement-breakpoint', '')
         )
@@ -406,16 +521,25 @@ export class NativeTaskDatabase {
       } catch (error) {
         attempt += 1
         if (!isBusy(error) || attempt >= this.#retry.attempts) {
+          if (isBusy(error)) {
+            throw new TaskDatabaseBusyError(attempt, error)
+          }
           throw error
         }
-        const jitter = 0.5 + this.#retry.random()
-        sleepSync(this.#retry.baseDelayMs * 2 ** (attempt - 1) * jitter)
+        const random = this.#retry.random()
+        const jitter =
+          0.5 +
+          (Number.isFinite(random) ? Math.max(0, Math.min(1, random)) : 0.5)
+        sleepSync(
+          Math.min(1000, this.#retry.baseDelayMs * 2 ** (attempt - 1) * jitter)
+        )
       }
     }
   }
 }
 
 type TaskDbFailure =
+  | TaskDatabaseBusyError
   | TaskDatabaseError
   | TaskDatabaseSchemaTooNewError
   | TaskStaleRevisionError
@@ -425,6 +549,7 @@ const effectTry = <A>(operation: () => A): Effect.Effect<A, TaskDbFailure> =>
     try: operation,
     catch: (cause) =>
       cause instanceof TaskDatabaseSchemaTooNewError ||
+      cause instanceof TaskDatabaseBusyError ||
       cause instanceof TaskStaleRevisionError
         ? cause
         : new TaskDatabaseError('Task database operation failed', cause),
@@ -433,6 +558,13 @@ const effectTry = <A>(operation: () => A): Effect.Effect<A, TaskDbFailure> =>
 export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
   TaskDb,
   {
+    readonly changesAfter: (
+      sequence: number,
+      limit?: number
+    ) => Effect.Effect<
+      readonly { sequence: number; taskId: string; changedAt: number }[],
+      TaskDbFailure
+    >
     readonly find: (id: string) => Effect.Effect<Task | null, TaskDbFailure>
     readonly insert: (
       input: NewTask,
@@ -455,6 +587,8 @@ export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
       ).pipe(
         Effect.map((database) =>
           TaskDb.of({
+            changesAfter: (sequence, limit) =>
+              effectTry(() => database.changesAfter(sequence, limit)),
             find: (id) => effectTry(() => database.find(id)),
             insert: (input, changedAt) =>
               effectTry(() => database.insert(input, changedAt)),

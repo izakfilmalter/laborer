@@ -69,6 +69,28 @@ describe("NativeTaskDatabase", () => {
     first.close();
   });
 
+  it("makes replayed execution inserts idempotent", () => {
+    const database = NativeTaskDatabase.open(temporaryDatabasePath());
+    const input = {
+      id: "task-execution",
+      rootPath: "/repo",
+      title: "Execution",
+      status: "in_progress" as const,
+      source: "execution" as const,
+      executionId: "execution-1",
+      executionStatus: "running" as const,
+    };
+
+    expect(database.insert(input, 10).inserted).toBe(true);
+    const replay = database.insert({ ...input, id: "replayed-id" }, 20);
+    expect(replay).toMatchObject({
+      inserted: false,
+      task: { id: "task-execution", revision: 1 },
+    });
+    expect(database.changesAfter(0)).toHaveLength(1);
+    database.close();
+  });
+
   it("appends exactly one change in the same transaction as each mutation", () => {
     const database = NativeTaskDatabase.open(temporaryDatabasePath());
     const inserted = database.insert(
@@ -88,15 +110,50 @@ describe("NativeTaskDatabase", () => {
       20
     );
 
-    expect(database.changesFor(inserted.id)).toEqual([
-      { sequence: 1, changedAt: 10 },
-      { sequence: 2, changedAt: 20 },
+    expect(database.changesAfter(0)).toEqual([
+      { sequence: 1, taskId: inserted.id, changedAt: 10 },
+      { sequence: 2, taskId: inserted.id, changedAt: 20 },
     ]);
     expect(() =>
       database.update(inserted.id, 1, { title: "stale" }, 30)
     ).toThrow(TaskStaleRevisionError);
-    expect(database.changesFor(inserted.id)).toHaveLength(2);
+    expect(database.changesAfter(0)).toHaveLength(2);
     database.close();
+  });
+
+  it("bounds change-ledger reads", () => {
+    const database = NativeTaskDatabase.open(temporaryDatabasePath());
+    database.insert({
+      id: "task-bounded-ledger",
+      rootPath: "/repo",
+      title: "Bounded ledger",
+      status: "todo",
+      source: "manual",
+    });
+
+    expect(database.changesAfter(0, 1)).toHaveLength(1);
+    expect(() => database.changesAfter(0, 1001)).toThrow(
+      "A task change limit must be between 1 and 1000"
+    );
+    database.close();
+  });
+
+  it("enforces persisted task enums", () => {
+    const path = temporaryDatabasePath();
+    const database = NativeTaskDatabase.open(path);
+    database.close();
+    const raw = new DatabaseSync(path);
+
+    expect(() =>
+      raw
+        .prepare(
+          `INSERT INTO tasks (
+            id, root_path, title, status, source, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run("invalid", "/repo", "Invalid", "unknown", "manual", 1, 1)
+    ).toThrow();
+    raw.close();
   });
 
   it("fails closed when the migration ledger contains a newer schema", () => {

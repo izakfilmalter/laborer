@@ -205,6 +205,16 @@ describe('task MCP HTTP endpoint', () => {
   it('executes task CRUD over streamable HTTP and rejects web origins', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-task-mcp-')))
     const databasePath = join(root, 'tasks.sqlite')
+    const seededDatabase = NodeTaskBoardDatabase.open(databasePath)
+    seededDatabase.insert({
+      executionId: 'execution-1',
+      id: 'execution-task',
+      rootPath: root,
+      source: 'execution',
+      status: 'in_progress',
+      title: 'Execution task',
+    })
+    seededDatabase.close()
     const nodeServer = createServer()
     const storeLayer = Layer.succeed(LaborerStore, {
       store: {
@@ -288,7 +298,9 @@ describe('task MCP HTTP endpoint', () => {
             expect(created.text).toContain('Investigate the race')
 
             const database = NodeTaskBoardDatabase.open(databasePath)
-            const task = database.snapshot().tasks[0]
+            const task = database
+              .snapshot()
+              .tasks.find(({ source }) => source === 'agent')
             database.close()
             expect(task).toMatchObject({ revision: 1, source: 'agent' })
             if (task === undefined) {
@@ -332,12 +344,27 @@ describe('task MCP HTTP endpoint', () => {
             })
             expect(replayedDelete.text).toContain('cancelled')
 
+            const deletedExecution = yield* rpc(port, {
+              id: 8,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: { expected_revision: 1, id: 'execution-task' },
+                name: 'delete_task',
+              },
+            })
+            expect(deletedExecution.text).toContain('cancelled')
+
             const persisted = NodeTaskBoardDatabase.open(databasePath)
             expect(persisted.find(task.id)).toMatchObject({
               revision: 3,
               status: 'cancelled',
             })
-            expect(persisted.readChanges(0).cursor).toBe(3)
+            expect(persisted.find('execution-task')).toMatchObject({
+              revision: 2,
+              status: 'cancelled',
+            })
+            expect(persisted.readChanges(0).cursor).toBe(5)
             persisted.close()
           })
         )

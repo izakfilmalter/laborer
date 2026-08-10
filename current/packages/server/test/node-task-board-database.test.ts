@@ -300,7 +300,7 @@ describe('NodeTaskBoardDatabase', () => {
     database.close()
   })
 
-  it('allows cancelling human cards but not execution cards', () => {
+  it('allows cancelling human and execution cards', () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)
     const raw = new DatabaseSync(path)
@@ -321,12 +321,13 @@ describe('NodeTaskBoardDatabase', () => {
     )
 
     expect(database.move('manual', 1, 'cancelled', 20).status).toBe('cancelled')
-    expect(() => database.move('execution', 1, 'cancelled', 20)).toThrow(
-      'Execution tasks cannot be cancelled from the board'
-    )
+    expect(database.move('execution', 1, 'cancelled', 20)).toMatchObject({
+      revision: 2,
+      status: 'cancelled',
+    })
     expect(
       raw.prepare('SELECT status FROM tasks WHERE id = ?').get('execution')
-    ).toEqual({ status: 'in_progress' })
+    ).toEqual({ status: 'cancelled' })
 
     raw.close()
     database.close()

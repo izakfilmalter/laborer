@@ -7,6 +7,7 @@ import { openExecutionTaskEmitter } from "../src/task-db/execution-task-emitter.
 import { NativeTaskDatabase } from "../src/task-db/task-database.ts";
 
 const directories: string[] = [];
+const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const temporaryPath = (): string => {
   const directory = mkdtempSync(join(tmpdir(), "laborer-execution-tasks-"));
   directories.push(directory);
@@ -46,6 +47,7 @@ describe("execution task emission", () => {
     });
 
     await Effect.runPromise(emitter.emit(projection("queued")));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const database = NativeTaskDatabase.open(path);
     expect(database.findByExecutionId("execution-1")).toMatchObject({
       actionName: "deal-with-bug",
@@ -57,6 +59,7 @@ describe("execution task emission", () => {
       title: "Fix startup race",
       worktreePath: "/projects/laborer.worktrees/fix-startup-race",
     });
+    expect(database.findByExecutionId("execution-1")?.id).toMatch(ULID_PATTERN);
 
     await Effect.runPromise(emitter.emit(projection("completed")));
     expect(database.findByExecutionId("execution-1")).toMatchObject({
@@ -73,6 +76,9 @@ describe("execution task emission", () => {
       executionStatus: "cancelled",
       status: "cancelled",
     });
+    const revision = database.findByExecutionId("execution-1")?.revision;
+    await Effect.runPromise(emitter.emit(projection("cancelled")));
+    expect(database.findByExecutionId("execution-1")?.revision).toBe(revision);
     expect(database.changesAfter(0).map(({ taskId }) => taskId)).toEqual([
       database.findByExecutionId("execution-1")?.id,
       database.findByExecutionId("execution-1")?.id,
@@ -81,6 +87,16 @@ describe("execution task emission", () => {
       database.findByExecutionId("execution-1")?.id,
     ]);
     database.close();
+    emitter.close();
+  });
+
+  it("does not wait for optional permalink enrichment", async () => {
+    const emitter = openExecutionTaskEmitter({
+      databasePath: temporaryPath(),
+      resolveSlackPermalink: () => new Promise(() => undefined),
+      rootPath: "/projects/laborer",
+    });
+    await Effect.runPromise(emitter.emit(projection("queued")));
     emitter.close();
   });
 

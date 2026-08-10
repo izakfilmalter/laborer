@@ -2973,15 +2973,19 @@ const makeRuntimeService = Effect.gen(function* () {
       (row) =>
         decodeStoredJson(row.inputJson).pipe(
           Effect.flatMap((input) =>
-            taskEmission.emit({
-              acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
-              actionName: row.actionName,
-              conversationId: row.conversationId,
-              executionId: row.executionId,
-              input,
-              status: row.status as ExecutionStatus,
-              workspaceId: row.workspaceId,
-            })
+            Schema.decodeUnknownEffect(ExecutionStatus)(row.status).pipe(
+              Effect.flatMap((status) =>
+                taskEmission.emit({
+                  acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
+                  actionName: row.actionName,
+                  conversationId: row.conversationId,
+                  executionId: row.executionId,
+                  input,
+                  status,
+                  workspaceId: row.workspaceId,
+                })
+              )
+            )
           ),
           Effect.ignore
         ),

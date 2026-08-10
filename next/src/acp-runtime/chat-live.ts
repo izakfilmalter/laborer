@@ -121,7 +121,7 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
       });
       const repositoryPath = yield* resolveGitRepositoryPath(
         prepared.laborer.root
-      );
+      ).pipe(Effect.option);
       const rootRuntime = yield* makeNodeRootDurableRuntime({
         application: rootApplication,
         databasePath: prepared.paths.runtimeDatabase,
@@ -131,7 +131,9 @@ export const runAcpChatComposition = Effect.fn("AcpRuntime.runChatComposition")(
           }
           return runPromise(chat.getPermalink(workspaceId, channelId, rootTs));
         },
-        repositoryPath,
+        ...(repositoryPath._tag === "Some"
+          ? { repositoryPath: repositoryPath.value }
+          : {}),
         rootIdentity: prepared.laborer.root,
       });
       rootRuntimes.set(workspaceId, rootRuntime);

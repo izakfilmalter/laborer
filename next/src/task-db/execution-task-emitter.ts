@@ -55,6 +55,7 @@ export class TaskEmissionDiagnostic extends Error {
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const SLACK_PERMALINK_TIMEOUT_MS = 5000;
 const ulid = (time: number): string => {
   let timestamp = Math.max(0, Math.min(time, 0xff_ff_ff_ff_ff_ff));
   let encodedTime = "";
@@ -65,7 +66,7 @@ const ulid = (time: number): string => {
   const entropy = randomBytes(16);
   let encodedRandom = "";
   for (let index = 0; index < 16; index += 1) {
-    encodedRandom += CROCKFORD[entropy[index] ?? 0];
+    encodedRandom += CROCKFORD[(entropy[index] ?? 0) % 32];
   }
   return `${encodedTime}${encodedRandom}`;
 };
@@ -143,14 +144,24 @@ export const openExecutionTaskEmitter = (
   options: NativeExecutionTaskEmitterOptions
 ): OpenedExecutionTaskEmitter => {
   const database = NativeTaskDatabase.open(options.databasePath);
+  const pendingPermalinks = new Set<string>();
+  const permalinkTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  let closed = false;
 
   const update = (task: Task, execution: ExecutionTaskProjection): Task => {
     let current = task;
     for (let attempt = 0; attempt < 8; attempt += 1) {
+      const statusPatch = taskStatusPatch(execution.status);
+      if (
+        current.executionStatus === execution.status &&
+        (!("status" in statusPatch) || current.status === statusPatch.status)
+      ) {
+        return current;
+      }
       try {
         return database.update(current.id, current.revision, {
           executionStatus: execution.status,
-          ...taskStatusPatch(execution.status),
+          ...statusPatch,
         });
       } catch (error) {
         if (
@@ -165,9 +176,53 @@ export const openExecutionTaskEmitter = (
     throw new Error("Task emission CAS retry limit exceeded");
   };
 
-  const emitUnsafe = async (
-    execution: ExecutionTaskProjection
+  const enrichPermalink = async (
+    execution: ExecutionTaskProjection,
+    coordinates: { readonly channelId: string; readonly rootTs: string }
   ): Promise<void> => {
+    if (
+      options.resolveSlackPermalink === undefined ||
+      pendingPermalinks.has(execution.executionId)
+    ) {
+      return;
+    }
+    pendingPermalinks.add(execution.executionId);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const permalink = await Promise.race([
+        options.resolveSlackPermalink({
+          ...coordinates,
+          workspaceId: execution.workspaceId,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("Slack permalink lookup timed out")),
+            SLACK_PERMALINK_TIMEOUT_MS
+          );
+          permalinkTimeouts.add(timeout);
+        }),
+      ]);
+      if (closed) {
+        return;
+      }
+      const latest = database.findByExecutionId(execution.executionId);
+      if (latest !== null && latest.slackPermalink === null) {
+        database.update(latest.id, latest.revision, {
+          slackPermalink: permalink,
+        });
+      }
+    } catch {
+      // Permalinks are optional enrichment and never gate an Execution.
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+        permalinkTimeouts.delete(timeout);
+      }
+      pendingPermalinks.delete(execution.executionId);
+    }
+  };
+
+  const emitUnsafe = (execution: ExecutionTaskProjection): void => {
     if (
       execution.actionName !== "create-feature" &&
       execution.actionName !== "deal-with-bug"
@@ -206,26 +261,20 @@ export const openExecutionTaskEmitter = (
     if (coordinates === null) {
       return;
     }
-    try {
-      const permalink = await options.resolveSlackPermalink({
-        ...coordinates,
-        workspaceId: execution.workspaceId,
-      });
-      const latest = database.findByExecutionId(execution.executionId);
-      if (latest !== null && latest.slackPermalink === null) {
-        database.update(latest.id, latest.revision, {
-          slackPermalink: permalink,
-        });
-      }
-    } catch {
-      // Permalinks are an optional, one-shot enrichment.
-    }
+    enrichPermalink(execution, coordinates).catch(() => undefined);
   };
 
   return {
-    close: () => database.close(),
+    close: () => {
+      closed = true;
+      for (const timeout of permalinkTimeouts) {
+        clearTimeout(timeout);
+      }
+      permalinkTimeouts.clear();
+      database.close();
+    },
     emit: (execution) =>
-      Effect.tryPromise(() => emitUnsafe(execution)).pipe(
+      Effect.try(() => emitUnsafe(execution)).pipe(
         Effect.catch((cause) =>
           Console.error(
             new TaskEmissionDiagnostic(execution.executionId, cause)

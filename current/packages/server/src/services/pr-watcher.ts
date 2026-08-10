@@ -428,18 +428,17 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
       // Re-scan at the background tier so reconciler-adopted worktrees gain a
       // watcher even when their LiveStore row is created after startup.
-      yield* refreshPolling().pipe(
-        Effect.zipRight(
-          Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
-        ),
-        Effect.forever,
+      const refreshPollingCoverage = refreshPolling().pipe(
         Effect.catchAllCause((cause) =>
           Effect.logWarning(
             `[PrWatcher] polling coverage refresh failed: ${String(cause)}`
           )
         ),
-        Effect.forkScoped
+        Effect.zipRight(
+          Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
+        )
       )
+      yield* refreshPollingCoverage.pipe(Effect.forever, Effect.forkScoped)
 
       // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())

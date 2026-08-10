@@ -151,6 +151,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         createWorkspace(store)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
+        yield* prWatcher.checkPr('workspace-1')
 
         assert.strictEqual(prData.number, 42)
         assert.strictEqual(prData.url, 'https://github.com/acme/fork/pull/42')
@@ -160,14 +161,15 @@ describe('PrWatcher fork origin PR lookup', () => {
           .find((row) => row.id === 'workspace-1')
         assert.strictEqual(workspace?.prNumber, 42)
         assert.strictEqual(workspace?.prTitle, 'Origin fork PR')
-        assert.deepEqual(transitions, [
-          {
+        assert.isAtLeast(transitions.length, 2)
+        for (const transition of transitions) {
+          assert.deepEqual(transition, {
             branchName: 'feature/fork-pr',
             projectRepoPath: '/tmp',
             registeredProjectRepoPaths: ['/tmp'],
             prState: 'OPEN',
-          },
-        ])
+          })
+        }
 
         const ghCalls = spawnMock.mock.calls.filter(([cmd]) => cmd[0] === 'gh')
         assert.isAtLeast(ghCalls.length, 1)

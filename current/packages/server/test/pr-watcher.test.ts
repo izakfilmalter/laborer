@@ -1,7 +1,8 @@
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Duration, Effect, Layer, TestClock } from 'effect'
 import { LaborerStore } from '../src/services/laborer-store.js'
+import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { TestLaborerStore } from './helpers/test-store.js'
@@ -203,6 +204,39 @@ describe('PrWatcher', () => {
       yield* prWatcher.refreshPolling()
       yield* waitForPollingState(prWatcher, 'workspace-adopted', true)
       assert.isTrue(yield* prWatcher.isPolling('workspace-adopted'))
+    })
+  )
+
+  it.scoped('periodically discovers an adopted workspace', () =>
+    Effect.gen(function* () {
+      const storeContext = yield* Layer.build(TestLaborerStore)
+      const { store } = Context.get(storeContext, LaborerStore)
+      const prWatcher = yield* buildPrWatcher(storeContext)
+
+      // Let the startup coverage pass finish while the store is empty.
+      yield* Effect.yieldNow()
+      store.commit(
+        events.workspaceCreated({
+          id: 'workspace-periodically-adopted',
+          projectId: 'project-1',
+          taskSource: null,
+          branchName: 'laborer/periodically-adopted',
+          worktreePath: '/tmp/workspace-periodically-adopted',
+          status: 'stopped',
+          origin: 'external',
+          createdAt: new Date().toISOString(),
+          baseSha: null,
+        })
+      )
+
+      assert.isFalse(
+        yield* prWatcher.isPolling('workspace-periodically-adopted')
+      )
+      yield* TestClock.adjust(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
+      yield* Effect.yieldNow()
+      assert.isTrue(
+        yield* prWatcher.isPolling('workspace-periodically-adopted')
+      )
     })
   )
 

@@ -30,27 +30,30 @@ class PrTaskTransitions extends Context.Tag('@laborer/PrTaskTransitions')<
   static readonly layer = Layer.scoped(
     PrTaskTransitions,
     Effect.acquireRelease(
-      Effect.try({
-        try: () => NodeTaskBoardDatabase.open(taskDatabasePath()),
-        catch: (cause) => new PrTaskTransitionError(cause),
-      }),
-      (database) => Effect.sync(() => database.close())
+      Effect.sync((): { database: NodeTaskBoardDatabase | undefined } => ({
+        database: undefined,
+      })),
+      (state) =>
+        Effect.sync(() => {
+          state.database?.close()
+        })
     ).pipe(
-      Effect.map((database) =>
+      Effect.map((state) =>
         PrTaskTransitions.of({
           transition: (input) =>
             Effect.try({
               try: () => {
+                // Retain only a successfully initialized connection so a
+                // temporary startup lock can heal on a later polling pass.
+                const database =
+                  state.database ??
+                  NodeTaskBoardDatabase.open(taskDatabasePath())
+                state.database = database
                 database.transitionTaskForPr(input)
               },
               catch: (cause) => new PrTaskTransitionError(cause),
             }),
         })
-      ),
-      Effect.catchAll((error) =>
-        Effect.succeed(
-          PrTaskTransitions.of({ transition: () => Effect.fail(error) })
-        )
       )
     )
   )

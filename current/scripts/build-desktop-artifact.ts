@@ -125,6 +125,13 @@ const REQUIRED_ASAR_FILES = [
   'node_modules/@effect/platform/package.json',
   'node_modules/effect/package.json',
   'packages/server/dist/main.mjs',
+  // The bundled server resolves task-db SQL migrations relative to the
+  // bundle (`new URL('./migrations/*.sql', import.meta.url)`). If these are
+  // missing from the asar, the server sidecar crash-loops at import time and
+  // the renderer gets ERR_CONNECTION_REFUSED on the backend port.
+  'packages/server/dist/migrations/0000_shared_task_db.sql',
+  'packages/server/dist/migrations/0001_execution_lifecycle_statuses.sql',
+  'packages/server/dist/migrations/0002_task_description_agent_source.sql',
 ] as const
 
 // ---------------------------------------------------------------------------

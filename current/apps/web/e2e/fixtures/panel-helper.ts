@@ -13,7 +13,7 @@
  * @see PRD-e2e-test-coverage.md — Page Object Pattern
  */
 
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 
 export class PanelHelper {
   readonly page: Page
@@ -29,22 +29,6 @@ export class PanelHelper {
   private async blurTerminal(): Promise<void> {
     await this.page.getByText('Server', { exact: true }).click({ force: true })
     await this.page.keyboard.press('Escape')
-  }
-
-  /** Get the terminal panels view toggle button. */
-  get terminalPanelsButton(): Locator {
-    return this.page.getByRole('button', {
-      name: 'Terminal panels',
-      exact: true,
-    })
-  }
-
-  /** Get the dashboard view toggle button. */
-  get dashboardButton(): Locator {
-    return this.page.getByRole('button', {
-      name: 'Dashboard',
-      exact: true,
-    })
   }
 
   /**
@@ -145,15 +129,5 @@ export class PanelHelper {
     await this.page.keyboard.down('Shift')
     await this.page.keyboard.press(actionKeyByDirection[direction])
     await this.page.keyboard.up('Shift')
-  }
-
-  /** Switch to the dashboard view. */
-  async switchToDashboard(): Promise<void> {
-    await this.dashboardButton.click()
-  }
-
-  /** Switch to the terminal panels view. */
-  async switchToPanels(): Promise<void> {
-    await this.terminalPanelsButton.click()
   }
 }

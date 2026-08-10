@@ -1,6 +1,5 @@
 import type { WindowLayout } from '@laborer/shared/types'
 import {
-  LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
   SquareKanban,
@@ -17,16 +16,13 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-/** The main content views: terminal panels, dashboard, or kanban board. */
-export type MainView = 'panels' | 'dashboard' | 'kanban'
+/** The main content views: terminal panels or kanban board. */
+export type MainView = 'panels' | 'kanban'
 
 /** Displays the contextual label for the current view. */
 function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
   if (mainView === 'panels') {
     return <span className="text-foreground">Panels</span>
-  }
-  if (mainView === 'dashboard') {
-    return <span className="text-foreground">Dashboard</span>
   }
   if (mainView === 'kanban') {
     return <span className="text-foreground">Board</span>
@@ -151,10 +147,9 @@ function WindowTabBar({
 /**
  * Bar rendered at the top of the main content area (right of the sidebar).
  *
- * Shows the sidebar toggle, view toggle (panels / dashboard), view label,
+ * Shows the sidebar toggle, view toggle (panels / board), view label,
  * and the window-level tab bar (auto-hidden when 1 tab).
  *
- * @see Issue #114: Cross-project workspace dashboard
  * @see Issue #8: Window tab bar integration
  */
 export function PanelHeaderBar({
@@ -229,22 +224,6 @@ export function PanelHeaderBar({
               <Terminal className="size-3.5" />
             </TooltipTrigger>
             <TooltipContent>Terminal panels</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Dashboard"
-                  className={mainView === 'dashboard' ? 'bg-accent' : ''}
-                  onClick={() => onViewChange('dashboard')}
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <LayoutDashboard className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Dashboard</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger

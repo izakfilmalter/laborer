@@ -14,7 +14,6 @@ import { ProjectGroup } from '@/components/project-group'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -968,7 +967,7 @@ function HomeComponent() {
   // When search is cleared, the stored collapse state is naturally restored.
   const isSearchActive = searchQuery.trim().length > 0
 
-  // Main content view toggle — panels (terminal panes) or dashboard
+  // Main content view toggle — terminal panels or kanban board
   const [mainView, setMainView] = useState<MainView>('panels')
   const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false)
 
@@ -1136,7 +1135,7 @@ function HomeComponent() {
             </button>
           )}
 
-          {/* Main content — Panel system, dashboard, or welcome empty state */}
+          {/* Main content — panel system, kanban board, or welcome empty state */}
           <main className="min-w-0 flex-1">
             {!hasProjects && <WelcomeEmptyState />}
             {hasProjects && (
@@ -1175,13 +1174,6 @@ function HomeComponent() {
                       windowTabs={windowLayout?.tabs}
                     />
                   </>
-                )}
-                {mainView === 'dashboard' && (
-                  <div className="flex h-full flex-col">
-                    <div className="min-h-0 flex-1">
-                      <WorkspaceDashboard />
-                    </div>
-                  </div>
                 )}
                 {mainView === 'kanban' && (
                   <div className="min-h-0 flex-1">

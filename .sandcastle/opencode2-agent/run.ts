@@ -6,6 +6,10 @@ import {
   statSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import {
+  classifyRecoveredAssistant,
+  type RecoveredSession,
+} from "./recovery.ts";
 
 interface Options {
   readonly diagnosticsPath?: string;
@@ -24,15 +28,6 @@ interface CommandResult {
   readonly sessionId?: string;
   readonly stderrTail: string;
 }
-
-type RecoveredSession =
-  | { readonly status: "ambiguous" }
-  | {
-      readonly error: string;
-      readonly errorType?: string;
-      readonly status: "failed";
-    }
-  | { readonly status: "succeeded"; readonly text: readonly string[] };
 
 const MAX_DIAGNOSTIC_TEXT = 4096;
 const MAX_STDERR_TAIL = 8192;
@@ -64,7 +59,7 @@ for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
   const result = await runStreaming(currentArgs, currentPrompt);
   let recovered: RecoveredSession | undefined;
 
-  if (result.exitCode !== 0 && result.sessionId !== undefined) {
+  if (result.sessionId !== undefined) {
     recovered = await recoverSession(result.sessionId);
     if (recovered?.status === "failed") {
       lastError = recovered.error;
@@ -89,27 +84,34 @@ for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     stderrTail: boundedText(result.stderrTail),
   });
 
-  if (result.exitCode === 0) {
+  if (recovered?.status === "succeeded") {
+    if (result.exitCode !== 0) {
+      for (const text of recovered.text) {
+        process.stdout.write(
+          `${JSON.stringify({
+            part: { text, type: "text" },
+            sessionID: result.sessionId,
+            type: "text",
+          })}\n`
+        );
+      }
+    }
     process.exit(0);
   }
-  if (
-    recovered?.status === "succeeded"
-  ) {
-    for (const text of recovered.text) {
-      process.stdout.write(
-        `${JSON.stringify({
-          part: { text, type: "text" },
-          sessionID: result.sessionId,
-          type: "text",
-        })}\n`
-      );
-    }
+  if (result.exitCode === 0 && recovered?.status !== "incomplete") {
     process.exit(0);
   }
   const retryableProviderFailure =
     recovered?.status === "failed" &&
     recovered.errorType?.startsWith("provider.") === true;
-  if (attempt >= options.maxAttempts || !retryableProviderFailure) {
+  const incompleteTurn = recovered?.status === "incomplete";
+  if (
+    attempt >= options.maxAttempts ||
+    !(retryableProviderFailure || incompleteTurn)
+  ) {
+    if (incompleteTurn) {
+      lastError = `OpenCode session ${result.sessionId ?? "unknown"} stopped before a terminal assistant response after ${String(attempt)} attempt(s).`;
+    }
     if (recovered?.status === "ambiguous") {
       lastError = `OpenCode transport failed and session ${result.sessionId ?? "unknown"} could not be recovered safely; refusing to replay the prompt. Inspect it with: opencode2 api get /api/session/${result.sessionId ?? "SESSION_ID"}`;
     }
@@ -121,16 +123,17 @@ for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
         })}\n`
       );
     }
-    process.exit(result.exitCode);
+    process.exit(result.exitCode === 0 ? 1 : result.exitCode);
   }
   currentArgs = withSession(options.runArgs, result.sessionId);
-  currentPrompt =
-    "The previous provider call failed transiently. Continue the existing task from this preserved session and worktree. Do not repeat completed side effects.";
+  currentPrompt = incompleteTurn
+    ? "Continue the existing task from this preserved session and worktree. The previous turn ended before a terminal response. Do not repeat completed side effects."
+    : "The previous provider call failed transiently. Continue the existing task from this preserved session and worktree. Do not repeat completed side effects.";
 
   const baseDelay = attempt * options.retryDelaySeconds * 1000;
   const jitter = randomMilliseconds(options.retryJitterSeconds);
   process.stdout.write(
-    `opencode2 attempt ${String(attempt)} failed; retrying preserved worktree in ${String(
+    `opencode2 attempt ${String(attempt)} ${incompleteTurn ? "ended before a terminal response" : "failed"}; retrying preserved session and worktree in ${String(
       Math.ceil((baseDelay + jitter) / 1000)
     )}s.\n`
   );
@@ -301,30 +304,7 @@ async function recoverSession(
   if (assistant === undefined) {
     return { status: "ambiguous" };
   }
-  const completed =
-    isRecord(assistant.time) && typeof assistant.time.completed === "number";
-  if (!completed) {
-    return { status: "ambiguous" };
-  }
-  const error = errorMessage(assistant.error);
-  const errorType =
-    isRecord(assistant.error) && typeof assistant.error.type === "string"
-      ? assistant.error.type
-      : undefined;
-  const content = Array.isArray(assistant.content) ? assistant.content : [];
-  const text = content.flatMap((part) =>
-    isRecord(part) && part.type === "text" && typeof part.text === "string"
-      ? [part.text]
-      : []
-  );
-  if (error !== undefined) {
-    return {
-      error,
-      ...(errorType === undefined ? {} : { errorType }),
-      status: "failed",
-    };
-  }
-  return { status: "succeeded", text };
+  return classifyRecoveredAssistant(assistant);
 }
 
 async function runCaptured(

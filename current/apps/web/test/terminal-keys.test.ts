@@ -154,6 +154,12 @@ describe('shouldBypassTerminal', () => {
     ).toBe(true)
   })
 
+  it('bypasses Cmd+K (kanban board overlay toggle)', () => {
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'k', metaKey: true }))
+    ).toBe(true)
+  })
+
   it('bypasses Cmd+P (push workspace)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'p', metaKey: true }))

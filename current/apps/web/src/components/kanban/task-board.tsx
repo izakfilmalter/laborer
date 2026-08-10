@@ -1,5 +1,5 @@
 /**
- * Shared-task-db kanban board — a MainView alongside panels/dashboard.
+ * Shared-task-db kanban board — an overlay above the panel area (Cmd+K).
  *
  * One global board where each LiveStore project is a collapsible swim
  * lane (Todo / In Progress / In Review / Done per lane). Lane collapse
@@ -1393,7 +1393,7 @@ function TaskDetailDialog({
 }
 
 /**
- * The kanban MainView: one lane per LiveStore project, collapse state
+ * The kanban board: one lane per LiveStore project, collapse state
  * shared with the sidebar's project groups (same keys, same instance).
  */
 function TaskBoard({

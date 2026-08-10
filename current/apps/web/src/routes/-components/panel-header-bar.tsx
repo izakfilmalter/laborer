@@ -1,10 +1,5 @@
 import type { WindowLayout } from '@laborer/shared/types'
-import {
-  PanelLeftClose,
-  PanelLeftOpen,
-  SquareKanban,
-  Terminal,
-} from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, SquareKanban } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
@@ -15,20 +10,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-
-/** The main content views: terminal panels or kanban board. */
-export type MainView = 'panels' | 'kanban'
-
-/** Displays the contextual label for the current view. */
-function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
-  if (mainView === 'panels') {
-    return <span className="text-foreground">Panels</span>
-  }
-  if (mainView === 'kanban') {
-    return <span className="text-foreground">Board</span>
-  }
-  return null
-}
 
 interface WindowTabBarProps {
   readonly onCloseTab: (() => void) | undefined
@@ -147,14 +128,14 @@ function WindowTabBar({
 /**
  * Bar rendered at the top of the main content area (right of the sidebar).
  *
- * Shows the sidebar toggle, view toggle (panels / board), view label,
- * and the window-level tab bar (auto-hidden when 1 tab).
+ * Shows the sidebar toggle, the board overlay toggle, and the
+ * window-level tab bar (auto-hidden when 1 tab).
  *
  * @see Issue #8: Window tab bar integration
  */
 export function PanelHeaderBar({
-  mainView,
-  onViewChange,
+  boardOpen,
+  onToggleBoard,
   onToggleSidebar,
   sidebarCollapsed,
   windowLayout,
@@ -164,8 +145,8 @@ export function PanelHeaderBar({
   onRenameWindowTab,
   onReorderWindowTabs,
 }: {
-  readonly mainView: MainView
-  readonly onViewChange: (view: MainView) => void
+  readonly boardOpen: boolean
+  readonly onToggleBoard: () => void
   readonly onToggleSidebar?: (() => void) | undefined
   readonly sidebarCollapsed?: boolean
   readonly windowLayout?: WindowLayout | undefined
@@ -208,56 +189,37 @@ export function PanelHeaderBar({
             </TooltipContent>
           </Tooltip>
         )}
-        <div className="flex gap-0.5">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Terminal panels"
-                  className={mainView === 'panels' ? 'bg-accent' : ''}
-                  onClick={() => onViewChange('panels')}
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Terminal className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Terminal panels</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Board"
-                  className={mainView === 'kanban' ? 'bg-accent' : ''}
-                  onClick={() => onViewChange('kanban')}
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <SquareKanban className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Board</TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="min-w-0 truncate text-muted-foreground text-xs">
-          <ViewContextLabel mainView={mainView} />
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={boardOpen ? 'Close board' : 'Open board'}
+                aria-pressed={boardOpen}
+                className={boardOpen ? 'bg-accent' : ''}
+                onClick={onToggleBoard}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <SquareKanban className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>
+            {boardOpen ? 'Close board' : 'Open board'} <Kbd>Cmd</Kbd>
+            <Kbd>K</Kbd>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
-      {/* Window tab bar, right after the view label (auto-hides with 1 tab) */}
-      {mainView === 'panels' && (
-        <WindowTabBar
-          onCloseTab={onCloseWindowTab}
-          onNewTab={onNewWindowTab}
-          onRenameTab={onRenameWindowTab}
-          onReorderTabs={onReorderWindowTabs}
-          onSelectTab={onSelectWindowTab}
-          windowLayout={windowLayout}
-        />
-      )}
+      {/* Window tab bar (auto-hides with 1 tab) */}
+      <WindowTabBar
+        onCloseTab={onCloseWindowTab}
+        onNewTab={onNewWindowTab}
+        onRenameTab={onRenameWindowTab}
+        onReorderTabs={onReorderWindowTabs}
+        onSelectTab={onSelectWindowTab}
+        windowLayout={windowLayout}
+      />
     </div>
   )
 }

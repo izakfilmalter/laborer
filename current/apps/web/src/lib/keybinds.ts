@@ -248,6 +248,10 @@ const KEYBINDS = {
   /** Cmd+Shift+Enter — toggle fullscreen pane */
   TOGGLE_FULLSCREEN: { key: 'Enter', meta: true, shift: true },
 
+  // -- Kanban board overlay --
+  /** Cmd+K — toggle the kanban board overlay over the main panel area */
+  TOGGLE_BOARD: { key: 'k', meta: true },
+
   // -- Push/Pull workspace --
   /** Cmd+P — push workspace */
   PUSH_WORKSPACE: { key: 'p', meta: true },

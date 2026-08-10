@@ -3,6 +3,7 @@ import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import { projects, workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
+import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { createFileRoute } from '@tanstack/react-router'
 import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -15,6 +16,7 @@ import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
+import { useBoardOverlayHeight } from '@/hooks/use-board-overlay-height'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
@@ -53,7 +55,6 @@ import {
   DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
-import type { MainView } from './-components/panel-header-bar'
 import { PanelHeaderBar } from './-components/panel-header-bar'
 import { WelcomeEmptyState } from './-components/welcome-empty-state'
 import { usePanelLayout } from './-hooks/use-panel-layout'
@@ -967,9 +968,80 @@ function HomeComponent() {
   // When search is cleared, the stored collapse state is naturally restored.
   const isSearchActive = searchQuery.trim().length > 0
 
-  // Main content view toggle — terminal panels or kanban board
-  const [mainView, setMainView] = useState<MainView>('panels')
+  // Kanban board overlay — covers the main panel area (not the sidebar).
+  // Toggled instantly (no animation) via Cmd+K or the header bar button;
+  // the panels underneath stay mounted so terminal sessions stay alive.
+  const [boardOverlayOpen, setBoardOverlayOpen] = useState(false)
+  const boardOverlayHeight = useBoardOverlayHeight()
+  const mainContentRef = useRef<HTMLDivElement | null>(null)
+  const boardResizeRef = useRef<{
+    containerHeight: number
+    startFraction: number
+    startY: number
+  } | null>(null)
   const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false)
+
+  const toggleBoardOverlay = useCallback(() => {
+    setBoardOverlayOpen((open) => !open)
+  }, [])
+
+  useHotkeySequence(['Meta+K'], (event) => {
+    event.preventDefault()
+    toggleBoardOverlay()
+  })
+
+  const handleBoardResizeStart = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const containerHeight =
+        mainContentRef.current?.getBoundingClientRect().height
+      if (event.button !== 0 || !containerHeight) {
+        return
+      }
+
+      event.preventDefault()
+      boardResizeRef.current = {
+        containerHeight,
+        startFraction: boardOverlayHeight.fraction,
+        startY: event.clientY,
+      }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      document.body.style.cursor = 'row-resize'
+      document.body.style.userSelect = 'none'
+    },
+    [boardOverlayHeight.fraction]
+  )
+
+  const handleBoardResizeMove = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const resizeState = boardResizeRef.current
+      if (!resizeState) {
+        return
+      }
+
+      event.preventDefault()
+      boardOverlayHeight.setFraction(
+        resizeState.startFraction +
+          (event.clientY - resizeState.startY) / resizeState.containerHeight
+      )
+    },
+    [boardOverlayHeight.setFraction]
+  )
+
+  const handleBoardResizeEnd = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      if (!boardResizeRef.current) {
+        return
+      }
+
+      boardResizeRef.current = null
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      document.body.style.removeProperty('cursor')
+      document.body.style.removeProperty('user-select')
+    },
+    []
+  )
 
   // Sidebar width is pixel-based, matching t3code's CSS-variable approach so
   // viewport resizes do not proportionally scale the sidebar.
@@ -1040,10 +1112,8 @@ function HomeComponent() {
   }, [])
 
   const handleMetaWWithoutPane = useCallback(() => {
-    if (mainView === 'panels') {
-      setIsCloseAppDialogOpen(true)
-    }
-  }, [mainView])
+    setIsCloseAppDialogOpen(true)
+  }, [])
 
   return (
     <DiffScrollProvider>
@@ -1141,45 +1211,70 @@ function HomeComponent() {
             {hasProjects && (
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
-                  mainView={mainView}
+                  boardOpen={boardOverlayOpen}
                   onCloseWindowTab={gatedPanelActions.closeWindowTab}
                   onNewWindowTab={panelActions.addWindowTab}
                   onRenameWindowTab={panelActions.renameWindowTab}
                   onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
                   onSelectWindowTab={panelActions.switchWindowTab}
+                  onToggleBoard={toggleBoardOverlay}
                   onToggleSidebar={
                     responsiveSizes.canCollapseSidebar
                       ? toggleSidebar
                       : undefined
                   }
-                  onViewChange={setMainView}
                   sidebarCollapsed={sidebarCollapsed}
                   windowLayout={panelActions.windowLayout}
                 />
-                {mainView === 'panels' && (
-                  <>
-                    <PanelHotkeys
-                      leafPaneIds={leafPaneIds}
-                      onMetaWWithoutPane={handleMetaWWithoutPane}
-                    />
-                    <PanelContent
-                      activePaneId={activePaneId}
-                      activeTabId={windowLayout?.activeTabId}
-                      diffWorkspaceIds={diffPaneWorkspaceIds}
-                      fullscreenPaneId={fullscreenPaneId}
-                      isEmptyWindowTab={isEmptyWindowTab}
-                      isReconciling={isReconciling}
-                      treeWorkspaceIds={treePaneWorkspaceIds}
-                      windowLayout={windowLayout}
-                      windowTabs={windowLayout?.tabs}
-                    />
-                  </>
+                {/* Pane hotkeys stay inert while the board overlay is open so
+                    shortcuts cannot invisibly mutate the panes underneath. */}
+                {!boardOverlayOpen && (
+                  <PanelHotkeys
+                    leafPaneIds={leafPaneIds}
+                    onMetaWWithoutPane={handleMetaWWithoutPane}
+                  />
                 )}
-                {mainView === 'kanban' && (
-                  <div className="min-h-0 flex-1">
-                    <TaskBoard collapseState={collapseState} />
-                  </div>
-                )}
+                <div className="relative min-h-0 flex-1" ref={mainContentRef}>
+                  <PanelContent
+                    activePaneId={activePaneId}
+                    activeTabId={windowLayout?.activeTabId}
+                    diffWorkspaceIds={diffPaneWorkspaceIds}
+                    fullscreenPaneId={fullscreenPaneId}
+                    isEmptyWindowTab={isEmptyWindowTab}
+                    isReconciling={isReconciling}
+                    treeWorkspaceIds={treePaneWorkspaceIds}
+                    windowLayout={windowLayout}
+                    windowTabs={windowLayout?.tabs}
+                  />
+                  {/* Kanban board overlay — semi-transparent so the panel
+                      sessions remain visible underneath; cards stay solid
+                      (bg-card). Appears/disappears instantly, no animation. */}
+                  {boardOverlayOpen && (
+                    <section
+                      aria-label="Task board"
+                      className="absolute inset-x-0 top-0 z-20 flex flex-col border-b bg-background/70 shadow-2xl"
+                      style={{
+                        height: `${boardOverlayHeight.fraction * 100}%`,
+                      }}
+                    >
+                      <div className="min-h-0 flex-1">
+                        <TaskBoard collapseState={collapseState} />
+                      </div>
+                      <button
+                        aria-label="Resize board"
+                        className="relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        onPointerCancel={handleBoardResizeEnd}
+                        onPointerDown={handleBoardResizeStart}
+                        onPointerMove={handleBoardResizeMove}
+                        onPointerUp={handleBoardResizeEnd}
+                        tabIndex={-1}
+                        type="button"
+                      >
+                        <div className="z-10 flex h-1.5 w-8 shrink-0 rounded-sm bg-border" />
+                      </button>
+                    </section>
+                  )}
+                </div>
               </div>
             )}
           </main>

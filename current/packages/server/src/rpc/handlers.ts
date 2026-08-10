@@ -12,7 +12,12 @@
  */
 
 import { join } from 'node:path'
-import { type AgentProvider, LaborerRpcs, RpcError } from '@laborer/shared/rpc'
+import {
+  type AgentProvider,
+  type BoardTask,
+  LaborerRpcs,
+  RpcError,
+} from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
@@ -23,11 +28,49 @@ import { LaborerStore } from '../services/laborer-store.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
+import { subscribeToTaskBoard } from '../services/task-board-reader.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
+
+export const projectContainsRoot = (
+  repoPath: string,
+  rootPath: string
+): boolean =>
+  repoPath === rootPath ||
+  rootPath.startsWith(repoPath.endsWith('/') ? repoPath : `${repoPath}/`)
+
+const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
+  Effect.gen(function* () {
+    const registry = yield* ProjectRegistry
+    const roots = [...new Set(tasks.map(({ rootPath }) => rootPath))]
+    yield* Effect.forEach(
+      roots,
+      (rootPath) =>
+        Effect.gen(function* () {
+          const registered = yield* registry.listProjects()
+          if (
+            registered.some(({ repoPath }) =>
+              projectContainsRoot(repoPath, rootPath)
+            )
+          ) {
+            return
+          }
+          yield* registry
+            .addProject(rootPath)
+            .pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning(
+                  `[task-board] Could not auto-register ${rootPath}: ${error.message}`
+                )
+              )
+            )
+        }),
+      { concurrency: 1, discard: true }
+    )
+  })
 
 const getProjectFromStore = (projectId: string) =>
   Effect.gen(function* () {
@@ -206,6 +249,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* registry.removeProject(projectId)
       }),
     'project.list': handleProjectList,
+
+    'task.board.subscribe': () =>
+      subscribeToTaskBoard().pipe(
+        Stream.tap(({ tasks }) => ensureTaskProjects(tasks))
+      ),
 
     // -------------------------------------------------------------------
     // Config RPCs (Issue #157)

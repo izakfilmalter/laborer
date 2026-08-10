@@ -37,6 +37,21 @@ export interface Task {
   readonly worktreePath: string | null
 }
 
+export interface TaskSnapshot {
+  readonly _tag: 'snapshot'
+  readonly cursor: number
+  readonly tasks: readonly Task[]
+}
+
+export interface TaskDelta {
+  readonly _tag: 'delta'
+  readonly cursor: number
+  readonly deletedTaskIds: readonly string[]
+  readonly tasks: readonly Task[]
+}
+
+export type TaskRead = TaskSnapshot | TaskDelta
+
 export interface NewTask {
   readonly actionName?: string | null
   readonly branchName?: string | null
@@ -129,6 +144,10 @@ const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
 }
 
 type SqliteRow = Record<string, unknown>
+interface ChangeBounds {
+  readonly maximum: number | null
+  readonly minimum: number | null
+}
 const isSqliteRow = (value: unknown): value is SqliteRow =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const sqliteRow = (value: unknown): SqliteRow => {
@@ -310,6 +329,49 @@ export class NativeTaskDatabase {
     return row == null ? null : rowToTask(sqliteRow(row))
   }
 
+  snapshot(): TaskSnapshot {
+    return this.#readTransaction(() => this.#snapshotUnsafe())
+  }
+
+  readChanges(sequence: number, limit = 1000): TaskRead {
+    if (!(Number.isSafeInteger(sequence) && sequence >= 0)) {
+      throw new Error('A task change cursor must be a nonnegative integer')
+    }
+    if (!(Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000)) {
+      throw new Error('A task change limit must be between 1 and 1000')
+    }
+
+    return this.#readTransaction(() => {
+      if (this.#cursorNeedsSnapshot(sequence, this.#changeBounds())) {
+        return this.#snapshotUnsafe()
+      }
+
+      const changes = this.changesAfter(sequence, limit)
+      if (!this.#changesAreContiguous(sequence, changes)) {
+        return this.#snapshotUnsafe()
+      }
+
+      const taskIds = [...new Set(changes.map(({ taskId }) => taskId))]
+      const changedTasks: Task[] = []
+      const deletedTaskIds: string[] = []
+      for (const taskId of taskIds) {
+        const task = this.find(taskId)
+        if (task) {
+          changedTasks.push(task)
+        } else {
+          deletedTaskIds.push(taskId)
+        }
+      }
+
+      return {
+        _tag: 'delta',
+        cursor: changes.at(-1)?.sequence ?? sequence,
+        tasks: changedTasks,
+        deletedTaskIds,
+      }
+    })
+  }
+
   insert(
     input: NewTask,
     changedAt = Date.now()
@@ -440,6 +502,60 @@ export class NativeTaskDatabase {
     return row == null ? null : rowToTask(sqliteRow(row))
   }
 
+  #changeBounds(): ChangeBounds {
+    const bounds = sqliteRow(
+      this.#database
+        .query(
+          'SELECT MIN(sequence) AS minimum, MAX(sequence) AS maximum FROM task_changes'
+        )
+        .get()
+    )
+    return {
+      minimum:
+        bounds.minimum === null
+          ? null
+          : safeInteger(bounds.minimum, 'task_changes.minimum'),
+      maximum:
+        bounds.maximum === null
+          ? null
+          : safeInteger(bounds.maximum, 'task_changes.maximum'),
+    }
+  }
+
+  #cursorNeedsSnapshot(sequence: number, bounds: ChangeBounds): boolean {
+    return (
+      (bounds.maximum === null && sequence > 0) ||
+      (bounds.maximum !== null && sequence > bounds.maximum) ||
+      (bounds.minimum !== null && bounds.minimum > sequence + 1)
+    )
+  }
+
+  #changesAreContiguous(
+    sequence: number,
+    changes: readonly { readonly sequence: number }[]
+  ): boolean {
+    return changes.every(
+      (change, index) => change.sequence === sequence + index + 1
+    )
+  }
+
+  #snapshotUnsafe(): TaskSnapshot {
+    const rows = this.#database
+      .query(`SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id`)
+      .all()
+      .map((value) => rowToTask(sqliteRow(value)))
+    const cursorRow = sqliteRow(
+      this.#database
+        .query('SELECT COALESCE(MAX(sequence), 0) AS cursor FROM task_changes')
+        .get()
+    )
+    return {
+      _tag: 'snapshot',
+      cursor: safeInteger(cursorRow.cursor, 'task_changes.cursor'),
+      tasks: rows,
+    }
+  }
+
   #appendChange(taskId: string, changedAt: number): void {
     this.#database
       .query('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
@@ -513,6 +629,24 @@ export class NativeTaskDatabase {
     })
   }
 
+  #readTransaction<A>(operation: () => A): A {
+    return this.#withBusyRetry(() => {
+      this.#database.exec('BEGIN')
+      try {
+        const result = operation()
+        this.#database.exec('COMMIT')
+        return result
+      } catch (error) {
+        try {
+          this.#database.exec('ROLLBACK')
+        } catch {
+          // Preserve the operation failure.
+        }
+        throw error
+      }
+    })
+  }
+
   #withBusyRetry<A>(operation: () => A): A {
     let attempt = 0
     while (true) {
@@ -566,6 +700,11 @@ export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
       TaskDbFailure
     >
     readonly find: (id: string) => Effect.Effect<Task | null, TaskDbFailure>
+    readonly readChanges: (
+      sequence: number,
+      limit?: number
+    ) => Effect.Effect<TaskRead, TaskDbFailure>
+    readonly snapshot: () => Effect.Effect<TaskSnapshot, TaskDbFailure>
     readonly insert: (
       input: NewTask,
       changedAt?: number
@@ -590,6 +729,9 @@ export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
             changesAfter: (sequence, limit) =>
               effectTry(() => database.changesAfter(sequence, limit)),
             find: (id) => effectTry(() => database.find(id)),
+            readChanges: (sequence, limit) =>
+              effectTry(() => database.readChanges(sequence, limit)),
+            snapshot: () => effectTry(() => database.snapshot()),
             insert: (input, changedAt) =>
               effectTry(() => database.insert(input, changedAt)),
             update: (id, expectedRevision, patch, changedAt) =>

@@ -896,27 +896,29 @@ function TaskDetailDialog({
   task,
 }: {
   readonly onOpenChange: (open: boolean) => void
-  readonly task: BoardTask | null
+  readonly task: BoardTask
 }) {
-  const [title, setTitle] = useState(task?.title ?? '')
-  const [description, setDescription] = useState(task?.description ?? '')
+  const [title, setTitle] = useState(task.title)
+  const [description, setDescription] = useState(task.description ?? '')
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<{
+    readonly conflict: boolean
+    readonly message: string
+  } | null>(null)
   const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
-
-  useEffect(() => {
-    setTitle(task?.title ?? '')
-    setDescription(task?.description ?? '')
-  }, [task])
+  const normalizedDescription = description.length === 0 ? null : description
+  const dirty = title !== task.title || description !== (task.description ?? '')
 
   const save = async () => {
-    if (!task || saving) {
+    if (saving || !dirty || title.trim().length === 0) {
       return
     }
     setSaving(true)
+    setSaveError(null)
     try {
       await updateTask({
         payload: {
-          description: description.length === 0 ? null : description,
+          description: normalizedDescription,
           expectedRevision: task.revision,
           taskId: task.id,
           title,
@@ -924,8 +926,13 @@ function TaskDetailDialog({
       })
       onOpenChange(false)
     } catch (error) {
-      toast.error('Could not save task', {
-        description: extractErrorMessage(error),
+      const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
+      const message = conflict
+        ? 'This task changed elsewhere. The latest version will replace this draft when it arrives.'
+        : extractErrorMessage(error)
+      setSaveError({ conflict, message })
+      toast.error(conflict ? 'Task changed elsewhere' : 'Could not save task', {
+        description: message,
       })
     } finally {
       setSaving(false)
@@ -933,42 +940,98 @@ function TaskDetailDialog({
   }
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={task !== null}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Task details</DialogTitle>
+    <Dialog onOpenChange={onOpenChange} open>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+        <DialogHeader className="gap-3 pr-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <DialogTitle>Edit task</DialogTitle>
+            <SourceBadge source={task.source} />
+          </div>
           <DialogDescription>
-            The description becomes the launched agent’s initial prompt when
-            this task is provisioned.
+            Refine the card and the instructions used when its agent launches.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4">
+        <form
+          className="grid gap-5"
+          onSubmit={(event) => {
+            event.preventDefault()
+            save()
+          }}
+        >
           <div className="grid gap-2">
             <Label htmlFor="task-detail-title">Title</Label>
             <Input
+              autoFocus
+              disabled={saving}
               id="task-detail-title"
               maxLength={100}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => {
+                setTitle(event.target.value)
+                setSaveError(null)
+              }}
               value={title}
             />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="task-detail-description">Description</Label>
             <Textarea
+              aria-describedby="task-detail-description-help"
+              className="min-h-40 resize-y"
+              disabled={saving}
               id="task-detail-description"
               maxLength={100_000}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Instructions for the agent"
-              rows={8}
+              onChange={(event) => {
+                setDescription(event.target.value)
+                setSaveError(null)
+              }}
+              placeholder="What should the agent know or do?"
               value={description}
             />
+            <div
+              className="flex flex-col gap-1 text-muted-foreground text-xs sm:flex-row sm:items-center sm:justify-between"
+              id="task-detail-description-help"
+            >
+              <span>Plain text · used as the agent’s initial prompt</span>
+              <span className="tabular-nums">
+                {description.length.toLocaleString()} / 100,000
+              </span>
+            </div>
           </div>
-        </div>
-        <DialogFooter>
-          <Button disabled={saving || title.trim().length === 0} onClick={save}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </DialogFooter>
+          {saveError && (
+            <div
+              aria-live="polite"
+              className={cn(
+                'flex gap-2 rounded-md border px-3 py-2 text-sm',
+                saveError.conflict
+                  ? 'border-warning/30 bg-warning/10 text-warning'
+                  : 'border-destructive/30 bg-destructive/10 text-destructive'
+              )}
+              role="alert"
+            >
+              <TriangleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0"
+              />
+              <span>{saveError.message}</span>
+            </div>
+          )}
+          <DialogFooter className="mt-1">
+            <Button
+              disabled={saving}
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={saving || !dirty || title.trim().length === 0}
+              type="submit"
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
@@ -988,7 +1051,7 @@ function TaskBoard({
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
-  const [selectedTask, setSelectedTask] = useState<BoardTask | null>(null)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
@@ -1137,6 +1200,10 @@ function TaskBoard({
       return { project, visibleTasks }
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
+  // Keep the dialog bound to the board projection rather than to the card
+  // snapshot that opened it. A CAS conflict's next poll therefore remounts
+  // the form with the winning revision instead of leaving stale fields open.
+  const selectedTask = boardTasks.find((task) => task.id === selectedTaskId)
 
   const persistMove = async (
     task: BoardTask,
@@ -1220,7 +1287,7 @@ function TaskBoard({
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
-                    onOpenTask={setSelectedTask}
+                    onOpenTask={(task) => setSelectedTaskId(task.id)}
                     projectId={project.id}
                     tasks={visibleTasks}
                   />
@@ -1295,16 +1362,19 @@ function TaskBoard({
           </div>
         </section>
       )}
-      <TaskDetailDialog
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedTask(null)
-          }
-        }}
-        task={selectedTask}
-      />
+      {selectedTask && (
+        <TaskDetailDialog
+          key={`${selectedTask.id}:${String(selectedTask.revision)}`}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedTaskId(null)
+            }
+          }}
+          task={selectedTask}
+        />
+      )}
     </div>
   )
 }
 
-export { TaskBoard }
+export { TaskBoard, TaskBoardCard, TaskDetailDialog }

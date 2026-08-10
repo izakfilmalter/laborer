@@ -26,6 +26,25 @@ describe('Slack workspace planner', () => {
     expect(isSlackMessageUrl('https://app.slack.com/client/T123/C123')).toBe(
       false
     )
+    expect(
+      isSlackMessageUrl(
+        'https://app.slack.com/client/T123/C123/thread/C123-1750000000000000'
+      )
+    ).toBe(true)
+    expect(
+      isSlackMessageUrl(
+        'https://user:secret@example.slack.com/archives/C123/p1'
+      )
+    ).toBe(false)
+    expect(
+      isSlackMessageUrl('https://example.slack.com:8443/archives/C123/p1')
+    ).toBe(false)
+    expect(
+      isSlackMessageUrl('https://example.slack.com/archives/C123/placeholder')
+    ).toBe(false)
+    expect(
+      isSlackMessageUrl('https://example.slack.com/archives/C123/p1/extra')
+    ).toBe(false)
   })
 
   it('normalizes the suggested name into a namespaced git branch', () => {

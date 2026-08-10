@@ -13,6 +13,10 @@ import {
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const MAX_CAS_ATTEMPTS = 5
 const MAX_MANUAL_TITLE_LENGTH = 100
+const MAX_MANUAL_BRANCH_SLUG_LENGTH = 48
+const MANUAL_BRANCH_INVALID_CHARACTERS_PATTERN = /[^a-z0-9]+/gu
+const MANUAL_BRANCH_BOUNDARY_HYPHENS_PATTERN = /^-+|-+$/gu
+const UNICODE_MARK_PATTERN = /\p{M}+/gu
 
 export type CreationColumn = Exclude<TaskStatus, 'cancelled'>
 
@@ -20,6 +24,33 @@ export interface CreateTaskCardInput {
   readonly rootPath: string
   readonly status: CreationColumn
   readonly text: string
+}
+
+/**
+ * Best-effort branch name for a manually titled task. Titles which contain no
+ * usable ASCII characters retain WorkspaceProvider's random-name fallback.
+ */
+export const manualTaskBranchName = (
+  title: string,
+  taskId: string
+): string | undefined => {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(UNICODE_MARK_PATTERN, '')
+    .replace(MANUAL_BRANCH_INVALID_CHARACTERS_PATTERN, '-')
+    .replace(MANUAL_BRANCH_BOUNDARY_HYPHENS_PATTERN, '')
+    .slice(0, MAX_MANUAL_BRANCH_SLUG_LENGTH)
+    .replace(MANUAL_BRANCH_BOUNDARY_HYPHENS_PATTERN, '')
+  const uniqueSuffix = taskId
+    .toLowerCase()
+    .replace(MANUAL_BRANCH_INVALID_CHARACTERS_PATTERN, '')
+    .slice(-8)
+
+  return slug.length > 0 && uniqueSuffix.length > 0
+    ? `laborer/${slug}-${uniqueSuffix}`
+    : undefined
 }
 
 type SlackPlanner = (

@@ -32,7 +32,10 @@ import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
-import { createTaskCard } from '../services/task-card-creator.js'
+import {
+  createTaskCard,
+  manualTaskBranchName,
+} from '../services/task-card-creator.js'
 import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -298,6 +301,15 @@ const bindTaskWorkspace = (
     throw new Error(`Could not bind task ${taskId} to its workspace`)
   })
 
+const taskWorkspaceBranchName = (task: Task): string | undefined => {
+  if (task.branchName !== null) {
+    return task.branchName
+  }
+  return task.source === 'manual'
+    ? manualTaskBranchName(task.title, task.id)
+    : undefined
+}
+
 const handleTaskMoveAtPathUnlocked = (
   {
     expectedRevision,
@@ -438,12 +450,13 @@ const handleTaskMoveAtPathUnlocked = (
       })
 
     const publishedWorkspace = yield* provider.findWorkspaceForTask(taskId)
+    const requestedBranchName = taskWorkspaceBranchName(task)
     const workspace =
       publishedWorkspace ??
       (yield* provider
         .createWorktree(
           project.id,
-          task.branchName ?? undefined,
+          requestedBranchName,
           onReady,
           undefined,
           bounceToTodo,
@@ -451,8 +464,9 @@ const handleTaskMoveAtPathUnlocked = (
         )
         .pipe(Effect.tapError((error) => bounceToTodo('', error))))
 
-    // The workspace pipeline determines the generated manual branch/path.
-    // Bind those values via CAS before returning them to the renderer.
+    // Bind the workspace's final branch/path via CAS before returning it to the
+    // renderer. The provider may still generate a random branch for a manual
+    // title that cannot produce a usable slug.
     task = yield* bindTaskWorkspace(path, taskId, workspace)
 
     return {

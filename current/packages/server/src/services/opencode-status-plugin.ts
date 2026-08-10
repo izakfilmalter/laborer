@@ -38,6 +38,11 @@ interface OpenCodePluginContext {
 }
 
 interface OpenCodeStatusPluginRuntimeOptions {
+  /**
+   * Upper bound on remembered sessionID -> directory mappings. The daemon
+   * runs indefinitely, so the oldest mapping is evicted past this bound.
+   */
+  readonly maxTrackedSessions?: number
   /** Delay before resubscribing after the volatile event stream fails. */
   readonly resubscribeDelayMs?: number
 }
@@ -47,17 +52,31 @@ interface OpenCodeStatusPluginRuntimeOptions {
  * installer embeds its JavaScript representation in the user-level plugin
  * file, so it must not reference module-scope bindings.
  *
- * v2 facts this runtime relies on (verified against the opencode repo):
+ * v2 facts this runtime relies on (verified empirically against a live
+ * daemon, 0.0.0-next-17086, with a probe plugin):
  * - Plugins load from a `default` export of `{ id, setup }`; `setup` receives
  *   a promise context and must return quickly (its result is awaited).
- * - One plugin instance exists per project directory (location), and
- *   `context.event.subscribe()` is already filtered to that location's
- *   events plus location-less events.
+ * - `context.event.subscribe()` delivers the daemon-wide firehose: events
+ *   from EVERY project directory arrive interleaved. The bus's location
+ *   filter does not apply to plugin hosts, so every event must be attributed
+ *   individually — a single "current directory" is never safe.
  * - Event payloads are `{ type, data, location?, ... }` — fields live under
  *   `data`, and the envelope carries an optional `location.directory`.
- * - `session.status` reports `{ type: 'busy' | 'retry' | 'idle' }`;
- *   `permission.asked` / `question.asked` signal a blocked agent;
- *   `session.created` data carries `parentID` for child (subagent) sessions.
+ * - `session.status` / `session.idle` exist in the schema but are never
+ *   emitted by the daemon. The official OpenCode app derives busy/idle from
+ *   `session.execution.started|succeeded|failed|interrupted` and
+ *   `session.retry.scheduled`; this runtime does the same (and keeps a
+ *   `session.status` mapping in case a future daemon emits it).
+ * - `session.execution.*` and `session.retry.scheduled` events carry NO
+ *   envelope location. Streaming events (`session.step.*`,
+ *   `session.tool.*`, `session.text.*`) do carry one, so the runtime learns
+ *   each session's directory from located events and buffers busy marks
+ *   until the directory is known.
+ * - `session.created` never reaches plugins, so subagent (child) sessions
+ *   cannot be recognized via `parentID`. Instead, a per-directory busy set
+ *   keeps the terminal `working` until the LAST busy session in that
+ *   directory finishes — parent and child sessions share the directory, so
+ *   a finishing child never flips a still-working terminal to idle.
  */
 function createOpenCodeStatusPluginRuntime(
   send: SendStatusReport,
@@ -66,12 +85,20 @@ function createOpenCodeStatusPluginRuntime(
   type Status = 'working' | 'needs_input' | 'idle'
 
   const resubscribeDelayMs = options.resubscribeDelayMs ?? 1000
+  const maxTrackedSessions = options.maxTrackedSessions ?? 1000
 
   let sequence = Date.now() * 1000
-  let directory: string | undefined
-  const childSessionIds = new Set<string>()
+
+  /** sessionID -> directory, learned from located events. Insertion-ordered. */
+  const sessionDirectories = new Map<string, string>()
+  /** directory -> busy sessionIDs. Working while non-empty. */
+  const busySessions = new Map<string, Set<string>>()
+  /** Sessions marked busy before any located event revealed their directory. */
+  const pendingBusy = new Set<string>()
+
+  /** directory -> newest status awaiting delivery. One request in flight. */
+  const pendingReports = new Map<string, Status>()
   let sending = false
-  let pending: { status: Status; directory: string } | undefined
 
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null
@@ -81,16 +108,16 @@ function createOpenCodeStatusPluginRuntime(
       return
     }
     sending = true
-    while (pending !== undefined) {
-      const current = pending
-      pending = undefined
+    while (pendingReports.size > 0) {
+      const next = pendingReports.entries().next()
+      if (next.done === true) {
+        break
+      }
+      const [directory, status] = next.value
+      pendingReports.delete(directory)
       sequence += 1
       try {
-        await send({
-          sequence,
-          status: current.status,
-          directory: current.directory,
-        })
+        await send({ sequence, status, directory })
       } catch {
         // Status is advisory. A later native event gets another attempt.
       }
@@ -98,95 +125,178 @@ function createOpenCodeStatusPluginRuntime(
     sending = false
   }
 
-  // At most one request is in flight. While it is in flight, retain only the
-  // newest lifecycle fact.
-  const report = (status: Status): void => {
-    if (directory === undefined) {
-      return
-    }
-    if (pending === undefined) {
-      pending = { status, directory }
-    } else {
-      pending.status = status
-      pending.directory = directory
-    }
+  // While a request is in flight, retain only the newest fact per directory.
+  const report = (directory: string, status: Status): void => {
+    pendingReports.set(directory, status)
     drain().catch(() => {
       // drain handles transport errors; this only guards an unexpected bug.
     })
   }
 
-  const statusFromSessionStatus = (value: unknown): Status | undefined => {
-    if (!isRecord(value) || typeof value.type !== 'string') {
-      return undefined
+  const markBusy = (sessionId: string, directory: string): void => {
+    let sessions = busySessions.get(directory)
+    if (sessions === undefined) {
+      sessions = new Set()
+      busySessions.set(directory, sessions)
     }
-    switch (value.type) {
-      case 'idle':
-        return 'idle'
-      case 'busy':
-      case 'retry':
-        return 'working'
-      default:
-        return undefined
+    const wasBusy = sessions.size > 0
+    sessions.add(sessionId)
+    // Report only the not-busy -> busy transition. Repeat busy signals (each
+    // step of a run, sibling subagent sessions) must not clobber a
+    // `needs_input` already reported for a blocked session.
+    if (!wasBusy) {
+      report(directory, 'working')
     }
   }
 
-  const rememberDirectory = (
-    envelope: Record<string, unknown>,
+  const forgetSession = (sessionId: string): void => {
+    pendingBusy.delete(sessionId)
+    const directory = sessionDirectories.get(sessionId)
+    if (directory === undefined) {
+      return
+    }
+    const sessions = busySessions.get(directory)
+    sessions?.delete(sessionId)
+    if (sessions !== undefined && sessions.size === 0) {
+      busySessions.delete(directory)
+    }
+  }
+
+  const rememberSession = (sessionId: string, directory: string): void => {
+    if (
+      !sessionDirectories.has(sessionId) &&
+      sessionDirectories.size >= maxTrackedSessions
+    ) {
+      const oldest = sessionDirectories.keys().next()
+      if (oldest.done !== true) {
+        forgetSession(oldest.value)
+        sessionDirectories.delete(oldest.value)
+      }
+    }
+    sessionDirectories.set(sessionId, directory)
+    if (pendingBusy.delete(sessionId)) {
+      markBusy(sessionId, directory)
+    }
+  }
+
+  const sessionBusy = (sessionId: string): void => {
+    const directory = sessionDirectories.get(sessionId)
+    if (directory === undefined) {
+      pendingBusy.add(sessionId)
+      return
+    }
+    markBusy(sessionId, directory)
+  }
+
+  /**
+   * A session stopped running. Reports `status` only when it was the last
+   * busy session in its directory — while siblings (or the parent of a
+   * subagent) are still busy the terminal stays `working`.
+   */
+  const sessionDone = (sessionId: string, status: Status): void => {
+    pendingBusy.delete(sessionId)
+    const directory = sessionDirectories.get(sessionId)
+    if (directory === undefined) {
+      return
+    }
+    const sessions = busySessions.get(directory)
+    sessions?.delete(sessionId)
+    if (sessions !== undefined && sessions.size === 0) {
+      busySessions.delete(directory)
+    }
+    if ((busySessions.get(directory)?.size ?? 0) === 0) {
+      report(directory, status)
+    }
+  }
+
+  /** Report for the session's directory without touching the busy set. */
+  const reportForSession = (sessionId: string, status: Status): void => {
+    const directory = sessionDirectories.get(sessionId)
+    if (directory !== undefined) {
+      report(directory, status)
+    }
+  }
+
+  // `session.step.started` doubles as a busy signal so a plugin loaded
+  // mid-run re-adopts already-running sessions.
+  const busyEvents = new Set([
+    'session.execution.started',
+    'session.retry.scheduled',
+    'session.step.started',
+  ])
+
+  /** Terminal status once the LAST busy session in a directory stops. */
+  const doneStatuses: Record<string, Status> = {
+    'session.execution.succeeded': 'idle',
+    'session.execution.interrupted': 'idle',
+    // Deprecated; kept in case a daemon emits it again.
+    'session.idle': 'idle',
+    'session.execution.failed': 'needs_input',
+  }
+
+  /** Statuses reported directly, without touching the busy set. */
+  const blockedStatuses: Record<string, Status> = {
+    'permission.asked': 'needs_input',
+    'question.asked': 'needs_input',
+    'permission.replied': 'working',
+    'question.replied': 'working',
+    'question.rejected': 'working',
+  }
+
+  // Not emitted by current daemons; mapped for forward compatibility.
+  const handleSessionStatus = (
+    sessionId: string,
     data: Record<string, unknown>
+  ): void => {
+    const statusType = isRecord(data.status) ? data.status.type : undefined
+    if (statusType === 'busy' || statusType === 'retry') {
+      sessionBusy(sessionId)
+    } else if (statusType === 'idle') {
+      sessionDone(sessionId, 'idle')
+    }
+  }
+
+  /** Learn the session's directory from a located envelope. */
+  const learnDirectory = (
+    sessionId: string,
+    envelope: Record<string, unknown>
   ): void => {
     const location = isRecord(envelope.location) ? envelope.location : undefined
     if (
       typeof location?.directory === 'string' &&
       location.directory.length > 0
     ) {
-      directory = location.directory
+      rememberSession(sessionId, location.directory)
+    }
+  }
+
+  const dispatch = (
+    type: string,
+    sessionId: string,
+    data: Record<string, unknown>
+  ): void => {
+    if (busyEvents.has(type)) {
+      sessionBusy(sessionId)
       return
     }
-    const dataLocation = isRecord(data.location) ? data.location : undefined
-    if (
-      directory === undefined &&
-      typeof dataLocation?.directory === 'string' &&
-      dataLocation.directory.length > 0
-    ) {
-      directory = dataLocation.directory
+    const doneStatus = doneStatuses[type]
+    if (doneStatus !== undefined) {
+      sessionDone(sessionId, doneStatus)
+      return
     }
-  }
-
-  const eventStatuses: Record<string, Status> = {
-    'session.execution.started': 'working',
-    'permission.replied': 'working',
-    'question.replied': 'working',
-    'question.rejected': 'working',
-    'permission.asked': 'needs_input',
-    'question.asked': 'needs_input',
-    'session.execution.failed': 'needs_input',
-    // Deprecated in v2 but still emitted alongside session.status.
-    'session.idle': 'idle',
-  }
-
-  /** Track child (subagent) sessions; returns true when the event is consumed. */
-  const trackSessionLifecycle = (
-    eventType: string,
-    sessionId: string | undefined,
-    data: Record<string, unknown>
-  ): boolean => {
-    if (eventType === 'session.created') {
-      if (
-        sessionId !== undefined &&
-        typeof data.parentID === 'string' &&
-        data.parentID.length > 0
-      ) {
-        childSessionIds.add(sessionId)
-      }
-      return true
+    const blockedStatus = blockedStatuses[type]
+    if (blockedStatus !== undefined) {
+      reportForSession(sessionId, blockedStatus)
+      return
     }
-    if (eventType === 'session.deleted') {
-      if (sessionId !== undefined) {
-        childSessionIds.delete(sessionId)
-      }
-      return true
+    if (type === 'session.deleted') {
+      sessionDone(sessionId, 'idle')
+      sessionDirectories.delete(sessionId)
+      return
     }
-    return false
+    if (type === 'session.status') {
+      handleSessionStatus(sessionId, data)
+    }
   }
 
   const handleEvent = (event: unknown): void => {
@@ -194,32 +304,15 @@ function createOpenCodeStatusPluginRuntime(
       return
     }
     const data = isRecord(event.data) ? event.data : {}
-    rememberDirectory(event, data)
-
     const sessionId =
       typeof data.sessionID === 'string' && data.sessionID.length > 0
         ? data.sessionID
         : undefined
-
-    if (trackSessionLifecycle(event.type, sessionId, data)) {
+    if (sessionId === undefined) {
       return
     }
-    // Child (subagent) session lifecycle must not clobber the root status.
-    if (sessionId !== undefined && childSessionIds.has(sessionId)) {
-      return
-    }
-
-    if (event.type === 'session.status') {
-      const status = statusFromSessionStatus(data.status)
-      if (status !== undefined) {
-        report(status)
-      }
-      return
-    }
-    const mapped = eventStatuses[event.type]
-    if (mapped !== undefined) {
-      report(mapped)
-    }
+    learnDirectory(sessionId, event)
+    dispatch(event.type, sessionId, data)
   }
 
   /**

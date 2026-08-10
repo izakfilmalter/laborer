@@ -15,15 +15,24 @@ import {
   writeAgentHookDiscovery,
 } from '../src/services/opencode-status-plugin.js'
 
-/** Build an OpenCode v2 event payload: fields under `data`, envelope location. */
-const v2Event = (
+/** A located v2 event: fields under `data`, envelope carries the directory. */
+const located = (
   type: string,
-  data: Record<string, unknown> = {},
+  data: Record<string, unknown>,
   directory = '/workspace/repo'
 ) => ({
   type,
   data,
   location: { directory },
+})
+
+/**
+ * An unlocated v2 event. `session.execution.*` and `session.retry.scheduled`
+ * arrive with no envelope location on real daemons.
+ */
+const unlocated = (type: string, data: Record<string, unknown>) => ({
+  type,
+  data,
 })
 
 /** Let queued microtasks and the runtime's send drain settle. */
@@ -72,43 +81,25 @@ const eventQueue = () => {
 }
 
 describe('OpenCode v2 status plugin runtime', () => {
-  it('maps v2 lifecycle events to semantic agent statuses with directory attribution', async () => {
+  it('derives working and idle from the execution lifecycle with per-session attribution', async () => {
     const reports: OpenCodeStatusReport[] = []
     const runtime = createOpenCodeStatusPluginRuntime((report) => {
       reports.push(report)
       return Promise.resolve()
     })
 
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    // Repeat steps of the same run must not spam duplicate reports.
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    // Execution events arrive without a location on real daemons.
     runtime.handleEvent(
-      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
+      unlocated('session.execution.succeeded', { sessionID: 'root' })
     )
-    await flush()
-    runtime.handleEvent(
-      v2Event('session.status', {
-        sessionID: 'root',
-        status: { type: 'retry', attempt: 1 },
-      })
-    )
-    await flush()
-    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'root' }))
-    await flush()
-    runtime.handleEvent(v2Event('question.asked', { sessionID: 'root' }))
-    await flush()
-    runtime.handleEvent(
-      v2Event('session.status', { sessionID: 'root', status: { type: 'idle' } })
-    )
-    await flush()
-    runtime.handleEvent(v2Event('session.idle', { sessionID: 'root' }))
     await flush()
 
-    expect(reports.map(({ status }) => status)).toEqual([
-      'working',
-      'working',
-      'needs_input',
-      'needs_input',
-      'idle',
-      'idle',
-    ])
+    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
     expect(
       reports.every(({ directory }) => directory === '/workspace/repo')
     ).toBe(true)
@@ -120,7 +111,7 @@ describe('OpenCode v2 status plugin runtime', () => {
     )
   })
 
-  it('ignores child (subagent) session lifecycle events', async () => {
+  it('buffers unlocated busy sessions until a located event reveals their directory', async () => {
     const reports: OpenCodeStatusReport[] = []
     const runtime = createOpenCodeStatusPluginRuntime((report) => {
       reports.push(report)
@@ -128,53 +119,148 @@ describe('OpenCode v2 status plugin runtime', () => {
     })
 
     runtime.handleEvent(
-      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
+      unlocated('session.execution.started', { sessionID: 'root' })
+    )
+    await flush()
+    expect(reports).toEqual([])
+
+    runtime.handleEvent(
+      located('session.step.started', { sessionID: 'root' }, '/workspace/known')
+    )
+    await flush()
+
+    expect(reports).toHaveLength(1)
+    expect(reports[0]?.status).toBe('working')
+    expect(reports[0]?.directory).toBe('/workspace/known')
+  })
+
+  it('keeps the terminal working while subagent sessions in the directory finish', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(located('session.step.started', { sessionID: 'child' }))
+    await flush()
+    // The child finishing must not flip the still-working terminal to idle.
+    runtime.handleEvent(
+      unlocated('session.execution.succeeded', { sessionID: 'child' })
+    )
+    await flush()
+    expect(reports.map(({ status }) => status)).toEqual(['working'])
+
+    runtime.handleEvent(
+      unlocated('session.execution.succeeded', { sessionID: 'root' })
+    )
+    await flush()
+    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
+  })
+
+  it('attributes the daemon-wide firehose across directories independently', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    runtime.handleEvent(
+      located('session.step.started', { sessionID: 'a' }, '/workspace/alpha')
     )
     await flush()
     runtime.handleEvent(
-      v2Event('session.created', { sessionID: 'child', parentID: 'root' })
+      located('session.step.started', { sessionID: 'b' }, '/workspace/beta')
     )
-    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'child' }))
+    await flush()
     runtime.handleEvent(
-      v2Event('session.status', {
-        sessionID: 'child',
+      unlocated('session.execution.succeeded', { sessionID: 'a' })
+    )
+    await flush()
+
+    expect(
+      reports.map(({ directory, status }) => ({ directory, status }))
+    ).toEqual([
+      { directory: '/workspace/alpha', status: 'working' },
+      { directory: '/workspace/beta', status: 'working' },
+      { directory: '/workspace/alpha', status: 'idle' },
+    ])
+  })
+
+  it('flags blocked agents as needs_input and resumes working after replies', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(unlocated('permission.asked', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(unlocated('permission.replied', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(unlocated('question.asked', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(unlocated('question.rejected', { sessionID: 'root' }))
+    await flush()
+
+    expect(reports.map(({ status }) => status)).toEqual([
+      'working',
+      'needs_input',
+      'working',
+      'needs_input',
+      'working',
+    ])
+  })
+
+  it('reports needs_input when the last session in a directory fails', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(
+      unlocated('session.execution.failed', { sessionID: 'root' })
+    )
+    await flush()
+
+    expect(reports.map(({ status }) => status)).toEqual([
+      'working',
+      'needs_input',
+    ])
+  })
+
+  it('maps session.status if a future daemon emits it', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
+      reports.push(report)
+      return Promise.resolve()
+    })
+
+    runtime.handleEvent(
+      located('session.status', {
+        sessionID: 'root',
+        status: { type: 'busy' },
+      })
+    )
+    await flush()
+    runtime.handleEvent(
+      located('session.status', {
+        sessionID: 'root',
         status: { type: 'idle' },
       })
     )
     await flush()
 
-    expect(reports.map(({ status }) => status)).toEqual(['working'])
+    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
   })
 
-  it('drops reports until a directory is known, then attributes to it', async () => {
-    const reports: OpenCodeStatusReport[] = []
-    const runtime = createOpenCodeStatusPluginRuntime((report) => {
-      reports.push(report)
-      return Promise.resolve()
-    })
-
-    runtime.handleEvent({
-      type: 'session.status',
-      data: { sessionID: 'root', status: { type: 'busy' } },
-    })
-    await flush()
-    expect(reports).toEqual([])
-
-    runtime.handleEvent(
-      v2Event(
-        'session.status',
-        { sessionID: 'root', status: { type: 'busy' } },
-        '/workspace/known'
-      )
-    )
-    await flush()
-
-    expect(reports.map(({ directory }) => directory)).toEqual([
-      '/workspace/known',
-    ])
-  })
-
-  it('serializes delivery and coalesces queued reports to the newest fact', async () => {
+  it('serializes delivery and coalesces queued reports to the newest fact per directory', async () => {
     const reports: OpenCodeStatusReport[] = []
     let releaseFirst: (() => void) | undefined
     const runtime = createOpenCodeStatusPluginRuntime(
@@ -189,11 +275,11 @@ describe('OpenCode v2 status plugin runtime', () => {
         })
     )
 
+    runtime.handleEvent(located('session.step.started', { sessionID: 'root' }))
+    runtime.handleEvent(unlocated('permission.asked', { sessionID: 'root' }))
     runtime.handleEvent(
-      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
+      unlocated('session.execution.succeeded', { sessionID: 'root' })
     )
-    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'root' }))
-    runtime.handleEvent(v2Event('session.idle', { sessionID: 'root' }))
 
     await flush()
     expect(reports.map(({ status }) => status)).toEqual(['working'])
@@ -218,14 +304,12 @@ describe('OpenCode v2 status plugin runtime', () => {
       event: { subscribe: () => queue.iterable },
     })
 
-    queue.push(
-      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
-    )
+    queue.push(located('session.step.started', { sessionID: 'root' }))
     await flush()
     expect(reports.map(({ status }) => status)).toEqual(['working'])
 
     cleanup()
-    queue.push(v2Event('session.idle', { sessionID: 'root' }))
+    queue.push(unlocated('session.execution.succeeded', { sessionID: 'root' }))
     await flush()
     expect(reports.map(({ status }) => status)).toEqual(['working'])
   })

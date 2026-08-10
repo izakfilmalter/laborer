@@ -11,6 +11,7 @@ import {
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
+import { manualTaskBranchName } from '../src/services/task-card-creator.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../src/services/workspace-sync-service.js'
 
@@ -108,6 +109,14 @@ describe('task provisioning', () => {
       workspaceId: workspace.id,
     })
     expect(createWorktree).toHaveBeenCalledTimes(1)
+    expect(createWorktree).toHaveBeenCalledWith(
+      project.id,
+      manualTaskBranchName('Start now', created.id),
+      expect.any(Function),
+      undefined,
+      expect.any(Function),
+      created.id
+    )
   })
 
   it('provisions once on entering In Progress and returns the stored prompt', async () => {

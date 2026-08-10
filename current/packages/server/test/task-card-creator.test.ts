@@ -8,6 +8,7 @@ import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.
 import {
   createTaskCard,
   createTaskUlid,
+  manualTaskBranchName,
   runSlackTaskPlanning,
 } from '../src/services/task-card-creator.js'
 
@@ -16,6 +17,21 @@ const databasePath = (): string =>
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u
 
 describe('task card creation', () => {
+  it('turns a manual task title into a namespaced branch name', () => {
+    expect(
+      manualTaskBranchName(
+        '  Débug electric sync delays!  ',
+        '01K2A3456789ABCDEFGHJKMNPQR'
+      )
+    ).toBe('laborer/debug-electric-sync-delays-hjkmnpqr')
+    expect(manualTaskBranchName('⚡️', '01K2A3456789ABCDEFGHJKMNPQR')).toBe(
+      undefined
+    )
+    expect(manualTaskBranchName('Same title', 'task-one')).not.toBe(
+      manualTaskBranchName('Same title', 'task-two')
+    )
+  })
+
   it('creates a manual card in its selected column with a ULID', async () => {
     const path = databasePath()
     const result = await Effect.runPromise(

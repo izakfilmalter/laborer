@@ -12,6 +12,7 @@ import {
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const MAX_CAS_ATTEMPTS = 5
+const MAX_MANUAL_TITLE_LENGTH = 100
 
 export type CreationColumn = Exclude<TaskStatus, 'cancelled'>
 
@@ -133,7 +134,15 @@ export const createTaskCard = (
       })
     }
 
-    const slackUrl = isSlackMessageUrl(text) ? new URL(text).toString() : null
+    const isSlackUrl = isSlackMessageUrl(text)
+    if (!isSlackUrl && text.length > MAX_MANUAL_TITLE_LENGTH) {
+      return yield* new RpcError({
+        code: 'INVALID_INPUT',
+        message: `Card titles must be ${String(MAX_MANUAL_TITLE_LENGTH)} characters or fewer.`,
+      })
+    }
+
+    const slackUrl = isSlackUrl ? new URL(text).toString() : null
     const task = yield* withDatabase(path, (database) =>
       database.insert({
         id: createTaskUlid(),
@@ -154,7 +163,7 @@ export const createTaskCard = (
 
     return {
       id: task.id,
-      source: task.source as 'manual' | 'slack_url',
-      status: task.status as CreationColumn,
+      source: slackUrl === null ? ('manual' as const) : ('slack_url' as const),
+      status: slackUrl === null ? input.status : ('todo' as const),
     }
   })

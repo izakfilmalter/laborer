@@ -7,6 +7,8 @@ const OPENCODE_MODEL = 'openai/gpt-5.6-sol-fast'
 const OPENCODE_TIMEOUT_MS = 180_000
 const PROCESS_KILL_GRACE_MS = 2000
 const MAX_ERROR_LENGTH = 2000
+const MAX_STDERR_BYTES = 64 * 1024
+const MAX_STDOUT_BYTES = 1024 * 1024
 const MAX_SLUG_LENGTH = 48
 const SLACK_NAME_PREFIX_PATTERN = /^slack\s*[/-]+\s*/u
 const SLUG_INVALID_CHARACTERS_PATTERN = /[^a-z0-9]+/gu
@@ -244,6 +246,32 @@ const delay = (milliseconds: number): Promise<void> =>
     setTimeout(resolve, milliseconds)
   })
 
+const readBoundedText = async (
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  label: string
+): Promise<string> => {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let bytesRead = 0
+  let text = ''
+  try {
+    while (true) {
+      const result = await reader.read()
+      if (result.done) {
+        return text + decoder.decode()
+      }
+      bytesRead += result.value.byteLength
+      if (bytesRead > maximumBytes) {
+        throw new Error(`OpenCode ${label} exceeded the output limit.`)
+      }
+      text += decoder.decode(result.value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 const terminateProcess = async (
   childProcess: ReturnType<typeof spawn>
 ): Promise<void> => {
@@ -292,8 +320,8 @@ const executeOpenCode = async (
     const result = await Promise.race([
       Promise.all([
         childProcess.exited,
-        new Response(childProcess.stdout).text(),
-        new Response(childProcess.stderr).text(),
+        readBoundedText(childProcess.stdout, MAX_STDOUT_BYTES, 'stdout'),
+        readBoundedText(childProcess.stderr, MAX_STDERR_BYTES, 'stderr'),
       ]),
       timeoutPromise,
     ])
@@ -307,6 +335,9 @@ const executeOpenCode = async (
     }
 
     return stdout
+  } catch (error) {
+    await startTermination().catch(() => undefined)
+    throw error
   } finally {
     signal.removeEventListener('abort', abortProcess)
     if (timeout !== undefined) {

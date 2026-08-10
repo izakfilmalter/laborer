@@ -1,5 +1,10 @@
+export const SLACK_MESSAGE_URL_MAX_LENGTH = 2048
+
 /** True only for HTTPS Slack message or thread permalinks understood by the planner. */
 export const isSlackMessageUrl = (value: string): boolean => {
+  if (value.length > SLACK_MESSAGE_URL_MAX_LENGTH) {
+    return false
+  }
   try {
     const url = new URL(value)
     const isSlackHost =

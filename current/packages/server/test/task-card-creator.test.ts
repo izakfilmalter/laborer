@@ -40,6 +40,23 @@ describe('task card creation', () => {
     database.close()
   })
 
+  it('rejects unbounded manual titles before writing a card', async () => {
+    const path = databasePath()
+    const error = await Effect.runPromise(
+      Effect.flip(
+        createTaskCard(
+          { rootPath: '/repo', status: 'todo', text: 'x'.repeat(101) },
+          path
+        )
+      )
+    )
+    expect(error).toMatchObject({ code: 'INVALID_INPUT' })
+
+    const database = NodeTaskBoardDatabase.open(path)
+    expect(database.snapshot().tasks).toEqual([])
+    database.close()
+  })
+
   it('stores a completed Slack plan through revision CAS', async () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)

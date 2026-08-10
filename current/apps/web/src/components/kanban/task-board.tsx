@@ -15,6 +15,7 @@
 import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { projects } from '@laborer/shared/schema'
+import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
 import { Cause, Effect, Stream } from 'effect'
 import {
@@ -26,6 +27,7 @@ import {
   FolderX,
   GitBranch,
   MessageSquare,
+  Plus,
   Search,
   SquarePen,
   X,
@@ -39,6 +41,7 @@ import {
   type BoardTask,
   type BoardTaskStatus,
   projectForTask,
+  slackAnalysisState,
 } from '@/components/kanban/board-data'
 import {
   Kanban,
@@ -62,11 +65,12 @@ import {
 } from '@/components/ui/tooltip'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
-import { cn } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const createTaskMutation = LaborerClient.mutation('task.create')
 
 /** The four rendered columns, in board order. Cancelled never renders. */
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -201,7 +205,7 @@ function ExecutionMirrorBadge({
 }: {
   readonly mirror: BoardTask['executionMirror']
 }) {
-  if (mirror === 'needs_attention') {
+  if (mirror === 'needs-attention') {
     return (
       <Badge
         className="gap-1 border-warning/30 bg-warning/10 text-warning"
@@ -222,6 +226,29 @@ function ExecutionMirrorBadge({
     )
   }
   return null
+}
+
+function SlackAnalysisBadge({ task }: { readonly task: BoardTask }) {
+  const state = slackAnalysisState(task)
+  if (state === null) {
+    return null
+  }
+  if (state === 'failed') {
+    return (
+      <Badge
+        className="gap-1 border-destructive/30 bg-destructive/10 text-destructive"
+        variant="outline"
+      >
+        Analysis failed
+      </Badge>
+    )
+  }
+  return (
+    <Badge className="gap-1 text-muted-foreground" variant="outline">
+      <Spinner className="size-3" />
+      Analyzing…
+    </Badge>
+  )
 }
 
 /** Worktree binding state affordance (derived on the real board). */
@@ -327,7 +354,10 @@ function TaskBoardCard({
         {/* Meta chips: source, execution mirror, PR, worktree state */}
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={task.source} />
-          <ExecutionMirrorBadge mirror={task.executionMirror} />
+          <SlackAnalysisBadge task={task} />
+          {task.source !== 'slack_url' && (
+            <ExecutionMirrorBadge mirror={task.executionMirror} />
+          )}
           {task.pr && (
             <GitHubPrStatusBadge
               prNumber={task.pr.number}
@@ -347,7 +377,105 @@ function TaskBoardCard({
  * One project lane's 4-column kanban. Its own Kanban root, so drags can
  * never cross projects.
  */
-function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
+function AddTaskInput({
+  projectId,
+  status,
+}: {
+  readonly projectId: string
+  readonly status: Exclude<BoardTaskStatus, 'cancelled'>
+}) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
+  const trimmed = value.trim()
+  const slackUrl = isSlackMessageUrl(trimmed)
+
+  const close = () => {
+    setOpen(false)
+    setValue('')
+    setError(null)
+  }
+
+  const submit = async () => {
+    if (trimmed.length === 0 || submitting) {
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await createTask({ payload: { projectId, status, text: trimmed } })
+      close()
+    } catch (cause) {
+      setError(extractErrorMessage(cause))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button
+        aria-label={`Add card to ${status.replaceAll('_', ' ')}`}
+        className="h-7 w-full justify-start gap-1.5 px-2 text-muted-foreground"
+        onClick={() => setOpen(true)}
+        size="sm"
+        variant="ghost"
+      >
+        <Plus className="size-3.5" />
+        Add card
+      </Button>
+    )
+  }
+
+  return (
+    <div className="space-y-1 px-2 pb-2">
+      <Input
+        aria-invalid={error !== null}
+        aria-label="Card title or Slack message URL"
+        autoFocus
+        className="h-8 bg-background text-xs"
+        disabled={submitting}
+        onChange={(event) => {
+          setValue(event.target.value)
+          setError(null)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            close()
+          } else if (event.key === 'Enter') {
+            event.preventDefault()
+            submit()
+          }
+        }}
+        placeholder="Title or Slack URL"
+        value={value}
+      />
+      <p
+        aria-live="polite"
+        className={cn(
+          'min-h-4 px-1 text-[10px] text-muted-foreground',
+          error && 'text-destructive'
+        )}
+      >
+        {error ??
+          (slackUrl
+            ? 'Slack thread will be added to Todo and analyzed.'
+            : 'Enter to add · Esc to cancel')}
+      </p>
+    </div>
+  )
+}
+
+function LaneBoard({
+  projectId,
+  tasks,
+}: {
+  readonly projectId: string
+  readonly tasks: readonly BoardTask[]
+}) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
@@ -408,6 +536,7 @@ function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
                   </div>
                 )}
               </KanbanColumnContent>
+              <AddTaskInput projectId={projectId} status={column.id} />
               {column.id === 'done' && (
                 <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
                   Done cards auto-hide after 7 days
@@ -528,6 +657,7 @@ function TaskBoard({
                 {expanded && (
                   <LaneBoard
                     key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
+                    projectId={project.id}
                     tasks={visibleTasks}
                   />
                 )}

@@ -128,7 +128,15 @@ export const BoardTask = Schema.Struct({
   createdAt: Schema.Int,
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal('running', 'failed', 'needs_attention')
+    Schema.Literal(
+      'queued',
+      'running',
+      'cancelling',
+      'completed',
+      'failed',
+      'cancelled',
+      'needs-attention'
+    )
   ),
   id: Schema.String,
   initialPrompt: Schema.NullOr(Schema.String),
@@ -206,6 +214,7 @@ const WorkspaceResponse = Schema.Struct({
 const SlackWorkspacePlanResponse = Schema.Struct({
   branchName: Schema.String,
   initialPrompt: Schema.String,
+  title: Schema.String,
   workType: Schema.Literal('bug', 'feature'),
 })
 
@@ -504,6 +513,20 @@ export class LaborerRpcs extends RpcGroup.make(
     success: TaskBoardEvent,
     error: RpcError,
     stream: true,
+  }),
+
+  Rpc.make('task.create', {
+    success: Schema.Struct({
+      id: Schema.String,
+      source: Schema.Literal('manual', 'slack_url'),
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+    }),
+    error: RpcError,
+    payload: {
+      projectId: Schema.String,
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      text: Schema.String,
+    },
   }),
 
   // -----------------------------------------------------------------------

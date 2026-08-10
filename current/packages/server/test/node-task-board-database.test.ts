@@ -9,6 +9,36 @@ const databasePath = (): string =>
   join(mkdtempSync(join(tmpdir(), 'laborer-board-reader-')), 'tasks.sqlite')
 
 describe('NodeTaskBoardDatabase', () => {
+  it('inserts and CAS-updates cards with a ledger row in each transaction', () => {
+    const database = NodeTaskBoardDatabase.open(databasePath())
+    const inserted = database.insert(
+      {
+        id: 'manual-card',
+        rootPath: '/repo',
+        source: 'manual',
+        status: 'in_review',
+        title: 'Review this',
+      },
+      10
+    )
+    const updated = database.update(
+      inserted.id,
+      inserted.revision,
+      { title: 'Reviewed' },
+      20
+    )
+
+    expect(updated).toMatchObject({ revision: 2, title: 'Reviewed' })
+    expect(database.readChanges(0)).toMatchObject({
+      cursor: 2,
+      tasks: [{ id: 'manual-card', revision: 2 }],
+    })
+    expect(() =>
+      database.update(inserted.id, inserted.revision, { title: 'Stale' })
+    ).toThrow('stale revision')
+    database.close()
+  })
+
   it('reads Bun-compatible task snapshots and bounded deltas under Node', () => {
     const path = databasePath()
     const reader = NodeTaskBoardDatabase.open(path)

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyTaskBoardEvents,
   projectForTask,
+  slackAnalysisState,
 } from '@/components/kanban/board-data'
 
 const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
@@ -79,5 +80,29 @@ describe('board task projection', () => {
     expect(projectForTask(task({ rootPath: '/repository' }), projects)).toBe(
       undefined
     )
+  })
+
+  it('projects Slack planning progress and failure from durable card fields', () => {
+    expect(
+      slackAnalysisState({
+        source: 'slack_url',
+        executionMirror: 'queued',
+        initialPrompt: null,
+      })
+    ).toBe('analyzing')
+    expect(
+      slackAnalysisState({
+        source: 'slack_url',
+        executionMirror: 'failed',
+        initialPrompt: null,
+      })
+    ).toBe('failed')
+    expect(
+      slackAnalysisState({
+        source: 'slack_url',
+        executionMirror: null,
+        initialPrompt: 'Implement it',
+      })
+    ).toBeNull()
   })
 })

@@ -4,7 +4,9 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
   ExecutionStatus,
+  NewTask,
   Task,
+  TaskPatch,
   TaskRead,
   TaskSnapshot,
   TaskSource,
@@ -16,6 +18,16 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   initial_prompt, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
+const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
+const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
+  title: 'title',
+  status: 'status',
+  executionStatus: 'execution_status',
+  slackPermalink: 'slack_permalink',
+  worktreePath: 'worktree_path',
+  branchName: 'branch_name',
+  initialPrompt: 'initial_prompt',
+}
 
 type SqliteRow = Record<string, unknown>
 
@@ -71,9 +83,13 @@ const taskSource = (value: unknown): TaskSource => {
 const executionStatus = (value: unknown): ExecutionStatus | null => {
   switch (value) {
     case null:
+    case 'queued':
     case 'running':
+    case 'cancelling':
+    case 'completed':
     case 'failed':
-    case 'needs_attention':
+    case 'cancelled':
+    case 'needs-attention':
       return value
     default:
       return invalidColumn('execution_status')
@@ -218,6 +234,83 @@ export class NodeTaskBoardDatabase {
     })
   }
 
+  find(id: string): Task | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .get(id)
+    return row === undefined ? null : rowToTask(sqliteRow(row))
+  }
+
+  insert(input: NewTask, changedAt = Date.now()): Task {
+    const createdAt = input.createdAt ?? changedAt
+    return this.#writeTransaction(() => {
+      this.#database
+        .prepare(`INSERT INTO tasks (
+          id, root_path, title, status, source, execution_id, action_name,
+          execution_status, slack_permalink, worktree_path, branch_name,
+          initial_prompt, created_at, updated_at, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+        .run(
+          input.id,
+          input.rootPath,
+          input.title,
+          input.status,
+          input.source,
+          input.executionId ?? null,
+          input.actionName ?? null,
+          input.executionStatus ?? null,
+          input.slackPermalink ?? null,
+          input.worktreePath ?? null,
+          input.branchName ?? null,
+          input.initialPrompt ?? null,
+          createdAt,
+          changedAt
+        )
+      this.#appendChange(input.id, changedAt)
+      const task = this.find(input.id)
+      if (!task) {
+        throw new Error(`Inserted task ${input.id} could not be read`)
+      }
+      return task
+    })
+  }
+
+  update(
+    id: string,
+    expectedRevision: number,
+    patch: TaskPatch,
+    changedAt = Date.now()
+  ): Task {
+    const entries = (Object.keys(patch) as (keyof TaskPatch)[]).map(
+      (field) => [field, patch[field]] as const
+    )
+    if (entries.length === 0) {
+      throw new Error('A task update requires at least one field')
+    }
+    return this.#writeTransaction(() => {
+      const result = this.#database
+        .prepare(`UPDATE tasks SET ${entries
+          .map(([field]) => `${PATCH_COLUMNS[field]} = ?`)
+          .join(', ')}, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(
+          ...entries.map(([, value]) => value ?? null),
+          changedAt,
+          id,
+          expectedRevision
+        )
+      if (result.changes === 0) {
+        throw new Error(`Task ${id} has a stale revision`)
+      }
+      this.#appendChange(id, changedAt)
+      const task = this.find(id)
+      if (!task) {
+        throw new Error(`Updated task ${id} could not be read`)
+      }
+      return task
+    })
+  }
+
   #snapshotUnsafe(): TaskSnapshot {
     const rows = this.#database
       .prepare(
@@ -287,6 +380,45 @@ export class NodeTaskBoardDatabase {
         // Preserve the migration failure.
       }
       throw error
+    }
+  }
+
+  #appendChange(taskId: string, changedAt: number): void {
+    this.#database
+      .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
+      .run(taskId, changedAt)
+  }
+
+  #writeTransaction<A>(operation: () => A): A {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        this.#database.exec('BEGIN IMMEDIATE')
+        try {
+          const result = operation()
+          this.#database.exec('COMMIT')
+          return result
+        } catch (error) {
+          try {
+            this.#database.exec('ROLLBACK')
+          } catch {
+            // Preserve the operation failure.
+          }
+          throw error
+        }
+      } catch (error) {
+        if (
+          attempt >= 5 ||
+          !(error instanceof Error && BUSY_MESSAGE.test(error.message))
+        ) {
+          throw error
+        }
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(4)),
+          0,
+          0,
+          Math.min(250, 10 * 2 ** (attempt - 1) * (0.5 + Math.random()))
+        )
+      }
     }
   }
 

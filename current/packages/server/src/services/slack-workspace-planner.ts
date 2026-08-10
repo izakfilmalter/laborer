@@ -1,4 +1,5 @@
 import { RpcError } from '@laborer/shared/rpc'
+import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { Effect } from 'effect'
 import { spawn } from '../lib/spawn.js'
 
@@ -18,6 +19,7 @@ type SlackWorkType = 'bug' | 'feature'
 interface SlackWorkspacePlan {
   readonly branchName: string
   readonly initialPrompt: string
+  readonly title: string
   readonly workType: SlackWorkType
 }
 
@@ -31,6 +33,7 @@ interface OpenCodeTextEvent {
 
 interface RawSlackWorkspacePlan {
   readonly messages?: unknown
+  readonly title?: unknown
   readonly work_type?: unknown
   readonly workspace_name?: unknown
 }
@@ -54,30 +57,6 @@ const isSlackMessage = (value: unknown): value is SlackMessage => {
     typeof message.text === 'string' &&
     (message.timestamp === undefined || typeof message.timestamp === 'string')
   )
-}
-
-const isSlackMessageUrl = (value: string): boolean => {
-  try {
-    const url = new URL(value)
-    const isSlackHost =
-      url.hostname === 'slack.com' || url.hostname.endsWith('.slack.com')
-    if (url.protocol !== 'https:' || !isSlackHost) {
-      return false
-    }
-
-    const segments = url.pathname.split('/').filter(Boolean)
-    const isArchiveMessage =
-      segments[0] === 'archives' &&
-      segments.length >= 3 &&
-      segments[2]?.startsWith('p')
-    const isAppMessage =
-      segments[0] === 'client' &&
-      ((segments[3] === 'thread' && segments.length >= 5) ||
-        segments[3]?.startsWith('p') === true)
-    return isArchiveMessage || isAppMessage
-  } catch {
-    return false
-  }
 }
 
 const normalizeWorkspaceName = (value: string): string => {
@@ -189,6 +168,9 @@ const parseSlackWorkspacePlan = (
 
   if (
     typeof rawPlan.workspace_name !== 'string' ||
+    typeof rawPlan.title !== 'string' ||
+    rawPlan.title.trim().length === 0 ||
+    rawPlan.title.trim().length > 100 ||
     !Array.isArray(rawPlan.messages) ||
     rawPlan.messages.length === 0 ||
     !rawPlan.messages.every(isSlackMessage) ||
@@ -208,6 +190,7 @@ const parseSlackWorkspacePlan = (
       slackUrl,
       rawPlan.messages
     ),
+    title: rawPlan.title.trim(),
     workType: rawPlan.work_type,
   }
 }
@@ -229,7 +212,7 @@ Classify the request as exactly one of:
 - bug: something existing is broken, incorrect, or regressed
 - feature: a new capability, enhancement, or behavior change is requested
 
-Produce a concise workspace name and a structured list of the relevant Slack
+Produce a short card title (100 characters or fewer), a concise workspace name, and a structured list of the relevant Slack
 messages. Copy message text verbatim with author names and timestamps. Include
 enough of the thread to preserve meaning. Do not summarize, reinterpret, or
 invent requirements.
@@ -237,6 +220,7 @@ invent requirements.
 Return exactly one valid JSON object and no markdown or commentary:
 {
   "work_type": "bug or feature",
+  "title": "short human-readable card title",
   "workspace_name": "lowercase-words-separated-by-hyphens",
   "messages": [
     { "author": "name", "timestamp": "Slack timestamp", "text": "verbatim text" }
@@ -372,7 +356,6 @@ export {
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
   extractOpenCodeText,
-  isSlackMessageUrl,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
   planSlackWorkspace,

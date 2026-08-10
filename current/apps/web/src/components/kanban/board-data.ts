@@ -7,6 +7,7 @@ export type BoardTaskStatus = RpcBoardTask['status']
 export type BoardTaskSource = RpcBoardTask['source']
 export type ExecutionMirror = RpcBoardTask['executionStatus']
 export type WorktreeState = 'exists' | 'provisioning' | 'gone' | 'none'
+export type SlackAnalysisState = 'analyzing' | 'failed' | null
 
 export interface BoardPr {
   readonly number: number
@@ -66,6 +67,15 @@ export const applyTaskBoardEvents = (
 export interface BoardProject {
   readonly id: string
   readonly repoPath: string
+}
+
+export const slackAnalysisState = (
+  task: Pick<BoardTask, 'executionMirror' | 'initialPrompt' | 'source'>
+): SlackAnalysisState => {
+  if (task.source !== 'slack_url' || task.initialPrompt !== null) {
+    return null
+  }
+  return task.executionMirror === 'failed' ? 'failed' : 'analyzing'
 }
 
 /** Return the equal or nearest-ancestor project for a canonical task root. */

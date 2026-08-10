@@ -29,7 +29,8 @@ const worktreeState = (task: RpcBoardTask): WorktreeState => {
   if (task.worktreeExists) {
     return 'exists'
   }
-  return task.status === 'in_progress' && task.executionStatus === 'running'
+  return task.status === 'in_progress' &&
+    (task.executionStatus === 'queued' || task.executionStatus === 'running')
     ? 'provisioning'
     : 'gone'
 }

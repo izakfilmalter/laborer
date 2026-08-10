@@ -28,6 +28,11 @@ describe('NodeTaskBoardDatabase', () => {
       cursor: 1,
       tasks: [{ id: 'task-1', status: 'todo' }],
     })
+    expect(reader.findTask('task-1')).toMatchObject({
+      id: 'task-1',
+      rootPath: '/repo',
+    })
+    expect(reader.findTask('missing')).toBeNull()
 
     writer
       .prepare(

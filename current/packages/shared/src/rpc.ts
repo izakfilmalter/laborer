@@ -128,7 +128,15 @@ export const BoardTask = Schema.Struct({
   createdAt: Schema.Int,
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal('running', 'failed', 'needs_attention')
+    Schema.Literal(
+      'queued',
+      'running',
+      'cancelling',
+      'completed',
+      'failed',
+      'cancelled',
+      'needs-attention'
+    )
   ),
   id: Schema.String,
   initialPrompt: Schema.NullOr(Schema.String),
@@ -145,6 +153,7 @@ export const BoardTask = Schema.Struct({
   ),
   title: Schema.String,
   updatedAt: Schema.Int,
+  worktreeBotOwned: Schema.Boolean,
   worktreeExists: Schema.Boolean,
   worktreePath: Schema.NullOr(Schema.String),
 })
@@ -632,6 +641,18 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
+    },
+  }),
+
+  /** Spawn a shell using the task's shared-db worktree path as plain cwd. */
+  Rpc.make('task.terminal.attach', {
+    success: Schema.Struct({
+      botOwned: Schema.Boolean,
+      terminal: TerminalResponse,
+    }),
+    error: RpcError,
+    payload: {
+      taskId: Schema.String,
     },
   }),
 

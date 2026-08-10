@@ -19,7 +19,7 @@ import {
   RpcError,
 } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
-import type { TaskStatus } from '@laborer/task-db'
+import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
@@ -197,42 +197,331 @@ export const handleProjectList = () =>
     }))
   })
 
-export const handleTaskMove = ({
-  expectedRevision,
-  status,
-  taskId,
-}: {
+const taskMoveError = (cause: unknown) =>
+  new RpcError({
+    code: 'TASK_MOVE_FAILED',
+    message: cause instanceof Error ? cause.message : 'Unable to move task',
+  })
+
+interface TaskMoveLock {
+  readonly semaphore: Effect.Semaphore
+  users: number
+}
+
+const taskMoveLocks = new Map<string, TaskMoveLock>()
+
+/** Serialize provisioning replays per task without blocking unrelated cards. */
+const withTaskMoveLock = <A, E, R>(
+  taskId: string,
+  operation: Effect.Effect<A, E, R>
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        const lock = yield* Effect.sync(() => {
+          const existing = taskMoveLocks.get(taskId)
+          if (existing !== undefined) {
+            existing.users += 1
+            return existing
+          }
+          const created: TaskMoveLock = {
+            semaphore: Effect.unsafeMakeSemaphore(1),
+            users: 1,
+          }
+          taskMoveLocks.set(taskId, created)
+          return created
+        })
+        yield* lock.semaphore.take(1)
+        return lock
+      })
+    ),
+    () => operation,
+    (lock) =>
+      lock.semaphore.release(1).pipe(
+        Effect.zipRight(
+          Effect.sync(() => {
+            lock.users -= 1
+            if (lock.users === 0 && taskMoveLocks.get(taskId) === lock) {
+              taskMoveLocks.delete(taskId)
+            }
+          })
+        )
+      )
+  )
+
+const withTaskDatabase = <A>(
+  path: string,
+  operation: (database: NodeTaskBoardDatabase) => A
+): Effect.Effect<A, RpcError> =>
+  Effect.try({
+    try: () => {
+      const database = NodeTaskBoardDatabase.open(path)
+      try {
+        return operation(database)
+      } finally {
+        database.close()
+      }
+    },
+    catch: taskMoveError,
+  })
+
+const bindTaskWorkspace = (
+  path: string,
+  taskId: string,
+  workspace: { readonly branchName: string; readonly worktreePath: string }
+): Effect.Effect<Task, RpcError> =>
+  withTaskDatabase(path, (database) => {
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const current = database.findTask(taskId)
+      if (current === null) {
+        throw new Error(`Task not found: ${taskId}`)
+      }
+      // The background setup can fail before this binding write wins its
+      // race. Its failure callback has already returned the task to Todo;
+      // do not resurrect provisioning fields in that case.
+      if (current.status !== 'in_progress' || current.worktreePath !== null) {
+        return current
+      }
+      try {
+        return database.update(taskId, current.revision, {
+          branchName: workspace.branchName,
+          worktreePath: workspace.worktreePath,
+        })
+      } catch (error) {
+        const stale =
+          error instanceof Error && error.message.includes('stale revision')
+        if (attempt === 5 || !stale) {
+          throw error
+        }
+      }
+    }
+    throw new Error(`Could not bind task ${taskId} to its workspace`)
+  })
+
+const handleTaskMoveAtPathUnlocked = (
+  {
+    expectedRevision,
+    status,
+    taskId,
+  }: {
+    readonly expectedRevision: number
+    readonly status: TaskStatus
+    readonly taskId: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.gen(function* () {
+    const path = databasePath
+    const withDatabase = <A>(
+      operation: (database: NodeTaskBoardDatabase) => A
+    ): Effect.Effect<A, RpcError> => withTaskDatabase(path, operation)
+
+    const initialTask = yield* withDatabase((database) =>
+      database.findTask(taskId)
+    )
+    if (initialTask === null) {
+      return yield* new RpcError({
+        code: 'NOT_FOUND',
+        message: `Task not found: ${taskId}`,
+      })
+    }
+    let task: Task = initialTask
+    if (task.revision !== expectedRevision && task.status !== status) {
+      return yield* new RpcError({
+        code: 'TASK_MOVE_FAILED',
+        message: `Task changed while moving: ${taskId}`,
+      })
+    }
+
+    const shouldProvision =
+      status === 'in_progress' &&
+      task.worktreePath === null &&
+      (task.source === 'manual' || task.source === 'slack_url')
+
+    // A failed Slack analysis is retried by the provisioning move itself. Do
+    // not create a workspace until the planner has produced the prompt.
+    if (
+      shouldProvision &&
+      task.source === 'slack_url' &&
+      task.initialPrompt === null
+    ) {
+      if (task.slackPermalink === null) {
+        return yield* new RpcError({
+          code: 'TASK_MOVE_FAILED',
+          message: 'Slack task has no permalink to analyze',
+        })
+      }
+      const plan = yield* planSlackWorkspace(task.slackPermalink)
+      task = yield* withDatabase((database) => {
+        const current = database.findTask(taskId)
+        if (current === null) {
+          throw new Error(`Task not found: ${taskId}`)
+        }
+        if (current.status !== task.status) {
+          throw new Error(`Task changed while planning: ${taskId}`)
+        }
+        if (current.worktreePath !== null || current.initialPrompt !== null) {
+          return current
+        }
+        return database.update(taskId, current.revision, {
+          branchName: plan.branchName,
+          executionStatus: null,
+          initialPrompt: plan.initialPrompt,
+          title: plan.title,
+        })
+      })
+    }
+
+    task = yield* withDatabase((database) =>
+      database.move(taskId, task.revision, status)
+    )
+
+    // An In Progress task without a binding is incomplete durable work. This
+    // deliberately retries after a crash between the status write and
+    // workspace creation; the task lock prevents concurrent replays from
+    // creating duplicates in this server process.
+    if (!(shouldProvision && task.worktreePath === null)) {
+      return {
+        description: null,
+        revision: task.revision,
+        status: task.status,
+        updatedAt: task.updatedAt,
+        workspaceId: null,
+      }
+    }
+
+    const registry = yield* ProjectRegistry
+    const project = [...(yield* registry.listProjects())]
+      .filter(({ repoPath }) => projectContainsRoot(repoPath, task.rootPath))
+      .sort((left, right) => right.repoPath.length - left.repoPath.length)[0]
+    if (project === undefined) {
+      yield* withDatabase((database) =>
+        database.move(taskId, task.revision, 'todo')
+      )
+      return yield* new RpcError({
+        code: 'TASK_MOVE_FAILED',
+        message: `No project owns task root: ${task.rootPath}`,
+      })
+    }
+
+    const bounceToTodo = (_workspaceId: string, error: RpcError) =>
+      withDatabase((database) => {
+        const current = database.findTask(taskId)
+        if (current === null || current.status !== 'in_progress') {
+          return
+        }
+        database.update(taskId, current.revision, {
+          branchName: current.source === 'manual' ? null : current.branchName,
+          status: 'todo',
+          worktreePath: null,
+        })
+      }).pipe(
+        Effect.catchAll((bounceError) =>
+          Effect.logError(
+            `[task-board] Could not return failed provisioning task ${taskId} to Todo: ${bounceError.message}`
+          )
+        ),
+        Effect.zipRight(
+          Effect.logWarning(
+            `[task-board] Provisioning failed for ${taskId}: ${error.message}`
+          )
+        )
+      )
+
+    const provider = yield* WorkspaceProvider
+    const prWatcher = yield* PrWatcher
+    const workspaceSyncService = yield* WorkspaceSyncService
+    const onReady = (workspaceId: string) =>
+      Effect.gen(function* () {
+        yield* prWatcher.startPolling(workspaceId)
+        yield* workspaceSyncService.startPolling(workspaceId)
+      })
+
+    const publishedWorkspace = yield* provider.findWorkspaceForTask(taskId)
+    const workspace =
+      publishedWorkspace ??
+      (yield* provider
+        .createWorktree(
+          project.id,
+          task.branchName ?? undefined,
+          onReady,
+          undefined,
+          bounceToTodo,
+          taskId
+        )
+        .pipe(Effect.tapError((error) => bounceToTodo('', error))))
+
+    // The workspace pipeline determines the generated manual branch/path.
+    // Bind those values via CAS before returning them to the renderer.
+    task = yield* bindTaskWorkspace(path, taskId, workspace)
+
+    return {
+      // `initial_prompt` is the currently shipped column name. The RPC uses
+      // the amended domain name so the client seam remains stable when the
+      // append-only description migration lands.
+      description: task.initialPrompt,
+      revision: task.revision,
+      status: task.status,
+      updatedAt: task.updatedAt,
+      workspaceId: workspace.id,
+    }
+  })
+
+export const handleTaskMoveAtPath = (
+  payload: {
+    readonly expectedRevision: number
+    readonly status: TaskStatus
+    readonly taskId: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  withTaskMoveLock(
+    payload.taskId,
+    handleTaskMoveAtPathUnlocked(payload, databasePath)
+  )
+
+export const handleTaskCreateAtPath = (
+  input: {
+    readonly rootPath: string
+    readonly status: Exclude<TaskStatus, 'cancelled'>
+    readonly text: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.gen(function* () {
+    const entersInProgress = input.status === 'in_progress'
+    const created = yield* createTaskCard(
+      {
+        rootPath: input.rootPath,
+        status: entersInProgress ? 'todo' : input.status,
+        text: input.text,
+      },
+      databasePath
+    )
+    if (!(entersInProgress && created.source === 'manual')) {
+      return { ...created, description: null, workspaceId: null }
+    }
+    const moved = yield* handleTaskMoveAtPath(
+      {
+        expectedRevision: 1,
+        status: 'in_progress',
+        taskId: created.id,
+      },
+      databasePath
+    )
+    return {
+      ...created,
+      description: moved.description,
+      status: 'in_progress' as const,
+      workspaceId: moved.workspaceId,
+    }
+  })
+
+export const handleTaskMove = (payload: {
   readonly expectedRevision: number
   readonly status: TaskStatus
   readonly taskId: string
-}) =>
-  Effect.acquireUseRelease(
-    Effect.try({
-      try: () => NodeTaskBoardDatabase.open(taskDatabasePath()),
-      catch: () =>
-        new RpcError({
-          code: 'TASK_MOVE_FAILED',
-          message: 'Unable to open the task database',
-        }),
-    }),
-    (database) =>
-      Effect.try({
-        try: () => database.move(taskId, expectedRevision, status),
-        catch: (cause) =>
-          new RpcError({
-            code: 'TASK_MOVE_FAILED',
-            message:
-              cause instanceof Error ? cause.message : 'Unable to move task',
-          }),
-      }).pipe(
-        Effect.map((task) => ({
-          revision: task.revision,
-          status: task.status,
-          updatedAt: task.updatedAt,
-        }))
-      ),
-    (database) => Effect.sync(() => database.close())
-  )
+}) => handleTaskMoveAtPath(payload)
 
 export const handleTaskUpdate = (
   {
@@ -406,7 +695,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'task.create': ({ projectId, status, text }) =>
       Effect.gen(function* () {
         const project = yield* getProjectFromStore(projectId)
-        return yield* createTaskCard({
+        return yield* handleTaskCreateAtPath({
           rootPath: project.repoPath,
           status,
           text,

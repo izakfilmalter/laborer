@@ -521,9 +521,13 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('task.create', {
     success: Schema.Struct({
+      /** Stored task description to inject when creation provisions a workspace. */
+      description: Schema.NullOr(Schema.String),
       id: Schema.String,
       source: Schema.Literal('manual', 'slack_url'),
       status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      /** Non-null only when creating directly in In Progress provisioned a workspace. */
+      workspaceId: Schema.NullOr(Schema.String),
     }),
     error: RpcError,
     payload: {
@@ -536,6 +540,10 @@ export class LaborerRpcs extends RpcGroup.make(
   /** Revision-CAS status write used by both card drags and cancellation. */
   Rpc.make('task.move', {
     success: Schema.Struct({
+      /** Non-null only when this move provisioned a new workspace. */
+      workspaceId: Schema.NullOr(Schema.String),
+      /** Stored task description to inject into the newly launched agent. */
+      description: Schema.NullOr(Schema.String),
       revision: Schema.Int,
       status: StoredTaskStatus,
       updatedAt: Schema.Int,

@@ -588,13 +588,24 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      *   a sub-workspace: the worktree is created from that workspace's current
      *   HEAD (its branch is pushed best-effort first so the PR base exists on
      *   the remote) and `baseBranch` records the branch its PR targets.
+     * @param taskSource - Optional durable task identity for replay adoption.
      */
     readonly createWorktree: (
       projectId: string,
       branchName?: string,
       onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
-      baseWorkspaceId?: string
+      baseWorkspaceId?: string,
+      onFailure?: (
+        workspaceId: string,
+        error: RpcError
+      ) => Effect.Effect<void, never>,
+      taskSource?: string
     ) => Effect.Effect<WorkspaceRecord, RpcError>
+
+    /** Find the non-destroyed workspace durably provisioned for a task. */
+    readonly findWorkspaceForTask: (
+      taskId: string
+    ) => Effect.Effect<WorkspaceRecord | null>
 
     /**
      * Destroy a workspace by removing its git worktree and committing a
@@ -989,7 +1000,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           projectId: string,
           branchName?: string,
           onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
-          baseWorkspaceId?: string
+          baseWorkspaceId?: string,
+          onFailure?: (
+            workspaceId: string,
+            error: RpcError
+          ) => Effect.Effect<void, never>,
+          taskSource?: string
         ) {
           // 1. Validate the project exists and get its repo path
           const project = yield* registry.getProject(projectId)
@@ -1054,7 +1070,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const workspace: WorkspaceRecord = {
             id,
             projectId,
-            taskSource: null,
+            taskSource: taskSource ?? null,
             branchName: resolvedBranch,
             worktreePath,
             status: 'creating',
@@ -1180,6 +1196,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     ? String(failureOption.value)
                     : prettyMessage
 
+                const failure =
+                  failureOption._tag === 'Some' &&
+                  failureOption.value instanceof RpcError
+                    ? failureOption.value
+                    : new RpcError({
+                        code: 'WORKSPACE_SETUP_FAILED',
+                        message: errorMessage,
+                      })
+
                 // Set workspace to errored status so the user can decide
                 // whether to retry or destroy it. Never auto-destroy — the
                 // worktree may contain uncommitted work.
@@ -1190,6 +1215,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     errorMessage,
                   })
                 )
+
+                if (onFailure) {
+                  yield* onFailure(id, failure)
+                }
               })
             )
           )
@@ -1688,10 +1717,44 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         }
       )
 
+      const findWorkspaceForTask = Effect.fn(
+        'WorkspaceProvider.findWorkspaceForTask'
+      )((taskId: string) =>
+        Effect.sync<WorkspaceRecord | null>(() => {
+          const workspace = store
+            .query(tables.workspaces)
+            .find(
+              (candidate) =>
+                candidate.taskSource === taskId &&
+                candidate.status !== 'destroyed'
+            )
+          const origin = workspace?.origin
+          if (
+            workspace === undefined ||
+            (origin !== 'laborer' && origin !== 'external')
+          ) {
+            return null
+          }
+          return {
+            baseBranch: workspace.baseBranch,
+            baseSha: workspace.baseSha,
+            branchName: workspace.branchName,
+            createdAt: workspace.createdAt,
+            id: workspace.id,
+            origin,
+            projectId: workspace.projectId,
+            status: workspace.status,
+            taskSource: workspace.taskSource,
+            worktreePath: workspace.worktreePath,
+          }
+        })
+      )
+
       return WorkspaceProvider.of({
         createWorktree,
         destroyWorktree,
         checkDirtyFiles,
+        findWorkspaceForTask,
         getWorkspaceEnv,
       })
     })

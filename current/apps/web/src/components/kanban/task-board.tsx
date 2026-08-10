@@ -48,6 +48,7 @@ import {
   projectForTask,
   slackAnalysisState,
 } from '@/components/kanban/board-data'
+import { openProvisionedAgent } from '@/components/kanban/provisioned-agent'
 import {
   TerminalAttachButton,
   WorktreeChip,
@@ -91,6 +92,7 @@ import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
@@ -578,6 +580,7 @@ function AddCardComposer({
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
+  const panelActions = usePanelActions()
   const trimmed = value.trim()
   const intent = composerIntent(trimmed)
 
@@ -592,6 +595,10 @@ function AddCardComposer({
       const created = await createTask({
         payload: { projectId, status: column.id, text: trimmed },
       })
+      openProvisionedAgent(
+        created,
+        panelActions?.autoOpenAgentWhenWorkspaceReady
+      )
       setValue('')
       setConfirmation(
         created.source === 'slack_url'
@@ -978,6 +985,7 @@ function TaskBoard({
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
+  const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const [selectedTask, setSelectedTask] = useState<BoardTask | null>(null)
@@ -1135,13 +1143,19 @@ function TaskBoard({
     status: Exclude<BoardTaskStatus, 'cancelled'>
   ) => {
     try {
-      await moveTask({
+      const result = await moveTask({
         payload: {
           expectedRevision: task.revision,
           status,
           taskId: task.id,
         },
       })
+      if (result.workspaceId !== null) {
+        openProvisionedAgent(
+          result,
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+      }
     } catch (error) {
       toast.error(`Could not move “${task.title}”`, {
         description: extractErrorMessage(error),

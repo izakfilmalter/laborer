@@ -19,17 +19,20 @@ import {
   RpcError,
 } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
+import { taskDatabasePath } from '@laborer/task-db/path'
 import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { LaborerStore } from '../services/laborer-store.js'
+import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
 import { createTaskCard } from '../services/task-card-creator.js'
+import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
@@ -193,6 +196,50 @@ export const handleProjectList = () =>
     }))
   })
 
+export const handleTaskTerminalAttach = (
+  { taskId }: { readonly taskId: string },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.gen(function* () {
+    const task = yield* Effect.try({
+      try: () => {
+        const database = NodeTaskBoardDatabase.open(databasePath)
+        try {
+          return database.findTask(taskId)
+        } finally {
+          database.close()
+        }
+      },
+      catch: (cause) =>
+        new RpcError({
+          code: 'TASK_BOARD_READ_FAILED',
+          message:
+            cause instanceof Error
+              ? cause.message
+              : 'Unable to read the task board',
+        }),
+    })
+    if (task === null) {
+      return yield* new RpcError({
+        code: 'NOT_FOUND',
+        message: `Task not found: ${taskId}`,
+      })
+    }
+    const inspection = inspectTaskWorktree(task.worktreePath, task.executionId)
+    if (!(inspection.exists && task.worktreePath)) {
+      return yield* new RpcError({
+        code: 'WORKTREE_NOT_FOUND',
+        message: 'The task worktree is not available on disk',
+      })
+    }
+    const terminalClient = yield* TerminalClient
+    const terminal = yield* terminalClient.spawnInDirectory(
+      `task:${task.id}`,
+      task.worktreePath
+    )
+    return { botOwned: inspection.botOwned, terminal }
+  })
+
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
@@ -267,6 +314,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           text,
         })
       }),
+
+    'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 
     // -------------------------------------------------------------------
     // Config RPCs (Issue #157)

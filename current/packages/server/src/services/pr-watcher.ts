@@ -1,7 +1,7 @@
 /**
  * PrWatcher — Effect Service
  *
- * Monitors active workspaces for associated pull requests by running
+ * Monitors non-destroyed workspaces for associated pull requests by running
  * `gh pr view` in their worktree directories. Uses the `gh` CLI so
  * authentication is handled by the user's existing GitHub login
  * (no API tokens needed in the app).
@@ -35,6 +35,7 @@ import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
+import { PrTaskTransitions } from './pr-task-transitions.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
 
 /**
@@ -46,11 +47,6 @@ interface PrData {
   readonly state: string | null
   readonly title: string | null
   readonly url: string | null
-}
-
-interface BootstrapPollingSnapshot {
-  readonly activeWorkspaceIds: readonly string[]
-  readonly stoppedWorkspaceIds: readonly string[]
 }
 
 /** Serialized PR state for deduplication. */
@@ -114,17 +110,22 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
      * @param workspaceId - ID of the workspace to check
      */
     readonly isPolling: (workspaceId: string) => Effect.Effect<boolean>
+
+    /** Ensure every currently non-destroyed workspace has a polling fiber. */
+    readonly refreshPolling: () => Effect.Effect<void>
   }
 >() {
   static readonly layer = Layer.scoped(
     PrWatcher,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
+      const taskTransitions = yield* PrTaskTransitions
 
       // Track active polling fibers per workspace.
       const pollingFibers = yield* Ref.make<
         Map<string, Fiber.RuntimeFiber<void, never>>
       >(new Map())
+      const startingWorkspaces = yield* Ref.make<ReadonlySet<string>>(new Set())
 
       // Cache previous PR state per workspace for deduplication.
       const previousPrState = yield* Ref.make<Map<string, string>>(new Map())
@@ -263,6 +264,33 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           }
         }
 
+        // PR display state and task-board state are independent durable
+        // projections. Attempt the task transition on every check so a prior
+        // busy/schema failure can heal even when the PR payload is unchanged.
+        const projects = store.query(tables.projects)
+        const project = pipe(
+          projects,
+          Arr.findFirst((candidate) => candidate.id === workspace.projectId)
+        )
+        if (project._tag === 'Some') {
+          yield* taskTransitions
+            .transition({
+              branchName: workspace.branchName,
+              projectRepoPath: project.value.repoPath,
+              registeredProjectRepoPaths: projects.map(
+                (candidate) => candidate.repoPath
+              ),
+              prState: prData.state,
+            })
+            .pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning(
+                  `[PrWatcher] Failed to move task for workspace ${workspaceId}: ${error.message}`
+                )
+              )
+            )
+        }
+
         return prData
       })
 
@@ -270,9 +298,25 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         workspaceId: string,
         _intervalMs?: number
       ) {
-        // Check if already polling
+        const reserved = yield* Ref.modify(startingWorkspaces, (starting) => {
+          if (starting.has(workspaceId)) {
+            return [false, starting] as const
+          }
+          const next = new Set(starting)
+          next.add(workspaceId)
+          return [true, next] as const
+        })
+        if (!reserved) {
+          return
+        }
+
         const currentFibers = yield* Ref.get(pollingFibers)
         if (currentFibers.has(workspaceId)) {
+          yield* Ref.update(startingWorkspaces, (starting) => {
+            const next = new Set(starting)
+            next.delete(workspaceId)
+            return next
+          })
           return
         }
 
@@ -285,7 +329,13 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             ? PR_VISIBLE_POLL_INTERVAL_MS
             : PR_BACKGROUND_POLL_INTERVAL_MS
 
-          yield* checkPr(workspaceId)
+          yield* checkPr(workspaceId).pipe(
+            Effect.catchAllCause((cause) =>
+              Effect.logWarning(
+                `[PrWatcher] polling check failed for workspace ${workspaceId}: ${String(cause)}`
+              )
+            )
+          )
           yield* Effect.sleep(Duration.millis(interval))
         }).pipe(Effect.forever, Effect.asVoid)
 
@@ -294,6 +344,11 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         yield* Ref.update(pollingFibers, (fibers) => {
           const next = new Map(fibers)
           next.set(workspaceId, fiber)
+          return next
+        })
+        yield* Ref.update(startingWorkspaces, (starting) => {
+          const next = new Set(starting)
+          next.delete(workspaceId)
           return next
         })
 
@@ -358,55 +413,32 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         return currentFibers.has(workspaceId)
       })
 
-      const getBootstrapPollingSnapshot = (): BootstrapPollingSnapshot => {
-        const allWorkspaces = store
-          .query(tables.workspaces)
-          .filter((workspace) => workspace.status !== 'destroyed')
-
-        return {
-          activeWorkspaceIds: allWorkspaces
-            .filter(
-              (workspace) =>
-                workspace.status === 'running' ||
-                workspace.status === 'creating'
-            )
-            .map((workspace) => workspace.id),
-          stoppedWorkspaceIds: allWorkspaces
-            .filter((workspace) => workspace.status === 'stopped')
-            .map((workspace) => workspace.id),
-        }
-      }
-
-      const bootstrapPolling = Effect.fn('PrWatcher.bootstrapPolling')(
-        function* (snapshot: BootstrapPollingSnapshot) {
-          const { activeWorkspaceIds, stoppedWorkspaceIds } = snapshot
-
+      const refreshPolling = Effect.fn('PrWatcher.refreshPolling')(
+        function* () {
+          const workspaces = store
+            .query(tables.workspaces)
+            .filter((workspace) => workspace.status !== 'destroyed')
           yield* Effect.forEach(
-            activeWorkspaceIds,
-            (workspaceId) => startPolling(workspaceId),
-            { discard: true }
-          )
-
-          // Run a one-time PR check for stopped workspaces to refresh stale
-          // PR data, but do not start continuous polling for them.
-          yield* Effect.forEach(
-            stoppedWorkspaceIds,
-            (workspaceId) => checkPr(workspaceId),
+            workspaces,
+            (workspace) => startPolling(workspace.id),
             { discard: true }
           )
         }
       )
 
-      const bootstrapSnapshot = getBootstrapPollingSnapshot()
-
-      yield* bootstrapPolling(bootstrapSnapshot).pipe(
+      // Re-scan at the background tier so reconciler-adopted worktrees gain a
+      // watcher even when their LiveStore row is created after startup.
+      const refreshPollingCoverage = refreshPolling().pipe(
         Effect.catchAllCause((cause) =>
           Effect.logWarning(
-            `[PrWatcher] startup polling failed: ${String(cause)}`
+            `[PrWatcher] polling coverage refresh failed: ${String(cause)}`
           )
         ),
-        Effect.forkScoped
+        Effect.zipRight(
+          Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
+        )
       )
+      yield* refreshPollingCoverage.pipe(Effect.forever, Effect.forkScoped)
 
       // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())
@@ -417,6 +449,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         stopPolling,
         stopAllPolling,
         isPolling,
+        refreshPolling,
       })
     })
   )

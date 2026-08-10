@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs'
 import { RpcError, type TaskBoardEvent } from '@laborer/shared/rpc'
 import type { TaskRead } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Duration, Effect, Option, Schedule, Stream } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
+import { inspectTaskWorktree } from './task-worktree.js'
 
 const DEFAULT_POLL_INTERVAL = Duration.millis(350)
 
@@ -16,10 +16,14 @@ const boardReadError = (cause: unknown) =>
 
 const toEvent = (read: TaskRead): TaskBoardEvent => ({
   ...read,
-  tasks: read.tasks.map((task) => ({
-    ...task,
-    worktreeExists: task.worktreePath !== null && existsSync(task.worktreePath),
-  })),
+  tasks: read.tasks.map((task) => {
+    const worktree = inspectTaskWorktree(task.worktreePath, task.executionId)
+    return {
+      ...task,
+      worktreeBotOwned: worktree.botOwned,
+      worktreeExists: worktree.exists,
+    }
+  }),
 })
 
 /**

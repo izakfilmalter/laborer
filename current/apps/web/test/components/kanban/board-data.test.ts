@@ -22,12 +22,48 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   status: 'todo',
   title: 'Task',
   updatedAt: 1,
+  worktreeBotOwned: false,
   worktreeExists: false,
   worktreePath: null,
   ...overrides,
 })
 
 describe('board task projection', () => {
+  it('projects queued worktrees as provisioning and missing completed worktrees as gone', () => {
+    expect(
+      applyTaskBoardEvents([
+        {
+          _tag: 'snapshot',
+          cursor: 1,
+          tasks: [
+            task({
+              executionStatus: 'queued',
+              source: 'execution',
+              status: 'in_progress',
+              worktreePath: '/repo.worktrees/task',
+            }),
+          ],
+        },
+      ])[0]?.worktreeState
+    ).toBe('provisioning')
+    expect(
+      applyTaskBoardEvents([
+        {
+          _tag: 'snapshot',
+          cursor: 1,
+          tasks: [
+            task({
+              executionStatus: 'completed',
+              source: 'execution',
+              status: 'in_review',
+              worktreePath: '/repo.worktrees/task',
+            }),
+          ],
+        },
+      ])[0]?.worktreeState
+    ).toBe('gone')
+  })
+
   it('replaces snapshots and applies updates and deletions', () => {
     const events: TaskBoardEvent[] = [
       { _tag: 'snapshot', cursor: 1, tasks: [task()] },

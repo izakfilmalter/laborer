@@ -411,6 +411,12 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       initialPrompt?: string
     ) => Effect.Effect<TerminalRecord, RpcError>
 
+    /** Spawn a plain shell at a caller-supplied local directory. */
+    readonly spawnInDirectory: (
+      ownerId: string,
+      cwd: string
+    ) => Effect.Effect<TerminalRecord, RpcError>
+
     /**
      * Kill all terminals belonging to a workspace.
      * Iterates the tracked workspace→terminal mapping and calls kill for each.
@@ -696,13 +702,15 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           workspace: { readonly worktreePath: string },
           workspaceId: string,
           command: string | undefined,
-          initialPrompt?: string
+          initialPrompt?: string,
+          suppliedEnv?: Readonly<Record<string, string>>
         ) {
           const { client: rpcClient, terminalPort } =
             yield* provideLayerScope(getOrCreateClient)
 
           const workspaceEnv =
-            yield* workspaceProvider.getWorkspaceEnv(workspaceId)
+            suppliedEnv ??
+            (yield* workspaceProvider.getWorkspaceEnv(workspaceId))
 
           const isHookableAgent =
             command !== undefined && HOOKABLE_AGENTS.has(command)
@@ -817,6 +825,18 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         }
       )
 
+      const spawnInDirectory = Effect.fn('TerminalClient.spawnInDirectory')(
+        function* (ownerId: string, cwd: string) {
+          return yield* spawnHostTerminal(
+            { worktreePath: cwd },
+            ownerId,
+            undefined,
+            undefined,
+            {}
+          )
+        }
+      )
+
       const killAllForWorkspace = (
         workspaceId: string
       ): Effect.Effect<number, never> =>
@@ -869,6 +889,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       )
 
       return TerminalClient.of({
+        spawnInDirectory,
         spawnInWorkspace,
         killAllForWorkspace,
       })

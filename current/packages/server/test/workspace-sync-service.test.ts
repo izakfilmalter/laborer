@@ -60,6 +60,7 @@ const TestPrWatcherLayer = Layer.effect(
           }
         }),
       isPolling: () => Effect.succeed(false),
+      refreshPolling: () => Effect.void,
       startPolling: () => Effect.void,
       stopAllPolling: () => Effect.void,
       stopPolling: () => Effect.void,

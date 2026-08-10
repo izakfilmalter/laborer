@@ -16,6 +16,16 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   initial_prompt, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
+const MAX_BRANCH_TASKS = 1000
+const MAX_CAS_ATTEMPTS = 5
+
+export interface PrTaskTransitionInput {
+  readonly branchName: string
+  readonly changedAt?: number
+  readonly projectRepoPath: string
+  readonly prState: string | null
+  readonly registeredProjectRepoPaths: readonly string[]
+}
 
 type SqliteRow = Record<string, unknown>
 
@@ -71,9 +81,13 @@ const taskSource = (value: unknown): TaskSource => {
 const executionStatus = (value: unknown): ExecutionStatus | null => {
   switch (value) {
     case null:
+    case 'queued':
     case 'running':
+    case 'cancelling':
+    case 'completed':
     case 'failed':
-    case 'needs_attention':
+    case 'cancelled':
+    case 'needs-attention':
       return value
     default:
       return invalidColumn('execution_status')
@@ -104,7 +118,45 @@ const rowToTask = (row: SqliteRow): Task => {
   }
 }
 
-/** Node/Electron-compatible, read-focused connection to the shared task DB. */
+const pathContains = (parent: string, child: string): boolean =>
+  parent === child ||
+  child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
+const nearestProjectRoot = (
+  rootPath: string,
+  projectRoots: readonly string[]
+): string | undefined => {
+  let nearest: string | undefined
+  for (const projectRoot of projectRoots) {
+    if (
+      pathContains(projectRoot, rootPath) &&
+      (nearest === undefined || projectRoot.length > nearest.length)
+    ) {
+      nearest = projectRoot
+    }
+  }
+  return nearest
+}
+
+const nextStatusForPr = (task: Task, prState: string): TaskStatus | null => {
+  switch (prState.toUpperCase()) {
+    case 'MERGED':
+      return task.status === 'done' ? null : 'done'
+    case 'CLOSED':
+      return task.status === 'in_review' ? 'in_progress' : null
+    case 'OPEN':
+      return task.status === 'in_progress' &&
+        (task.source === 'manual' || task.source === 'slack_url')
+        ? 'in_review'
+        : null
+    default:
+      return null
+  }
+}
+
+class StalePrTaskTransition extends Error {}
+
+/** Node/Electron-compatible connection to the shared task DB. */
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
 
@@ -119,6 +171,7 @@ export class NodeTaskBoardDatabase {
       database.exec('PRAGMA busy_timeout = 5000')
       database.exec('PRAGMA journal_mode = WAL')
       database.exec('PRAGMA synchronous = NORMAL')
+      database.exec('PRAGMA foreign_keys = ON')
       const result = new NodeTaskBoardDatabase(database)
       result.#migrate()
       return result
@@ -218,6 +271,85 @@ export class NodeTaskBoardDatabase {
     })
   }
 
+  /**
+   * Move the newest task bound to a branch when its PR lifecycle requires it.
+   * Selection and the revision-CAS write share a short IMMEDIATE transaction;
+   * the ledger append is committed atomically with the task update.
+   */
+  transitionTaskForPr(input: PrTaskTransitionInput): Task | null {
+    if (input.prState === null) {
+      return null
+    }
+    const projectRoots = input.registeredProjectRepoPaths.includes(
+      input.projectRepoPath
+    )
+      ? input.registeredProjectRepoPaths
+      : [...input.registeredProjectRepoPaths, input.projectRepoPath]
+    const changedAt = input.changedAt ?? Date.now()
+
+    for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
+      try {
+        return this.#writeTransaction(() => {
+          const rows = this.#database
+            .prepare(
+              `SELECT ${TASK_COLUMNS} FROM tasks
+               WHERE branch_name = ?
+               ORDER BY created_at DESC, id DESC LIMIT ?`
+            )
+            .all(input.branchName, MAX_BRANCH_TASKS + 1)
+          if (rows.length > MAX_BRANCH_TASKS) {
+            throw new Error(
+              `Branch ${input.branchName} exceeds the ${MAX_BRANCH_TASKS} task match limit`
+            )
+          }
+          const task = rows
+            .map((row) => rowToTask(sqliteRow(row)))
+            .find(
+              (candidate) =>
+                nearestProjectRoot(candidate.rootPath, projectRoots) ===
+                input.projectRepoPath
+            )
+          if (task === undefined) {
+            return null
+          }
+          const status = nextStatusForPr(task, input.prState ?? '')
+          if (status === null) {
+            return null
+          }
+
+          const result = this.#database
+            .prepare(`UPDATE tasks
+              SET status = ?, updated_at = ?, revision = revision + 1
+              WHERE id = ? AND revision = ?`)
+            .run(status, changedAt, task.id, task.revision)
+          if (result.changes === 0) {
+            throw new StalePrTaskTransition()
+          }
+          this.#database
+            .prepare(
+              'INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)'
+            )
+            .run(task.id, changedAt)
+          const updated = this.#database
+            .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+            .get(task.id)
+          if (updated === undefined) {
+            throw new Error(`Updated task ${task.id} could not be read`)
+          }
+          return rowToTask(sqliteRow(updated))
+        })
+      } catch (error) {
+        if (
+          !(error instanceof StalePrTaskTransition) ||
+          attempt === MAX_CAS_ATTEMPTS
+        ) {
+          throw error
+        }
+      }
+    }
+    return null
+  }
+
   #snapshotUnsafe(): TaskSnapshot {
     const rows = this.#database
       .prepare(
@@ -301,6 +433,22 @@ export class NodeTaskBoardDatabase {
         this.#database.exec('ROLLBACK')
       } catch {
         // Preserve the read failure.
+      }
+      throw error
+    }
+  }
+
+  #writeTransaction<A>(operation: () => A): A {
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = operation()
+      this.#database.exec('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        this.#database.exec('ROLLBACK')
+      } catch {
+        // Preserve the operation failure.
       }
       throw error
     }

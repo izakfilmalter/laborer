@@ -201,7 +201,7 @@ function ExecutionMirrorBadge({
 }: {
   readonly mirror: BoardTask['executionMirror']
 }) {
-  if (mirror === 'needs_attention') {
+  if (mirror === 'needs-attention') {
     return (
       <Badge
         className="gap-1 border-warning/30 bg-warning/10 text-warning"

@@ -128,7 +128,15 @@ export const BoardTask = Schema.Struct({
   createdAt: Schema.Int,
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal('running', 'failed', 'needs_attention')
+    Schema.Literal(
+      'queued',
+      'running',
+      'cancelling',
+      'completed',
+      'failed',
+      'cancelled',
+      'needs-attention'
+    )
   ),
   id: Schema.String,
   initialPrompt: Schema.NullOr(Schema.String),

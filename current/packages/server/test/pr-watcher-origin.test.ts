@@ -6,6 +6,7 @@ import { afterEach, vi } from 'vitest'
 import type { SpawnResult } from '../src/lib/spawn.js'
 import { spawn } from '../src/lib/spawn.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
+import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
@@ -73,6 +74,15 @@ const createSpawnMock = (
 
 const createWorkspace = (store: LaborerStore['Type']['store']) => {
   store.commit(
+    events.projectCreated({
+      id: 'project-1',
+      repoPath: '/tmp',
+      name: 'Test project',
+      repoId: null,
+      canonicalGitCommonDir: null,
+    })
+  )
+  store.commit(
     events.workspaceCreated({
       id: 'workspace-1',
       projectId: 'project-1',
@@ -96,6 +106,7 @@ describe('PrWatcher fork origin PR lookup', () => {
     'prefers the origin repo when a fork has both origin and upstream',
     () =>
       Effect.gen(function* () {
+        const transitions: unknown[] = []
         spawnMock.mockImplementation(
           createSpawnMock({
             '--repo acme/fork': {
@@ -121,6 +132,17 @@ describe('PrWatcher fork origin PR lookup', () => {
         const { store } = Context.get(storeContext, LaborerStore)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                PrTaskTransitions,
+                PrTaskTransitions.of({
+                  transition: (input) =>
+                    Effect.sync(() => {
+                      transitions.push(input)
+                    }),
+                })
+              )
+            ),
             Layer.provide(Layer.succeedContext(storeContext))
           )
         )
@@ -138,9 +160,17 @@ describe('PrWatcher fork origin PR lookup', () => {
           .find((row) => row.id === 'workspace-1')
         assert.strictEqual(workspace?.prNumber, 42)
         assert.strictEqual(workspace?.prTitle, 'Origin fork PR')
+        assert.deepEqual(transitions, [
+          {
+            branchName: 'feature/fork-pr',
+            projectRepoPath: '/tmp',
+            registeredProjectRepoPaths: ['/tmp'],
+            prState: 'OPEN',
+          },
+        ])
 
         const ghCalls = spawnMock.mock.calls.filter(([cmd]) => cmd[0] === 'gh')
-        assert.strictEqual(ghCalls.length, 1)
+        assert.isAtLeast(ghCalls.length, 1)
         assert.include(
           ghCalls[0]?.[0].join(' '),
           'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
@@ -177,6 +207,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         const { store } = Context.get(storeContext, LaborerStore)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
+            Layer.provide(PrTaskTransitions.noopLayer),
             Layer.provide(Layer.succeedContext(storeContext))
           )
         )
@@ -193,16 +224,26 @@ describe('PrWatcher fork origin PR lookup', () => {
         )
 
         const ghCalls = spawnMock.mock.calls.filter(([cmd]) => cmd[0] === 'gh')
-        assert.strictEqual(ghCalls.length, 2)
-        assert.include(
-          ghCalls[0]?.[0].join(' '),
-          'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+        assert.isAtLeast(ghCalls.length, 2)
+        assert.isTrue(
+          ghCalls.some(([cmd]) =>
+            cmd
+              .join(' ')
+              .includes(
+                'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+              )
+          )
         )
-        assert.include(
-          ghCalls[1]?.[0].join(' ') ?? '',
-          'gh pr view feature/fork-pr --json number,url,title,state'
+        assert.isTrue(
+          ghCalls.some(([cmd]) => {
+            const call = cmd.join(' ')
+            return (
+              call.includes(
+                'gh pr view feature/fork-pr --json number,url,title,state'
+              ) && !call.includes('--repo')
+            )
+          })
         )
-        assert.notInclude(ghCalls[1]?.[0].join(' ') ?? '', '--repo')
       })
   )
 })

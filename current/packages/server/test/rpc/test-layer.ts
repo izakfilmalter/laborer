@@ -15,6 +15,7 @@ import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
+import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
@@ -121,7 +122,7 @@ const DeferredLeafLayers = Layer.mergeAll(
 const DeferredGroup1aLayers = Layer.mergeAll(
   BranchStateTracker.layer,
   FileService.layer,
-  PrWatcher.layer
+  PrWatcher.layer.pipe(Layer.provide(PrTaskTransitions.noopLayer))
 )
 
 const DeferredGroup1Layers = WorktreeReconciler.layer.pipe(

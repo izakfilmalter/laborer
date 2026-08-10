@@ -24,6 +24,7 @@ import {
   FolderX,
   GitBranch,
   MessageSquare,
+  Plus,
   Search,
   SquarePen,
   X,
@@ -44,7 +45,6 @@ import {
   KanbanColumnContent,
   KanbanItem,
   KanbanItemHandle,
-  type KanbanMoveEvent,
   KanbanOverlay,
 } from '@/components/reui/kanban'
 import { Badge } from '@/components/ui/badge'
@@ -100,11 +100,17 @@ function buildColumnTasks(
   return byColumn
 }
 
-/** Case-insensitive substring match against title or branch. */
+/** Case-insensitive substring match against title, branch, or PR. */
 function matchesQuery(task: BoardTask, query: string): boolean {
+  // "#212" and "212" both match PR #212.
+  const prNumberQuery = query.startsWith('#') ? query.slice(1) : query
   return (
     task.title.toLowerCase().includes(query) ||
-    (task.branch?.toLowerCase().includes(query) ?? false)
+    (task.branch?.toLowerCase().includes(query) ?? false) ||
+    (task.pr !== null &&
+      ((prNumberQuery.length > 0 &&
+        String(task.pr.number).includes(prNumberQuery)) ||
+        task.pr.title.toLowerCase().includes(query)))
   )
 }
 
@@ -343,51 +349,99 @@ function TaskBoardCard({
   )
 }
 
+/** Per-column "+" that prepends a fake manual card (prototype only). */
+function AddTaskButton({
+  columnTitle,
+  onAddTask,
+}: {
+  readonly columnTitle: string
+  readonly onAddTask: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={`Add task to ${columnTitle}`}
+            className="ml-auto text-muted-foreground"
+            onClick={onAddTask}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        <Plus className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>Add task</TooltipContent>
+    </Tooltip>
+  )
+}
+
 /**
  * One project lane's 4-column kanban. Its own Kanban root, so drags can
  * never cross projects.
  */
-function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
+function LaneBoard({
+  rootPath,
+  tasks,
+}: {
+  readonly rootPath: string
+  readonly tasks: readonly BoardTask[]
+}) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
 
+  // Derived from local column state so add-task cards resolve too.
   const tasksById = useMemo(() => {
     const byId = new Map<string, BoardTask>()
-    for (const task of tasks) {
-      byId.set(task.id, task)
-    }
-    return byId
-  }, [tasks])
-
-  const handleMove = (event: KanbanMoveEvent) => {
-    // Witness-only: a real drag writes a CAS status update to the shared
-    // db here. The prototype just narrates the transition.
-    if (event.activeContainer !== event.overContainer) {
-      const column = BOARD_COLUMNS.find((c) => c.id === event.overContainer)
-      const task = tasksById.get(String(event.event.active.id))
-      if (column && task) {
-        toast.success(`"${task.title}" → ${column.title}`)
+    for (const columnList of Object.values(columnTasks)) {
+      for (const task of columnList) {
+        byId.set(task.id, task)
       }
     }
+    return byId
+  }, [columnTasks])
+
+  const addTask = (status: Exclude<BoardTaskStatus, 'cancelled'>) => {
+    const task: BoardTask = {
+      id: crypto.randomUUID(),
+      rootPath,
+      title: 'New task',
+      status,
+      source: 'manual',
+      slackPermalink: null,
+      branch: null,
+      worktreePath: null,
+      worktreeState: 'none',
+      executionMirror: null,
+      pr: null,
+      createdAt: new Date().toISOString(),
+    }
+    setColumnTasks((prev) => ({
+      ...prev,
+      [status]: [task, ...(prev[status] ?? [])],
+    }))
   }
 
+  // No onMove handler: the real board writes a CAS status update to the
+  // shared db on cross-column drops. The prototype just keeps local state.
   return (
     <Kanban
       className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
-      onMove={handleMove}
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
-      <KanbanBoard className="grid grid-cols-4 gap-2">
+      <KanbanBoard className="grid min-w-0 grid-cols-4 gap-2 sm:grid-cols-4">
         {BOARD_COLUMNS.map((column) => (
-          <KanbanColumn key={column.id} value={column.id}>
+          <KanbanColumn className="min-w-0" key={column.id} value={column.id}>
             <div className="flex min-w-0 flex-col rounded-lg bg-muted/50">
-              <div className="flex items-center gap-2 px-3 pt-2 pb-0.5">
+              <div className="flex min-w-0 items-center gap-2 px-3 pt-2 pb-0.5">
                 <span
                   className={cn(
-                    'inline-block size-2 rounded-full',
+                    'inline-block size-2 shrink-0 rounded-full',
                     column.dotClassName
                   )}
                 />
@@ -397,6 +451,10 @@ function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
                 <span className="text-muted-foreground text-sm tabular-nums">
                   {(columnTasks[column.id] ?? []).length}
                 </span>
+                <AddTaskButton
+                  columnTitle={column.title}
+                  onAddTask={() => addTask(column.id)}
+                />
               </div>
               <KanbanColumnContent
                 className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
@@ -466,18 +524,18 @@ function TaskBoard({
           task.status !== 'cancelled' &&
           (!searching || matchesQuery(task, query))
       )
-      return { project, visibleTasks }
+      return { project, laneRoot: laneRoot ?? '', visibleTasks }
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center border-b px-3">
         <BoardSearch onChange={setSearchQuery} value={searchQuery} />
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          {lanes.map(({ project, visibleTasks }) => {
+          {lanes.map(({ project, laneRoot, visibleTasks }) => {
             const expanded = searching || collapseState.isExpanded(project.id)
 
             return (
@@ -500,7 +558,13 @@ function TaskBoard({
                     {visibleTasks.length}
                   </span>
                 </Button>
-                {expanded && <LaneBoard key={query} tasks={visibleTasks} />}
+                {expanded && (
+                  <LaneBoard
+                    key={query}
+                    rootPath={laneRoot}
+                    tasks={visibleTasks}
+                  />
+                )}
               </div>
             )
           })}

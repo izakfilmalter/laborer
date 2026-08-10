@@ -1,6 +1,3 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { Effect } from 'effect'
 import { spawn } from '../lib/spawn.js'
@@ -15,7 +12,6 @@ const SLUG_INVALID_CHARACTERS_PATTERN = /[^a-z0-9]+/gu
 const SLUG_BOUNDARY_HYPHENS_PATTERN = /^-+|-+$/gu
 const JSON_CODE_FENCE_START_PATTERN = /^```(?:json)?\s*/iu
 const JSON_CODE_FENCE_END_PATTERN = /\s*```$/u
-const PLANNER_AGENT_NAME = 'slack-workspace-planner'
 
 type SlackWorkType = 'bug' | 'feature'
 
@@ -255,31 +251,9 @@ const buildOpenCodeArgs = (prompt: string): string[] => [
   'json',
   '--model',
   OPENCODE_MODEL,
-  '--agent',
-  PLANNER_AGENT_NAME,
   '--auto',
   prompt,
 ]
-
-const makePlannerConfig = () => ({
-  $schema: 'https://opencode.ai/config.json',
-  agent: {
-    [PLANNER_AGENT_NAME]: {
-      description: 'Reads Slack context and returns a workspace plan',
-      mode: 'primary',
-      permission: {
-        '*': 'deny',
-        'slack_*': 'allow',
-      },
-      tools: {
-        '*': false,
-        'slack_*': true,
-      },
-    },
-  },
-})
-
-const PLANNER_CONFIG = `${JSON.stringify(makePlannerConfig(), null, 2)}\n`
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
@@ -308,64 +282,53 @@ const executeOpenCode = async (
   prompt: string,
   signal: AbortSignal
 ): Promise<string> => {
-  const isolatedDirectory = await mkdtemp(
-    join(tmpdir(), 'laborer-slack-planner-')
-  )
+  const childProcess = spawn(buildOpenCodeArgs(prompt))
+  let termination: Promise<void> | undefined
+  const startTermination = (): Promise<void> => {
+    termination ??= terminateProcess(childProcess)
+    return termination
+  }
+  const abortProcess = (): void => {
+    startTermination().catch(() => undefined)
+  }
+  signal.addEventListener('abort', abortProcess, { once: true })
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      startTermination()
+        .catch(() => undefined)
+        .finally(() => {
+          reject(new Error('OpenCode timed out while reading Slack.'))
+        })
+    }, OPENCODE_TIMEOUT_MS)
+  })
 
   try {
-    await writeFile(join(isolatedDirectory, 'opencode.json'), PLANNER_CONFIG)
-    const childProcess = spawn(buildOpenCodeArgs(prompt), {
-      cwd: isolatedDirectory,
-    })
-    let termination: Promise<void> | undefined
-    const startTermination = (): Promise<void> => {
-      termination ??= terminateProcess(childProcess)
-      return termination
+    const result = await Promise.race([
+      Promise.all([
+        childProcess.exited,
+        new Response(childProcess.stdout).text(),
+        new Response(childProcess.stderr).text(),
+      ]),
+      timeoutPromise,
+    ])
+    const [exitCode, stdout, stderr] = result
+
+    if (exitCode !== 0) {
+      const detail = stderr.trim().slice(-MAX_ERROR_LENGTH)
+      throw new Error(
+        detail || `OpenCode exited with status ${String(exitCode)}.`
+      )
     }
-    const abortProcess = (): void => {
-      startTermination().catch(() => undefined)
-    }
-    signal.addEventListener('abort', abortProcess, { once: true })
 
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        startTermination()
-          .catch(() => undefined)
-          .finally(() => {
-            reject(new Error('OpenCode timed out while reading Slack.'))
-          })
-      }, OPENCODE_TIMEOUT_MS)
-    })
-
-    try {
-      const result = await Promise.race([
-        Promise.all([
-          childProcess.exited,
-          new Response(childProcess.stdout).text(),
-          new Response(childProcess.stderr).text(),
-        ]),
-        timeoutPromise,
-      ])
-      const [exitCode, stdout, stderr] = result
-
-      if (exitCode !== 0) {
-        const detail = stderr.trim().slice(-MAX_ERROR_LENGTH)
-        throw new Error(
-          detail || `OpenCode exited with status ${String(exitCode)}.`
-        )
-      }
-
-      return stdout
-    } finally {
-      signal.removeEventListener('abort', abortProcess)
-      if (timeout !== undefined) {
-        clearTimeout(timeout)
-      }
-      await termination
-    }
+    return stdout
   } finally {
-    await rm(isolatedDirectory, { force: true, recursive: true })
+    signal.removeEventListener('abort', abortProcess)
+    if (timeout !== undefined) {
+      clearTimeout(timeout)
+    }
+    await termination
   }
 }
 
@@ -410,7 +373,6 @@ export {
   buildSlackPlannerPrompt,
   extractOpenCodeText,
   isSlackMessageUrl,
-  makePlannerConfig,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
   planSlackWorkspace,

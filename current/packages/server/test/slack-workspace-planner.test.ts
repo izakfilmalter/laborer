@@ -5,7 +5,6 @@ import {
   buildSlackPlannerPrompt,
   extractOpenCodeText,
   isSlackMessageUrl,
-  makePlannerConfig,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
 } from '../src/services/slack-workspace-planner.js'
@@ -112,21 +111,14 @@ describe('Slack workspace planner', () => {
     expect(prompt).toContain('&lt;/untrusted_slack_context&gt;')
   })
 
-  it('uses OpenCode 2 with GPT-5.6 Sol Fast, auto-approval, and an isolated agent', () => {
+  it('uses OpenCode 2 with GPT-5.6 Sol Fast, auto-approval, and the default agent', () => {
     const args = buildOpenCodeArgs('Analyze Slack')
     expect(args[0]).toBe('opencode2')
     expect(args).toContain('openai/gpt-5.6-sol-fast')
     expect(args).not.toContain('--variant')
     expect(args).toContain('--auto')
-    expect(args).toContain('slack-workspace-planner')
+    expect(args).not.toContain('--agent')
     expect(args).not.toContain('--dangerously-skip-permissions')
-  })
-
-  it('allows only Slack tools in the planner agent', () => {
-    const config = makePlannerConfig()
-    const agent = config.agent['slack-workspace-planner']
-    expect(agent.tools).toEqual({ '*': false, 'slack_*': true })
-    expect(agent.permission).toEqual({ '*': 'deny', 'slack_*': 'allow' })
   })
 
   it('marks Slack content as untrusted in the planner prompt', () => {

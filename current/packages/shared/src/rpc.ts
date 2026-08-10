@@ -521,9 +521,13 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('task.create', {
     success: Schema.Struct({
+      /** Stored task description to inject when creation provisions a workspace. */
+      description: Schema.NullOr(Schema.String),
       id: Schema.String,
       source: Schema.Literal('manual', 'slack_url'),
       status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      /** Non-null only when creating directly in In Progress provisioned a workspace. */
+      workspaceId: Schema.NullOr(Schema.String),
     }),
     error: RpcError,
     payload: {

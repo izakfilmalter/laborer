@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { Effect, Layer } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
-import { handleTaskMoveAtPath } from '../src/rpc/handlers.js'
+import {
+  handleTaskCreateAtPath,
+  handleTaskMoveAtPath,
+} from '../src/rpc/handlers.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
@@ -25,7 +28,9 @@ const project = {
 }
 
 const testLayer = (
-  createWorktree: WorkspaceProvider['Type']['createWorktree']
+  createWorktree: WorkspaceProvider['Type']['createWorktree'],
+  findWorkspaceForTask: WorkspaceProvider['Type']['findWorkspaceForTask'] = () =>
+    Effect.succeed(null)
 ) =>
   Layer.mergeAll(
     Layer.succeed(
@@ -43,6 +48,7 @@ const testLayer = (
         checkDirtyFiles: () => Effect.succeed([]),
         createWorktree,
         destroyWorktree: () => Effect.void,
+        findWorkspaceForTask,
         getWorkspaceEnv: () => Effect.succeed({}),
       })
     ),
@@ -85,6 +91,25 @@ const workspace = {
 }
 
 describe('task provisioning', () => {
+  it('provisions a manual task created directly in In Progress', async () => {
+    const path = databasePath()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const created = await Effect.runPromise(
+      handleTaskCreateAtPath(
+        { rootPath: '/repo', status: 'in_progress', text: 'Start now' },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    expect(created).toMatchObject({
+      source: 'manual',
+      status: 'in_progress',
+      workspaceId: workspace.id,
+    })
+    expect(createWorktree).toHaveBeenCalledTimes(1)
+  })
+
   it('provisions once on entering In Progress and returns the stored prompt', async () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)
@@ -155,6 +180,103 @@ describe('task provisioning', () => {
     )
 
     expect(result).toMatchObject({ status: 'done', workspaceId: null })
+    expect(createWorktree).not.toHaveBeenCalled()
+  })
+
+  it('serializes concurrent replays and provisions only one workspace', async () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    database.insert({
+      id: 'task-concurrent',
+      rootPath: '/repo',
+      source: 'manual',
+      status: 'todo',
+      title: 'Concurrent move',
+    })
+    database.close()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+    const layer = testLayer(createWorktree)
+
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        Effect.runPromise(
+          handleTaskMoveAtPath(
+            {
+              expectedRevision: 1,
+              status: 'in_progress',
+              taskId: 'task-concurrent',
+            },
+            path
+          ).pipe(Effect.provide(layer))
+        )
+      )
+    )
+
+    expect(
+      results.filter(({ workspaceId }) => workspaceId !== null)
+    ).toHaveLength(1)
+    expect(createWorktree).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers provisioning after a status-only crash boundary', async () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    database.insert({
+      id: 'task-replay',
+      rootPath: '/repo',
+      source: 'manual',
+      status: 'in_progress',
+      title: 'Replay move',
+    })
+    database.close()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const result = await Effect.runPromise(
+      handleTaskMoveAtPath(
+        {
+          expectedRevision: 1,
+          status: 'in_progress',
+          taskId: 'task-replay',
+        },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    expect(result.workspaceId).toBe(workspace.id)
+    expect(createWorktree).toHaveBeenCalledTimes(1)
+  })
+
+  it('adopts a workspace published before task binding was interrupted', async () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    database.insert({
+      id: 'task-adopt',
+      rootPath: '/repo',
+      source: 'manual',
+      status: 'in_progress',
+      title: 'Adopt workspace',
+    })
+    database.close()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const result = await Effect.runPromise(
+      handleTaskMoveAtPath(
+        {
+          expectedRevision: 1,
+          status: 'in_progress',
+          taskId: 'task-adopt',
+        },
+        path
+      ).pipe(
+        Effect.provide(
+          testLayer(createWorktree, () =>
+            Effect.succeed({ ...workspace, taskSource: 'task-adopt' })
+          )
+        )
+      )
+    )
+
+    expect(result.workspaceId).toBe(workspace.id)
     expect(createWorktree).not.toHaveBeenCalled()
   })
 

@@ -13,7 +13,7 @@ export const openProvisionedAgent = (
   result: ProvisionedTaskMove,
   openAgent: OpenAgent | undefined
 ): void => {
-  if (result.workspaceId === null || openAgent === undefined) {
+  if (typeof result.workspaceId !== 'string' || openAgent === undefined) {
     return
   }
   if (result.description === null) {

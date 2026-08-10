@@ -203,6 +203,52 @@ const taskMoveError = (cause: unknown) =>
     message: cause instanceof Error ? cause.message : 'Unable to move task',
   })
 
+interface TaskMoveLock {
+  readonly semaphore: Effect.Semaphore
+  users: number
+}
+
+const taskMoveLocks = new Map<string, TaskMoveLock>()
+
+/** Serialize provisioning replays per task without blocking unrelated cards. */
+const withTaskMoveLock = <A, E, R>(
+  taskId: string,
+  operation: Effect.Effect<A, E, R>
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        const lock = yield* Effect.sync(() => {
+          const existing = taskMoveLocks.get(taskId)
+          if (existing !== undefined) {
+            existing.users += 1
+            return existing
+          }
+          const created: TaskMoveLock = {
+            semaphore: Effect.unsafeMakeSemaphore(1),
+            users: 1,
+          }
+          taskMoveLocks.set(taskId, created)
+          return created
+        })
+        yield* lock.semaphore.take(1)
+        return lock
+      })
+    ),
+    () => operation,
+    (lock) =>
+      lock.semaphore.release(1).pipe(
+        Effect.zipRight(
+          Effect.sync(() => {
+            lock.users -= 1
+            if (lock.users === 0 && taskMoveLocks.get(taskId) === lock) {
+              taskMoveLocks.delete(taskId)
+            }
+          })
+        )
+      )
+  )
+
 const withTaskDatabase = <A>(
   path: string,
   operation: (database: NodeTaskBoardDatabase) => A
@@ -252,7 +298,7 @@ const bindTaskWorkspace = (
     throw new Error(`Could not bind task ${taskId} to its workspace`)
   })
 
-export const handleTaskMoveAtPath = (
+const handleTaskMoveAtPathUnlocked = (
   {
     expectedRevision,
     status,
@@ -326,15 +372,15 @@ export const handleTaskMoveAtPath = (
       })
     }
 
-    const revisionBeforeMove = task.revision
     task = yield* withDatabase((database) =>
       database.move(taskId, task.revision, status)
     )
 
-    // An idempotent duplicate request receives the already-applied move but
-    // must not start a second workspace pipeline.
-    const moveApplied = task.revision !== revisionBeforeMove
-    if (!(shouldProvision && moveApplied)) {
+    // An In Progress task without a binding is incomplete durable work. This
+    // deliberately retries after a crash between the status write and
+    // workspace creation; the task lock prevents concurrent replays from
+    // creating duplicates in this server process.
+    if (!(shouldProvision && task.worktreePath === null)) {
       return {
         description: null,
         revision: task.revision,
@@ -391,15 +437,19 @@ export const handleTaskMoveAtPath = (
         yield* workspaceSyncService.startPolling(workspaceId)
       })
 
-    const workspace = yield* provider
-      .createWorktree(
-        project.id,
-        task.branchName ?? undefined,
-        onReady,
-        undefined,
-        bounceToTodo
-      )
-      .pipe(Effect.tapError((error) => bounceToTodo('', error)))
+    const publishedWorkspace = yield* provider.findWorkspaceForTask(taskId)
+    const workspace =
+      publishedWorkspace ??
+      (yield* provider
+        .createWorktree(
+          project.id,
+          task.branchName ?? undefined,
+          onReady,
+          undefined,
+          bounceToTodo,
+          taskId
+        )
+        .pipe(Effect.tapError((error) => bounceToTodo('', error))))
 
     // The workspace pipeline determines the generated manual branch/path.
     // Bind those values via CAS before returning them to the renderer.
@@ -414,6 +464,56 @@ export const handleTaskMoveAtPath = (
       status: task.status,
       updatedAt: task.updatedAt,
       workspaceId: workspace.id,
+    }
+  })
+
+export const handleTaskMoveAtPath = (
+  payload: {
+    readonly expectedRevision: number
+    readonly status: TaskStatus
+    readonly taskId: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  withTaskMoveLock(
+    payload.taskId,
+    handleTaskMoveAtPathUnlocked(payload, databasePath)
+  )
+
+export const handleTaskCreateAtPath = (
+  input: {
+    readonly rootPath: string
+    readonly status: Exclude<TaskStatus, 'cancelled'>
+    readonly text: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.gen(function* () {
+    const entersInProgress = input.status === 'in_progress'
+    const created = yield* createTaskCard(
+      {
+        rootPath: input.rootPath,
+        status: entersInProgress ? 'todo' : input.status,
+        text: input.text,
+      },
+      databasePath
+    )
+    if (!(entersInProgress && created.source === 'manual')) {
+      return { ...created, description: null, workspaceId: null }
+    }
+    const moved = yield* handleTaskMoveAtPath(
+      {
+        expectedRevision: 1,
+        status: 'in_progress',
+        taskId: created.id,
+      },
+      databasePath
+    )
+    return {
+      ...created,
+      description: moved.description,
+      status: 'in_progress' as const,
+      workspaceId: moved.workspaceId,
     }
   })
 
@@ -535,7 +635,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'task.create': ({ projectId, status, text }) =>
       Effect.gen(function* () {
         const project = yield* getProjectFromStore(projectId)
-        return yield* createTaskCard({
+        return yield* handleTaskCreateAtPath({
           rootPath: project.repoPath,
           status,
           text,

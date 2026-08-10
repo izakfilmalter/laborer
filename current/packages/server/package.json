@@ -15,6 +15,7 @@
     ".": "./src/utility-main.ts"
   },
   "dependencies": {
+    "@effect/ai": "catalog:",
     "@effect/cli": "catalog:",
     "@effect/cluster": "catalog:",
     "@effect/experimental": "catalog:",

@@ -168,6 +168,7 @@
       "name": "@laborer/server",
       "version": "0.0.0",
       "dependencies": {
+        "@effect/ai": "catalog:",
         "@effect/cli": "catalog:",
         "@effect/cluster": "catalog:",
         "@effect/experimental": "catalog:",
@@ -259,6 +260,7 @@
     },
   },
   "overrides": {
+    "@effect/ai": "0.29.1",
     "@effect/cli": "0.72.1",
     "@effect/cluster": "0.55.0",
     "@effect/experimental": "0.57.11",
@@ -275,6 +277,7 @@
     "effect": "3.19.12",
   },
   "catalog": {
+    "@effect/ai": "0.29.1",
     "@effect/cli": "0.72.1",
     "@effect/cluster": "0.55.0",
     "@effect/experimental": "0.57.11",

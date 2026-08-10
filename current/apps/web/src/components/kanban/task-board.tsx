@@ -23,7 +23,6 @@ import {
   ChevronRight,
   ExternalLink,
   FolderGit2,
-  FolderX,
   GitBranch,
   MessageSquare,
   Search,
@@ -42,6 +41,10 @@ import {
   projectForTask,
 } from '@/components/kanban/board-data'
 import {
+  TerminalAttachButton,
+  WorktreeChip,
+} from '@/components/kanban/worktree-affordance'
+import {
   Kanban,
   KanbanBoard,
   KanbanColumn,
@@ -55,7 +58,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
@@ -229,35 +231,6 @@ function ExecutionMirrorBadge({
   return null
 }
 
-/** Worktree binding state affordance (derived on the real board). */
-function WorktreeChip({ task }: { readonly task: BoardTask }) {
-  if (task.worktreeState === 'provisioning') {
-    return (
-      <Badge className="gap-1 text-muted-foreground" variant="outline">
-        <Spinner className="size-3" />
-        Provisioning…
-      </Badge>
-    )
-  }
-  if (task.worktreeState === 'gone') {
-    return (
-      <Badge className="gap-1 text-muted-foreground/70" variant="outline">
-        <FolderX className="size-3" />
-        Worktree gone
-      </Badge>
-    )
-  }
-  if (task.worktreeState === 'exists') {
-    return (
-      <Badge className="gap-1 text-muted-foreground" variant="outline">
-        <FolderGit2 className="size-3" />
-        {task.worktreeBotOwned ? 'Bot-owned worktree' : 'Worktree'}
-      </Badge>
-    )
-  }
-  return null
-}
-
 /** Map PR state onto the existing badge's uppercase vocabulary. */
 function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
   return state.toUpperCase()
@@ -265,13 +238,15 @@ function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
 
 function TaskBoardCard({
   task,
-  attachDisabled = false,
+  attachBlocked = false,
+  attached = false,
   attaching = false,
   isOverlay = false,
   onAttach,
 }: {
   readonly task: BoardTask
-  readonly attachDisabled?: boolean
+  readonly attachBlocked?: boolean
+  readonly attached?: boolean
   readonly attaching?: boolean
   readonly isOverlay?: boolean
   readonly onAttach?: (task: BoardTask) => void
@@ -283,13 +258,12 @@ function TaskBoardCard({
     }
   }
 
-  const canInspectWorktree = task.worktreePath !== null
-
   return (
     <Card
       className={cn(
-        'cursor-pointer gap-0 rounded-md py-0 shadow-xs ring-foreground/10 transition-colors hover:ring-foreground/20',
-        isOverlay && 'shadow-lg'
+        'cursor-grab gap-0 rounded-md py-0 shadow-xs ring-foreground/10 transition-colors hover:ring-foreground/20',
+        attached && 'ring-1 ring-ring/40',
+        isOverlay && 'cursor-grabbing shadow-lg'
       )}
     >
       <CardContent className="flex flex-col gap-2 px-3 py-2.5">
@@ -325,7 +299,7 @@ function TaskBoardCard({
           </div>
         )}
 
-        {/* Meta chips: source, execution mirror, PR, worktree state */}
+        {/* Meta chips: source, execution mirror, PR, worktree state, terminal */}
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={task.source} />
           <ExecutionMirrorBadge mirror={task.executionMirror} />
@@ -337,31 +311,15 @@ function TaskBoardCard({
               prUrl={task.pr.url}
             />
           )}
-          <WorktreeChip task={task} />
-          {canInspectWorktree && !isOverlay && (
-            <Button
-              aria-label={
-                task.worktreeState === 'exists'
-                  ? `Open terminal for ${task.title}`
-                  : `Check worktree and open terminal for ${task.title}`
-              }
-              className="ml-auto h-6 gap-1 px-2 text-xs"
-              disabled={attachDisabled}
-              onClick={(event) => {
-                event.stopPropagation()
-                onAttach?.(task)
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              size="sm"
-              variant="secondary"
-            >
-              {attaching ? (
-                <Spinner className="size-3" />
-              ) : (
-                <Terminal className="size-3" />
-              )}
-              {task.worktreeState === 'exists' ? 'Terminal' : 'Check'}
-            </Button>
+          <WorktreeChip card={task} />
+          {!isOverlay && (
+            <TerminalAttachButton
+              attached={attached}
+              busy={attaching}
+              card={task}
+              disabled={attachBlocked}
+              onAttach={() => onAttach?.(task)}
+            />
           )}
         </div>
       </CardContent>
@@ -374,10 +332,12 @@ function TaskBoardCard({
  * never cross projects.
  */
 function LaneBoard({
+  attachedTaskId,
   attachingTaskId,
   onAttach,
   tasks,
 }: {
+  readonly attachedTaskId: string | null
   readonly attachingTaskId: string | null
   readonly onAttach: (task: BoardTask) => void
   readonly tasks: readonly BoardTask[]
@@ -433,7 +393,11 @@ function LaneBoard({
                   <KanbanItem key={task.id} value={task.id}>
                     <KanbanItemHandle>
                       <TaskBoardCard
-                        attachDisabled={attachingTaskId !== null}
+                        attachBlocked={
+                          attachingTaskId !== null &&
+                          attachingTaskId !== task.id
+                        }
+                        attached={attachedTaskId === task.id}
                         attaching={attachingTaskId === task.id}
                         onAttach={onAttach}
                         task={task}
@@ -484,8 +448,11 @@ function TaskBoard({
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
+    readonly botOwned: boolean
     readonly id: string
+    readonly taskId: string
     readonly taskTitle: string
+    readonly worktreePath: string
   } | null>(null)
   const attachTaskTerminal = useAtomSet(attachTaskTerminalMutation, {
     mode: 'promise',
@@ -520,6 +487,10 @@ function TaskBoard({
   }, [pullNext, rpcResult])
 
   const handleAttach = (task: BoardTask) => {
+    // Already showing this card's terminal: don't spawn a second shell.
+    if (attachedTerminal?.taskId === task.id || attachingTaskId !== null) {
+      return
+    }
     setAttachingTaskId(task.id)
     attachTaskTerminal({ payload: { taskId: task.id } })
       .then(({ botOwned, terminal }) => {
@@ -535,7 +506,13 @@ function TaskBoard({
               : candidate
           )
         )
-        setAttachedTerminal({ id: terminal.id, taskTitle: task.title })
+        setAttachedTerminal({
+          botOwned,
+          id: terminal.id,
+          taskId: task.id,
+          taskTitle: task.title,
+          worktreePath: task.worktreePath ?? '',
+        })
       })
       .catch((error: unknown) => {
         setBoardTasks((current) =>
@@ -551,9 +528,13 @@ function TaskBoard({
           )
         )
         if (task.worktreeState === 'provisioning') {
-          toast.info('Worktree is still provisioning')
+          toast.info('Worktree is still provisioning', {
+            description: 'The terminal opens once it lands on disk.',
+          })
         } else {
-          toast.error(extractErrorMessage(error))
+          toast.error(`Could not open a terminal for ${task.title}`, {
+            description: extractErrorMessage(error),
+          })
         }
       })
       .finally(() => setAttachingTaskId(null))
@@ -614,6 +595,7 @@ function TaskBoard({
                 </Button>
                 {expanded && (
                   <LaneBoard
+                    attachedTaskId={attachedTerminal?.taskId ?? null}
                     attachingTaskId={attachingTaskId}
                     key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
                     onAttach={handleAttach}
@@ -638,21 +620,47 @@ function TaskBoard({
       {attachedTerminal && (
         <section
           aria-label={`Terminal for ${attachedTerminal.taskTitle}`}
-          className="absolute inset-y-0 right-0 z-30 flex w-2/3 min-w-96 flex-col border-l bg-background shadow-2xl"
+          className="absolute inset-y-0 right-0 z-30 flex w-[min(48rem,66%)] min-w-96 flex-col border-l bg-background shadow-2xl"
         >
-          <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-            <Terminal className="size-4 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate font-medium text-sm">
-              {attachedTerminal.taskTitle}
-            </span>
-            <Button
-              aria-label="Detach terminal view"
-              onClick={() => setAttachedTerminal(null)}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <X className="size-4" />
-            </Button>
+          <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+            <Terminal className="size-4 shrink-0 text-muted-foreground" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate font-medium text-sm">
+                  {attachedTerminal.taskTitle}
+                </span>
+                {attachedTerminal.botOwned && (
+                  <Badge
+                    className="gap-1 text-muted-foreground"
+                    variant="outline"
+                  >
+                    <Bot className="size-3" />
+                    Bot worktree
+                  </Badge>
+                )}
+              </div>
+              <span
+                className="truncate font-mono text-[11px] text-muted-foreground"
+                title={attachedTerminal.worktreePath}
+              >
+                {attachedTerminal.worktreePath}
+              </span>
+            </div>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={`Close terminal for ${attachedTerminal.taskTitle}`}
+                    onClick={() => setAttachedTerminal(null)}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <X className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>Close terminal</TooltipContent>
+            </Tooltip>
           </header>
           <div className="min-h-0 flex-1">
             <TerminalPane terminalId={attachedTerminal.id} />

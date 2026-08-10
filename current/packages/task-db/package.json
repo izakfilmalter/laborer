@@ -1,0 +1,24 @@
+{
+  "name": "@laborer/task-db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "exports": {
+    ".": "./src/task-database.ts",
+    "./schema": "./src/schema.sql.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.44.7",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@laborer/config": "workspace:*",
+    "@types/bun": "^1.3.5",
+    "typescript": "catalog:"
+  }
+}

@@ -109,7 +109,7 @@ test.describe('workspace lifecycle', () => {
 
     // Type a branch name with a forward slash
     const branchNameInput = page.getByRole('textbox', {
-      name: 'Branch Name (optional)',
+      name: 'Branch Name or Slack URL (optional)',
     })
     await branchNameInput.fill(inputBranchName)
 

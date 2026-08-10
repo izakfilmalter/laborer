@@ -239,7 +239,7 @@ export async function addProjectAndCreateWorkspace(
 
   // Always fill in the branch name so we can reliably reference it in tests
   await page
-    .getByRole('textbox', { name: 'Branch Name (optional)' })
+    .getByRole('textbox', { name: 'Branch Name or Slack URL (optional)' })
     .fill(resolvedBranch)
 
   await page.getByRole('button', { name: CREATE_WORKSPACE_RE }).click()

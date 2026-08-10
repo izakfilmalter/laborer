@@ -2,7 +2,9 @@
  * Create Workspace form component.
  *
  * A dialog with a TanStack Form for creating a new workspace.
- * Fields: optional branch name (autofocused on open).
+ * Fields: a single optional input (autofocused on open) that accepts either a
+ * branch name or a Slack message/thread URL — the form detects which one was
+ * entered and switches behavior accordingly.
  * On submit, calls the `workspace.create` mutation via AtomRpc.
  * The dialog closes immediately on submit while a temporary workspace item shows
  * Slack analysis and creation progress in the project sidebar. Success and failure
@@ -17,7 +19,7 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { useForm } from '@tanstack/react-form'
 import { pipe, String as Str } from 'effect'
-import { Layers } from 'lucide-react'
+import { GitBranch, Layers, Slack } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useId, useState } from 'react'
 import { IMaskInput } from 'react-imask'
@@ -35,17 +37,60 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
+import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
 const planSlackWorkspaceMutation = LaborerClient.mutation(
   'workspace.planFromSlack'
 )
+
+/** Characters the combined input accepts: branch-safe characters plus URL syntax. */
+const ALLOWED_INPUT_PATTERN = /^[a-zA-Z0-9\s\-_/.:?=&#%~+@]*$/
+const BRANCH_UNSAFE_PATTERN = /[^a-z0-9\-_/.]/g
+const HTTP_SCHEME_PATTERN = /^https?:\/\//i
+const URL_SCHEMES = ['https://', 'http://']
+/** Below this length a value is still ambiguous with a branch name like "ht". */
+const MIN_SCHEME_PREFIX_LENGTH = 4
+
+/**
+ * True when the value should be treated as a Slack URL rather than a branch
+ * name. Partial schemes ("http", "https:/") count so that normalization stops
+ * mangling the value while a URL is still being typed.
+ */
+const isSlackUrlInput = (value: string): boolean => {
+  const candidate = value.trim().toLowerCase()
+  if (candidate === '') {
+    return false
+  }
+  return (
+    HTTP_SCHEME_PATTERN.test(candidate) ||
+    candidate.includes('slack.com') ||
+    (candidate.length >= MIN_SCHEME_PREFIX_LENGTH &&
+      URL_SCHEMES.some((scheme) => scheme.startsWith(candidate)))
+  )
+}
+
+/** Slack URLs pasted without a scheme still need one for the planner. */
+const toSlackUrl = (value: string): string =>
+  HTTP_SCHEME_PATTERN.test(value) ? value : `https://${value}`
+
+const toBranchName = (value: string): string =>
+  pipe(
+    value,
+    Str.toLowerCase,
+    Str.replaceAll(' ', '-'),
+    Str.replace(BRANCH_UNSAFE_PATTERN, '')
+  )
+
+/** Strips the border/ring so the input blends into its InputGroup wrapper. */
+const inputGroupControlClassName =
+  'flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent'
 
 type PendingWorkspaceCreationPhase = 'analyzing' | 'creating'
 
@@ -90,6 +135,7 @@ function CreateWorkspaceForm({
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const panelActions = usePanelActions()
   const pendingCreationId = useId()
+  const descriptionId = useId()
   const [open, setOpen] = useState(false)
   const createWorkspace = useAtomSet(createWorkspaceMutation, {
     mode: 'promise',
@@ -108,12 +154,12 @@ function CreateWorkspaceForm({
 
   const form = useForm({
     defaultValues: {
-      branchName: '',
-      slackUrl: '',
+      branchNameOrSlackUrl: '',
     },
     onSubmit: async ({ value }) => {
-      const slackUrl = value.slackUrl.trim()
-      let branchName = value.branchName.trim()
+      const entered = value.branchNameOrSlackUrl.trim()
+      const slackUrl = isSlackUrlInput(entered) ? toSlackUrl(entered) : ''
+      let branchName = slackUrl ? '' : entered
       let initialPrompt: string | undefined
       const initialPhase: PendingWorkspaceCreationPhase = slackUrl
         ? 'analyzing'
@@ -193,8 +239,7 @@ function CreateWorkspaceForm({
         if (value) {
           // Reset form when dialog opens
           form.reset({
-            branchName: '',
-            slackUrl: '',
+            branchNameOrSlackUrl: '',
           })
         }
       }}
@@ -251,58 +296,54 @@ function CreateWorkspaceForm({
           }}
         >
           <div className="grid gap-4 py-2">
-            <form.Field name="branchName">
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor="branchName">
-                    Branch Name (optional)
-                  </FieldLabel>
-                  <IMaskInput
-                    className={inputClassName}
-                    disabled={form.state.isSubmitting}
-                    id="branchName"
-                    inputRef={branchInputRef}
-                    // biome-ignore lint/performance/useTopLevelRegex: required inline for IMaskInput
-                    mask={/^[a-zA-Z0-9\s\-_/]*$/}
-                    name={field.name}
-                    onAccept={(value) => field.handleChange(value)}
-                    onBlur={field.handleBlur}
-                    placeholder={`${projectName}/my-feature`}
-                    prepare={(str) =>
-                      pipe(str, Str.toLowerCase, Str.replaceAll(' ', '-'))
-                    }
-                    value={field.state.value}
-                  />
-                  <FieldDescription>
-                    Used when no Slack URL is provided. Leave empty to
-                    auto-generate a branch name.
-                  </FieldDescription>
-                </Field>
-              )}
-            </form.Field>
-            <form.Field name="slackUrl">
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor="slackUrl">
-                    Slack Message or Thread URL (optional)
-                  </FieldLabel>
-                  <input
-                    className={inputClassName}
-                    disabled={form.state.isSubmitting}
-                    id="slackUrl"
-                    name={field.name}
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    placeholder="https://workspace.slack.com/archives/…"
-                    type="url"
-                    value={field.state.value}
-                  />
-                  <FieldDescription>
-                    OpenCode will read the conversation, name the workspace, and
-                    start with a self-contained prompt.
-                  </FieldDescription>
-                </Field>
-              )}
+            <form.Field name="branchNameOrSlackUrl">
+              {(field) => {
+                const isSlackMode = isSlackUrlInput(field.state.value)
+
+                return (
+                  <Field>
+                    <FieldLabel htmlFor="branchNameOrSlackUrl">
+                      Branch Name or Slack URL (optional)
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupAddon>
+                        {isSlackMode ? (
+                          <Slack aria-hidden="true" className="size-3.5" />
+                        ) : (
+                          <GitBranch aria-hidden="true" className="size-3.5" />
+                        )}
+                      </InputGroupAddon>
+                      <IMaskInput
+                        aria-describedby={descriptionId}
+                        className={cn(
+                          inputClassName,
+                          inputGroupControlClassName
+                        )}
+                        data-slot="input-group-control"
+                        disabled={form.state.isSubmitting}
+                        id="branchNameOrSlackUrl"
+                        inputRef={branchInputRef}
+                        mask={ALLOWED_INPUT_PATTERN}
+                        name={field.name}
+                        onAccept={(value) => field.handleChange(value)}
+                        onBlur={field.handleBlur}
+                        placeholder={`${projectName}/my-feature or a Slack URL`}
+                        prepare={(str, masked) =>
+                          isSlackUrlInput(`${masked.value}${str}`)
+                            ? str
+                            : toBranchName(str)
+                        }
+                        value={field.state.value}
+                      />
+                    </InputGroup>
+                    <FieldDescription id={descriptionId}>
+                      {isSlackMode
+                        ? 'OpenCode will read the conversation, name the workspace, and start with a self-contained prompt.'
+                        : 'Leave empty to auto-generate a branch name, or paste a Slack message or thread URL to build the workspace from that conversation.'}
+                    </FieldDescription>
+                  </Field>
+                )
+              }}
             </form.Field>
           </div>
 

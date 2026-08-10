@@ -156,13 +156,14 @@ const { CreateWorkspaceForm } = await import(
 )
 const { ReadyPhaseWrapper } = await import('./helpers/lifecycle-test-utils')
 
-const BRANCH_NAME_RE = /branch name/i
+const BRANCH_OR_SLACK_RE = /branch name or slack url/i
 const CREATE_WORKSPACE_RE = /create workspace/i
-const SLACK_URL_RE = /slack message or thread url/i
+const SLACK_HINT_RE = /read the conversation/i
+const BRANCH_HINT_RE = /auto-generate a branch name/i
 
-/** Return the branch name input (dialog is always rendered inline by the mock). */
+/** Return the combined branch/Slack input (dialog is rendered inline by the mock). */
 function getBranchInput() {
-  return screen.getByRole('textbox', { name: BRANCH_NAME_RE })
+  return screen.getByRole('textbox', { name: BRANCH_OR_SLACK_RE })
 }
 
 describe('CreateWorkspaceForm — branch name mask', () => {
@@ -174,7 +175,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     vi.clearAllMocks()
   })
 
-  it('autofocuses the branch name input', () => {
+  it('autofocuses the combined input', () => {
     render(
       <ReadyPhaseWrapper>
         <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
@@ -184,22 +185,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     expect(document.activeElement).toBe(input)
   })
 
-  it('tabs from the branch name input to the Slack URL input', async () => {
-    const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
-      </ReadyPhaseWrapper>
-    )
-
-    await user.tab()
-
-    expect(document.activeElement).toBe(
-      screen.getByRole('textbox', { name: SLACK_URL_RE })
-    )
-  })
-
-  it('renders the branch name input with correct placeholder', () => {
+  it('renders a single input mentioning both branch names and Slack URLs', () => {
     render(
       <ReadyPhaseWrapper>
         <CreateWorkspaceForm projectId="project-1" projectName="my-app" />
@@ -207,7 +193,30 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     )
     const input = getBranchInput()
     expect(input).toBeTruthy()
-    expect(input.getAttribute('placeholder')).toBe('my-app/my-feature')
+    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    expect(input.getAttribute('placeholder')).toBe(
+      'my-app/my-feature or a Slack URL'
+    )
+    expect(screen.getByText(BRANCH_HINT_RE)).toBeTruthy()
+  })
+
+  it('swaps the hint to Slack guidance once a URL is entered', async () => {
+    const user = userEvent.setup()
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.type(
+      getBranchInput(),
+      'https://example.slack.com/archives/C12345678/p1750000000000000'
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(SLACK_HINT_RE)).toBeTruthy()
+    })
+    expect(screen.queryByText(BRANCH_HINT_RE)).toBeNull()
   })
 
   it('converts spaces to hyphens', async () => {
@@ -361,6 +370,62 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     })
   })
 
+  it('keeps Slack URLs verbatim instead of masking them as a branch name', async () => {
+    const user = userEvent.setup()
+    const slackUrl =
+      'https://Example.slack.com/archives/C12345678/p1750000000000000?thread_ts=1.2'
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
+      </ReadyPhaseWrapper>
+    )
+    const input = getBranchInput()
+
+    await user.type(input, slackUrl)
+
+    await waitFor(() => {
+      expect((input as HTMLInputElement).value).toBe(slackUrl)
+    })
+  })
+
+  it('treats a scheme-less Slack URL as a Slack URL', async () => {
+    const user = userEvent.setup()
+    planSlackWorkspaceFn.mockResolvedValue({
+      branchName: 'slack/fix-auth-timeout',
+      initialPrompt: 'Fix it.',
+      workType: 'bug',
+    })
+    createWorkspaceFn.mockResolvedValue({
+      id: 'ws-slack',
+      projectId: 'project-1',
+      branchName: 'slack/fix-auth-timeout',
+      worktreePath: '/path/to/worktree',
+      status: 'creating',
+    })
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" projectName="laborer" />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.type(
+      getBranchInput(),
+      'example.slack.com/archives/C12345678/p1750000000000000'
+    )
+    await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
+
+    await waitFor(() => {
+      expect(planSlackWorkspaceFn).toHaveBeenCalledWith({
+        payload: {
+          slackUrl:
+            'https://example.slack.com/archives/C12345678/p1750000000000000',
+        },
+      })
+    })
+  })
+
   it('plans from Slack and opens OpenCode with the generated prompt', async () => {
     const user = userEvent.setup()
     const slackUrl =
@@ -385,10 +450,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       </ReadyPhaseWrapper>
     )
 
-    await user.type(
-      screen.getByRole('textbox', { name: SLACK_URL_RE }),
-      slackUrl
-    )
+    await user.type(getBranchInput(), slackUrl)
     await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
 
     await waitFor(() => {
@@ -454,10 +516,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     fireEvent.click(screen.getByTestId('dialog-open-control'))
     expect(screen.getByTestId('dialog').getAttribute('data-open')).toBe('true')
 
-    await user.type(
-      screen.getByRole('textbox', { name: SLACK_URL_RE }),
-      slackUrl
-    )
+    await user.type(getBranchInput(), slackUrl)
     await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
 
     await waitFor(() => {
@@ -534,7 +593,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     )
 
     await user.type(
-      screen.getByRole('textbox', { name: SLACK_URL_RE }),
+      getBranchInput(),
       'https://example.slack.com/archives/C12345678/p1750000000000000'
     )
     await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))

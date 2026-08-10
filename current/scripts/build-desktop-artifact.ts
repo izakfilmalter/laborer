@@ -132,6 +132,7 @@ const REQUIRED_ASAR_FILES = [
   'packages/server/dist/migrations/0000_shared_task_db.sql',
   'packages/server/dist/migrations/0001_execution_lifecycle_statuses.sql',
   'packages/server/dist/migrations/0002_task_description_agent_source.sql',
+  'packages/server/dist/migrations/0003_worktree_task_source.sql',
 ] as const
 
 // ---------------------------------------------------------------------------

@@ -61,12 +61,14 @@ describe('NativeTaskDatabase', () => {
       '0000_shared_task_db',
       '0001_execution_lifecycle_statuses',
       '0002_task_description_agent_source',
+      '0003_worktree_task_source',
     ])
     const second = NativeTaskDatabase.open(path)
     expect(second.migrationNames()).toEqual([
       '0000_shared_task_db',
       '0001_execution_lifecycle_statuses',
       '0002_task_description_agent_source',
+      '0003_worktree_task_source',
     ])
     second.close()
     first.close()
@@ -109,6 +111,28 @@ describe('NativeTaskDatabase', () => {
         .run('unknown', '/repo', 'Unknown', 'todo', 'unknown', 1, 1)
     ).toThrow()
     raw.close()
+  })
+
+  it('accepts worktree-source tasks after the 0003 migration', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    expect(
+      database.insert({
+        id: 'worktree-task',
+        rootPath: '/repo',
+        title: 'laborer/adopted',
+        status: 'in_progress',
+        source: 'worktree',
+        branchName: 'laborer/adopted',
+        worktreePath: '/repo.worktrees/adopted',
+      }).task
+    ).toMatchObject({
+      source: 'worktree',
+      status: 'in_progress',
+      branchName: 'laborer/adopted',
+      worktreePath: '/repo.worktrees/adopted',
+    })
+    database.close()
   })
 
   it('rejects a stale CAS across two writers', () => {

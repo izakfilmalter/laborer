@@ -16,7 +16,12 @@ export type TaskStatus =
   | 'in_review'
   | 'done'
   | 'cancelled'
-export type TaskSource = 'execution' | 'manual' | 'slack_url' | 'agent'
+export type TaskSource =
+  | 'execution'
+  | 'manual'
+  | 'slack_url'
+  | 'agent'
+  | 'worktree'
 export type ExecutionStatus =
   | 'queued'
   | 'running'
@@ -226,6 +231,7 @@ const taskSource = (value: unknown): TaskSource => {
     case 'manual':
     case 'slack_url':
     case 'agent':
+    case 'worktree':
       return value
     default:
       return invalidColumn('source')

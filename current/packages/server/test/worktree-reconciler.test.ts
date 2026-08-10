@@ -8,9 +8,11 @@ import {
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
+import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { LaborerStore } from '../src/services/laborer-store.js'
+import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
@@ -504,6 +506,80 @@ describe('WorktreeReconciler canonical path support', () => {
           paths.includes(realpathSync(wt2Path)),
           'wt2 path should be present'
         )
+      }).pipe(Effect.provide(TestLayer))
+  )
+})
+
+describe('WorktreeReconciler task translation', () => {
+  it.scoped(
+    'translates linked worktrees into worktree-source tasks, skipping main',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-task-translate', tempRoots)
+        const linkedPath = join(repoPath, '.worktrees', 'feature-t')
+        git(`worktree add -b feature/translated ${linkedPath}`, repoPath)
+
+        const reconciler = yield* WorktreeReconciler
+        yield* reconciler.reconcile('project-tasks', repoPath)
+
+        const canonicalRoot = realpathSync(repoPath)
+        const database = NodeTaskBoardDatabase.open(taskDatabasePath())
+        const tasks = database
+          .snapshot()
+          .tasks.filter((task) => task.rootPath === canonicalRoot)
+        database.close()
+
+        assert.strictEqual(tasks.length, 1)
+        const task = tasks[0]
+        assert.isDefined(task)
+        assert.strictEqual(task?.source, 'worktree')
+        assert.strictEqual(task?.status, 'in_progress')
+        assert.strictEqual(task?.title, 'feature/translated')
+        assert.strictEqual(task?.branchName, 'feature/translated')
+        assert.strictEqual(task?.worktreePath, realpathSync(linkedPath))
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'does not duplicate tasks across repeated reconciles and skips task-bound workspaces',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-task-claimed', tempRoots)
+        const boundPath = join(repoPath, '.worktrees', 'bound')
+        const freePath = join(repoPath, '.worktrees', 'free')
+        git(`worktree add -b laborer/bound ${boundPath}`, repoPath)
+        git(`worktree add -b feature/free ${freePath}`, repoPath)
+
+        // A provisioning workspace claims its worktree through LiveStore
+        // `taskSource` before the task row carries a worktree path.
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.workspaceCreated({
+            id: 'bound-workspace',
+            projectId: 'project-claimed',
+            taskSource: 'task-in-flight',
+            branchName: 'laborer/bound',
+            worktreePath: realpathSync(boundPath),
+            status: 'stopped',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const reconciler = yield* WorktreeReconciler
+        yield* reconciler.reconcile('project-claimed', repoPath)
+        yield* reconciler.reconcile('project-claimed', repoPath)
+
+        const canonicalRoot = realpathSync(repoPath)
+        const database = NodeTaskBoardDatabase.open(taskDatabasePath())
+        const tasks = database
+          .snapshot()
+          .tasks.filter((task) => task.rootPath === canonicalRoot)
+        database.close()
+
+        assert.strictEqual(tasks.length, 1)
+        assert.strictEqual(tasks[0]?.branchName, 'feature/free')
       }).pipe(Effect.provide(TestLayer))
   )
 })

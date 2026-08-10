@@ -85,6 +85,7 @@ const taskSource = (value: unknown): TaskSource => {
     case 'manual':
     case 'slack_url':
     case 'agent':
+    case 'worktree':
       return value
     default:
       return invalidColumn('source')
@@ -161,7 +162,8 @@ const nextStatusForPr = (task: Task, prState: string): TaskStatus | null => {
       return task.status === 'in_progress' &&
         (task.source === 'manual' ||
           task.source === 'slack_url' ||
-          task.source === 'agent')
+          task.source === 'agent' ||
+          task.source === 'worktree')
         ? 'in_review'
         : null
     default:
@@ -410,6 +412,90 @@ export class NodeTaskBoardDatabase {
         throw new Error(`Moved task could not be read: ${id}`)
       }
       return moved
+    })
+  }
+
+  /**
+   * Insert an `in_progress` task witnessing an existing git worktree, unless
+   * some task already claims that worktree. The claim check and the insert
+   * share one IMMEDIATE transaction, so concurrent reconciles cannot mint
+   * duplicate cards for the same worktree.
+   *
+   * A worktree is claimed when any task row (any status, cancelled and done
+   * included) stores one of the worktree path aliases, or binds the same
+   * branch within an overlapping root. The branch guard covers execution
+   * tasks whose deterministic worktree path has not materialized on disk yet
+   * and slack cards whose planned branch precedes provisioning.
+   *
+   * Returns the inserted task, or null when the worktree was already claimed.
+   */
+  adoptWorktreeTask(
+    input: {
+      readonly branchName: string | null
+      readonly id: string
+      readonly rootPath: string
+      readonly title: string
+      readonly worktreePath: string
+      readonly worktreePathAliases: readonly string[]
+    },
+    changedAt = Date.now()
+  ): Task | null {
+    const aliases = [
+      ...new Set([input.worktreePath, ...input.worktreePathAliases]),
+    ]
+    return this.#writeTransaction(() => {
+      const pathRows = this.#database
+        .prepare(
+          `SELECT ${TASK_COLUMNS} FROM tasks
+           WHERE worktree_path IN (${aliases.map(() => '?').join(', ')})
+           LIMIT 1`
+        )
+        .all(...aliases)
+      if (pathRows.length > 0) {
+        return null
+      }
+
+      if (input.branchName !== null) {
+        const branchRows = this.#database
+          .prepare(
+            `SELECT ${TASK_COLUMNS} FROM tasks
+             WHERE branch_name = ? LIMIT ?`
+          )
+          .all(input.branchName, MAX_BRANCH_TASKS)
+        const claimed = branchRows
+          .map((row) => rowToTask(sqliteRow(row)))
+          .some(
+            (candidate) =>
+              pathContains(candidate.rootPath, input.rootPath) ||
+              pathContains(input.rootPath, candidate.rootPath)
+          )
+        if (claimed) {
+          return null
+        }
+      }
+
+      this.#database
+        .prepare(`INSERT INTO tasks (
+          id, root_path, title, status, source, execution_id, action_name,
+          execution_status, slack_permalink, worktree_path, branch_name,
+          description, created_at, updated_at, revision
+        ) VALUES (?, ?, ?, 'in_progress', 'worktree', NULL, NULL, NULL, NULL,
+          ?, ?, NULL, ?, ?, 1)`)
+        .run(
+          input.id,
+          input.rootPath,
+          input.title,
+          input.worktreePath,
+          input.branchName,
+          changedAt,
+          changedAt
+        )
+      this.#appendChange(input.id, changedAt)
+      const task = this.find(input.id)
+      if (!task) {
+        throw new Error(`Adopted worktree task ${input.id} could not be read`)
+      }
+      return task
     })
   }
 

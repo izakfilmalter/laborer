@@ -27,7 +27,7 @@ export const tasks = sqliteTable(
     ),
     check(
       'tasks_source_check',
-      sql`${table.source} IN ('execution', 'manual', 'slack_url', 'agent')`
+      sql`${table.source} IN ('execution', 'manual', 'slack_url', 'agent', 'worktree')`
     ),
     check(
       'tasks_execution_status_check',

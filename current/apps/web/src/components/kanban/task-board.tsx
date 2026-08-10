@@ -249,6 +249,12 @@ const SOURCE_BADGES: Record<
     icon: MessageSquare,
     label: 'Slack',
   },
+  worktree: {
+    className: 'text-muted-foreground',
+    hint: 'Adopted from an existing git worktree.',
+    icon: GitBranch,
+    label: 'Worktree',
+  },
 }
 
 /** Chip showing where the card came from. */

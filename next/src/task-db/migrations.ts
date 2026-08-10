@@ -34,4 +34,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       "utf8"
     ),
   },
+  {
+    name: "0003_worktree_task_source",
+    sql: readFileSync(
+      new URL("./migrations/0003_worktree_task_source.sql", import.meta.url),
+      "utf8"
+    ),
+  },
 ];

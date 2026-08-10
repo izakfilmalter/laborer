@@ -61,6 +61,7 @@ describe("NativeTaskDatabase", () => {
       "0000_shared_task_db",
       "0001_execution_lifecycle_statuses",
       "0002_task_description_agent_source",
+      "0003_worktree_task_source",
     ]);
 
     const second = NativeTaskDatabase.open(path);
@@ -68,6 +69,7 @@ describe("NativeTaskDatabase", () => {
       "0000_shared_task_db",
       "0001_execution_lifecycle_statuses",
       "0002_task_description_agent_source",
+      "0003_worktree_task_source",
     ]);
 
     second.close();

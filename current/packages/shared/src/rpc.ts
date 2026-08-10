@@ -152,7 +152,13 @@ export const BoardTask = Schema.Struct({
   revision: Schema.Int,
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
-  source: Schema.Literal('execution', 'manual', 'slack_url', 'agent'),
+  source: Schema.Literal(
+    'execution',
+    'manual',
+    'slack_url',
+    'agent',
+    'worktree'
+  ),
   status: StoredTaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,

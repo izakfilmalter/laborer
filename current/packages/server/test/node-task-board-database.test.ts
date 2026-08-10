@@ -333,3 +333,134 @@ describe('NodeTaskBoardDatabase', () => {
     database.close()
   })
 })
+
+describe('NodeTaskBoardDatabase.adoptWorktreeTask', () => {
+  it('adopts an unclaimed worktree as an in-progress worktree-source task', () => {
+    const database = NodeTaskBoardDatabase.open(databasePath())
+    const task = database.adoptWorktreeTask(
+      {
+        branchName: 'feature/adopted',
+        id: 'worktree-1',
+        rootPath: '/repo',
+        title: 'feature/adopted',
+        worktreePath: '/repo.worktrees/adopted',
+        worktreePathAliases: ['/private/repo.worktrees/adopted'],
+      },
+      10
+    )
+
+    expect(task).toMatchObject({
+      branchName: 'feature/adopted',
+      id: 'worktree-1',
+      rootPath: '/repo',
+      source: 'worktree',
+      status: 'in_progress',
+      worktreePath: '/repo.worktrees/adopted',
+    })
+    expect(database.readChanges(0)).toMatchObject({
+      cursor: 1,
+      tasks: [{ id: 'worktree-1' }],
+    })
+    database.close()
+  })
+
+  it('skips worktrees claimed by any task path, terminal statuses included', () => {
+    const database = NodeTaskBoardDatabase.open(databasePath())
+    database.insert({
+      id: 'done-card',
+      rootPath: '/repo',
+      source: 'manual',
+      status: 'done',
+      title: 'Shipped',
+      worktreePath: '/repo.worktrees/shipped',
+    })
+
+    const viaPath = database.adoptWorktreeTask({
+      branchName: 'other/branch',
+      id: 'worktree-dup',
+      rootPath: '/repo',
+      title: 'other/branch',
+      worktreePath: '/repo.worktrees/shipped',
+      worktreePathAliases: [],
+    })
+    const viaAlias = database.adoptWorktreeTask({
+      branchName: 'other/branch',
+      id: 'worktree-alias-dup',
+      rootPath: '/repo',
+      title: 'other/branch',
+      worktreePath: '/private/repo.worktrees/shipped',
+      worktreePathAliases: ['/repo.worktrees/shipped'],
+    })
+
+    expect(viaPath).toBeNull()
+    expect(viaAlias).toBeNull()
+    expect(database.findTask('worktree-dup')).toBeNull()
+    expect(database.findTask('worktree-alias-dup')).toBeNull()
+    database.close()
+  })
+
+  it('skips branches claimed within an overlapping root before their worktree binds', () => {
+    const database = NodeTaskBoardDatabase.open(databasePath())
+    // An execution task from next whose deterministic worktree path has not
+    // materialized as the detected path yet; its root is a subdirectory of
+    // the repo toplevel.
+    database.insert({
+      id: 'execution-card',
+      executionId: 'exec-1',
+      rootPath: '/repo/packages/app',
+      source: 'execution',
+      status: 'in_progress',
+      title: 'Fix the bug',
+      branchName: 'laborer/fix-bug',
+    })
+
+    const sameBranch = database.adoptWorktreeTask({
+      branchName: 'laborer/fix-bug',
+      id: 'worktree-branch-dup',
+      rootPath: '/repo',
+      title: 'laborer/fix-bug',
+      worktreePath: '/repo.worktrees/fix-bug',
+      worktreePathAliases: [],
+    })
+    const unrelatedRoot = database.adoptWorktreeTask({
+      branchName: 'laborer/fix-bug',
+      id: 'worktree-other-repo',
+      rootPath: '/elsewhere',
+      title: 'laborer/fix-bug',
+      worktreePath: '/elsewhere.worktrees/fix-bug',
+      worktreePathAliases: [],
+    })
+
+    expect(sameBranch).toBeNull()
+    expect(unrelatedRoot).toMatchObject({
+      id: 'worktree-other-repo',
+      source: 'worktree',
+    })
+    database.close()
+  })
+
+  it('is idempotent across repeated reconcile passes', () => {
+    const database = NodeTaskBoardDatabase.open(databasePath())
+    const first = database.adoptWorktreeTask({
+      branchName: null,
+      id: 'detached-1',
+      rootPath: '/repo',
+      title: 'adopted',
+      worktreePath: '/repo.worktrees/adopted',
+      worktreePathAliases: [],
+    })
+    const second = database.adoptWorktreeTask({
+      branchName: null,
+      id: 'detached-2',
+      rootPath: '/repo',
+      title: 'adopted',
+      worktreePath: '/repo.worktrees/adopted',
+      worktreePathAliases: [],
+    })
+
+    expect(first).toMatchObject({ id: 'detached-1', branchName: null })
+    expect(second).toBeNull()
+    expect(database.snapshot().tasks).toHaveLength(1)
+    database.close()
+  })
+})

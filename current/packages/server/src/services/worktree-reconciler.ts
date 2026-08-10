@@ -7,12 +7,17 @@ import { LaborerStore } from './laborer-store.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { WorktreeDetector } from './worktree-detector.js'
+import {
+  type TranslatableWorktree,
+  translateWorktreesToTasks,
+} from './worktree-task-translator.js'
 
 interface WorkspaceRecord {
   readonly branchName: string
   readonly id: string
   readonly projectId: string
   readonly status: string
+  readonly taskSource: string | null
   readonly worktreePath: string
 }
 
@@ -136,6 +141,43 @@ const toWorkspaceBranchName = (
     return branch
   }
   return `detached/${headSha.slice(0, 8)}`
+}
+
+/**
+ * Choose the worktrees the shared task db should witness as cards. Skips the
+ * main checkout, worktrees mid-provisioning for an existing task (the
+ * workspace's `taskSource` is committed before `git worktree add` runs,
+ * while the task row gains its `worktree_path` only after), and
+ * laborer-managed destroys still in progress.
+ */
+const selectTranslatableWorktrees = (
+  detectedWorktrees: readonly {
+    readonly branch: string | null
+    readonly isMain: boolean
+    readonly path: string
+  }[],
+  workspacesByCanonicalPath: ReadonlyMap<string, WorkspaceRecord>
+): readonly TranslatableWorktree[] => {
+  const translatable: TranslatableWorktree[] = []
+  for (const detected of detectedWorktrees) {
+    if (detected.isMain) {
+      continue
+    }
+    const canonicalPath = canonicalize(detected.path)
+    const workspace = workspacesByCanonicalPath.get(canonicalPath)
+    if (
+      workspace !== undefined &&
+      (workspace.taskSource !== null || workspace.status === 'destroyed')
+    ) {
+      continue
+    }
+    translatable.push({
+      branch: detected.branch,
+      canonicalPath,
+      path: detected.path,
+    })
+  }
+  return translatable
 }
 
 class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
@@ -270,6 +312,14 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           store.commit(events.workspaceDestroyed({ id: workspace.id }))
           removed += 1
         }
+
+        yield* translateWorktreesToTasks({
+          rootPath: canonicalRepoPath,
+          worktrees: selectTranslatableWorktrees(
+            detectedWorktrees,
+            allByCanonicalPath
+          ),
+        })
 
         if (added > 0 || removed > 0) {
           yield* Effect.log(

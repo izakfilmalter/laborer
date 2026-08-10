@@ -8,6 +8,7 @@ export default defineConfig({
       include: ['src/**/*.ts'],
     },
     include: ['test/**/*.test.ts'],
+    setupFiles: ['test/helpers/isolate-state-home.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
 

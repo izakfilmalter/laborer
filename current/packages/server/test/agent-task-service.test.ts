@@ -53,9 +53,11 @@ describe('AgentTaskService', () => {
 
         const deleted = yield* service.deleteTask(updated.id, updated.revision)
         expect(deleted.status).toBe('cancelled')
-        expect(yield* service.deleteTask(updated.id, updated.revision)).toEqual(
-          deleted
+        const staleDelete = yield* Effect.flip(
+          service.deleteTask(updated.id, updated.revision)
         )
+        expect(staleDelete).toMatchObject({ code: 'CAS_CONFLICT' })
+        expect(staleDelete.message).toContain('Refetch the task and retry')
         expect(yield* service.listTasks({})).toEqual([])
         expect(
           yield* service.listTasks({ includeCancelled: true })

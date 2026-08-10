@@ -90,21 +90,24 @@ const editablePatch = (input: {
 const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
   Effect.try({
     try: operation,
-    catch: (cause) =>
-      cause instanceof AgentTaskError
-        ? cause
-        : new AgentTaskError({
-            code:
-              cause instanceof Error &&
-              (cause.message.toLowerCase().includes('stale revision') ||
-                cause.message.toLowerCase().includes('changed while moving'))
-                ? 'CAS_CONFLICT'
-                : 'TASK_DATABASE_ERROR',
-            message:
-              cause instanceof Error
-                ? cause.message
-                : 'Task database operation failed',
-          }),
+    catch: (cause) => {
+      if (cause instanceof AgentTaskError) {
+        return cause
+      }
+      const message =
+        cause instanceof Error
+          ? cause.message
+          : 'Task database operation failed'
+      const isCasConflict =
+        message.toLowerCase().includes('stale revision') ||
+        message.toLowerCase().includes('changed while moving')
+      return new AgentTaskError({
+        code: isCasConflict ? 'CAS_CONFLICT' : 'TASK_DATABASE_ERROR',
+        message: isCasConflict
+          ? `${message}. Refetch the task and retry with its latest revision.`
+          : message,
+      })
+    },
   })
 
 export class AgentTaskService extends Context.Tag(
@@ -271,7 +274,9 @@ export class AgentTaskService extends Context.Tag(
                   message: `Task not found: ${id}`,
                 })
               }
-              return database.move(id, expectedRevision, 'cancelled')
+              return database.update(id, expectedRevision, {
+                status: 'cancelled',
+              })
             }),
         })
       })

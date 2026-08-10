@@ -1,17 +1,26 @@
 /**
  * Prototype kanban board — a new MainView alongside panels/dashboard.
  *
- * Renders the shared-db task shape (faked in board-data.ts) as a per-project
- * board: Todo / In Progress / In Review / Done. Cancelled cards are stored
- * but never rendered. Drag uses the vendored reui kanban (dnd-kit); the
- * board witnesses state and never gates next.
+ * One global board where each LiveStore project is a collapsible swim
+ * lane (Todo / In Progress / In Review / Done per lane). Lane collapse
+ * shares the sidebar's project collapse state instance, so collapsing a
+ * project in either place collapses it in both, live in-session.
+ * Cancelled cards are stored but never rendered. Drag uses the vendored
+ * reui kanban (dnd-kit); each lane is its own Kanban root so cards can
+ * never cross projects.
  *
  * Throwaway prototype for wayfinder ticket #354 — no persistence, no RPC.
+ * Fake tasks are mapped onto real projects by index via FAKE_ROOT_PATHS.
  */
 
+import { projects } from '@laborer/shared/schema'
+import { queryDb } from '@livestore/livestore'
 import {
   Bot,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
+  FolderGit2,
   FolderX,
   GitBranch,
   MessageSquare,
@@ -23,7 +32,7 @@ import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
   type BoardTask,
   type BoardTaskStatus,
-  FAKE_PROJECTS,
+  FAKE_ROOT_PATHS,
   FAKE_TASKS,
 } from '@/components/kanban/board-data'
 import {
@@ -37,23 +46,21 @@ import {
   KanbanOverlay,
 } from '@/components/reui/kanban'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn } from '@/lib/utils'
+import { useLaborerStore } from '@/livestore/store'
+
+const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 
 /** The four rendered columns, in board order. Cancelled never renders. */
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -279,25 +286,21 @@ function TaskBoardCard({
 }
 
 /**
- * Per-project board. Keyed by project root so switching projects resets
- * the drag-preview state cleanly.
+ * One project lane's 4-column kanban. Its own Kanban root, so drags can
+ * never cross projects.
  */
-function ProjectBoard({ rootPath }: { readonly rootPath: string }) {
-  const projectTasks = useMemo(
-    () => FAKE_TASKS.filter((task) => task.rootPath === rootPath),
-    [rootPath]
-  )
+function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
-    () => buildColumnTasks(projectTasks)
+    () => buildColumnTasks(tasks)
   )
 
   const tasksById = useMemo(() => {
     const byId = new Map<string, BoardTask>()
-    for (const task of projectTasks) {
+    for (const task of tasks) {
       byId.set(task.id, task)
     }
     return byId
-  }, [projectTasks])
+  }, [tasks])
 
   const handleMove = (event: KanbanMoveEvent) => {
     // Witness-only: a real drag writes a CAS status update to the shared
@@ -313,64 +316,56 @@ function ProjectBoard({ rootPath }: { readonly rootPath: string }) {
 
   return (
     <Kanban
-      className="flex h-full min-h-0 w-full min-w-0 flex-col"
+      className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
       onMove={handleMove}
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="h-full p-3">
-          <KanbanBoard className="grid h-full min-h-0 w-max auto-cols-[minmax(17rem,20rem)] grid-flow-col gap-2 sm:grid-cols-none">
-            {BOARD_COLUMNS.map((column) => (
-              <KanbanColumn
-                className="h-full min-h-0"
-                key={column.id}
+      <KanbanBoard className="grid grid-cols-4 gap-2">
+        {BOARD_COLUMNS.map((column) => (
+          <KanbanColumn key={column.id} value={column.id}>
+            <div className="flex min-w-0 flex-col rounded-lg bg-muted/50">
+              <div className="flex items-center gap-2 px-3 pt-2 pb-0.5">
+                <span
+                  className={cn(
+                    'inline-block size-2 rounded-full',
+                    column.dotClassName
+                  )}
+                />
+                <span className="truncate font-medium text-sm">
+                  {column.title}
+                </span>
+                <span className="text-muted-foreground text-sm tabular-nums">
+                  {(columnTasks[column.id] ?? []).length}
+                </span>
+              </div>
+              <KanbanColumnContent
+                className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
                 value={column.id}
               >
-                <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg bg-muted/50">
-                  <div className="flex items-center gap-2 px-3 pt-2 pb-0.5">
-                    <span
-                      className={cn(
-                        'inline-block size-2 rounded-full',
-                        column.dotClassName
-                      )}
-                    />
-                    <span className="truncate font-medium text-sm">
-                      {column.title}
-                    </span>
-                    <span className="text-muted-foreground text-sm tabular-nums">
-                      {(columnTasks[column.id] ?? []).length}
-                    </span>
+                {(columnTasks[column.id] ?? []).map((task) => (
+                  <KanbanItem key={task.id} value={task.id}>
+                    <KanbanItemHandle>
+                      <TaskBoardCard task={task} />
+                    </KanbanItemHandle>
+                  </KanbanItem>
+                ))}
+                {(columnTasks[column.id] ?? []).length === 0 && (
+                  <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
+                    No cards
                   </div>
-                  <KanbanColumnContent
-                    className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto px-2 pt-1.5 pb-2"
-                    value={column.id}
-                  >
-                    {(columnTasks[column.id] ?? []).map((task) => (
-                      <KanbanItem key={task.id} value={task.id}>
-                        <KanbanItemHandle>
-                          <TaskBoardCard task={task} />
-                        </KanbanItemHandle>
-                      </KanbanItem>
-                    ))}
-                    {(columnTasks[column.id] ?? []).length === 0 && (
-                      <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
-                        No cards
-                      </div>
-                    )}
-                  </KanbanColumnContent>
-                  {column.id === 'done' && (
-                    <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
-                      Done cards auto-hide after 7 days
-                    </p>
-                  )}
-                </div>
-              </KanbanColumn>
-            ))}
-          </KanbanBoard>
-        </div>
-      </ScrollArea>
+                )}
+              </KanbanColumnContent>
+              {column.id === 'done' && (
+                <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
+                  Done cards auto-hide after 7 days
+                </p>
+              )}
+            </div>
+          </KanbanColumn>
+        ))}
+      </KanbanBoard>
       <KanbanOverlay>
         {({ value }) => {
           const task = tasksById.get(String(value))
@@ -385,46 +380,56 @@ function ProjectBoard({ rootPath }: { readonly rootPath: string }) {
 }
 
 /**
- * The kanban MainView: project picker toolbar + per-project board.
+ * The kanban MainView: one lane per LiveStore project, collapse state
+ * shared with the sidebar's project groups (same keys, same instance).
  */
-function TaskBoard() {
-  const [rootPath, setRootPath] = useState<string>(
-    FAKE_PROJECTS[0]?.rootPath ?? ''
-  )
-  const activeProject = FAKE_PROJECTS.find(
-    (project) => project.rootPath === rootPath
-  )
+function TaskBoard({
+  collapseState,
+}: {
+  readonly collapseState: CollapseState
+}) {
+  const store = useLaborerStore()
+  const projectList = store.useQuery(boardProjects$)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-        <Select
-          onValueChange={(value) => {
-            if (value) {
-              setRootPath(value)
-            }
-          }}
-          value={rootPath}
-        >
-          <SelectTrigger className="h-7 w-44">
-            <SelectValue>{activeProject?.name ?? 'Project'}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {FAKE_PROJECTS.map((project) => (
-              <SelectItem key={project.rootPath} value={project.rootPath}>
-                {project.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="truncate font-mono text-muted-foreground text-xs">
-          {rootPath}
-        </span>
+    <ScrollArea className="h-full">
+      <div className="flex flex-col gap-3 p-3">
+        {projectList.map((project, index) => {
+          const laneRoot = FAKE_ROOT_PATHS[index]
+          const laneTasks = laneRoot
+            ? FAKE_TASKS.filter((task) => task.rootPath === laneRoot)
+            : []
+          const cardCount = laneTasks.filter(
+            (task) => task.status !== 'cancelled'
+          ).length
+          const expanded = collapseState.isExpanded(project.id)
+
+          return (
+            <div className="flex flex-col gap-1.5" key={project.id}>
+              <Button
+                className="h-8 w-fit justify-start gap-2 px-2"
+                onClick={() => collapseState.toggle(project.id)}
+                variant="ghost"
+              >
+                {expanded ? (
+                  <ChevronDown className="size-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                )}
+                <FolderGit2 className="size-4 text-muted-foreground" />
+                <span className="truncate font-medium text-sm">
+                  {project.name}
+                </span>
+                <span className="text-muted-foreground text-sm tabular-nums">
+                  {cardCount}
+                </span>
+              </Button>
+              {expanded && <LaneBoard tasks={laneTasks} />}
+            </div>
+          )
+        })}
       </div>
-      <div className="min-h-0 flex-1">
-        <ProjectBoard key={rootPath} rootPath={rootPath} />
-      </div>
-    </div>
+    </ScrollArea>
   )
 }
 

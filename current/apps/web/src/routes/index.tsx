@@ -1186,7 +1186,7 @@ function HomeComponent() {
                 {mainView === 'kanban' && (
                   <div className="flex h-full flex-col">
                     <div className="min-h-0 flex-1">
-                      <TaskBoard />
+                      <TaskBoard collapseState={collapseState} />
                     </div>
                   </div>
                 )}

@@ -60,14 +60,14 @@ export interface BoardTask {
   readonly worktreeState: WorktreeState
 }
 
-export interface BoardProject {
-  readonly name: string
-  readonly rootPath: string
-}
-
-export const FAKE_PROJECTS: readonly BoardProject[] = [
-  { rootPath: '/Users/izak/Projects/laborer', name: 'laborer' },
-  { rootPath: '/Users/izak/Projects/church-work', name: 'church-work' },
+/**
+ * Ordered fake roots: the lane for the Nth real LiveStore project shows
+ * the fake tasks bound to the Nth root here. Later projects get empty
+ * lanes. Prototype-only index mapping.
+ */
+export const FAKE_ROOT_PATHS: readonly string[] = [
+  '/Users/izak/Projects/laborer',
+  '/Users/izak/Projects/church-work',
 ]
 
 const hoursAgo = (hours: number): string =>

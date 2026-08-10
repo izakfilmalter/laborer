@@ -193,6 +193,43 @@ describe('task card details', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('keeps a draft when the card changes elsewhere, and adopts the change when there is none', async () => {
+    const { rerender } = render(
+      <TaskDetailDialog onOpenChange={vi.fn()} task={task()} />
+    )
+
+    await userEvent.type(screen.getByLabelText('Description'), ' Twice.')
+    rerender(
+      <TaskDetailDialog
+        onOpenChange={vi.fn()}
+        task={task({ description: 'Rewritten by someone else.', revision: 5 })}
+      />
+    )
+
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Run the focused tests. Twice.')
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'This card changed elsewhere'
+    )
+
+    cleanup()
+    const untouched = render(
+      <TaskDetailDialog onOpenChange={vi.fn()} task={task()} />
+    )
+    untouched.rerender(
+      <TaskDetailDialog
+        onOpenChange={vi.fn()}
+        task={task({ description: 'Rewritten by someone else.', revision: 5 })}
+      />
+    )
+
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Rewritten by someone else.')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('offers a name instead of a raw permalink for an unnamed Slack card', () => {
     render(
       <TaskDetailDialog

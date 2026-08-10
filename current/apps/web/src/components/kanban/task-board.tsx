@@ -85,7 +85,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
-import { Kbd } from '@/components/ui/kbd'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -1016,7 +1016,12 @@ function TaskDetailFooter({
   if (confirmingDiscard) {
     return (
       <DialogFooter className="mt-1 sm:items-center sm:justify-between">
-        <p className="text-sm text-warning">Discard your unsaved edits?</p>
+        {/* The question replaces the usual actions, so it has to announce
+            itself — a screen reader user gets no other signal that the buttons
+            under their fingers changed meaning. */}
+        <p className="text-sm text-warning" role="alert">
+          Discard your unsaved edits?
+        </p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
           <Button onClick={onDiscard} type="button" variant="outline">
             Discard
@@ -1049,7 +1054,12 @@ function TaskDetailFooter({
         </Button>
         <Button disabled={!canSave} type="submit">
           Save changes
-          <Kbd aria-hidden="true">⌘↵</Kbd>
+          {/* Hidden from the accessible name: “Save changes ⌘ ↵” reads as
+              gibberish, and the shortcut is a sighted-user affordance. */}
+          <KbdGroup aria-hidden="true">
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </KbdGroup>
         </Button>
       </div>
     </DialogFooter>
@@ -1077,27 +1087,97 @@ function TaskDetailDialog({
   // An unnamed Slack card stores its permalink as the title. A raw URL in the
   // field reads like a mistake to correct, so the field starts empty behind a
   // prompt and the card keeps its stand-in until someone names it.
-  const initialTitle = presented.isPlaceholder ? '' : task.title
-  const initialDescription = task.description ?? ''
-  const [title, setTitle] = useState(initialTitle)
-  const [description, setDescription] = useState(initialDescription)
+  const incomingTitle = presented.isPlaceholder ? '' : task.title
+  const incomingDescription = task.description ?? ''
+  const [title, setTitle] = useState(incomingTitle)
+  const [description, setDescription] = useState(incomingDescription)
+  // What the draft is measured against: the card as it stood when the form
+  // last took its values from the board.
+  const [baseline, setBaseline] = useState({
+    description: incomingDescription,
+    revision: task.revision,
+    title: incomingTitle,
+  })
   const [saving, setSaving] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+  const [changedElsewhere, setChangedElsewhere] = useState(false)
   const [saveError, setSaveError] = useState<{
     readonly conflict: boolean
     readonly message: string
   } | null>(null)
+  // The field the caret was last in, so leaving the discard question can put it
+  // back where it was instead of dropping focus on the body.
+  const lastFieldRef = useRef<HTMLElement | null>(null)
   const fieldId = useId()
   const titleId = `${fieldId}-title`
+  const titleMessageId = `${fieldId}-title-message`
   const descriptionId = `${fieldId}-description`
   const descriptionHelpId = `${fieldId}-description-help`
   const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
   const normalizedDescription = description.length === 0 ? null : description
   const trimmedTitle = title.trim()
-  const dirty = title !== initialTitle || description !== initialDescription
+  const dirty = title !== baseline.title || description !== baseline.description
   // Only scold about an empty title once the person has emptied it themselves.
   const titleMissing = dirty && trimmedTitle.length === 0
+  const hasTitleMessage = titleMissing || presented.isPlaceholder
   const canSave = dirty && trimmedTitle.length > 0 && !saving
+
+  // The board keeps polling while this dialog is open. A card that changed
+  // elsewhere replaces an untouched form outright, so the fields never show a
+  // stale card; a draft in progress is kept instead, because silently wiping a
+  // half-written brief is worse than admitting the card moved underneath it.
+  useEffect(() => {
+    if (task.revision === baseline.revision) {
+      return
+    }
+    if (dirty) {
+      setBaseline((current) => ({ ...current, revision: task.revision }))
+      setChangedElsewhere(true)
+      return
+    }
+    setTitle(incomingTitle)
+    setDescription(incomingDescription)
+    setBaseline({
+      description: incomingDescription,
+      revision: task.revision,
+      title: incomingTitle,
+    })
+    setChangedElsewhere(false)
+    setSaveError(null)
+  }, [
+    baseline.revision,
+    dirty,
+    incomingDescription,
+    incomingTitle,
+    task.revision,
+  ])
+
+  // Leaving the discard question takes its buttons away with it. Without this
+  // the caret lands nowhere and the next keystroke goes to the page.
+  useEffect(() => {
+    if (!confirmingDiscard) {
+      lastFieldRef.current?.focus()
+    }
+  }, [confirmingDiscard])
+
+  // One banner at a time: a card that moved underneath the draft is the fresher
+  // and more actionable news, so it outranks the failure that preceded it.
+  const banner = (() => {
+    if (changedElsewhere) {
+      return {
+        message:
+          'This card changed elsewhere. Your edits are still here — saving replaces the newer version.',
+        tone: 'warning' as const,
+      }
+    }
+    if (saveError) {
+      return {
+        message: saveError.message,
+        tone: saveError.conflict ? ('warning' as const) : ('error' as const),
+      }
+    }
+    return null
+  })()
 
   /**
    * Esc, the close button, and Cancel all land here. The first attempt with
@@ -1133,7 +1213,7 @@ function TaskDetailDialog({
     } catch (error) {
       const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
       const message = conflict
-        ? 'This card changed elsewhere. The newer version will replace this draft when it arrives.'
+        ? 'This card changed elsewhere. Your edits are still here — save again once the newer version lands to apply them over it.'
         : extractErrorMessage(error)
       setSaveError({ conflict, message })
       toast.error(conflict ? 'Card changed elsewhere' : 'Could not save card', {
@@ -1179,7 +1259,7 @@ function TaskDetailDialog({
             save()
           }}
         >
-          <Field>
+          <Field data-invalid={titleMissing}>
             <div className="flex items-baseline justify-between gap-2">
               <FieldLabel htmlFor={titleId}>Title</FieldLabel>
               {title.length >= TITLE_COUNTER_THRESHOLD && (
@@ -1189,6 +1269,9 @@ function TaskDetailDialog({
               )}
             </div>
             <Input
+              // The message under the field is the only explanation for a
+              // disabled Save, so the field has to carry it to a screen reader.
+              aria-describedby={hasTitleMessage ? titleMessageId : undefined}
               aria-invalid={titleMissing}
               autoFocus
               className="font-medium"
@@ -1197,6 +1280,10 @@ function TaskDetailDialog({
               onChange={(event) => {
                 setTitle(event.target.value)
                 setSaveError(null)
+                setConfirmingDiscard(false)
+              }}
+              onFocus={(event) => {
+                lastFieldRef.current = event.currentTarget
               }}
               placeholder={
                 presented.isPlaceholder ? presented.text : 'Name this card'
@@ -1206,9 +1293,11 @@ function TaskDetailDialog({
               readOnly={saving}
               value={title}
             />
-            {titleMissing && <FieldError>A card needs a title.</FieldError>}
+            {titleMissing && (
+              <FieldError id={titleMessageId}>A card needs a title.</FieldError>
+            )}
             {presented.isPlaceholder && !titleMissing && (
-              <FieldDescription className="text-xs">
+              <FieldDescription className="text-xs" id={titleMessageId}>
                 Still unnamed — saving a title here replaces the stand-in the
                 board shows.
               </FieldDescription>
@@ -1237,6 +1326,10 @@ function TaskDetailDialog({
               onChange={(event) => {
                 setDescription(event.target.value)
                 setSaveError(null)
+                setConfirmingDiscard(false)
+              }}
+              onFocus={(event) => {
+                lastFieldRef.current = event.currentTarget
               }}
               placeholder="What should the agent know or do?"
               readOnly={saving}
@@ -1247,12 +1340,12 @@ function TaskDetailDialog({
               enters In Progress.
             </FieldDescription>
           </Field>
-          {saveError && (
+          {banner && (
             <div
               aria-live="polite"
               className={cn(
                 'flex gap-2 rounded-md border px-3 py-2 text-sm',
-                saveError.conflict
+                banner.tone === 'warning'
                   ? 'border-warning/30 bg-warning/10 text-warning'
                   : 'border-destructive/30 bg-destructive/10 text-destructive'
               )}
@@ -1262,7 +1355,7 @@ function TaskDetailDialog({
                 aria-hidden="true"
                 className="mt-0.5 size-4 shrink-0"
               />
-              <span>{saveError.message}</span>
+              <span>{banner.message}</span>
             </div>
           )}
           <TaskDetailFooter
@@ -1444,8 +1537,8 @@ function TaskBoard({
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
   // Keep the dialog bound to the board projection rather than to the card
-  // snapshot that opened it. A CAS conflict's next poll therefore remounts
-  // the form with the winning revision instead of leaving stale fields open.
+  // snapshot that opened it, so a card that changes elsewhere reaches the open
+  // form — which decides for itself whether to adopt it or protect a draft.
   const selectedTask = boardTasks.find((task) => task.id === selectedTaskId)
 
   const persistMove = async (
@@ -1607,7 +1700,7 @@ function TaskBoard({
       )}
       {selectedTask && (
         <TaskDetailDialog
-          key={`${selectedTask.id}:${String(selectedTask.revision)}`}
+          key={selectedTask.id}
           onOpenChange={(open) => {
             if (!open) {
               setSelectedTaskId(null)

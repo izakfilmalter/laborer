@@ -16,7 +16,7 @@ import { taskDbMigrations } from '@laborer/task-db/migrations'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  initial_prompt, created_at, updated_at, revision`
+  description, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
@@ -26,7 +26,7 @@ const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
   slackPermalink: 'slack_permalink',
   worktreePath: 'worktree_path',
   branchName: 'branch_name',
-  initialPrompt: 'initial_prompt',
+  description: 'description',
 }
 const MAX_BRANCH_TASKS = 1000
 const MAX_CAS_ATTEMPTS = 5
@@ -84,6 +84,7 @@ const taskSource = (value: unknown): TaskSource => {
     case 'execution':
     case 'manual':
     case 'slack_url':
+    case 'agent':
       return value
     default:
       return invalidColumn('source')
@@ -118,7 +119,7 @@ const rowToTask = (row: SqliteRow): Task => {
     executionId: nullableString(row.execution_id, 'execution_id'),
     executionStatus: executionStatus(row.execution_status),
     id: requiredString(row.id, 'id'),
-    initialPrompt: nullableString(row.initial_prompt, 'initial_prompt'),
+    description: nullableString(row.description, 'description'),
     revision,
     rootPath: requiredString(row.root_path, 'root_path'),
     slackPermalink: nullableString(row.slack_permalink, 'slack_permalink'),
@@ -158,7 +159,9 @@ const nextStatusForPr = (task: Task, prState: string): TaskStatus | null => {
       return task.status === 'in_review' ? 'in_progress' : null
     case 'OPEN':
       return task.status === 'in_progress' &&
-        (task.source === 'manual' || task.source === 'slack_url')
+        (task.source === 'manual' ||
+          task.source === 'slack_url' ||
+          task.source === 'agent')
         ? 'in_review'
         : null
     default:
@@ -304,7 +307,7 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          initial_prompt, created_at, updated_at, revision
+          description, created_at, updated_at, revision
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
         .run(
           input.id,
@@ -318,7 +321,7 @@ export class NodeTaskBoardDatabase {
           input.slackPermalink ?? null,
           input.worktreePath ?? null,
           input.branchName ?? null,
-          input.initialPrompt ?? null,
+          input.description ?? null,
           createdAt,
           changedAt
         )

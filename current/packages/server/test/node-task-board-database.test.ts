@@ -92,18 +92,18 @@ describe('NodeTaskBoardDatabase', () => {
       created_at, updated_at, revision
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     insert.run(
-      'manual-task',
+      'agent-task',
       '/repo/apps/agent',
-      'Manual task',
+      'Agent task',
       'in_progress',
-      'manual',
+      'agent',
       'feature/pr-card',
       10,
       10
     )
     writer
       .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
-      .run('manual-task', 10)
+      .run('agent-task', 10)
 
     expect(
       database.transitionTaskForPr({
@@ -137,10 +137,10 @@ describe('NodeTaskBoardDatabase', () => {
       .prepare('SELECT task_id, changed_at FROM task_changes ORDER BY sequence')
       .all()
     expect(changes).toEqual([
-      { task_id: 'manual-task', changed_at: 10 },
-      { task_id: 'manual-task', changed_at: 20 },
-      { task_id: 'manual-task', changed_at: 30 },
-      { task_id: 'manual-task', changed_at: 40 },
+      { task_id: 'agent-task', changed_at: 10 },
+      { task_id: 'agent-task', changed_at: 20 },
+      { task_id: 'agent-task', changed_at: 30 },
+      { task_id: 'agent-task', changed_at: 40 },
     ])
 
     writer.close()

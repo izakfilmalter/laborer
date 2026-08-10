@@ -100,7 +100,7 @@ export const runSlackTaskPlanning = (
       updateLatest(path, taskId, {
         branchName: plan.branchName,
         executionStatus: null,
-        initialPrompt: plan.initialPrompt,
+        description: plan.initialPrompt,
         title: plan.title,
       })
     ),

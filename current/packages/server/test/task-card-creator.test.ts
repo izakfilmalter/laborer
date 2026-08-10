@@ -90,7 +90,7 @@ describe('task card creation', () => {
     expect(updated.find('slack-card')).toMatchObject({
       branchName: 'slack/fix-auth',
       executionStatus: null,
-      initialPrompt: 'Fix the auth flow',
+      description: 'Fix the auth flow',
       revision: 2,
       title: 'Fix auth flow',
     })
@@ -129,7 +129,7 @@ describe('task card creation', () => {
     const failed = NodeTaskBoardDatabase.open(path)
     expect(failed.find('failed-card')).toMatchObject({
       executionStatus: 'failed',
-      initialPrompt: null,
+      description: null,
       status: 'todo',
     })
     failed.close()

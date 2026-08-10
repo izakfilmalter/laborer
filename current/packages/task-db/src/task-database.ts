@@ -16,7 +16,7 @@ export type TaskStatus =
   | 'in_review'
   | 'done'
   | 'cancelled'
-export type TaskSource = 'execution' | 'manual' | 'slack_url'
+export type TaskSource = 'execution' | 'manual' | 'slack_url' | 'agent'
 export type ExecutionStatus =
   | 'queued'
   | 'running'
@@ -30,10 +30,10 @@ export interface Task {
   readonly actionName: string | null
   readonly branchName: string | null
   readonly createdAt: number
+  readonly description: string | null
   readonly executionId: string | null
   readonly executionStatus: ExecutionStatus | null
   readonly id: string
-  readonly initialPrompt: string | null
   readonly revision: number
   readonly rootPath: string
   readonly slackPermalink: string | null
@@ -63,10 +63,10 @@ export interface NewTask {
   readonly actionName?: string | null
   readonly branchName?: string | null
   readonly createdAt?: number
+  readonly description?: string | null
   readonly executionId?: string | null
   readonly executionStatus?: ExecutionStatus | null
   readonly id: string
-  readonly initialPrompt?: string | null
   readonly rootPath: string
   readonly slackPermalink?: string | null
   readonly source: TaskSource
@@ -84,7 +84,7 @@ export type TaskPatch = Partial<
     | 'slackPermalink'
     | 'worktreePath'
     | 'branchName'
-    | 'initialPrompt'
+    | 'description'
   >
 >
 
@@ -138,7 +138,7 @@ interface RetryOptions {
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  initial_prompt, created_at, updated_at, revision`
+  description, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
 
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
@@ -148,7 +148,7 @@ const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
   slackPermalink: 'slack_permalink',
   worktreePath: 'worktree_path',
   branchName: 'branch_name',
-  initialPrompt: 'initial_prompt',
+  description: 'description',
 }
 
 type SqliteRow = Record<string, unknown>
@@ -225,6 +225,7 @@ const taskSource = (value: unknown): TaskSource => {
     case 'execution':
     case 'manual':
     case 'slack_url':
+    case 'agent':
       return value
     default:
       return invalidColumn('source')
@@ -264,7 +265,7 @@ const rowToTask = (row: SqliteRow): Task => {
     slackPermalink: nullableString(row.slack_permalink, 'slack_permalink'),
     worktreePath: nullableString(row.worktree_path, 'worktree_path'),
     branchName: nullableString(row.branch_name, 'branch_name'),
-    initialPrompt: nullableString(row.initial_prompt, 'initial_prompt'),
+    description: nullableString(row.description, 'description'),
     createdAt: safeInteger(row.created_at, 'created_at'),
     updatedAt: safeInteger(row.updated_at, 'updated_at'),
     revision,
@@ -384,7 +385,7 @@ export class NativeTaskDatabase {
         .query(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          initial_prompt, created_at, updated_at, revision
+          description, created_at, updated_at, revision
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(execution_id) DO NOTHING`)
         .run(
@@ -399,7 +400,7 @@ export class NativeTaskDatabase {
           input.slackPermalink ?? null,
           input.worktreePath ?? null,
           input.branchName ?? null,
-          input.initialPrompt ?? null,
+          input.description ?? null,
           createdAt,
           changedAt
         )
@@ -433,7 +434,7 @@ export class NativeTaskDatabase {
         'slackPermalink',
         'worktreePath',
         'branchName',
-        'initialPrompt',
+        'description',
       ] as const
     )
       .filter((field) => Object.hasOwn(patch, field))

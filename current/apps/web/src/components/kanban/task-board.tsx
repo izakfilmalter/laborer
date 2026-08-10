@@ -191,7 +191,7 @@ function BoardSearch({
 
 /** Chip showing where the card came from. */
 function SourceBadge({ source }: { readonly source: BoardTask['source'] }) {
-  if (source === 'execution') {
+  if (source === 'execution' || source === 'agent') {
     return (
       <Badge className="shrink-0 gap-1 text-muted-foreground" variant="outline">
         <Bot className="size-3" />

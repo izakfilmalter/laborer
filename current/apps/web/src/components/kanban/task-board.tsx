@@ -29,10 +29,12 @@ import {
   MessageSquare,
   Plus,
   Search,
+  Slack,
   SquarePen,
+  TriangleAlert,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -40,6 +42,7 @@ import {
   applyTaskBoardEvents,
   type BoardTask,
   type BoardTaskStatus,
+  boardTaskTitle,
   projectForTask,
   slackAnalysisState,
 } from '@/components/kanban/board-data'
@@ -56,6 +59,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -72,12 +80,14 @@ const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 
-/** The four rendered columns, in board order. Cancelled never renders. */
-const BOARD_COLUMNS: ReadonlyArray<{
+interface BoardColumn {
+  readonly dotClassName: string
   readonly id: Exclude<BoardTaskStatus, 'cancelled'>
   readonly title: string
-  readonly dotClassName: string
-}> = [
+}
+
+/** The four rendered columns, in board order. Cancelled never renders. */
+const BOARD_COLUMNS: readonly BoardColumn[] = [
   { id: 'todo', title: 'Todo', dotClassName: 'bg-muted-foreground/50' },
   { id: 'in_progress', title: 'In Progress', dotClassName: 'bg-success' },
   { id: 'in_review', title: 'In Review', dotClassName: 'bg-purple-500' },
@@ -228,6 +238,11 @@ function ExecutionMirrorBadge({
   return null
 }
 
+/**
+ * Background planning progress for a Slack card, derived from the durable
+ * card fields rather than from any in-flight client request — so it survives
+ * a restart and reads the same on every window.
+ */
 function SlackAnalysisBadge({ task }: { readonly task: BoardTask }) {
   const state = slackAnalysisState(task)
   if (state === null) {
@@ -237,15 +252,21 @@ function SlackAnalysisBadge({ task }: { readonly task: BoardTask }) {
     return (
       <Badge
         className="gap-1 border-destructive/30 bg-destructive/10 text-destructive"
+        title="Reading the Slack thread failed. The card stays in Todo — open the thread to check it."
         variant="outline"
       >
+        <TriangleAlert aria-hidden="true" className="size-3" />
         Analysis failed
       </Badge>
     )
   }
   return (
-    <Badge className="gap-1 text-muted-foreground" variant="outline">
-      <Spinner className="size-3" />
+    <Badge
+      className="gap-1 text-muted-foreground"
+      title="Reading the Slack thread to name this card and write its prompt."
+      variant="outline"
+    >
+      <Spinner aria-hidden="true" className="size-3" />
       Analyzing…
     </Badge>
   )
@@ -306,9 +327,12 @@ function TaskBoardCard({
 
   const jumpDisabled =
     task.worktreeState === 'provisioning' || task.worktreeState === 'gone'
+  const analysis = slackAnalysisState(task)
+  const title = boardTaskTitle(task)
 
   return (
     <Card
+      aria-busy={analysis === 'analyzing' ? true : undefined}
       className={cn(
         'cursor-pointer gap-0 rounded-md py-0 shadow-xs ring-foreground/10 transition-colors hover:ring-foreground/20',
         jumpDisabled && 'opacity-80',
@@ -321,8 +345,14 @@ function TaskBoardCard({
       <CardContent className="flex flex-col gap-2 px-3 py-2.5">
         {/* Title row: source chip + slack link pinned right */}
         <div className="flex items-start justify-between gap-2">
-          <p className="line-clamp-2 min-w-0 font-medium text-sm leading-snug">
-            {task.title}
+          <p
+            className={cn(
+              'line-clamp-2 min-w-0 font-medium text-sm leading-snug',
+              // An unnamed Slack card is a stand-in until the planner names it.
+              title.isPlaceholder && 'text-muted-foreground italic'
+            )}
+          >
+            {title.text}
           </p>
           {task.slackPermalink && (
             <Tooltip>
@@ -373,102 +403,206 @@ function TaskBoardCard({
   )
 }
 
+/** What the typed text will become once committed. */
+type ComposerIntent = 'empty' | 'manual' | 'slack' | 'unrecognized-link'
+
+const LINK_LIKE_PATTERN = /^https?:\/\//i
+
 /**
- * One project lane's 4-column kanban. Its own Kanban root, so drags can
- * never cross projects.
+ * Classify composer text the way the server will: a recognized Slack message
+ * permalink becomes a Slack card, anything else becomes a manual card. Text
+ * that only looks like a link is called out before it silently becomes a card
+ * titled with a URL.
  */
-function AddTaskInput({
-  projectId,
-  status,
+const composerIntent = (trimmed: string): ComposerIntent => {
+  if (trimmed.length === 0) {
+    return 'empty'
+  }
+  if (isSlackMessageUrl(trimmed)) {
+    return 'slack'
+  }
+  return LINK_LIKE_PATTERN.test(trimmed) ||
+    trimmed.toLowerCase().includes('slack.com')
+    ? 'unrecognized-link'
+    : 'manual'
+}
+
+/** The column header's Plus affordance, which toggles that column's composer. */
+function AddCardButton({
+  columnTitle,
+  composerId,
+  onToggle,
+  open,
 }: {
-  readonly projectId: string
-  readonly status: Exclude<BoardTaskStatus, 'cancelled'>
+  readonly columnTitle: string
+  readonly composerId: string
+  readonly onToggle: () => void
+  readonly open: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-controls={composerId}
+            aria-expanded={open}
+            aria-label={`Add card to ${columnTitle}`}
+            className="ml-auto text-muted-foreground"
+            onClick={onToggle}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        <Plus className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>Add card</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
+ * The inline card composer for one column: Enter commits, Esc cancels. It
+ * stays open after a commit so several cards can be typed in a row, and it
+ * reports what the text will become before it is committed.
+ */
+function AddCardComposer({
+  column,
+  composerId,
+  onClose,
+  projectId,
+}: {
+  readonly column: BoardColumn
+  readonly composerId: string
+  readonly onClose: () => void
+  readonly projectId: string
+}) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [confirmation, setConfirmation] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
   const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
   const trimmed = value.trim()
-  const slackUrl = isSlackMessageUrl(trimmed)
-
-  const close = () => {
-    setOpen(false)
-    setValue('')
-    setError(null)
-  }
+  const intent = composerIntent(trimmed)
 
   const submit = async () => {
-    if (trimmed.length === 0 || submitting) {
+    if (intent === 'empty' || submitting) {
       return
     }
     setSubmitting(true)
     setError(null)
+    setConfirmation(null)
     try {
-      await createTask({ payload: { projectId, status, text: trimmed } })
-      close()
+      const created = await createTask({
+        payload: { projectId, status: column.id, text: trimmed },
+      })
+      setValue('')
+      setConfirmation(
+        created.source === 'slack_url'
+          ? 'Slack card added to Todo — analyzing in the background.'
+          : `Card added to ${column.title}.`
+      )
     } catch (cause) {
+      // Keep the text so the person can correct it and try again.
       setError(extractErrorMessage(cause))
     } finally {
       setSubmitting(false)
+      inputRef.current?.focus()
     }
   }
 
-  if (!open) {
-    return (
-      <Button
-        aria-label={`Add card to ${status.replaceAll('_', ' ')}`}
-        className="h-7 w-full justify-start gap-1.5 px-2 text-muted-foreground"
-        onClick={() => setOpen(true)}
-        size="sm"
-        variant="ghost"
-      >
-        <Plus className="size-3.5" />
-        Add card
-      </Button>
-    )
-  }
+  const hint = (() => {
+    if (submitting) {
+      return { className: 'text-muted-foreground', text: 'Adding…' }
+    }
+    if (error !== null) {
+      return { className: 'text-destructive', text: error }
+    }
+    if (intent === 'slack') {
+      return {
+        className: 'text-muted-foreground',
+        text:
+          column.id === 'todo'
+            ? 'Slack link — analyzed in the background.'
+            : 'Slack link — added to Todo and analyzed in the background.',
+      }
+    }
+    if (intent === 'unrecognized-link') {
+      return {
+        className: 'text-warning',
+        text: 'Not a Slack message link — this becomes a card titled with the text.',
+      }
+    }
+    if (confirmation !== null) {
+      return { className: 'text-muted-foreground', text: confirmation }
+    }
+    return {
+      className: 'text-muted-foreground',
+      text: 'Enter to add · Esc to close',
+    }
+  })()
 
   return (
-    <div className="space-y-1 px-2 pb-2">
-      <Input
-        aria-invalid={error !== null}
-        aria-label="Card title or Slack message URL"
-        autoFocus
-        className="h-8 bg-background text-xs"
-        disabled={submitting}
-        onChange={(event) => {
-          setValue(event.target.value)
-          setError(null)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            close()
-          } else if (event.key === 'Enter') {
-            event.preventDefault()
-            submit()
-          }
-        }}
-        placeholder="Title or Slack URL"
-        value={value}
-      />
+    <div className="flex flex-col gap-1 px-2 pt-1.5" id={composerId}>
+      <InputGroup className="bg-background">
+        <InputGroupAddon>
+          {submitting && <Spinner aria-hidden="true" className="size-3.5" />}
+          {!submitting && intent === 'slack' && (
+            <Slack aria-hidden="true" className="size-3.5" />
+          )}
+          {!(submitting || intent === 'slack') && (
+            <SquarePen aria-hidden="true" className="size-3.5" />
+          )}
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-describedby={`${composerId}-hint`}
+          aria-invalid={error !== null}
+          aria-label={`Card title or Slack message link for ${column.title}`}
+          autoFocus
+          className="text-xs"
+          disabled={submitting}
+          onBlur={() => {
+            // An abandoned empty composer closes itself; typed text stays put.
+            if (!submitting && trimmed.length === 0) {
+              onClose()
+            }
+          }}
+          onChange={(event) => {
+            setValue(event.target.value)
+            setError(null)
+            setConfirmation(null)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              onClose()
+            } else if (event.key === 'Enter') {
+              event.preventDefault()
+              submit()
+            }
+          }}
+          placeholder="Title, or paste a Slack link"
+          ref={inputRef}
+          value={value}
+        />
+      </InputGroup>
       <p
         aria-live="polite"
-        className={cn(
-          'min-h-4 px-1 text-[10px] text-muted-foreground',
-          error && 'text-destructive'
-        )}
+        className={cn('min-h-4 px-0.5 text-[11px]', hint.className)}
+        id={`${composerId}-hint`}
       >
-        {error ??
-          (slackUrl
-            ? 'Slack thread will be added to Todo and analyzed.'
-            : 'Enter to add · Esc to cancel')}
+        {hint.text}
       </p>
     </div>
   )
 }
 
+/**
+ * One project lane's 4-column kanban. Its own Kanban root, so drags can
+ * never cross projects.
+ */
 function LaneBoard({
   projectId,
   tasks,
@@ -479,6 +613,24 @@ function LaneBoard({
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
+  // At most one composer per lane, so the board never grows four open inputs.
+  const [composerColumn, setComposerColumn] = useState<
+    BoardColumn['id'] | null
+  >(null)
+  const laneId = useId()
+
+  // Server-side card changes reset the local drag state without remounting the
+  // lane, so a card arriving in the background never steals a half-typed
+  // composer or its focus.
+  const signature = useMemo(
+    () => tasks.map((task) => `${task.id}:${String(task.revision)}`).join(','),
+    [tasks]
+  )
+  const [syncedSignature, setSyncedSignature] = useState(signature)
+  if (syncedSignature !== signature) {
+    setSyncedSignature(signature)
+    setColumnTasks(buildColumnTasks(tasks))
+  }
 
   // Derived from local column state so add-task cards resolve too.
   const tasksById = useMemo(() => {
@@ -502,49 +654,78 @@ function LaneBoard({
       value={columnTasks}
     >
       <KanbanBoard className="grid min-w-0 grid-cols-4 gap-2 sm:grid-cols-4">
-        {BOARD_COLUMNS.map((column) => (
-          <KanbanColumn className="min-w-0" key={column.id} value={column.id}>
-            <div className="flex min-w-0 flex-col rounded-lg bg-muted/50">
-              <div className="flex min-w-0 items-center gap-2 px-3 pt-2 pb-0.5">
-                <span
-                  className={cn(
-                    'inline-block size-2 shrink-0 rounded-full',
-                    column.dotClassName
-                  )}
-                />
-                <span className="truncate font-medium text-sm">
-                  {column.title}
-                </span>
-                <span className="text-muted-foreground text-sm tabular-nums">
-                  {(columnTasks[column.id] ?? []).length}
-                </span>
-              </div>
-              <KanbanColumnContent
-                className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
-                value={column.id}
-              >
-                {(columnTasks[column.id] ?? []).map((task) => (
-                  <KanbanItem key={task.id} value={task.id}>
-                    <KanbanItemHandle>
-                      <TaskBoardCard task={task} />
-                    </KanbanItemHandle>
-                  </KanbanItem>
-                ))}
-                {(columnTasks[column.id] ?? []).length === 0 && (
-                  <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
-                    No cards
-                  </div>
+        {BOARD_COLUMNS.map((column) => {
+          const composerId = `${laneId}-${column.id}-composer`
+          const composerOpen = composerColumn === column.id
+
+          return (
+            <KanbanColumn className="min-w-0" key={column.id} value={column.id}>
+              <div className="flex min-w-0 flex-col rounded-lg bg-muted/50">
+                <div className="flex min-w-0 items-center gap-2 pt-1.5 pr-1.5 pb-0.5 pl-3">
+                  <span
+                    className={cn(
+                      'inline-block size-2 shrink-0 rounded-full',
+                      column.dotClassName
+                    )}
+                  />
+                  <span className="truncate font-medium text-sm">
+                    {column.title}
+                  </span>
+                  <span className="text-muted-foreground text-sm tabular-nums">
+                    {(columnTasks[column.id] ?? []).length}
+                  </span>
+                  <AddCardButton
+                    columnTitle={column.title}
+                    composerId={composerId}
+                    onToggle={() =>
+                      setComposerColumn(composerOpen ? null : column.id)
+                    }
+                    open={composerOpen}
+                  />
+                </div>
+                {composerOpen && (
+                  <AddCardComposer
+                    column={column}
+                    composerId={composerId}
+                    onClose={() => setComposerColumn(null)}
+                    projectId={projectId}
+                  />
                 )}
-              </KanbanColumnContent>
-              <AddTaskInput projectId={projectId} status={column.id} />
-              {column.id === 'done' && (
-                <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
-                  Done cards auto-hide after 7 days
-                </p>
-              )}
-            </div>
-          </KanbanColumn>
-        ))}
+                <KanbanColumnContent
+                  className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
+                  value={column.id}
+                >
+                  {(columnTasks[column.id] ?? []).map((task) => (
+                    <KanbanItem key={task.id} value={task.id}>
+                      <KanbanItemHandle>
+                        <TaskBoardCard task={task} />
+                      </KanbanItemHandle>
+                    </KanbanItem>
+                  ))}
+                  {(columnTasks[column.id] ?? []).length === 0 &&
+                    (composerOpen ? (
+                      <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
+                        No cards
+                      </div>
+                    ) : (
+                      <button
+                        className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => setComposerColumn(column.id)}
+                        type="button"
+                      >
+                        No cards — add one
+                      </button>
+                    ))}
+                </KanbanColumnContent>
+                {column.id === 'done' && (
+                  <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
+                    Done cards auto-hide after 7 days
+                  </p>
+                )}
+              </div>
+            </KanbanColumn>
+          )
+        })}
       </KanbanBoard>
       <KanbanOverlay>
         {({ value }) => {
@@ -655,11 +836,7 @@ function TaskBoard({
                   </span>
                 </Button>
                 {expanded && (
-                  <LaneBoard
-                    key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
-                    projectId={project.id}
-                    tasks={visibleTasks}
-                  />
+                  <LaneBoard projectId={project.id} tasks={visibleTasks} />
                 )}
               </div>
             )

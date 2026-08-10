@@ -2,6 +2,7 @@ import type { BoardTask, TaskBoardEvent } from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
   applyTaskBoardEvents,
+  boardTaskTitle,
   projectForTask,
   slackAnalysisState,
 } from '@/components/kanban/board-data'
@@ -104,5 +105,32 @@ describe('board task projection', () => {
         initialPrompt: 'Implement it',
       })
     ).toBeNull()
+  })
+
+  it('shows a readable stand-in until the planner names a Slack card', () => {
+    const permalink = 'https://acme.slack.com/archives/C0ABCD123/p1700000000'
+    expect(
+      boardTaskTitle({
+        slackPermalink: permalink,
+        source: 'slack_url',
+        title: permalink,
+      })
+    ).toEqual({ isPlaceholder: true, text: 'Slack thread · C0ABCD123' })
+
+    expect(
+      boardTaskTitle({
+        slackPermalink: permalink,
+        source: 'slack_url',
+        title: 'Fix the flaky board test',
+      })
+    ).toEqual({ isPlaceholder: false, text: 'Fix the flaky board test' })
+
+    expect(
+      boardTaskTitle({
+        slackPermalink: null,
+        source: 'manual',
+        title: 'https://example.com/docs',
+      })
+    ).toEqual({ isPlaceholder: false, text: 'https://example.com/docs' })
   })
 })

@@ -78,6 +78,46 @@ export const slackAnalysisState = (
   return task.executionMirror === 'failed' ? 'failed' : 'analyzing'
 }
 
+/** Slack conversation IDs: channels, DMs, and group DMs. */
+const SLACK_CONVERSATION_PATTERN = /^[CDG][A-Z0-9]{2,}$/
+
+/**
+ * A readable stand-in for a Slack card that has not been named yet. The
+ * conversation ID keeps concurrently analyzing cards distinguishable.
+ */
+const slackThreadLabel = (permalink: string): string => {
+  let segments: readonly string[] = []
+  try {
+    segments = new URL(permalink).pathname.split('/').filter(Boolean)
+  } catch {
+    return 'Slack thread'
+  }
+  const conversation = segments.find((segment) =>
+    SLACK_CONVERSATION_PATTERN.test(segment)
+  )
+  return conversation ? `Slack thread · ${conversation}` : 'Slack thread'
+}
+
+export interface BoardTaskTitle {
+  /** True while the card still carries its creation-time placeholder title. */
+  readonly isPlaceholder: boolean
+  readonly text: string
+}
+
+/**
+ * What the card shows as its title. A Slack card is stored with its permalink
+ * as the title until the planner writes one, and a raw URL reads poorly on a
+ * card, so it is presented as a readable thread label until then.
+ */
+export const boardTaskTitle = (
+  task: Pick<BoardTask, 'slackPermalink' | 'source' | 'title'>
+): BoardTaskTitle =>
+  task.source === 'slack_url' &&
+  task.slackPermalink !== null &&
+  task.title === task.slackPermalink
+    ? { isPlaceholder: true, text: slackThreadLabel(task.slackPermalink) }
+    : { isPlaceholder: false, text: task.title }
+
 /** Return the equal or nearest-ancestor project for a canonical task root. */
 export const projectForTask = <Project extends BoardProject>(
   task: Pick<BoardTask, 'rootPath'>,

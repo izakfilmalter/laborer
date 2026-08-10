@@ -271,13 +271,6 @@ export class AgentTaskService extends Context.Tag(
                   message: `Task not found: ${id}`,
                 })
               }
-              if (current.source === 'execution') {
-                throw new AgentTaskError({
-                  code: 'LOCKED_TASK',
-                  message:
-                    'Execution-source tasks are read-only to delete_task',
-                })
-              }
               return database.move(id, expectedRevision, 'cancelled')
             }),
         })

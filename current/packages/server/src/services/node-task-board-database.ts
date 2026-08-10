@@ -389,9 +389,6 @@ export class NodeTaskBoardDatabase {
       if (initial === null) {
         throw new Error(`Task not found: ${id}`)
       }
-      if (status === 'cancelled' && initial.source === 'execution') {
-        throw new Error('Execution tasks cannot be cancelled from the board')
-      }
       if (initial.status === status) {
         return initial
       }

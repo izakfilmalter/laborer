@@ -343,7 +343,7 @@ const handleTaskMoveAtPathUnlocked = (
     if (
       shouldProvision &&
       task.source === 'slack_url' &&
-      task.initialPrompt === null
+      task.description === null
     ) {
       if (task.slackPermalink === null) {
         return yield* new RpcError({
@@ -360,13 +360,13 @@ const handleTaskMoveAtPathUnlocked = (
         if (current.status !== task.status) {
           throw new Error(`Task changed while planning: ${taskId}`)
         }
-        if (current.worktreePath !== null || current.initialPrompt !== null) {
+        if (current.worktreePath !== null || current.description !== null) {
           return current
         }
         return database.update(taskId, current.revision, {
           branchName: plan.branchName,
           executionStatus: null,
-          initialPrompt: plan.initialPrompt,
+          description: plan.initialPrompt,
           title: plan.title,
         })
       })
@@ -456,10 +456,7 @@ const handleTaskMoveAtPathUnlocked = (
     task = yield* bindTaskWorkspace(path, taskId, workspace)
 
     return {
-      // `initial_prompt` is the currently shipped column name. The RPC uses
-      // the amended domain name so the client seam remains stable when the
-      // append-only description migration lands.
-      description: task.initialPrompt,
+      description: task.description,
       revision: task.revision,
       status: task.status,
       updatedAt: task.updatedAt,

@@ -10,7 +10,8 @@ import { HttpServer } from '@effect/platform'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer, Schema } from 'effect'
 
-const discoveryFile = join(dirname(taskDatabasePath()), 'server.json')
+const defaultDiscoveryFile = () =>
+  join(dirname(taskDatabasePath()), 'server.json')
 const DiscoveryRecord = Schema.Struct({
   host: Schema.String,
   pid: Schema.Int,
@@ -19,10 +20,13 @@ const DiscoveryRecord = Schema.Struct({
 })
 const DiscoveryJson = Schema.parseJson(DiscoveryRecord)
 
-export const serverDiscoveryLayer = (fallback: {
-  readonly host: string
-  readonly port: number
-}) =>
+export const serverDiscoveryLayer = (
+  fallback: {
+    readonly host: string
+    readonly port: number
+  },
+  discoveryFile = defaultDiscoveryFile()
+) =>
   Layer.scopedDiscard(
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer

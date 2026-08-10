@@ -68,7 +68,7 @@ describe('AgentTaskService', () => {
     database.close()
   })
 
-  it('rejects unknown projects, stale revisions, and Execution edits', async () => {
+  it('rejects unknown projects, stale revisions, and Execution updates', async () => {
     const { databasePath, layer, root } = fixture()
     const database = NodeTaskBoardDatabase.open(databasePath)
     database.insert({
@@ -93,10 +93,10 @@ describe('AgentTaskService', () => {
         )
         expect(locked.code).toBe('LOCKED_TASK')
 
-        const deleteLocked = yield* Effect.flip(
-          service.deleteTask('execution-task', 1)
-        )
-        expect(deleteLocked.code).toBe('LOCKED_TASK')
+        expect(yield* service.deleteTask('execution-task', 1)).toMatchObject({
+          revision: 2,
+          status: 'cancelled',
+        })
 
         const missing = yield* Effect.flip(
           service.createTask({

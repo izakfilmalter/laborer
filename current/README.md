@@ -86,6 +86,15 @@ Laborer runs as multiple cooperating services:
 | File Watcher | 2104 | Filesystem watching via @parcel/watcher |
 | Desktop | — | Electron shell (spawns backend services as sidecars in production) |
 
+### Agent task MCP
+
+While `current` is running, external local agents can manage board tasks through
+the token-free streamable-HTTP MCP endpoint at `http://127.0.0.1:3773/mcp`.
+Set `LABORER_SERVER_PORT` to pin another port. The active address is written to
+`~/.local/state/laborer/server.json` (or `$XDG_STATE_HOME/laborer/server.json`).
+The endpoint is loopback-only; `/rpc` and `/sync` retain their existing token
+checks.
+
 In development, Turborepo runs all services as separate processes. In production, the Electron main process spawns backend services as sidecar child processes with health monitoring and automatic crash recovery.
 
 ## Project Structure

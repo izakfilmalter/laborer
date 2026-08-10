@@ -19,6 +19,7 @@ import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
 import { Cause, Effect, Stream } from 'effect'
 import {
+  AlignLeft,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -26,6 +27,7 @@ import {
   FolderGit2,
   GitBranch,
   MessageSquare,
+  Pencil,
   Plus,
   Search,
   Slack,
@@ -62,14 +64,24 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Tooltip,
   TooltipContent,
@@ -85,6 +97,7 @@ const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
+const updateTaskMutation = LaborerClient.mutation('task.update')
 const attachTaskTerminalMutation = LaborerClient.mutation(
   'task.terminal.attach'
 )
@@ -191,7 +204,18 @@ function BoardSearch({
 
 /** Chip showing where the card came from. */
 function SourceBadge({ source }: { readonly source: BoardTask['source'] }) {
-  if (source === 'execution' || source === 'agent') {
+  if (source === 'agent') {
+    return (
+      <Badge
+        className="shrink-0 gap-1 border-primary/30 bg-primary/5"
+        variant="outline"
+      >
+        <Bot className="size-3" />
+        Agent staged
+      </Badge>
+    )
+  }
+  if (source === 'execution') {
     return (
       <Badge className="shrink-0 gap-1 text-muted-foreground" variant="outline">
         <Bot className="size-3" />
@@ -300,6 +324,7 @@ function TaskBoardCard({
   isOverlay = false,
   onAttach,
   onCancel,
+  onOpen,
 }: {
   readonly task: BoardTask
   readonly attachBlocked?: boolean
@@ -308,6 +333,7 @@ function TaskBoardCard({
   readonly isOverlay?: boolean
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
+  readonly onOpen?: (task: BoardTask) => void
 }) {
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -326,6 +352,7 @@ function TaskBoardCard({
         attached && 'ring-1 ring-ring/40',
         isOverlay && 'cursor-grabbing shadow-lg'
       )}
+      onClick={() => onOpen?.(task)}
     >
       <CardContent className="flex flex-col gap-2 px-3 py-2.5">
         {/* Title row: source chip + slack link pinned right */}
@@ -354,6 +381,26 @@ function TaskBoardCard({
                 <ExternalLink className="size-3.5" />
               </TooltipTrigger>
               <TooltipContent>Open Slack thread</TooltipContent>
+            </Tooltip>
+          )}
+          {!isOverlay && onOpen && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    aria-label={`Edit ${task.title}`}
+                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpen(task)
+                    }}
+                    type="button"
+                  />
+                }
+              >
+                <Pencil className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Edit task details</TooltipContent>
             </Tooltip>
           )}
           {!isOverlay && task.source !== 'execution' && onCancel && (
@@ -389,6 +436,16 @@ function TaskBoardCard({
         {/* Meta chips: source, execution mirror, PR, worktree state, terminal */}
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={task.source} />
+          {task.description !== null && (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="text-muted-foreground" />}
+              >
+                <AlignLeft aria-label="Has description" className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Has description</TooltipContent>
+            </Tooltip>
+          )}
           <SlackAnalysisBadge task={task} />
           {/*
             While a Slack card is still being read, its analysis badge already
@@ -648,6 +705,7 @@ function LaneBoard({
   onAttach,
   onCancelTask,
   onMoveTask,
+  onOpenTask,
   projectId,
   tasks,
 }: {
@@ -659,6 +717,7 @@ function LaneBoard({
     task: BoardTask,
     status: Exclude<BoardTaskStatus, 'cancelled'>
   ) => Promise<void>
+  readonly onOpenTask: (task: BoardTask) => void
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
 }) {
@@ -780,6 +839,7 @@ function LaneBoard({
                           attaching={attachingTaskId === task.id}
                           onAttach={onAttach}
                           onCancel={onCancelTask}
+                          onOpen={onOpenTask}
                           task={task}
                         />
                       </KanbanItemHandle>
@@ -824,6 +884,89 @@ function LaneBoard({
   )
 }
 
+function TaskDetailDialog({
+  onOpenChange,
+  task,
+}: {
+  readonly onOpenChange: (open: boolean) => void
+  readonly task: BoardTask | null
+}) {
+  const [title, setTitle] = useState(task?.title ?? '')
+  const [description, setDescription] = useState(task?.description ?? '')
+  const [saving, setSaving] = useState(false)
+  const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
+
+  useEffect(() => {
+    setTitle(task?.title ?? '')
+    setDescription(task?.description ?? '')
+  }, [task])
+
+  const save = async () => {
+    if (!task || saving) {
+      return
+    }
+    setSaving(true)
+    try {
+      await updateTask({
+        payload: {
+          description: description.length === 0 ? null : description,
+          expectedRevision: task.revision,
+          taskId: task.id,
+          title,
+        },
+      })
+      onOpenChange(false)
+    } catch (error) {
+      toast.error('Could not save task', {
+        description: extractErrorMessage(error),
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={task !== null}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Task details</DialogTitle>
+          <DialogDescription>
+            The description becomes the launched agent’s initial prompt when
+            this task is provisioned.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="task-detail-title">Title</Label>
+            <Input
+              id="task-detail-title"
+              maxLength={100}
+              onChange={(event) => setTitle(event.target.value)}
+              value={title}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="task-detail-description">Description</Label>
+            <Textarea
+              id="task-detail-description"
+              maxLength={100_000}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Instructions for the agent"
+              rows={8}
+              value={description}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button disabled={saving || title.trim().length === 0} onClick={save}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /**
  * The kanban MainView: one lane per LiveStore project, collapse state
  * shared with the sidebar's project groups (same keys, same instance).
@@ -837,6 +980,7 @@ function TaskBoard({
   const projectList = store.useQuery(boardProjects$)
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
+  const [selectedTask, setSelectedTask] = useState<BoardTask | null>(null)
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
@@ -1062,6 +1206,7 @@ function TaskBoard({
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
+                    onOpenTask={setSelectedTask}
                     projectId={project.id}
                     tasks={visibleTasks}
                   />
@@ -1136,6 +1281,14 @@ function TaskBoard({
           </div>
         </section>
       )}
+      <TaskDetailDialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedTask(null)
+          }
+        }}
+        task={selectedTask}
+      />
     </div>
   )
 }

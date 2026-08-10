@@ -44,6 +44,9 @@
  * @see Issue #10: Server utility process: RPC over MessagePort
  */
 
+import { createServer } from 'node:http'
+import { HttpRouter } from '@effect/platform'
+import { NodeHttpServer } from '@effect/platform-node'
 import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -51,6 +54,7 @@ import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messagep
 import { Context, Effect, Fiber, Layer, pipe, Ref, Stream } from 'effect'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
+import { AgentTaskService } from './services/agent-task-service.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
@@ -71,7 +75,13 @@ import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
+import { serverDiscoveryLayer } from './services/server-discovery.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
+import {
+  mcpOriginGuard,
+  TaskMcpProtocolLayer,
+  TaskMcpToolsLayer,
+} from './services/task-mcp.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorkspaceSyncService } from './services/workspace-sync-service.js'
@@ -425,6 +435,48 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
   Layer.provideMerge(LaborerStoreLive)
 )
 
+const configuredMcpPort = (): number => {
+  const port = Number(process.env.LABORER_SERVER_PORT ?? '3773')
+  if (!(Number.isSafeInteger(port) && port >= 1 && port <= 65_535)) {
+    throw new Error(
+      'LABORER_SERVER_PORT must be an integer between 1 and 65535'
+    )
+  }
+  return port
+}
+
+const selectMcpPort = (preferred: number): Promise<number> => {
+  if (process.env.LABORER_SERVER_PORT !== undefined) {
+    return Promise.resolve(preferred)
+  }
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') {
+        resolve(0)
+      } else {
+        reject(error)
+      }
+    })
+    probe.listen(preferred, '127.0.0.1', () => {
+      probe.close((error) => (error ? reject(error) : resolve(preferred)))
+    })
+  })
+}
+
+const makeMcpHttpLayer = (port: number) => {
+  const config = { host: '127.0.0.1', port } as const
+  return Layer.mergeAll(
+    TaskMcpToolsLayer,
+    HttpRouter.Default.serve(mcpOriginGuard),
+    serverDiscoveryLayer(config)
+  ).pipe(
+    Layer.provide(TaskMcpProtocolLayer),
+    Layer.provide(AgentTaskService.layer()),
+    Layer.provide(NodeHttpServer.layer(createServer, config))
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
@@ -449,6 +501,7 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
  */
 async function main(): Promise<void> {
   const { rpcPort, parentPort } = await waitForPort()
+  const mcpPort = await selectMcpPort(configuredMcpPort())
 
   // Build the RPC layer with MessagePort transport.
   // Unlike the HTTP entry point, we don't need:
@@ -516,7 +569,7 @@ async function main(): Promise<void> {
     }
   })
 
-  const program = RpcLive.pipe(
+  const program = Layer.merge(RpcLive, makeMcpHttpLayer(mcpPort)).pipe(
     Layer.provide(InfrastructureLayer),
     Layer.launch,
     Effect.scoped

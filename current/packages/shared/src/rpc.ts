@@ -548,6 +548,23 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  /** Human-authored title/description edits from the task detail dialog. */
+  Rpc.make('task.update', {
+    success: Schema.Struct({
+      description: Schema.NullOr(Schema.String),
+      revision: Schema.Int,
+      title: Schema.String,
+      updatedAt: Schema.Int,
+    }),
+    error: RpcError,
+    payload: {
+      description: Schema.NullOr(Schema.String),
+      expectedRevision: Schema.Int,
+      taskId: Schema.String,
+      title: Schema.String,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Config RPCs
   // -----------------------------------------------------------------------

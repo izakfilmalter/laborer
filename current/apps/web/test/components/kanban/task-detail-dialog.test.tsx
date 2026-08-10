@@ -145,24 +145,43 @@ describe('task card details', () => {
   })
 
   it('keeps the dialog open and explains a revision conflict', async () => {
-    updateTask.mockRejectedValue({
-      code: 'CAS_CONFLICT',
-      message: 'stale revision for task task-1',
-    })
+    updateTask
+      .mockRejectedValueOnce({
+        code: 'CAS_CONFLICT',
+        message: 'stale revision for task task-1',
+      })
+      .mockResolvedValueOnce({})
     const onOpenChange = vi.fn()
-    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+    const view = render(
+      <TaskDetailDialog onOpenChange={onOpenChange} task={task()} />
+    )
 
     await userEvent.type(screen.getByLabelText('Description'), ' More.')
+    view.rerender(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        task={task({ description: 'Winning edit.', revision: 5 })}
+      />
+    )
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'This card changed elsewhere'
     )
+    expect(updateTask).toHaveBeenLastCalledWith({
+      payload: expect.objectContaining({ expectedRevision: 4 }),
+    })
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(toastError).toHaveBeenCalledWith(
       'Card changed elsewhere',
       expect.any(Object)
     )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(updateTask).toHaveBeenLastCalledWith({
+      payload: expect.objectContaining({ expectedRevision: 5 }),
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('asks before dropping unsaved edits and can go back to editing', async () => {

@@ -381,7 +381,7 @@ function TaskBoardCard({
   // The card body opens the detail dialog, but its chips own their own
   // clicks — opening a PR or a terminal should not also open the dialog.
   const openDetail = (event: React.MouseEvent) => {
-    if ((event.target as HTMLElement).closest('a,button') !== null) {
+    if (event.target instanceof Element && event.target.closest('a,button')) {
       return
     }
     onOpen?.(task)
@@ -1131,8 +1131,13 @@ function TaskDetailDialog({
       return
     }
     if (dirty) {
-      setBaseline((current) => ({ ...current, revision: task.revision }))
       setChangedElsewhere(true)
+      // Keep the revision the draft started from until a CAS conflict proves
+      // it stale. Otherwise a poll arriving just before Save would silently
+      // advance the CAS and let this draft overwrite the newer card.
+      if (saveError?.conflict) {
+        setBaseline((current) => ({ ...current, revision: task.revision }))
+      }
       return
     }
     setTitle(incomingTitle)
@@ -1149,6 +1154,7 @@ function TaskDetailDialog({
     dirty,
     incomingDescription,
     incomingTitle,
+    saveError?.conflict,
     task.revision,
   ])
 
@@ -1166,7 +1172,7 @@ function TaskDetailDialog({
     if (changedElsewhere) {
       return {
         message:
-          'This card changed elsewhere. Your edits are still here — saving replaces the newer version.',
+          'This card changed elsewhere. Your edits are still here — Save will report the conflict before you can apply them over the newer version.',
         tone: 'warning' as const,
       }
     }
@@ -1204,7 +1210,7 @@ function TaskDetailDialog({
       await updateTask({
         payload: {
           description: normalizedDescription,
-          expectedRevision: task.revision,
+          expectedRevision: baseline.revision,
           taskId: task.id,
           title: trimmedTitle,
         },
@@ -1215,6 +1221,11 @@ function TaskDetailDialog({
       const message = conflict
         ? 'This card changed elsewhere. Your edits are still here — save again once the newer version lands to apply them over it.'
         : extractErrorMessage(error)
+      if (conflict && task.revision !== baseline.revision) {
+        // The board poll already supplied the winning row. Advance only after
+        // surfacing the conflict so the next deliberate Save can overwrite it.
+        setBaseline((current) => ({ ...current, revision: task.revision }))
+      }
       setSaveError({ conflict, message })
       toast.error(conflict ? 'Card changed elsewhere' : 'Could not save card', {
         description: message,

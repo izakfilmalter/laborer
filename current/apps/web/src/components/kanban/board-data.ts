@@ -71,7 +71,7 @@ export interface BoardProject {
 }
 
 export const slackAnalysisState = (
-  task: Pick<BoardTask, 'description' | 'executionMirror' | 'source'>
+  task: Pick<BoardTask, 'executionMirror' | 'description' | 'source'>
 ): SlackAnalysisState => {
   if (task.source !== 'slack_url' || task.description !== null) {
     return null

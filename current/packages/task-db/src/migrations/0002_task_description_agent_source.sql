@@ -1,4 +1,4 @@
-CREATE TABLE `tasks_new` (
+CREATE TABLE `tasks_description_agent_source` (
 	`id` text PRIMARY KEY NOT NULL,
 	`root_path` text NOT NULL,
 	`title` text NOT NULL,
@@ -16,11 +16,18 @@ CREATE TABLE `tasks_new` (
 	`revision` integer DEFAULT 1 NOT NULL CHECK (`revision` >= 1)
 );
 --> statement-breakpoint
-INSERT INTO `tasks_new` (`id`, `root_path`, `title`, `status`, `source`, `execution_id`, `action_name`, `execution_status`, `slack_permalink`, `worktree_path`, `branch_name`, `description`, `created_at`, `updated_at`, `revision`)
-SELECT `id`, `root_path`, `title`, `status`, `source`, `execution_id`, `action_name`, `execution_status`, `slack_permalink`, `worktree_path`, `branch_name`, `initial_prompt`, `created_at`, `updated_at`, `revision` FROM `tasks`;
+INSERT INTO `tasks_description_agent_source` (
+	`id`, `root_path`, `title`, `status`, `source`, `execution_id`, `action_name`,
+	`execution_status`, `slack_permalink`, `worktree_path`, `branch_name`,
+	`description`, `created_at`, `updated_at`, `revision`
+) SELECT
+	`id`, `root_path`, `title`, `status`, `source`, `execution_id`, `action_name`,
+	`execution_status`, `slack_permalink`, `worktree_path`, `branch_name`,
+	`initial_prompt`, `created_at`, `updated_at`, `revision`
+FROM `tasks`;
 --> statement-breakpoint
 DROP TABLE `tasks`;
 --> statement-breakpoint
-ALTER TABLE `tasks_new` RENAME TO `tasks`;
+ALTER TABLE `tasks_description_agent_source` RENAME TO `tasks`;
 --> statement-breakpoint
 CREATE UNIQUE INDEX `tasks_execution_id_unique` ON `tasks` (`execution_id`);

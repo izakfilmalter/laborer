@@ -159,7 +159,9 @@ const nextStatusForPr = (task: Task, prState: string): TaskStatus | null => {
       return task.status === 'in_review' ? 'in_progress' : null
     case 'OPEN':
       return task.status === 'in_progress' &&
-        (task.source === 'manual' || task.source === 'slack_url')
+        (task.source === 'manual' ||
+          task.source === 'slack_url' ||
+          task.source === 'agent')
         ? 'in_review'
         : null
     default:

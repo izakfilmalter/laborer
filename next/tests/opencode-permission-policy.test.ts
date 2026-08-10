@@ -592,6 +592,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           );
           const input = {
             prompt: `Invoke ${actionName} attempt ${attempt} under ${policy}.`,
+            title: "Execution task",
             worktreeName: `pinned-${policy}-${attempt}`,
           };
           provider.enqueue({
@@ -674,6 +675,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           return {
             input: {
               prompt: "Implement model-selected export support.",
+              title: "Execution task",
               worktreeName: "model-selected-feature",
             },
             kind: "tool",
@@ -685,6 +687,7 @@ describe("issue #245 real pinned OpenCode permission policy", () => {
           return {
             input: {
               prompt: "Diagnose and fix the model-selected export crash.",
+              title: "Execution task",
               worktreeName: "model-selected-bug",
             },
             kind: "tool",

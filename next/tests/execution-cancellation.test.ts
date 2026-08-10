@@ -88,6 +88,7 @@ describe("issue #249 durable Execution cancellation", () => {
                   assert.ok(prompt);
                   const started = yield* action.invoke({
                     prompt: "Implement cancellation fencing.",
+                    title: "Execution task",
                     worktreeName: "preserved-worktree",
                   });
                   yield* Ref.set(executionId, started.executionId);
@@ -320,6 +321,7 @@ describe("issue #249 durable Execution cancellation", () => {
                   assert.ok(cancel);
                   const started = yield* action.invoke({
                     prompt: "Exercise terminal event redrive.",
+                    title: "Execution task",
                     worktreeName: "redrive-worktree",
                   });
                   yield* Ref.set(cancelControl, cancel);
@@ -438,6 +440,7 @@ describe("issue #249 durable Execution cancellation", () => {
                 assert.ok(cancel);
                 const started = yield* action.invoke({
                   prompt: "Complete at the cancellation boundary.",
+                  title: "Execution task",
                   worktreeName: "completion-first",
                 });
                 yield* Ref.set(cancelControl, cancel);
@@ -553,6 +556,7 @@ describe("issue #249 durable Execution cancellation", () => {
                   assert.ok(cancel);
                   const started = yield* action.invoke({
                     prompt: "Outlive the cancelled caller.",
+                    title: "Execution task",
                     worktreeName: "caller-cancel",
                   });
                   yield* Ref.set(cancelControl, cancel);

@@ -65,6 +65,7 @@ it.effect(
               return action
                 .invoke({
                   prompt: "Finish despite a failed cancellation request.",
+                  title: "Execution task",
                   worktreeName: "failed-cancellation",
                 })
                 .pipe(Effect.as([] as const));

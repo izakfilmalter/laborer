@@ -8,6 +8,7 @@ import {
   ACTION_CANONICAL_MAX_ITEMS as SHARED_ACTION_CANONICAL_MAX_ITEMS,
   canonicalCatalogJson as sharedCanonicalCatalogJson,
 } from "./bounded-action-value.ts";
+import { ActionTitle } from "./task-db/execution-task-emitter.ts";
 
 export const ACTION_CANONICAL_MAX_BYTES = SHARED_ACTION_CANONICAL_MAX_BYTES;
 export const ACTION_CANONICAL_MAX_DEPTH = SHARED_ACTION_CANONICAL_MAX_DEPTH;
@@ -39,6 +40,7 @@ export const CreateFeatureActionInput = Schema.Struct({
     description:
       "The bounded, nonblank implementation request. Whitespace is preserved.",
   }),
+  title: ActionTitle,
   worktreeName: SafeWorktreeName,
 });
 export type CreateFeatureActionInput = typeof CreateFeatureActionInput.Type;

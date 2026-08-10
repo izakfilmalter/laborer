@@ -102,6 +102,7 @@ describe("private Action MCP bridge", () => {
                   assert.ok(inspect);
                   const started = yield* action.invoke({
                     prompt: "Start generated control work.",
+                    title: "Execution task",
                     worktreeName: "generated-control-work",
                   });
                   yield* Ref.set(executionIdRef, started.executionId);
@@ -698,6 +699,7 @@ describe("private Action MCP bridge", () => {
                 const sessionId = `session-invalid-${invalid.label}`;
                 const input = {
                   prompt: `Reject ${invalid.label} raw result.`,
+                  title: "Execution task",
                   worktreeName: `invalid-${invalid.label}`,
                 };
                 const permission = `${bridge.serverName}_deal-with-bug`;
@@ -863,6 +865,7 @@ describe("private Action MCP bridge", () => {
               name: permission,
               rawInput: {
                 prompt: "stale",
+                title: "Execution task",
                 worktreeName: "stale-observation",
               },
               sessionUpdate: "tool_call",
@@ -1041,6 +1044,7 @@ describe("private Action MCP bridge", () => {
           });
           const input = {
             prompt: "Implement the private Action path.",
+            title: "Execution task",
             worktreeName: "action-246",
           };
           const permission = `${bridge.serverName}_create-feature`;
@@ -1152,6 +1156,7 @@ describe("private Action MCP bridge", () => {
           const secondSessionId = "session-action-246-b";
           const secondInput = {
             prompt: "Implement the second private Action path.",
+            title: "Execution task",
             worktreeName: "action-246-b",
           };
           const closeSecondTurn = yield* bridge.activateTurn({
@@ -1210,6 +1215,7 @@ describe("private Action MCP bridge", () => {
           const expiredSessionId = "session-action-246-expired";
           const expiredInput = {
             prompt: "This capability must expire before invocation.",
+            title: "Execution task",
             worktreeName: "action-246-expired",
           };
           const closeExpiredTurn = yield* bridge.activateTurn({
@@ -1335,6 +1341,7 @@ describe("private Action MCP bridge", () => {
           const sessionId = "session-persistence-246";
           const input = {
             prompt: "Do not run after persistence failure.",
+            title: "Execution task",
             worktreeName: "persistence-failure",
           };
           const permission = `${bridge.serverName}_create-feature`;
@@ -1486,6 +1493,7 @@ describe("private Action MCP bridge", () => {
           const sessionId = "session-response-lost";
           const input = {
             prompt: "Run one external effect.",
+            title: "Execution task",
             worktreeName: "response-lost",
           };
           const permission = `${bridge.serverName}_create-feature`;
@@ -1689,6 +1697,7 @@ describe("private Action MCP bridge", () => {
         };
         const input = {
           prompt: "Attempt the original prompt action.",
+          title: "Execution task",
           worktreeName: "lease-swap",
         };
         const permission = `${bridge.serverName}_create-feature`;
@@ -1839,6 +1848,7 @@ describe("private Action MCP bridge", () => {
               const sessionId = `session-${limits.name}-waiter-limit`;
               const input = {
                 prompt: `Bound ${limits.name} duplicate waiters.`,
+                title: "Execution task",
                 worktreeName: `${limits.name}-waiter-limit`,
               };
               const permission = `${bridge.serverName}_create-feature`;
@@ -1969,6 +1979,7 @@ describe("private Action MCP bridge", () => {
         const sessionId = "session-single-flight-expiry";
         const input = {
           prompt: "Expire this shared invocation.",
+          title: "Execution task",
           worktreeName: "single-flight-expiry",
         };
         const permission = `${bridge.serverName}_create-feature`;
@@ -2086,6 +2097,7 @@ describe("private Action MCP bridge", () => {
         const sessionId = "session-single-flight-shutdown";
         const input = {
           prompt: "Stop this shared invocation.",
+          title: "Execution task",
           worktreeName: "single-flight-shutdown",
         };
         const permission = `${bridge.serverName}_create-feature`;
@@ -2169,10 +2181,12 @@ describe("private Action MCP bridge", () => {
           });
           const inputA = {
             prompt: "Implement stable input A.",
+            title: "Execution task",
             worktreeName: "restart-recorrelation",
           };
           const inputB = {
             prompt: "Implement conflicting input B.",
+            title: "Execution task",
             worktreeName: "restart-recorrelation",
           };
           const scopeBase = {
@@ -2442,7 +2456,11 @@ describe("private Action MCP bridge", () => {
 
           const sessionId = "session-scope-246";
           const permission = `${bridge.serverName}_create-feature`;
-          const input = { prompt: "Scoped action", worktreeName: "scope-246" };
+          const input = {
+            prompt: "Scoped action",
+            title: "Execution task",
+            worktreeName: "scope-246",
+          };
           const closeExpiredTurn = yield* bridge.activateTurn({
             actionServerGeneration: registration.actionServerGeneration,
             actions: [action],
@@ -2769,7 +2787,11 @@ describe("private Action MCP bridge", () => {
           });
           const permission = `${bridge.serverName}_create-feature`;
           const invalid = allowRequest({
-            input: { prompt: "valid", worktreeName: "../invalid" },
+            input: {
+              prompt: "valid",
+              title: "Execution task",
+              worktreeName: "../invalid",
+            },
             permission,
             sessionId: "unknown-session",
             toolCallId: "invalid-call",

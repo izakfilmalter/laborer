@@ -49,6 +49,7 @@ describe("eighth reference coding Application review", () => {
             assert.ok(action);
             const accepted = yield* action.invoke({
               prompt: "Implement exact idempotency.",
+              title: "Execution task",
               worktreeName: "exact-idempotency",
             });
             yield* Ref.update(acceptedExecutionIds, (current) => [
@@ -139,6 +140,7 @@ describe("eighth reference coding Application review", () => {
                 return action
                   .invoke({
                     prompt: "Preserve this original prompt.",
+                    title: "Execution task",
                     worktreeName: "preserved-worktree",
                   })
                   .pipe(
@@ -158,6 +160,7 @@ describe("eighth reference coding Application review", () => {
                 return Effect.result(
                   action.invoke({
                     prompt: "Conflicting replacement prompt.",
+                    title: "Execution task",
                     worktreeName: "replacement-worktree",
                   })
                 ).pipe(
@@ -255,6 +258,7 @@ describe("eighth reference coding Application review", () => {
               return action
                 .invoke({
                   prompt: "Fail this implementation in a typed way.",
+                  title: "Execution task",
                   worktreeName: "typed-failure",
                 })
                 .pipe(Effect.as([] as const));
@@ -384,6 +388,7 @@ describe("eighth reference coding Application review", () => {
                         }
                       : {
                           prompt: "Start cancellable durable work.",
+                          title: "Execution task",
                           worktreeName: "cancellation-outbox",
                         }
                   )
@@ -481,6 +486,7 @@ describe("eighth reference coding Application review", () => {
                     return action
                       .invoke({
                         prompt: "Persist work for failed recovery.",
+                        title: "Execution task",
                         worktreeName: "recovery-failure-outbox",
                       })
                       .pipe(Effect.as([] as const));
@@ -610,6 +616,7 @@ describe("eighth reference coding Application review", () => {
                     return action
                       .invoke({
                         prompt: "Complete before restart.",
+                        title: "Execution task",
                         worktreeName: "completed-restart",
                       })
                       .pipe(Effect.as([] as const));
@@ -945,6 +952,7 @@ describe("eighth reference coding Application review", () => {
                 return Effect.result(
                   action.invoke({
                     prompt: "Fail while starting.",
+                    title: "Execution task",
                     worktreeName: "failed-start",
                   })
                 ).pipe(Effect.as([] as const));
@@ -1044,6 +1052,7 @@ describe("eighth reference coding Application review", () => {
                         }
                       : {
                           prompt: "Fail before the queue advances.",
+                          title: "Execution task",
                           worktreeName: "failed-queue",
                         }
                   )

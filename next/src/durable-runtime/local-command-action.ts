@@ -5,10 +5,12 @@ import {
   type LocalProcessResult,
   validateLocalExecutable,
 } from "../adapters/local-process-execution.ts";
+import { ActionTitle } from "../task-db/execution-task-emitter.ts";
 import { defineAction } from "./action.ts";
 
 export const RenderLocalTextActionInput = Schema.Struct({
   text: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(1024)),
+  title: ActionTitle,
 });
 
 export const RenderLocalTextActionResult = Schema.Struct({
@@ -71,7 +73,7 @@ export const makeRenderLocalTextAction = Effect.fn("makeRenderLocalTextAction")(
       name: "render-local-text",
       recoveryPolicy: "fail-closed",
       result: RenderLocalTextActionResult,
-      revision: "reference-local-command/render-v1",
+      revision: "reference-local-command/render-v2",
       run: (request, context) =>
         Effect.gen(function* () {
           yield* context.reportProgress("command-started", {

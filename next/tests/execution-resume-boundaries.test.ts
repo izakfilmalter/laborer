@@ -79,6 +79,7 @@ describe("in-flight Execution restart boundaries", () => {
                 return action
                   .invoke({
                     prompt: "Implement exactly once across restart.",
+                    title: "Execution task",
                     worktreeName: "resume-boundary",
                   })
                   .pipe(Effect.as([] as const));
@@ -91,6 +92,7 @@ describe("in-flight Execution restart boundaries", () => {
                 return action
                   .invoke({
                     prompt: "Implement exactly once across restart.",
+                    title: "Execution task",
                     worktreeName: "resume-boundary",
                   })
                   .pipe(Effect.as([] as const));
@@ -279,6 +281,7 @@ describe("in-flight Execution restart boundaries", () => {
                     return action
                       .invoke({
                         prompt: "Produce one durable response.",
+                        title: "Execution task",
                         worktreeName: "response-boundary",
                       })
                       .pipe(Effect.as([] as const));

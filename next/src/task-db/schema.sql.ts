@@ -31,7 +31,7 @@ export const tasks = sqliteTable(
     ),
     check(
       "tasks_execution_status_check",
-      sql`${table.executionStatus} IN ('running', 'failed', 'needs_attention')`
+      sql`${table.executionStatus} IN ('queued', 'running', 'cancelling', 'completed', 'failed', 'cancelled', 'needs-attention')`
     ),
     check("tasks_revision_check", sql`${table.revision} >= 1`),
   ]

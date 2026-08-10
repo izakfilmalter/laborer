@@ -53,6 +53,11 @@ export type ChatSdkMessageHandler = (
 export type ChatSdkMentionHandler = ChatSdkMessageHandler;
 
 export interface ChatSdkLike {
+  readonly getPermalink?: (
+    workspaceId: string,
+    channelId: string,
+    messageTs: string
+  ) => Promise<string>;
   readonly initialize: () => Promise<void>;
   readonly onAction?: (handler: ChatSdkActionHandler) => void;
   readonly onNewMention: (handler: ChatSdkMessageHandler) => void;
@@ -116,6 +121,11 @@ export class ChatPlaneOperationError extends Schema.TaggedErrorClass<ChatPlaneOp
 ) {}
 
 export interface ChatPlaneShape {
+  readonly getPermalink: (
+    workspaceId: string,
+    channelId: string,
+    messageTs: string
+  ) => Effect.Effect<string, ChatPlaneOperationError>;
   readonly postNotice: (
     thread: ChatSdkThreadLike,
     notice: string
@@ -301,6 +311,16 @@ const collectActivationHistory = async (
 };
 
 const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
+  getPermalink: (workspaceId, channelId, messageTs) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.getPermalink === undefined) {
+          throw new Error("Chat permalink lookup unavailable");
+        }
+        return sdk.getPermalink(workspaceId, channelId, messageTs);
+      },
+      catch: () => operationFailure("chat.getPermalink"),
+    }),
   postPermission: (request) =>
     Effect.tryPromise({
       try: () => {
@@ -692,6 +712,18 @@ export const makeLiveChatPlaneLayer = (
       };
 
       return {
+        getPermalink: async (workspaceId, channelId, messageTs) => {
+          const response = await withWorkspaceToken(workspaceId, () =>
+            slackAdapter.webClient.chat.getPermalink({
+              channel: channelId,
+              message_ts: messageTs,
+            })
+          );
+          if (!(response.ok && typeof response.permalink === "string")) {
+            throw new Error("Slack permalink unavailable");
+          }
+          return response.permalink;
+        },
         initialize: async () => {
           if (config.installations !== undefined) {
             for (const installation of config.installations) {

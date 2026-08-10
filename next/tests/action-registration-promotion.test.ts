@@ -203,6 +203,7 @@ describe("process-global Action registration promotion", () => {
               ...process.env,
               SCRIPTED_ACP_ACTION_OPERATION_JSON: JSON.stringify({
                 prompt: "Exercise the promoted Action registration.",
+                title: "Execution task",
                 worktreeName: "registration-proof",
               }),
               SCRIPTED_ACP_ACTION_ORDINARY_MARKER: ordinaryMarker,

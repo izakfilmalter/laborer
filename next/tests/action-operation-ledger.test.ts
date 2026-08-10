@@ -92,6 +92,7 @@ describe("durable Action operation ledger", () => {
               );
               const input = {
                 prompt: `Do not cross ${boundary} without full durability.`,
+                title: "Execution task",
                 worktreeName: `durability-${boundary}-${hookName}`,
               };
               const inputHash = yield* actionInputHash(
@@ -212,6 +213,7 @@ describe("durable Action operation ledger", () => {
               Effect.gen(function* () {
                 const input = {
                   prompt: `Run exactly one ${actionName} operation.`,
+                  title: "Execution task",
                   worktreeName: `one-${actionName}`,
                 };
                 const inputHash = yield* actionInputHash(
@@ -317,10 +319,12 @@ describe("durable Action operation ledger", () => {
           );
           const inputA = {
             prompt: "Build input A.",
+            title: "Execution task",
             worktreeName: "stable-slot",
           };
           const inputB = {
             prompt: "Build input B.",
+            title: "Execution task",
             worktreeName: "stable-slot",
           };
           const [inputHashA, inputHashB] = yield* Effect.all([
@@ -451,6 +455,7 @@ describe("durable Action operation ledger", () => {
           );
           const sharedInput = {
             prompt: "Use the same requested worktree without sharing it.",
+            title: "Execution task",
             worktreeName: "shared-name",
           };
           const [featureHash, bugHash] = yield* Effect.all([
@@ -723,6 +728,7 @@ describe("durable Action operation ledger", () => {
           const input = {
             prompt:
               "Keep this in-flight feature unchanged across catalog growth.",
+            title: "Execution task",
             worktreeName: "old-catalog-feature",
           };
           const inputHash = yield* actionInputHash(
@@ -881,6 +887,7 @@ describe("durable Action operation ledger", () => {
           const snapshotPath = join(root, "application.json");
           const input = {
             prompt: "Persist this operation before restart.",
+            title: "Execution task",
             worktreeName: "restart-safe",
           };
           const inputHash = yield* actionInputHash(
@@ -1015,6 +1022,7 @@ describe("durable Action operation ledger", () => {
           );
           const input = {
             prompt: "Do not adopt the colliding worktree.",
+            title: "Execution task",
             worktreeName: "already-owned",
           };
           const inputHash = yield* actionInputHash(
@@ -1142,6 +1150,7 @@ describe("durable Action operation ledger", () => {
           const originalEvent = event("event:protected-failure-246");
           const originalInput = {
             prompt: "Retain this failed operation while its turn can recover.",
+            title: "Execution task",
             worktreeName: "protected-failure",
           };
           const changedInput = {
@@ -1387,6 +1396,7 @@ describe("durable Action operation ledger", () => {
             event("event:active-owner-compaction"),
             {
               prompt: "Do not compact an old-catalog active owner.",
+              title: "Execution task",
               worktreeName: "active-owner-compaction",
             },
             Number.MAX_SAFE_INTEGER
@@ -1433,6 +1443,7 @@ describe("durable Action operation ledger", () => {
             event("event:pre-expiry-compaction"),
             {
               prompt: "Compact only unreachable history before expiry.",
+              title: "Execution task",
               worktreeName: "pre-expiry-compaction",
             },
             Number.MAX_SAFE_INTEGER
@@ -1473,6 +1484,7 @@ describe("durable Action operation ledger", () => {
             event("event:post-expiry-compaction"),
             {
               prompt: "Compact the now-unreachable failed identity.",
+              title: "Execution task",
               worktreeName: "post-expiry-compaction",
             },
             Number.MAX_SAFE_INTEGER
@@ -1545,6 +1557,7 @@ describe("durable Action operation ledger", () => {
           const failures = yield* Ref.make<readonly string[]>([]);
           const input = {
             prompt: "This allocation must fail before effects.",
+            title: "Execution task",
             worktreeName: "capacity-closed",
           };
           const inputHash = yield* actionInputHash(
@@ -1648,6 +1661,7 @@ describe("durable Action operation ledger", () => {
           );
           const input = {
             prompt: "Allocate after more than 1,024 terminal operations.",
+            title: "Execution task",
             worktreeName: "after-ledger-retention",
           };
           const inputHash = yield* actionInputHash(

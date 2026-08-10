@@ -149,6 +149,7 @@ describe("registered local command Action", () => {
             application,
             databasePath: join(directory, "runtime.sqlite"),
             rootIdentity: directory,
+            taskDatabasePath: join(directory, "tasks.sqlite"),
           });
           const conversationId = "conversation-local-command";
           const workspaceId = "TLOCAL";
@@ -164,7 +165,10 @@ describe("registered local command Action", () => {
           const sessionId = "session-local-command";
           const toolCallId = "tool-call-local-command";
           const permission = `${bridge.serverName}_${action.name}`;
-          const input = { text: "private command evidence" };
+          const input = {
+            text: "private command evidence",
+            title: "Render private command evidence",
+          };
           const closeTurn = yield* bridge.activateTurn({
             actionServerGeneration: registration.actionServerGeneration,
             actions: [conversationAction],

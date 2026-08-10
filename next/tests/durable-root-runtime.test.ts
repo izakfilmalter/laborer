@@ -28,6 +28,7 @@ import {
   RUNTIME_PAYLOAD_MAX_BYTES,
 } from "../src/durable-runtime/root-runtime.ts";
 import { runConversationRpcLocally } from "../src/durable-runtime/rpc.ts";
+import type { ExecutionTaskProjection } from "../src/task-db/execution-task-emitter.ts";
 import { makeTempDirectoryScoped } from "./support/temp-directory.ts";
 
 const waitForTerminal = Effect.fn("waitForTerminal")(function* (
@@ -59,6 +60,91 @@ const waitForTerminal = Effect.fn("waitForTerminal")(function* (
 });
 
 describe("root durable runtime", () => {
+  it.live(
+    "emits accepted and lifecycle snapshots without duplicating replayed acceptance",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            "laborer-durable-task-emission-"
+          );
+          const action = defineAction({
+            annotations: { idempotentHint: true },
+            description: "Complete one emitted task",
+            input: Schema.Struct({
+              prompt: Schema.String,
+              title: Schema.String,
+              worktreeName: Schema.String,
+            }),
+            name: "deal-with-bug",
+            recoveryPolicy: "idempotent-retry",
+            result: Schema.Struct({ outcome: Schema.String }),
+            revision: "emission-v1",
+            run: () => Effect.succeed({ outcome: "done" }),
+          });
+          const application = defineApplication({ actions: [action] });
+          const emitted: ExecutionTaskProjection[] = [];
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            directory,
+            {
+              emit: (projection) =>
+                Effect.sync(() => {
+                  emitted.push(projection);
+                }),
+            }
+          );
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime;
+            const request = {
+              actionName: "deal-with-bug",
+              conversationId: "workspace:T1:C1:1.0",
+              input: {
+                prompt: "Fix it",
+                title: "Fix it",
+                worktreeName: "fix-it",
+              },
+              invocationId: "emission-invocation",
+              rootIdentity: directory,
+              workspaceId: "T1",
+            } as const;
+            const execution = yield* runtime.startExecution(request);
+            yield* waitForTerminal(
+              execution.executionId,
+              request.conversationId,
+              "T1"
+            );
+            yield* runtime.startExecution(request);
+
+            assert.strictEqual(
+              emitted.filter(({ status }) => status === "queued").length,
+              1
+            );
+            assert.ok(emitted.some(({ status }) => status === "running"));
+            assert.ok(emitted.some(({ status }) => status === "completed"));
+          }).pipe(Effect.provide(layer));
+
+          const reconciled: ExecutionTaskProjection[] = [];
+          const restartedLayer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, "runtime.sqlite") }),
+            application.actions,
+            directory,
+            {
+              emit: (projection) =>
+                Effect.sync(() => {
+                  reconciled.push(projection);
+                }),
+            }
+          );
+          yield* RootDurableRuntime.pipe(Effect.provide(restartedLayer));
+          assert.strictEqual(reconciled.length, 1);
+          assert.strictEqual(reconciled[0]?.status, "completed");
+        })
+      ),
+    20_000
+  );
+
   it.live(
     "runs ordered ordinary Conversation turns through Cluster and resumes one session",
     () =>

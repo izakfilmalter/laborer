@@ -14,4 +14,14 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       "utf8"
     ),
   },
+  {
+    name: "0001_execution_lifecycle_statuses",
+    sql: readFileSync(
+      new URL(
+        "./migrations/0001_execution_lifecycle_statuses.sql",
+        import.meta.url
+      ),
+      "utf8"
+    ),
+  },
 ];

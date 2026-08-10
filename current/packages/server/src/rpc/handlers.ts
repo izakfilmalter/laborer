@@ -46,11 +46,11 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
   Effect.gen(function* () {
     const registry = yield* ProjectRegistry
     const roots = [...new Set(tasks.map(({ rootPath }) => rootPath))]
+    const registered = [...(yield* registry.listProjects())]
     yield* Effect.forEach(
       roots,
       (rootPath) =>
         Effect.gen(function* () {
-          const registered = yield* registry.listProjects()
           if (
             registered.some(({ repoPath }) =>
               projectContainsRoot(repoPath, rootPath)
@@ -58,15 +58,18 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
           ) {
             return
           }
-          yield* registry
+          const project = yield* registry
             .addProject(rootPath)
             .pipe(
               Effect.catchAll((error) =>
                 Effect.logWarning(
                   `[task-board] Could not auto-register ${rootPath}: ${error.message}`
-                )
+                ).pipe(Effect.as(undefined))
               )
             )
+          if (project) {
+            registered.push(project)
+          }
         }),
       { concurrency: 1, discard: true }
     )

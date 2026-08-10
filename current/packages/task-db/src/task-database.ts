@@ -1,11 +1,11 @@
 import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname } from 'node:path'
 import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite'
 import { Context, Effect, Layer } from 'effect'
 import { taskDbMigrations } from './migrations.ts'
+import { taskDatabasePath as resolveTaskDatabasePath } from './path.ts'
 import { taskChanges, tasks } from './schema.sql.ts'
 
 const schema = { taskChanges, tasks }
@@ -259,17 +259,7 @@ const rowToTask = (row: SqliteRow): Task => {
   }
 }
 
-export const taskDatabasePath = (
-  environment: NodeJS.ProcessEnv = process.env,
-  home: string = homedir()
-): string => {
-  const xdgStateHome = environment.XDG_STATE_HOME?.trim()
-  const stateHome =
-    xdgStateHome && isAbsolute(xdgStateHome)
-      ? xdgStateHome
-      : join(home, '.local', 'state')
-  return join(stateHome, 'laborer', 'laborer.sqlite')
-}
+export const taskDatabasePath = resolveTaskDatabasePath
 
 export class NativeTaskDatabase {
   readonly #database: Database

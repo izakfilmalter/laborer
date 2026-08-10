@@ -44,9 +44,10 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */
 export const applyTaskBoardEvents = (
-  events: readonly TaskBoardEvent[]
+  events: readonly TaskBoardEvent[],
+  initialTasks: readonly RpcBoardTask[] = []
 ): readonly BoardTask[] => {
-  const tasks = new Map<string, RpcBoardTask>()
+  const tasks = new Map(initialTasks.map((task) => [task.id, task]))
   for (const event of events) {
     if (event._tag === 'snapshot') {
       tasks.clear()

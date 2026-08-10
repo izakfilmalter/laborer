@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs'
 import { RpcError, type TaskBoardEvent } from '@laborer/shared/rpc'
 import type { TaskRead } from '@laborer/task-db'
+import { taskDatabasePath } from '@laborer/task-db/path'
 import { Duration, Effect, Option, Schedule, Stream } from 'effect'
+import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 
 const DEFAULT_POLL_INTERVAL = Duration.millis(350)
 
@@ -33,12 +35,7 @@ export const subscribeToTaskBoard = (
   Stream.unwrapScoped(
     Effect.acquireRelease(
       Effect.tryPromise({
-        try: async () => {
-          const { NativeTaskDatabase, taskDatabasePath } = await import(
-            '@laborer/task-db'
-          )
-          return NativeTaskDatabase.open(path ?? taskDatabasePath())
-        },
+        try: async () => NodeTaskBoardDatabase.open(path ?? taskDatabasePath()),
         catch: boardReadError,
       }),
       (database) => Effect.sync(() => database.close())

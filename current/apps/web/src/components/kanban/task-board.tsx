@@ -16,7 +16,7 @@ import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { projects } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
-import { Cause } from 'effect'
+import { Cause, Effect, Stream } from 'effect'
 import {
   Bot,
   ChevronDown,
@@ -442,30 +442,35 @@ function TaskBoard({
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
   const [searchQuery, setSearchQuery] = useState('')
+  const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const taskEventsAtom = useMemo(
     () =>
-      // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-      LaborerClient.query('task.board.subscribe', undefined as void),
+      LaborerClient.runtime.pull(
+        LaborerClient.pipe(
+          Effect.map((client) =>
+            // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+            client('task.board.subscribe', undefined as void)
+          ),
+          Stream.unwrap
+        ),
+        { disableAccumulation: true }
+      ),
     []
   )
   const rpcResult = useAtomValue(taskEventsAtom)
   const pullNext = useAtomSet(taskEventsAtom)
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
+      setBoardTasks((current) =>
+        applyTaskBoardEvents(rpcResult.value.items, current)
+      )
       // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
       pullNext(undefined as void)
-    }, 250)
-    return () => clearInterval(interval)
-  }, [pullNext])
-
-  const boardTasks = useMemo(
-    () =>
-      Result.isSuccess(rpcResult)
-        ? applyTaskBoardEvents(rpcResult.value.items)
-        : [],
-    [rpcResult]
-  )
+    } else if (Result.isFailure(rpcResult)) {
+      setBoardTasks([])
+    }
+  }, [pullNext, rpcResult])
 
   const query = searchQuery.trim().toLowerCase()
   const searching = query.length > 0

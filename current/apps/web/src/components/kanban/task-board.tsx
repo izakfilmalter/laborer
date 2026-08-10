@@ -24,9 +24,11 @@ import {
   FolderX,
   GitBranch,
   MessageSquare,
+  Search,
   SquarePen,
+  X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
@@ -48,6 +50,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -95,6 +98,61 @@ function buildColumnTasks(
     byColumn[task.status]?.push(task)
   }
   return byColumn
+}
+
+/** Case-insensitive substring match against title or branch. */
+function matchesQuery(task: BoardTask, query: string): boolean {
+  return (
+    task.title.toLowerCase().includes(query) ||
+    (task.branch?.toLowerCase().includes(query) ?? false)
+  )
+}
+
+/** Local search input for the board toolbar. */
+function BoardSearch({
+  value,
+  onChange,
+}: {
+  readonly value: string
+  readonly onChange: (value: string) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleClear = () => {
+    onChange('')
+    inputRef.current?.focus()
+  }
+
+  return (
+    <div className="relative w-64">
+      <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        aria-label="Search cards"
+        className="h-7 pr-7 pl-7"
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && value.length > 0) {
+            e.preventDefault()
+            handleClear()
+          }
+        }}
+        placeholder="Search cards..."
+        ref={inputRef}
+        type="text"
+        value={value}
+      />
+      {value.length > 0 && (
+        <button
+          aria-label="Clear search"
+          className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={handleClear}
+          type="button"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
+  )
 }
 
 /** Chip showing where the card came from. */
@@ -390,46 +448,70 @@ function TaskBoard({
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const query = searchQuery.trim().toLowerCase()
+  const searching = query.length > 0
+
+  // Lanes with zero matches are hidden while searching; matches force-
+  // expand their lane without mutating the stored collapse state.
+  const lanes = projectList
+    .map((project, index) => {
+      const laneRoot = FAKE_ROOT_PATHS[index]
+      const laneTasks = laneRoot
+        ? FAKE_TASKS.filter((task) => task.rootPath === laneRoot)
+        : []
+      const visibleTasks = laneTasks.filter(
+        (task) =>
+          task.status !== 'cancelled' &&
+          (!searching || matchesQuery(task, query))
+      )
+      return { project, visibleTasks }
+    })
+    .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
   return (
-    <ScrollArea className="h-full">
-      <div className="flex flex-col gap-3 p-3">
-        {projectList.map((project, index) => {
-          const laneRoot = FAKE_ROOT_PATHS[index]
-          const laneTasks = laneRoot
-            ? FAKE_TASKS.filter((task) => task.rootPath === laneRoot)
-            : []
-          const cardCount = laneTasks.filter(
-            (task) => task.status !== 'cancelled'
-          ).length
-          const expanded = collapseState.isExpanded(project.id)
-
-          return (
-            <div className="flex flex-col gap-1.5" key={project.id}>
-              <Button
-                className="h-8 w-fit justify-start gap-2 px-2"
-                onClick={() => collapseState.toggle(project.id)}
-                variant="ghost"
-              >
-                {expanded ? (
-                  <ChevronDown className="size-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="size-4 text-muted-foreground" />
-                )}
-                <FolderGit2 className="size-4 text-muted-foreground" />
-                <span className="truncate font-medium text-sm">
-                  {project.name}
-                </span>
-                <span className="text-muted-foreground text-sm tabular-nums">
-                  {cardCount}
-                </span>
-              </Button>
-              {expanded && <LaneBoard tasks={laneTasks} />}
-            </div>
-          )
-        })}
+    <div className="flex h-full flex-col">
+      <div className="flex h-10 shrink-0 items-center border-b px-3">
+        <BoardSearch onChange={setSearchQuery} value={searchQuery} />
       </div>
-    </ScrollArea>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-3 p-3">
+          {lanes.map(({ project, visibleTasks }) => {
+            const expanded = searching || collapseState.isExpanded(project.id)
+
+            return (
+              <div className="flex flex-col gap-1.5" key={project.id}>
+                <Button
+                  className="h-8 w-fit justify-start gap-2 px-2"
+                  onClick={() => collapseState.toggle(project.id)}
+                  variant="ghost"
+                >
+                  {expanded ? (
+                    <ChevronDown className="size-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  )}
+                  <FolderGit2 className="size-4 text-muted-foreground" />
+                  <span className="truncate font-medium text-sm">
+                    {project.name}
+                  </span>
+                  <span className="text-muted-foreground text-sm tabular-nums">
+                    {visibleTasks.length}
+                  </span>
+                </Button>
+                {expanded && <LaneBoard key={query} tasks={visibleTasks} />}
+              </div>
+            )
+          })}
+          {searching && lanes.length === 0 && (
+            <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
+              No matching cards
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   )
 }
 

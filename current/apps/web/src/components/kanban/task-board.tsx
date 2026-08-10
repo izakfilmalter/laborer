@@ -67,6 +67,7 @@ import { useLaborerStore } from '@/livestore/store'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const moveTaskMutation = LaborerClient.mutation('task.move')
 
 /** The four rendered columns, in board order. Cancelled never renders. */
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -266,9 +267,11 @@ function describeJump(task: BoardTask): string {
 function TaskBoardCard({
   task,
   isOverlay = false,
+  onCancel,
 }: {
   readonly task: BoardTask
   readonly isOverlay?: boolean
+  readonly onCancel?: (task: BoardTask) => void
 }) {
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -314,6 +317,26 @@ function TaskBoardCard({
               <TooltipContent>Open Slack thread</TooltipContent>
             </Tooltip>
           )}
+          {!isOverlay && task.source !== 'execution' && onCancel && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    aria-label={`Cancel ${task.title}`}
+                    className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onCancel(task)
+                    }}
+                    type="button"
+                  />
+                }
+              >
+                <X className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Cancel task</TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         {/* Branch row */}
@@ -347,7 +370,18 @@ function TaskBoardCard({
  * One project lane's 4-column kanban. Its own Kanban root, so drags can
  * never cross projects.
  */
-function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
+function LaneBoard({
+  onCancelTask,
+  onMoveTask,
+  tasks,
+}: {
+  readonly onCancelTask: (task: BoardTask) => void
+  readonly onMoveTask: (
+    task: BoardTask,
+    status: Exclude<BoardTaskStatus, 'cancelled'>
+  ) => Promise<void>
+  readonly tasks: readonly BoardTask[]
+}) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
@@ -363,13 +397,26 @@ function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
     return byId
   }, [columnTasks])
 
-  // Persistence for human moves is intentionally a later slice. Keeping the
-  // controlled local value preserves the prototype's reorder behavior without
-  // claiming a durable write occurred.
   return (
     <Kanban
       className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
+      onMove={({ event, activeContainer, overContainer }) => {
+        if (activeContainer === overContainer) {
+          return
+        }
+        const task = tasksById.get(String(event.active.id))
+        const status = BOARD_COLUMNS.find(
+          (column) => column.id === overContainer
+        )?.id
+        if (!(task && status)) {
+          setColumnTasks(buildColumnTasks(tasks))
+          return
+        }
+        onMoveTask(task, status).catch(() => {
+          setColumnTasks(buildColumnTasks(tasks))
+        })
+      }}
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
@@ -398,7 +445,7 @@ function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
                 {(columnTasks[column.id] ?? []).map((task) => (
                   <KanbanItem key={task.id} value={task.id}>
                     <KanbanItemHandle>
-                      <TaskBoardCard task={task} />
+                      <TaskBoardCard onCancel={onCancelTask} task={task} />
                     </KanbanItemHandle>
                   </KanbanItem>
                 ))}
@@ -459,6 +506,7 @@ function TaskBoard({
   )
   const rpcResult = useAtomValue(taskEventsAtom)
   const pullNext = useAtomSet(taskEventsAtom)
+  const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
 
   useEffect(() => {
     if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
@@ -495,6 +543,45 @@ function TaskBoard({
     })
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
+  const persistMove = async (
+    task: BoardTask,
+    status: Exclude<BoardTaskStatus, 'cancelled'>
+  ) => {
+    try {
+      await moveTask({
+        payload: {
+          expectedRevision: task.revision,
+          status,
+          taskId: task.id,
+        },
+      })
+    } catch (error) {
+      toast.error(`Could not move “${task.title}”`, {
+        description: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  }
+
+  const cancelTask = (task: BoardTask) => {
+    // Hide immediately; the subscription delta confirms the durable state.
+    setBoardTasks((current) => current.filter(({ id }) => id !== task.id))
+    moveTask({
+      payload: {
+        expectedRevision: task.revision,
+        status: 'cancelled',
+        taskId: task.id,
+      },
+    }).catch((error) => {
+      setBoardTasks((current) =>
+        current.some(({ id }) => id === task.id) ? current : [...current, task]
+      )
+      toast.error(`Could not cancel “${task.title}”`, {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center border-b px-3">
@@ -528,6 +615,8 @@ function TaskBoard({
                 {expanded && (
                   <LaneBoard
                     key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
+                    onCancelTask={cancelTask}
+                    onMoveTask={persistMove}
                     tasks={visibleTasks}
                   />
                 )}

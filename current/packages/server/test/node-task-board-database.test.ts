@@ -47,4 +47,100 @@ describe('NodeTaskBoardDatabase', () => {
     writer.close()
     reader.close()
   })
+
+  it('persists status moves and appends the change in the same transaction', () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    const raw = new DatabaseSync(path)
+    raw
+      .prepare(`INSERT INTO tasks (
+        id, root_path, title, status, source, created_at, updated_at, revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('task-1', '/repo', 'Task', 'todo', 'manual', 10, 10, 1)
+
+    const moved = database.move('task-1', 1, 'done', 20)
+
+    expect(moved).toMatchObject({
+      id: 'task-1',
+      revision: 2,
+      status: 'done',
+      updatedAt: 20,
+    })
+    expect(
+      raw
+        .prepare(
+          'SELECT task_id, changed_at FROM task_changes ORDER BY sequence'
+        )
+        .all()
+    ).toEqual([{ task_id: 'task-1', changed_at: 20 }])
+
+    database.close()
+    const reopened = NodeTaskBoardDatabase.open(path)
+    expect(reopened.snapshot().tasks).toMatchObject([
+      { id: 'task-1', revision: 2, status: 'done' },
+    ])
+
+    reopened.close()
+    raw.close()
+  })
+
+  it('refetches a stale revision and reapplies the human decision with CAS', () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    const concurrentWriter = new DatabaseSync(path)
+    concurrentWriter
+      .prepare(`INSERT INTO tasks (
+        id, root_path, title, status, source, created_at, updated_at, revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('task-1', '/repo', 'Task', 'todo', 'manual', 10, 10, 1)
+    concurrentWriter
+      .prepare(
+        'UPDATE tasks SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?'
+      )
+      .run('in_review', 15, 'task-1', 1)
+
+    const moved = database.move('task-1', 1, 'done', 20)
+
+    expect(moved).toMatchObject({ revision: 3, status: 'done' })
+    expect(
+      concurrentWriter
+        .prepare('SELECT status, revision FROM tasks WHERE id = ?')
+        .get('task-1')
+    ).toEqual({ status: 'done', revision: 3 })
+
+    concurrentWriter.close()
+    database.close()
+  })
+
+  it('allows cancelling human cards but not execution cards', () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    const raw = new DatabaseSync(path)
+    const insert = raw.prepare(`INSERT INTO tasks (
+      id, root_path, title, status, source, execution_id, created_at, updated_at, revision
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    insert.run('manual', '/repo', 'Manual', 'todo', 'manual', null, 10, 10, 1)
+    insert.run(
+      'execution',
+      '/repo',
+      'Execution',
+      'in_progress',
+      'execution',
+      'execution-1',
+      10,
+      10,
+      1
+    )
+
+    expect(database.move('manual', 1, 'cancelled', 20).status).toBe('cancelled')
+    expect(() => database.move('execution', 1, 'cancelled', 20)).toThrow(
+      'Execution tasks cannot be cancelled from the board'
+    )
+    expect(
+      raw.prepare('SELECT status FROM tasks WHERE id = ?').get('execution')
+    ).toEqual({ status: 'in_progress' })
+
+    raw.close()
+    database.close()
+  })
 })

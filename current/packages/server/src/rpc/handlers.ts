@@ -19,12 +19,15 @@ import {
   RpcError,
 } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
+import type { TaskStatus } from '@laborer/task-db'
+import { taskDatabasePath } from '@laborer/task-db/path'
 import { Array, Effect, pipe, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { LaborerStore } from '../services/laborer-store.js'
+import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
@@ -192,6 +195,43 @@ export const handleProjectList = () =>
     }))
   })
 
+export const handleTaskMove = ({
+  expectedRevision,
+  status,
+  taskId,
+}: {
+  readonly expectedRevision: number
+  readonly status: TaskStatus
+  readonly taskId: string
+}) =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => NodeTaskBoardDatabase.open(taskDatabasePath()),
+      catch: () =>
+        new RpcError({
+          code: 'TASK_MOVE_FAILED',
+          message: 'Unable to open the task database',
+        }),
+    }),
+    (database) =>
+      Effect.try({
+        try: () => database.move(taskId, expectedRevision, status),
+        catch: (cause) =>
+          new RpcError({
+            code: 'TASK_MOVE_FAILED',
+            message:
+              cause instanceof Error ? cause.message : 'Unable to move task',
+          }),
+      }).pipe(
+        Effect.map((task) => ({
+          revision: task.revision,
+          status: task.status,
+          updatedAt: task.updatedAt,
+        }))
+      ),
+    (database) => Effect.sync(() => database.close())
+  )
+
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
@@ -257,6 +297,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       subscribeToTaskBoard().pipe(
         Stream.tap(({ tasks }) => ensureTaskProjects(tasks))
       ),
+    'task.move': handleTaskMove,
 
     // -------------------------------------------------------------------
     // Config RPCs (Issue #157)

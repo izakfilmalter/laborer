@@ -14,10 +14,23 @@ const boardReadError = (cause: unknown) =>
       cause instanceof Error ? cause.message : 'Unable to read the task board',
   })
 
+const executionStatusForBoard = (
+  status: TaskRead['tasks'][number]['executionStatus']
+): TaskBoardEvent['tasks'][number]['executionStatus'] => {
+  if (status === 'needs-attention') {
+    return 'needs_attention'
+  }
+  if (status === 'running' || status === 'failed') {
+    return status
+  }
+  return null
+}
+
 const toEvent = (read: TaskRead): TaskBoardEvent => ({
   ...read,
   tasks: read.tasks.map((task) => ({
     ...task,
+    executionStatus: executionStatusForBoard(task.executionStatus),
     worktreeExists: task.worktreePath !== null && existsSync(task.worktreePath),
   })),
 })

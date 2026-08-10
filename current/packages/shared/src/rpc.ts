@@ -122,6 +122,14 @@ export const ProjectResponse = Schema.Struct({
 
 export type ProjectResponse = typeof ProjectResponse.Type
 
+export const StoredTaskStatus = Schema.Literal(
+  'todo',
+  'in_progress',
+  'in_review',
+  'done',
+  'cancelled'
+)
+
 export const BoardTask = Schema.Struct({
   actionName: Schema.NullOr(Schema.String),
   branchName: Schema.NullOr(Schema.String),
@@ -136,13 +144,7 @@ export const BoardTask = Schema.Struct({
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
   source: Schema.Literal('execution', 'manual', 'slack_url'),
-  status: Schema.Literal(
-    'todo',
-    'in_progress',
-    'in_review',
-    'done',
-    'cancelled'
-  ),
+  status: StoredTaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,
   worktreeExists: Schema.Boolean,
@@ -504,6 +506,21 @@ export class LaborerRpcs extends RpcGroup.make(
     success: TaskBoardEvent,
     error: RpcError,
     stream: true,
+  }),
+
+  /** Revision-CAS status write used by both card drags and cancellation. */
+  Rpc.make('task.move', {
+    success: Schema.Struct({
+      revision: Schema.Int,
+      status: StoredTaskStatus,
+      updatedAt: Schema.Int,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: Schema.Int,
+      status: StoredTaskStatus,
+      taskId: Schema.String,
+    },
   }),
 
   // -----------------------------------------------------------------------

@@ -16,11 +16,23 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   initial_prompt, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
+const MAX_BUSY_ATTEMPTS = 5
+const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
 
 type SqliteRow = Record<string, unknown>
 
 const isSqliteRow = (value: unknown): value is SqliteRow =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isBusy = (error: unknown): boolean =>
+  error instanceof Error &&
+  (('code' in error &&
+    (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_BUSY_SNAPSHOT')) ||
+    BUSY_MESSAGE.test(error.message))
+
+const sleepSync = (milliseconds: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
 
 const invalidColumn = (column: string): never => {
   throw new Error(`Task database contains an invalid ${column}`)
@@ -71,9 +83,13 @@ const taskSource = (value: unknown): TaskSource => {
 const executionStatus = (value: unknown): ExecutionStatus | null => {
   switch (value) {
     case null:
+    case 'queued':
     case 'running':
+    case 'cancelling':
+    case 'completed':
     case 'failed':
-    case 'needs_attention':
+    case 'cancelled':
+    case 'needs-attention':
       return value
     default:
       return invalidColumn('execution_status')
@@ -104,7 +120,7 @@ const rowToTask = (row: SqliteRow): Task => {
   }
 }
 
-/** Node/Electron-compatible, read-focused connection to the shared task DB. */
+/** Node/Electron-compatible connection to the shared task DB. */
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
 
@@ -119,6 +135,7 @@ export class NodeTaskBoardDatabase {
       database.exec('PRAGMA busy_timeout = 5000')
       database.exec('PRAGMA journal_mode = WAL')
       database.exec('PRAGMA synchronous = NORMAL')
+      database.exec('PRAGMA foreign_keys = ON')
       const result = new NodeTaskBoardDatabase(database)
       result.#migrate()
       return result
@@ -218,6 +235,67 @@ export class NodeTaskBoardDatabase {
     })
   }
 
+  /**
+   * Persist a human status declaration. A stale caller revision is refetched
+   * under the write lock and the decision is applied to that newer revision,
+   * so no writer is overwritten without first being observed.
+   */
+  move(
+    id: string,
+    expectedRevision: number,
+    status: TaskStatus,
+    changedAt = Date.now()
+  ): Task {
+    if (!(Number.isSafeInteger(expectedRevision) && expectedRevision >= 1)) {
+      throw new Error('A task move requires a positive expected revision')
+    }
+    return this.#writeTransaction(() => {
+      const find = this.#database.prepare(
+        `SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`
+      )
+      const initialRow = find.get(id)
+      if (initialRow === undefined) {
+        throw new Error(`Task not found: ${id}`)
+      }
+      const initial = rowToTask(sqliteRow(initialRow))
+      if (status === 'cancelled' && initial.source === 'execution') {
+        throw new Error('Execution tasks cannot be cancelled from the board')
+      }
+      if (initial.status === status) {
+        return initial
+      }
+
+      const update = this.#database.prepare(`UPDATE tasks
+        SET status = ?, updated_at = ?, revision = revision + 1
+        WHERE id = ? AND revision = ?`)
+      let revision = expectedRevision
+      let result = update.run(status, changedAt, id, revision)
+      if (result.changes === 0) {
+        const currentRow = find.get(id)
+        if (currentRow === undefined) {
+          throw new Error(`Task not found: ${id}`)
+        }
+        const current = rowToTask(sqliteRow(currentRow))
+        if (current.status === status) {
+          return current
+        }
+        revision = current.revision
+        result = update.run(status, changedAt, id, revision)
+      }
+      if (result.changes === 0) {
+        throw new Error(`Task changed while moving: ${id}`)
+      }
+      this.#database
+        .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
+        .run(id, changedAt)
+      const movedRow = find.get(id)
+      if (movedRow === undefined) {
+        throw new Error(`Moved task could not be read: ${id}`)
+      }
+      return rowToTask(sqliteRow(movedRow))
+    })
+  }
+
   #snapshotUnsafe(): TaskSnapshot {
     const rows = this.#database
       .prepare(
@@ -303,6 +381,34 @@ export class NodeTaskBoardDatabase {
         // Preserve the read failure.
       }
       throw error
+    }
+  }
+
+  #writeTransaction<A>(operation: () => A): A {
+    let attempt = 0
+    while (true) {
+      try {
+        this.#database.exec('BEGIN IMMEDIATE')
+        try {
+          const result = operation()
+          this.#database.exec('COMMIT')
+          return result
+        } catch (error) {
+          try {
+            this.#database.exec('ROLLBACK')
+          } catch {
+            // Preserve the write failure.
+          }
+          throw error
+        }
+      } catch (error) {
+        attempt += 1
+        if (!(isBusy(error) && attempt < MAX_BUSY_ATTEMPTS)) {
+          throw error
+        }
+        const jitter = 0.5 + Math.random()
+        sleepSync(10 * 2 ** (attempt - 1) * jitter)
+      }
     }
   }
 }

@@ -593,7 +593,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       projectId: string,
       branchName?: string,
       onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
-      baseWorkspaceId?: string
+      baseWorkspaceId?: string,
+      onFailure?: (
+        workspaceId: string,
+        error: RpcError
+      ) => Effect.Effect<void, never>
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /**
@@ -989,7 +993,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           projectId: string,
           branchName?: string,
           onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>,
-          baseWorkspaceId?: string
+          baseWorkspaceId?: string,
+          onFailure?: (
+            workspaceId: string,
+            error: RpcError
+          ) => Effect.Effect<void, never>
         ) {
           // 1. Validate the project exists and get its repo path
           const project = yield* registry.getProject(projectId)
@@ -1180,6 +1188,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     ? String(failureOption.value)
                     : prettyMessage
 
+                const failure =
+                  failureOption._tag === 'Some' &&
+                  failureOption.value instanceof RpcError
+                    ? failureOption.value
+                    : new RpcError({
+                        code: 'WORKSPACE_SETUP_FAILED',
+                        message: errorMessage,
+                      })
+
                 // Set workspace to errored status so the user can decide
                 // whether to retry or destroy it. Never auto-destroy — the
                 // worktree may contain uncommitted work.
@@ -1190,6 +1207,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     errorMessage,
                   })
                 )
+
+                if (onFailure) {
+                  yield* onFailure(id, failure)
+                }
               })
             )
           )

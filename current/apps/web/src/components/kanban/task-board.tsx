@@ -14,7 +14,7 @@
 
 import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { projects } from '@laborer/shared/schema'
+import { projects, workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
 import { Cause, Effect, Stream } from 'effect'
@@ -46,6 +46,7 @@ import {
   projectForTask,
   slackAnalysisState,
 } from '@/components/kanban/board-data'
+import { openProvisionedAgent } from '@/components/kanban/provisioned-agent'
 import {
   TerminalAttachButton,
   WorktreeChip,
@@ -79,9 +80,11 @@ import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
+const boardWorkspaces$ = queryDb(workspaces, { label: 'boardWorkspaces' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
@@ -835,8 +838,13 @@ function TaskBoard({
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
+  const workspaceList = store.useQuery(boardWorkspaces$)
+  const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
+  const provisioningTasksRef = useRef(
+    new Map<string, { readonly title: string }>()
+  )
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
@@ -878,6 +886,19 @@ function TaskBoard({
       setBoardTasks([])
     }
   }, [pullNext, rpcResult])
+
+  useEffect(() => {
+    for (const workspace of workspaceList) {
+      const pending = provisioningTasksRef.current.get(workspace.id)
+      if (pending === undefined || workspace.status !== 'errored') {
+        continue
+      }
+      provisioningTasksRef.current.delete(workspace.id)
+      toast.error(`Could not provision “${pending.title}”`, {
+        description: workspace.errorMessage ?? 'Workspace setup failed.',
+      })
+    }
+  }, [workspaceList])
 
   // Closing hands focus back to the card control that opened the terminal, so
   // a keyboard user lands where they left rather than at the top of the board.
@@ -991,13 +1012,22 @@ function TaskBoard({
     status: Exclude<BoardTaskStatus, 'cancelled'>
   ) => {
     try {
-      await moveTask({
+      const result = await moveTask({
         payload: {
           expectedRevision: task.revision,
           status,
           taskId: task.id,
         },
       })
+      if (result.workspaceId !== null) {
+        provisioningTasksRef.current.set(result.workspaceId, {
+          title: task.title,
+        })
+        openProvisionedAgent(
+          result,
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+      }
     } catch (error) {
       toast.error(`Could not move “${task.title}”`, {
         description: extractErrorMessage(error),

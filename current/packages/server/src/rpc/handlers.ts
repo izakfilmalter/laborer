@@ -32,6 +32,8 @@ import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
+import { createTaskCard } from '../services/task-card-creator.js'
+import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
@@ -232,6 +234,50 @@ export const handleTaskMove = ({
     (database) => Effect.sync(() => database.close())
   )
 
+export const handleTaskTerminalAttach = (
+  { taskId }: { readonly taskId: string },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.gen(function* () {
+    const task = yield* Effect.try({
+      try: () => {
+        const database = NodeTaskBoardDatabase.open(databasePath)
+        try {
+          return database.findTask(taskId)
+        } finally {
+          database.close()
+        }
+      },
+      catch: (cause) =>
+        new RpcError({
+          code: 'TASK_BOARD_READ_FAILED',
+          message:
+            cause instanceof Error
+              ? cause.message
+              : 'Unable to read the task board',
+        }),
+    })
+    if (task === null) {
+      return yield* new RpcError({
+        code: 'NOT_FOUND',
+        message: `Task not found: ${taskId}`,
+      })
+    }
+    const inspection = inspectTaskWorktree(task.worktreePath, task.executionId)
+    if (!(inspection.exists && task.worktreePath)) {
+      return yield* new RpcError({
+        code: 'WORKTREE_NOT_FOUND',
+        message: 'The task worktree is not available on disk',
+      })
+    }
+    const terminalClient = yield* TerminalClient
+    const terminal = yield* terminalClient.spawnInDirectory(
+      `task:${task.id}`,
+      task.worktreePath
+    )
+    return { botOwned: inspection.botOwned, terminal }
+  })
+
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
@@ -297,7 +343,18 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       subscribeToTaskBoard().pipe(
         Stream.tap(({ tasks }) => ensureTaskProjects(tasks))
       ),
+    'task.create': ({ projectId, status, text }) =>
+      Effect.gen(function* () {
+        const project = yield* getProjectFromStore(projectId)
+        return yield* createTaskCard({
+          rootPath: project.repoPath,
+          status,
+          text,
+        })
+      }),
     'task.move': handleTaskMove,
+
+    'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 
     // -------------------------------------------------------------------
     // Config RPCs (Issue #157)

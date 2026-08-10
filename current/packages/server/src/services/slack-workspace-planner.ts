@@ -1,4 +1,5 @@
 import { RpcError } from '@laborer/shared/rpc'
+import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { Effect } from 'effect'
 import { spawn } from '../lib/spawn.js'
 
@@ -6,6 +7,8 @@ const OPENCODE_MODEL = 'openai/gpt-5.6-sol-fast'
 const OPENCODE_TIMEOUT_MS = 180_000
 const PROCESS_KILL_GRACE_MS = 2000
 const MAX_ERROR_LENGTH = 2000
+const MAX_STDERR_BYTES = 64 * 1024
+const MAX_STDOUT_BYTES = 1024 * 1024
 const MAX_SLUG_LENGTH = 48
 const SLACK_NAME_PREFIX_PATTERN = /^slack\s*[/-]+\s*/u
 const SLUG_INVALID_CHARACTERS_PATTERN = /[^a-z0-9]+/gu
@@ -18,6 +21,7 @@ type SlackWorkType = 'bug' | 'feature'
 interface SlackWorkspacePlan {
   readonly branchName: string
   readonly initialPrompt: string
+  readonly title: string
   readonly workType: SlackWorkType
 }
 
@@ -31,6 +35,7 @@ interface OpenCodeTextEvent {
 
 interface RawSlackWorkspacePlan {
   readonly messages?: unknown
+  readonly title?: unknown
   readonly work_type?: unknown
   readonly workspace_name?: unknown
 }
@@ -54,30 +59,6 @@ const isSlackMessage = (value: unknown): value is SlackMessage => {
     typeof message.text === 'string' &&
     (message.timestamp === undefined || typeof message.timestamp === 'string')
   )
-}
-
-const isSlackMessageUrl = (value: string): boolean => {
-  try {
-    const url = new URL(value)
-    const isSlackHost =
-      url.hostname === 'slack.com' || url.hostname.endsWith('.slack.com')
-    if (url.protocol !== 'https:' || !isSlackHost) {
-      return false
-    }
-
-    const segments = url.pathname.split('/').filter(Boolean)
-    const isArchiveMessage =
-      segments[0] === 'archives' &&
-      segments.length >= 3 &&
-      segments[2]?.startsWith('p')
-    const isAppMessage =
-      segments[0] === 'client' &&
-      ((segments[3] === 'thread' && segments.length >= 5) ||
-        segments[3]?.startsWith('p') === true)
-    return isArchiveMessage || isAppMessage
-  } catch {
-    return false
-  }
 }
 
 const normalizeWorkspaceName = (value: string): string => {
@@ -189,6 +170,9 @@ const parseSlackWorkspacePlan = (
 
   if (
     typeof rawPlan.workspace_name !== 'string' ||
+    typeof rawPlan.title !== 'string' ||
+    rawPlan.title.trim().length === 0 ||
+    rawPlan.title.trim().length > 100 ||
     !Array.isArray(rawPlan.messages) ||
     rawPlan.messages.length === 0 ||
     !rawPlan.messages.every(isSlackMessage) ||
@@ -208,6 +192,7 @@ const parseSlackWorkspacePlan = (
       slackUrl,
       rawPlan.messages
     ),
+    title: rawPlan.title.trim(),
     workType: rawPlan.work_type,
   }
 }
@@ -229,7 +214,7 @@ Classify the request as exactly one of:
 - bug: something existing is broken, incorrect, or regressed
 - feature: a new capability, enhancement, or behavior change is requested
 
-Produce a concise workspace name and a structured list of the relevant Slack
+Produce a short card title (100 characters or fewer), a concise workspace name, and a structured list of the relevant Slack
 messages. Copy message text verbatim with author names and timestamps. Include
 enough of the thread to preserve meaning. Do not summarize, reinterpret, or
 invent requirements.
@@ -237,6 +222,7 @@ invent requirements.
 Return exactly one valid JSON object and no markdown or commentary:
 {
   "work_type": "bug or feature",
+  "title": "short human-readable card title",
   "workspace_name": "lowercase-words-separated-by-hyphens",
   "messages": [
     { "author": "name", "timestamp": "Slack timestamp", "text": "verbatim text" }
@@ -259,6 +245,32 @@ const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, milliseconds)
   })
+
+const readBoundedText = async (
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  label: string
+): Promise<string> => {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let bytesRead = 0
+  let text = ''
+  try {
+    while (true) {
+      const result = await reader.read()
+      if (result.done) {
+        return text + decoder.decode()
+      }
+      bytesRead += result.value.byteLength
+      if (bytesRead > maximumBytes) {
+        throw new Error(`OpenCode ${label} exceeded the output limit.`)
+      }
+      text += decoder.decode(result.value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
 
 const terminateProcess = async (
   childProcess: ReturnType<typeof spawn>
@@ -308,8 +320,8 @@ const executeOpenCode = async (
     const result = await Promise.race([
       Promise.all([
         childProcess.exited,
-        new Response(childProcess.stdout).text(),
-        new Response(childProcess.stderr).text(),
+        readBoundedText(childProcess.stdout, MAX_STDOUT_BYTES, 'stdout'),
+        readBoundedText(childProcess.stderr, MAX_STDERR_BYTES, 'stderr'),
       ]),
       timeoutPromise,
     ])
@@ -323,6 +335,9 @@ const executeOpenCode = async (
     }
 
     return stdout
+  } catch (error) {
+    await startTermination().catch(() => undefined)
+    throw error
   } finally {
     signal.removeEventListener('abort', abortProcess)
     if (timeout !== undefined) {
@@ -372,7 +387,6 @@ export {
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
   extractOpenCodeText,
-  isSlackMessageUrl,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
   planSlackWorkspace,

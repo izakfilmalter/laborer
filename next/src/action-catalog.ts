@@ -8,8 +8,7 @@ import {
   ACTION_CANONICAL_MAX_ITEMS as SHARED_ACTION_CANONICAL_MAX_ITEMS,
   canonicalCatalogJson as sharedCanonicalCatalogJson,
 } from "./bounded-action-value.ts";
-import { ActionTitle } from "./task-db/execution-task-emitter.ts";
-
+import { ActionTitle } from "./task-db/task-schemas.ts";
 export const ACTION_CANONICAL_MAX_BYTES = SHARED_ACTION_CANONICAL_MAX_BYTES;
 export const ACTION_CANONICAL_MAX_DEPTH = SHARED_ACTION_CANONICAL_MAX_DEPTH;
 export const ACTION_CANONICAL_MAX_ITEMS = SHARED_ACTION_CANONICAL_MAX_ITEMS;
@@ -20,7 +19,6 @@ export const ACTION_CATALOG_CONTRACT_VERSION = 1;
 export const WORKTREE_NAME_MAX_LENGTH = 64;
 export const SAFE_WORKTREE_NAME_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
-
 export const SafeWorktreeName = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(WORKTREE_NAME_MAX_LENGTH),

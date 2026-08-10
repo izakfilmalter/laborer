@@ -4,7 +4,9 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
   ExecutionStatus,
+  NewTask,
   Task,
+  TaskPatch,
   TaskRead,
   TaskSnapshot,
   TaskSource,
@@ -16,23 +18,31 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   initial_prompt, created_at, updated_at, revision`
 const MAX_SNAPSHOT_TASKS = 10_000
-const MAX_BUSY_ATTEMPTS = 5
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
+const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
+  title: 'title',
+  status: 'status',
+  executionStatus: 'execution_status',
+  slackPermalink: 'slack_permalink',
+  worktreePath: 'worktree_path',
+  branchName: 'branch_name',
+  initialPrompt: 'initial_prompt',
+}
+const MAX_BRANCH_TASKS = 1000
+const MAX_CAS_ATTEMPTS = 5
+
+export interface PrTaskTransitionInput {
+  readonly branchName: string
+  readonly changedAt?: number
+  readonly projectRepoPath: string
+  readonly prState: string | null
+  readonly registeredProjectRepoPaths: readonly string[]
+}
 
 type SqliteRow = Record<string, unknown>
 
 const isSqliteRow = (value: unknown): value is SqliteRow =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isBusy = (error: unknown): boolean =>
-  error instanceof Error &&
-  (('code' in error &&
-    (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_BUSY_SNAPSHOT')) ||
-    BUSY_MESSAGE.test(error.message))
-
-const sleepSync = (milliseconds: number): void => {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
-}
 
 const invalidColumn = (column: string): never => {
   throw new Error(`Task database contains an invalid ${column}`)
@@ -120,6 +130,44 @@ const rowToTask = (row: SqliteRow): Task => {
   }
 }
 
+const pathContains = (parent: string, child: string): boolean =>
+  parent === child ||
+  child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
+const nearestProjectRoot = (
+  rootPath: string,
+  projectRoots: readonly string[]
+): string | undefined => {
+  let nearest: string | undefined
+  for (const projectRoot of projectRoots) {
+    if (
+      pathContains(projectRoot, rootPath) &&
+      (nearest === undefined || projectRoot.length > nearest.length)
+    ) {
+      nearest = projectRoot
+    }
+  }
+  return nearest
+}
+
+const nextStatusForPr = (task: Task, prState: string): TaskStatus | null => {
+  switch (prState.toUpperCase()) {
+    case 'MERGED':
+      return task.status === 'done' ? null : 'done'
+    case 'CLOSED':
+      return task.status === 'in_review' ? 'in_progress' : null
+    case 'OPEN':
+      return task.status === 'in_progress' &&
+        (task.source === 'manual' || task.source === 'slack_url')
+        ? 'in_review'
+        : null
+    default:
+      return null
+  }
+}
+
+class StalePrTaskTransition extends Error {}
+
 /** Node/Electron-compatible connection to the shared task DB. */
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
@@ -151,6 +199,13 @@ export class NodeTaskBoardDatabase {
 
   snapshot(): TaskSnapshot {
     return this.#readTransaction(() => this.#snapshotUnsafe())
+  }
+
+  findTask(taskId: string): Task | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .get(taskId)
+    return row === undefined ? null : rowToTask(sqliteRow(row))
   }
 
   readChanges(sequence: number, limit = 1000): TaskRead {
@@ -235,6 +290,83 @@ export class NodeTaskBoardDatabase {
     })
   }
 
+  find(id: string): Task | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .get(id)
+    return row === undefined ? null : rowToTask(sqliteRow(row))
+  }
+
+  insert(input: NewTask, changedAt = Date.now()): Task {
+    const createdAt = input.createdAt ?? changedAt
+    return this.#writeTransaction(() => {
+      this.#database
+        .prepare(`INSERT INTO tasks (
+          id, root_path, title, status, source, execution_id, action_name,
+          execution_status, slack_permalink, worktree_path, branch_name,
+          initial_prompt, created_at, updated_at, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+        .run(
+          input.id,
+          input.rootPath,
+          input.title,
+          input.status,
+          input.source,
+          input.executionId ?? null,
+          input.actionName ?? null,
+          input.executionStatus ?? null,
+          input.slackPermalink ?? null,
+          input.worktreePath ?? null,
+          input.branchName ?? null,
+          input.initialPrompt ?? null,
+          createdAt,
+          changedAt
+        )
+      this.#appendChange(input.id, changedAt)
+      const task = this.find(input.id)
+      if (!task) {
+        throw new Error(`Inserted task ${input.id} could not be read`)
+      }
+      return task
+    })
+  }
+
+  update(
+    id: string,
+    expectedRevision: number,
+    patch: TaskPatch,
+    changedAt = Date.now()
+  ): Task {
+    const entries = (Object.keys(patch) as (keyof TaskPatch)[]).map(
+      (field) => [field, patch[field]] as const
+    )
+    if (entries.length === 0) {
+      throw new Error('A task update requires at least one field')
+    }
+    return this.#writeTransaction(() => {
+      const result = this.#database
+        .prepare(`UPDATE tasks SET ${entries
+          .map(([field]) => `${PATCH_COLUMNS[field]} = ?`)
+          .join(', ')}, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(
+          ...entries.map(([, value]) => value ?? null),
+          changedAt,
+          id,
+          expectedRevision
+        )
+      if (result.changes === 0) {
+        throw new Error(`Task ${id} has a stale revision`)
+      }
+      this.#appendChange(id, changedAt)
+      const task = this.find(id)
+      if (!task) {
+        throw new Error(`Updated task ${id} could not be read`)
+      }
+      return task
+    })
+  }
+
   /**
    * Persist a human status declaration. A stale caller revision is compared
    * with the row under the write lock: an already-applied declaration is
@@ -250,14 +382,10 @@ export class NodeTaskBoardDatabase {
       throw new Error('A task move requires a positive expected revision')
     }
     return this.#writeTransaction(() => {
-      const find = this.#database.prepare(
-        `SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`
-      )
-      const initialRow = find.get(id)
-      if (initialRow === undefined) {
+      const initial = this.find(id)
+      if (initial === null) {
         throw new Error(`Task not found: ${id}`)
       }
-      const initial = rowToTask(sqliteRow(initialRow))
       if (status === 'cancelled' && initial.source === 'execution') {
         throw new Error('Execution tasks cannot be cancelled from the board')
       }
@@ -268,22 +396,100 @@ export class NodeTaskBoardDatabase {
         throw new Error(`Task changed while moving: ${id}`)
       }
 
-      const update = this.#database.prepare(`UPDATE tasks
-        SET status = ?, updated_at = ?, revision = revision + 1
-        WHERE id = ? AND revision = ?`)
-      const result = update.run(status, changedAt, id, expectedRevision)
+      const result = this.#database
+        .prepare(`UPDATE tasks
+          SET status = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(status, changedAt, id, expectedRevision)
       if (result.changes === 0) {
         throw new Error(`Task changed while moving: ${id}`)
       }
-      this.#database
-        .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
-        .run(id, changedAt)
-      const movedRow = find.get(id)
-      if (movedRow === undefined) {
+      this.#appendChange(id, changedAt)
+      const moved = this.find(id)
+      if (moved === null) {
         throw new Error(`Moved task could not be read: ${id}`)
       }
-      return rowToTask(sqliteRow(movedRow))
+      return moved
     })
+  }
+
+  /**
+   * Move the newest task bound to a branch when its PR lifecycle requires it.
+   * Selection and the revision-CAS write share a short IMMEDIATE transaction;
+   * the ledger append is committed atomically with the task update.
+   */
+  transitionTaskForPr(input: PrTaskTransitionInput): Task | null {
+    if (input.prState === null) {
+      return null
+    }
+    const projectRoots = input.registeredProjectRepoPaths.includes(
+      input.projectRepoPath
+    )
+      ? input.registeredProjectRepoPaths
+      : [...input.registeredProjectRepoPaths, input.projectRepoPath]
+    const changedAt = input.changedAt ?? Date.now()
+
+    for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
+      try {
+        return this.#writeTransaction(() => {
+          const rows = this.#database
+            .prepare(
+              `SELECT ${TASK_COLUMNS} FROM tasks
+               WHERE branch_name = ?
+               ORDER BY created_at DESC, id DESC LIMIT ?`
+            )
+            .all(input.branchName, MAX_BRANCH_TASKS + 1)
+          if (rows.length > MAX_BRANCH_TASKS) {
+            throw new Error(
+              `Branch ${input.branchName} exceeds the ${MAX_BRANCH_TASKS} task match limit`
+            )
+          }
+          const task = rows
+            .map((row) => rowToTask(sqliteRow(row)))
+            .find(
+              (candidate) =>
+                nearestProjectRoot(candidate.rootPath, projectRoots) ===
+                input.projectRepoPath
+            )
+          if (task === undefined) {
+            return null
+          }
+          const status = nextStatusForPr(task, input.prState ?? '')
+          if (status === null) {
+            return null
+          }
+
+          const result = this.#database
+            .prepare(`UPDATE tasks
+              SET status = ?, updated_at = ?, revision = revision + 1
+              WHERE id = ? AND revision = ?`)
+            .run(status, changedAt, task.id, task.revision)
+          if (result.changes === 0) {
+            throw new StalePrTaskTransition()
+          }
+          this.#database
+            .prepare(
+              'INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)'
+            )
+            .run(task.id, changedAt)
+          const updated = this.#database
+            .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+            .get(task.id)
+          if (updated === undefined) {
+            throw new Error(`Updated task ${task.id} could not be read`)
+          }
+          return rowToTask(sqliteRow(updated))
+        })
+      } catch (error) {
+        if (
+          !(error instanceof StalePrTaskTransition) ||
+          attempt === MAX_CAS_ATTEMPTS
+        ) {
+          throw error
+        }
+      }
+    }
+    return null
   }
 
   #snapshotUnsafe(): TaskSnapshot {
@@ -358,6 +564,45 @@ export class NodeTaskBoardDatabase {
     }
   }
 
+  #appendChange(taskId: string, changedAt: number): void {
+    this.#database
+      .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
+      .run(taskId, changedAt)
+  }
+
+  #writeTransaction<A>(operation: () => A): A {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        this.#database.exec('BEGIN IMMEDIATE')
+        try {
+          const result = operation()
+          this.#database.exec('COMMIT')
+          return result
+        } catch (error) {
+          try {
+            this.#database.exec('ROLLBACK')
+          } catch {
+            // Preserve the operation failure.
+          }
+          throw error
+        }
+      } catch (error) {
+        if (
+          attempt >= 5 ||
+          !(error instanceof Error && BUSY_MESSAGE.test(error.message))
+        ) {
+          throw error
+        }
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(4)),
+          0,
+          0,
+          Math.min(250, 10 * 2 ** (attempt - 1) * (0.5 + Math.random()))
+        )
+      }
+    }
+  }
+
   #readTransaction<A>(operation: () => A): A {
     this.#database.exec('BEGIN')
     try {
@@ -371,34 +616,6 @@ export class NodeTaskBoardDatabase {
         // Preserve the read failure.
       }
       throw error
-    }
-  }
-
-  #writeTransaction<A>(operation: () => A): A {
-    let attempt = 0
-    while (true) {
-      try {
-        this.#database.exec('BEGIN IMMEDIATE')
-        try {
-          const result = operation()
-          this.#database.exec('COMMIT')
-          return result
-        } catch (error) {
-          try {
-            this.#database.exec('ROLLBACK')
-          } catch {
-            // Preserve the write failure.
-          }
-          throw error
-        }
-      } catch (error) {
-        attempt += 1
-        if (!(isBusy(error) && attempt < MAX_BUSY_ATTEMPTS)) {
-          throw error
-        }
-        const jitter = 0.5 + Math.random()
-        sleepSync(10 * 2 ** (attempt - 1) * jitter)
-      }
     }
   }
 }

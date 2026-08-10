@@ -66,6 +66,7 @@ import {
   FileWatcherRpcPort,
 } from './services/file-watcher-client.js'
 import { LaborerStore, LaborerStoreLive } from './services/laborer-store.js'
+import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
@@ -269,7 +270,7 @@ const DeferredLeafLayers = Layer.mergeAll(
 const DeferredGroup1aLayers = Layer.mergeAll(
   BranchStateTracker.layer,
   FileService.layer,
-  PrWatcher.layer
+  PrWatcher.layer.pipe(Layer.provide(PrTaskTransitions.layer))
 )
 
 /**

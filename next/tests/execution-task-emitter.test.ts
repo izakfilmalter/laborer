@@ -101,8 +101,9 @@ describe("execution task emission", () => {
   });
 
   it("drops malformed emission without failing its caller", async () => {
+    const path = temporaryPath();
     const emitter = openExecutionTaskEmitter({
-      databasePath: temporaryPath(),
+      databasePath: path,
       rootPath: "/projects/laborer",
     });
     await expect(
@@ -110,6 +111,21 @@ describe("execution task emission", () => {
         emitter.emit({ ...projection("queued"), input: { title: " " } })
       )
     ).resolves.toBeUndefined();
+    await expect(
+      Effect.runPromise(
+        emitter.emit({
+          ...projection("queued"),
+          input: {
+            prompt: "Fix it",
+            title: "Unsafe persisted worktree",
+            worktreeName: "../outside",
+          },
+        })
+      )
+    ).resolves.toBeUndefined();
+    const database = NativeTaskDatabase.open(path);
+    expect(database.findByExecutionId("execution-1")).toBeNull();
+    database.close();
     emitter.close();
   });
 });

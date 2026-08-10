@@ -1,5 +1,6 @@
 import { Rpc, RpcGroup } from '@effect/rpc'
 import { Schema } from 'effect'
+import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -136,7 +137,15 @@ export const BoardTask = Schema.Struct({
   createdAt: Schema.Int,
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal('running', 'failed', 'needs_attention')
+    Schema.Literal(
+      'queued',
+      'running',
+      'cancelling',
+      'completed',
+      'failed',
+      'cancelled',
+      'needs-attention'
+    )
   ),
   id: Schema.String,
   initialPrompt: Schema.NullOr(Schema.String),
@@ -147,6 +156,7 @@ export const BoardTask = Schema.Struct({
   status: StoredTaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,
+  worktreeBotOwned: Schema.Boolean,
   worktreeExists: Schema.Boolean,
   worktreePath: Schema.NullOr(Schema.String),
 })
@@ -208,6 +218,7 @@ const WorkspaceResponse = Schema.Struct({
 const SlackWorkspacePlanResponse = Schema.Struct({
   branchName: Schema.String,
   initialPrompt: Schema.String,
+  title: Schema.String,
   workType: Schema.Literal('bug', 'feature'),
 })
 
@@ -508,6 +519,20 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
   }),
 
+  Rpc.make('task.create', {
+    success: Schema.Struct({
+      id: Schema.String,
+      source: Schema.Literal('manual', 'slack_url'),
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+    }),
+    error: RpcError,
+    payload: {
+      projectId: Schema.String,
+      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      text: Schema.String.pipe(Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)),
+    },
+  }),
+
   /** Revision-CAS status write used by both card drags and cancellation. */
   Rpc.make('task.move', {
     success: Schema.Struct({
@@ -586,7 +611,9 @@ export class LaborerRpcs extends RpcGroup.make(
     success: SlackWorkspacePlanResponse,
     error: RpcError,
     payload: {
-      slackUrl: Schema.String,
+      slackUrl: Schema.String.pipe(
+        Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)
+      ),
     },
   }),
 
@@ -649,6 +676,18 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
+    },
+  }),
+
+  /** Spawn a shell using the task's shared-db worktree path as plain cwd. */
+  Rpc.make('task.terminal.attach', {
+    success: Schema.Struct({
+      botOwned: Schema.Boolean,
+      terminal: TerminalResponse,
+    }),
+    error: RpcError,
+    payload: {
+      taskId: Schema.String,
     },
   }),
 

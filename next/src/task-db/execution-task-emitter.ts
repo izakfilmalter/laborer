@@ -1,21 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { Console, Context, Effect, Schema } from "effect";
+import { CreateFeatureActionInput } from "../action-catalog.ts";
 import type { ExecutionStatus } from "../durable-runtime/root-runtime.ts";
 import {
   NativeTaskDatabase,
   type Task,
   TaskStaleRevisionError,
 } from "./task-database.ts";
-
-export const ACTION_TITLE_MAX_LENGTH = 100;
-const NONBLANK_PATTERN = /\S/;
-export const ActionTitle = Schema.String.check(
-  Schema.isPattern(NONBLANK_PATTERN),
-  Schema.isMaxLength(ACTION_TITLE_MAX_LENGTH)
-).annotate({
-  description: "A short, nonblank title for the Action Execution.",
-});
 
 export interface ExecutionTaskProjection {
   readonly acceptedAtUnixMs: number;
@@ -74,19 +66,8 @@ const ulid = (time: number): string => {
 const executionInput = (
   value: unknown
 ): { readonly title: string; readonly worktreeName: string } => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("title" in value) ||
-    !("worktreeName" in value) ||
-    typeof value.title !== "string" ||
-    typeof value.worktreeName !== "string" ||
-    !NONBLANK_PATTERN.test(value.title) ||
-    value.title.length > ACTION_TITLE_MAX_LENGTH
-  ) {
-    throw new Error("Execution task input is invalid");
-  }
-  return { title: value.title, worktreeName: value.worktreeName };
+  const input = Schema.decodeUnknownSync(CreateFeatureActionInput)(value);
+  return { title: input.title, worktreeName: input.worktreeName };
 };
 
 const taskStatusPatch = (

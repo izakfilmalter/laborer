@@ -444,7 +444,8 @@ function AddCardButton({
       <TooltipTrigger
         render={
           <Button
-            aria-controls={composerId}
+            // Only reference the composer while it exists in the tree.
+            aria-controls={open ? composerId : undefined}
             aria-expanded={open}
             aria-label={`Add card to ${columnTitle}`}
             className="ml-auto text-muted-foreground"
@@ -562,7 +563,6 @@ function AddCardComposer({
           aria-label={`Card title or Slack message link for ${column.title}`}
           autoFocus
           className="text-xs"
-          disabled={submitting}
           onBlur={() => {
             // An abandoned empty composer closes itself; typed text stays put.
             if (!submitting && trimmed.length === 0) {
@@ -584,6 +584,9 @@ function AddCardComposer({
             }
           }}
           placeholder="Title, or paste a Slack link"
+          // Read-only rather than disabled: a disabled input drops focus, so
+          // the caret would leave the composer on every commit.
+          readOnly={submitting}
           ref={inputRef}
           value={value}
         />

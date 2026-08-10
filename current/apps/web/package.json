@@ -17,6 +17,9 @@
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.7.9",
     "@base-ui/react": "^1.2.0",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@effect-atom/atom": "0.4.13",
     "@effect-atom/atom-react": "0.4.6",
     "@effect/experimental": "0.57.11",

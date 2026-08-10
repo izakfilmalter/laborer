@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
+  SquareKanban,
   Terminal,
 } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
@@ -16,8 +17,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-/** The two main content views: terminal panels or cross-project dashboard. */
-export type MainView = 'panels' | 'dashboard'
+/** The main content views: terminal panels, dashboard, or kanban board. */
+export type MainView = 'panels' | 'dashboard' | 'kanban'
 
 /** Displays the contextual label for the current view. */
 function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
@@ -26,6 +27,9 @@ function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
   }
   if (mainView === 'dashboard') {
     return <span className="text-foreground">Dashboard</span>
+  }
+  if (mainView === 'kanban') {
+    return <span className="text-foreground">Board</span>
   }
   return null
 }
@@ -241,6 +245,22 @@ export function PanelHeaderBar({
               <LayoutDashboard className="size-3.5" />
             </TooltipTrigger>
             <TooltipContent>Dashboard</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Board"
+                  className={mainView === 'kanban' ? 'bg-accent' : ''}
+                  onClick={() => onViewChange('kanban')}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <SquareKanban className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>Board</TooltipContent>
           </Tooltip>
         </div>
         <div className="min-w-0 truncate text-muted-foreground text-xs">

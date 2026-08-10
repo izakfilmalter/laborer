@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
+import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
@@ -1179,6 +1180,13 @@ function HomeComponent() {
                   <div className="flex h-full flex-col">
                     <div className="min-h-0 flex-1">
                       <WorkspaceDashboard />
+                    </div>
+                  </div>
+                )}
+                {mainView === 'kanban' && (
+                  <div className="flex h-full flex-col">
+                    <div className="min-h-0 flex-1">
+                      <TaskBoard />
                     </div>
                   </div>
                 )}

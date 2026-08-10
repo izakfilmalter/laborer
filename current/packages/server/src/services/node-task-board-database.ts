@@ -236,9 +236,9 @@ export class NodeTaskBoardDatabase {
   }
 
   /**
-   * Persist a human status declaration. A stale caller revision is refetched
-   * under the write lock and the decision is applied to that newer revision,
-   * so no writer is overwritten without first being observed.
+   * Persist a human status declaration. A stale caller revision is compared
+   * with the row under the write lock: an already-applied declaration is
+   * idempotent, while a different winning status is left untouched.
    */
   move(
     id: string,
@@ -264,24 +264,14 @@ export class NodeTaskBoardDatabase {
       if (initial.status === status) {
         return initial
       }
+      if (initial.revision !== expectedRevision) {
+        throw new Error(`Task changed while moving: ${id}`)
+      }
 
       const update = this.#database.prepare(`UPDATE tasks
         SET status = ?, updated_at = ?, revision = revision + 1
         WHERE id = ? AND revision = ?`)
-      let revision = expectedRevision
-      let result = update.run(status, changedAt, id, revision)
-      if (result.changes === 0) {
-        const currentRow = find.get(id)
-        if (currentRow === undefined) {
-          throw new Error(`Task not found: ${id}`)
-        }
-        const current = rowToTask(sqliteRow(currentRow))
-        if (current.status === status) {
-          return current
-        }
-        revision = current.revision
-        result = update.run(status, changedAt, id, revision)
-      }
+      const result = update.run(status, changedAt, id, expectedRevision)
       if (result.changes === 0) {
         throw new Error(`Task changed while moving: ${id}`)
       }

@@ -139,6 +139,7 @@ interface RetryOptions {
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   initial_prompt, created_at, updated_at, revision`
+const MAX_SNAPSHOT_TASKS = 10_000
 
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
   title: 'title',
@@ -542,9 +543,15 @@ export class NativeTaskDatabase {
 
   #snapshotUnsafe(): TaskSnapshot {
     const rows = this.#database
-      .query(`SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id`)
-      .all()
-      .map((value) => rowToTask(sqliteRow(value)))
+      .query(
+        `SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id LIMIT ?`
+      )
+      .all(MAX_SNAPSHOT_TASKS + 1)
+    if (rows.length > MAX_SNAPSHOT_TASKS) {
+      throw new Error(
+        `Task database snapshot exceeds the ${MAX_SNAPSHOT_TASKS} task limit`
+      )
+    }
     const cursorRow = sqliteRow(
       this.#database
         .query('SELECT COALESCE(MAX(sequence), 0) AS cursor FROM task_changes')
@@ -553,7 +560,7 @@ export class NativeTaskDatabase {
     return {
       _tag: 'snapshot',
       cursor: safeInteger(cursorRow.cursor, 'task_changes.cursor'),
-      tasks: rows,
+      tasks: rows.map((value) => rowToTask(sqliteRow(value))),
     }
   }
 

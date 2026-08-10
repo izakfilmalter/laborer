@@ -144,8 +144,13 @@ export const openExecutionTaskEmitter = (
   options: NativeExecutionTaskEmitterOptions
 ): OpenedExecutionTaskEmitter => {
   const database = NativeTaskDatabase.open(options.databasePath);
-  const pendingPermalinks = new Set<string>();
-  const permalinkTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  const pendingPermalinks = new Map<
+    string,
+    {
+      readonly reject: (cause: Error) => void;
+      readonly timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   let closed = false;
 
   const update = (task: Task, execution: ExecutionTaskProjection): Task => {
@@ -186,7 +191,6 @@ export const openExecutionTaskEmitter = (
     ) {
       return;
     }
-    pendingPermalinks.add(execution.executionId);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const permalink = await Promise.race([
@@ -199,7 +203,7 @@ export const openExecutionTaskEmitter = (
             () => reject(new Error("Slack permalink lookup timed out")),
             SLACK_PERMALINK_TIMEOUT_MS
           );
-          permalinkTimeouts.add(timeout);
+          pendingPermalinks.set(execution.executionId, { reject, timeout });
         }),
       ]);
       if (closed) {
@@ -216,7 +220,6 @@ export const openExecutionTaskEmitter = (
     } finally {
       if (timeout !== undefined) {
         clearTimeout(timeout);
-        permalinkTimeouts.delete(timeout);
       }
       pendingPermalinks.delete(execution.executionId);
     }
@@ -267,10 +270,11 @@ export const openExecutionTaskEmitter = (
   return {
     close: () => {
       closed = true;
-      for (const timeout of permalinkTimeouts) {
-        clearTimeout(timeout);
+      for (const pending of pendingPermalinks.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error("Execution task emitter closed"));
       }
-      permalinkTimeouts.clear();
+      pendingPermalinks.clear();
       database.close();
     },
     emit: (execution) =>

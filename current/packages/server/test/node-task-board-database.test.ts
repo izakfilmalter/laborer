@@ -84,7 +84,7 @@ describe('NodeTaskBoardDatabase', () => {
     raw.close()
   })
 
-  it('refetches a stale revision and reapplies the human decision with CAS', () => {
+  it('leaves the winning state visible when a human move loses its CAS', () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)
     const concurrentWriter = new DatabaseSync(path)
@@ -99,14 +99,14 @@ describe('NodeTaskBoardDatabase', () => {
       )
       .run('in_review', 15, 'task-1', 1)
 
-    const moved = database.move('task-1', 1, 'done', 20)
-
-    expect(moved).toMatchObject({ revision: 3, status: 'done' })
+    expect(() => database.move('task-1', 1, 'done', 20)).toThrow(
+      'Task changed while moving: task-1'
+    )
     expect(
       concurrentWriter
         .prepare('SELECT status, revision FROM tasks WHERE id = ?')
         .get('task-1')
-    ).toEqual({ status: 'done', revision: 3 })
+    ).toEqual({ status: 'in_review', revision: 2 })
 
     concurrentWriter.close()
     database.close()

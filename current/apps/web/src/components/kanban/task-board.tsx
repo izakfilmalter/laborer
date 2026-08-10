@@ -28,6 +28,7 @@ import {
   MessageSquare,
   Search,
   SquarePen,
+  Terminal,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -62,11 +63,15 @@ import {
 } from '@/components/ui/tooltip'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
-import { cn } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { TerminalPane } from '@/panes/terminal-pane'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const attachTaskTerminalMutation = LaborerClient.mutation(
+  'task.terminal.attach'
+)
 
 /** The four rendered columns, in board order. Cancelled never renders. */
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -201,7 +206,7 @@ function ExecutionMirrorBadge({
 }: {
   readonly mirror: BoardTask['executionMirror']
 }) {
-  if (mirror === 'needs_attention') {
+  if (mirror === 'needs-attention') {
     return (
       <Badge
         className="gap-1 border-warning/30 bg-warning/10 text-warning"
@@ -242,6 +247,14 @@ function WorktreeChip({ task }: { readonly task: BoardTask }) {
       </Badge>
     )
   }
+  if (task.worktreeState === 'exists') {
+    return (
+      <Badge className="gap-1 text-muted-foreground" variant="outline">
+        <FolderGit2 className="size-3" />
+        {task.worktreeBotOwned ? 'Bot-owned worktree' : 'Worktree'}
+      </Badge>
+    )
+  }
   return null
 }
 
@@ -250,25 +263,18 @@ function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
   return state.toUpperCase()
 }
 
-function describeJump(task: BoardTask): string {
-  switch (task.worktreeState) {
-    case 'exists':
-      return `Would jump into workspace ${task.branch ?? task.worktreePath}`
-    case 'provisioning':
-      return 'Worktree is still provisioning — nothing to open yet'
-    case 'gone':
-      return 'Worktree no longer exists on disk'
-    default:
-      return 'No workspace yet — leaving Todo provisions one'
-  }
-}
-
 function TaskBoardCard({
   task,
+  attachDisabled = false,
+  attaching = false,
   isOverlay = false,
+  onAttach,
 }: {
   readonly task: BoardTask
+  readonly attachDisabled?: boolean
+  readonly attaching?: boolean
   readonly isOverlay?: boolean
+  readonly onAttach?: (task: BoardTask) => void
 }) {
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -277,19 +283,14 @@ function TaskBoardCard({
     }
   }
 
-  const jumpDisabled =
-    task.worktreeState === 'provisioning' || task.worktreeState === 'gone'
+  const canInspectWorktree = task.worktreePath !== null
 
   return (
     <Card
       className={cn(
         'cursor-pointer gap-0 rounded-md py-0 shadow-xs ring-foreground/10 transition-colors hover:ring-foreground/20',
-        jumpDisabled && 'opacity-80',
         isOverlay && 'shadow-lg'
       )}
-      onClick={() => {
-        toast.info(describeJump(task))
-      }}
     >
       <CardContent className="flex flex-col gap-2 px-3 py-2.5">
         {/* Title row: source chip + slack link pinned right */}
@@ -337,6 +338,31 @@ function TaskBoardCard({
             />
           )}
           <WorktreeChip task={task} />
+          {canInspectWorktree && !isOverlay && (
+            <Button
+              aria-label={
+                task.worktreeState === 'exists'
+                  ? `Open terminal for ${task.title}`
+                  : `Check worktree and open terminal for ${task.title}`
+              }
+              className="ml-auto h-6 gap-1 px-2 text-xs"
+              disabled={attachDisabled}
+              onClick={(event) => {
+                event.stopPropagation()
+                onAttach?.(task)
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              size="sm"
+              variant="secondary"
+            >
+              {attaching ? (
+                <Spinner className="size-3" />
+              ) : (
+                <Terminal className="size-3" />
+              )}
+              {task.worktreeState === 'exists' ? 'Terminal' : 'Check'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -347,7 +373,15 @@ function TaskBoardCard({
  * One project lane's 4-column kanban. Its own Kanban root, so drags can
  * never cross projects.
  */
-function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
+function LaneBoard({
+  attachingTaskId,
+  onAttach,
+  tasks,
+}: {
+  readonly attachingTaskId: string | null
+  readonly onAttach: (task: BoardTask) => void
+  readonly tasks: readonly BoardTask[]
+}) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
   )
@@ -398,7 +432,12 @@ function LaneBoard({ tasks }: { readonly tasks: readonly BoardTask[] }) {
                 {(columnTasks[column.id] ?? []).map((task) => (
                   <KanbanItem key={task.id} value={task.id}>
                     <KanbanItemHandle>
-                      <TaskBoardCard task={task} />
+                      <TaskBoardCard
+                        attachDisabled={attachingTaskId !== null}
+                        attaching={attachingTaskId === task.id}
+                        onAttach={onAttach}
+                        task={task}
+                      />
                     </KanbanItemHandle>
                   </KanbanItem>
                 ))}
@@ -443,6 +482,14 @@ function TaskBoard({
   const projectList = store.useQuery(boardProjects$)
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
+  const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
+  const [attachedTerminal, setAttachedTerminal] = useState<{
+    readonly id: string
+    readonly taskTitle: string
+  } | null>(null)
+  const attachTaskTerminal = useAtomSet(attachTaskTerminalMutation, {
+    mode: 'promise',
+  })
   const taskEventsAtom = useMemo(
     () =>
       LaborerClient.runtime.pull(
@@ -472,6 +519,46 @@ function TaskBoard({
     }
   }, [pullNext, rpcResult])
 
+  const handleAttach = (task: BoardTask) => {
+    setAttachingTaskId(task.id)
+    attachTaskTerminal({ payload: { taskId: task.id } })
+      .then(({ botOwned, terminal }) => {
+        setBoardTasks((current) =>
+          current.map((candidate) =>
+            candidate.id === task.id
+              ? {
+                  ...candidate,
+                  worktreeBotOwned: botOwned,
+                  worktreeExists: true,
+                  worktreeState: 'exists',
+                }
+              : candidate
+          )
+        )
+        setAttachedTerminal({ id: terminal.id, taskTitle: task.title })
+      })
+      .catch((error: unknown) => {
+        setBoardTasks((current) =>
+          current.map((candidate) =>
+            candidate.id === task.id && candidate.worktreeState === 'exists'
+              ? {
+                  ...candidate,
+                  worktreeBotOwned: false,
+                  worktreeExists: false,
+                  worktreeState: 'gone',
+                }
+              : candidate
+          )
+        )
+        if (task.worktreeState === 'provisioning') {
+          toast.info('Worktree is still provisioning')
+        } else {
+          toast.error(extractErrorMessage(error))
+        }
+      })
+      .finally(() => setAttachingTaskId(null))
+  }
+
   const query = searchQuery.trim().toLowerCase()
   const searching = query.length > 0
 
@@ -496,7 +583,7 @@ function TaskBoard({
     .filter((lane) => !searching || lane.visibleTasks.length > 0)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center border-b px-3">
         <BoardSearch onChange={setSearchQuery} value={searchQuery} />
       </div>
@@ -527,7 +614,9 @@ function TaskBoard({
                 </Button>
                 {expanded && (
                   <LaneBoard
+                    attachingTaskId={attachingTaskId}
                     key={`${query}:${visibleTasks.map((task) => `${task.id}:${String(task.revision)}`).join(',')}`}
+                    onAttach={handleAttach}
                     tasks={visibleTasks}
                   />
                 )}
@@ -546,6 +635,30 @@ function TaskBoard({
           )}
         </div>
       </ScrollArea>
+      {attachedTerminal && (
+        <section
+          aria-label={`Terminal for ${attachedTerminal.taskTitle}`}
+          className="absolute inset-y-0 right-0 z-30 flex w-2/3 min-w-96 flex-col border-l bg-background shadow-2xl"
+        >
+          <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
+            <Terminal className="size-4 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate font-medium text-sm">
+              {attachedTerminal.taskTitle}
+            </span>
+            <Button
+              aria-label="Detach terminal view"
+              onClick={() => setAttachedTerminal(null)}
+              size="icon-sm"
+              variant="ghost"
+            >
+              <X className="size-4" />
+            </Button>
+          </header>
+          <div className="min-h-0 flex-1">
+            <TerminalPane terminalId={attachedTerminal.id} />
+          </div>
+        </section>
+      )}
     </div>
   )
 }

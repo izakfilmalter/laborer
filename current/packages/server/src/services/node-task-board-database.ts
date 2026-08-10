@@ -71,9 +71,13 @@ const taskSource = (value: unknown): TaskSource => {
 const executionStatus = (value: unknown): ExecutionStatus | null => {
   switch (value) {
     case null:
+    case 'queued':
     case 'running':
+    case 'cancelling':
+    case 'completed':
     case 'failed':
-    case 'needs_attention':
+    case 'cancelled':
+    case 'needs-attention':
       return value
     default:
       return invalidColumn('execution_status')
@@ -134,6 +138,13 @@ export class NodeTaskBoardDatabase {
 
   snapshot(): TaskSnapshot {
     return this.#readTransaction(() => this.#snapshotUnsafe())
+  }
+
+  findTask(taskId: string): Task | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .get(taskId)
+    return row === undefined ? null : rowToTask(sqliteRow(row))
   }
 
   readChanges(sequence: number, limit = 1000): TaskRead {

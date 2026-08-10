@@ -14,7 +14,7 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   executionId: null,
   executionStatus: null,
   id: 'task-1',
-  initialPrompt: null,
+  description: null,
   revision: 1,
   rootPath: '/repo',
   slackPermalink: null,
@@ -124,21 +124,21 @@ describe('board task projection', () => {
       slackAnalysisState({
         source: 'slack_url',
         executionMirror: 'queued',
-        initialPrompt: null,
+        description: null,
       })
     ).toBe('analyzing')
     expect(
       slackAnalysisState({
         source: 'slack_url',
         executionMirror: 'failed',
-        initialPrompt: null,
+        description: null,
       })
     ).toBe('failed')
     expect(
       slackAnalysisState({
         source: 'slack_url',
         executionMirror: null,
-        initialPrompt: 'Implement it',
+        description: 'Implement it',
       })
     ).toBeNull()
   })

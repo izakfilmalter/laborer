@@ -234,6 +234,66 @@ export const handleTaskMove = ({
     (database) => Effect.sync(() => database.close())
   )
 
+export const handleTaskUpdate = (
+  {
+    description,
+    expectedRevision,
+    taskId,
+    title,
+  }: {
+    readonly description: string | null
+    readonly expectedRevision: number
+    readonly taskId: string
+    readonly title: string
+  },
+  databasePath = taskDatabasePath()
+) =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => NodeTaskBoardDatabase.open(databasePath),
+      catch: () =>
+        new RpcError({
+          code: 'TASK_UPDATE_FAILED',
+          message: 'Unable to open the task database',
+        }),
+    }),
+    (database) =>
+      Effect.try({
+        try: () => {
+          const trimmedTitle = title.trim()
+          if (trimmedTitle.length === 0 || trimmedTitle.length > 100) {
+            throw new Error('Task titles must be between 1 and 100 characters')
+          }
+          if (description !== null && description.length > 100_000) {
+            throw new Error(
+              'Task descriptions must be 100000 characters or fewer'
+            )
+          }
+          return database.update(taskId, expectedRevision, {
+            description,
+            title: trimmedTitle,
+          })
+        },
+        catch: (cause) =>
+          new RpcError({
+            code:
+              cause instanceof Error && cause.message.includes('stale revision')
+                ? 'CAS_CONFLICT'
+                : 'TASK_UPDATE_FAILED',
+            message:
+              cause instanceof Error ? cause.message : 'Unable to update task',
+          }),
+      }).pipe(
+        Effect.map((task) => ({
+          description: task.description,
+          revision: task.revision,
+          title: task.title,
+          updatedAt: task.updatedAt,
+        }))
+      ),
+    (database) => Effect.sync(() => database.close())
+  )
+
 export const handleTaskTerminalAttach = (
   { taskId }: { readonly taskId: string },
   databasePath = taskDatabasePath()
@@ -353,6 +413,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         })
       }),
     'task.move': handleTaskMove,
+    'task.update': (payload) => handleTaskUpdate(payload),
 
     'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 

@@ -148,11 +148,11 @@ export const BoardTask = Schema.Struct({
     )
   ),
   id: Schema.String,
-  initialPrompt: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String),
   revision: Schema.Int,
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
-  source: Schema.Literal('execution', 'manual', 'slack_url'),
+  source: Schema.Literal('execution', 'manual', 'slack_url', 'agent'),
   status: StoredTaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,
@@ -545,6 +545,23 @@ export class LaborerRpcs extends RpcGroup.make(
       expectedRevision: Schema.Int,
       status: StoredTaskStatus,
       taskId: Schema.String,
+    },
+  }),
+
+  /** Human-authored title/description edits from the task detail dialog. */
+  Rpc.make('task.update', {
+    success: Schema.Struct({
+      description: Schema.NullOr(Schema.String),
+      revision: Schema.Int,
+      title: Schema.String,
+      updatedAt: Schema.Int,
+    }),
+    error: RpcError,
+    payload: {
+      description: Schema.NullOr(Schema.String),
+      expectedRevision: Schema.Int,
+      taskId: Schema.String,
+      title: Schema.String,
     },
   }),
 

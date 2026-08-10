@@ -31,11 +31,13 @@ describe('NativeTaskDatabase', () => {
     expect(first.migrationNames()).toEqual([
       '0000_shared_task_db',
       '0001_execution_lifecycle_statuses',
+      '0002_task_descriptions_and_agent_source',
     ])
     const second = NativeTaskDatabase.open(path)
     expect(second.migrationNames()).toEqual([
       '0000_shared_task_db',
       '0001_execution_lifecycle_statuses',
+      '0002_task_descriptions_and_agent_source',
     ])
     second.close()
     first.close()

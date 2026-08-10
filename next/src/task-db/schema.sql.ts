@@ -15,7 +15,7 @@ export const tasks = sqliteTable(
     slackPermalink: text("slack_permalink"),
     worktreePath: text("worktree_path"),
     branchName: text("branch_name"),
-    initialPrompt: text("initial_prompt"),
+    description: text("description"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     revision: integer().notNull().default(1),
@@ -27,7 +27,7 @@ export const tasks = sqliteTable(
     ),
     check(
       "tasks_source_check",
-      sql`${table.source} IN ('execution', 'manual', 'slack_url')`
+      sql`${table.source} IN ('execution', 'manual', 'slack_url', 'agent')`
     ),
     check(
       "tasks_execution_status_check",

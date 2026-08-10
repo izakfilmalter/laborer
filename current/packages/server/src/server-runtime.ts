@@ -12,11 +12,14 @@ import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
 import { LaborerRpcsLive } from './rpc/handlers.js'
+import { AgentTaskService } from './services/agent-task-service.js'
+import { serverDiscoveryLayer } from './services/server-discovery.js'
 import {
   SharedSyncBackendServiceLive,
   SyncRpcHandlersLive,
   SyncWsRpc,
 } from './services/sync-backend.js'
+import { TaskMcpProtocolLayer, TaskMcpToolsLayer } from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
 const PortSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 65_535))
@@ -31,6 +34,11 @@ export interface ServerRuntimeConfigShape {
 export class ServerRuntimeConfig extends Context.Tag(
   '@laborer/server/ServerRuntimeConfig'
 )<ServerRuntimeConfig, ServerRuntimeConfigShape>() {}
+
+class McpLoopbackRequiredError extends Schema.TaggedError<McpLoopbackRequiredError>()(
+  'McpLoopbackRequiredError',
+  { message: Schema.String }
+) {}
 
 const BootstrapEnvelope = Schema.Struct({
   authToken: Schema.optional(Schema.String),
@@ -50,14 +58,14 @@ export function readBootstrapConfig(
     return {
       authToken: parsed.authToken,
       host: parsed.host ?? '127.0.0.1',
-      port: parsed.port ?? 2100,
+      port: parsed.port ?? 3773,
     }
   }
 
   return {
     authToken: env.LABORER_SERVER_AUTH_TOKEN,
     host: env.LABORER_SERVER_HOST ?? '127.0.0.1',
-    port: Number(env.LABORER_SERVER_PORT ?? env.PORT ?? '2100'),
+    port: Number(env.LABORER_SERVER_PORT ?? env.PORT ?? '3773'),
   }
 }
 
@@ -219,6 +227,11 @@ const makeRoutesLayer = Layer.unwrapScoped(
       )
     )
 
+    const mcpLayer = TaskMcpToolsLayer.pipe(
+      Layer.provide(TaskMcpProtocolLayer),
+      Layer.provide(AgentTaskService.layer())
+    )
+
     return Layer.mergeAll(
       HttpRouter.Default.use((router) =>
         router.get('/', HttpServerResponse.empty({ status: 204 }))
@@ -229,7 +242,8 @@ const makeRoutesLayer = Layer.unwrapScoped(
         `/sync/${encodeURIComponent(config.authToken ?? '')}`,
         config.authToken,
         loggedSyncWebSocketApp
-      )
+      ),
+      mcpLayer
     )
   })
 )
@@ -237,6 +251,11 @@ const makeRoutesLayer = Layer.unwrapScoped(
 export const makeServerLayer = Layer.unwrapEffect(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
+    if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
+      return yield* new McpLoopbackRequiredError({
+        message: 'The token-free MCP endpoint requires a loopback server host',
+      })
+    }
     const listeningLogLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer
@@ -254,7 +273,8 @@ export const makeServerLayer = Layer.unwrapEffect(
       HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
         Layer.provide(makeRoutesLayer)
       ),
-      listeningLogLayer
+      listeningLogLayer,
+      serverDiscoveryLayer(config)
     ).pipe(
       Layer.provide(InfrastructureLayer),
       Layer.provide(

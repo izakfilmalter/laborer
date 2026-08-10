@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { cloneElement, isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardTask } from '@/components/kanban/board-data'
 import { TaskBoardCard, TaskDetailDialog } from '@/components/kanban/task-board'
@@ -34,6 +35,8 @@ vi.mock('sonner', () => ({
   toast: { error: toastError, info: vi.fn() },
 }))
 
+// Stub tooltip — the real trigger merges its children into `render`, so the
+// stub has to as well or every chip loses its label.
 vi.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({
@@ -42,7 +45,10 @@ vi.mock('@/components/ui/tooltip', () => ({
   }: {
     children?: React.ReactNode
     render?: React.ReactElement
-  }) => <>{render ?? children}</>,
+  }) =>
+    render && isValidElement(render)
+      ? cloneElement(render, render.props as Record<string, unknown>, children)
+      : children,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <span>{children}</span>
   ),
@@ -150,12 +156,58 @@ describe('task card details', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'This task changed elsewhere'
+      'This card changed elsewhere'
     )
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(toastError).toHaveBeenCalledWith(
-      'Task changed elsewhere',
+      'Card changed elsewhere',
       expect.any(Object)
     )
+  })
+
+  it('asks before dropping unsaved edits and can go back to editing', async () => {
+    const onOpenChange = vi.fn()
+    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+
+    await userEvent.type(screen.getByLabelText('Description'), ' And more.')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.getByText('Discard your unsaved edits?')).toBeTruthy()
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Run the focused tests. And more.')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('closes straight away when nothing was edited', async () => {
+    const onOpenChange = vi.fn()
+    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('offers a name instead of a raw permalink for an unnamed Slack card', () => {
+    render(
+      <TaskDetailDialog
+        onOpenChange={vi.fn()}
+        task={task({
+          description: null,
+          slackPermalink: 'https://acme.slack.com/archives/C123/p1700000000',
+          source: 'slack_url',
+          title: 'https://acme.slack.com/archives/C123/p1700000000',
+        })}
+      />
+    )
+
+    const titleField = screen.getByLabelText('Title') as HTMLInputElement
+    expect(titleField.value).toBe('')
+    expect(titleField.placeholder).toContain('Slack thread')
   })
 })

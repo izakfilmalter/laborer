@@ -96,19 +96,23 @@ export function WorktreeChip({ card }: { readonly card: WorktreeCard }) {
 /**
  * Attach a terminal to the card's worktree path. Pressable in every state
  * that has a path: in the degraded states the press is the existence check,
- * which is how the card recovers without polling.
+ * which is how the card recovers without polling. Once attached the control
+ * is a toggle, so the same press that opened the terminal closes it — which
+ * is what its pressed state promises.
  */
 export function TerminalAttachButton({
   attached = false,
   busy = false,
   card,
   disabled = false,
+  id,
   onAttach,
 }: {
   readonly attached?: boolean
   readonly busy?: boolean
   readonly card: WorktreeCard
   readonly disabled?: boolean
+  readonly id?: string
   readonly onAttach: () => void
 }) {
   if (card.worktreePath === null) {
@@ -118,7 +122,7 @@ export function TerminalAttachButton({
   const exists = card.worktreeState === 'exists'
   const label = terminalActionLabel(card.worktreeState)
   const hint = attached
-    ? `Terminal attached to ${card.worktreePath}`
+    ? `Attached to ${card.worktreePath} — press to close`
     : terminalActionHint(card)
 
   return (
@@ -139,6 +143,7 @@ export function TerminalAttachButton({
               attached && 'ring-1 ring-ring/40'
             )}
             disabled={disabled || busy}
+            id={id}
             onClick={(event) => {
               event.stopPropagation()
               onAttach()

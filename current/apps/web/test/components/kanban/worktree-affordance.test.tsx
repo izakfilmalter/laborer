@@ -126,12 +126,25 @@ describe('terminal attach button', () => {
     expect(onAttach).not.toHaveBeenCalled()
   })
 
-  it('marks the card whose terminal is already showing', () => {
-    render(<TerminalAttachButton attached card={card()} onAttach={vi.fn()} />)
+  it('marks the card whose terminal is already showing and toggles back', async () => {
+    const onAttach = vi.fn()
+    render(
+      <TerminalAttachButton
+        attached
+        card={card()}
+        id="terminal-attach-task-1"
+        onAttach={onAttach}
+      />
+    )
     const button = screen.getByRole('button', {
       name: 'Terminal attached for Fix the board',
     })
     expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(button.id).toBe('terminal-attach-task-1')
+
+    // The pressed state promises a toggle, so the press must still be handled.
+    await userEvent.click(button)
+    expect(onAttach).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the terminal available when the owner marker is missing', () => {

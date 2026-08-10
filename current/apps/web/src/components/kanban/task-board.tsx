@@ -236,6 +236,13 @@ function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
   return state.toUpperCase()
 }
 
+/**
+ * Stable id for a card's terminal control, so closing the terminal panel can
+ * hand keyboard focus back to the control that opened it.
+ */
+const terminalAttachButtonId = (taskId: string): string =>
+  `terminal-attach-${taskId}`
+
 function TaskBoardCard({
   task,
   attachBlocked = false,
@@ -318,6 +325,7 @@ function TaskBoardCard({
               busy={attaching}
               card={task}
               disabled={attachBlocked}
+              id={terminalAttachButtonId(task.id)}
               onAttach={() => onAttach?.(task)}
             />
           )}
@@ -486,9 +494,24 @@ function TaskBoard({
     }
   }, [pullNext, rpcResult])
 
+  // Closing hands focus back to the card control that opened the terminal, so
+  // a keyboard user lands where they left rather than at the top of the board.
+  const closeTerminal = () => {
+    const returnTo = attachedTerminal
+      ? document.getElementById(terminalAttachButtonId(attachedTerminal.taskId))
+      : null
+    setAttachedTerminal(null)
+    returnTo?.focus()
+  }
+
   const handleAttach = (task: BoardTask) => {
-    // Already showing this card's terminal: don't spawn a second shell.
-    if (attachedTerminal?.taskId === task.id || attachingTaskId !== null) {
+    // The control is a toggle once attached: a second press closes the panel
+    // it opened rather than spawning a second shell.
+    if (attachedTerminal?.taskId === task.id) {
+      closeTerminal()
+      return
+    }
+    if (attachingTaskId !== null) {
       return
     }
     setAttachingTaskId(task.id)
@@ -626,9 +649,9 @@ function TaskBoard({
             <Terminal className="size-4 shrink-0 text-muted-foreground" />
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 truncate font-medium text-sm">
+                <h2 className="min-w-0 truncate font-medium text-sm">
                   {attachedTerminal.taskTitle}
-                </span>
+                </h2>
                 {attachedTerminal.botOwned && (
                   <Badge
                     className="gap-1 text-muted-foreground"
@@ -639,19 +662,21 @@ function TaskBoard({
                   </Badge>
                 )}
               </div>
-              <span
-                className="truncate font-mono text-[11px] text-muted-foreground"
-                title={attachedTerminal.worktreePath}
-              >
-                {attachedTerminal.worktreePath}
-              </span>
+              {attachedTerminal.worktreePath && (
+                <span
+                  className="truncate font-mono text-[11px] text-muted-foreground"
+                  title={attachedTerminal.worktreePath}
+                >
+                  {attachedTerminal.worktreePath}
+                </span>
+              )}
             </div>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     aria-label={`Close terminal for ${attachedTerminal.taskTitle}`}
-                    onClick={() => setAttachedTerminal(null)}
+                    onClick={closeTerminal}
                     size="icon-sm"
                     variant="ghost"
                   />

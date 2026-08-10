@@ -28,11 +28,16 @@
  * @see Issue #20: Build script update + port reservation removal
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { NodeSocket } from '@effect/platform-node'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
-import { AgentStatusSchema, RpcError, TerminalRpcs } from '@laborer/shared/rpc'
+import {
+  type AgentStatusReport,
+  AgentStatusSchema,
+  RpcError,
+  TerminalRpcs,
+} from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { tables } from '@laborer/shared/schema'
 import {
@@ -51,7 +56,10 @@ import {
 import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { writeClaudeStatusHooks } from './claude-status-hooks.js'
 import { LaborerStore } from './laborer-store.js'
-import { installOpenCodeStatusPlugin } from './opencode-status-plugin.js'
+import {
+  installOpenCodeStatusPlugin,
+  writeAgentHookDiscovery,
+} from './opencode-status-plugin.js'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -79,17 +87,6 @@ interface TerminalRecord {
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
-
-/**
- * Helper used solely for type inference. Never called at runtime.
- * Uses `createMessagePortRpcClient` (same as the real code path)
- * to derive the return type of the terminal RPC client.
- */
-const _inferTerminalRpc = (port: RpcMessagePort, scope: Scope.Scope) =>
-  createMessagePortRpcClient(TerminalRpcs, port, scope)
-
-/** The inferred type of the terminal RPC client. */
-type TerminalRpc = Effect.Effect.Success<ReturnType<typeof _inferTerminalRpc>>
 
 /**
  * Service tag providing a MessagePort for direct RPC to the
@@ -123,9 +120,24 @@ class OpenCodePluginInstallError extends Data.TaggedError(
   'OpenCodePluginInstallError'
 )<{ readonly cause: unknown }> {}
 
+class AgentHookDiscoveryWriteError extends Data.TaggedError(
+  'AgentHookDiscoveryWriteError'
+)<{ readonly cause: unknown }> {}
+
 const AgentHookRequestSchema = Schema.parseJson(
   Schema.Struct({
-    terminalId: Schema.String,
+    /**
+     * Direct terminal attribution. Used by agents whose hooks run inside the
+     * terminal's own process tree (Claude settings hooks), where per-terminal
+     * environment variables are trustworthy.
+     */
+    terminalId: Schema.optional(Schema.String),
+    /**
+     * Directory attribution. Used by the OpenCode v2 plugin, which runs in a
+     * shared daemon where per-terminal env vars are unavailable. The hook
+     * server maps the directory to the terminal(s) spawned in that worktree.
+     */
+    directory: Schema.optional(Schema.String),
     status: AgentStatusSchema,
     sequence: Schema.optional(
       Schema.Number.pipe(
@@ -136,6 +148,89 @@ const AgentHookRequestSchema = Schema.parseJson(
     ),
   })
 )
+
+const TRAILING_SEPARATORS_REGEX = /\/+$/
+
+/**
+ * Resolve symlinks and trailing separators so directories reported by
+ * OpenCode (which may resolve symlinks, e.g. /var → /private/var on macOS)
+ * compare equal to the cwd Laborer spawned the terminal with.
+ */
+const normalizeDirectory = (directory: string): string => {
+  let resolved = directory
+  try {
+    resolved = realpathSync(directory)
+  } catch {
+    // Path may no longer exist; compare the raw value.
+  }
+  return resolved.length > 1
+    ? resolved.replace(TRAILING_SEPARATORS_REGEX, '')
+    : resolved
+}
+
+/** Terminal facts the agent hook server needs for directory attribution. */
+interface AgentHookTerminal {
+  readonly cwd: string
+  readonly id: string
+  readonly status: 'running' | 'stopped'
+}
+
+/**
+ * Narrow gateway between the agent hook HTTP server and the terminal
+ * service. Keeps the server testable without a live RPC client.
+ */
+interface AgentHookGateway {
+  readonly listTerminals: () => Effect.Effect<
+    readonly AgentHookTerminal[],
+    unknown
+  >
+  readonly setAgentStatus: (input: {
+    readonly id: string
+    readonly report: AgentStatusReport
+  }) => Effect.Effect<unknown, unknown>
+}
+
+const MAX_HOOK_ID_LENGTH = 1000
+const MAX_HOOK_DIRECTORY_LENGTH = 4096
+
+/**
+ * Resolve a hook report to the terminal IDs it applies to.
+ *
+ * Directory reports fan out to every running terminal spawned in that
+ * directory. The terminal status engine drops hook evidence for terminals
+ * whose process tree has no agent (ADR 0006), so over-matching here is
+ * harmless — a plain shell in the same worktree ignores the report.
+ */
+const resolveAgentHookTargets = async (
+  gateway: AgentHookGateway,
+  terminalId: string | undefined,
+  directory: string | undefined
+): Promise<readonly string[] | null> => {
+  if (terminalId !== undefined) {
+    if (terminalId.length === 0 || terminalId.length > MAX_HOOK_ID_LENGTH) {
+      return null
+    }
+    return [terminalId]
+  }
+  if (
+    directory === undefined ||
+    directory.length === 0 ||
+    directory.length > MAX_HOOK_DIRECTORY_LENGTH
+  ) {
+    return null
+  }
+  const normalized = normalizeDirectory(directory)
+  const terminals = await Effect.runPromise(
+    gateway.listTerminals().pipe(Effect.orElseSucceed(() => []))
+  )
+  return terminals
+    .filter(
+      (terminal) =>
+        terminal.status === 'running' &&
+        normalizeDirectory(terminal.cwd) === normalized
+    )
+    .map((terminal) => terminal.id)
+}
 
 const readBody = (req: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -182,11 +277,70 @@ const readBody = (req: IncomingMessage): Promise<string> =>
  * Returns the port the server is listening on.
  */
 const startAgentHookServer = (
-  rpcClient: TerminalRpc,
+  gateway: AgentHookGateway,
   scope: Scope.Scope
 ): Effect.Effect<number> =>
   Effect.async<number>((resume) => {
     const reportSequences = new Map<string, number>()
+
+    const forwardReport = (
+      targetId: string,
+      status: AgentStatusReport['status'],
+      reportedSequence: number | undefined
+    ): Promise<'forwarded' | 'stale' | 'failed'> => {
+      // Epoch-based sequences stay newer when this proxy restarts while
+      // the terminal service and agent process remain alive.
+      const sequence =
+        reportedSequence ??
+        Math.max(Date.now() * 1000, (reportSequences.get(targetId) ?? -1) + 1)
+      if (sequence <= (reportSequences.get(targetId) ?? -1)) {
+        return Promise.resolve('stale')
+      }
+      reportSequences.set(targetId, sequence)
+      return Effect.runPromise(
+        gateway.setAgentStatus({
+          id: targetId,
+          report: { status, sequence },
+        })
+      ).then(
+        () => 'forwarded' as const,
+        () => 'failed' as const
+      )
+    }
+
+    const handleHookRequest = async (body: string): Promise<number> => {
+      const {
+        sequence: reportedSequence,
+        terminalId,
+        directory,
+        status,
+      } = Schema.decodeUnknownSync(AgentHookRequestSchema)(body)
+
+      const targets = await resolveAgentHookTargets(
+        gateway,
+        terminalId,
+        directory
+      )
+      if (targets === null) {
+        return 400
+      }
+      // No terminal in that directory — a session outside Laborer's
+      // workspaces. Accept and drop.
+      if (targets.length === 0) {
+        return 202
+      }
+
+      const results = await Promise.all(
+        targets.map((targetId) =>
+          forwardReport(targetId, status, reportedSequence)
+        )
+      )
+      if (results.includes('forwarded')) {
+        return 200
+      }
+      return results.includes('failed') ? 500 : 202
+    }
+
     const server: Server = createServer((req, res) => {
       if (req.method !== 'POST' || req.url !== '/hook/agent-status') {
         res.writeHead(404)
@@ -195,47 +349,12 @@ const startAgentHookServer = (
       }
 
       readBody(req)
-        .then((body) => {
-          const {
-            sequence: reportedSequence,
-            terminalId,
-            status,
-          } = Schema.decodeUnknownSync(AgentHookRequestSchema)(body)
-          if (terminalId.length === 0 || terminalId.length > 1000) {
-            res.writeHead(400)
+        .then((body) =>
+          handleHookRequest(body).then((statusCode) => {
+            res.writeHead(statusCode)
             res.end()
-            return
-          }
-
-          // Epoch-based sequences stay newer when this proxy restarts while
-          // the terminal service and agent process remain alive.
-          const sequence =
-            reportedSequence ??
-            Math.max(
-              Date.now() * 1000,
-              (reportSequences.get(terminalId) ?? -1) + 1
-            )
-          if (sequence <= (reportSequences.get(terminalId) ?? -1)) {
-            res.writeHead(202)
-            res.end()
-            return
-          }
-          reportSequences.set(terminalId, sequence)
-          Effect.runPromise(
-            rpcClient.terminal.setAgentStatus({
-              id: terminalId,
-              report: { status, sequence },
-            })
-          )
-            .then(() => {
-              res.writeHead(200)
-              res.end()
-            })
-            .catch(() => {
-              res.writeHead(500)
-              res.end()
-            })
-        })
+          })
+        )
         .catch((error: unknown) => {
           res.writeHead(error instanceof AgentHookBodyTooLarge ? 413 : 400)
           res.end()
@@ -457,11 +576,42 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           // Agent CLIs (OpenCode plugin, Claude hooks) POST lifecycle
           // events here. The server forwards them to the terminal
           // service via the `terminal.setAgentStatus` RPC.
-          const hookPort = yield* startAgentHookServer(client, layerScope)
+          const hookPort = yield* startAgentHookServer(
+            {
+              setAgentStatus: (input) => client.terminal.setAgentStatus(input),
+              listTerminals: () => client.terminal.list(),
+            },
+            layerScope
+          )
 
           yield* Effect.log(
             `Agent hook server listening on port ${hookPort}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // Publish the hook URL for the OpenCode v2 plugin, which runs in
+          // a shared daemon and cannot see per-terminal env vars. The file
+          // survives daemon restarts and always names the current port.
+          if (process.env.NODE_ENV !== 'test') {
+            yield* Effect.try({
+              try: () =>
+                writeAgentHookDiscovery(
+                  `http://127.0.0.1:${hookPort}/hook/agent-status`
+                ),
+              catch: (cause) => new AgentHookDiscoveryWriteError({ cause }),
+            }).pipe(
+              Effect.tap((discoveryPath) =>
+                Effect.logInfo(
+                  `Wrote agent hook discovery file at ${discoveryPath}`
+                )
+              ),
+              Effect.catchTag('AgentHookDiscoveryWriteError', ({ cause }) =>
+                Effect.logWarning(
+                  `Could not write agent hook discovery file: ${String(cause)}`
+                )
+              ),
+              Effect.annotateLogs('module', logPrefix)
+            )
+          }
 
           return { client, terminalPort: hookPort }
         })
@@ -504,8 +654,10 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         }
 
         // For OpenCode and other agents, add any supported initial prompt.
-        // OpenCode hooks are handled via a plugin file that reads
-        // LABORER_TERMINAL_ID and LABORER_HOOK_URL from the environment.
+        // OpenCode v2 status flows through a user-level plugin running in
+        // the shared OpenCode daemon: it discovers the hook URL from the
+        // discovery file and attributes reports by workspace directory.
+        // The LABORER_* env vars remain for diagnostics only.
         return buildOpenCodeSpawnCommand(
           agentCommand as 'opencode' | 'opencode2',
           terminalId,
@@ -724,4 +876,11 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   )
 }
 
-export { buildOpenCodeSpawnCommand, TerminalClient }
+export {
+  type AgentHookGateway,
+  type AgentHookTerminal,
+  buildOpenCodeSpawnCommand,
+  resolveAgentHookTargets,
+  startAgentHookServer,
+  TerminalClient,
+}

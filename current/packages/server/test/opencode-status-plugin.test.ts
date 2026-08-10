@@ -12,31 +12,94 @@ import {
   createOpenCodeStatusPluginRuntime,
   installOpenCodeStatusPlugin,
   type OpenCodeStatusReport,
+  writeAgentHookDiscovery,
 } from '../src/services/opencode-status-plugin.js'
 
-const nativeEvent = (
+/** Build an OpenCode v2 event payload: fields under `data`, envelope location. */
+const v2Event = (
   type: string,
-  sessionID: string,
-  extra: Record<string, unknown> = {}
-) => ({ event: { type, properties: { sessionID, ...extra } } })
+  data: Record<string, unknown> = {},
+  directory = '/workspace/repo'
+) => ({
+  type,
+  data,
+  location: { directory },
+})
 
-describe('OpenCode status plugin adapter', () => {
-  it('maps native root lifecycle events to semantic agent statuses', async () => {
+/** Let queued microtasks and the runtime's send drain settle. */
+const flush = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0))
+
+/** Async iterable queue standing in for `context.event.subscribe()`. */
+const eventQueue = () => {
+  const buffered: unknown[] = []
+  let waiter: ((next: IteratorResult<unknown>) => void) | undefined
+  let closed = false
+  return {
+    push: (event: unknown) => {
+      if (waiter !== undefined) {
+        const resolve = waiter
+        waiter = undefined
+        resolve({ done: false, value: event })
+        return
+      }
+      buffered.push(event)
+    },
+    iterable: {
+      [Symbol.asyncIterator]: (): AsyncIterator<unknown> => ({
+        next: () =>
+          new Promise<IteratorResult<unknown>>((resolve) => {
+            if (buffered.length > 0) {
+              resolve({ done: false, value: buffered.shift() })
+              return
+            }
+            if (closed) {
+              resolve({ done: true, value: undefined })
+              return
+            }
+            waiter = resolve
+          }),
+        return: () => {
+          closed = true
+          const pendingWaiter = waiter
+          waiter = undefined
+          pendingWaiter?.({ done: true, value: undefined })
+          return Promise.resolve({ done: true, value: undefined })
+        },
+      }),
+    } satisfies AsyncIterable<unknown>,
+  }
+}
+
+describe('OpenCode v2 status plugin runtime', () => {
+  it('maps v2 lifecycle events to semantic agent statuses with directory attribution', async () => {
     const reports: OpenCodeStatusReport[] = []
-    const plugin = createOpenCodeStatusPluginRuntime((report) => {
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
       reports.push(report)
       return Promise.resolve()
     })
 
-    await plugin.event(
-      nativeEvent('session.status', 'root', { status: { type: 'busy' } })
+    runtime.handleEvent(
+      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
     )
-    await plugin.event(
-      nativeEvent('session.status', 'root', { status: 'streaming' })
+    await flush()
+    runtime.handleEvent(
+      v2Event('session.status', {
+        sessionID: 'root',
+        status: { type: 'retry', attempt: 1 },
+      })
     )
-    await plugin.event(nativeEvent('permission.asked', 'root'))
-    await plugin.event(nativeEvent('session.error', 'root'))
-    await plugin.event(nativeEvent('session.idle', 'root'))
+    await flush()
+    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(v2Event('question.asked', { sessionID: 'root' }))
+    await flush()
+    runtime.handleEvent(
+      v2Event('session.status', { sessionID: 'root', status: { type: 'idle' } })
+    )
+    await flush()
+    runtime.handleEvent(v2Event('session.idle', { sessionID: 'root' }))
+    await flush()
 
     expect(reports.map(({ status }) => status)).toEqual([
       'working',
@@ -44,60 +107,77 @@ describe('OpenCode status plugin adapter', () => {
       'needs_input',
       'needs_input',
       'idle',
+      'idle',
     ])
+    expect(
+      reports.every(({ directory }) => directory === '/workspace/repo')
+    ).toBe(true)
     expect(reports.map(({ sequence }) => sequence)).toEqual(
       reports.map(({ sequence }) => sequence).toSorted((a, b) => a - b)
     )
-    expect(new Set(reports.map(({ sequence }) => sequence)).size).toBe(5)
+    expect(new Set(reports.map(({ sequence }) => sequence)).size).toBe(
+      reports.length
+    )
   })
 
-  it('ignores child completion, errors, and permission events', async () => {
+  it('ignores child (subagent) session lifecycle events', async () => {
     const reports: OpenCodeStatusReport[] = []
-    const plugin = createOpenCodeStatusPluginRuntime((report) => {
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
       reports.push(report)
       return Promise.resolve()
     })
 
-    await plugin.event(
-      nativeEvent('session.status', 'root', { status: { type: 'busy' } })
+    runtime.handleEvent(
+      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
     )
-    await plugin.event(
-      nativeEvent('session.created', 'child', {
-        info: { id: 'child', parentID: 'root' },
+    await flush()
+    runtime.handleEvent(
+      v2Event('session.created', { sessionID: 'child', parentID: 'root' })
+    )
+    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'child' }))
+    runtime.handleEvent(
+      v2Event('session.status', {
+        sessionID: 'child',
+        status: { type: 'idle' },
       })
     )
-    await plugin.event(nativeEvent('permission.asked', 'child'))
-    await plugin.event(nativeEvent('session.error', 'child'))
-    await plugin.event(nativeEvent('session.idle', 'child'))
+    await flush()
 
     expect(reports.map(({ status }) => status)).toEqual(['working'])
   })
 
-  it('follows an explicitly created replacement root session', async () => {
+  it('drops reports until a directory is known, then attributes to it', async () => {
     const reports: OpenCodeStatusReport[] = []
-    const plugin = createOpenCodeStatusPluginRuntime((report) => {
+    const runtime = createOpenCodeStatusPluginRuntime((report) => {
       reports.push(report)
       return Promise.resolve()
     })
 
-    await plugin.event(
-      nativeEvent('session.status', 'first-root', { status: 'busy' })
-    )
-    await plugin.event(
-      nativeEvent('session.created', 'second-root', {
-        info: { id: 'second-root' },
-      })
-    )
-    await plugin.event(nativeEvent('session.idle', 'first-root'))
-    await plugin.event(nativeEvent('session.idle', 'second-root'))
+    runtime.handleEvent({
+      type: 'session.status',
+      data: { sessionID: 'root', status: { type: 'busy' } },
+    })
+    await flush()
+    expect(reports).toEqual([])
 
-    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
+    runtime.handleEvent(
+      v2Event(
+        'session.status',
+        { sessionID: 'root', status: { type: 'busy' } },
+        '/workspace/known'
+      )
+    )
+    await flush()
+
+    expect(reports.map(({ directory }) => directory)).toEqual([
+      '/workspace/known',
+    ])
   })
 
   it('serializes delivery and coalesces queued reports to the newest fact', async () => {
     const reports: OpenCodeStatusReport[] = []
     let releaseFirst: (() => void) | undefined
-    const plugin = createOpenCodeStatusPluginRuntime(
+    const runtime = createOpenCodeStatusPluginRuntime(
       (report) =>
         new Promise((resolve) => {
           reports.push(report)
@@ -109,24 +189,50 @@ describe('OpenCode status plugin adapter', () => {
         })
     )
 
-    const working = plugin.event(
-      nativeEvent('session.status', 'root', { status: 'busy' })
+    runtime.handleEvent(
+      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
     )
-    const blocked = plugin.event(nativeEvent('permission.asked', 'root'))
-    const idle = plugin.event(nativeEvent('session.idle', 'root'))
+    runtime.handleEvent(v2Event('permission.asked', { sessionID: 'root' }))
+    runtime.handleEvent(v2Event('session.idle', { sessionID: 'root' }))
 
-    await Promise.resolve()
+    await flush()
     expect(reports.map(({ status }) => status)).toEqual(['working'])
     releaseFirst?.()
-    await Promise.all([working, blocked, idle])
+    await flush()
 
     expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
     expect(reports[1]?.sequence).toBe((reports[0]?.sequence ?? 0) + 1)
   })
+
+  it('consumes the event stream from setup and stops on cleanup', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime(
+      (report) => {
+        reports.push(report)
+        return Promise.resolve()
+      },
+      { resubscribeDelayMs: 1 }
+    )
+    const queue = eventQueue()
+    const cleanup = runtime.setup({
+      event: { subscribe: () => queue.iterable },
+    })
+
+    queue.push(
+      v2Event('session.status', { sessionID: 'root', status: { type: 'busy' } })
+    )
+    await flush()
+    expect(reports.map(({ status }) => status)).toEqual(['working'])
+
+    cleanup()
+    queue.push(v2Event('session.idle', { sessionID: 'root' }))
+    await flush()
+    expect(reports.map(({ status }) => status)).toEqual(['working'])
+  })
 })
 
 describe('OpenCode status plugin installer', () => {
-  it('installs the managed plugin in an existing user config at startup', () => {
+  it('installs a v2 default-export plugin in an existing user config', () => {
     const homeDirectory = mkdtempSync(join(tmpdir(), 'laborer-opencode-'))
     try {
       const configDirectory = join(homeDirectory, '.config', 'opencode')
@@ -138,9 +244,10 @@ describe('OpenCode status plugin installer', () => {
         join(configDirectory, 'plugins', 'laborer-agent-status.js')
       )
       expect(pluginPath === null ? false : existsSync(pluginPath)).toBe(true)
-      expect(readFileSync(pluginPath ?? '', 'utf8')).toContain(
-        'export const LaborerAgentStatusPlugin'
-      )
+      const source = readFileSync(pluginPath ?? '', 'utf8')
+      expect(source).toContain('export default')
+      expect(source).toContain('laborer-agent-status')
+      expect(source).toContain('agent-hook.json')
     } finally {
       rmSync(homeDirectory, { force: true, recursive: true })
     }
@@ -151,6 +258,26 @@ describe('OpenCode status plugin installer', () => {
     try {
       expect(installOpenCodeStatusPlugin({ homeDirectory })).toBeNull()
       expect(existsSync(join(homeDirectory, '.config', 'opencode'))).toBe(false)
+    } finally {
+      rmSync(homeDirectory, { force: true, recursive: true })
+    }
+  })
+})
+
+describe('agent hook discovery file', () => {
+  it('writes the hook URL where the OpenCode daemon plugin can find it', () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), 'laborer-discovery-'))
+    try {
+      const discoveryPath = writeAgentHookDiscovery(
+        'http://127.0.0.1:53185/hook/agent-status',
+        { homeDirectory }
+      )
+
+      expect(discoveryPath).toBe(
+        join(homeDirectory, '.config', 'laborer', 'agent-hook.json')
+      )
+      const contents = JSON.parse(readFileSync(discoveryPath, 'utf8'))
+      expect(contents.url).toBe('http://127.0.0.1:53185/hook/agent-status')
     } finally {
       rmSync(homeDirectory, { force: true, recursive: true })
     }

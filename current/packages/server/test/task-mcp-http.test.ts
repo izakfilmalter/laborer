@@ -281,8 +281,41 @@ describe('task MCP HTTP endpoint', () => {
             )
             expect(forbidden.response.status).toBe(403)
 
-            const created = yield* rpc(port, {
+            const unknownProject = yield* rpc(port, {
               id: 4,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: {
+                  path: realpathSync(tmpdir()),
+                  title: 'Orphan',
+                },
+                name: 'create_task',
+              },
+            })
+            expect(unknownProject.text).toContain('UNKNOWN_PROJECT')
+            const afterRejectedCreate = NodeTaskBoardDatabase.open(databasePath)
+            expect(afterRejectedCreate.snapshot().tasks).toHaveLength(1)
+            expect(afterRejectedCreate.readChanges(0).cursor).toBe(1)
+            afterRejectedCreate.close()
+
+            const lockedUpdate = yield* rpc(port, {
+              id: 5,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: {
+                  expected_revision: 1,
+                  id: 'execution-task',
+                  title: 'Agent overwrite',
+                },
+                name: 'update_task',
+              },
+            })
+            expect(lockedUpdate.text).toContain('LOCKED_TASK')
+
+            const created = yield* rpc(port, {
+              id: 6,
               jsonrpc: '2.0',
               method: 'tools/call',
               params: {
@@ -302,13 +335,41 @@ describe('task MCP HTTP endpoint', () => {
               .snapshot()
               .tasks.find(({ source }) => source === 'agent')
             database.close()
-            expect(task).toMatchObject({ revision: 1, source: 'agent' })
+            expect(task).toMatchObject({
+              description: 'Investigate the race',
+              revision: 1,
+              rootPath: root,
+              source: 'agent',
+              status: 'todo',
+              title: 'Follow up',
+            })
             if (task === undefined) {
               throw new Error('create_task did not persist a task')
             }
 
+            const rejectedStatusUpdate = yield* rpc(port, {
+              id: 7,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: {
+                  expected_revision: 1,
+                  id: task.id,
+                  status: 'in_progress',
+                },
+                name: 'update_task',
+              },
+            })
+            expect(rejectedStatusUpdate.text).toContain('isError')
+            const afterRejectedStatus = NodeTaskBoardDatabase.open(databasePath)
+            expect(afterRejectedStatus.find(task.id)).toMatchObject({
+              revision: 1,
+              status: 'todo',
+            })
+            afterRejectedStatus.close()
+
             const updated = yield* rpc(port, {
-              id: 5,
+              id: 8,
               jsonrpc: '2.0',
               method: 'tools/call',
               params: {
@@ -322,8 +383,24 @@ describe('task MCP HTTP endpoint', () => {
             })
             expect(updated.text).toContain('Refined follow-up')
 
+            const staleUpdate = yield* rpc(port, {
+              id: 9,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: {
+                  description: 'Losing write',
+                  expected_revision: 1,
+                  id: task.id,
+                },
+                name: 'update_task',
+              },
+            })
+            expect(staleUpdate.text).toContain('CAS_CONFLICT')
+            expect(staleUpdate.text).toContain('Refetch the task and retry')
+
             const deleted = yield* rpc(port, {
-              id: 6,
+              id: 10,
               jsonrpc: '2.0',
               method: 'tools/call',
               params: {
@@ -334,7 +411,7 @@ describe('task MCP HTTP endpoint', () => {
             expect(deleted.text).toContain('cancelled')
 
             const replayedDelete = yield* rpc(port, {
-              id: 7,
+              id: 11,
               jsonrpc: '2.0',
               method: 'tools/call',
               params: {
@@ -342,10 +419,11 @@ describe('task MCP HTTP endpoint', () => {
                 name: 'delete_task',
               },
             })
-            expect(replayedDelete.text).toContain('cancelled')
+            expect(replayedDelete.text).toContain('CAS_CONFLICT')
+            expect(replayedDelete.text).toContain('Refetch the task and retry')
 
             const deletedExecution = yield* rpc(port, {
-              id: 8,
+              id: 12,
               jsonrpc: '2.0',
               method: 'tools/call',
               params: {
@@ -355,10 +433,20 @@ describe('task MCP HTTP endpoint', () => {
             })
             expect(deletedExecution.text).toContain('cancelled')
 
+            const defaultList = yield* rpc(port, {
+              id: 13,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: { arguments: {}, name: 'list_tasks' },
+            })
+            expect(defaultList.text).not.toContain(task.id)
+
             const persisted = NodeTaskBoardDatabase.open(databasePath)
             expect(persisted.find(task.id)).toMatchObject({
+              description: 'Investigate the race',
               revision: 3,
               status: 'cancelled',
+              title: 'Refined follow-up',
             })
             expect(persisted.find('execution-task')).toMatchObject({
               revision: 2,

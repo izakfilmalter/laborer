@@ -272,6 +272,34 @@ describe('NodeTaskBoardDatabase', () => {
     database.close()
   })
 
+  it('replays an already-applied status declaration without another write', () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    const raw = new DatabaseSync(path)
+    raw
+      .prepare(`INSERT INTO tasks (
+        id, root_path, title, status, source, created_at, updated_at, revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('task-1', '/repo', 'Task', 'todo', 'manual', 10, 10, 1)
+
+    expect(database.move('task-1', 1, 'done', 20)).toMatchObject({
+      revision: 2,
+      status: 'done',
+      updatedAt: 20,
+    })
+    expect(database.move('task-1', 1, 'done', 30)).toMatchObject({
+      revision: 2,
+      status: 'done',
+      updatedAt: 20,
+    })
+    expect(
+      raw.prepare('SELECT COUNT(*) AS count FROM task_changes').get()
+    ).toEqual({ count: 1 })
+
+    raw.close()
+    database.close()
+  })
+
   it('allows cancelling human cards but not execution cards', () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)

@@ -1000,7 +1000,7 @@ function TaskBoard({
       })
     } catch (error) {
       toast.error(`Could not move “${task.title}”`, {
-        description: error instanceof Error ? error.message : String(error),
+        description: extractErrorMessage(error),
       })
       throw error
     }
@@ -1020,7 +1020,7 @@ function TaskBoard({
         current.some(({ id }) => id === task.id) ? current : [...current, task]
       )
       toast.error(`Could not cancel “${task.title}”`, {
-        description: error instanceof Error ? error.message : String(error),
+        description: extractErrorMessage(error),
       })
     })
   }

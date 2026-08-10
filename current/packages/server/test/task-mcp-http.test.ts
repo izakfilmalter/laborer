@@ -1,15 +1,23 @@
 import { once } from 'node:events'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HttpRouter } from '@effect/platform'
 import { NodeHttpServer } from '@effect/platform-node'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schedule } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { AgentTaskService } from '../src/services/agent-task-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
+import { serverDiscoveryLayer } from '../src/services/server-discovery.js'
 import {
   mcpOriginGuard,
   TaskMcpProtocolLayer,
@@ -30,6 +38,170 @@ const rpc = (port: number, body: unknown, origin?: string) =>
   )
 
 describe('task MCP HTTP endpoint', () => {
+  it('reads projects and filtered task rows and publishes the bound port', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-task-mcp-')))
+    const firstProject = join(root, 'first-project')
+    const secondProject = join(root, 'second-project')
+    mkdirSync(firstProject)
+    mkdirSync(secondProject)
+    const databasePath = join(root, 'tasks.sqlite')
+    const discoveryPath = join(root, 'server.json')
+    const database = NodeTaskBoardDatabase.open(databasePath)
+    database.insert({
+      actionName: 'implement',
+      branchName: 'feature/read-tools',
+      description: 'Full task description',
+      executionId: 'execution-1',
+      executionStatus: 'running',
+      id: 'task-visible',
+      rootPath: firstProject,
+      source: 'execution',
+      status: 'in_progress',
+      title: 'Visible task',
+      worktreePath: join(firstProject, '.worktrees', 'read-tools'),
+    })
+    database.insert({
+      branchName: 'chore/retired',
+      id: 'task-cancelled',
+      rootPath: firstProject,
+      source: 'manual',
+      status: 'cancelled',
+      title: 'Cancelled task',
+    })
+    database.insert({
+      id: 'task-other-project',
+      rootPath: secondProject,
+      source: 'manual',
+      status: 'todo',
+      title: 'Other project task',
+    })
+    database.close()
+
+    const nodeServer = createServer()
+    const storeLayer = Layer.succeed(LaborerStore, {
+      store: {
+        query: () => [
+          { id: 'project-1', name: 'First', repoPath: firstProject },
+          { id: 'project-2', name: 'Second', repoPath: secondProject },
+        ],
+      } as never,
+    })
+    const serverLayer = Layer.mergeAll(
+      TaskMcpToolsLayer,
+      HttpRouter.Default.serve(mcpOriginGuard),
+      serverDiscoveryLayer({ host: '127.0.0.1', port: 0 }, discoveryPath)
+    ).pipe(
+      Layer.provide(TaskMcpProtocolLayer),
+      Layer.provide(AgentTaskService.layer(databasePath)),
+      Layer.provide(
+        NodeHttpServer.layer(() => nodeServer, {
+          host: '127.0.0.1',
+          port: 0,
+        })
+      ),
+      Layer.provide(storeLayer)
+    )
+
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* Layer.launch(serverLayer).pipe(Effect.forkScoped)
+            if (!nodeServer.listening) {
+              yield* Effect.promise(() => once(nodeServer, 'listening'))
+            }
+            const address = nodeServer.address()
+            if (address === null || typeof address === 'string') {
+              return yield* Effect.die(
+                new Error('Task MCP test server did not bind to TCP')
+              )
+            }
+            const port = address.port
+            const discovery = yield* Effect.try(() =>
+              JSON.parse(readFileSync(discoveryPath, 'utf8'))
+            ).pipe(
+              Effect.retry(
+                Schedule.spaced('5 millis').pipe(
+                  Schedule.intersect(Schedule.recurs(20))
+                )
+              )
+            )
+            expect(discovery).toMatchObject({
+              host: '127.0.0.1',
+              port,
+              url: `http://127.0.0.1:${String(port)}/mcp`,
+            })
+
+            const projects = yield* rpc(port, {
+              id: 1,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: { arguments: {}, name: 'list_projects' },
+            })
+            expect(projects.response.status).toBe(200)
+            expect(projects.text).toContain('First')
+            expect(projects.text).toContain(firstProject)
+            expect(projects.text).toContain('Second')
+
+            const defaultList = yield* rpc(port, {
+              id: 2,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: { arguments: {}, name: 'list_tasks' },
+            })
+            expect(defaultList.text).toContain('task-visible')
+            expect(defaultList.text).toContain('task-other-project')
+            expect(defaultList.text).not.toContain('task-cancelled')
+
+            const cancelledList = yield* rpc(port, {
+              id: 3,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: { include_cancelled: true },
+                name: 'list_tasks',
+              },
+            })
+            expect(cancelledList.text).toContain('task-cancelled')
+
+            const filteredList = yield* rpc(port, {
+              id: 4,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: {
+                  path: firstProject,
+                  search: 'read-tools',
+                  status: 'in_progress',
+                },
+                name: 'list_tasks',
+              },
+            })
+            expect(filteredList.text).toContain('task-visible')
+            expect(filteredList.text).not.toContain('task-other-project')
+
+            const task = yield* rpc(port, {
+              id: 5,
+              jsonrpc: '2.0',
+              method: 'tools/call',
+              params: {
+                arguments: { id: 'task-visible' },
+                name: 'get_task',
+              },
+            })
+            expect(task.text).toContain('Full task description')
+            expect(task.text).toContain('executionStatus')
+            expect(task.text).toContain('running')
+            expect(task.text).toContain('worktreePath')
+          })
+        )
+      )
+      expect(existsSync(discoveryPath)).toBe(false)
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
+  })
+
   it('executes task CRUD over streamable HTTP and rejects web origins', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-task-mcp-')))
     const databasePath = join(root, 'tasks.sqlite')

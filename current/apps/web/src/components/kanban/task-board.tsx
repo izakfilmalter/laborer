@@ -367,7 +367,13 @@ function TaskBoardCard({
         <div className="flex flex-wrap items-center gap-1.5">
           <SourceBadge source={task.source} />
           <SlackAnalysisBadge task={task} />
-          {task.source !== 'slack_url' && (
+          {/*
+            While a Slack card is still being read, its analysis badge already
+            speaks for the execution — two badges would say the same thing
+            twice. Once the card is named, the mirror is about the run itself,
+            so a failed run still surfaces here.
+          */}
+          {analysis === null && (
             <ExecutionMirrorBadge mirror={task.executionMirror} />
           )}
           {task.pr && (
@@ -423,11 +429,13 @@ const composerIntent = (trimmed: string): ComposerIntent => {
 function AddCardButton({
   columnTitle,
   composerId,
+  id,
   onToggle,
   open,
 }: {
   readonly columnTitle: string
   readonly composerId: string
+  readonly id: string
   readonly onToggle: () => void
   readonly open: boolean
 }) {
@@ -440,7 +448,11 @@ function AddCardButton({
             aria-controls={open ? composerId : undefined}
             aria-expanded={open}
             aria-label={`Add card to ${columnTitle}`}
-            className="ml-auto text-muted-foreground"
+            className={cn(
+              'ml-auto text-muted-foreground',
+              open && 'bg-accent text-foreground'
+            )}
+            id={id}
             onClick={onToggle}
             size="icon-xs"
             type="button"
@@ -448,12 +460,21 @@ function AddCardButton({
           />
         }
       >
-        <Plus className="size-3.5" />
+        <Plus
+          className={cn('size-3.5 transition-transform', open && 'rotate-45')}
+        />
       </TooltipTrigger>
-      <TooltipContent>Add card</TooltipContent>
+      <TooltipContent>{open ? 'Close composer' : 'Add card'}</TooltipContent>
     </Tooltip>
   )
 }
+
+/**
+ * Why the composer closed. Esc is a deliberate cancel, so focus goes back to
+ * the control that opened it; a blur means the person is already somewhere
+ * else and moving their focus again would yank them back.
+ */
+type ComposerCloseReason = 'cancel' | 'blur'
 
 /**
  * The inline card composer for one column: Enter commits, Esc cancels. It
@@ -468,7 +489,7 @@ function AddCardComposer({
 }: {
   readonly column: BoardColumn
   readonly composerId: string
-  readonly onClose: () => void
+  readonly onClose: (reason: ComposerCloseReason) => void
   readonly projectId: string
 }) {
   const [value, setValue] = useState('')
@@ -525,7 +546,7 @@ function AddCardComposer({
     if (intent === 'unrecognized-link') {
       return {
         className: 'text-warning',
-        text: 'Not a Slack message link — this becomes a card titled with the text.',
+        text: 'Not a Slack message link — this becomes a manual card titled with the URL.',
       }
     }
     if (confirmation !== null) {
@@ -558,7 +579,7 @@ function AddCardComposer({
           onBlur={() => {
             // An abandoned empty composer closes itself; typed text stays put.
             if (!submitting && trimmed.length === 0) {
-              onClose()
+              onClose('blur')
             }
           }}
           onChange={(event) => {
@@ -569,7 +590,7 @@ function AddCardComposer({
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.preventDefault()
-              onClose()
+              onClose('cancel')
             } else if (event.key === 'Enter') {
               event.preventDefault()
               submit()
@@ -657,7 +678,14 @@ function LaneBoard({
       <KanbanBoard className="grid min-w-0 grid-cols-4 gap-2 sm:grid-cols-4">
         {BOARD_COLUMNS.map((column) => {
           const composerId = `${laneId}-${column.id}-composer`
+          const addButtonId = `${laneId}-${column.id}-add`
           const composerOpen = composerColumn === column.id
+          const closeComposer = (reason: ComposerCloseReason) => {
+            setComposerColumn(null)
+            if (reason === 'cancel') {
+              document.getElementById(addButtonId)?.focus()
+            }
+          }
 
           return (
             <KanbanColumn className="min-w-0" key={column.id} value={column.id}>
@@ -678,6 +706,7 @@ function LaneBoard({
                   <AddCardButton
                     columnTitle={column.title}
                     composerId={composerId}
+                    id={addButtonId}
                     onToggle={() =>
                       setComposerColumn(composerOpen ? null : column.id)
                     }
@@ -688,7 +717,7 @@ function LaneBoard({
                   <AddCardComposer
                     column={column}
                     composerId={composerId}
-                    onClose={() => setComposerColumn(null)}
+                    onClose={closeComposer}
                     projectId={projectId}
                   />
                 )}
@@ -719,6 +748,7 @@ function LaneBoard({
                       </div>
                     ) : (
                       <button
+                        aria-label={`Add the first card to ${column.title}`}
                         className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={() => setComposerColumn(column.id)}
                         type="button"

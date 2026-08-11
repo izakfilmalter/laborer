@@ -17,19 +17,12 @@ const databasePath = (): string =>
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u
 
 describe('task card creation', () => {
-  it('turns a manual task title into a namespaced branch name', () => {
-    expect(
-      manualTaskBranchName(
-        '  Débug electric sync delays!  ',
-        '01K2A3456789ABCDEFGHJKMNPQR'
-      )
-    ).toBe('laborer/debug-electric-sync-delays-hjkmnpqr')
-    expect(manualTaskBranchName('⚡️', '01K2A3456789ABCDEFGHJKMNPQR')).toBe(
-      undefined
+  it('turns a manual task title into an unadorned branch name', () => {
+    expect(manualTaskBranchName('  Débug electric sync delays!  ')).toBe(
+      'debug-electric-sync-delays'
     )
-    expect(manualTaskBranchName('Same title', 'task-one')).not.toBe(
-      manualTaskBranchName('Same title', 'task-two')
-    )
+    expect(manualTaskBranchName('⚡️')).toBe('task')
+    expect(manualTaskBranchName('Same title')).toBe('same-title')
   })
 
   it('creates a manual card in its selected column with a ULID', async () => {

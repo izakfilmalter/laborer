@@ -40,6 +40,7 @@ import {
   makeServiceProxy,
 } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
@@ -102,6 +103,7 @@ function buildServerLayer(port: RpcMessagePort) {
     Layer.provide(DeferredServiceStubs),
     Layer.provide(DeferredServicesReadyLayer),
     Layer.provide(ConfigService.layer),
+    Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
     Layer.provide(TestLaborerStore)
   )
 }

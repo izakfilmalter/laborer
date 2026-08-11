@@ -1,4 +1,8 @@
-import type { SharedProjectRow, SharedTaskRow } from '@laborer/shared/rpc'
+import type {
+  SharedProjectRow,
+  SharedSettingRow,
+  SharedTaskRow,
+} from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
   type AuthoritativeSharedState,
@@ -52,6 +56,14 @@ const project = (rootPath: string, revision = 1): SharedProjectRow => ({
   revision,
   rootPath,
   updatedAt: revision,
+})
+
+const setting = (value: string, revision = 1): SharedSettingRow => ({
+  createdAt: 1,
+  key: 'github_desktop_token',
+  revision,
+  updatedAt: revision,
+  value,
 })
 
 describe('applySharedStateUpdate', () => {
@@ -119,5 +131,24 @@ describe('applySharedStateUpdate', () => {
       rows: [project('/second', 2)],
     })
     expect(removed.projects).toEqual({ cursor: 3, rows: [] })
+  })
+
+  it('applies live setting changes from another writer', () => {
+    const connected = applySharedStateUpdate(empty, {
+      settings: { cursor: 1, rows: [setting('first')], type: 'snapshot' },
+    })
+    const externallyChanged = applySharedStateUpdate(connected, {
+      settings: {
+        cursor: 2,
+        deletedRowIds: [],
+        rows: [setting('second', 2)],
+        type: 'delta',
+      },
+    })
+
+    expect(externallyChanged.settings).toEqual({
+      cursor: 2,
+      rows: [setting('second', 2)],
+    })
   })
 })

@@ -994,6 +994,42 @@ export class NativeLaborerDatabase {
     })
   }
 
+  /**
+   * Compare-and-set a setting. Revision zero is the sentinel for an absent
+   * row, allowing first creation to participate in the same CAS contract.
+   */
+  setSetting(
+    key: string,
+    expectedRevision: number,
+    value: string,
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<AppSetting> {
+    if (expectedRevision !== 0) {
+      return this.updateSetting(
+        key,
+        expectedRevision,
+        value,
+        mutationId,
+        changedAt
+      )
+    }
+    try {
+      return this.insertSetting(key, value, mutationId, changedAt)
+    } catch (cause) {
+      const current = this.findSetting(key)
+      if (current !== null) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'app_settings',
+          key,
+          expectedRevision,
+          current
+        )
+      }
+      throw cause
+    }
+  }
+
   updateSetting(
     key: string,
     expectedRevision: number,

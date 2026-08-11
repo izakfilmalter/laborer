@@ -23,6 +23,7 @@ import {
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
@@ -61,6 +62,7 @@ const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
   Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(TestLaborerStore)
 )
 
@@ -158,6 +160,7 @@ const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provideMerge(TestLaborerStore)
 )
 

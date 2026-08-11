@@ -603,6 +603,21 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
   }),
 
+  /** Revision-CAS write for a global app setting. Revision 0 means absent. */
+  Rpc.make('appSetting.set', {
+    success: Schema.Struct({
+      cursor: Schema.NonNegativeInt,
+      row: SharedSettingRow,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: Schema.NonNegativeInt,
+      key: Schema.String,
+      mutationId: Schema.String,
+      value: Schema.String,
+    },
+  }),
+
   Rpc.make('task.create', {
     success: Schema.Struct({
       /** Stored task description to inject when creation provisions a workspace. */

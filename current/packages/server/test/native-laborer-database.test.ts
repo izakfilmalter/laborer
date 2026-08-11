@@ -205,6 +205,34 @@ describe('NativeLaborerDatabase', () => {
     database.close()
   })
 
+  it('creates settings through revision-zero CAS and rejects stale creation', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const created = database.setSetting(
+      'github_desktop_token',
+      0,
+      'secret',
+      'create-setting',
+      10
+    )
+
+    expect(created).toMatchObject({
+      cursor: 1,
+      row: { revision: 1, value: 'secret' },
+    })
+    expect(() =>
+      database.setSetting(
+        'github_desktop_token',
+        0,
+        'overwritten',
+        'stale-setting',
+        20
+      )
+    ).toThrow(LaborerDatabaseStaleRevisionError)
+    expect(database.findSetting('github_desktop_token')?.value).toBe('secret')
+    expect(database.stateChangesAfter(0)).toHaveLength(1)
+    database.close()
+  })
+
   it('rolls back constraint failures without appending ledger rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     database.insertProject({

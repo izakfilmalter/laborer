@@ -26,7 +26,9 @@ import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
+import { LaborerDatabase } from '../services/laborer-database.js'
 import { LaborerStore } from '../services/laborer-store.js'
+import { LaborerDatabaseStaleRevisionError } from '../services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
@@ -566,6 +568,40 @@ export const handleTaskMove = (payload: {
   readonly taskId: string
 }) => handleTaskMoveAtPath(payload)
 
+export const handleAppSettingSet = (payload: {
+  readonly expectedRevision: number
+  readonly key: string
+  readonly mutationId: string
+  readonly value: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('set app setting', (native) =>
+        native.setSetting(
+          payload.key,
+          payload.expectedRevision,
+          payload.value,
+          payload.mutationId
+        )
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new RpcError({
+              code:
+                cause instanceof LaborerDatabaseStaleRevisionError
+                  ? 'CAS_CONFLICT'
+                  : 'APP_SETTING_WRITE_FAILED',
+              message:
+                cause instanceof LaborerDatabaseStaleRevisionError
+                  ? `Setting changed while saving: ${payload.key}`
+                  : `Unable to save setting: ${payload.key}`,
+            })
+        )
+      )
+  })
+
 export const handleTaskUpdate = (
   {
     description,
@@ -743,6 +779,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             : ensureTaskProjects(update.tasks.rows)
         )
       ),
+    'appSetting.set': handleAppSettingSet,
     'task.create': ({ projectId, status, text }) =>
       Effect.gen(function* () {
         const project = yield* getProject(projectId)

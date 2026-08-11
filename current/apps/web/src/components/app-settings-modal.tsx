@@ -1,10 +1,9 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { AgentProvider } from '@laborer/shared/rpc'
-import { appSettings, events } from '@laborer/shared/schema'
-import { queryDb } from '@livestore/livestore'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { settingRowsAtom } from '@/atoms/shared-state'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -12,7 +11,6 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import { Button } from './ui/button'
 import {
   Dialog,
@@ -45,12 +43,8 @@ const AGENT_OPTIONS: ReadonlyArray<{
 const GITHUB_OAUTH_SCOPES = 'repo user workflow'
 const GITHUB_OAUTH_CLIENT_ID = '3a723b10ac5575cc5bb9'
 
-/** LiveStore query for all app settings. */
-const allAppSettings$ = queryDb(appSettings, {
-  label: 'appSettings',
-})
-
 const exchangeCodeMutation = LaborerClient.mutation('github.exchangeOAuthCode')
+const setAppSettingMutation = LaborerClient.mutation('appSetting.set')
 const updateGlobalConfigMutation = LaborerClient.mutation('globalConfig.update')
 const globalConfigGet$ = LaborerClient.query(
   'globalConfig.get',
@@ -78,9 +72,9 @@ function GlobalConfigInitializer({
 
 export function AppSettingsModal() {
   const { open, onOpenChange } = useAppSettings()
-  const store = useLaborerStore()
-  const settings = store.useQuery(allAppSettings$)
+  const settings = useAtomValue(settingRowsAtom)
   const exchangeCode = useAtomSet(exchangeCodeMutation, { mode: 'promise' })
+  const setAppSetting = useAtomSet(setAppSettingMutation, { mode: 'promise' })
   const updateGlobalConfig = useAtomSet(updateGlobalConfigMutation, {
     mode: 'promise',
   })
@@ -91,7 +85,6 @@ export function AppSettingsModal() {
   const [callbackUrl, setCallbackUrl] = useState('')
   const [isExchanging, setIsExchanging] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
   const csrfStateRef = useRef<string>('')
 
   const [agent, setAgent] = useState<AgentProvider>('opencode2')
@@ -153,15 +146,15 @@ export function AppSettingsModal() {
 
         const result = await exchangeCode({ payload: { code } })
 
-        // Store the token in LiveStore
-        store.commit(
-          events.appSettingChanged({
+        await setAppSetting({
+          payload: {
+            expectedRevision: githubToken?.revision ?? 0,
             key: 'github_desktop_token',
+            mutationId: crypto.randomUUID(),
             value: result.accessToken,
-          })
-        )
+          },
+        })
 
-        setSuccess(true)
         setCallbackUrl('')
       } catch (err) {
         setError(
@@ -171,7 +164,7 @@ export function AppSettingsModal() {
         setIsExchanging(false)
       }
     },
-    [exchangeCode, store]
+    [exchangeCode, githubToken?.revision, setAppSetting]
   )
 
   // Listen for the protocol handler callback (Electron only)
@@ -194,7 +187,6 @@ export function AppSettingsModal() {
     const state = crypto.randomUUID()
     csrfStateRef.current = state
     setError(null)
-    setSuccess(false)
 
     const bridge = getDesktopBridge()
     if (bridge?.startGithubOAuth) {
@@ -221,15 +213,24 @@ export function AppSettingsModal() {
     await handleExchangeFromUrl(callbackUrl.trim())
   }, [callbackUrl, handleExchangeFromUrl])
 
-  const handleDisconnect = useCallback(() => {
-    store.commit(
-      events.appSettingChanged({
-        key: 'github_desktop_token',
-        value: '',
+  const handleDisconnect = useCallback(async () => {
+    if (githubToken === undefined) {
+      return
+    }
+    setError(null)
+    try {
+      await setAppSetting({
+        payload: {
+          expectedRevision: githubToken.revision,
+          key: githubToken.key,
+          mutationId: crypto.randomUUID(),
+          value: '',
+        },
       })
-    )
-    setSuccess(false)
-  }, [store])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disconnect.')
+    }
+  }, [githubToken, setAppSetting])
 
   // Reset state when modal closes
   const handleOpenChange = useCallback(
@@ -246,11 +247,8 @@ export function AppSettingsModal() {
   )
 
   const statusLabel = useMemo(() => {
-    if (success) {
-      return 'connected'
-    }
     return hasToken ? 'connected' : 'not connected'
-  }, [hasToken, success])
+  }, [hasToken])
 
   const AgentIcon =
     agent in AGENT_ICONS ? AGENT_ICONS[agent] : AGENT_ICONS.opencode2
@@ -335,12 +333,12 @@ export function AppSettingsModal() {
               <h3 className="font-medium text-sm">GitHub Connection</h3>
               <span
                 className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
-                  hasToken || success
+                  hasToken
                     ? 'bg-green-500/10 text-green-500'
                     : 'bg-muted text-muted-foreground'
                 }`}
               >
-                {(hasToken || success) && <Check className="h-3 w-3" />}
+                {hasToken && <Check className="h-3 w-3" />}
                 {statusLabel}
               </span>
             </div>
@@ -350,7 +348,7 @@ export function AppSettingsModal() {
               and other live notifications.
             </p>
 
-            {hasToken || success ? (
+            {hasToken ? (
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-sm">
                   GitHub account connected.
@@ -412,10 +410,9 @@ export function AppSettingsModal() {
                     Paste the full URL from your browser after authorizing.
                   </FieldDescription>
                 </Field>
-
-                {error && <p className="text-destructive text-sm">{error}</p>}
               </div>
             )}
+            {error && <p className="text-destructive text-sm">{error}</p>}
           </div>
         </div>
 

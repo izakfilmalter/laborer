@@ -1,5 +1,6 @@
 import type {
   BoardTask as RpcBoardTask,
+  SharedStateUpdate,
   TaskBoardEvent,
 } from '@laborer/shared/rpc'
 
@@ -59,6 +60,31 @@ export const applyTaskBoardEvents = (
       }
     }
     for (const task of event.tasks) {
+      tasks.set(task.id, task)
+    }
+  }
+  return [...tasks.values()].map(toBoardTask)
+}
+
+/** Apply task updates from the combined shared-state subscription. */
+export const applySharedTaskUpdates = (
+  events: readonly SharedStateUpdate[],
+  initialTasks: readonly RpcBoardTask[] = []
+): readonly BoardTask[] => {
+  const tasks = new Map(initialTasks.map((task) => [task.id, task]))
+  for (const event of events) {
+    const update = event.tasks
+    if (update === undefined) {
+      continue
+    }
+    if (update.type === 'snapshot') {
+      tasks.clear()
+    } else {
+      for (const taskId of update.deletedRowIds) {
+        tasks.delete(taskId)
+      }
+    }
+    for (const task of update.rows) {
       tasks.set(task.id, task)
     }
   }

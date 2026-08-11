@@ -17,7 +17,7 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
-import { Cause, Effect, Stream } from 'effect'
+import { Cause } from 'effect'
 import {
   AlignLeft,
   Bot,
@@ -38,10 +38,14 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import {
+  installSharedStateUpdateAtom,
+  sharedStateEventsAtom,
+} from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
-  applyTaskBoardEvents,
+  applySharedTaskUpdates,
   type BoardTask,
   type BoardTaskStatus,
   boardTaskTitle,
@@ -1483,34 +1487,24 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
-  const taskEventsAtom = useMemo(
-    () =>
-      LaborerClient.runtime.pull(
-        LaborerClient.pipe(
-          Effect.map((client) =>
-            // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-            client('task.board.subscribe', undefined as void)
-          ),
-          Stream.unwrap
-        ),
-        { disableAccumulation: true }
-      ),
-    []
-  )
-  const rpcResult = useAtomValue(taskEventsAtom)
-  const pullNext = useAtomSet(taskEventsAtom)
+  const rpcResult = useAtomValue(sharedStateEventsAtom)
+  const pullNext = useAtomSet(sharedStateEventsAtom)
+  const installSharedStateUpdate = useAtomSet(installSharedStateUpdateAtom)
 
   useEffect(() => {
     if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
+      for (const update of rpcResult.value.items) {
+        installSharedStateUpdate(update)
+      }
       setBoardTasks((current) =>
-        applyTaskBoardEvents(rpcResult.value.items, current)
+        applySharedTaskUpdates(rpcResult.value.items, current)
       )
       // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
       pullNext(undefined as void)
     } else if (Result.isFailure(rpcResult)) {
       setBoardTasks([])
     }
-  }, [pullNext, rpcResult])
+  }, [installSharedStateUpdate, pullNext, rpcResult])
 
   // Closing hands focus back to the card control that opened the terminal, so
   // a keyboard user lands where they left rather than at the top of the board.

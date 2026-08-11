@@ -13,6 +13,7 @@ import type {
   TaskStatus,
 } from '@laborer/task-db'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
@@ -176,9 +177,11 @@ class StalePrTaskTransition extends Error {}
 /** Node/Electron-compatible connection to the shared task DB. */
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
+  readonly #path: string
 
-  private constructor(database: DatabaseSync) {
+  private constructor(database: DatabaseSync, path: string) {
     this.#database = database
+    this.#path = path
   }
 
   static open(path: string): NodeTaskBoardDatabase {
@@ -189,7 +192,7 @@ export class NodeTaskBoardDatabase {
       database.exec('PRAGMA journal_mode = WAL')
       database.exec('PRAGMA synchronous = NORMAL')
       database.exec('PRAGMA foreign_keys = ON')
-      const result = new NodeTaskBoardDatabase(database)
+      const result = new NodeTaskBoardDatabase(database, path)
       result.#migrate()
       return result
     } catch (error) {
@@ -663,6 +666,7 @@ export class NodeTaskBoardDatabase {
         try {
           const result = operation()
           this.#database.exec('COMMIT')
+          notifyLaborerDatabaseWrite(this.#path)
           return result
         } catch (error) {
           try {

@@ -183,6 +183,78 @@ export const TaskBoardEvent = Schema.Union(
 
 export type TaskBoardEvent = typeof TaskBoardEvent.Type
 
+/** Authoritative shared-database task row plus server-only worktree facts. */
+export const SharedTaskRow = Schema.Struct({
+  ...BoardTask.fields,
+  baseBranch: Schema.NullOr(Schema.String),
+  baseSha: Schema.NullOr(Schema.String),
+  parentTaskId: Schema.NullOr(Schema.String),
+  prIsDraft: Schema.Boolean,
+  prNumber: Schema.NullOr(Schema.Int),
+  prState: Schema.NullOr(Schema.Literal('open', 'closed', 'merged')),
+  prTitle: Schema.NullOr(Schema.String),
+  prUrl: Schema.NullOr(Schema.String),
+  setupCompletedAt: Schema.NullOr(Schema.Int),
+  sortOrder: Schema.NullOr(Schema.Number),
+  worktreeError: Schema.NullOr(Schema.String),
+  worktreeStatus: Schema.NullOr(
+    Schema.Literal('provisioning', 'ready', 'errored')
+  ),
+})
+export type SharedTaskRow = typeof SharedTaskRow.Type
+
+export const SharedProjectRow = Schema.Struct({
+  canonicalGitCommonDir: Schema.String,
+  createdAt: Schema.Int,
+  id: Schema.String,
+  name: Schema.String,
+  repoId: Schema.String,
+  revision: Schema.Int,
+  rootPath: Schema.String,
+  updatedAt: Schema.Int,
+})
+export type SharedProjectRow = typeof SharedProjectRow.Type
+
+export const SharedSettingRow = Schema.Struct({
+  createdAt: Schema.Int,
+  key: Schema.String,
+  revision: Schema.Int,
+  updatedAt: Schema.Int,
+  value: Schema.String,
+})
+export type SharedSettingRow = typeof SharedSettingRow.Type
+
+const tableUpdate = <Row extends Schema.Schema.Any>(row: Row) =>
+  Schema.Union(
+    Schema.Struct({
+      type: Schema.Literal('snapshot'),
+      cursor: Schema.Int,
+      rows: Schema.Array(row),
+    }),
+    Schema.Struct({
+      type: Schema.Literal('delta'),
+      cursor: Schema.Int,
+      deletedRowIds: Schema.Array(Schema.String),
+      mutationIds: Schema.optional(Schema.Array(Schema.String)),
+      rows: Schema.Array(row),
+    })
+  )
+
+export const TaskTableUpdate = tableUpdate(SharedTaskRow)
+export type TaskTableUpdate = typeof TaskTableUpdate.Type
+export const ProjectTableUpdate = tableUpdate(SharedProjectRow)
+export type ProjectTableUpdate = typeof ProjectTableUpdate.Type
+export const SettingTableUpdate = tableUpdate(SharedSettingRow)
+export type SettingTableUpdate = typeof SettingTableUpdate.Type
+
+/** One stream, with task_changes and state_changes advancing independently. */
+export const SharedStateUpdate = Schema.Struct({
+  projects: Schema.optional(ProjectTableUpdate),
+  settings: Schema.optional(SettingTableUpdate),
+  tasks: Schema.optional(TaskTableUpdate),
+})
+export type SharedStateUpdate = typeof SharedStateUpdate.Type
+
 const ConfigResolvedValueString = Schema.Struct({
   value: Schema.String,
   source: Schema.String,
@@ -521,6 +593,12 @@ export class LaborerRpcs extends RpcGroup.make(
    */
   Rpc.make('task.board.subscribe', {
     success: TaskBoardEvent,
+    error: RpcError,
+    stream: true,
+  }),
+
+  Rpc.make('state.subscribe', {
+    success: SharedStateUpdate,
     error: RpcError,
     stream: true,
   }),

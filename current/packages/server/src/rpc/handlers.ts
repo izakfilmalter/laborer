@@ -30,6 +30,7 @@ import { LaborerStore } from '../services/laborer-store.js'
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
+import { subscribeToSharedState } from '../services/shared-state-reader.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
 import {
@@ -742,6 +743,14 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'task.board.subscribe': () =>
       subscribeToTaskBoard().pipe(
         Stream.tap(({ tasks }) => ensureTaskProjects(tasks))
+      ),
+    'state.subscribe': () =>
+      subscribeToSharedState().pipe(
+        Stream.tap((update) =>
+          update.tasks === undefined
+            ? Effect.void
+            : ensureTaskProjects(update.tasks.rows)
+        )
       ),
     'task.create': ({ projectId, status, text }) =>
       Effect.gen(function* () {

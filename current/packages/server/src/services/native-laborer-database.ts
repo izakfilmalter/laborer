@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 export type TaskStatus =
   | 'todo'
@@ -163,6 +164,38 @@ export interface StateChange {
   readonly rowId: string
   readonly sequence: number
   readonly tableName: 'projects' | 'app_settings'
+}
+
+export interface LaborerDatabaseSnapshot {
+  readonly projects: readonly Project[]
+  readonly settings: readonly AppSetting[]
+  readonly stateCursor: number
+  readonly taskCursor: number
+  readonly tasks: readonly LaborerTask[]
+}
+
+export interface NativeTableUpdate<Row> {
+  readonly cursor: number
+  readonly deletedRowIds: readonly string[]
+  readonly mutationIds: readonly string[]
+  readonly rows: readonly Row[]
+  readonly type: 'delta'
+}
+
+export interface NativeStateUpdates {
+  readonly projects: NativeTableUpdate<Project>
+  readonly settings: NativeTableUpdate<AppSetting>
+}
+
+export class LaborerDatabaseCursorGapError extends Error {
+  readonly _tag = 'LaborerDatabaseCursorGapError'
+  readonly cursor: number
+  readonly ledger: string
+  constructor(ledger: string, cursor: number) {
+    super(`Laborer database ${ledger} cannot continue after cursor ${cursor}`)
+    this.cursor = cursor
+    this.ledger = ledger
+  }
 }
 
 export class LaborerDatabaseSchemaTooNewError extends Error {
@@ -467,10 +500,15 @@ const sleep = (milliseconds: number): void => {
 /** Synchronous, framework-neutral owner of one shared laborer.sqlite handle. */
 export class NativeLaborerDatabase {
   readonly #database: DatabaseSync
+  readonly #path: string
   readonly #retry: Required<Omit<LaborerDatabaseOptions, 'busyTimeoutMs'>>
   #closed = false
 
-  private constructor(database: DatabaseSync, options: LaborerDatabaseOptions) {
+  private constructor(
+    database: DatabaseSync,
+    path: string,
+    options: LaborerDatabaseOptions
+  ) {
     const attempts = options.attempts ?? 5
     const baseDelayMs = options.baseDelayMs ?? 10
     if (!(Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= 10)) {
@@ -482,6 +520,7 @@ export class NativeLaborerDatabase {
       throw new Error('Database retry base delay must be between 0 and 1000ms')
     }
     this.#database = database
+    this.#path = path
     this.#retry = {
       attempts,
       baseDelayMs,
@@ -497,7 +536,7 @@ export class NativeLaborerDatabase {
     mkdirSync(dirname(path), { recursive: true })
     const database = new DatabaseSync(path)
     try {
-      return new NativeLaborerDatabase(database, options)
+      return new NativeLaborerDatabase(database, path, options)
     } catch (cause) {
       database.close()
       throw cause
@@ -838,6 +877,94 @@ export class NativeLaborerDatabase {
     return boundedRows(rows, 'app_settings').map(rowToSetting)
   }
 
+  /** Rows and both durable ledger cursors captured in one read transaction. */
+  snapshot(): LaborerDatabaseSnapshot {
+    return this.#readTransaction(() => ({
+      projects: this.listProjects(),
+      settings: this.listSettings(),
+      stateCursor: this.#ledgerBounds('state_changes').maximum ?? 0,
+      taskCursor: this.#ledgerBounds('task_changes').maximum ?? 0,
+      tasks: this.listTasks(),
+    }))
+  }
+
+  taskUpdateAfter(sequence: number): NativeTableUpdate<LaborerTask> | null {
+    validateCursorRead(sequence, MAX_LEDGER_READ)
+    return this.#readTransaction(() => {
+      const bounds = this.#ledgerBounds('task_changes')
+      if (this.#cursorNeedsSnapshot(sequence, bounds)) {
+        throw new LaborerDatabaseCursorGapError('task_changes', sequence)
+      }
+      const changes = this.taskChangesAfter(sequence)
+      if (changes.length === 0) {
+        return null
+      }
+      this.#assertContiguous(
+        sequence,
+        changes.map(({ sequence }) => sequence)
+      )
+      const ids = [...new Set(changes.map(({ taskId }) => taskId))]
+      const rows = ids
+        .map((id) => this.findTask(id))
+        .filter((row): row is LaborerTask => row !== null)
+      const present = new Set(rows.map(({ id }) => id))
+      return {
+        cursor: changes.at(-1)?.sequence ?? sequence,
+        deletedRowIds: ids.filter((id) => !present.has(id)),
+        mutationIds: changes.flatMap(({ mutationId }) =>
+          mutationId === null ? [] : [mutationId]
+        ),
+        rows,
+        type: 'delta' as const,
+      }
+    })
+  }
+
+  stateUpdatesAfter(sequence: number): NativeStateUpdates | null {
+    validateCursorRead(sequence, MAX_LEDGER_READ)
+    return this.#readTransaction(() => {
+      const bounds = this.#ledgerBounds('state_changes')
+      if (this.#cursorNeedsSnapshot(sequence, bounds)) {
+        throw new LaborerDatabaseCursorGapError('state_changes', sequence)
+      }
+      const changes = this.stateChangesAfter(sequence)
+      if (changes.length === 0) {
+        return null
+      }
+      this.#assertContiguous(
+        sequence,
+        changes.map(({ sequence }) => sequence)
+      )
+      const cursor = changes.at(-1)?.sequence ?? sequence
+      const update = <Row extends Project | AppSetting>(
+        tableName: 'projects' | 'app_settings',
+        find: (id: string) => Row | null
+      ): NativeTableUpdate<Row> => {
+        const tableChanges = changes.filter(
+          (change) => change.tableName === tableName
+        )
+        const ids = [...new Set(tableChanges.map(({ rowId }) => rowId))]
+        const rows = ids.map(find).filter((row): row is Row => row !== null)
+        const present = new Set(
+          rows.map((row) => ('id' in row ? row.id : row.key))
+        )
+        return {
+          cursor,
+          deletedRowIds: ids.filter((id) => !present.has(id)),
+          mutationIds: tableChanges.flatMap(({ mutationId }) =>
+            mutationId === null ? [] : [mutationId]
+          ),
+          rows,
+          type: 'delta',
+        }
+      }
+      return {
+        projects: update('projects', (id) => this.findProject(id)),
+        settings: update('app_settings', (key) => this.findSetting(key)),
+      }
+    })
+  }
+
   insertSetting(
     key: string,
     value: string,
@@ -1042,7 +1169,7 @@ export class NativeLaborerDatabase {
   }
 
   #writeTransaction<A>(operation: () => A): A {
-    return this.#withBusyRetry(() => {
+    const result = this.#withBusyRetry(() => {
       this.#database.exec('BEGIN IMMEDIATE')
       try {
         const result = operation()
@@ -1057,6 +1184,65 @@ export class NativeLaborerDatabase {
         throw cause
       }
     })
+    notifyLaborerDatabaseWrite(this.#path)
+    return result
+  }
+
+  #readTransaction<A>(operation: () => A): A {
+    this.#database.exec('BEGIN')
+    try {
+      const result = operation()
+      this.#database.exec('COMMIT')
+      return result
+    } catch (cause) {
+      try {
+        this.#database.exec('ROLLBACK')
+      } catch {
+        // Preserve the read/decode failure so the stream can snapshot-fallback.
+      }
+      throw cause
+    }
+  }
+
+  #ledgerBounds(table: 'task_changes' | 'state_changes'): {
+    readonly maximum: number | null
+    readonly minimum: number | null
+  } {
+    const row = sqliteRow(
+      this.#database
+        .prepare(
+          `SELECT MIN(sequence) AS minimum, MAX(sequence) AS maximum FROM ${table}`
+        )
+        .get()
+    )
+    return {
+      maximum:
+        row.maximum === null ? null : integer(row.maximum, `${table}.maximum`),
+      minimum:
+        row.minimum === null ? null : integer(row.minimum, `${table}.minimum`),
+    }
+  }
+
+  #cursorNeedsSnapshot(
+    cursor: number,
+    bounds: { readonly maximum: number | null; readonly minimum: number | null }
+  ): boolean {
+    return (
+      (bounds.maximum === null && cursor > 0) ||
+      (bounds.maximum !== null && cursor > bounds.maximum) ||
+      (bounds.maximum !== null && bounds.maximum - cursor > MAX_LEDGER_READ) ||
+      (bounds.minimum !== null && bounds.minimum > cursor + 1)
+    )
+  }
+
+  #assertContiguous(cursor: number, sequences: readonly number[]): void {
+    let expected = cursor + 1
+    for (const sequence of sequences) {
+      if (sequence !== expected) {
+        throw new LaborerDatabaseCursorGapError('ledger', cursor)
+      }
+      expected += 1
+    }
   }
 
   #withBusyRetry<A>(operation: () => A): A {

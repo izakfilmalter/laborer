@@ -1,15 +1,14 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer, Ref } from 'effect'
 import { afterAll } from 'vitest'
 import { BackgroundFetchService } from '../src/services/background-fetch-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { WorkspaceSyncService } from '../src/services/workspace-sync-service.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
 
@@ -53,6 +52,7 @@ const TestPrWatcherLayer = Layer.effect(
           ])
 
           return {
+            isDraft: false,
             number: null,
             state: null,
             title: null,
@@ -78,24 +78,12 @@ const TestBackgroundFetchLayer = Layer.succeed(
   })
 )
 
-const buildWorkspaceSyncService = (
-  storeContext: Context.Context<LaborerStore>
-) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      WorkspaceSyncService.layer.pipe(
-        Layer.provide(TestPrWatcherLayer),
-        Layer.provide(TestBackgroundFetchLayer),
-        Layer.provideMerge(TestPrWatcherRecorderLayer),
-        Layer.provide(Layer.succeedContext(storeContext))
-      )
-    )
-
-    return {
-      prWatcherRecorder: Context.get(context, TestPrWatcherRecorder),
-      workspaceSyncService: Context.get(context, WorkspaceSyncService),
-    }
-  })
+const TestLayer = WorkspaceSyncService.layer.pipe(
+  Layer.provide(TestPrWatcherLayer),
+  Layer.provide(TestBackgroundFetchLayer),
+  Layer.provideMerge(TestPrWatcherRecorderLayer),
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
+)
 
 const configureRepo = (repoPath: string) => {
   git('config user.email test@example.com', repoPath)
@@ -132,24 +120,27 @@ const initRemoteRepo = (prefix: string) => {
 }
 
 const createWorkspace = (
-  store: { commit: (event: unknown) => void },
+  database: NativeLaborerDatabase,
   worktreePath: string,
-  workspaceId: string,
-  status: 'running' | 'stopped' = 'stopped'
+  workspaceId: string
 ) => {
-  store.commit(
-    events.workspaceCreated({
-      id: workspaceId,
-      projectId: 'project-1',
-      taskSource: null,
-      branchName: 'main',
-      worktreePath,
-      status,
-      origin: 'external',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+  database.insertProject({
+    canonicalGitCommonDir: join(worktreePath, '.git'),
+    id: workspaceId,
+    name: workspaceId,
+    repoId: workspaceId,
+    rootPath: worktreePath,
+  })
+  database.insertTask({
+    branchName: 'main',
+    id: workspaceId,
+    rootPath: worktreePath,
+    source: 'worktree',
+    status: 'in_progress',
+    title: workspaceId,
+    worktreePath,
+    worktreeStatus: 'ready',
+  })
 }
 
 describe('WorkspaceSyncService', () => {
@@ -157,9 +148,7 @@ describe('WorkspaceSyncService', () => {
     'returns WORKSPACE_NOT_FOUND when the workspace does not exist',
     () =>
       Effect.gen(function* () {
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { workspaceSyncService } =
-          yield* buildWorkspaceSyncService(storeContext)
+        const workspaceSyncService = yield* WorkspaceSyncService
 
         const result = yield* workspaceSyncService
           .checkStatus('missing-workspace')
@@ -175,19 +164,16 @@ describe('WorkspaceSyncService', () => {
           result.left.message,
           'Workspace not found: missing-workspace'
         )
-      })
+      }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('returns null counts when no upstream is configured', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('sync-no-upstream', tempRoots)
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, repoPath, 'workspace-no-upstream')
 
-      createWorkspace(store, repoPath, 'workspace-no-upstream')
-
-      const { workspaceSyncService } =
-        yield* buildWorkspaceSyncService(storeContext)
+      const workspaceSyncService = yield* WorkspaceSyncService
       const result = yield* workspaceSyncService.checkStatus(
         'workspace-no-upstream'
       )
@@ -196,10 +182,10 @@ describe('WorkspaceSyncService', () => {
         aheadCount: null,
         behindCount: null,
       })
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('clears cached sync counts for destroyed workspaces', () =>
+  it.scoped('rejects sync checks after a workspace releases its worktree', () =>
     Effect.gen(function* () {
       const { localPath, remotePath } = initRemoteRepo('sync-destroyed')
       const remoteClonePath = createRemoteClone(
@@ -211,40 +197,34 @@ describe('WorkspaceSyncService', () => {
       git('push origin main', remoteClonePath)
       git('fetch origin', localPath)
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-destroyed')
 
-      createWorkspace(store, localPath, 'workspace-destroyed')
-
-      const { workspaceSyncService } =
-        yield* buildWorkspaceSyncService(storeContext)
+      const workspaceSyncService = yield* WorkspaceSyncService
 
       const before = yield* workspaceSyncService.checkStatus(
         'workspace-destroyed'
       )
       assert.strictEqual(before.behindCount, 1)
 
-      store.commit(
-        events.workspaceStatusChanged({
-          id: 'workspace-destroyed',
-          status: 'destroyed',
-        })
-      )
-
-      const result = yield* workspaceSyncService.checkStatus(
-        'workspace-destroyed'
-      )
-      assert.deepStrictEqual(result, {
-        aheadCount: null,
-        behindCount: null,
+      const task = database.findTask('workspace-destroyed')
+      assert.isNotNull(task)
+      if (task === null) {
+        assert.fail('Expected workspace task')
+      }
+      database.updateTask(task.id, task.revision, {
+        worktreePath: null,
+        worktreeStatus: null,
       })
 
-      const workspace = store.query(
-        tables.workspaces.where('id', 'workspace-destroyed')
-      )
-      assert.strictEqual(workspace[0]?.aheadCount, null)
-      assert.strictEqual(workspace[0]?.behindCount, null)
-    })
+      const result = yield* workspaceSyncService
+        .checkStatus('workspace-destroyed')
+        .pipe(Effect.either)
+      assert.strictEqual(result._tag, 'Left')
+      if (result._tag === 'Left') {
+        assert.strictEqual(result.left.code, 'WORKSPACE_NOT_FOUND')
+      }
+    }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('tracks ahead and behind commit counts for upstream branches', () =>
@@ -257,13 +237,10 @@ describe('WorkspaceSyncService', () => {
       git('push origin main', remoteClonePath)
       git('fetch origin', localPath)
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-ahead-behind')
 
-      createWorkspace(store, localPath, 'workspace-ahead-behind')
-
-      const { workspaceSyncService } =
-        yield* buildWorkspaceSyncService(storeContext)
+      const workspaceSyncService = yield* WorkspaceSyncService
       const result = yield* workspaceSyncService.checkStatus(
         'workspace-ahead-behind'
       )
@@ -272,13 +249,7 @@ describe('WorkspaceSyncService', () => {
         aheadCount: 1,
         behindCount: 1,
       })
-
-      const workspace = store.query(
-        tables.workspaces.where('id', 'workspace-ahead-behind')
-      )
-      assert.strictEqual(workspace[0]?.aheadCount, 1)
-      assert.strictEqual(workspace[0]?.behindCount, 1)
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('pushes local commits and refreshes PR state after push', () =>
@@ -287,13 +258,11 @@ describe('WorkspaceSyncService', () => {
 
       commitFile(localPath, 'push.txt', 'push me\n')
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-push')
 
-      createWorkspace(store, localPath, 'workspace-push')
-
-      const { prWatcherRecorder, workspaceSyncService } =
-        yield* buildWorkspaceSyncService(storeContext)
+      const prWatcherRecorder = yield* TestPrWatcherRecorder
+      const workspaceSyncService = yield* WorkspaceSyncService
 
       const before = yield* workspaceSyncService.checkStatus('workspace-push')
       assert.strictEqual(before.aheadCount, 1)
@@ -309,7 +278,7 @@ describe('WorkspaceSyncService', () => {
 
       const checkPrCalls = yield* Ref.get(prWatcherRecorder.checkPrCalls)
       assert.deepStrictEqual(checkPrCalls, ['workspace-push'])
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('pulls remote commits and clears behind count after pull', () =>
@@ -324,13 +293,10 @@ describe('WorkspaceSyncService', () => {
       git('push origin main', remoteClonePath)
       git('fetch origin', localPath)
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-pull')
 
-      createWorkspace(store, localPath, 'workspace-pull')
-
-      const { workspaceSyncService } =
-        yield* buildWorkspaceSyncService(storeContext)
+      const workspaceSyncService = yield* WorkspaceSyncService
 
       const before = yield* workspaceSyncService.checkStatus('workspace-pull')
       assert.strictEqual(before.aheadCount, 0)
@@ -343,6 +309,6 @@ describe('WorkspaceSyncService', () => {
         behindCount: 0,
       })
       assert.strictEqual(git('show HEAD:pulled.txt', localPath), 'from remote')
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 })

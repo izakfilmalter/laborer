@@ -12,7 +12,6 @@
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import {
   assembleDiffEntries,
@@ -20,18 +19,18 @@ import {
   fileFromPatchChunk,
   splitGitPatch,
 } from '../src/services/file-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 /**
  * Layer for FileService tests — provides real FileService with
- * in-memory LaborerStore and no-op file watcher client.
+ * in-memory LaborerDatabase and no-op file watcher client.
  */
 const TestFileServiceLayer = FileService.layer.pipe(
   Layer.provide(TestFileWatcherClientLayer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 const tempRoots: string[] = []
@@ -48,37 +47,34 @@ const cleanupTempRoots = () => {
 }
 
 /**
- * Seed a project and running workspace in the test store.
+ * Seed a project and task-backed workspace in the test database.
  * Returns the workspaceId for use in test assertions.
  */
 const seedWorkspace = (
-  store: LaborerStore['Type']['store'],
+  database: NativeLaborerDatabase,
   repoPath: string,
   status = 'running'
 ) => {
   const workspaceId = crypto.randomUUID()
   const projectId = crypto.randomUUID()
 
-  store.commit(
-    events.projectCreated({
-      id: projectId,
-      repoPath,
-      name: 'test-project',
-    })
-  )
-  store.commit(
-    events.workspaceCreated({
-      id: workspaceId,
-      projectId,
-      taskSource: null,
-      branchName: 'main',
-      worktreePath: repoPath,
-      status,
-      origin: 'manual',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+  database.insertProject({
+    canonicalGitCommonDir: `${repoPath}/.git`,
+    id: projectId,
+    name: 'test-project',
+    repoId: projectId,
+    rootPath: repoPath,
+  })
+  database.insertTask({
+    branchName: status === 'destroyed' ? null : 'main',
+    id: workspaceId,
+    rootPath: repoPath,
+    source: 'manual',
+    status: 'in_progress',
+    title: 'Test workspace',
+    worktreePath: status === 'destroyed' ? null : repoPath,
+    worktreeStatus: status === 'destroyed' ? null : 'ready',
+  })
 
   return workspaceId
 }
@@ -92,8 +88,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'src/index.ts'), 'export {}\n')
       writeFileSync(join(repoPath, 'package.json'), '{}\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -135,8 +131,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'zfile.txt'), '')
       writeFileSync(join(repoPath, 'afile.txt'), '')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -196,8 +192,8 @@ describe('FileService', () => {
       mkdirSync(join(repoPath, 'dist'), { recursive: true })
       mkdirSync(join(repoPath, 'src'), { recursive: true })
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -223,8 +219,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'Thumbs.db'), '')
       writeFileSync(join(repoPath, 'real-file.txt'), 'hello\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -249,8 +245,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'src/index.ts'), 'export {}\n')
       writeFileSync(join(repoPath, 'src/components/Button.tsx'), 'export {}\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId, 'src')
@@ -275,8 +271,8 @@ describe('FileService', () => {
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-traversal', tempRoots)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.list(workspaceId, '../../etc').pipe(
@@ -315,30 +311,32 @@ describe('FileService', () => {
     }).pipe(Effect.provide(TestFileServiceLayer))
   )
 
-  // --- Behavior 8: INVALID_STATE for destroyed workspace ---
-  it.scoped('list fails with INVALID_STATE for destroyed workspace', () =>
-    Effect.gen(function* () {
-      const repoPath = createTempDir('file-svc-destroyed', tempRoots)
+  // --- Behavior 8: Tasks without worktrees are not workspaces ---
+  it.scoped(
+    'list fails with NOT_FOUND after a workspace loses its worktree',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = createTempDir('file-svc-destroyed', tempRoots)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath, 'destroyed')
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath, 'destroyed')
 
-      const fileService = yield* FileService
-      const result = yield* fileService.list(workspaceId).pipe(
-        Effect.matchEffect({
-          onSuccess: () => Effect.succeed('success' as const),
-          onFailure: (error) => Effect.succeed(error),
-        })
-      )
+        const fileService = yield* FileService
+        const result = yield* fileService.list(workspaceId).pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
 
-      if (result === 'success') {
-        assert.fail('Expected INVALID_STATE error')
-      }
-      assert.strictEqual(result._tag, 'RpcError')
-      assert.strictEqual(result.code, 'INVALID_STATE')
+        if (result === 'success') {
+          assert.fail('Expected NOT_FOUND error')
+        }
+        assert.strictEqual(result._tag, 'RpcError')
+        assert.strictEqual(result.code, 'NOT_FOUND')
 
-      cleanupTempRoots()
-    }).pipe(Effect.provide(TestFileServiceLayer))
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
   )
 
   // =================================================================
@@ -353,8 +351,8 @@ describe('FileService', () => {
       git('add hello.txt', repoPath)
       git('commit -m "add hello"', repoPath)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'hello.txt')
@@ -383,8 +381,8 @@ describe('FileService', () => {
         'line 1\nline 2 modified\nline 3\n'
       )
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'tracked.txt')
@@ -415,8 +413,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'staged.txt'), 'modified\n')
       git('add staged.txt', repoPath)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'staged.txt')
@@ -438,8 +436,8 @@ describe('FileService', () => {
       git('add clean.txt', repoPath)
       git('commit -m "add clean"', repoPath)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'clean.txt')
@@ -460,8 +458,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'new-file.txt'), 'brand new\n')
       // Do NOT git add — leave untracked
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'new-file.txt')
@@ -482,8 +480,8 @@ describe('FileService', () => {
       const repoPath = initRepo('file-svc-read-binary', tempRoots)
       writeFileSync(join(repoPath, 'app.exe'), Buffer.from([0, 1, 2, 3]))
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'app.exe')
@@ -506,8 +504,8 @@ describe('FileService', () => {
       )
       writeFileSync(join(repoPath, 'icon.png'), pngBytes)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'icon.png')
@@ -526,8 +524,8 @@ describe('FileService', () => {
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-missing', tempRoots)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.read(workspaceId, 'does-not-exist.txt')
@@ -544,8 +542,8 @@ describe('FileService', () => {
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-traversal', tempRoots)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService
@@ -608,8 +606,8 @@ describe('FileService', () => {
           'line 1\nline 2 modified\nline 3\nline 4\n'
         )
 
-        const { store } = yield* LaborerStore
-        const workspaceId = seedWorkspace(store, repoPath)
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
 
         const fileService = yield* FileService
         const result = yield* fileService.status(workspaceId)
@@ -640,8 +638,8 @@ describe('FileService', () => {
         writeFileSync(join(repoPath, 'new-file.txt'), 'hello\nworld\n')
         // Do NOT git add — leave untracked
 
-        const { store } = yield* LaborerStore
-        const workspaceId = seedWorkspace(store, repoPath)
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
 
         const fileService = yield* FileService
         const result = yield* fileService.status(workspaceId)
@@ -667,8 +665,8 @@ describe('FileService', () => {
       // Delete the file (tracked deletion, not staged)
       unlinkSync(join(repoPath, 'to-delete.txt'))
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.status(workspaceId)
@@ -691,8 +689,8 @@ describe('FileService', () => {
       const repoPath = initRepo('file-svc-status-clean', tempRoots)
       // initRepo already commits README.md, so the tree is clean
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.status(workspaceId)
@@ -723,8 +721,8 @@ describe('FileService', () => {
       // Add one new file (untracked)
       writeFileSync(join(repoPath, 'brand-new.txt'), 'new content\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const result = yield* fileService.status(workspaceId)
@@ -771,8 +769,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'app.log'), 'log data\n')
       writeFileSync(join(repoPath, 'main.ts'), 'code\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -808,8 +806,8 @@ describe('FileService', () => {
         writeFileSync(join(repoPath, 'output/bundle.js'), 'bundle\n')
         mkdirSync(join(repoPath, 'src'), { recursive: true })
 
-        const { store } = yield* LaborerStore
-        const workspaceId = seedWorkspace(store, repoPath)
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
 
         const fileService = yield* FileService
         const nodes = yield* fileService.list(workspaceId)
@@ -844,8 +842,8 @@ describe('FileService', () => {
       writeFileSync(join(repoPath, 'cache.tmp'), 'tmp\n')
       writeFileSync(join(repoPath, 'main.ts'), 'code\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const nodes = yield* fileService.list(workspaceId)
@@ -880,8 +878,8 @@ describe('FileService', () => {
         writeFileSync(join(repoPath, 'index.ts'), 'code\n')
         mkdirSync(join(repoPath, 'lib'), { recursive: true })
 
-        const { store } = yield* LaborerStore
-        const workspaceId = seedWorkspace(store, repoPath)
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
 
         const fileService = yield* FileService
         const nodes = yield* fileService.list(workspaceId)
@@ -916,8 +914,8 @@ describe('FileService', () => {
         writeFileSync(join(repoPath, 'app.ts'), 'code\n')
         mkdirSync(join(repoPath, 'lib'), { recursive: true })
 
-        const { store } = yield* LaborerStore
-        const workspaceId = seedWorkspace(store, repoPath)
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
 
         const fileService = yield* FileService
         const nodes = yield* fileService.list(workspaceId)
@@ -950,8 +948,8 @@ describe('FileService.diff', () => {
 
       writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2 modified\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)
@@ -975,8 +973,8 @@ describe('FileService.diff', () => {
       writeFileSync(join(repoPath, 'brand-new.txt'), 'hello\nworld\n')
       // Do NOT git add — leave untracked
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)
@@ -1002,8 +1000,8 @@ describe('FileService.diff', () => {
 
       unlinkSync(join(repoPath, 'to-delete.txt'))
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)
@@ -1029,8 +1027,8 @@ describe('FileService.diff', () => {
       writeFileSync(join(repoPath, 'staged.txt'), 'modified\n')
       git('add staged.txt', repoPath)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)
@@ -1057,8 +1055,8 @@ describe('FileService.diff', () => {
       unlinkSync(join(repoPath, 'delete-me.txt'))
       writeFileSync(join(repoPath, 'brand-new.txt'), 'new content\n')
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)
@@ -1080,8 +1078,8 @@ describe('FileService.diff', () => {
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-clean', tempRoots)
 
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
 
       const fileService = yield* FileService
       const entries = yield* fileService.diff(workspaceId)

@@ -7,7 +7,6 @@ import {
 } from 'node:fs'
 import { basename, join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { tables } from '@laborer/shared/schema'
 import { Effect, Either, type Scope } from 'effect'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
@@ -32,9 +31,9 @@ const runWithRpcTestContext = <A, E>(
 
 describe('LaborerRpcs project management', () => {
   it.scoped(
-    'project.add registers a real git repo and materializes detected worktrees',
+    'project.add registers a real git repo with canonical identity',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -54,36 +53,18 @@ describe('LaborerRpcs project management', () => {
           const canonicalGitCommonDir = realpathSync(join(repoPath, '.git'))
           assert.strictEqual(project.repoPath, canonicalRepoPath)
           assert.strictEqual(project.name, basename(canonicalRepoPath))
-          const storedProject = store.query(
-            tables.projects.where('id', project.id)
-          )
+          const storedProject = database.findProject(project.id)
 
-          assert.isString(storedProject[0]?.repoId)
+          assert.isString(storedProject?.repoId)
           assert.strictEqual(
-            storedProject[0]?.canonicalGitCommonDir,
+            storedProject?.canonicalGitCommonDir,
             canonicalGitCommonDir
           )
-          assert.deepStrictEqual(storedProject, [
-            {
-              id: project.id,
-              repoPath: canonicalRepoPath,
-              repoId: storedProject[0]?.repoId ?? null,
-              canonicalGitCommonDir,
-              name: basename(canonicalRepoPath),
-            },
-          ])
+          assert.strictEqual(storedProject?.rootPath, canonicalRepoPath)
+          assert.strictEqual(storedProject?.name, basename(canonicalRepoPath))
+          assert.strictEqual(database.stateChangesAfter(0).length, 1)
 
-          const workspaces = store.query(
-            tables.workspaces.where('projectId', project.id)
-          )
-
-          assert.strictEqual(workspaces.length, 2)
-          assert.isTrue(
-            workspaces.every((workspace) => workspace.origin === 'external')
-          )
-          assert.isTrue(
-            workspaces.every((workspace) => workspace.status === 'stopped')
-          )
+          assert.isTrue(existsSync(linkedWorktreePath))
         })
       )
   )
@@ -91,7 +72,7 @@ describe('LaborerRpcs project management', () => {
   it.scoped(
     'project.add returns NOT_GIT_REPO for a directory without git metadata',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -110,10 +91,7 @@ describe('LaborerRpcs project management', () => {
 
           assert.strictEqual(result.left.code, 'NOT_GIT_REPO')
           assert.include(result.left.message, 'not a git repository')
-          assert.deepStrictEqual(
-            store.query(tables.projects.where('repoPath', repoPath)),
-            []
-          )
+          assert.deepStrictEqual(database.listProjects(), [])
         })
       )
   )
@@ -121,7 +99,7 @@ describe('LaborerRpcs project management', () => {
   it.scoped(
     'project.add returns a clear duplicate message for nested repo paths',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -149,7 +127,7 @@ describe('LaborerRpcs project management', () => {
           assert.include(result.left.message, project.name)
           assert.include(result.left.message, 'already registered repository')
 
-          assert.strictEqual(store.query(tables.projects).length, 1)
+          assert.strictEqual(database.listProjects().length, 1)
         })
       )
   )
@@ -157,7 +135,7 @@ describe('LaborerRpcs project management', () => {
   it.scoped(
     'project.add returns a clear duplicate message for symlinked repo paths',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -189,13 +167,13 @@ describe('LaborerRpcs project management', () => {
           assert.include(result.left.message, project.name)
           assert.include(result.left.message, 'already registered repository')
 
-          assert.strictEqual(store.query(tables.projects).length, 1)
+          assert.strictEqual(database.listProjects().length, 1)
         })
       )
   )
 
   it.scoped('project.remove deletes a previously registered project', () =>
-    runWithRpcTestContext(({ client, store }) =>
+    runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -206,10 +184,8 @@ describe('LaborerRpcs project management', () => {
         const project = yield* client.project.add({ repoPath })
         yield* client.project.remove({ projectId: project.id })
 
-        assert.deepStrictEqual(
-          store.query(tables.projects.where('id', project.id)),
-          []
-        )
+        assert.isNull(database.findProject(project.id))
+        assert.strictEqual(database.stateChangesAfter(0).length, 2)
       })
     )
   )
@@ -233,5 +209,72 @@ describe('LaborerRpcs project management', () => {
         )
       })
     )
+  )
+
+  it.scoped('a second clone re-points the existing repository project', () =>
+    runWithRpcTestContext(({ client, database }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
+        const source = initRepo('rpc-project-source', tempRoots)
+        const cloneRoot = createTempDir('rpc-project-clones', tempRoots)
+        const bare = join(cloneRoot, 'origin.git')
+        const firstClone = join(cloneRoot, 'first')
+        const secondClone = join(cloneRoot, 'second')
+        git(`clone --bare ${source} ${bare}`, cloneRoot)
+        git(`clone ${bare} ${firstClone}`, cloneRoot)
+        git(`clone ${bare} ${secondClone}`, cloneRoot)
+
+        const first = yield* client.project.add({ repoPath: firstClone })
+        const second = yield* client.project.add({ repoPath: secondClone })
+
+        assert.strictEqual(second.id, first.id)
+        assert.strictEqual(database.listProjects().length, 1)
+        assert.strictEqual(
+          database.findProject(first.id)?.rootPath,
+          realpathSync(secondClone)
+        )
+        assert.strictEqual(database.findProject(first.id)?.revision, 2)
+        assert.strictEqual(database.stateChangesAfter(0).length, 2)
+      })
+    )
+  )
+
+  it.scoped(
+    'removal keeps tasks and re-registration makes their root visible again',
+    () =>
+      runWithRpcTestContext(({ client, database }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+          const repoPath = initRepo('rpc-project-task-preservation', tempRoots)
+          const first = yield* client.project.add({ repoPath })
+          database.insertTask({
+            id: 'task-that-survives-project-removal',
+            rootPath: realpathSync(repoPath),
+            source: 'manual',
+            status: 'todo',
+            title: 'Survives',
+          })
+
+          yield* client.project.remove({ projectId: first.id })
+          assert.isNotNull(
+            database.findTask('task-that-survives-project-removal')
+          )
+          assert.deepStrictEqual(database.listProjects(), [])
+
+          const registeredAgain = yield* client.project.add({ repoPath })
+          assert.notStrictEqual(registeredAgain.id, first.id)
+          assert.strictEqual(
+            database.findTask('task-that-survives-project-removal')?.rootPath,
+            registeredAgain.repoPath
+          )
+          assert.strictEqual(database.stateChangesAfter(0).length, 3)
+        })
+      )
   )
 })

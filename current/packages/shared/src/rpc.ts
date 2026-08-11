@@ -3,6 +3,10 @@ import { Schema } from 'effect'
 import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
+const APP_SETTING_KEY_MAX_LENGTH = 128
+const APP_SETTING_VALUE_MAX_LENGTH = 16_384
+const MUTATION_ID_MAX_LENGTH = 128
+
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
 // ---------------------------------------------------------------------------
@@ -182,6 +186,78 @@ export const TaskBoardEvent = Schema.Union(
 )
 
 export type TaskBoardEvent = typeof TaskBoardEvent.Type
+
+/** Authoritative shared-database task row plus server-only worktree facts. */
+export const SharedTaskRow = Schema.Struct({
+  ...BoardTask.fields,
+  baseBranch: Schema.NullOr(Schema.String),
+  baseSha: Schema.NullOr(Schema.String),
+  parentTaskId: Schema.NullOr(Schema.String),
+  prIsDraft: Schema.Boolean,
+  prNumber: Schema.NullOr(Schema.Int),
+  prState: Schema.NullOr(Schema.Literal('open', 'closed', 'merged')),
+  prTitle: Schema.NullOr(Schema.String),
+  prUrl: Schema.NullOr(Schema.String),
+  setupCompletedAt: Schema.NullOr(Schema.Int),
+  sortOrder: Schema.NullOr(Schema.Finite),
+  worktreeError: Schema.NullOr(Schema.String),
+  worktreeStatus: Schema.NullOr(
+    Schema.Literal('provisioning', 'ready', 'errored')
+  ),
+})
+export type SharedTaskRow = typeof SharedTaskRow.Type
+
+export const SharedProjectRow = Schema.Struct({
+  canonicalGitCommonDir: Schema.String,
+  createdAt: Schema.Int,
+  id: Schema.String,
+  name: Schema.String,
+  repoId: Schema.String,
+  revision: Schema.Int,
+  rootPath: Schema.String,
+  updatedAt: Schema.Int,
+})
+export type SharedProjectRow = typeof SharedProjectRow.Type
+
+export const SharedSettingRow = Schema.Struct({
+  createdAt: Schema.Int,
+  key: Schema.String,
+  revision: Schema.Int,
+  updatedAt: Schema.Int,
+  value: Schema.String,
+})
+export type SharedSettingRow = typeof SharedSettingRow.Type
+
+const tableUpdate = <Row extends Schema.Schema.Any>(row: Row) =>
+  Schema.Union(
+    Schema.Struct({
+      type: Schema.Literal('snapshot'),
+      cursor: Schema.Int,
+      rows: Schema.Array(row),
+    }),
+    Schema.Struct({
+      type: Schema.Literal('delta'),
+      cursor: Schema.Int,
+      deletedRowIds: Schema.Array(Schema.String),
+      mutationIds: Schema.optional(Schema.Array(Schema.String)),
+      rows: Schema.Array(row),
+    })
+  )
+
+export const TaskTableUpdate = tableUpdate(SharedTaskRow)
+export type TaskTableUpdate = typeof TaskTableUpdate.Type
+export const ProjectTableUpdate = tableUpdate(SharedProjectRow)
+export type ProjectTableUpdate = typeof ProjectTableUpdate.Type
+export const SettingTableUpdate = tableUpdate(SharedSettingRow)
+export type SettingTableUpdate = typeof SettingTableUpdate.Type
+
+/** One stream, with task_changes and state_changes advancing independently. */
+export const SharedStateUpdate = Schema.Struct({
+  projects: Schema.optional(ProjectTableUpdate),
+  settings: Schema.optional(SettingTableUpdate),
+  tasks: Schema.optional(TaskTableUpdate),
+})
+export type SharedStateUpdate = typeof SharedStateUpdate.Type
 
 const ConfigResolvedValueString = Schema.Struct({
   value: Schema.String,
@@ -525,6 +601,33 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
   }),
 
+  Rpc.make('state.subscribe', {
+    success: SharedStateUpdate,
+    error: RpcError,
+    stream: true,
+  }),
+
+  /** Revision-CAS write for a global app setting. Revision 0 means absent. */
+  Rpc.make('appSetting.set', {
+    success: Schema.Struct({
+      cursor: Schema.NonNegativeInt,
+      row: SharedSettingRow,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: Schema.NonNegativeInt,
+      key: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(APP_SETTING_KEY_MAX_LENGTH)
+      ),
+      mutationId: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      value: Schema.String.pipe(Schema.maxLength(APP_SETTING_VALUE_MAX_LENGTH)),
+    },
+  }),
+
   Rpc.make('task.create', {
     success: Schema.Struct({
       /** Stored task description to inject when creation provisions a workspace. */
@@ -543,20 +646,27 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  /** Revision-CAS status write used by both card drags and cancellation. */
+  /** Revision-CAS status/manual-order write used by card drags and cancellation. */
   Rpc.make('task.move', {
     success: Schema.Struct({
+      cursor: Schema.NonNegativeInt,
       /** Non-null only when this move provisioned a new workspace. */
       workspaceId: Schema.NullOr(Schema.String),
       /** Stored task description to inject into the newly launched agent. */
       description: Schema.NullOr(Schema.String),
       revision: Schema.Int,
+      row: SharedTaskRow,
       status: StoredTaskStatus,
       updatedAt: Schema.Int,
     }),
     error: RpcError,
     payload: {
-      expectedRevision: Schema.Int,
+      expectedRevision: Schema.Positive.pipe(Schema.int()),
+      mutationId: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      sortOrder: Schema.NullOr(Schema.Finite),
       status: StoredTaskStatus,
       taskId: Schema.String,
     },

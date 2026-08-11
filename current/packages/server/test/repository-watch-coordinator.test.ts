@@ -2,7 +2,6 @@ import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { tables } from '@laborer/shared/schema'
 import { Context, Effect, Exit, Layer, Scope } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
@@ -12,17 +11,20 @@ import {
   type FileEventSubscription,
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitFor } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
+
+const listTasksForRoot = (database: NativeLaborerDatabase, rootPath: string) =>
+  database.listTasks().filter((task) => task.rootPath === rootPath)
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -105,7 +107,7 @@ const createTestLayerWithRecording = (
     Layer.provide(WorktreeReconciler.layer),
     Layer.provide(WorktreeDetector.layer),
     Layer.provide(RepositoryIdentity.layer),
-    Layer.provideMerge(TestLaborerStore)
+    Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
   )
 
 describe('RepositoryWatchCoordinator scoped lifecycle', () => {
@@ -120,9 +122,8 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
+          const { database } = yield* LaborerDatabase
           yield* coordinator.watchProject('project-coord-1', repoPath)
-
-          const { store } = yield* LaborerStore
 
           // Creating a worktree modifies the git directory
           git(`worktree add -b coord/one ${linkedPath}`, repoPath)
@@ -148,17 +149,15 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
           yield* Effect.promise(() =>
             waitFor(() =>
               Promise.resolve(
-                store.query(
-                  tables.workspaces.where('projectId', 'project-coord-1')
-                ).length === 2
+                listTasksForRoot(database, canonicalRepoPath).length === 1
               )
             )
           )
 
-          const workspaces = store.query(
-            tables.workspaces.where('projectId', 'project-coord-1')
+          assert.strictEqual(
+            listTasksForRoot(database, canonicalRepoPath).length,
+            1
           )
-          assert.strictEqual(workspaces.length, 2)
         }).pipe(Effect.provide(testLayer))
       })
   )
@@ -174,9 +173,8 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
+          const { database } = yield* LaborerDatabase
           yield* coordinator.watchProject('project-coord-gitdir', repoPath)
-
-          const { store } = yield* LaborerStore
 
           // Adding a worktree modifies the git common dir
           git(`worktree add -b coord/gitdir ${linkedPath}`, repoPath)
@@ -201,9 +199,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
           yield* Effect.promise(() =>
             waitFor(() =>
               Promise.resolve(
-                store.query(
-                  tables.workspaces.where('projectId', 'project-coord-gitdir')
-                ).length === 2
+                listTasksForRoot(database, canonicalRepoPath).length === 1
               )
             )
           )
@@ -221,9 +217,8 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
 
       yield* Effect.gen(function* () {
         const coordinator = yield* RepositoryWatchCoordinator
+        const { database } = yield* LaborerDatabase
         yield* coordinator.watchProject('project-coord-teardown', repoPath)
-
-        const { store } = yield* LaborerStore
 
         // Resolve canonical path (macOS tmpdir is a symlink)
         const canonicalRepoPath = realpathSync(repoPath)
@@ -242,9 +237,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
         yield* Effect.promise(() =>
           waitFor(() =>
             Promise.resolve(
-              store.query(
-                tables.workspaces.where('projectId', 'project-coord-teardown')
-              ).length === 2
+              listTasksForRoot(database, canonicalRepoPath).length === 1
             )
           )
         )
@@ -264,13 +257,10 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
         })
         yield* Effect.promise(() => delay(1500))
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', 'project-coord-teardown')
-        )
         assert.strictEqual(
-          workspaces.length,
-          2,
-          'No new workspace should be created after unwatching'
+          listTasksForRoot(database, canonicalRepoPath).length,
+          1,
+          'No new task should be created after unwatching'
         )
       }).pipe(Effect.provide(testLayer))
     })

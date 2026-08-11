@@ -1,5 +1,7 @@
 import type {
   BoardTask as RpcBoardTask,
+  SharedStateUpdate,
+  SharedTaskRow,
   TaskBoardEvent,
 } from '@laborer/shared/rpc'
 
@@ -19,7 +21,9 @@ export interface BoardPr {
 export interface BoardTask extends RpcBoardTask {
   readonly branch: string | null
   readonly executionMirror: ExecutionMirror
+  readonly parentTaskId: string | null
   readonly pr: BoardPr | null
+  readonly sortOrder: number | null
   readonly worktreeState: WorktreeState
 }
 
@@ -40,9 +44,32 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
   ...task,
   branch: task.branchName,
   executionMirror: task.executionStatus,
+  parentTaskId: null,
   pr: null,
+  sortOrder: null,
   worktreeState: worktreeState(task),
 })
+
+export const boardTasksFromSharedRows = (
+  tasks: readonly SharedTaskRow[]
+): readonly BoardTask[] =>
+  tasks.map((task) => ({
+    ...toBoardTask(task),
+    parentTaskId: task.parentTaskId,
+    pr:
+      task.prNumber === null ||
+      task.prState === null ||
+      task.prTitle === null ||
+      task.prUrl === null
+        ? null
+        : {
+            number: task.prNumber,
+            state: task.prState,
+            title: task.prTitle,
+            url: task.prUrl,
+          },
+    sortOrder: task.sortOrder,
+  }))
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */
 export const applyTaskBoardEvents = (
@@ -63,6 +90,33 @@ export const applyTaskBoardEvents = (
     }
   }
   return [...tasks.values()].map(toBoardTask)
+}
+
+/** Apply task updates from the combined shared-state subscription. */
+export const applySharedTaskUpdates = (
+  events: readonly SharedStateUpdate[],
+  initialTasks: readonly RpcBoardTask[] = []
+): readonly BoardTask[] => {
+  const tasks = new Map<string, BoardTask>(
+    initialTasks.map((task) => [task.id, toBoardTask(task)])
+  )
+  for (const event of events) {
+    const update = event.tasks
+    if (update === undefined) {
+      continue
+    }
+    if (update.type === 'snapshot') {
+      tasks.clear()
+    } else {
+      for (const taskId of update.deletedRowIds) {
+        tasks.delete(taskId)
+      }
+    }
+    for (const task of boardTasksFromSharedRows(update.rows)) {
+      tasks.set(task.id, task)
+    }
+  }
+  return [...tasks.values()]
 }
 
 export interface BoardProject {

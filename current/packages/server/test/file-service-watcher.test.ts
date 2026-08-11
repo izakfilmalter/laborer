@@ -15,28 +15,27 @@
 import { rmSync } from 'node:fs'
 import { assert, describe, it } from '@effect/vitest'
 import type { FileWatcherEvent } from '@laborer/shared/rpc'
-import { events } from '@laborer/shared/schema'
 import { Chunk, Effect, Fiber, Layer, Ref, Stream } from 'effect'
 import { FileService } from '../src/services/file-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { createTempDir } from './helpers/git-helpers.js'
 import {
   TestFileWatcherClientRecorder,
   TestFileWatcherClientRecordingWithRecorderLayer,
 } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 /**
  * Layer for watcher tests — provides FileService with recording
  * FileWatcherClient mock (+ TestFileWatcherClientRecorder for
- * assertions) and in-memory LaborerStore.
+ * assertions) and an in-memory shared database.
  *
  * Uses `provideMerge` for the recorder layer so
  * `TestFileWatcherClientRecorder` remains in the output context.
  */
 const TestWatcherServiceLayer = FileService.layer.pipe(
   Layer.provideMerge(TestFileWatcherClientRecordingWithRecorderLayer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 const tempRoots: string[] = []
@@ -53,36 +52,33 @@ const cleanupTempRoots = () => {
 }
 
 /**
- * Seed a project and running workspace in the test store.
+ * Seed a project and task-backed workspace in the test database.
  */
 const seedWorkspace = (
-  store: LaborerStore['Type']['store'],
+  database: NativeLaborerDatabase,
   repoPath: string,
   status = 'running'
 ) => {
   const workspaceId = crypto.randomUUID()
   const projectId = crypto.randomUUID()
 
-  store.commit(
-    events.projectCreated({
-      id: projectId,
-      repoPath,
-      name: 'test-project',
-    })
-  )
-  store.commit(
-    events.workspaceCreated({
-      id: workspaceId,
-      projectId,
-      taskSource: null,
-      branchName: 'main',
-      worktreePath: repoPath,
-      status,
-      origin: 'manual',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+  database.insertProject({
+    canonicalGitCommonDir: `${repoPath}/.git`,
+    id: projectId,
+    name: 'test-project',
+    repoId: projectId,
+    rootPath: repoPath,
+  })
+  database.insertTask({
+    branchName: status === 'destroyed' ? null : 'main',
+    id: workspaceId,
+    rootPath: repoPath,
+    source: 'manual',
+    status: 'in_progress',
+    title: 'Test workspace',
+    worktreePath: status === 'destroyed' ? null : repoPath,
+    worktreeStatus: status === 'destroyed' ? null : 'ready',
+  })
 
   return workspaceId
 }
@@ -131,8 +127,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('emits add event with relative path when file is created', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-add', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 
@@ -174,8 +170,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('emits change event when file is modified', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-change', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 
@@ -199,8 +195,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('maps delete event to unlink', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-delete', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 
@@ -224,8 +220,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('unsubscribes file watcher on stream teardown', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-unsub', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 
@@ -284,8 +280,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('filters events from other subscriptions', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-filter', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 
@@ -330,12 +326,12 @@ describe('FileService.watcherSubscribe', () => {
     }).pipe(Effect.scoped, Effect.provide(TestWatcherServiceLayer))
   )
 
-  // --- Behavior 7: Destroyed workspace returns INVALID_STATE ---
-  it.live('fails with INVALID_STATE for destroyed workspace', () =>
+  // --- Behavior 7: Tasks without worktrees are not workspaces ---
+  it.live('fails with NOT_FOUND after a workspace loses its worktree', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-destroyed', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath, 'destroyed')
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath, 'destroyed')
       const fileService = yield* FileService
 
       const stream = fileService.watcherSubscribe(workspaceId)
@@ -349,10 +345,10 @@ describe('FileService.watcherSubscribe', () => {
       )
 
       if (result === 'success') {
-        assert.fail('Expected INVALID_STATE error')
+        assert.fail('Expected NOT_FOUND error')
       }
       assert.strictEqual(result._tag, 'RpcError')
-      assert.strictEqual(result.code, 'INVALID_STATE')
+      assert.strictEqual(result.code, 'NOT_FOUND')
 
       cleanupTempRoots()
     }).pipe(Effect.scoped, Effect.provide(TestWatcherServiceLayer))
@@ -362,8 +358,8 @@ describe('FileService.watcherSubscribe', () => {
   it.live('uses absolute path fallback when fileName is null', () =>
     Effect.gen(function* () {
       const repoPath = createTempDir('watcher-fallback', tempRoots)
-      const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath)
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
       const recorder = yield* TestFileWatcherClientRecorder
       const fileService = yield* FileService
 

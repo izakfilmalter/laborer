@@ -1,9 +1,13 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Either, Ref, type Scope } from 'effect'
-import { vi } from 'vitest'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
@@ -13,24 +17,23 @@ const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
 
 /**
- * Poll until the workspace row is removed from LiveStore.
+ * Poll until the task releases its worktree.
  * destroyWorktree forks cleanup into a background daemon fiber, so the
- * workspace row deletion (the last step) signals that all cleanup is done.
+ * cleared worktree path (the last step) signals that all cleanup is done.
  */
 const waitForWorkspaceRemoval = (
-  store: RpcTestContext['store'],
+  database: RpcTestContext['database'],
   workspaceId: string
 ) =>
   Effect.gen(function* () {
     const maxAttempts = 100
     for (let i = 0; i < maxAttempts; i++) {
       yield* Effect.sleep('100 millis')
-      const rows = store.query(tables.workspaces.where('id', workspaceId))
-      if (rows.length === 0) {
+      if (database.findTask(workspaceId)?.worktreePath === null) {
         return
       }
     }
-    assert.fail('Timed out waiting for workspace row to be removed')
+    assert.fail('Timed out waiting for workspace task to release its worktree')
   })
 
 const cleanupTempRoots = (tempRoots: readonly string[]) => {
@@ -105,7 +108,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create creates a worktree and runs setup scripts',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -143,27 +146,24 @@ describe('LaborerRpcs workspace management', () => {
 
           // Wait for the worktree-ready checkpoint. Setup scripts may still
           // be running after the workspace transitions to 'running'.
-          // The fiber is forked into the layer scope so we poll the store,
+          // The fiber is forked into the layer scope so we poll the database,
           // yielding via Effect.sleep to let the background fiber progress.
           yield* Effect.gen(function* () {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const rows = store.query(
-                tables.workspaces.where('id', workspace.id)
-              )
-              const row = rows[0]
-              if (row === undefined) {
+              const row = database.findTask(workspace.id)
+              if (row === null) {
                 return assert.fail(
                   'Workspace row deleted — setup likely errored and rolled back'
                 )
               }
-              if (row.status === 'errored') {
+              if (row?.worktreeStatus === 'errored') {
                 return assert.fail(
-                  `Workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                  `Workspace errored: ${row.worktreeError ?? ''}`
                 )
               }
-              if (row.status === 'running') {
+              if (row?.worktreeStatus === 'ready') {
                 return
               }
             }
@@ -184,16 +184,13 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const rows = store.query(
-                tables.workspaces.where('id', workspace.id)
-              )
-              const row = rows[0]
-              if (row?.status === 'errored') {
+              const row = database.findTask(workspace.id)
+              if (row?.worktreeStatus === 'errored') {
                 return assert.fail(
-                  `Workspace errored during setup scripts: ${row.errorMessage ?? ''}`
+                  `Workspace errored during setup scripts: ${row.worktreeError ?? ''}`
                 )
               }
-              if (row?.worktreeSetupStep === null) {
+              if (row?.setupCompletedAt !== null) {
                 return
               }
             }
@@ -210,26 +207,20 @@ describe('LaborerRpcs workspace management', () => {
             `${workspace.id},${branchName},${workspace.worktreePath}`
           )
 
-          const workspaceRows = store.query(
-            tables.workspaces.where('id', workspace.id)
-          )
-
-          assert.strictEqual(workspaceRows.length, 1)
-          const workspaceRow = workspaceRows[0]
+          const workspaceRow = database.findTask(workspace.id)
           assert.isDefined(workspaceRow)
-          if (workspaceRow === undefined) {
+          if (workspaceRow === null) {
             assert.fail(
-              'Expected workspace.create to materialize a workspace row'
+              'Expected workspace.create to materialize a workspace task'
             )
           }
 
-          assert.strictEqual(workspaceRow.branchName, branchName)
-          assert.strictEqual(workspaceRow.id, workspace.id)
-          assert.strictEqual(workspaceRow.origin, 'laborer')
-          assert.strictEqual(workspaceRow.projectId, project.id)
-          assert.strictEqual(workspaceRow.status, 'running')
-          assert.isNull(workspaceRow.taskSource)
-          assert.strictEqual(workspaceRow.worktreePath, workspace.worktreePath)
+          assert.strictEqual(workspaceRow?.branchName, branchName)
+          assert.strictEqual(workspaceRow?.id, workspace.id)
+          assert.strictEqual(workspaceRow?.rootPath, project.repoPath)
+          assert.strictEqual(workspaceRow?.worktreeStatus, 'ready')
+          assert.isNumber(workspaceRow?.setupCompletedAt)
+          assert.strictEqual(workspaceRow?.worktreePath, workspace.worktreePath)
         })
       )
   )
@@ -237,7 +228,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create checks out a remote-only branch when it exists on origin',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -280,16 +271,14 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const row = store.query(
-                tables.workspaces.where('id', workspace.id)
-              )[0]
-              if (row === undefined) {
+              const row = database.findTask(workspace.id)
+              if (row === null) {
                 return assert.fail('Workspace row deleted during setup')
               }
-              if (row.status === 'errored') {
-                return assert.fail(row.errorMessage ?? 'Workspace errored')
+              if (row.worktreeStatus === 'errored') {
+                return assert.fail(row.worktreeError ?? 'Workspace errored')
               }
-              if (row.status === 'running') {
+              if (row.worktreeStatus === 'ready') {
                 return
               }
             }
@@ -314,7 +303,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create ignores legacy dev-server config and creates a local worktree',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -354,15 +343,16 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const row = store.query(
-                tables.workspaces.where('id', workspace.id)
-              )[0]
-              if (row?.status === 'errored') {
+              const row = database.findTask(workspace.id)
+              if (row?.worktreeStatus === 'errored') {
                 return assert.fail(
-                  `Workspace errored during local setup: ${row.errorMessage ?? ''}`
+                  `Workspace errored during local setup: ${row.worktreeError ?? ''}`
                 )
               }
-              if (row?.status === 'running' && row.worktreeSetupStep === null) {
+              if (
+                row?.worktreeStatus === 'ready' &&
+                row.setupCompletedAt !== null
+              ) {
                 return
               }
             }
@@ -385,11 +375,9 @@ describe('LaborerRpcs workspace management', () => {
             )
           )
 
-          const workspaceRow = store.query(
-            tables.workspaces.where('id', workspace.id)
-          )[0]
+          const workspaceRow = database.findTask(workspace.id)
           assert.isDefined(workspaceRow)
-          if (workspaceRow === undefined) {
+          if (workspaceRow === null) {
             assert.fail('Expected local workspace row to exist')
           }
         })
@@ -399,7 +387,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create with baseWorkspaceId branches from the parent worktree HEAD, pushes the parent branch, and records baseBranch',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -427,17 +415,15 @@ describe('LaborerRpcs workspace management', () => {
               const maxAttempts = 200
               for (let i = 0; i < maxAttempts; i++) {
                 yield* Effect.sleep('100 millis')
-                const row = store.query(
-                  tables.workspaces.where('id', workspaceId)
-                )[0]
-                if (row?.status === 'errored') {
+                const row = database.findTask(workspaceId)
+                if (row?.worktreeStatus === 'errored') {
                   return assert.fail(
-                    `Workspace errored: ${row.errorMessage ?? ''}`
+                    `Workspace errored: ${row.worktreeError ?? ''}`
                   )
                 }
                 if (
-                  row?.status === 'running' &&
-                  row.worktreeSetupStep === null
+                  row?.worktreeStatus === 'ready' &&
+                  row.setupCompletedAt !== null
                 ) {
                   return
                 }
@@ -473,13 +459,23 @@ describe('LaborerRpcs workspace management', () => {
           )
           assert.notStrictEqual(git('rev-parse HEAD', localPath), parentHeadSha)
 
-          const childRow = store.query(
-            tables.workspaces.where('id', child.id)
-          )[0]
+          const childRow = database.findTask(child.id)
           assert.isDefined(childRow)
           assert.strictEqual(childRow?.baseBranch, 'feat/big-thing')
           // Diff base is the parent HEAD at creation time.
           assert.strictEqual(childRow?.baseSha, parentHeadSha)
+
+          const parentTask = database.findTask(parent.id)
+          const childTask = database.findTask(child.id)
+          assert.isDefined(parentTask)
+          assert.isDefined(childTask)
+          assert.strictEqual(parentTask?.worktreeStatus, 'ready')
+          assert.isNumber(parentTask?.setupCompletedAt)
+          assert.strictEqual(childTask?.parentTaskId, parent.id)
+          assert.strictEqual(childTask?.baseBranch, 'feat/big-thing')
+          assert.strictEqual(childTask?.baseSha, parentHeadSha)
+          assert.strictEqual(childTask?.worktreeStatus, 'ready')
+          assert.isNumber(childTask?.setupCompletedAt)
 
           // The parent branch was auto-pushed so the child's PR base exists
           // on the remote.
@@ -489,16 +485,14 @@ describe('LaborerRpcs workspace management', () => {
           )
 
           // Ordinary workspaces record no baseBranch.
-          const parentRow = store.query(
-            tables.workspaces.where('id', parent.id)
-          )[0]
+          const parentRow = database.findTask(parent.id)
           assert.isNull(parentRow?.baseBranch)
         })
       )
   )
 
   it.scoped('workspace.create returns NOT_FOUND for an unknown project', () =>
-    runWithRpcTestContext(({ client, store }) =>
+    runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const result = yield* client.workspace
           .create({
@@ -517,7 +511,7 @@ describe('LaborerRpcs workspace management', () => {
           result.left.message,
           'Project not found: missing-project'
         )
-        assert.deepStrictEqual(store.query(tables.workspaces), [])
+        assert.deepStrictEqual(database.listTasks(), [])
       })
     )
   )
@@ -525,7 +519,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.destroy removes laborer-managed worktrees and records terminal cleanup',
     () =>
-      runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
+      runWithRpcTestContext(({ client, database, terminalClientRecorder }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -554,8 +548,8 @@ describe('LaborerRpcs workspace management', () => {
           yield* client.workspace.destroy({ workspaceId: workspace.id })
 
           // destroyWorktree forks cleanup into a background daemon fiber.
-          // Poll until the workspace row is removed (last step in the fiber).
-          yield* waitForWorkspaceRemoval(store, workspace.id)
+          // Poll until the task releases its worktree (last cleanup step).
+          yield* waitForWorkspaceRemoval(database, workspace.id)
 
           assert.isFalse(existsSync(workspace.worktreePath))
           assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
@@ -563,14 +557,19 @@ describe('LaborerRpcs workspace management', () => {
             yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
             [workspace.id]
           )
+          assert.deepInclude(database.findTask(workspace.id), {
+            id: workspace.id,
+            worktreePath: null,
+            worktreeStatus: null,
+          })
         })
       )
   )
 
   it.scopedLive(
-    'workspace.destroy removes external worktrees from disk and store state',
+    'workspace.destroy removes external worktrees from disk and database state',
     () =>
-      runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
+      runWithRpcTestContext(({ client, database, terminalClientRecorder }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -586,38 +585,21 @@ describe('LaborerRpcs workspace management', () => {
           )
           git(`worktree add -b ${branchName} ${externalWorktreePath}`, repoPath)
 
-          const project = yield* client.project.add({ repoPath })
-          const externalWorkspaceId = crypto.randomUUID()
-          store.commit(
-            events.workspaceCreated({
-              baseSha: null,
-              branchName,
-              createdAt: new Date().toISOString(),
-              id: externalWorkspaceId,
-              origin: 'external',
-              projectId: project.id,
-              status: 'stopped',
-              taskSource: null,
-              worktreePath: externalWorktreePath,
-            })
+          yield* client.project.add({ repoPath })
+          const externalWorkspace = database.findTaskByWorktreePath(
+            realpathSync(externalWorktreePath)
           )
 
-          const externalWorkspace = store.query(
-            tables.workspaces.where('id', externalWorkspaceId)
-          )[0]
-
           assert.isDefined(externalWorkspace)
-          if (externalWorkspace === undefined) {
+          if (externalWorkspace === null) {
             assert.fail('Expected the external workspace fixture to exist')
           }
 
-          yield* client.workspace.destroy({
-            workspaceId: externalWorkspace.id,
-          })
+          yield* client.workspace.destroy({ workspaceId: externalWorkspace.id })
 
           // destroyWorktree forks cleanup into a background daemon fiber.
-          // Poll until the workspace row is removed (last step in the fiber).
-          yield* waitForWorkspaceRemoval(store, externalWorkspace.id)
+          // Poll until the task releases its worktree (last cleanup step).
+          yield* waitForWorkspaceRemoval(database, externalWorkspace.id)
 
           assert.isFalse(existsSync(externalWorktreePath))
           assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
@@ -632,7 +614,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.destroy does not emit duplicate destroy events after the workspace is already gone',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -661,24 +643,16 @@ describe('LaborerRpcs workspace management', () => {
             projectId: project.id,
           })
 
-          const commitSpy = vi.spyOn(store, 'commit')
+          yield* client.workspace.destroy({ workspaceId: workspace.id })
+          yield* waitForWorkspaceRemoval(database, workspace.id)
+          const changesAfterFirstDestroy = database.taskChangesAfter(0).length
 
           yield* client.workspace.destroy({ workspaceId: workspace.id })
-          yield* waitForWorkspaceRemoval(store, workspace.id)
 
-          yield* client.workspace.destroy({ workspaceId: workspace.id })
-
-          const workspaceDestroyedCommits = commitSpy.mock.calls.filter(
-            ([event]) =>
-              typeof event === 'object' &&
-              event !== null &&
-              'name' in event &&
-              event.name === 'v1.WorkspaceDestroyed'
+          assert.strictEqual(
+            database.taskChangesAfter(0).length,
+            changesAfterFirstDestroy
           )
-
-          assert.strictEqual(workspaceDestroyedCommits.length, 1)
-
-          commitSpy.mockRestore()
         })
       )
   )
@@ -686,7 +660,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create succeeds for a branch whose previous workspace was just destroyed',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -718,19 +692,18 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const rows = store.query(tables.workspaces.where('id', first.id))
-              const row = rows[0]
-              if (row === undefined) {
+              const row = database.findTask(first.id)
+              if (row === null) {
                 return assert.fail(
                   'First workspace row deleted — setup errored and rolled back'
                 )
               }
-              if (row.status === 'errored') {
+              if (row.worktreeStatus === 'errored') {
                 return assert.fail(
-                  `First workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                  `First workspace errored: ${row.worktreeError ?? ''}`
                 )
               }
-              if (row.status === 'running') {
+              if (row.worktreeStatus === 'ready') {
                 return
               }
             }
@@ -766,19 +739,18 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const rows = store.query(tables.workspaces.where('id', second.id))
-              const row = rows[0]
-              if (row === undefined) {
+              const row = database.findTask(second.id)
+              if (row === null) {
                 return assert.fail(
                   'Second workspace row deleted — setup likely raced with destroy cleanup'
                 )
               }
-              if (row.status === 'errored') {
+              if (row.worktreeStatus === 'errored') {
                 return assert.fail(
-                  `Second workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                  `Second workspace errored: ${row.worktreeError ?? ''}`
                 )
               }
-              if (row.status === 'running') {
+              if (row.worktreeStatus === 'ready') {
                 return
               }
             }
@@ -790,11 +762,9 @@ describe('LaborerRpcs workspace management', () => {
           // 5. Verify the second workspace is healthy
           assert.isTrue(existsSync(second.worktreePath))
 
-          const finalRows = store.query(
-            tables.workspaces.where('id', second.id)
-          )
-          assert.strictEqual(finalRows.length, 1)
-          assert.strictEqual(finalRows[0]?.status, 'running')
+          const finalTask = database.findTask(second.id)
+          assert.isNotNull(finalTask)
+          assert.strictEqual(finalTask?.worktreeStatus, 'ready')
         })
       )
   )
@@ -802,7 +772,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create transitions to errored with setup steps cleared when setup script fails',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -837,24 +807,16 @@ describe('LaborerRpcs workspace management', () => {
             const maxAttempts = 200
             for (let i = 0; i < maxAttempts; i++) {
               yield* Effect.sleep('100 millis')
-              const rows = store.query(
-                tables.workspaces.where('id', workspace.id)
-              )
-              const row = rows[0]
-              if (row === undefined) {
+              const row = database.findTask(workspace.id)
+              if (row === null) {
                 return assert.fail(
                   'Workspace row deleted — expected it to transition to errored'
                 )
               }
-              if (row.status === 'errored') {
-                // The key assertion: setup steps must be cleared
-                assert.isNull(
-                  row.worktreeSetupStep,
-                  'worktreeSetupStep should be cleared on error'
-                )
+              if (row.worktreeStatus === 'errored') {
                 // Error message should mention the failed script
-                assert.isString(row.errorMessage)
-                assert.include(row.errorMessage ?? '', 'exit 42')
+                assert.isString(row.worktreeError)
+                assert.include(row.worktreeError ?? '', 'exit 42')
                 return
               }
             }
@@ -862,12 +824,21 @@ describe('LaborerRpcs workspace management', () => {
               'Timed out waiting for workspace to transition to errored'
             )
           })
+
+          assert.deepInclude(database.findTask(workspace.id), {
+            setupCompletedAt: null,
+            worktreeStatus: 'errored',
+          })
+          assert.include(
+            database.findTask(workspace.id)?.worktreeError ?? '',
+            'exit 42'
+          )
         })
       )
   )
 
   it.scopedLive('workspace.refreshSyncStatus returns ahead/behind counts', () =>
-    runWithRpcTestContext(({ client, store }) =>
+    runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -891,19 +862,16 @@ describe('LaborerRpcs workspace management', () => {
 
         const project = yield* client.project.add({ repoPath: localPath })
         const workspaceId = crypto.randomUUID()
-        store.commit(
-          events.workspaceCreated({
-            id: workspaceId,
-            projectId: project.id,
-            taskSource: null,
-            branchName: 'main',
-            worktreePath: localPath,
-            status: 'stopped',
-            origin: 'external',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        database.insertTask({
+          branchName: 'main',
+          id: workspaceId,
+          rootPath: project.repoPath,
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'main',
+          worktreePath: localPath,
+          worktreeStatus: 'ready',
+        })
 
         const result = yield* client.workspace.refreshSyncStatus({
           workspaceId,
@@ -918,7 +886,7 @@ describe('LaborerRpcs workspace management', () => {
   )
 
   it.scopedLive('workspace.push pushes commits and refreshes sync status', () =>
-    runWithRpcTestContext(({ client, store }) =>
+    runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -934,19 +902,16 @@ describe('LaborerRpcs workspace management', () => {
 
         const project = yield* client.project.add({ repoPath: localPath })
         const workspaceId = crypto.randomUUID()
-        store.commit(
-          events.workspaceCreated({
-            id: workspaceId,
-            projectId: project.id,
-            taskSource: null,
-            branchName: 'main',
-            worktreePath: localPath,
-            status: 'stopped',
-            origin: 'external',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        database.insertTask({
+          branchName: 'main',
+          id: workspaceId,
+          rootPath: project.repoPath,
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'main',
+          worktreePath: localPath,
+          worktreeStatus: 'ready',
+        })
 
         const result = yield* client.workspace.push({ workspaceId })
 
@@ -962,7 +927,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.pull pulls remote commits and refreshes sync status',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -985,19 +950,16 @@ describe('LaborerRpcs workspace management', () => {
 
           const project = yield* client.project.add({ repoPath: localPath })
           const workspaceId = crypto.randomUUID()
-          store.commit(
-            events.workspaceCreated({
-              id: workspaceId,
-              projectId: project.id,
-              taskSource: null,
-              branchName: 'main',
-              worktreePath: localPath,
-              status: 'stopped',
-              origin: 'external',
-              createdAt: new Date().toISOString(),
-              baseSha: null,
-            })
-          )
+          database.insertTask({
+            branchName: 'main',
+            id: workspaceId,
+            rootPath: project.repoPath,
+            source: 'worktree',
+            status: 'in_progress',
+            title: 'main',
+            worktreePath: localPath,
+            worktreeStatus: 'ready',
+          })
 
           const result = yield* client.workspace.pull({ workspaceId })
 

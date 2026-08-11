@@ -20,19 +20,9 @@
 
 import { statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { tables } from '@laborer/shared/schema'
-import {
-  Array as Arr,
-  Context,
-  Duration,
-  Effect,
-  Fiber,
-  Layer,
-  pipe,
-  Ref,
-} from 'effect'
+import { Context, Duration, Effect, Fiber, Layer, Ref } from 'effect'
 import { spawn } from '../lib/spawn.js'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import {
   FETCH_HEAD_GUARD_MS,
   FETCH_INTERVAL_MS,
@@ -40,6 +30,7 @@ import {
   FETCH_SKEW_UPPER_BOUND_MS,
 } from './polling-intervals.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
+import { findWorkspaceRecord } from './workspace-records.js'
 
 const GITHUB_HTTPS_REMOTE_REGEX =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
@@ -257,7 +248,7 @@ class BackgroundFetchService extends Context.Tag(
   static readonly layer = Layer.scoped(
     BackgroundFetchService,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
 
       /**
        * Map from repo root path -> fetch schedule state.
@@ -279,15 +270,11 @@ class BackgroundFetchService extends Context.Tag(
        */
       const pollIntervalCache = yield* Ref.make<Map<string, number>>(new Map())
 
-      const getWorktreePath = (workspaceId: string): string | undefined => {
-        const workspace = pipe(
-          store.query(tables.workspaces),
-          Arr.findFirst((ws) => ws.id === workspaceId)
+      const getWorktreePath = (workspaceId: string) =>
+        laborerDatabase.read(
+          'find workspace for background fetch',
+          (database) => findWorkspaceRecord(database, workspaceId)?.worktreePath
         )
-        return workspace._tag === 'Some'
-          ? workspace.value.worktreePath
-          : undefined
-      }
 
       /**
        * Resolve the repo root for a worktree path. This is the
@@ -377,7 +364,7 @@ class BackgroundFetchService extends Context.Tag(
 
       const startFetching = Effect.fn('BackgroundFetchService.startFetching')(
         function* (workspaceId: string) {
-          const worktreePath = getWorktreePath(workspaceId)
+          const worktreePath = yield* getWorktreePath(workspaceId)
           if (worktreePath === undefined) {
             return
           }
@@ -484,7 +471,7 @@ class BackgroundFetchService extends Context.Tag(
       const fetchNow = Effect.fn('BackgroundFetchService.fetchNow')(function* (
         workspaceId: string
       ) {
-        const worktreePath = getWorktreePath(workspaceId)
+        const worktreePath = yield* getWorktreePath(workspaceId)
         if (worktreePath === undefined) {
           return false
         }

@@ -23,12 +23,12 @@ import {
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
-import { TestLaborerStore } from '../helpers/test-store.js'
 
 /**
  * Placeholder proxy layers for all deferred services.
@@ -51,7 +51,7 @@ const DeferredServiceStubs = Layer.mergeAll(
 
 /**
  * Core-only test layer: LaborerRpcsLive with only core infrastructure
- * layers (ConfigService, LaborerStore) and placeholder proxy
+ * layers (ConfigService, LaborerDatabase) and placeholder proxy
  * implementations for all deferred services.
  *
  * This proves the health endpoint responds without building any
@@ -61,7 +61,7 @@ const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
   Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
-  Layer.provide(TestLaborerStore)
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 const CoreOnlyRpcClient = RpcTest.makeClient(LaborerRpcs).pipe(
@@ -93,12 +93,12 @@ describe('Core layers (Issue #13)', () => {
     })
   )
 
-  it.scoped('LiveStore queries work with only core layers', () =>
+  it.scoped('database-backed core RPCs work with only core layers', () =>
     Effect.gen(function* () {
       const client = yield* CoreOnlyRpcClient
 
-      // health.check uses LaborerStore internally (via module-level
-      // startTime), proving LiveStore is available in core layers.
+      // Building and serving the core RPC proves the database layer is
+      // available without any deferred services.
       const response = yield* client.health.check()
       assert.isTrue(response.uptime >= 0)
     })
@@ -158,7 +158,7 @@ const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 const makeScopedInitStatusContext = Effect.gen(function* () {

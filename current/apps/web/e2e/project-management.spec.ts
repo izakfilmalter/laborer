@@ -3,7 +3,7 @@
  *
  * Tests project lifecycle flows: add project, open/save settings, delete.
  * All tests exercise the full stack: Electron UI -> RPC mutation -> backend
- * -> LiveStore sync -> UI re-render.
+ * -> the server state stream -> UI re-render.
  *
  * Uses the temp git repository created by globalSetup.
  *

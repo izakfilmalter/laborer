@@ -335,7 +335,7 @@ interface PanelActions {
    *
    * When toggled OFF: restores the normal multi-pane, multi-workspace view.
    *
-   * This is a transient UI state (not persisted to LiveStore).
+   * This is transient UI state.
    */
   readonly toggleFullscreenPane: () => void
   /**

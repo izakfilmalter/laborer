@@ -14,7 +14,7 @@ import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
-import { LaborerStore } from '../../src/services/laborer-store.js'
+import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
@@ -26,7 +26,6 @@ import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
 import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from '../helpers/test-store.js'
 
 class TestTerminalClientRecorder extends Context.Tag(
   '@laborer/test/TestTerminalClientRecorder'
@@ -124,7 +123,7 @@ const DeferredLeafLayers = Layer.mergeAll(
 )
 
 /**
- * Deferred Group 1 — services depending on LaborerStore + leaf layers.
+ * Deferred Group 1 — services depending on the shared database + leaf layers.
  */
 const DeferredGroup1aLayers = Layer.mergeAll(
   BranchStateTracker.layer,
@@ -204,24 +203,24 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
-  Layer.provide(TestLaborerStore)
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
-const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
+const TestLaborerRpcWithDatabaseLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(DeferredServiceStackWithTerminal),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 export const TestLaborerRpcClient = RpcTest.makeClient(LaborerRpcs)
 
 interface ScopedTestRpcContext {
   readonly client: Effect.Effect.Success<typeof TestLaborerRpcClient>
-  readonly store: LaborerStore['Type']['store']
+  readonly database: LaborerDatabase['Type']['database']
   readonly terminalClientRecorder: TestTerminalClientRecorder['Type']
 }
 
@@ -234,15 +233,15 @@ export const makeScopedTestRpcContext: Effect.Effect<
   never,
   Scope.Scope
 > = Effect.gen(function* () {
-  const context = yield* Layer.build(TestLaborerRpcWithStoreLayer)
+  const context = yield* Layer.build(TestLaborerRpcWithDatabaseLayer)
   const client = yield* TestLaborerRpcClient.pipe(
     Effect.provide(Layer.succeedContext(context))
   )
-  const { store } = Context.get(context, LaborerStore)
+  const { database } = Context.get(context, LaborerDatabase)
   const terminalClientRecorder = Context.get(
     context,
     TestTerminalClientRecorder
   )
 
-  return { client, store, terminalClientRecorder }
+  return { client, database, terminalClientRecorder }
 })

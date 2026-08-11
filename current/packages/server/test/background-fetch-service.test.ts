@@ -1,13 +1,12 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events } from '@laborer/shared/schema'
-import { Context, Effect, Layer } from 'effect'
+import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BackgroundFetchService } from '../src/services/background-fetch-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const BRANCH_AB_RE = /^# branch\.ab \+(\d+) -(\d+)$/m
 
@@ -56,64 +55,55 @@ const createRemoteClone = (remotePath: string, prefix: string): string => {
 }
 
 const createWorkspace = (
-  store: { commit: (event: unknown) => void },
+  database: NativeLaborerDatabase,
   worktreePath: string,
-  workspaceId: string,
-  status: 'running' | 'stopped' = 'stopped'
+  workspaceId: string
 ) => {
-  store.commit(
-    events.workspaceCreated({
-      id: workspaceId,
-      projectId: 'project-1',
-      taskSource: null,
-      branchName: 'main',
-      worktreePath,
-      status,
-      origin: 'external',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+  database.insertProject({
+    canonicalGitCommonDir: join(worktreePath, '.git'),
+    id: workspaceId,
+    name: workspaceId,
+    repoId: workspaceId,
+    rootPath: worktreePath,
+  })
+  database.insertTask({
+    branchName: 'main',
+    id: workspaceId,
+    rootPath: worktreePath,
+    source: 'worktree',
+    status: 'in_progress',
+    title: workspaceId,
+    worktreePath,
+    worktreeStatus: 'ready',
+  })
 }
 
-const buildBackgroundFetchService = (
-  storeContext: Context.Context<LaborerStore>
-) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      BackgroundFetchService.layer.pipe(
-        Layer.provide(Layer.succeedContext(storeContext))
-      )
-    )
-
-    return Context.get(context, BackgroundFetchService)
-  })
+const TestLayer = BackgroundFetchService.layer.pipe(
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
+)
 
 describe('BackgroundFetchService', () => {
   it.scoped('fetchNow succeeds for a workspace with a remote', () =>
     Effect.gen(function* () {
       const { localPath } = initRemoteRepo('fetch-now')
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-fetch-now')
 
-      createWorkspace(store, localPath, 'workspace-fetch-now')
-
-      const service = yield* buildBackgroundFetchService(storeContext)
+      const service = yield* BackgroundFetchService
       const result = yield* service.fetchNow('workspace-fetch-now')
 
       assert.isTrue(result)
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('fetchNow returns false for a missing workspace', () =>
     Effect.gen(function* () {
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const service = yield* buildBackgroundFetchService(storeContext)
+      const service = yield* BackgroundFetchService
       const result = yield* service.fetchNow('missing-workspace')
 
       assert.isFalse(result)
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped(
@@ -136,12 +126,10 @@ describe('BackgroundFetchService', () => {
         assert.isNotNull(beforeBehind)
         assert.strictEqual(beforeBehind?.[2], '0')
 
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
+        const { database } = yield* LaborerDatabase
+        createWorkspace(database, localPath, 'workspace-fetch-updates')
 
-        createWorkspace(store, localPath, 'workspace-fetch-updates')
-
-        const service = yield* buildBackgroundFetchService(storeContext)
+        const service = yield* BackgroundFetchService
         const fetched = yield* service.fetchNow('workspace-fetch-updates')
         assert.isTrue(fetched)
 
@@ -150,7 +138,7 @@ describe('BackgroundFetchService', () => {
         const afterBehind = afterStatus.match(BRANCH_AB_RE)
         assert.isNotNull(afterBehind)
         assert.strictEqual(afterBehind?.[2], '1')
-      })
+      }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped(
@@ -159,17 +147,15 @@ describe('BackgroundFetchService', () => {
       Effect.gen(function* () {
         const { localPath } = initRemoteRepo('fetch-lifecycle')
 
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
+        const { database } = yield* LaborerDatabase
+        createWorkspace(database, localPath, 'workspace-lifecycle')
 
-        createWorkspace(store, localPath, 'workspace-lifecycle', 'running')
-
-        const service = yield* buildBackgroundFetchService(storeContext)
+        const service = yield* BackgroundFetchService
 
         // Start and stop should not throw
         yield* service.startFetching('workspace-lifecycle')
         yield* service.stopFetching('workspace-lifecycle')
-      })
+      }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('stopAllFetching cleans up all schedules without errors', () =>
@@ -177,17 +163,15 @@ describe('BackgroundFetchService', () => {
       const { localPath: localPath1 } = initRemoteRepo('fetch-stop-all-1')
       const { localPath: localPath2 } = initRemoteRepo('fetch-stop-all-2')
 
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath1, 'workspace-stop-all-1')
+      createWorkspace(database, localPath2, 'workspace-stop-all-2')
 
-      createWorkspace(store, localPath1, 'workspace-stop-all-1', 'running')
-      createWorkspace(store, localPath2, 'workspace-stop-all-2', 'running')
-
-      const service = yield* buildBackgroundFetchService(storeContext)
+      const service = yield* BackgroundFetchService
 
       yield* service.startFetching('workspace-stop-all-1')
       yield* service.startFetching('workspace-stop-all-2')
       yield* service.stopAllFetching()
-    })
+    }).pipe(Effect.provide(TestLayer))
   )
 })

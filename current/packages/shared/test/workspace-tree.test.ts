@@ -4,14 +4,14 @@ import {
   buildWorkspaceTree,
 } from '../src/workspace-tree.js'
 
-const workspace = (branchName: string, baseBranch: string | null = null) => ({
+const workspace = (branchName: string, parentTaskId: string | null = null) => ({
   id: branchName,
   branchName,
-  baseBranch,
+  parentTaskId,
 })
 
 describe('buildWorkspaceTree', () => {
-  it('renders workspaces without a base branch as top-level, in input order', () => {
+  it('renders workspaces without a parent as top-level, in input order', () => {
     const tree = buildWorkspaceTree([
       workspace('feat/one'),
       workspace('feat/two'),
@@ -23,7 +23,7 @@ describe('buildWorkspaceTree', () => {
     ])
   })
 
-  it('nests sub-workspaces under the workspace owning their base branch, recursively', () => {
+  it('nests sub-workspaces under their parent task, recursively', () => {
     const tree = buildWorkspaceTree([
       workspace('feat/big-thing'),
       workspace('fix/auth', 'feat/big-thing'),
@@ -52,7 +52,7 @@ describe('buildWorkspaceTree', () => {
     ])
   })
 
-  it('renders a sub-workspace top-level when no live workspace owns its base branch', () => {
+  it('renders a sub-workspace top-level when its parent is absent', () => {
     const tree = buildWorkspaceTree([
       workspace('fix/auth', 'feat/destroyed-parent'),
       workspace('fix/auth-tests', 'fix/auth'),
@@ -68,7 +68,7 @@ describe('buildWorkspaceTree', () => {
     ])
   })
 
-  it('never drops workspaces when base branches form a cycle or self-reference', () => {
+  it('never drops workspaces when parent ids form a cycle or self-reference', () => {
     const tree = buildWorkspaceTree([
       workspace('feat/a', 'feat/b'),
       workspace('feat/b', 'feat/a'),
@@ -109,7 +109,7 @@ describe('buildWorkspacePath', () => {
     ])
   })
 
-  it('promotes a workspace when no live workspace owns its base branch', () => {
+  it('promotes a workspace when its parent is absent', () => {
     const path = buildWorkspacePath(
       [
         workspace('fix/auth', 'feat/destroyed-parent'),

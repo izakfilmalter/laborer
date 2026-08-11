@@ -231,7 +231,7 @@ export interface DesktopBridge {
    * cancelled.
    *
    * Use this to:
-   * - Flush pending LiveStore state
+   * - Flush pending application state
    * - Prompt the user about running terminals/tasks
    * - Clean up subscriptions and resources
    *

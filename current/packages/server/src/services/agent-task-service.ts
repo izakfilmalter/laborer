@@ -1,11 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { tables } from '@laborer/shared/schema'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema } from 'effect'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import { createTaskUlid } from './task-card-creator.js'
 
@@ -154,16 +153,16 @@ export class AgentTaskService extends Context.Tag(
 >() {
   static layer(
     path = taskDatabasePath()
-  ): Layer.Layer<AgentTaskService, never, LaborerStore> {
+  ): Layer.Layer<AgentTaskService, never, LaborerDatabase> {
     return Layer.effect(
       AgentTaskService,
       Effect.gen(function* () {
-        const { store } = yield* LaborerStore
+        const laborerDatabase = yield* LaborerDatabase
         const listProjects = () =>
-          Effect.sync(() =>
-            store
-              .query(tables.projects)
-              .map(({ name, repoPath }) => ({ name, repoPath }))
+          laborerDatabase.read('list agent task projects', (database) =>
+            database
+              .listProjects()
+              .map(({ name, rootPath: repoPath }) => ({ name, repoPath }))
           )
         const withDatabase = <A>(
           operation: (database: NodeTaskBoardDatabase) => A

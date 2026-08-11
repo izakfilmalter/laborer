@@ -11,7 +11,6 @@
  * - LaborerRpcs served over MessagePort (no HTTP server)
  * - Command-service proxies are exposed immediately; real services hydrate in
  *   background fibers
- * - LiveStore setup preserved (sync channel migrated separately in #11)
  * - Server-to-terminal and server-to-file-watcher connections use lazy
  *   MessagePort acquisition so startup does not wait for sidecar ports
  *
@@ -20,14 +19,13 @@
  * - No RpcSerialization.layerJson (MessagePort uses structured clone)
  * - No CustomRoutesLive (no HTTP health/init-status routes — init status
  *   is available via the `lifecycle.initStatus` RPC)
- * - No SyncRpcLive (LiveStore WebSocket sync migrated in #11)
  * - No HttpRouter / HttpMiddleware / CORS
  *
  * What's preserved:
  * - LaborerRpcsLive (all ~40 RPC handlers)
  * - DeferredServicesProxyLive (Ref-backed proxies + background init fiber)
  * - DeferredServicesReadyLayer
- * - LaborerStoreLive (LiveStore + SQLite persistence)
+ * - LaborerDatabaseLive (shared SQLite persistence)
  * - ConfigService.layer
  * - RepositoryIdentity.layer
  * - Full service stack (all ~20 services)
@@ -69,14 +67,16 @@ import {
   FileWatcherClient,
   FileWatcherRpcPort,
 } from './services/file-watcher-client.js'
-import { LaborerStore, LaborerStoreLive } from './services/laborer-store.js'
+import {
+  LaborerDatabase,
+  LaborerDatabaseLive,
+} from './services/laborer-database.js'
 import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { serverDiscoveryLayer } from './services/server-discovery.js'
-import { serveSyncOnPort } from './services/sync-backend.js'
 import {
   mcpOriginGuard,
   TaskMcpProtocolLayer,
@@ -275,7 +275,7 @@ const DeferredLeafLayers = Layer.mergeAll(
 )
 
 /**
- * Services depending on LaborerStore + leaf layers.
+ * Services depending on the shared database + leaf layers.
  */
 const DeferredGroup1aLayers = Layer.mergeAll(
   BranchStateTracker.layer,
@@ -325,13 +325,13 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         'Starting background initialization of deferred services...'
       )
 
-      const store = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const config = yield* ConfigService
       const repoId = yield* RepositoryIdentity
       const ready = yield* DeferredServicesReady
 
       const CoreDeps = Layer.mergeAll(
-        Layer.succeed(LaborerStore, store),
+        Layer.succeed(LaborerDatabase, laborerDatabase),
         Layer.succeed(ConfigService, config),
         Layer.succeed(RepositoryIdentity, repoId),
         Layer.succeed(DeferredServicesReady, ready)
@@ -432,7 +432,7 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provideMerge(ConfigService.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
-  Layer.provideMerge(LaborerStoreLive)
+  Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))
 )
 
 const configuredMcpPort = (): number => {
@@ -497,7 +497,7 @@ const makeMcpHttpLayer = (port: number) => {
  *     + ServicesReadyLayer                 — readiness stream
  *     + ConfigService.layer               — Configuration resolution
  *     + RepositoryIdentity.layer          — Git repo identification
- *     + LaborerStoreLive                  — LiveStore + SQLite persistence
+ *     + LaborerDatabaseLive               — shared SQLite persistence
  */
 async function main(): Promise<void> {
   const { rpcPort, parentPort } = await waitForPort()
@@ -516,12 +516,6 @@ async function main(): Promise<void> {
 
   // Listen for additional port messages from the parent process.
   //
-  // - `sync-port`: LiveStore sync channel for the renderer's worker.
-  //   Each incoming sync port gets a standalone `RpcServer` serving
-  //   `SyncWsRpc` handlers backed by a shared SQLite sync database.
-  //   Multiple ports can be active simultaneously (one per window).
-  //   @see Issue #11: LiveStore sync over MessagePort
-  //
   // - `terminal-rpc-port`: Direct MessagePort to the terminal utility
   //   process, brokered by the main process. Resolves the deferred
   //   `TerminalRpcPortLive` layer so `TerminalClient` uses MessagePort
@@ -529,14 +523,7 @@ async function main(): Promise<void> {
   //   @see Issue #13: Server-to-terminal MessagePort channel
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
-    if (data?.type === 'sync-port' && event.ports.length > 0) {
-      const syncPort = event.ports[0] as RpcMessagePort
-      console.log('[server-utility] Received sync-port from main process')
-      // Do NOT call start() here — the RPC server transport will call
-      // start() after attaching its message listener to avoid losing
-      // messages (MessagePortMain doesn't buffer after start).
-      serveSyncOnPort(syncPort, { source: 'renderer' })
-    } else if (data?.type === 'terminal-rpc-port' && event.ports.length > 0) {
+    if (data?.type === 'terminal-rpc-port' && event.ports.length > 0) {
       const terminalPort = event.ports[0] as RpcMessagePort
       // Do NOT call start() here — the RPC client transport will call
       // start() after attaching its message listener to avoid losing

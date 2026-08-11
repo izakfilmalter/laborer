@@ -53,23 +53,11 @@ const {
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: () => spawnTerminalMock,
+  useAtomValue: () => workspaceRowsRef.current,
 }))
 
-vi.mock('@laborer/shared/schema', () => ({
-  panelLayout: {
-    table: 'panel_layout',
-    get: vi.fn((id: string, options?: { default?: unknown }) => ({
-      id,
-      options,
-      type: 'panelLayoutGet',
-    })),
-  },
-  windowLayoutUpdated: windowLayoutUpdatedMock,
-  workspaces: { table: 'workspaces' },
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: vi.fn((table: unknown, options: unknown) => ({ table, options })),
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -104,45 +92,6 @@ vi.mock('@/lib/desktop', () => ({
       ? { reportVisibleWorkspaces: reportVisibleWorkspacesMock }
       : undefined
   ),
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: vi.fn(() => {
-    const useClientDocument = (
-      _table: unknown,
-      windowId: string,
-      options?: { default?: { windowLayout: unknown } }
-    ) => {
-      const currentRow = persistedRowsRef.current.find(
-        (row) => row.windowId === windowId
-      )
-      const document = {
-        windowLayout:
-          currentRow?.windowLayout ?? options?.default?.windowLayout ?? null,
-      }
-      const setDocument = (nextDocument: { windowLayout: unknown }) => {
-        windowLayoutUpdatedMock({
-          windowId,
-          windowLayout: nextDocument.windowLayout,
-        })
-        const otherRows = persistedRowsRef.current.filter(
-          (row) => row.windowId !== windowId
-        )
-        persistedRowsRef.current = [
-          ...otherRows,
-          { windowId, windowLayout: nextDocument.windowLayout },
-        ]
-      }
-      return [document, setDocument] as const
-    }
-
-    return {
-      commit: storeCommitMock,
-      query: storeQueryMock,
-      useClientDocument,
-      useQuery: storeUseQueryMock,
-    }
-  }),
 }))
 
 vi.mock('@/panels/panel-group-registry', () => ({

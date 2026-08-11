@@ -11,51 +11,60 @@
  * - 30s when workspace has no open panel (background)
  *
  * Responsibilities:
- * - Run `gh pr view --json number,url,title,state` in a workspace's worktree
- * - Commit WorkspacePrUpdated events to LiveStore when PR state changes
+ * - Run `gh pr view --json number,url,title,state,isDraft` in a workspace's worktree
+ * - Persist PR facts on tasks
  * - Poll on adaptive interval based on panel visibility
  * - Start/stop polling per workspace
- * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
+ * - Deduplicate unchanged PR state
  */
 
 import { existsSync } from 'node:fs'
-import { events, tables } from '@laborer/shared/schema'
-import {
-  Array as Arr,
-  Context,
-  Duration,
-  Effect,
-  Fiber,
-  Layer,
-  pipe,
-  Ref,
-} from 'effect'
+import { Context, Duration, Effect, Fiber, Layer, Ref, Schema } from 'effect'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
+import {
+  findWorkspaceRecord,
+  listWorkspaceRecords,
+} from './workspace-records.js'
+import {
+  findWorkspaceTask,
+  updateServerTaskFacts,
+} from './workspace-task-facts.js'
 
 /**
  * Shape of PR data returned by `gh pr view --json ...`.
  * All fields are nullable because the branch may not have a PR.
  */
 interface PrData {
+  readonly isDraft: boolean
   readonly number: number | null
   readonly state: string | null
   readonly title: string | null
   readonly url: string | null
 }
 
+const GhPrData = Schema.Struct({
+  isDraft: Schema.optional(Schema.Boolean),
+  number: Schema.optional(Schema.NullOr(Schema.Number)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+})
+const GhPrDataJson = Schema.parseJson(GhPrData)
+
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
-  JSON.stringify([data.number, data.url, data.title, data.state])
+  JSON.stringify([data.number, data.url, data.title, data.state, data.isDraft])
 
 /** Empty PR data (no PR found). */
 const EMPTY_PR: PrData = {
+  isDraft: false,
   number: null,
   url: null,
   title: null,
@@ -119,7 +128,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
   static readonly layer = Layer.scoped(
     PrWatcher,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const taskTransitions = yield* PrTaskTransitions
 
       // Track active polling fibers per workspace.
@@ -150,7 +159,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
           branchName,
-          'number,url,title,state',
+          'number,url,title,state,isDraft',
           (error) => error
         ).pipe(
           Effect.catchAll((error) => {
@@ -175,19 +184,12 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return EMPTY_PR
         }
 
-        const parseResult = yield* Effect.try({
-          try: () =>
-            JSON.parse(spawnResult.stdout.trim()) as {
-              number?: number
-              url?: string
-              title?: string
-              state?: string
-            },
-          catch: () => 'json-parse-failed' as const,
-        }).pipe(
+        const parseResult = yield* Schema.decodeUnknown(GhPrDataJson)(
+          spawnResult.stdout.trim()
+        ).pipe(
           Effect.catchAll(() =>
             Effect.logWarning(
-              `[PrWatcher] Failed to parse gh pr view output: ${spawnResult.stdout.slice(0, 200)}`
+              '[PrWatcher] Failed to parse gh pr view output'
             ).pipe(Effect.as(undefined))
           )
         )
@@ -197,6 +199,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         }
 
         return {
+          isDraft: parseResult.isDraft ?? false,
           number: parseResult.number ?? null,
           url: parseResult.url ?? null,
           title: parseResult.title ?? null,
@@ -207,27 +210,17 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
       const checkPr = Effect.fn('PrWatcher.checkPr')(function* (
         workspaceId: string
       ) {
-        // Look up the workspace in LiveStore
-        const allWorkspaces = store.query(tables.workspaces)
-        const workspaceOpt = pipe(
-          allWorkspaces,
-          Arr.findFirst((w) => w.id === workspaceId)
+        const workspace = yield* laborerDatabase.read(
+          'find workspace for PR check',
+          (database) => findWorkspaceRecord(database, workspaceId)
         )
 
-        if (workspaceOpt._tag === 'None') {
+        if (workspace === null) {
           yield* Effect.logWarning(
-            `[PrWatcher] Workspace not found in LiveStore, cleaning up. workspaceId=${workspaceId}`
+            `[PrWatcher] Workspace not found, cleaning up. workspaceId=${workspaceId}`
           )
-
-          store.commit(events.workspaceDestroyed({ id: workspaceId }))
           yield* stopPolling(workspaceId)
 
-          return EMPTY_PR
-        }
-
-        const workspace = workspaceOpt.value
-
-        if (workspace.status === 'destroyed') {
           return EMPTY_PR
         }
 
@@ -240,6 +233,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         const serialized = serializePrData(prData)
         const persistedSerialized = serializePrData({
           number: workspace.prNumber,
+          isDraft: false,
           url: workspace.prUrl,
           title: workspace.prTitle,
           state: workspace.prState,
@@ -258,16 +252,6 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           previousSerialized !== serialized &&
           persistedSerialized !== serialized
         ) {
-          store.commit(
-            events.workspacePrUpdated({
-              id: workspaceId,
-              prNumber: prData.number,
-              prUrl: prData.url,
-              prTitle: prData.title,
-              prState: prData.state,
-            })
-          )
-
           if (prData.number != null) {
             yield* Effect.log(
               `[PrWatcher] workspace=${workspaceId} PR #${prData.number} (${prData.state})`
@@ -279,21 +263,58 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           }
         }
 
+        const task = yield* findWorkspaceTask(laborerDatabase, workspace).pipe(
+          Effect.catchAll((error) =>
+            Effect.logWarning(
+              `[PrWatcher] Failed to find durable task for workspace ${workspaceId}: ${error.message}`
+            ).pipe(Effect.as(null))
+          )
+        )
+        if (task !== null) {
+          const normalizedState = (() => {
+            switch (prData.state?.toUpperCase()) {
+              case 'OPEN':
+                return 'open' as const
+              case 'CLOSED':
+                return 'closed' as const
+              case 'MERGED':
+                return 'merged' as const
+              default:
+                return null
+            }
+          })()
+          yield* updateServerTaskFacts(laborerDatabase, task.id, {
+            prIsDraft: prData.isDraft,
+            prNumber: prData.number,
+            prState: normalizedState,
+            prTitle: prData.title,
+            prUrl: prData.url,
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `[PrWatcher] Failed to persist PR facts for task ${task.id}: ${error.message}`
+              )
+            )
+          )
+        }
+
         // PR display state and task-board state are independent durable
         // projections. Attempt the task transition on every check so a prior
         // busy/schema failure can heal even when the PR payload is unchanged.
-        const projects = store.query(tables.projects)
-        const project = pipe(
-          projects,
-          Arr.findFirst((candidate) => candidate.id === workspace.projectId)
+        const projects = yield* laborerDatabase.read(
+          'list projects for PR transition',
+          (database) => database.listProjects()
         )
-        if (project._tag === 'Some') {
+        const project = projects.find(
+          (candidate) => candidate.id === workspace.projectId
+        )
+        if (project !== undefined) {
           yield* taskTransitions
             .transition({
               branchName: workspace.branchName,
-              projectRepoPath: project.value.repoPath,
+              projectRepoPath: project.rootPath,
               registeredProjectRepoPaths: projects.map(
-                (candidate) => candidate.repoPath
+                (candidate) => candidate.rootPath
               ),
               prState: prData.state,
             })
@@ -338,7 +359,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         // Adaptive polling: check visibility on each tick and sleep
         // for the appropriate interval.
         const pollEffect = Effect.gen(function* () {
-          const visibleWorkspaces = getVisibleWorkspaceIds(store)
+          const visibleWorkspaces = getVisibleWorkspaceIds()
           const isVisible = visibleWorkspaces.has(workspaceId)
           const interval = isVisible
             ? PR_VISIBLE_POLL_INTERVAL_MS
@@ -430,9 +451,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
       const refreshPolling = Effect.fn('PrWatcher.refreshPolling')(
         function* () {
-          const workspaces = store
-            .query(tables.workspaces)
-            .filter((workspace) => workspace.status !== 'destroyed')
+          const workspaces = yield* laborerDatabase.read(
+            'list workspaces for PR polling',
+            listWorkspaceRecords
+          )
           yield* Effect.forEach(
             workspaces,
             (workspace) => startPolling(workspace.id),
@@ -442,7 +464,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
       )
 
       // Re-scan at the background tier so reconciler-adopted worktrees gain a
-      // watcher even when their LiveStore row is created after startup.
+      // watcher after startup.
       const refreshPollingCoverage = refreshPolling().pipe(
         Effect.catchAllCause((cause) =>
           Effect.logWarning(

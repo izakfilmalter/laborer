@@ -54,8 +54,6 @@ export const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL =
   'laborer:acquire-terminal-data-port'
 export const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
   'laborer:terminal-data-port-response'
-export const ACQUIRE_SYNC_PORT_CHANNEL = 'laborer:acquire-sync-port'
-export const SYNC_PORT_RESPONSE_CHANNEL = 'laborer:sync-port-response'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -794,33 +792,5 @@ export function registerIpcHandlers(
     event.sender.postMessage(TERMINAL_DATA_PORT_RESPONSE_CHANNEL, nonce, [
       rendererPort,
     ])
-  })
-
-  // -- Acquire sync port ----------------------------------------------------
-  ipcMain.removeAllListeners(ACQUIRE_SYNC_PORT_CHANNEL)
-  ipcMain.on(ACQUIRE_SYNC_PORT_CHANNEL, (event, payload: unknown) => {
-    if (typeof payload !== 'object' || payload === null) {
-      return
-    }
-
-    const { nonce } = payload as { nonce: unknown }
-
-    if (typeof nonce !== 'string') {
-      return
-    }
-
-    if (!utilityProcessManagerRef?.isRunning('server')) {
-      return
-    }
-
-    const utilityProcess = utilityProcessManagerRef.getProcess('server')
-    if (!utilityProcess || event.sender.isDestroyed()) {
-      return
-    }
-
-    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-    rendererPortRegistry.track('server', rendererPort)
-    utilityProcess.postMessage({ type: 'sync-port' }, [utilityPort])
-    event.sender.postMessage(SYNC_PORT_RESPONSE_CHANNEL, nonce, [rendererPort])
   })
 }

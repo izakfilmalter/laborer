@@ -5,7 +5,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type {
   PanelNode,
   PaneType,
@@ -14,13 +14,13 @@ import type {
   WorkspaceTileNode,
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
-import { queryDb } from '@livestore/livestore'
 import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   GroupImperativeHandle,
   PanelImperativeHandle,
 } from 'react-resizable-panels'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -43,7 +43,6 @@ import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
 import { cn } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import {
   usePanelActions,
   usePendingClosePanelTab,
@@ -176,17 +175,6 @@ export function EmptyPanelTabState({
 }
 
 // ---------------------------------------------------------------------------
-// LiveStore queries for workspace picker
-// ---------------------------------------------------------------------------
-
-const allWorkspacesForPicker$ = queryDb(workspaces, {
-  label: 'emptyWindowTabWorkspaces',
-})
-const allProjectsForPicker$ = queryDb(projects, {
-  label: 'emptyWindowTabProjects',
-})
-
-// ---------------------------------------------------------------------------
 // Empty window tab state — workspace picker
 // ---------------------------------------------------------------------------
 
@@ -216,9 +204,8 @@ interface ProjectWorkspaceGroup {
  */
 export function EmptyWindowTabState() {
   const actions = usePanelActions()
-  const store = useLaborerStore()
-  const workspaceList = store.useQuery(allWorkspacesForPicker$)
-  const projectList = store.useQuery(allProjectsForPicker$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const projectList = useAtomValue(projectViewsAtom)
 
   // Collect workspace IDs that are already open in any window tab
   const openWorkspaceIds = useMemo(() => {

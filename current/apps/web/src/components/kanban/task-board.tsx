@@ -1,7 +1,7 @@
 /**
  * Shared-task-db kanban board — an overlay above the panel area (Cmd+K).
  *
- * One global board where each LiveStore project is a collapsible swim
+ * One global board where each shared-database project is a collapsible swim
  * lane (Todo / In Progress / In Review / Done per lane). Lane collapse
  * shares the sidebar's project collapse state instance, so collapsing a
  * project in either place collapses it in both, live in-session.
@@ -12,12 +12,8 @@
  * The renderer subscribes to typed snapshots/deltas and never opens SQLite.
  */
 
-import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { projects, workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
-import { queryDb } from '@livestore/livestore'
-import { Cause, Effect, Schedule, Stream } from 'effect'
 import {
   AlignLeft,
   Bot,
@@ -38,18 +34,33 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import {
+  authoritativeTasksAtom,
+  clearTaskOptimisticOverlayAtom,
+  confirmTaskOptimisticMoveAtom,
+  installTaskOptimisticOverlayAtom,
+  projectViewsAtom,
+  type TaskOptimisticOverlay,
+  taskMutationReceiptAtom,
+  taskRowsAtom,
+  workspaceViewsAtom,
+} from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
-  applyTaskBoardEvents,
   type BoardTask,
   type BoardTaskStatus,
+  boardTasksFromSharedRows,
   boardTaskTitle,
   projectForTask,
   slackAnalysisState,
   workspaceForTask,
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
+import {
+  fractionalOrderAt,
+  OptimisticTaskMoveQueue,
+} from '@/components/kanban/optimistic-task-moves'
 import {
   openProvisionedAgent,
   resolvePendingAgentOpen,
@@ -106,12 +117,9 @@ import {
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
-const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
-const boardWorkspaces$ = queryDb(workspaces, { label: 'boardWorkspaces' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
@@ -135,8 +143,8 @@ const BOARD_COLUMNS: readonly BoardColumn[] = [
 ]
 
 /**
- * Group tasks into rendered columns, newest first. Cancelled cards are
- * dropped here — the board never shows them.
+ * Group tasks into rendered columns. Explicit manual rank wins; unranked new
+ * and incoming cards remain newest-first at the top.
  */
 function buildColumnTasks(
   tasks: readonly BoardTask[]
@@ -146,7 +154,18 @@ function buildColumnTasks(
     byColumn[column.id] = []
   }
   const doneCutoff = Date.now() - DONE_RETENTION_MS
-  const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.sortOrder === null && b.sortOrder === null) {
+      return b.createdAt - a.createdAt
+    }
+    if (a.sortOrder === null) {
+      return -1
+    }
+    if (b.sortOrder === null) {
+      return 1
+    }
+    return a.sortOrder - b.sortOrder || b.createdAt - a.createdAt
+  })
   for (const task of sorted) {
     if (
       task.status === 'cancelled' ||
@@ -349,6 +368,7 @@ function TaskBoardCard({
   onAttach,
   onCancel,
   onOpen,
+  parentTitle,
   workspace,
 }: {
   readonly task: BoardTask
@@ -360,6 +380,7 @@ function TaskBoardCard({
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
   readonly onOpen?: (task: BoardTask) => void
+  readonly parentTitle?: string | undefined
   /** The workspace this card's work already runs in, if any. */
   readonly workspace?: BoardCardWorkspace | undefined
 }) {
@@ -444,6 +465,11 @@ function TaskBoardCard({
   const boardBadges = (
     <>
       <SourceBadge source={task.source} />
+      {parentTitle && (
+        <Badge className="max-w-full shrink truncate" variant="secondary">
+          Parent: {parentTitle}
+        </Badge>
+      )}
       {task.description !== null && (
         <Tooltip>
           <TooltipTrigger
@@ -837,8 +863,9 @@ function LaneBoard({
   readonly onCancelTask: (task: BoardTask) => void
   readonly onMoveTask: (
     task: BoardTask,
-    status: Exclude<BoardTaskStatus, 'cancelled'>
-  ) => Promise<void>
+    status: Exclude<BoardTaskStatus, 'cancelled'>,
+    sortOrder: number
+  ) => void
   readonly onOpenTask: (task: BoardTask) => void
   readonly onSlackCardQueued: (taskId: string) => void
   readonly projectId: string
@@ -859,7 +886,13 @@ function LaneBoard({
   // lane, so a card arriving in the background never steals a half-typed
   // composer or its focus.
   const signature = useMemo(
-    () => tasks.map((task) => `${task.id}:${String(task.revision)}`).join(','),
+    () =>
+      tasks
+        .map(
+          (task) =>
+            `${task.id}:${String(task.revision)}:${task.status}:${String(task.sortOrder)}`
+        )
+        .join(','),
     [tasks]
   )
   const [syncedSignature, setSyncedSignature] = useState(signature)
@@ -883,10 +916,7 @@ function LaneBoard({
     <Kanban
       className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
-      onMove={({ event, activeContainer, overContainer }) => {
-        if (activeContainer === overContainer) {
-          return
-        }
+      onMove={({ event, overContainer }) => {
         const task = tasksById.get(String(event.active.id))
         const status = BOARD_COLUMNS.find(
           (column) => column.id === overContainer
@@ -895,9 +925,13 @@ function LaneBoard({
           setColumnTasks(buildColumnTasks(tasks))
           return
         }
-        onMoveTask(task, status).catch(() => {
+        const destination = columnTasks[overContainer] ?? []
+        const index = destination.findIndex(({ id }) => id === task.id)
+        if (index < 0) {
           setColumnTasks(buildColumnTasks(tasks))
-        })
+          return
+        }
+        onMoveTask(task, status, fractionalOrderAt(destination, index))
       }}
       onValueChange={setColumnTasks}
       value={columnTasks}
@@ -967,6 +1001,11 @@ function LaneBoard({
                           onAttach={onAttach}
                           onCancel={onCancelTask}
                           onOpen={onOpenTask}
+                          parentTitle={
+                            task.parentTaskId === null
+                              ? undefined
+                              : tasksById.get(task.parentTaskId)?.title
+                          }
                           task={task}
                           workspace={workspaceForCard(task)}
                         />
@@ -1008,6 +1047,11 @@ function LaneBoard({
           return (
             <TaskBoardCard
               isOverlay
+              parentTitle={
+                task.parentTaskId === null
+                  ? undefined
+                  : tasksById.get(task.parentTaskId)?.title
+              }
               task={task}
               workspace={workspaceForCard(task)}
             />
@@ -1466,7 +1510,7 @@ function TaskDetailDialog({
 }
 
 /**
- * The kanban board: one lane per LiveStore project, collapse state
+ * The kanban board: one lane per shared-database project, collapse state
  * shared with the sidebar's project groups (same keys, same instance).
  */
 function TaskBoard({
@@ -1483,9 +1527,11 @@ function TaskBoard({
   readonly onDismiss: () => void
   readonly open: boolean
 }) {
-  const store = useLaborerStore()
-  const projectList = store.useQuery(boardProjects$)
-  const workspaceList = store.useQuery(boardWorkspaces$)
+  const projectList = useAtomValue(projectViewsAtom)
+  const sharedTaskRows = useAtomValue(taskRowsAtom)
+  const authoritativeTasks = useAtomValue(authoritativeTasksAtom).rows
+  const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
@@ -1503,55 +1549,64 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
-  const taskEventsAtom = useMemo(
-    () =>
-      LaborerClient.runtime.pull(
-        LaborerClient.pipe(
-          Effect.map((client) =>
-            // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-            client('task.board.subscribe', undefined as void)
-          ),
-          Stream.unwrap,
-          // A dropped backend socket (OS sleep/wake) fails this stream even
-          // though the protocol reconnects underneath. Every fresh
-          // subscription starts with a full snapshot and
-          // `applyTaskBoardEvents` clears on snapshot, so resubscribing is
-          // safe — the board self-heals instead of dying with "Task board
-          // unavailable" until app restart. Defects still surface.
-          Stream.tapErrorCause((cause) =>
-            Effect.sync(() => {
-              console.warn(
-                '[TaskBoard] subscription failed, resubscribing',
-                Cause.squash(cause)
-              )
-            })
-          ),
-          Stream.retry(Schedule.spaced('2 seconds'))
-        ),
-        { disableAccumulation: true }
-      ),
-    []
-  )
-  const rpcResult = useAtomValue(taskEventsAtom)
-  const pullNext = useAtomSet(taskEventsAtom)
-
+  const installTaskOverlay = useAtomSet(installTaskOptimisticOverlayAtom)
+  const clearTaskOverlay = useAtomSet(clearTaskOptimisticOverlayAtom)
+  const confirmTaskMove = useAtomSet(confirmTaskOptimisticMoveAtom)
+  const authoritativeTasksRef = useRef(authoritativeTasks)
+  authoritativeTasksRef.current = authoritativeTasks
+  const moveQueueRef = useRef<OptimisticTaskMoveQueue | null>(null)
+  const moveDependencies = {
+    clear: (taskId: string, mutationId: string) =>
+      clearTaskOverlay({ mutationId, taskId }),
+    confirm: (
+      confirmation: {
+        readonly cursor: number
+        readonly row: (typeof authoritativeTasks)[number]
+      },
+      mutationId: string
+    ) => confirmTaskMove({ ...confirmation, mutationId }),
+    getAuthoritativeTask: (taskId: string) =>
+      authoritativeTasksRef.current.find(({ id }) => id === taskId),
+    install: (taskId: string, overlay: TaskOptimisticOverlay) =>
+      installTaskOverlay({ overlay, taskId }),
+    isConflict: (error: unknown) => extractErrorCode(error) === 'CAS_CONFLICT',
+    isDefinitiveFailure: (error: unknown) =>
+      extractErrorCode(error) !== undefined,
+    mutationId: () => crypto.randomUUID(),
+    send: async (command: {
+      readonly expectedRevision: number
+      readonly mutationId: string
+      readonly sortOrder: number | null
+      readonly status: BoardTaskStatus
+      readonly taskId: string
+    }) => {
+      const result = await moveTask({ payload: command })
+      if (result.workspaceId !== null) {
+        openProvisionedAgent(
+          result,
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+      }
+      return { cursor: result.cursor, row: result.row }
+    },
+  }
+  if (moveQueueRef.current === null) {
+    moveQueueRef.current = new OptimisticTaskMoveQueue(moveDependencies)
+  } else {
+    moveQueueRef.current.configure(moveDependencies)
+  }
   useEffect(() => {
-    if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
-      setBoardTasks((current) =>
-        applyTaskBoardEvents(rpcResult.value.items, current)
-      )
-      // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
-      pullNext(undefined as void)
-    } else if (Result.isFailure(rpcResult)) {
-      setBoardTasks([])
-    }
-  }, [pullNext, rpcResult])
+    moveQueueRef.current?.observeMutationIds(taskMutationReceipt.mutationIds)
+  }, [taskMutationReceipt])
+  useEffect(() => {
+    setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
+  }, [sharedTaskRows])
 
   // Slack cards created directly in In Progress are planned and provisioned
   // by a detached server fiber, so their create response carries no workspace
   // id. Remember them and open the agent — seeded with the planned prompt —
-  // once the board's task deltas and the LiveStore workspace rows agree the
-  // work has a workspace.
+  // once the shared-state task and workspace projections agree the work has a
+  // workspace.
   const pendingSlackAgentOpensRef = useRef<Set<string>>(new Set())
   const queueSlackAgentOpen = (taskId: string) => {
     pendingSlackAgentOpensRef.current.add(taskId)
@@ -1724,30 +1779,12 @@ function TaskBoard({
     onDismiss()
   }
 
-  const persistMove = async (
+  const persistMove = (
     task: BoardTask,
-    status: Exclude<BoardTaskStatus, 'cancelled'>
+    status: Exclude<BoardTaskStatus, 'cancelled'>,
+    sortOrder: number
   ) => {
-    try {
-      const result = await moveTask({
-        payload: {
-          expectedRevision: task.revision,
-          status,
-          taskId: task.id,
-        },
-      })
-      if (result.workspaceId !== null) {
-        openProvisionedAgent(
-          result,
-          panelActions?.autoOpenAgentWhenWorkspaceReady
-        )
-      }
-    } catch (error) {
-      toast.error(`Could not move “${task.title}”`, {
-        description: extractErrorMessage(error),
-      })
-      throw error
-    }
+    moveQueueRef.current?.move(task.id, { sortOrder, status })
   }
 
   const cancelTask = (task: BoardTask) => {
@@ -1756,6 +1793,8 @@ function TaskBoard({
     moveTask({
       payload: {
         expectedRevision: task.revision,
+        mutationId: crypto.randomUUID(),
+        sortOrder: task.sortOrder,
         status: 'cancelled',
         taskId: task.id,
       },
@@ -1824,11 +1863,6 @@ function TaskBoard({
           {searching && lanes.length === 0 && (
             <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
               No matching cards
-            </div>
-          )}
-          {Result.isFailure(rpcResult) && (
-            <div className="flex items-center justify-center p-8 text-destructive text-sm">
-              Task board unavailable: {String(Cause.squash(rpcResult.cause))}
             </div>
           )}
         </div>

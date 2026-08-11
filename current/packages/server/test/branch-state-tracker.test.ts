@@ -1,25 +1,26 @@
 import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
+import { listWorkspaceRecords } from '../src/services/workspace-records.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitFor, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
+const TestDatabaseLayer = LaborerDatabase.testLayer().pipe(Layer.orDie)
 
 const TestLayer = BranchStateTracker.layer.pipe(
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(TestDatabaseLayer)
 )
 
 const CoordinatorTestLayer = RepositoryWatchCoordinator.layer.pipe(
@@ -29,8 +30,39 @@ const CoordinatorTestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(TestDatabaseLayer)
 )
+
+const createProject = (
+  database: NativeLaborerDatabase,
+  projectId: string,
+  repoPath: string
+) =>
+  database.insertProject({
+    canonicalGitCommonDir: realpathSync(join(repoPath, '.git')),
+    id: projectId,
+    name: projectId,
+    repoId: projectId,
+    rootPath: realpathSync(repoPath),
+  })
+
+const createWorkspace = (
+  database: NativeLaborerDatabase,
+  projectRoot: string,
+  workspaceId: string,
+  branchName: string,
+  worktreePath: string
+) =>
+  database.insertTask({
+    branchName,
+    id: workspaceId,
+    rootPath: realpathSync(projectRoot),
+    source: 'worktree',
+    status: 'in_progress',
+    title: branchName,
+    worktreePath: realpathSync(worktreePath),
+    worktreeStatus: 'ready',
+  })
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -50,26 +82,14 @@ describe('BranchStateTracker', () => {
       const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'branch-refresh-stale',
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId,
-          taskSource: null,
-          branchName: 'feature/stale',
-          worktreePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
+      const { database } = yield* LaborerDatabase
+      createProject(database, projectId, repoPath)
+      createWorkspace(
+        database,
+        repoPath,
+        workspaceId,
+        'feature/stale',
+        worktreePath
       )
 
       // Switch the worktree to a different branch
@@ -81,8 +101,10 @@ describe('BranchStateTracker', () => {
       assert.strictEqual(result.checked, 1)
       assert.strictEqual(result.updated, 1)
 
-      const workspace = store.query(tables.workspaces.where('id', workspaceId))
-      assert.strictEqual(workspace[0]?.branchName, 'feature/updated')
+      assert.strictEqual(
+        database.findTask(workspaceId)?.branchName,
+        'feature/updated'
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -95,26 +117,14 @@ describe('BranchStateTracker', () => {
       const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'branch-refresh-current',
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId,
-          taskSource: null,
-          branchName: 'feature/current',
-          worktreePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
+      const { database } = yield* LaborerDatabase
+      createProject(database, projectId, repoPath)
+      createWorkspace(
+        database,
+        repoPath,
+        workspaceId,
+        'feature/current',
+        worktreePath
       )
 
       const tracker = yield* BranchStateTracker
@@ -123,8 +133,10 @@ describe('BranchStateTracker', () => {
       assert.strictEqual(result.checked, 1)
       assert.strictEqual(result.updated, 0)
 
-      const workspace = store.query(tables.workspaces.where('id', workspaceId))
-      assert.strictEqual(workspace[0]?.branchName, 'feature/current')
+      assert.strictEqual(
+        database.findTask(workspaceId)?.branchName,
+        'feature/current'
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -140,40 +152,10 @@ describe('BranchStateTracker', () => {
       const wsIdA = crypto.randomUUID()
       const wsIdB = crypto.randomUUID()
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'branch-refresh-multi',
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: wsIdA,
-          projectId,
-          taskSource: null,
-          branchName: 'feature/multi-a',
-          worktreePath: worktreeA,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: wsIdB,
-          projectId,
-          taskSource: null,
-          branchName: 'feature/multi-b',
-          worktreePath: worktreeB,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      createProject(database, projectId, repoPath)
+      createWorkspace(database, repoPath, wsIdA, 'feature/multi-a', worktreeA)
+      createWorkspace(database, repoPath, wsIdB, 'feature/multi-b', worktreeB)
 
       // Switch both worktrees to new branches
       git('checkout -b feature/multi-a-new', worktreeA)
@@ -185,10 +167,14 @@ describe('BranchStateTracker', () => {
       assert.strictEqual(result.checked, 2)
       assert.strictEqual(result.updated, 2)
 
-      const wsA = store.query(tables.workspaces.where('id', wsIdA))
-      const wsB = store.query(tables.workspaces.where('id', wsIdB))
-      assert.strictEqual(wsA[0]?.branchName, 'feature/multi-a-new')
-      assert.strictEqual(wsB[0]?.branchName, 'feature/multi-b-new')
+      assert.strictEqual(
+        database.findTask(wsIdA)?.branchName,
+        'feature/multi-a-new'
+      )
+      assert.strictEqual(
+        database.findTask(wsIdB)?.branchName,
+        'feature/multi-b-new'
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -199,33 +185,18 @@ describe('BranchStateTracker', () => {
       const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'branch-refresh-destroyed',
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId,
-          taskSource: null,
-          branchName: 'main',
-          worktreePath: repoPath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
-      store.commit(
-        events.workspaceStatusChanged({
-          id: workspaceId,
-          status: 'destroyed',
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      createProject(database, projectId, repoPath)
+      createWorkspace(database, repoPath, workspaceId, 'main', repoPath)
+      const task = database.findTask(workspaceId)
+      assert.isNotNull(task)
+      if (task === null) {
+        assert.fail('Expected workspace task')
+      }
+      database.updateTask(task.id, task.revision, {
+        worktreePath: null,
+        worktreeStatus: null,
+      })
 
       const tracker = yield* BranchStateTracker
       const result = yield* tracker.refreshBranches(projectId)
@@ -244,26 +215,14 @@ describe('BranchStateTracker', () => {
       const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'branch-refresh-detached',
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId,
-          taskSource: null,
-          branchName: 'feature/detach',
-          worktreePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
+      const { database } = yield* LaborerDatabase
+      createProject(database, projectId, repoPath)
+      createWorkspace(
+        database,
+        repoPath,
+        workspaceId,
+        'feature/detach',
+        worktreePath
       )
 
       // Detach HEAD in the worktree
@@ -275,8 +234,9 @@ describe('BranchStateTracker', () => {
 
       assert.strictEqual(result.updated, 1)
 
-      const workspace = store.query(tables.workspaces.where('id', workspaceId))
-      assert.isTrue(workspace[0]?.branchName.startsWith('detached/'))
+      assert.isTrue(
+        database.findTask(workspaceId)?.branchName?.startsWith('detached/')
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 })
@@ -292,15 +252,16 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         const repoPath = initRepo('coord-branch-refresh', tempRoots)
 
         const coordinator = yield* RepositoryWatchCoordinator
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         const projectId = 'project-coord-branch'
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath,
-            name: 'coord-branch-refresh',
-          })
+        createProject(database, projectId, repoPath)
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-coord-branch',
+          'main',
+          repoPath
         )
 
         // Use watchProject (idempotent) instead of watchAll to avoid
@@ -313,16 +274,17 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         yield* Effect.promise(() =>
           waitFor(() =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length >= 1
+              listWorkspaceRecords(database).filter(
+                (workspace) => workspace.projectId === projectId
+              ).length >= 1
             )
           )
         )
 
         // Verify the initial branch name
-        const initialWorkspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly { readonly branchName: string }[]
+        const initialWorkspaces = listWorkspaceRecords(database).filter(
+          (workspace) => workspace.projectId === projectId
+        )
         const initialBranch = initialWorkspaces[0]?.branchName
 
         // Switch branch on the main worktree (modifies .git/HEAD)
@@ -331,9 +293,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         // Wait for the branch name to be refreshed
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', projectId)
-            ) as readonly { readonly branchName: string }[]
+            const workspaces = listWorkspaceRecords(database).filter(
+              (workspace) => workspace.projectId === projectId
+            )
             return Promise.resolve(
               workspaces.some(
                 (w) => w.branchName === 'feature/coord-branch-updated'
@@ -342,9 +304,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           }, repoPath)
         )
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly { readonly branchName: string }[]
+        const workspaces = listWorkspaceRecords(database).filter(
+          (workspace) => workspace.projectId === projectId
+        )
         const updatedWorkspace = workspaces.find(
           (w) => w.branchName === 'feature/coord-branch-updated'
         )
@@ -371,15 +333,23 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         const canonicalRepoPath = realpathSync(repoPath)
 
         const coordinator = yield* RepositoryWatchCoordinator
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         const projectId = 'project-coord-main-branch-with-linked'
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath,
-            name: 'coord-main-branch-with-linked',
-          })
+        createProject(database, projectId, repoPath)
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-coord-main',
+          'main',
+          repoPath
+        )
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-coord-linked-existing',
+          'feature/linked-existing',
+          linkedPath
         )
 
         // Use watchProject (idempotent) instead of watchAll to avoid
@@ -391,8 +361,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         yield* Effect.promise(() =>
           waitFor(() =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length === 2
+              listWorkspaceRecords(database).filter(
+                (workspace) => workspace.projectId === projectId
+              ).length === 2
             )
           )
         )
@@ -401,12 +372,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', projectId)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listWorkspaceRecords(database).filter(
+              (workspace) => workspace.projectId === projectId
+            )
 
             return Promise.resolve(
               workspaces.some(
@@ -418,12 +386,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           }, repoPath)
         )
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const workspaces = listWorkspaceRecords(database).filter(
+          (workspace) => workspace.projectId === projectId
+        )
         assert.isDefined(
           workspaces.find(
             (workspace) =>
@@ -448,15 +413,16 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         const canonicalLinkedPath = realpathSync(linkedPath)
 
         const coordinator = yield* RepositoryWatchCoordinator
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         const projectId = 'project-coord-linked-branch-refresh'
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath,
-            name: 'coord-linked-branch-refresh',
-          })
+        createProject(database, projectId, repoPath)
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-coord-linked-refresh',
+          'feature/linked-start',
+          linkedPath
         )
 
         // Use watchProject (idempotent) instead of watchAll to avoid
@@ -468,8 +434,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         yield* Effect.promise(() =>
           waitFor(() =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length === 2
+              listWorkspaceRecords(database).filter(
+                (workspace) => workspace.projectId === projectId
+              ).length === 1
             )
           )
         )
@@ -478,12 +445,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', projectId)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listWorkspaceRecords(database).filter(
+              (workspace) => workspace.projectId === projectId
+            )
 
             return Promise.resolve(
               workspaces.some(
@@ -495,12 +459,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           }, repoPath)
         )
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const workspaces = listWorkspaceRecords(database).filter(
+          (workspace) => workspace.projectId === projectId
+        )
         assert.isDefined(
           workspaces.find(
             (workspace) =>
@@ -518,16 +479,28 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         const repoPath = initRepo('coord-both-triggers', tempRoots)
 
         const coordinator = yield* RepositoryWatchCoordinator
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         const projectId = 'project-coord-both'
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath,
-            name: 'coord-both-triggers',
-          })
+        createProject(database, projectId, repoPath)
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-coord-both-main',
+          'main',
+          repoPath
         )
+        const missingPath = join(repoPath, '.worktrees', 'missing')
+        database.insertTask({
+          branchName: 'feature/missing',
+          id: 'workspace-coord-both-missing',
+          rootPath: realpathSync(repoPath),
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'feature/missing',
+          worktreePath: missingPath,
+          worktreeStatus: 'ready',
+        })
 
         // Use watchProject (idempotent) instead of watchAll to avoid
         // racing with the daemon watchAll fired during layer construction.
@@ -535,12 +508,14 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
 
-        // Wait for initial reconciliation (main worktree only)
+        // Initial reconciliation releases the stale missing worktree, leaving
+        // only the main checkout.
         yield* Effect.promise(() =>
           waitFor(() =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length >= 1
+              listWorkspaceRecords(database).filter(
+                (workspace) => workspace.projectId === projectId
+              ).length === 1
             )
           )
         )
@@ -549,28 +524,33 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         // which should trigger both reconciliation AND branch refresh
         const worktreePath = join(repoPath, '.worktrees', 'coord-both-triggers')
         git(`worktree add -b feature/both-triggers ${worktreePath}`, repoPath)
+        yield* Effect.promise(() => delay(500))
+        git('checkout -b feature/both-main-updated', repoPath)
 
-        // Wait for the new worktree to appear as a workspace
+        // Reconciliation releases the missing worktree and adopts the new
+        // worktree while branch refresh updates the main checkout.
         yield* Effect.promise(() =>
-          waitForWithNudge(
-            () =>
-              Promise.resolve(
-                store.query(tables.workspaces.where('projectId', projectId))
-                  .length >= 2
-              ),
-            repoPath
-          )
+          waitForWithNudge(() => {
+            const workspaces = listWorkspaceRecords(database).filter(
+              (workspace) => workspace.projectId === projectId
+            )
+            return Promise.resolve(
+              workspaces.length === 2 &&
+                workspaces.some(
+                  (workspace) =>
+                    workspace.branchName === 'feature/both-main-updated'
+                ) &&
+                workspaces.some(
+                  (workspace) =>
+                    workspace.branchName === 'feature/both-triggers'
+                )
+            )
+          }, repoPath)
         )
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly { readonly branchName: string }[]
-        const newWorkspace = workspaces.find(
-          (w) => w.branchName === 'feature/both-triggers'
-        )
-        assert.isDefined(
-          newWorkspace,
-          'New worktree should be detected with correct branch name'
+        assert.strictEqual(
+          database.findTask('workspace-coord-both-missing')?.worktreePath,
+          null
         )
       }).pipe(Effect.provide(CoordinatorTestLayer))
   )

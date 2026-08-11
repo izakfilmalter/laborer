@@ -1,14 +1,13 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { workspaces } from '@laborer/shared/schema'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type {
   LeafNode,
   PanelNode,
   PaneType,
   WindowLayout,
 } from '@laborer/shared/types'
-import { queryDb } from '@livestore/livestore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import {
@@ -21,7 +20,6 @@ import {
   getCurrentWindowId,
   getDesktopBridge,
 } from '@/lib/desktop'
-import { useLaborerStore } from '@/livestore/store'
 
 import type { AutoOpenAgentOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
@@ -384,13 +382,11 @@ function assignTerminalInWorkspace(
  */
 const paneSpawnGuard = createSpawnGuard()
 
-/** LiveStore query used to resolve workspace state throughout the hook. */
-const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
-
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'laborer:panel-layout:v1:'
 
 interface StoredPanelLayout {
-  readonly windowLayout: WindowLayout | null
+  /** Untrusted persisted input; decode before treating it as a layout. */
+  readonly windowLayout: unknown | null
 }
 
 const createPanelLayoutStorageKey = (windowId: string) =>
@@ -411,11 +407,7 @@ const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
 
     const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
-      return {
-        windowLayout:
-          (parsed as { readonly windowLayout?: WindowLayout | null })
-            .windowLayout ?? null,
-      }
+      return { windowLayout: Reflect.get(parsed, 'windowLayout') ?? null }
     }
   } catch {
     return { windowLayout: null }
@@ -455,7 +447,6 @@ const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
  *    `WindowLayout` and write it back to localStorage.
  */
 export function usePanelLayout() {
-  const store = useLaborerStore()
   const initialLayout = useInitialLayout()
   const registry = usePanelGroupRegistry()
   const nativeWindowId = getCurrentWindowId()
@@ -477,7 +468,8 @@ export function usePanelLayout() {
   )
 
   const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
-    return readStoredPanelLayout(panelWindowId).windowLayout ?? undefined
+    return decodeWindowLayout(readStoredPanelLayout(panelWindowId).windowLayout)
+      .windowLayout
   }, [panelWindowId])
 
   // Read and decode the hierarchical window layout from localStorage.
@@ -496,10 +488,10 @@ export function usePanelLayout() {
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
-  const workspaceList = store.useQuery(allWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   // Agent panes opened optimistically while their workspace is still being
   // set up. Maps workspaceId -> placeholder paneId (null when the pane
-  // couldn't be opened yet, e.g. the workspace hadn't landed in LiveStore).
+  // couldn't be opened yet, e.g. the task hadn't landed in the stream).
   // The watcher effect spawns the agent terminal into the recorded pane
   // once the workspace transitions to 'running'.
   const pendingAgentSpawnsRef = useRef<Map<string, PendingAgentSpawn>>(
@@ -649,7 +641,7 @@ export function usePanelLayout() {
   )
 
   /**
-   * Commit reconciled layout to LiveStore.
+   * Commit reconciled layout to per-window localStorage.
    */
   const commitReconciledLayouts = useCallback(
     (liveIds: ReadonlySet<string>, respawnedIds: Map<string, string>) => {
@@ -891,8 +883,7 @@ export function usePanelLayout() {
         if (newPaneType !== 'agent') {
           return undefined
         }
-        const wsList = store.query(allWorkspaces$)
-        const ws = wsList.find((w) => w.id === wsId)
+        const ws = workspaceList.find((w) => w.id === wsId)
         if (!ws?.projectId) {
           return 'opencode2'
         }
@@ -983,7 +974,7 @@ export function usePanelLayout() {
       getConfig,
       spawnTerminal,
       removeTerminalOptimistically,
-      store.query,
+      workspaceList,
     ]
   )
 
@@ -1046,8 +1037,7 @@ export function usePanelLayout() {
           if (paneType !== 'agent') {
             return undefined
           }
-          const wsList = store.query(allWorkspaces$)
-          const ws = wsList.find((w) => w.id === wsId)
+          const ws = workspaceList.find((w) => w.id === wsId)
           if (!ws?.projectId) {
             return 'opencode2'
           }
@@ -1126,7 +1116,7 @@ export function usePanelLayout() {
       getConfig,
       spawnTerminal,
       removeTerminalOptimistically,
-      store.query,
+      workspaceList,
     ]
   )
 
@@ -1746,7 +1736,7 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
 
   /**
-   * Helper to persist a panel tab layout update to LiveStore.
+   * Helper to persist a panel tab layout update to per-window localStorage.
    */
   const commitPanelTabLayout = useCallback(
     (reason: string, newLayout: WindowLayout) => {
@@ -1776,8 +1766,7 @@ export function usePanelLayout() {
         if (panelType !== 'agent') {
           return undefined
         }
-        const wsList = store.query(allWorkspaces$)
-        const ws = wsList.find((w) => w.id === workspaceId)
+        const ws = workspaceList.find((w) => w.id === workspaceId)
         if (!ws?.projectId) {
           return 'opencode2'
         }
@@ -1855,7 +1844,7 @@ export function usePanelLayout() {
         })
     },
     [
-      store,
+      workspaceList,
       getConfig,
       spawnTerminal,
       getCurrentWindowLayout,
@@ -1968,7 +1957,7 @@ export function usePanelLayout() {
         return
       }
       if (!workspace) {
-        // The workspace hasn't landed in LiveStore yet — the watcher
+        // The task-backed workspace hasn't landed in the stream yet — the watcher
         // effect opens the pane as soon as the record appears.
         pendingAgentSpawnsRef.current.set(workspaceId, {
           initialPrompt,

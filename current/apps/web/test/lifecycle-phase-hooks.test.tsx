@@ -168,7 +168,7 @@ describe('useServiceStatus', () => {
     )
   })
 
-  it('includes sync status entry with unknown state initially', async () => {
+  it('includes server connection status as reconnecting initially', async () => {
     mockFetch(() => pendingPromise())
 
     render(<ServiceStatusDisplay />)
@@ -177,8 +177,7 @@ describe('useServiceStatus', () => {
       await Promise.resolve()
     })
 
-    // Sync status is unknown until LiveStore is wired (Issue #2)
-    expect(screen.getByTestId('sync-state').textContent).toBe('unknown')
+    expect(screen.getByTestId('sync-state').textContent).toBe('reconnecting')
   })
 
   it('updates sidecar status to healthy when health endpoint responds', async () => {

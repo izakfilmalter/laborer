@@ -27,6 +27,12 @@ const SELECT_WORKSPACE_REGEX = /Select a workspace to add to this tab/
 // ---------------------------------------------------------------------------
 
 const addWorkspaceToCurrentTabMock = vi.fn()
+const { projectResults } = vi.hoisted(() => ({
+  projectResults: { current: [] as MockProject[] },
+}))
+const { workspaceResults } = vi.hoisted(() => ({
+  workspaceResults: { current: [] as MockWorkspace[] },
+}))
 
 const mockActions: PanelActions = {
   assignTerminalToPane: vi.fn(),
@@ -81,7 +87,7 @@ vi.mock('@/panels/panel-context', () => ({
   useActiveWorkspaceId: () => null,
 }))
 
-// Mock LiveStore — provides workspace and project data
+// Mock the combined shared-state projections.
 interface MockWorkspace {
   branchName: string
   id: string
@@ -94,26 +100,16 @@ interface MockProject {
   name: string
 }
 
-// Query results array: [workspaces, projects] set per test
-const queryResults: unknown[][] = []
-let queryCallIndex = 0
+vi.mock('@effect-atom/atom-react/Hooks', () => ({
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceResults.current
+      : projectResults.current,
+}))
 
-vi.mock('@livestore/livestore', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@livestore/livestore')>()
-  return {
-    ...actual,
-    queryDb: vi.fn(() => ({})),
-  }
-})
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => {
-      const result = queryResults[queryCallIndex] ?? []
-      queryCallIndex += 1
-      return result
-    },
-  }),
+vi.mock('@/atoms/shared-state', () => ({
+  projectViewsAtom: Symbol.for('projectViews'),
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 // Stub drag-and-drop (required by workspace-frames.tsx imports)
@@ -182,10 +178,8 @@ function setupQueryResults(
   workspaceData: MockWorkspace[],
   projectData: MockProject[]
 ) {
-  // The component calls useQuery twice: first for workspaces, then for projects
-  queryResults.length = 0
-  queryResults.push(workspaceData, projectData)
-  queryCallIndex = 0
+  workspaceResults.current = workspaceData
+  projectResults.current = projectData
 }
 
 afterEach(() => {
@@ -197,8 +191,8 @@ afterEach(() => {
     writable: true,
     configurable: true,
   })
-  queryResults.length = 0
-  queryCallIndex = 0
+  workspaceResults.current = []
+  projectResults.current = []
 })
 
 // ---------------------------------------------------------------------------

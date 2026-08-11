@@ -2,7 +2,7 @@
  * BranchStateTracker — Effect Service
  *
  * Refreshes branch metadata for all workspaces belonging to a project
- * by reading the current branch from git and committing update events
+ * by reading the current branch from git and persisting changed facts
  * when stored branch names are stale.
  *
  * This service is triggered by the RepositoryWatchCoordinator when
@@ -17,10 +17,10 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { RpcError } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
+import { listWorkspaceRecords } from './workspace-records.js'
 
 export interface BranchRefreshResult {
   readonly checked: number
@@ -129,23 +129,19 @@ class BranchStateTracker extends Context.Tag('@laborer/BranchStateTracker')<
   static readonly layer = Layer.effect(
     BranchStateTracker,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
 
       const refreshBranches = Effect.fn('BranchStateTracker.refreshBranches')(
         function* (projectId: string) {
-          const allWorkspaces = store.query(
-            tables.workspaces.where('projectId', projectId)
-          ) as readonly {
-            readonly branchName: string
-            readonly id: string
-            readonly status: string
-            readonly worktreePath: string
-          }[]
-
-          // Only refresh non-destroyed workspaces
-          const activeWorkspaces = allWorkspaces.filter(
-            (w) => w.status !== 'destroyed'
+          const allWorkspaces = yield* laborerDatabase.read(
+            'list workspaces for branch refresh',
+            (database) =>
+              listWorkspaceRecords(database).filter(
+                (workspace) => workspace.projectId === projectId
+              )
           )
+
+          const activeWorkspaces = allWorkspaces
 
           let checked = 0
           let updated = 0
@@ -162,12 +158,24 @@ class BranchStateTracker extends Context.Tag('@laborer/BranchStateTracker')<
             }
 
             if (currentBranch !== workspace.branchName) {
-              store.commit(
-                events.workspaceBranchChanged({
-                  id: workspace.id,
-                  branchName: currentBranch,
+              yield* laborerDatabase
+                .run('update workspace branch', (database) => {
+                  const task = database.findTask(workspace.id)
+                  if (task !== null) {
+                    database.updateTask(task.id, task.revision, {
+                      branchName: currentBranch,
+                    })
+                  }
                 })
-              )
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new RpcError({
+                        code: 'BRANCH_REFRESH_FAILED',
+                        message: `Failed to persist branch for workspace ${workspace.id}`,
+                      })
+                  )
+                )
               updated += 1
             }
           }

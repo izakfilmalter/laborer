@@ -1,10 +1,10 @@
 /**
  * Context for controlling the app settings modal from components
- * that live outside the LiveStoreProvider tree (e.g. Header).
+ * that live outside the settings modal subtree (e.g. Header).
  *
  * The open/close state is lifted here so that Header can trigger
  * "open settings" while the actual AppSettingsModal renders inside
- * LiveStoreProvider where it has store access.
+ * shared-state bridge where it has server data access.
  */
 
 import { createContext, useCallback, useContext, useState } from 'react'

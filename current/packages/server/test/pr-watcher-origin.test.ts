@@ -3,15 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
 import { afterEach, vi } from 'vitest'
 import type { SpawnResult } from '../src/lib/spawn.js'
 import { spawn } from '../src/lib/spawn.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 vi.mock('../src/lib/spawn.js', () => ({
   spawn: vi.fn(),
@@ -86,31 +85,26 @@ const makeWorktreeDir = Effect.acquireRelease(
 )
 
 const createWorkspace = (
-  store: LaborerStore['Type']['store'],
+  database: NativeLaborerDatabase,
   worktreePath: string
 ) => {
-  store.commit(
-    events.projectCreated({
-      id: 'project-1',
-      repoPath: '/tmp',
-      name: 'Test project',
-      repoId: null,
-      canonicalGitCommonDir: null,
-    })
-  )
-  store.commit(
-    events.workspaceCreated({
-      id: 'workspace-1',
-      projectId: 'project-1',
-      taskSource: null,
-      branchName: 'feature/fork-pr',
-      worktreePath,
-      status: 'running',
-      origin: 'laborer',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+  database.insertProject({
+    canonicalGitCommonDir: '/tmp/.git',
+    id: 'project-1',
+    name: 'Test project',
+    repoId: 'test-project',
+    rootPath: '/tmp',
+  })
+  database.insertTask({
+    branchName: 'feature/fork-pr',
+    id: 'workspace-1',
+    rootPath: '/tmp',
+    source: 'worktree',
+    status: 'in_progress',
+    title: 'Fork PR',
+    worktreePath,
+    worktreeStatus: 'ready',
+  })
 }
 
 afterEach(() => {
@@ -127,6 +121,7 @@ describe('PrWatcher fork origin PR lookup', () => {
           createSpawnMock({
             '--repo acme/fork': {
               stdout: JSON.stringify({
+                isDraft: true,
                 number: 42,
                 state: 'OPEN',
                 title: 'Origin fork PR',
@@ -136,19 +131,22 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state': {
-              stdout: '',
-              stderr: 'no pull requests found',
-              exitCode: 1,
-            },
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft':
+              {
+                stdout: '',
+                stderr: 'no pull requests found',
+                exitCode: 1,
+              },
           })
         )
 
         const worktreePath = yield* makeWorktreeDir
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
+        const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+        const { database } = Context.get(databaseContext, LaborerDatabase)
+        createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
+            Layer.provide(Layer.succeedContext(databaseContext)),
             Layer.provide(
               Layer.succeed(
                 PrTaskTransitions,
@@ -159,25 +157,23 @@ describe('PrWatcher fork origin PR lookup', () => {
                     }),
                 })
               )
-            ),
-            Layer.provide(Layer.succeedContext(storeContext))
+            )
           )
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
-
-        createWorkspace(store, worktreePath)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
         yield* prWatcher.checkPr('workspace-1')
 
         assert.strictEqual(prData.number, 42)
         assert.strictEqual(prData.url, 'https://github.com/acme/fork/pull/42')
-
-        const workspace = store
-          .query(tables.workspaces)
-          .find((row) => row.id === 'workspace-1')
-        assert.strictEqual(workspace?.prNumber, 42)
-        assert.strictEqual(workspace?.prTitle, 'Origin fork PR')
+        assert.deepInclude(database.findTask('workspace-1'), {
+          prIsDraft: true,
+          prNumber: 42,
+          prState: 'open',
+          prTitle: 'Origin fork PR',
+          prUrl: 'https://github.com/acme/fork/pull/42',
+        })
         assert.isAtLeast(transitions.length, 2)
         for (const transition of transitions) {
           assert.deepEqual(transition, {
@@ -192,7 +188,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         assert.isAtLeast(ghCalls.length, 1)
         assert.include(
           ghCalls[0]?.[0].join(' '),
-          'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+          'gh pr view feature/fork-pr --json number,url,title,state,isDraft --repo acme/fork'
         )
       })
   )
@@ -211,29 +207,29 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state': {
-              stdout: JSON.stringify({
-                number: 7,
-                state: 'OPEN',
-                title: 'Upstream PR',
-                url: 'https://github.com/upstream/repo/pull/7',
-              }),
-            },
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft':
+              {
+                stdout: JSON.stringify({
+                  number: 7,
+                  state: 'OPEN',
+                  title: 'Upstream PR',
+                  url: 'https://github.com/upstream/repo/pull/7',
+                }),
+              },
           })
         )
 
         const worktreePath = yield* makeWorktreeDir
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
+        const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+        const { database } = Context.get(databaseContext, LaborerDatabase)
+        createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),
-            Layer.provide(Layer.succeedContext(storeContext))
+            Layer.provide(Layer.succeedContext(databaseContext))
           )
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
-
-        createWorkspace(store, worktreePath)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
 
@@ -250,7 +246,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             cmd
               .join(' ')
               .includes(
-                'gh pr view feature/fork-pr --json number,url,title,state --repo acme/fork'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft --repo acme/fork'
               )
           )
         )
@@ -259,7 +255,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             const call = cmd.join(' ')
             return (
               call.includes(
-                'gh pr view feature/fork-pr --json number,url,title,state'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft'
               ) && !call.includes('--repo')
             )
           })

@@ -24,7 +24,7 @@
  *   LABORER_DESKTOP_SIGNED=true
  */
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   copyFileSync,
   cpSync,
@@ -133,7 +133,14 @@ const REQUIRED_ASAR_FILES = [
   'packages/server/dist/migrations/0001_execution_lifecycle_statuses.sql',
   'packages/server/dist/migrations/0002_task_description_agent_source.sql',
   'packages/server/dist/migrations/0003_worktree_task_source.sql',
+  'packages/server/dist/migrations/0004_task_worktree_pr_columns.sql',
+  'packages/server/dist/migrations/0005_projects.sql',
+  'packages/server/dist/migrations/0006_app_settings_and_ledger.sql',
 ] as const
+
+const REMOVED_PERSISTENCE_PAYLOAD_PATTERN =
+  /(?:^|[/\\])(?:@livestore|sql\.js|wa-sqlite)(?:[/\\]|$)/i
+const PACKAGED_SMOKE_TIMEOUT_MS = 30_000
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,6 +166,102 @@ function run(
     throw new Error(
       `Command failed (exit ${String(result.status)}): ${command} ${args.join(' ')}`
     )
+  }
+}
+
+function findRemovedPersistencePayloads(root: string): readonly string[] {
+  if (!existsSync(root)) {
+    return []
+  }
+
+  const matches: string[] = []
+  const pending = [root]
+  while (pending.length > 0) {
+    const directory = pending.pop()
+    if (!directory) {
+      continue
+    }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      const relativePath = relative(root, path)
+      if (REMOVED_PERSISTENCE_PAYLOAD_PATTERN.test(relativePath)) {
+        matches.push(relativePath)
+        continue
+      }
+      if (entry.isDirectory()) {
+        pending.push(path)
+      }
+    }
+  }
+  return matches.sort()
+}
+
+function validateNoRemovedPersistencePayloads(
+  root: string,
+  label: string
+): void {
+  const matches = findRemovedPersistencePayloads(root)
+  if (matches.length === 0) {
+    log(`Validated ${label}: no LiveStore/sql.js/wa-sqlite payloads`)
+    return
+  }
+
+  throw new Error(
+    `${label} contains removed persistence payloads: ${matches.slice(0, 20).join(', ')}`
+  )
+}
+
+function sleep(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function terminateProcessGroup(pid: number): void {
+  const groupPid = -pid
+  try {
+    process.kill(groupPid, 'SIGTERM')
+  } catch {
+    return
+  }
+
+  const shutdownDeadline = Date.now() + 5000
+  while (Date.now() < shutdownDeadline) {
+    if (!isProcessRunning(groupPid)) {
+      return
+    }
+    sleep(50)
+  }
+
+  try {
+    process.kill(groupPid, 'SIGKILL')
+  } catch {
+    // The packaged app and its subprocesses completed graceful shutdown.
+  }
+}
+
+function hasValidSmokeMarker(markerPath: string): boolean {
+  if (!existsSync(markerPath)) {
+    return false
+  }
+
+  try {
+    const marker: unknown = JSON.parse(readFileSync(markerPath, 'utf8'))
+    return (
+      typeof marker === 'object' &&
+      marker !== null &&
+      'url' in marker &&
+      marker.url === 'laborer://app/'
+    )
+  } catch {
+    return false
   }
 }
 
@@ -288,10 +391,7 @@ function resolveGitHubPublishConfig():
   const rawRepo =
     process.env.LABORER_DESKTOP_UPDATE_REPOSITORY?.trim() ||
     process.env.GITHUB_REPOSITORY?.trim() ||
-    ''
-  if (!rawRepo) {
-    return undefined
-  }
+    'izakfilmalter/laborer'
 
   const parts = rawRepo.split('/')
   const owner = parts[0]
@@ -388,7 +488,92 @@ function validatePackagedAsar(stageAppDir: string): void {
     )
   }
 
-  log(`Validated runtime dependencies in ${relative(stageAppDir, appAsarPath)}`)
+  const removedPayloads = [...files].filter((file) =>
+    REMOVED_PERSISTENCE_PAYLOAD_PATTERN.test(file)
+  )
+  if (removedPayloads.length > 0) {
+    throw new Error(
+      `Packaged app.asar contains removed persistence payloads: ${removedPayloads.slice(0, 20).join(', ')}`
+    )
+  }
+
+  log(
+    `Validated runtime dependencies and removed payloads in ${relative(stageAppDir, appAsarPath)}`
+  )
+}
+
+function smokeTestPackagedApp(stageAppDir: string): void {
+  const appName = resolveDesktopAppName({
+    isDevelopment: false,
+    version: BUILD_VERSION,
+  })
+  const executablePath = join(
+    stageAppDir,
+    'dist',
+    `mac-${ARCH}`,
+    `${appName}.app`,
+    'Contents',
+    'MacOS',
+    appName
+  )
+  if (!existsSync(executablePath)) {
+    throw new Error(`Missing packaged executable at ${executablePath}`)
+  }
+
+  const smokeRoot = mkdtempSync(join(tmpdir(), 'laborer-desktop-smoke-'))
+  const markerPath = join(smokeRoot, 'renderer-ready.json')
+  const stateRoot = join(smokeRoot, 'state')
+  const databasePath = join(stateRoot, 'laborer', 'laborer.sqlite')
+  const output = VERBOSE ? 'inherit' : 'ignore'
+  let childPid: number | undefined
+  try {
+    const child = spawn(executablePath, [], {
+      detached: true,
+      env: {
+        HOME: smokeRoot,
+        LANG: process.env.LANG ?? 'en_US.UTF-8',
+        LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
+        LABORER_DISABLE_AUTO_UPDATE: '1',
+        PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+        SHELL: process.env.SHELL ?? '/bin/zsh',
+        TMPDIR: smokeRoot,
+        XDG_CONFIG_HOME: join(smokeRoot, 'config'),
+        XDG_STATE_HOME: stateRoot,
+      },
+      stdio: ['ignore', output, output],
+    })
+    // A failed spawn reports both an undefined pid and an asynchronous error.
+    // The listener prevents that error from escaping after this function throws.
+    child.once('error', () => undefined)
+    childPid = child.pid
+    if (childPid === undefined) {
+      throw new Error('Packaged app did not start')
+    }
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < PACKAGED_SMOKE_TIMEOUT_MS) {
+      // This script intentionally blocks between probes, so ChildProcess
+      // events and exitCode cannot be used to observe liveness here.
+      if (!isProcessRunning(childPid)) {
+        throw new Error('Packaged app exited before smoke readiness')
+      }
+      if (hasValidSmokeMarker(markerPath) && existsSync(databasePath)) {
+        log(
+          'Packaged app loaded its renderer against the shared laborer.sqlite'
+        )
+        return
+      }
+      sleep(100)
+    }
+    throw new Error(
+      `Packaged app did not load its renderer and shared database within ${String(PACKAGED_SMOKE_TIMEOUT_MS)}ms`
+    )
+  } finally {
+    if (childPid !== undefined) {
+      terminateProcessGroup(childPid)
+    }
+    rmSync(smokeRoot, { force: true, recursive: true })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -521,11 +706,25 @@ function stage(stageRoot: string): void {
     `${JSON.stringify(stagePackageJson, null, 2)}\n`
   )
 
+  const stagedDependencyNames = Object.keys(stagePackageJson.dependencies)
+  const removedDependencyNames = stagedDependencyNames.filter((name) =>
+    REMOVED_PERSISTENCE_PAYLOAD_PATTERN.test(name)
+  )
+  if (removedDependencyNames.length > 0) {
+    throw new Error(
+      `Generated production dependencies contain removed packages: ${removedDependencyNames.join(', ')}`
+    )
+  }
+
   // Install production dependencies in the staging directory.
   log('Installing staged production dependencies...')
-  run('bun', ['install', '--production', '--omit', 'optional'], {
+  run('bun', ['install', '--production', '--omit', 'optional', '--offline'], {
     cwd: stageAppDir,
   })
+  validateNoRemovedPersistencePayloads(
+    join(stageAppDir, 'node_modules'),
+    'staged production dependencies'
+  )
 
   // Run electron-builder.
   log(`Building mac/dmg+zip (arch=${ARCH}, version=${appVersion})...`)
@@ -562,6 +761,7 @@ function stage(stageRoot: string): void {
   )
 
   validatePackagedAsar(stageAppDir)
+  smokeTestPackagedApp(stageAppDir)
 
   // Copy artifacts to output dir.
   const stageDistDir = join(stageAppDir, 'dist')

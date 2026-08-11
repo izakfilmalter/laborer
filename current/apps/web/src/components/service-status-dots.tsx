@@ -52,7 +52,7 @@ const DOT_DISPLAY_NAMES: Record<ServiceName, string> = {
   server: 'Server',
   terminal: 'Terminal',
   'file-watcher': 'File Watcher',
-  sync: 'Sync',
+  sync: 'Connection',
 }
 
 /** Map semantic colors to Tailwind utility classes for the status dot. */
@@ -79,7 +79,11 @@ const MIN_DISPLAY_DURATION_MS = 300
 
 /** Whether a service state should pulse the indicator dot. */
 function shouldPulse(state: ServiceState): boolean {
-  return state.state === 'starting' || state.state === 'restarting'
+  return (
+    state.state === 'starting' ||
+    state.state === 'restarting' ||
+    state.state === 'reconnecting'
+  )
 }
 
 /**
@@ -198,6 +202,7 @@ function StatusBadgeCore({
   label,
   onActivate,
   pulsing,
+  state,
   testId,
   variant,
 }: {
@@ -211,6 +216,7 @@ function StatusBadgeCore({
    */
   readonly onActivate?: (() => void) | undefined
   readonly pulsing: boolean
+  readonly state?: ServiceState['state']
   readonly testId?: string
   readonly variant: 'default' | 'destructive' | 'outline' | 'secondary'
 }) {
@@ -227,6 +233,7 @@ function StatusBadgeCore({
               color === 'red' && 'border-destructive text-destructive',
               color === 'gray' && 'border-border text-muted-foreground'
             )}
+            data-state={state}
             data-testid={testId}
             render={
               onActivate ? (
@@ -338,7 +345,7 @@ function toSidecarName(name: ServiceName): SidecarName | undefined {
   return name
 }
 
-/** Sync status badge — always visible, shows current sync state. */
+/** Server connection badge — always visible in the former sync-status slot. */
 function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   const color = getStatusColor(syncState)
   const label = getStatusLabel(syncState)
@@ -348,9 +355,10 @@ function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   return (
     <StatusBadgeCore
       color={color}
-      displayName="Sync"
+      displayName="Connection"
       label={label}
       pulsing={pulsing}
+      state={syncState.state}
       testId="sync-indicator"
       variant={variant}
     />

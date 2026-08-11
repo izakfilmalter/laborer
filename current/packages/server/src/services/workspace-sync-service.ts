@@ -1,22 +1,15 @@
 import { RpcError } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
-import {
-  Array as Arr,
-  Context,
-  Duration,
-  Effect,
-  Fiber,
-  Layer,
-  pipe,
-  Ref,
-  Schedule,
-} from 'effect'
+import { Context, Duration, Effect, Fiber, Layer, Ref, Schedule } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { BackgroundFetchService } from './background-fetch-service.js'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { SYNC_STATUS_POLL_INTERVAL_MS } from './polling-intervals.js'
 import { PrWatcher } from './pr-watcher.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
+import {
+  findWorkspaceRecord,
+  listWorkspaceRecords,
+} from './workspace-records.js'
 
 interface WorkspaceSyncStatus {
   readonly aheadCount: number | null
@@ -107,7 +100,7 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
   static readonly layer = Layer.scoped(
     WorkspaceSyncService,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const prWatcher = yield* PrWatcher
       const backgroundFetch = yield* BackgroundFetchService
 
@@ -118,19 +111,19 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
 
       const getWorkspace = Effect.fn('WorkspaceSyncService.getWorkspace')(
         function* (workspaceId: string) {
-          const workspaceOpt = pipe(
-            store.query(tables.workspaces),
-            Arr.findFirst((workspace) => workspace.id === workspaceId)
+          const workspace = yield* laborerDatabase.read(
+            'find workspace for sync operation',
+            (database) => findWorkspaceRecord(database, workspaceId)
           )
 
-          if (workspaceOpt._tag === 'None') {
+          if (workspace === null) {
             return yield* new RpcError({
               code: 'WORKSPACE_NOT_FOUND',
               message: `Workspace not found: ${workspaceId}`,
             })
           }
 
-          return workspaceOpt.value
+          return workspace
         }
       )
 
@@ -138,17 +131,6 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
         'WorkspaceSyncService.commitSyncStatus'
       )(function* (workspaceId: string, status: WorkspaceSyncStatus) {
         const serialized = serializeSyncStatus(status)
-        const workspaceOpt = pipe(
-          store.query(tables.workspaces),
-          Arr.findFirst((workspace) => workspace.id === workspaceId)
-        )
-        const persistedSerialized =
-          workspaceOpt._tag === 'Some'
-            ? serializeSyncStatus({
-                aheadCount: workspaceOpt.value.aheadCount,
-                behindCount: workspaceOpt.value.behindCount,
-              })
-            : null
         const previousSerialized = yield* Ref.modify(
           previousStatuses,
           (cache) => {
@@ -159,30 +141,14 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
           }
         )
 
-        if (
-          previousSerialized === serialized ||
-          persistedSerialized === serialized
-        ) {
+        if (previousSerialized === serialized) {
           return
         }
-
-        store.commit(
-          events.workspaceSyncStatusUpdated({
-            id: workspaceId,
-            aheadCount: status.aheadCount,
-            behindCount: status.behindCount,
-          })
-        )
       })
 
       const checkStatus = Effect.fn('WorkspaceSyncService.checkStatus')(
         function* (workspaceId: string) {
           const workspace = yield* getWorkspace(workspaceId)
-
-          if (workspace.status === 'destroyed') {
-            yield* commitSyncStatus(workspaceId, EMPTY_SYNC_STATUS)
-            return EMPTY_SYNC_STATUS
-          }
 
           const result = yield* Effect.tryPromise({
             try: () =>
@@ -327,10 +293,10 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
       const bootstrapPolling = Effect.fn(
         'WorkspaceSyncService.bootstrapPolling'
       )(function* () {
-        // All non-destroyed workspaces are active — poll them all.
-        const workspaces = store
-          .query(tables.workspaces)
-          .filter((workspace) => workspace.status !== 'destroyed')
+        const workspaces = yield* laborerDatabase.read(
+          'list workspaces for sync polling',
+          listWorkspaceRecords
+        )
 
         yield* Effect.forEach(
           workspaces,

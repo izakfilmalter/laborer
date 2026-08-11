@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
+import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { translateWorktreesToTasks } from '../src/services/worktree-task-translator.js'
 
@@ -18,6 +19,7 @@ describe('translateWorktreesToTasks', () => {
           rootPath: '/repo',
           worktrees: [
             {
+              baseSha: 'base-one',
               branch: 'feature/one',
               canonicalPath: '/repo.worktrees/one',
               path: '/repo.worktrees/one',
@@ -56,6 +58,12 @@ describe('translateWorktreesToTasks', () => {
       ])
     )
     database.close()
+
+    const sharedDatabase = NativeLaborerDatabase.open(path)
+    expect(
+      sharedDatabase.findTaskByWorktreePath('/repo.worktrees/one')
+    ).toMatchObject({ baseSha: 'base-one', worktreeStatus: 'ready' })
+    sharedDatabase.close()
   })
 
   it('does not duplicate cards across repeated passes', async () => {

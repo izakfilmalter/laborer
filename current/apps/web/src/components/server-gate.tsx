@@ -11,9 +11,9 @@
  *    endpoint (`/server-health`, proxied by Vite) with exponential
  *    backoff until a 2xx response is received.
  *
- * In both cases the gate prevents LiveStore and route content from
+ * In both cases the gate prevents route content from
  * rendering until the backend is confirmed ready, avoiding the
- * first-boot race condition where LiveStore sync would time out
+ * first-boot race condition where server requests would time out
  * against a not-yet-running server.
  *
  * @see apps/desktop/src/health.ts — HealthMonitor event emission

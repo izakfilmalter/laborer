@@ -10,16 +10,14 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
-import { SyncStatusBridge } from '@/components/sync-status-bridge'
-import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useBeforeQuit } from '@/hooks/use-before-quit'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
-import { LiveStoreProvider } from '@/livestore/provider'
 import { QuitAppDialog } from '@/routes/-components/close-dialogs'
 
 import '../index.css'
@@ -91,16 +89,12 @@ function RootComponent() {
               <SidecarRuntimeBoundary>
                 {(generation) => (
                   <AtomRegistryProvider key={`atom-registry-${generation}`}>
+                    <SharedStateBridge />
                     <AppSettingsProvider>
-                      <SyncStatusProvider>
-                        <div className="h-svh">
-                          <LiveStoreProvider key={`livestore-${generation}`}>
-                            <SyncStatusBridge />
-                            <AppSettingsModal />
-                            <Outlet />
-                          </LiveStoreProvider>
-                        </div>
-                      </SyncStatusProvider>
+                      <div className="h-svh">
+                        <AppSettingsModal />
+                        <Outlet />
+                      </div>
                     </AppSettingsProvider>
                     <Toaster richColors />
                     <PhaseTransitionDriver />

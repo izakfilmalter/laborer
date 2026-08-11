@@ -73,7 +73,7 @@ const HEARTBEAT_PING_TICKS = 5
 /**
  * How many awake-time ticks of pong silence before declaring the port
  * dead (~30 s). Set to 6× the ping interval so heavy synchronous work on
- * the server (e.g. SQLite sync changesets, LiveStore rematerialization)
+ * the server (for example shared-state subscription deltas)
  * doesn't cause false-positive dead port detections.
  *
  * With a ~5 s ping interval the client gets six pings before declaring

@@ -13,6 +13,15 @@ import {
 } from '../src/task-database.ts'
 
 const directories: string[] = []
+const migrationNames = [
+  '0000_shared_task_db',
+  '0001_execution_lifecycle_statuses',
+  '0002_task_description_agent_source',
+  '0003_worktree_task_source',
+  '0004_task_worktree_pr_columns',
+  '0005_projects',
+  '0006_app_settings_and_ledger',
+]
 
 const temporaryDatabasePath = (): string => {
   const directory = mkdtempSync(join(tmpdir(), 'laborer-task-db-current-'))
@@ -47,6 +56,42 @@ const createPreDescriptionDatabase = (path: string): void => {
   raw.close()
 }
 
+const createPreSharedDbExpansionDatabase = (path: string): void => {
+  const raw = new Database(path, { create: true, strict: true })
+  raw.exec(`CREATE TABLE __drizzle_migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    name TEXT NOT NULL UNIQUE
+  )`)
+  const record = raw.query(
+    'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
+  )
+  for (const migration of taskDbMigrations.slice(0, 4)) {
+    raw.exec(migration.sql.replaceAll('--> statement-breakpoint', ''))
+    record.run(
+      createHash('sha256').update(migration.sql).digest('hex'),
+      1,
+      migration.name
+    )
+  }
+  raw
+    .query(`INSERT INTO tasks (
+      id, root_path, title, status, source, worktree_path, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      'legacy-task',
+      '/repo',
+      'Legacy task',
+      'in_progress',
+      'manual',
+      '/repo/.worktrees/legacy',
+      1,
+      1
+    )
+  raw.close()
+}
+
 afterEach(() => {
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
@@ -57,21 +102,116 @@ describe('NativeTaskDatabase', () => {
   it('migrates a fresh database once and a second writer adopts it', () => {
     const path = temporaryDatabasePath()
     const first = NativeTaskDatabase.open(path)
-    expect(first.migrationNames()).toEqual([
-      '0000_shared_task_db',
-      '0001_execution_lifecycle_statuses',
-      '0002_task_description_agent_source',
-      '0003_worktree_task_source',
-    ])
+    expect(first.migrationNames()).toEqual(migrationNames)
     const second = NativeTaskDatabase.open(path)
-    expect(second.migrationNames()).toEqual([
-      '0000_shared_task_db',
-      '0001_execution_lifecycle_statuses',
-      '0002_task_description_agent_source',
-      '0003_worktree_task_source',
-    ])
+    expect(second.migrationNames()).toEqual(migrationNames)
     second.close()
     first.close()
+  })
+
+  it('migrates a populated 0003 database through the shared-db expansion', () => {
+    const path = temporaryDatabasePath()
+    createPreSharedDbExpansionDatabase(path)
+
+    const database = NativeTaskDatabase.open(path)
+    expect(database.migrationNames()).toEqual(migrationNames)
+    expect(database.find('legacy-task')).toMatchObject({
+      title: 'Legacy task',
+      revision: 1,
+    })
+    database.close()
+
+    const raw = new Database(path, { strict: true })
+    const task = raw
+      .query(`SELECT worktree_status, parent_task_id, pr_is_draft, sort_order
+        FROM tasks WHERE id = ?`)
+      .get('legacy-task')
+    expect(task).toMatchObject({
+      parent_task_id: null,
+      pr_is_draft: 0,
+      sort_order: null,
+      worktree_status: null,
+    })
+    raw
+      .query(`INSERT INTO projects (
+        id, name, root_path, repo_id, canonical_git_common_dir, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('project', 'Project', '/repo', 'repo-id', '/repo/.git', 1, 1)
+    raw
+      .query(`INSERT INTO app_settings (
+        key, value, created_at, updated_at
+      ) VALUES (?, ?, ?, ?)`)
+      .run('github.token', 'test-value', 1, 1)
+    raw
+      .query(`INSERT INTO task_changes (
+        task_id, changed_at, mutation_id
+      ) VALUES (?, ?, ?)`)
+      .run('legacy-task', 1, 'task-mutation-1')
+    raw
+      .query(`INSERT INTO state_changes (
+        table_name, row_id, changed_at, mutation_id
+      ) VALUES (?, ?, ?, ?)`)
+      .run('app_settings', 'github.token', 1, 'mutation-1')
+    expect(
+      raw.query('SELECT mutation_id FROM state_changes').get()
+    ).toMatchObject({ mutation_id: 'mutation-1' })
+    expect(
+      raw
+        .query(
+          'SELECT mutation_id FROM task_changes WHERE mutation_id IS NOT NULL'
+        )
+        .get()
+    ).toMatchObject({ mutation_id: 'task-mutation-1' })
+    raw.close()
+  })
+
+  it('promotes children and rejects duplicate worktree ownership', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    database.insert({
+      id: 'parent',
+      rootPath: '/repo',
+      title: 'Parent',
+      status: 'in_progress',
+      source: 'manual',
+      worktreePath: '/repo/.worktrees/parent',
+    })
+    database.insert({
+      id: 'child',
+      rootPath: '/repo',
+      title: 'Child',
+      status: 'in_progress',
+      source: 'manual',
+      worktreePath: '/repo/.worktrees/child',
+    })
+    database.close()
+
+    const raw = new Database(path, { strict: true })
+    raw.exec('PRAGMA foreign_keys = ON')
+    raw
+      .query('UPDATE tasks SET parent_task_id = ? WHERE id = ?')
+      .run('parent', 'child')
+    raw.query('DELETE FROM tasks WHERE id = ?').run('parent')
+    expect(
+      raw.query('SELECT parent_task_id FROM tasks WHERE id = ?').get('child')
+    ).toMatchObject({ parent_task_id: null })
+    expect(() =>
+      raw
+        .query(`INSERT INTO tasks (
+          id, root_path, title, status, source, worktree_path, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(
+          'duplicate',
+          '/repo',
+          'Duplicate',
+          'todo',
+          'manual',
+          '/repo/.worktrees/child',
+          1,
+          1
+        )
+    ).toThrow()
+    raw.close()
   })
 
   it('migrates initial prompts to descriptions without changing the ledger', () => {

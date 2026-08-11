@@ -7,17 +7,17 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
-import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
-import { LaborerStore } from '../src/services/laborer-store.js'
-import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type {
+  NativeLaborerDatabase,
+  NewLaborerTask,
+} from '../src/services/native-laborer-database.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
 
@@ -46,8 +46,34 @@ const getDetectedWorktreePaths = (repoPath: string): string[] =>
 const TestLayer = WorktreeReconciler.layer.pipe(
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(WorktreeDetector.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
+
+const insertProject = (
+  database: NativeLaborerDatabase,
+  id: string,
+  rootPath: string
+) =>
+  database.insertProject({
+    canonicalGitCommonDir: join(realpathSync(rootPath), '.git'),
+    id,
+    name: id,
+    repoId: id,
+    rootPath: realpathSync(rootPath),
+  })
+
+const insertWorkspaceTask = (
+  database: NativeLaborerDatabase,
+  input: NewLaborerTask
+) => database.insertTask(input)
+
+const listSharedTasksForRoot = (
+  database: NativeLaborerDatabase,
+  rootPath: string
+) =>
+  database
+    .listTasks()
+    .filter((task) => task.rootPath === realpathSync(rootPath))
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -58,26 +84,24 @@ afterAll(() => {
 })
 
 describe('WorktreeReconciler', () => {
-  it.scoped('creates external stopped workspaces for detected worktrees', () =>
+  it.scoped('creates external tasks for detected linked worktrees', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-create', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'feature-c')
       git(`worktree add -b feature/c ${linkedPath}`, repoPath)
 
+      const { database } = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-1', repoPath)
 
       assert.strictEqual(result.added, 2)
 
-      const { store } = yield* LaborerStore
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-1')
-      )
+      const rows = listSharedTasksForRoot(database, repoPath)
 
-      assert.strictEqual(rows.length, 2)
+      assert.strictEqual(rows.length, 1)
       for (const row of rows) {
-        assert.strictEqual(row.origin, 'external')
-        assert.strictEqual(row.status, 'stopped')
+        assert.strictEqual(row.source, 'worktree')
+        assert.strictEqual(row.status, 'in_progress')
       }
     }).pipe(Effect.provide(TestLayer))
   )
@@ -87,20 +111,19 @@ describe('WorktreeReconciler', () => {
       const repoPath = initRepo('reconciler-unchanged', tempRoots)
       const [mainWorktreePath] = getDetectedWorktreePaths(repoPath)
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.workspaceCreated({
-          id: 'existing-main-workspace',
-          projectId: 'project-unchanged',
-          taskSource: null,
-          branchName: 'custom/main',
-          worktreePath: mainWorktreePath ?? repoPath,
-          status: 'running',
-          origin: 'laborer',
-          createdAt: new Date().toISOString(),
-          baseSha: 'custom-base-sha',
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      insertProject(database, 'project-unchanged', repoPath)
+      insertWorkspaceTask(database, {
+        id: 'existing-main-workspace',
+        rootPath: realpathSync(repoPath),
+        source: 'manual',
+        title: 'custom/main',
+        branchName: 'custom/main',
+        worktreePath: mainWorktreePath ?? repoPath,
+        status: 'in_progress',
+        worktreeStatus: 'ready',
+        baseSha: 'custom-base-sha',
+      })
 
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-unchanged', repoPath)
@@ -109,14 +132,12 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(result.removed, 0)
       assert.strictEqual(result.unchanged, 1)
 
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-unchanged')
-      )
+      const rows = database.listTasks()
 
       assert.strictEqual(rows.length, 1)
       assert.strictEqual(rows[0]?.id, 'existing-main-workspace')
-      assert.strictEqual(rows[0]?.origin, 'laborer')
-      assert.strictEqual(rows[0]?.status, 'running')
+      assert.strictEqual(rows[0]?.source, 'manual')
+      assert.strictEqual(rows[0]?.status, 'in_progress')
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -125,31 +146,26 @@ describe('WorktreeReconciler', () => {
       const repoPath = initRepo('reconciler-stale', tempRoots)
       const stalePath = join(repoPath, '.worktrees', 'missing')
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.workspaceCreated({
-          id: 'stale-workspace',
-          projectId: 'project-2',
-          taskSource: null,
-          branchName: 'feature/missing',
-          worktreePath: stalePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      insertProject(database, 'project-2', repoPath)
+      insertWorkspaceTask(database, {
+        id: 'stale-workspace',
+        rootPath: realpathSync(repoPath),
+        source: 'worktree',
+        title: 'feature/missing',
+        branchName: 'feature/missing',
+        worktreePath: stalePath,
+        status: 'in_progress',
+        worktreeStatus: 'ready',
+        baseSha: null,
+      })
 
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-2', repoPath)
 
       assert.strictEqual(result.removed, 1)
 
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-2')
-      )
-
-      assert.isFalse(rows.some((row) => row.id === 'stale-workspace'))
+      assert.isNull(database.findTask('stale-workspace')?.worktreePath)
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -160,20 +176,19 @@ describe('WorktreeReconciler', () => {
         const repoPath = initRepo('reconciler-creating', tempRoots)
         const pendingPath = join(repoPath, '.worktrees', 'pending-branch')
 
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.workspaceCreated({
-            id: 'creating-workspace',
-            projectId: 'project-creating',
-            taskSource: null,
-            branchName: 'feature/pending',
-            worktreePath: pendingPath,
-            status: 'creating',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        const { database } = yield* LaborerDatabase
+        insertProject(database, 'project-creating', repoPath)
+        insertWorkspaceTask(database, {
+          id: 'creating-workspace',
+          rootPath: realpathSync(repoPath),
+          source: 'manual',
+          title: 'feature/pending',
+          branchName: 'feature/pending',
+          worktreePath: pendingPath,
+          status: 'in_progress',
+          worktreeStatus: 'provisioning',
+          baseSha: null,
+        })
 
         const reconciler = yield* WorktreeReconciler
         const result = yield* reconciler.reconcile('project-creating', repoPath)
@@ -181,16 +196,9 @@ describe('WorktreeReconciler', () => {
         // The creating workspace should NOT be removed
         assert.strictEqual(result.removed, 0)
 
-        const rows = store.query(
-          tables.workspaces.where('projectId', 'project-creating')
-        )
-
-        // The creating workspace should still exist
-        assert.isTrue(rows.some((row) => row.id === 'creating-workspace'))
-        assert.strictEqual(
-          rows.find((row) => row.id === 'creating-workspace')?.status,
-          'creating'
-        )
+        const task = database.findTask('creating-workspace')
+        assert.strictEqual(task?.worktreePath, pendingPath)
+        assert.strictEqual(task?.worktreeStatus, 'provisioning')
       }).pipe(Effect.provide(TestLayer))
   )
 
@@ -202,33 +210,30 @@ describe('WorktreeReconciler', () => {
       git(`worktree add -b feature/mixed ${linkedPath}`, repoPath)
       const [mainWorktreePath] = getDetectedWorktreePaths(repoPath)
 
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.workspaceCreated({
-          id: 'existing-main',
-          projectId: 'project-mixed',
-          taskSource: null,
-          branchName: 'main',
-          worktreePath: mainWorktreePath ?? repoPath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
-      store.commit(
-        events.workspaceCreated({
-          id: 'stale-workspace',
-          projectId: 'project-mixed',
-          taskSource: null,
-          branchName: 'feature/stale',
-          worktreePath: stalePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      insertProject(database, 'project-mixed', repoPath)
+      insertWorkspaceTask(database, {
+        id: 'existing-main',
+        rootPath: realpathSync(repoPath),
+        source: 'worktree',
+        title: 'main',
+        branchName: 'main',
+        worktreePath: mainWorktreePath ?? repoPath,
+        status: 'in_progress',
+        worktreeStatus: 'ready',
+        baseSha: null,
+      })
+      insertWorkspaceTask(database, {
+        id: 'stale-workspace',
+        rootPath: realpathSync(repoPath),
+        source: 'worktree',
+        title: 'feature/stale',
+        branchName: 'feature/stale',
+        worktreePath: stalePath,
+        status: 'in_progress',
+        worktreeStatus: 'ready',
+        baseSha: null,
+      })
 
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-mixed', repoPath)
@@ -237,36 +242,37 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(result.removed, 1)
       assert.strictEqual(result.unchanged, 1)
 
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-mixed')
+      assert.isNotNull(database.findTask('existing-main')?.worktreePath)
+      assert.isNull(database.findTask('stale-workspace')?.worktreePath)
+      assert.isTrue(
+        listSharedTasksForRoot(database, repoPath).some(
+          (row) => row.branchName === 'feature/mixed'
+        )
       )
-
-      assert.strictEqual(rows.length, 2)
-      assert.isTrue(rows.some((row) => row.id === 'existing-main'))
-      assert.isTrue(rows.some((row) => row.branchName === 'feature/mixed'))
-      assert.isFalse(rows.some((row) => row.id === 'stale-workspace'))
     }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped('derives base SHA from merge-base for detected worktrees', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-base-sha', tempRoots)
-      git('checkout -b feature/base-sha', repoPath)
-      writeFileSync(join(repoPath, 'feature.txt'), 'feature branch content\n')
-      git('add feature.txt', repoPath)
-      git('commit -m "feature commit"', repoPath)
+      const linkedPath = join(repoPath, '.worktrees', 'feature-base-sha')
+      git(`worktree add -b feature/base-sha ${linkedPath}`, repoPath)
+      writeFileSync(join(linkedPath, 'feature.txt'), 'feature branch content\n')
+      git('add feature.txt', linkedPath)
+      git('commit -m "feature commit"', linkedPath)
 
+      const { database } = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-base-sha', repoPath)
 
-      assert.strictEqual(result.added, 1)
+      assert.strictEqual(result.added, 2)
 
       const defaultBranch = getDefaultBranchForTest(repoPath)
-      const expectedBaseSha = git(`merge-base ${defaultBranch} HEAD`, repoPath)
-      const { store } = yield* LaborerStore
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-base-sha')
+      const expectedBaseSha = git(
+        `merge-base ${defaultBranch} feature/base-sha`,
+        repoPath
       )
+      const rows = listSharedTasksForRoot(database, repoPath)
 
       assert.strictEqual(rows.length, 1)
       assert.strictEqual(rows[0]?.baseSha, expectedBaseSha)
@@ -283,31 +289,25 @@ describe('WorktreeReconciler historical remote-only workspaces', () => {
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-remote-stale', tempRoots)
 
-      const { store } = yield* LaborerStore
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'remote-workspace-1',
-          projectId: 'project-remote',
-          taskSource: null,
-          branchName: 'feature/remote-test',
-          worktreePath: '',
-          status: 'running',
-          origin: 'laborer',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      const { database } = yield* LaborerDatabase
+      insertProject(database, 'project-remote', repoPath)
+      insertWorkspaceTask(database, {
+        id: 'remote-workspace-1',
+        rootPath: realpathSync(repoPath),
+        source: 'manual',
+        title: 'feature/remote-test',
+        branchName: 'feature/remote-test',
+        worktreePath: '',
+        status: 'in_progress',
+        worktreeStatus: 'ready',
+        baseSha: null,
+      })
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-remote', repoPath)
 
       assert.strictEqual(result.removed, 1)
 
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-remote')
-      )
-
-      assert.isFalse(rows.some((row) => row.id === 'remote-workspace-1'))
+      assert.isNull(database.findTask('remote-workspace-1')?.worktreePath)
     }).pipe(Effect.provide(TestLayer))
   )
 })
@@ -323,18 +323,19 @@ describe('WorktreeReconciler canonical path support', () => {
       const linkedPath = join(repoPath, '.worktrees', 'feature-canon')
       git(`worktree add -b feature/canon ${linkedPath}`, repoPath)
 
+      const { database } = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-canonical', repoPath)
 
       assert.strictEqual(result.added, 2)
 
-      const { store } = yield* LaborerStore
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-canonical')
-      )
+      const rows = listSharedTasksForRoot(database, repoPath)
 
       // All stored worktreePaths should be canonical (realpath-resolved)
       for (const row of rows) {
+        if (row.worktreePath === null) {
+          throw new Error('Translated task should own a worktree')
+        }
         const canonical = realpathSync(row.worktreePath)
         assert.strictEqual(
           row.worktreePath,
@@ -357,21 +358,19 @@ describe('WorktreeReconciler canonical path support', () => {
         const externalLinkedPath = join(externalDir, 'external-wt')
         git(`worktree add -b feature/external ${externalLinkedPath}`, repoPath)
 
+        const { database } = yield* LaborerDatabase
         const reconciler = yield* WorktreeReconciler
         const result = yield* reconciler.reconcile(
           'project-external-wt',
           repoPath
         )
 
-        // Should detect both main worktree and external linked worktree
+        // Reconciliation sees both, while only the linked worktree becomes a task.
         assert.strictEqual(result.added, 2)
 
-        const { store } = yield* LaborerStore
-        const rows = store.query(
-          tables.workspaces.where('projectId', 'project-external-wt')
-        )
+        const rows = listSharedTasksForRoot(database, repoPath)
 
-        assert.strictEqual(rows.length, 2)
+        assert.strictEqual(rows.length, 1)
         assert.isTrue(
           rows.some(
             (row) => row.worktreePath === realpathSync(externalLinkedPath)
@@ -379,14 +378,14 @@ describe('WorktreeReconciler canonical path support', () => {
           'External linked worktree should be detected with canonical path'
         )
         assert.isTrue(
-          rows.every((row) => row.origin === 'external'),
-          "All detected worktrees should have origin 'external'"
+          rows.every((row) => row.source === 'worktree'),
+          "All detected worktrees should have source 'worktree'"
         )
       }).pipe(Effect.provide(TestLayer))
   )
 
   it.scoped(
-    'does not create duplicate workspaces when reconciling with symlinked repo path',
+    'does not create duplicate tasks when reconciling with symlinked repo path',
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('reconciler-symlink-dedup', tempRoots)
@@ -401,6 +400,7 @@ describe('WorktreeReconciler canonical path support', () => {
         const symlinkPath = join(symlinkDir, 'linked-repo')
         symlinkSync(repoPath, symlinkPath)
 
+        const { database } = yield* LaborerDatabase
         const reconciler = yield* WorktreeReconciler
 
         // First reconcile via the real path
@@ -410,15 +410,21 @@ describe('WorktreeReconciler canonical path support', () => {
         )
         assert.strictEqual(result1.added, 2)
 
-        // Second reconcile via the symlinked path — should detect
-        // all as unchanged since paths are canonicalized
+        const tasksAfterFirstReconcile = listSharedTasksForRoot(
+          database,
+          repoPath
+        )
+        assert.strictEqual(tasksAfterFirstReconcile.length, 1)
+
+        // The service-local workspace projection is intentionally separate
+        // from translated shared tasks, but translation remains idempotent.
         const result2 = yield* reconciler.reconcile(
           'project-sym-dedup',
           symlinkPath
         )
-        assert.strictEqual(result2.added, 0)
-        assert.strictEqual(result2.unchanged, 2)
+        assert.strictEqual(result2.added, 2)
         assert.strictEqual(result2.removed, 0)
+        assert.strictEqual(listSharedTasksForRoot(database, repoPath).length, 1)
       }).pipe(Effect.provide(TestLayer))
   )
 
@@ -432,20 +438,19 @@ describe('WorktreeReconciler canonical path support', () => {
         // Pre-seed a workspace with the raw (non-canonical) path
         // On macOS, /tmp is a symlink to /private/tmp, so use the
         // raw path to simulate a non-canonical stored path
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.workspaceCreated({
-            id: 'existing-non-canonical',
-            projectId: 'project-existing-canon',
-            taskSource: null,
-            branchName: 'main',
-            worktreePath: canonicalRepoPath,
-            status: 'stopped',
-            origin: 'external',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        const { database } = yield* LaborerDatabase
+        insertProject(database, 'project-existing-canon', repoPath)
+        insertWorkspaceTask(database, {
+          id: 'existing-non-canonical',
+          rootPath: canonicalRepoPath,
+          source: 'worktree',
+          title: 'main',
+          branchName: 'main',
+          worktreePath: canonicalRepoPath,
+          status: 'in_progress',
+          worktreeStatus: 'ready',
+          baseSha: null,
+        })
 
         const reconciler = yield* WorktreeReconciler
         const result = yield* reconciler.reconcile(
@@ -470,34 +475,31 @@ describe('WorktreeReconciler canonical path support', () => {
         git(`worktree add -b wt1 ${wt1Path}`, repoPath)
         git(`worktree add -b wt2 ${wt2Path}`, repoPath)
 
+        const { database } = yield* LaborerDatabase
         const reconciler = yield* WorktreeReconciler
         const result = yield* reconciler.reconcile(
           'project-shared-git',
           repoPath
         )
 
-        // Should detect all 3 worktrees (main + wt1 + wt2)
+        // Reconciliation detects all three, but the main checkout is not a task.
         assert.strictEqual(result.added, 3)
 
-        const { store } = yield* LaborerStore
-        const rows = store.query(
-          tables.workspaces.where('projectId', 'project-shared-git')
-        )
+        const rows = listSharedTasksForRoot(database, repoPath)
 
-        assert.strictEqual(rows.length, 3)
+        assert.strictEqual(rows.length, 2)
 
         // All paths should be canonical
         for (const row of rows) {
+          if (row.worktreePath === null) {
+            throw new Error('Translated task should own a worktree')
+          }
           const canonical = realpathSync(row.worktreePath)
           assert.strictEqual(row.worktreePath, canonical)
         }
 
         // Verify the specific worktrees are detected
         const paths = rows.map((r) => r.worktreePath)
-        assert.isTrue(
-          paths.includes(realpathSync(repoPath)),
-          'Main worktree path should be present'
-        )
         assert.isTrue(
           paths.includes(realpathSync(wt1Path)),
           'wt1 path should be present'
@@ -519,15 +521,11 @@ describe('WorktreeReconciler task translation', () => {
         const linkedPath = join(repoPath, '.worktrees', 'feature-t')
         git(`worktree add -b feature/translated ${linkedPath}`, repoPath)
 
+        const { database } = yield* LaborerDatabase
         const reconciler = yield* WorktreeReconciler
         yield* reconciler.reconcile('project-tasks', repoPath)
 
-        const canonicalRoot = realpathSync(repoPath)
-        const database = NodeTaskBoardDatabase.open(taskDatabasePath())
-        const tasks = database
-          .snapshot()
-          .tasks.filter((task) => task.rootPath === canonicalRoot)
-        database.close()
+        const tasks = listSharedTasksForRoot(database, repoPath)
 
         assert.strictEqual(tasks.length, 1)
         const task = tasks[0]
@@ -550,36 +548,36 @@ describe('WorktreeReconciler task translation', () => {
         git(`worktree add -b laborer/bound ${boundPath}`, repoPath)
         git(`worktree add -b feature/free ${freePath}`, repoPath)
 
-        // A provisioning workspace claims its worktree through LiveStore
-        // `taskSource` before the task row carries a worktree path.
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.workspaceCreated({
-            id: 'bound-workspace',
-            projectId: 'project-claimed',
-            taskSource: 'task-in-flight',
-            branchName: 'laborer/bound',
-            worktreePath: realpathSync(boundPath),
-            status: 'stopped',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        // A provisioning task claims its worktree before reconciliation.
+        const { database } = yield* LaborerDatabase
+        insertProject(database, 'project-claimed', repoPath)
+        insertWorkspaceTask(database, {
+          id: 'bound-workspace',
+          rootPath: realpathSync(repoPath),
+          source: 'manual',
+          title: 'laborer/bound',
+          branchName: 'laborer/bound',
+          worktreePath: realpathSync(boundPath),
+          status: 'in_progress',
+          worktreeStatus: 'provisioning',
+          baseSha: null,
+        })
 
         const reconciler = yield* WorktreeReconciler
         yield* reconciler.reconcile('project-claimed', repoPath)
         yield* reconciler.reconcile('project-claimed', repoPath)
 
-        const canonicalRoot = realpathSync(repoPath)
-        const database = NodeTaskBoardDatabase.open(taskDatabasePath())
-        const tasks = database
-          .snapshot()
-          .tasks.filter((task) => task.rootPath === canonicalRoot)
-        database.close()
+        const tasks = listSharedTasksForRoot(database, repoPath)
 
-        assert.strictEqual(tasks.length, 1)
-        assert.strictEqual(tasks[0]?.branchName, 'feature/free')
+        assert.strictEqual(tasks.length, 2)
+        assert.strictEqual(
+          tasks.filter((task) => task.branchName === 'laborer/bound').length,
+          1
+        )
+        assert.strictEqual(
+          tasks.filter((task) => task.branchName === 'feature/free').length,
+          1
+        )
       }).pipe(Effect.provide(TestLayer))
   )
 })

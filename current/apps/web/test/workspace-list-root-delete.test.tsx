@@ -15,19 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  destroyFn,
-  isElectronMock,
-  mutationMap,
-  queryDbMock,
-  useLaborerStoreMock,
-} = vi.hoisted(() => ({
-  destroyFn: vi.fn(),
-  isElectronMock: vi.fn(() => false),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  useLaborerStoreMock: vi.fn(),
-}))
+const { destroyFn, isElectronMock, mutationMap, workspaceRows } = vi.hoisted(
+  () => ({
+    destroyFn: vi.fn(),
+    isElectronMock: vi.fn(() => false),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    workspaceRows: { current: [] as unknown[] },
+  })
+)
 
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
@@ -48,10 +43,14 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
-  useAtomValue: () => ({
-    _tag: 'Success',
-    value: {},
-  }),
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceRows.current
+      : { _tag: 'Success', value: {} },
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -66,18 +65,6 @@ vi.mock('@/atoms/laborer-client', () => ({
     },
     query: () => Symbol.for('query:stub'),
   },
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: queryDbMock,
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: useLaborerStoreMock,
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: { name: 'workspaces' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -226,14 +213,7 @@ const makeWorkspace = (
 
 /** Configure the mock store with the given workspaces. */
 const mockStore = (workspaces: unknown[]) => {
-  useLaborerStoreMock.mockReturnValue({
-    useQuery: (query: { label: string }) => {
-      if (query.label === 'workspaceList') {
-        return workspaces
-      }
-      return []
-    },
-  })
+  workspaceRows.current = workspaces
 }
 
 // ---------------------------------------------------------------------------

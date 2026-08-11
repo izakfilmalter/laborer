@@ -29,13 +29,6 @@ vi.mock('@/atoms/terminal-service-client', () => ({
   TerminalServiceClient: { mutation: (name: string) => name },
 }))
 
-vi.mock('@livestore/livestore', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@livestore/livestore')>()),
-  queryDb: vi.fn(() => ({})),
-}))
-
-vi.mock('@/livestore/store', () => ({ useLaborerStore: vi.fn() }))
-
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), info: vi.fn() },
 }))
@@ -113,6 +106,7 @@ const task: BoardTask = {
   executionMirror: null,
   executionStatus: null,
   id: 'task-1',
+  parentTaskId: null,
   pr: null,
   revision: 1,
   rootPath: '/repo',
@@ -190,6 +184,18 @@ describe('board card for work that has a workspace', () => {
     expect(
       screen.getByRole('button', { name: 'Open workspace for matching cards' })
     ).toBeTruthy()
+  })
+
+  it('shows the parent task badge for sub-task cards', () => {
+    render(
+      <TaskBoardCard
+        parentTitle="Parent task"
+        task={{ ...task, parentTaskId: 'parent' }}
+        workspace={workspace}
+      />
+    )
+
+    expect(screen.getByText('Parent: Parent task')).toBeTruthy()
   })
 
   it('leaves destroying the workspace to the surface that owns it', () => {

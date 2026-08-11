@@ -26,7 +26,6 @@ import {
 } from '../../src/services/file-watcher-client.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
-import { TestLaborerStore } from '../helpers/test-store.js'
 
 describe('Lazy sidecar connections (Issue #16)', () => {
   describe('FileWatcherClient', () => {
@@ -76,14 +75,13 @@ describe('Lazy sidecar connections (Issue #16)', () => {
 
   describe('TerminalClient', () => {
     /**
-     * TerminalClient.layer requires LaborerStore and WorkspaceProvider.
+     * TerminalClient.layer requires WorkspaceProvider.
      * For this test, we provide a stub for the deferred workspace service.
      */
     const TerminalClientTestLayer = TerminalClient.layer.pipe(
       Layer.provide(
         Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider'))
-      ),
-      Layer.provide(TestLaborerStore)
+      )
     )
 
     it.scoped(
@@ -157,8 +155,7 @@ describe('Lazy sidecar connections (Issue #16)', () => {
                   WorkspaceProvider,
                   makeServiceProxy('WorkspaceProvider')
                 )
-              ),
-              Layer.provide(TestLaborerStore)
+              )
             )
 
             const startTime = Date.now()

@@ -3,7 +3,7 @@
  *
  * Tests the terminal package's TerminalManager by composing real Effect layers:
  * - Real PtyHostClient (spawns the actual PTY Host child process under Node.js)
- * - No LiveStore — terminal state is fully in-memory
+ * - Terminal state is fully in-memory
  * - No WorkspaceProvider — spawn payload provides all parameters
  *
  * Tests verify:
@@ -47,7 +47,7 @@ import {
 
 /**
  * Full test layer: TerminalManager with direct PtyHostClient (node-pty).
- * No LiveStore, no WorkspaceProvider.
+ * No workspace persistence or WorkspaceProvider.
  */
 const TestLayer = TerminalManager.layer.pipe(Layer.provideMerge(directLayer))
 

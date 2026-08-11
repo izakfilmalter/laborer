@@ -13,6 +13,7 @@ import type {
   TaskStatus,
 } from '@laborer/task-db'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
@@ -176,9 +177,11 @@ class StalePrTaskTransition extends Error {}
 /** Node/Electron-compatible connection to the shared task DB. */
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
+  readonly #path: string
 
-  private constructor(database: DatabaseSync) {
+  private constructor(database: DatabaseSync, path: string) {
     this.#database = database
+    this.#path = path
   }
 
   static open(path: string): NodeTaskBoardDatabase {
@@ -189,7 +192,7 @@ export class NodeTaskBoardDatabase {
       database.exec('PRAGMA journal_mode = WAL')
       database.exec('PRAGMA synchronous = NORMAL')
       database.exec('PRAGMA foreign_keys = ON')
-      const result = new NodeTaskBoardDatabase(database)
+      const result = new NodeTaskBoardDatabase(database, path)
       result.#migrate()
       return result
     } catch (error) {
@@ -309,8 +312,9 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+          description, created_at, updated_at, revision, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+          (SELECT COALESCE(MIN(sort_order), 0) - 1 FROM tasks WHERE status = ?))`)
         .run(
           input.id,
           input.rootPath,
@@ -325,7 +329,8 @@ export class NodeTaskBoardDatabase {
           input.branchName ?? null,
           input.description ?? null,
           createdAt,
-          changedAt
+          changedAt,
+          input.status
         )
       this.#appendChange(input.id, changedAt)
       const task = this.find(input.id)
@@ -400,9 +405,12 @@ export class NodeTaskBoardDatabase {
 
       const result = this.#database
         .prepare(`UPDATE tasks
-          SET status = ?, updated_at = ?, revision = revision + 1
+          SET status = ?,
+              sort_order = (SELECT COALESCE(MIN(sort_order), 0) - 1
+                            FROM tasks WHERE status = ?),
+              updated_at = ?, revision = revision + 1
           WHERE id = ? AND revision = ?`)
-        .run(status, changedAt, id, expectedRevision)
+        .run(status, status, changedAt, id, expectedRevision)
       if (result.changes === 0) {
         throw new Error(`Task changed while moving: ${id}`)
       }
@@ -431,6 +439,7 @@ export class NodeTaskBoardDatabase {
    */
   adoptWorktreeTask(
     input: {
+      readonly baseSha?: string | null
       readonly branchName: string | null
       readonly id: string
       readonly rootPath: string
@@ -478,9 +487,10 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision
+          description, created_at, updated_at, revision, base_sha,
+          worktree_status
         ) VALUES (?, ?, ?, 'in_progress', 'worktree', NULL, NULL, NULL, NULL,
-          ?, ?, NULL, ?, ?, 1)`)
+          ?, ?, NULL, ?, ?, 1, ?, 'ready')`)
         .run(
           input.id,
           input.rootPath,
@@ -488,7 +498,8 @@ export class NodeTaskBoardDatabase {
           input.worktreePath,
           input.branchName,
           changedAt,
-          changedAt
+          changedAt,
+          input.baseSha ?? null
         )
       this.#appendChange(input.id, changedAt)
       const task = this.find(input.id)
@@ -547,9 +558,12 @@ export class NodeTaskBoardDatabase {
 
           const result = this.#database
             .prepare(`UPDATE tasks
-              SET status = ?, updated_at = ?, revision = revision + 1
+              SET status = ?,
+                  sort_order = (SELECT COALESCE(MIN(sort_order), 0) - 1
+                                FROM tasks WHERE status = ?),
+                  updated_at = ?, revision = revision + 1
               WHERE id = ? AND revision = ?`)
-            .run(status, changedAt, task.id, task.revision)
+            .run(status, status, changedAt, task.id, task.revision)
           if (result.changes === 0) {
             throw new StalePrTaskTransition()
           }
@@ -663,6 +677,7 @@ export class NodeTaskBoardDatabase {
         try {
           const result = operation()
           this.#database.exec('COMMIT')
+          notifyLaborerDatabaseWrite(this.#path)
           return result
         } catch (error) {
           try {

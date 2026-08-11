@@ -81,19 +81,6 @@ export function getBackendRpcWsUrl(): string | null {
   return url.toString()
 }
 
-export function getBackendSyncWsUrl(): string | null {
-  const backendUrl = getBackendWsUrl()
-  if (!backendUrl) {
-    return null
-  }
-
-  const url = new URL(backendUrl)
-  const token = url.searchParams.get('token')
-  url.search = ''
-  url.pathname = token ? `/sync/${encodeURIComponent(token)}` : '/sync'
-  return url.toString()
-}
-
 /**
  * Attempt to focus an existing window that has the given workspace open.
  * Returns true if another window was focused (the caller should abort its
@@ -124,8 +111,6 @@ const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
 const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL = 'laborer:acquire-terminal-data-port'
 const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
   'laborer:terminal-data-port-response'
-const ACQUIRE_SYNC_PORT_CHANNEL = 'laborer:acquire-sync-port'
-const SYNC_PORT_RESPONSE_CHANNEL = 'laborer:sync-port-response'
 
 /**
  * Acquire a `MessagePort` from a utility process, following VS Code's pattern.
@@ -191,22 +176,6 @@ export function acquireServicePort(name: string): Promise<MessagePort | null> {
     SERVICE_PORT_RESPONSE_CHANNEL,
     ACQUIRE_SERVICE_PORT_CHANNEL,
     { name }
-  )
-}
-
-/**
- * Acquire a sync port (LiveStore sync connection to the server).
- */
-export function acquireSyncPort(): Promise<MessagePort | null> {
-  const bridge = getDesktopBridge()
-  if (!bridge) {
-    return Promise.resolve(null)
-  }
-  return acquirePort(
-    bridge,
-    SYNC_PORT_RESPONSE_CHANNEL,
-    ACQUIRE_SYNC_PORT_CHANNEL,
-    {}
   )
 }
 

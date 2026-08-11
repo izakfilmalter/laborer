@@ -96,7 +96,13 @@ const testLayer = (
       PrWatcher,
       PrWatcher.of({
         checkPr: () =>
-          Effect.succeed({ number: null, state: null, title: null, url: null }),
+          Effect.succeed({
+            isDraft: false,
+            number: null,
+            state: null,
+            title: null,
+            url: null,
+          }),
         startPolling: () => Effect.void,
         isPolling: () => Effect.succeed(false),
         refreshPolling: () => Effect.void,

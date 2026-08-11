@@ -47,8 +47,8 @@ export type PendingAgentOpenResolution =
  * Resolve one deferred Slack provisioning against the board's current
  * projection. A card created straight into In Progress is planned and
  * provisioned by a detached server fiber, so the create response carries no
- * workspace id; the board watches its own task deltas and the LiveStore
- * workspace rows until the two agree that the work has a workspace.
+ * workspace id; the board watches its shared-state task and workspace
+ * projections until the two agree that the work has a workspace.
  *
  * The card is forgotten when its analysis failed or when it left In Progress
  * (a failed provisioning bounces it back to Todo) — in both cases the retry

@@ -10,7 +10,7 @@
  * | Phase | Name | What's Available |
  * |-------|------|------------------|
  * | 1 | Starting | Local OPFS data, navigation, panel layouts |
- * | 2 | Ready | Core RPCs, LiveStore sync, workspace CRUD |
+ * | 2 | Ready | Core RPCs, shared-state stream, workspace CRUD |
  * | 3 | Restored | Terminals, file watching, full read/write |
  * | 4 | Eventually | PR tracking, everything else |
  *

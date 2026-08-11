@@ -2,7 +2,7 @@
  * WorkspaceHelper — Shared helpers for adding projects and creating workspaces.
  *
  * Encapsulates the Electron-compatible flow:
- * 1. Navigate with `?reset` to clear OPFS/LiveStore state
+ * 1. Navigate with `?reset` to clear local renderer state
  * 2. Mock `dialog.showOpenDialog` via `electronApp.evaluate`
  * 3. Click "Add Project" (Electron renders a button, not a text input)
  * 4. Optionally create a workspace via the per-project "+" button dialog
@@ -124,7 +124,7 @@ export function cleanupRepo(): void {
 }
 
 /**
- * Navigate to the app with `?reset` to clear OPFS/LiveStore state,
+ * Navigate to the app with `?reset` to clear local renderer state,
  * then wait for the app to be ready.
  *
  * Also cleans up git worktrees from previous test runs so the server
@@ -255,7 +255,7 @@ export async function addProjectAndCreateWorkspace(
   await expect(dialogTitle).not.toBeVisible({ timeout: 10_000 })
 
   // Wait for the workspace card to appear in the sidebar.
-  // LiveStore sync may lag behind the RPC response, so give it time.
+  // the server state stream may lag behind the RPC response, so give it time.
   await expect(
     page.getByText(resolvedBranch, { exact: true }).first()
   ).toBeVisible({ timeout: 15_000 })

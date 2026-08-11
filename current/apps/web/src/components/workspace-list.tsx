@@ -1,12 +1,12 @@
 /**
  * Workspace list UI component.
  *
- * Displays a reactive list of workspaces for a given project from LiveStore,
+ * Displays a reactive list of task-backed workspaces from the combined stream,
  * arranged as a tree of sub-workspace groups. Each workspace is a
  * `WorkspaceCard` — the same card the kanban board shows for work that has a
  * workspace — so this module owns the arrangement, not the card.
  *
- * Updates reactively when workspace state changes.
+ * Updates reactively when task state changes.
  *
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
@@ -21,14 +21,14 @@
  * @see Issue #160: UI for detected workspaces
  */
 
-import { workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import {
   buildWorkspaceTree,
   type WorkspaceTreeNode,
 } from '@laborer/shared/workspace-tree'
-import { queryDb } from '@livestore/livestore'
 import { ChevronRight, GitBranch, GitBranchPlus } from 'lucide-react'
 import { useMemo } from 'react'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import {
   CreateWorkspaceForm,
@@ -65,9 +65,6 @@ import {
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
 import { cn } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
-
-const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 
 interface WorkspaceListProps {
   /** Reports pending sub-workspace creation changes to the project group. */
@@ -89,7 +86,7 @@ interface WorkspaceListProps {
 
 /** Workspace row shape used by the sidebar tree. */
 type WorkspaceTreeRow = WorkspaceCardWorkspace & {
-  readonly baseBranch: string | null
+  readonly parentTaskId: string | null
 }
 
 interface WorkspaceTreeGroupProps {
@@ -108,10 +105,8 @@ interface WorkspaceTreeGroupProps {
  * branch-named group header wrapping its own card plus its children —
  * recursively, so stacks can nest arbitrarily deep.
  *
- * Lineage is derived from branch names, not stored parent IDs
- * (docs/adr/0001-branch-keyed-workspace-lineage.md): destroying a parent
- * simply dissolves its group, and recreating a workspace on the same branch
- * re-adopts its children.
+ * Lineage is the persisted parent task relationship (ADR 0009). A deleted
+ * parent disappears from the stream after SQLite promotes its children.
  */
 function WorkspaceTreeGroup({
   node,
@@ -136,8 +131,7 @@ function WorkspaceTreeGroup({
     return card
   }
 
-  // Keyed by branch so collapse state survives destroy/recreate cycles.
-  const groupKey = `${workspace.projectId}:${workspace.branchName}`
+  const groupKey = workspace.id
   const expanded = collapseState.isExpanded(groupKey)
 
   return (
@@ -254,8 +248,7 @@ function WorkspaceList({
   projectName,
   repoPath,
 }: WorkspaceListProps) {
-  const store = useLaborerStore()
-  const workspaceList = store.useQuery(allWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const collapseState = useWorkspaceGroupCollapseState()
 
   // Filter out destroyed workspaces, scoped to the given project
@@ -267,22 +260,9 @@ function WorkspaceList({
     [workspaceList, projectId]
   )
 
-  // Derive the sub-workspace tree by matching each workspace's baseBranch
-  // against live workspaces' branchName.
+  // The database owns promotion on parent deletion (`ON DELETE SET NULL`).
   const workspaceTree = useMemo(
-    () =>
-      buildWorkspaceTree(
-        activeWorkspaces.map(
-          (ws): WorkspaceTreeRow => ({
-            ...ws,
-            // baseBranch is not in LiveStore's inferred queryDb type
-            // (column count limit), but it IS in the SQLite table and
-            // accessible at runtime.
-            baseBranch:
-              (ws as { baseBranch?: string | null }).baseBranch ?? null,
-          })
-        )
-      ),
+    () => buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces),
     [activeWorkspaces]
   )
 

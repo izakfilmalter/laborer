@@ -559,7 +559,7 @@ describe('heartbeat timeout detection', () => {
       new MessageChannel()
 
     // Build a proxy server that intentionally drops raw heartbeat pings while
-    // still serving normal RPC traffic. This mirrors the Electron sync-port
+    // still serving normal RPC traffic. This mirrors the Electron service-port
     // path where regular RPC works but the transport-level ping/pong loop is
     // not a reliable liveness signal.
     const proxyServerPort: RpcMessagePort = {

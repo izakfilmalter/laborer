@@ -1,27 +1,19 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { PanelNode } from '@laborer/shared/types'
 import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
-import { queryDb } from '@livestore/livestore'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
-import { useLaborerStore } from '@/livestore/store'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import { getScopedActivePaneId } from '@/panels/window-layout-utils'
-
-/** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
-const allProjects$ = queryDb(projects, { label: 'headerProjects' })
-
-/** LiveStore query for workspaces. */
-const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
 const refreshPrMutation = LaborerClient.mutation('workspace.refreshPr')
 
 /**
- * Data-fetching wrapper for WorkspaceFrameHeader. Queries LiveStore for
- * project, workspace, and layout data, then delegates to the presentational
+ * Data-fetching wrapper for WorkspaceFrameHeader. Reads project and task-backed
+ * workspace data from the combined stream, then delegates to the presentational
  * component.
  */
 export function WorkspaceFrameHeaderContainer({
@@ -47,9 +39,8 @@ export function WorkspaceFrameHeaderContainer({
   readonly diffIsOpen?: boolean
   readonly treeIsOpen?: boolean
 }) {
-  const store = useLaborerStore()
-  const projectList = store.useQuery(allProjects$)
-  const workspaceList = store.useQuery(allWorkspaces$)
+  const projectList = useAtomValue(projectViewsAtom)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
   const refreshPr = useAtomSet(refreshPrMutation, { mode: 'promise' })
@@ -106,7 +97,7 @@ export function WorkspaceFrameHeaderContainer({
       .map((ws) => ({
         id: ws.id,
         branchName: ws.branchName,
-        baseBranch: (ws as { baseBranch?: string | null }).baseBranch ?? null,
+        parentTaskId: ws.parentTaskId,
       }))
     const workspacePath = buildWorkspacePath(
       projectWorkspaces,

@@ -1,20 +1,13 @@
 /**
- * Branch-keyed workspace lineage.
- *
- * A sub-workspace stores only `baseBranch` (the branch its PR targets). The
- * sidebar tree is derived at render time by matching `baseBranch` against
- * live workspaces' `branchName` — there is no stored parent ID.
- * See docs/adr/0001-branch-keyed-workspace-lineage.md.
+ * Task-keyed workspace lineage (ADR 0009).
  */
 
 export interface WorkspaceTreeInput {
-  baseBranch: string | null
-  branchName: string
+  id: string
+  parentTaskId: string | null
 }
 
-export interface WorkspacePathInput extends WorkspaceTreeInput {
-  id: string
-}
+export type WorkspacePathInput = WorkspaceTreeInput
 
 export interface WorkspaceTreeNode<W extends WorkspaceTreeInput> {
   children: WorkspaceTreeNode<W>[]
@@ -24,9 +17,8 @@ export interface WorkspaceTreeNode<W extends WorkspaceTreeInput> {
 /**
  * Builds the sidebar workspace tree for a single project.
  *
- * - A workspace nests under the workspace whose `branchName` matches its
- *   `baseBranch`.
- * - Workspaces with no `baseBranch`, or whose base branch has no live owner,
+ * - A workspace nests under the workspace identified by `parentTaskId`.
+ * - Workspaces with no parent, or whose parent is no longer present,
  *   render top-level.
  * - Input order is preserved at every level.
  */
@@ -37,11 +29,9 @@ export const buildWorkspaceTree = <W extends WorkspaceTreeInput>(
     (workspace): WorkspaceTreeNode<W> => ({ workspace, children: [] })
   )
 
-  const byBranch = new Map<string, WorkspaceTreeNode<W>>()
+  const byId = new Map<string, WorkspaceTreeNode<W>>()
   for (const node of nodes) {
-    if (!byBranch.has(node.workspace.branchName)) {
-      byBranch.set(node.workspace.branchName, node)
-    }
+    byId.set(node.workspace.id, node)
   }
 
   /**
@@ -49,10 +39,10 @@ export const buildWorkspaceTree = <W extends WorkspaceTreeInput>(
    * self-reference) as "no parent" so every workspace stays reachable.
    */
   const resolveParent = (node: WorkspaceTreeNode<W>) => {
-    if (node.workspace.baseBranch === null) {
+    if (node.workspace.parentTaskId === null) {
       return undefined
     }
-    const parent = byBranch.get(node.workspace.baseBranch)
+    const parent = byId.get(node.workspace.parentTaskId)
     const seen = new Set([node])
     let ancestor = parent
     while (ancestor) {
@@ -60,8 +50,8 @@ export const buildWorkspaceTree = <W extends WorkspaceTreeInput>(
         return undefined
       }
       seen.add(ancestor)
-      ancestor = ancestor.workspace.baseBranch
-        ? byBranch.get(ancestor.workspace.baseBranch)
+      ancestor = ancestor.workspace.parentTaskId
+        ? byId.get(ancestor.workspace.parentTaskId)
         : undefined
     }
     return parent
@@ -94,11 +84,9 @@ export const buildWorkspacePath = <W extends WorkspacePathInput>(
     return []
   }
 
-  const byBranch = new Map<string, W>()
+  const byId = new Map<string, W>()
   for (const workspace of workspaceList) {
-    if (!byBranch.has(workspace.branchName)) {
-      byBranch.set(workspace.branchName, workspace)
-    }
+    byId.set(workspace.id, workspace)
   }
 
   const path: W[] = []
@@ -113,7 +101,7 @@ export const buildWorkspacePath = <W extends WorkspacePathInput>(
     seen.add(current.id)
     path.unshift(current)
 
-    current = current.baseBranch ? byBranch.get(current.baseBranch) : undefined
+    current = current.parentTaskId ? byId.get(current.parentTaskId) : undefined
   }
 
   return path

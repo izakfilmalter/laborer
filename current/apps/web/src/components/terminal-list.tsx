@@ -14,7 +14,7 @@
  *
  * @see Issue #63: Terminal list per workspace UI
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
- * @see Issue #144: Web app LiveStore terminal query replacement
+ * @see Issue #144: Web app terminal query replacement
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'

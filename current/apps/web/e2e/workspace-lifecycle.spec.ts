@@ -6,7 +6,7 @@
  * sidebar with their branch names and status badges, and confirm removal.
  *
  * All tests exercise the full stack: Electron UI -> RPC mutation -> backend
- * (worktree creation, setup scripts) -> LiveStore sync -> UI re-render.
+ * (worktree creation, setup scripts) -> the server state stream -> UI re-render.
  *
  * Uses the temp git repository created by globalSetup.
  *
@@ -190,14 +190,14 @@ test.describe('workspace lifecycle', () => {
       page.getByText('destroyed successfully', { exact: false })
     ).toBeVisible({ timeout: 60_000 })
     // Verify the workspace card is removed from the sidebar.
-    // LiveStore sync may lag behind the RPC response, especially when
+    // the server state stream may lag behind the RPC response, especially when
     // the workspace was still "creating". Check if the card is gone;
-    // if not, reload the page to force a fresh LiveStore read.
+    // if not, reload the page to force a fresh authoritative snapshot.
     try {
       await expect(workspaceCard).not.toBeVisible({ timeout: 10_000 })
     } catch {
-      // LiveStore sync didn't deliver the status change. Reload the page
-      // to force a fresh read from the server's LiveStore state.
+      // the server state stream didn't deliver the status change. Reload the page
+      // to force a fresh read from the server's authoritative state.
       await page.evaluate(() => window.location.reload())
       await page.waitForTimeout(500)
       await expect(page.getByText('Server', { exact: true })).toBeVisible({

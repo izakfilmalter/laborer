@@ -1,6 +1,5 @@
 import { assert, describe, it } from '@effect/vitest'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Exit, Layer, Scope } from 'effect'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
@@ -9,7 +8,7 @@ import {
   type FileEventSubscription,
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { withFsmonitorDisabled } from '../src/services/repo-watching-git.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import {
@@ -17,7 +16,6 @@ import {
   RepositoryWatchCoordinator,
 } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitFor } from './helpers/timing-helpers.js'
 
 interface RecordedSubscription {
@@ -130,7 +128,7 @@ const createTestLayer = (params: {
     Layer.provide(fileWatcherClientLayer),
     Layer.provide(reconcilerLayer),
     Layer.provide(repoIdentityLayer),
-    Layer.provideMerge(TestLaborerStore)
+    Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
   )
 }
 
@@ -285,20 +283,18 @@ describe('RepositoryWatchCoordinator hardening', () => {
         Layer.provide(fileWatcherClientLayer),
         Layer.provide(reconcilerLayer),
         Layer.provide(repoIdentityLayer),
-        Layer.provideMerge(TestLaborerStore)
+        Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
       )
 
       return Effect.gen(function* () {
-        const { store } = yield* LaborerStore
-        store.commit(
-          events.projectCreated({
-            id: 'project-persisted-startup',
-            repoPath: '/persisted/repo',
-            repoId: 'repo-1',
-            canonicalGitCommonDir: '/persisted/repo/.git',
-            name: 'persisted-repo',
-          })
-        )
+        const { database } = yield* LaborerDatabase
+        database.insertProject({
+          id: 'project-persisted-startup',
+          rootPath: '/persisted/repo',
+          repoId: 'repo-1',
+          canonicalGitCommonDir: '/persisted/repo/.git',
+          name: 'persisted-repo',
+        })
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchAll()
@@ -306,18 +302,13 @@ describe('RepositoryWatchCoordinator hardening', () => {
         assert.strictEqual(resolveCalls.current, 0)
         assert.strictEqual(reconcileCalls.current, 1)
         assert.strictEqual(branchRefreshCalls.current, 1)
-        assert.deepStrictEqual(
-          store.query(tables.projects.where('id', 'project-persisted-startup')),
-          [
-            {
-              id: 'project-persisted-startup',
-              repoPath: '/persisted/repo',
-              repoId: 'repo-1',
-              canonicalGitCommonDir: '/persisted/repo/.git',
-              name: 'persisted-repo',
-            },
-          ]
-        )
+        assert.deepInclude(database.findProject('project-persisted-startup'), {
+          id: 'project-persisted-startup',
+          rootPath: '/persisted/repo',
+          repoId: 'repo-1',
+          canonicalGitCommonDir: '/persisted/repo/.git',
+          name: 'persisted-repo',
+        })
         assert.deepStrictEqual(subscribedPaths, [
           '/persisted/repo/.git',
           '/persisted/repo',

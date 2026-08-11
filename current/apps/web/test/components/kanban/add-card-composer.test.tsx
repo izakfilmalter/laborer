@@ -20,15 +20,6 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
-vi.mock('@livestore/livestore', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@livestore/livestore')>()),
-  queryDb: vi.fn(() => ({})),
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: vi.fn(),
-}))
-
 vi.mock('@/components/kanban/provisioned-agent', () => ({
   openProvisionedAgent,
 }))

@@ -305,9 +305,7 @@ const taskWorkspaceBranchName = (task: Task): string | undefined => {
   if (task.branchName !== null) {
     return task.branchName
   }
-  return task.source === 'manual'
-    ? manualTaskBranchName(task.title, task.id)
-    : undefined
+  return task.source === 'manual' ? manualTaskBranchName(task.title) : undefined
 }
 
 const handleTaskMoveAtPathUnlocked = (

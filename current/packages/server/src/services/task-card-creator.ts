@@ -27,13 +27,9 @@ export interface CreateTaskCardInput {
 }
 
 /**
- * Best-effort branch name for a manually titled task. Titles which contain no
- * usable ASCII characters retain WorkspaceProvider's random-name fallback.
+ * Unadorned branch name for a manually titled task.
  */
-export const manualTaskBranchName = (
-  title: string,
-  taskId: string
-): string | undefined => {
+export const manualTaskBranchName = (title: string): string => {
   const slug = title
     .trim()
     .toLowerCase()
@@ -43,14 +39,7 @@ export const manualTaskBranchName = (
     .replace(MANUAL_BRANCH_BOUNDARY_HYPHENS_PATTERN, '')
     .slice(0, MAX_MANUAL_BRANCH_SLUG_LENGTH)
     .replace(MANUAL_BRANCH_BOUNDARY_HYPHENS_PATTERN, '')
-  const uniqueSuffix = taskId
-    .toLowerCase()
-    .replace(MANUAL_BRANCH_INVALID_CHARACTERS_PATTERN, '')
-    .slice(-8)
-
-  return slug.length > 0 && uniqueSuffix.length > 0
-    ? `laborer/${slug}-${uniqueSuffix}`
-    : undefined
+  return slug.length > 0 ? slug : 'task'
 }
 
 type SlackPlanner = (

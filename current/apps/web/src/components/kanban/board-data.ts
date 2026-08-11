@@ -68,6 +68,7 @@ export const boardTasksFromSharedRows = (
             title: task.prTitle,
             url: task.prUrl,
           },
+    sortOrder: task.sortOrder,
   }))
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */

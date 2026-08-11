@@ -174,6 +174,28 @@ export const clearTaskOptimisticOverlayAtom = Atom.writable(
   }
 )
 
+export const confirmAuthoritativeTask = (
+  state: AuthoritativeSharedState,
+  input: { readonly row: SharedTaskRow }
+): AuthoritativeSharedState => {
+  const current = state.tasks.rows.find(({ id }) => id === input.row.id)
+  if (current !== undefined && input.row.revision < current.revision) {
+    return state
+  }
+  const rows = new Map(state.tasks.rows.map((row) => [row.id, row]))
+  rows.set(input.row.id, input.row)
+  return {
+    ...state,
+    tasks: {
+      // An RPC response confirms one row, not every ledger entry through its
+      // cursor. Only the subscription may advance the table cursor, otherwise
+      // its next multi-row delta could be mistaken for a duplicate and lost.
+      cursor: state.tasks.cursor,
+      rows: [...rows.values()],
+    },
+  }
+}
+
 export const confirmTaskOptimisticMoveAtom = Atom.writable(
   (get) => get(authoritativeSharedStateAtom),
   (
@@ -185,18 +207,10 @@ export const confirmTaskOptimisticMoveAtom = Atom.writable(
     }
   ) => {
     const state = context.get(authoritativeSharedStateAtom)
-    const current = state.tasks.rows.find(({ id }) => id === input.row.id)
-    if (current === undefined || input.row.revision >= current.revision) {
-      const rows = new Map(state.tasks.rows.map((row) => [row.id, row]))
-      rows.set(input.row.id, input.row)
-      context.set(authoritativeSharedStateAtom, {
-        ...state,
-        tasks: {
-          cursor: Math.max(state.tasks.cursor, input.cursor),
-          rows: [...rows.values()],
-        },
-      })
-    }
+    context.set(
+      authoritativeSharedStateAtom,
+      confirmAuthoritativeTask(state, input)
+    )
     const overlays = context.get(taskOptimisticOverlaysAtom)
     if (overlays.get(input.row.id)?.mutationId === input.mutationId) {
       const next = new Map(overlays)

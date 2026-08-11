@@ -199,7 +199,7 @@ export const SharedTaskRow = Schema.Struct({
   prTitle: Schema.NullOr(Schema.String),
   prUrl: Schema.NullOr(Schema.String),
   setupCompletedAt: Schema.NullOr(Schema.Int),
-  sortOrder: Schema.NullOr(Schema.Number),
+  sortOrder: Schema.NullOr(Schema.Finite),
   worktreeError: Schema.NullOr(Schema.String),
   worktreeStatus: Schema.NullOr(
     Schema.Literal('provisioning', 'ready', 'errored')
@@ -666,7 +666,7 @@ export class LaborerRpcs extends RpcGroup.make(
         Schema.minLength(1),
         Schema.maxLength(MUTATION_ID_MAX_LENGTH)
       ),
-      sortOrder: Schema.NullOr(Schema.Number),
+      sortOrder: Schema.NullOr(Schema.Finite),
       status: StoredTaskStatus,
       taskId: Schema.String,
     },

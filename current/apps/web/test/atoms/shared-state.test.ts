@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   type AuthoritativeSharedState,
   applySharedStateUpdate,
+  confirmAuthoritativeTask,
   settleTaskOverlays,
   workspaceViewsFromRows,
 } from '../../src/atoms/shared-state'
@@ -218,5 +219,26 @@ describe('optimistic overlay ownership', () => {
 
     expect(settleTaskOverlays(overlays, ['move-a'])).toEqual(overlays)
     expect(settleTaskOverlays(overlays, ['move-b']).size).toBe(0)
+  })
+
+  it('does not advance the subscription cursor with a one-row RPC response', () => {
+    const current: AuthoritativeSharedState = {
+      ...empty,
+      tasks: { cursor: 5, rows: [task('moved')] },
+    }
+    const confirmed = confirmAuthoritativeTask(current, {
+      row: task('moved', 2),
+    })
+    const streamed = applySharedStateUpdate(confirmed, {
+      tasks: {
+        cursor: 10,
+        deletedRowIds: [],
+        rows: [task('other')],
+        type: 'delta',
+      },
+    })
+
+    expect(confirmed.tasks.cursor).toBe(5)
+    expect(streamed.tasks.rows.map(({ id }) => id)).toEqual(['moved', 'other'])
   })
 })

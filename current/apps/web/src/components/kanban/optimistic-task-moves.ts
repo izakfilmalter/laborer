@@ -25,6 +25,11 @@ interface CardQueue {
   queued: PendingMove | null
 }
 
+// One shared-state delta contains at most 1,000 ledger entries. Keep one full
+// batch so a response rejection queued just after its receipt can still be
+// recognized as an already-committed move.
+const MAX_OBSERVED_MUTATION_IDS = 1024
+
 export interface OptimisticTaskMoveDependencies {
   readonly clear: (taskId: string, mutationId: string) => void
   readonly confirm: (
@@ -91,7 +96,7 @@ export class OptimisticTaskMoveQueue {
         this.#observedMutationOrder.push(mutationId)
       }
     }
-    while (this.#observedMutationOrder.length > 256) {
+    while (this.#observedMutationOrder.length > MAX_OBSERVED_MUTATION_IDS) {
       const oldest = this.#observedMutationOrder.shift()
       if (oldest !== undefined) {
         this.#observedMutationIds.delete(oldest)

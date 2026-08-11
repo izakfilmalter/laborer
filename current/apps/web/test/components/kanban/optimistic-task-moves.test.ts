@@ -119,6 +119,21 @@ describe('OptimisticTaskMoveQueue', () => {
     expect(state.overlays.get('task-1')).toBeUndefined()
   })
 
+  it('recognizes an early receipt from a full ledger batch', async () => {
+    const state = setup()
+    state.queue.move('task-1', { sortOrder: 2, status: 'in_review' })
+    state.queue.observeMutationIds([
+      'move-1',
+      ...Array.from({ length: 999 }, (_, index) => `other-${String(index)}`),
+    ])
+    state.sends[0]?.response.reject('transport')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    state.queue.move('task-1', { sortOrder: 3, status: 'done' })
+    expect(state.sends).toHaveLength(2)
+  })
+
   it('coalesces re-drags and threads the latest authoritative revision', async () => {
     const state = setup()
     state.queue.move('task-1', { sortOrder: 1, status: 'in_progress' })

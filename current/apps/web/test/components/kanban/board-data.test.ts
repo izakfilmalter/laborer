@@ -158,6 +158,20 @@ describe('board task projection', () => {
     })
   })
 
+  it('preserves the durable manual order in the board projection', () => {
+    const [projected] = applySharedTaskUpdates([
+      {
+        tasks: {
+          cursor: 1,
+          rows: [sharedTask({ sortOrder: 12.5 })],
+          type: 'snapshot',
+        },
+      },
+    ])
+
+    expect(projected?.sortOrder).toBe(12.5)
+  })
+
   it('chooses the nearest ancestor project without prefix collisions', () => {
     const projects = [
       { id: 'broad', repoPath: '/repo' },

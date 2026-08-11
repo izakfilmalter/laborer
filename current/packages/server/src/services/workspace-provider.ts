@@ -65,8 +65,13 @@ import {
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import {
+  findWorkspaceTask,
+  updateServerTaskFacts,
+} from './workspace-task-facts.js'
 
 /**
  * Shape of a workspace record returned by the provider.
@@ -675,8 +680,79 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         new Map<string, Fiber.RuntimeFiber<void, never>>()
       )
       const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
+      const persistWorkspaceFacts = <A>(
+        effect: Effect.Effect<A, { readonly message: string }>
+      ): Effect.Effect<A, RpcError> =>
+        effect.pipe(
+          Effect.mapError(
+            () =>
+              new RpcError({
+                code: 'WORKSPACE_PERSIST_FAILED',
+                message: 'Could not persist workspace lifecycle facts',
+              })
+          )
+        )
+
+      const beginTaskProvisioning = Effect.fn(
+        'WorkspaceProvider.beginTaskProvisioning'
+      )(function* (input: {
+        readonly baseWorkspace: WorkspaceRecord | undefined
+        readonly rootPath: string
+        readonly taskSource: string | undefined
+        readonly workspace: WorkspaceRecord
+      }) {
+        const parentTask = input.baseWorkspace
+          ? yield* persistWorkspaceFacts(
+              findWorkspaceTask(laborerDatabase, input.baseWorkspace)
+            )
+          : null
+        const taskId = input.taskSource ?? input.workspace.id
+        const existingTask = yield* persistWorkspaceFacts(
+          laborerDatabase.run('find provisioning task', (database) =>
+            database.findTask(taskId)
+          )
+        )
+        if (input.taskSource !== undefined && existingTask === null) {
+          return yield* new RpcError({
+            code: 'NOT_FOUND',
+            message: `Task not found: ${input.taskSource}`,
+          })
+        }
+        if (existingTask === null) {
+          yield* persistWorkspaceFacts(
+            laborerDatabase.run('create workspace task', (database) =>
+              database.insertTask({
+                baseBranch: input.workspace.baseBranch,
+                branchName: input.workspace.branchName,
+                id: taskId,
+                parentTaskId: parentTask?.id ?? null,
+                rootPath: input.rootPath,
+                source: 'worktree',
+                status: 'in_progress',
+                title: input.workspace.branchName,
+                worktreeError: null,
+                worktreePath: input.workspace.worktreePath,
+                worktreeStatus: 'provisioning',
+              })
+            )
+          )
+        } else {
+          yield* persistWorkspaceFacts(
+            updateServerTaskFacts(laborerDatabase, taskId, {
+              baseBranch: input.workspace.baseBranch,
+              branchName: input.workspace.branchName,
+              parentTaskId: parentTask?.id ?? existingTask.parentTaskId,
+              worktreeError: null,
+              worktreePath: input.workspace.worktreePath,
+              worktreeStatus: 'provisioning',
+            })
+          )
+        }
+        return taskId
+      })
 
       /**
        * Create and validate a git worktree.
@@ -1080,6 +1156,30 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             baseBranch: baseWorkspace?.branchName ?? null,
           }
 
+          // A destroyed task retains its identity but releases the unique
+          // worktree path only when physical cleanup finishes. Wait for that
+          // exact cleanup fiber before trying to claim the path again.
+          const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+            worktreePath
+          )
+          if (inFlightDestroy !== undefined) {
+            yield* Effect.logInfo(
+              `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            yield* Fiber.join(inFlightDestroy)
+          }
+
+          // Expand side of the LiveStore removal: the durable task owns the
+          // worktree lifecycle while the legacy workspace row remains live for
+          // renderer compatibility. A legacy workspace created without a task
+          // becomes its own worktree-source task.
+          const taskId = yield* beginTaskProvisioning({
+            baseWorkspace: baseWorkspace as WorkspaceRecord | undefined,
+            rootPath: project.repoPath,
+            taskSource,
+            workspace,
+          })
+
           store.commit(
             events.workspaceCreated({
               id: workspace.id,
@@ -1096,22 +1196,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           const localWorktreeSetup = Effect.gen(function* () {
-            // Phase 0: Wait for any in-flight destroy cleanup targeting the
-            // same worktree path. This blocks on the actual background fiber
-            // instead of polling with a timeout.
-            const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
-              worktreePath
-            )
-            if (inFlightDestroy !== undefined) {
-              yield* Effect.logInfo(
-                `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-              yield* Fiber.join(inFlightDestroy)
-              yield* Effect.logInfo(
-                `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-            }
-
             // Phase 0b: Sub-workspaces branch from the base workspace's
             // HEAD. Push its branch first (best-effort) so the PR base
             // exists on the remote, then resolve the HEAD to branch from.
@@ -1135,6 +1219,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             if (baseSha !== null) {
               store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
             }
+
+            yield* updateServerTaskFacts(laborerDatabase, taskId, {
+              baseSha,
+              worktreeError: null,
+              worktreeStatus: 'ready',
+            })
 
             // Worktree setup complete — transition to 'running'.
             // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
@@ -1162,6 +1252,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               branchName: resolvedBranch,
               setupScripts: resolvedConfig.setupScripts.value,
               worktreePath,
+            })
+            yield* updateServerTaskFacts(laborerDatabase, taskId, {
+              setupCompletedAt: Date.now(),
             })
           })
 
@@ -1195,6 +1288,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   failureOption._tag === 'Some'
                     ? String(failureOption.value)
                     : prettyMessage
+
+                yield* updateServerTaskFacts(laborerDatabase, taskId, {
+                  worktreeError: errorMessage,
+                  worktreeStatus: 'errored',
+                }).pipe(
+                  Effect.catchAll((databaseError) =>
+                    Effect.logError(
+                      `Could not persist errored worktree state for task ${taskId}: ${databaseError.message}`
+                    )
+                  )
+                )
 
                 const failure =
                   failureOption._tag === 'Some' &&
@@ -1270,6 +1374,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           }
 
           const workspace = workspaceOpt.value
+          const workspaceTask = yield* persistWorkspaceFacts(
+            findWorkspaceTask(laborerDatabase, workspace)
+          )
 
           const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
             workspace.worktreePath
@@ -1572,6 +1679,19 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             yield* Effect.logInfo(
               `Committing WorkspaceDestroyed event for ${workspaceId}`
             ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            if (workspaceTask !== null && !dirStillExists) {
+              yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
+                worktreeError: null,
+                worktreePath: null,
+                worktreeStatus: null,
+              })
+            } else if (workspaceTask !== null) {
+              yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
+                worktreeError: 'Worktree removal did not remove the directory',
+                worktreeStatus: 'errored',
+              })
+            }
 
             store.commit(events.workspaceDestroyed({ id: workspaceId }))
 

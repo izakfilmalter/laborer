@@ -434,6 +434,7 @@ export class NodeTaskBoardDatabase {
    */
   adoptWorktreeTask(
     input: {
+      readonly baseSha?: string | null
       readonly branchName: string | null
       readonly id: string
       readonly rootPath: string
@@ -481,9 +482,10 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision
+          description, created_at, updated_at, revision, base_sha,
+          worktree_status
         ) VALUES (?, ?, ?, 'in_progress', 'worktree', NULL, NULL, NULL, NULL,
-          ?, ?, NULL, ?, ?, 1)`)
+          ?, ?, NULL, ?, ?, 1, ?, 'ready')`)
         .run(
           input.id,
           input.rootPath,
@@ -491,7 +493,8 @@ export class NodeTaskBoardDatabase {
           input.worktreePath,
           input.branchName,
           changedAt,
-          changedAt
+          changedAt,
+          input.baseSha ?? null
         )
       this.#appendChange(input.id, changedAt)
       const task = this.find(input.id)

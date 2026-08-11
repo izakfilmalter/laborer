@@ -1,6 +1,7 @@
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Duration, Effect, Layer, Logger, TestClock } from 'effect'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
@@ -34,6 +35,7 @@ const buildPrWatcher = (storeContext: Context.Context<LaborerStore>) =>
     const prWatcherContext = yield* Layer.build(
       PrWatcher.layer.pipe(
         Layer.provide(PrTaskTransitions.noopLayer),
+        Layer.provide(LaborerDatabase.testLayer()),
         Layer.provide(Layer.succeedContext(storeContext))
       )
     )
@@ -65,6 +67,7 @@ describe('PrWatcher', () => {
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),
+            Layer.provide(LaborerDatabase.testLayer()),
             Layer.provide(Layer.succeedContext(storeContext))
           )
         )
@@ -101,6 +104,7 @@ describe('PrWatcher', () => {
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),
+            Layer.provide(LaborerDatabase.testLayer()),
             Layer.provide(Layer.succeedContext(storeContext))
           )
         )
@@ -160,6 +164,7 @@ describe('PrWatcher', () => {
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),
+            Layer.provide(LaborerDatabase.testLayer()),
             Layer.provide(Layer.succeedContext(storeContext))
           )
         )
@@ -290,6 +295,7 @@ describe('PrWatcher', () => {
       const prWatcherContext = yield* Layer.build(
         PrWatcher.layer.pipe(
           Layer.provide(PrTaskTransitions.noopLayer),
+          Layer.provide(LaborerDatabase.testLayer()),
           Layer.provide(Layer.succeedContext(storeContext))
         )
       )

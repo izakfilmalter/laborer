@@ -256,6 +256,52 @@ describe('NativeLaborerDatabase', () => {
     database.close()
   })
 
+  it('enforces unique worktree ownership and promotes children on deletion', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const parent = database.insertTask({
+      id: 'parent',
+      rootPath: '/repo',
+      source: 'worktree',
+      status: 'in_progress',
+      title: 'Parent',
+      worktreePath: '/repo.worktrees/parent',
+      worktreeStatus: 'ready',
+    }).row
+    database.insertTask({
+      baseBranch: 'feat/parent',
+      id: 'child',
+      parentTaskId: parent.id,
+      rootPath: '/repo',
+      source: 'worktree',
+      status: 'in_progress',
+      title: 'Child',
+    })
+
+    expect(() =>
+      database.insertTask({
+        id: 'duplicate',
+        rootPath: '/repo',
+        source: 'worktree',
+        status: 'in_progress',
+        title: 'Duplicate',
+        worktreePath: '/repo.worktrees/parent',
+      })
+    ).toThrow()
+    expect(database.findTask('duplicate')).toBeNull()
+
+    const cleared = database.updateTask(parent.id, parent.revision, {
+      worktreePath: null,
+      worktreeStatus: null,
+    }).row
+    expect(cleared.worktreePath).toBeNull()
+    database.deleteTask(parent.id, cleared.revision)
+    expect(database.findTask('child')).toMatchObject({
+      baseBranch: 'feat/parent',
+      parentTaskId: null,
+    })
+    database.close()
+  })
+
   it('bounds ledger reads', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     expect(() => database.taskChangesAfter(-1)).toThrow(

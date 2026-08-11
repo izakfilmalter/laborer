@@ -589,6 +589,13 @@ export class NativeLaborerDatabase {
     return row === undefined ? null : rowToTask(row)
   }
 
+  findTaskByWorktreePath(worktreePath: string): LaborerTask | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE worktree_path = ?`)
+      .get(worktreePath)
+    return row === undefined ? null : rowToTask(row)
+  }
+
   listTasks(): readonly LaborerTask[] {
     const rows = this.#database
       .prepare(

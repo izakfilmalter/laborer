@@ -11,8 +11,8 @@
  * - 30s when workspace has no open panel (background)
  *
  * Responsibilities:
- * - Run `gh pr view --json number,url,title,state` in a workspace's worktree
- * - Commit WorkspacePrUpdated events to LiveStore when PR state changes
+ * - Run `gh pr view --json number,url,title,state,isDraft` in a workspace's worktree
+ * - Persist PR facts on tasks and mirror them to LiveStore during expansion
  * - Poll on adaptive interval based on panel visibility
  * - Start/stop polling per workspace
  * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
@@ -31,6 +31,7 @@ import {
   Ref,
 } from 'effect'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { LaborerStore } from './laborer-store.js'
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
@@ -38,12 +39,17 @@ import {
 } from './polling-intervals.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
+import {
+  findWorkspaceTask,
+  updateServerTaskFacts,
+} from './workspace-task-facts.js'
 
 /**
  * Shape of PR data returned by `gh pr view --json ...`.
  * All fields are nullable because the branch may not have a PR.
  */
 interface PrData {
+  readonly isDraft: boolean
   readonly number: number | null
   readonly state: string | null
   readonly title: string | null
@@ -52,10 +58,11 @@ interface PrData {
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
-  JSON.stringify([data.number, data.url, data.title, data.state])
+  JSON.stringify([data.number, data.url, data.title, data.state, data.isDraft])
 
 /** Empty PR data (no PR found). */
 const EMPTY_PR: PrData = {
+  isDraft: false,
   number: null,
   url: null,
   title: null,
@@ -120,6 +127,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
     PrWatcher,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const taskTransitions = yield* PrTaskTransitions
 
       // Track active polling fibers per workspace.
@@ -150,7 +158,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
           branchName,
-          'number,url,title,state',
+          'number,url,title,state,isDraft',
           (error) => error
         ).pipe(
           Effect.catchAll((error) => {
@@ -179,6 +187,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           try: () =>
             JSON.parse(spawnResult.stdout.trim()) as {
               number?: number
+              isDraft?: boolean
               url?: string
               title?: string
               state?: string
@@ -197,6 +206,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         }
 
         return {
+          isDraft: parseResult.isDraft ?? false,
           number: parseResult.number ?? null,
           url: parseResult.url ?? null,
           title: parseResult.title ?? null,
@@ -240,6 +250,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         const serialized = serializePrData(prData)
         const persistedSerialized = serializePrData({
           number: workspace.prNumber,
+          isDraft: false,
           url: workspace.prUrl,
           title: workspace.prTitle,
           state: workspace.prState,
@@ -277,6 +288,41 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
               `[PrWatcher] workspace=${workspaceId} no PR found`
             )
           }
+        }
+
+        const task = yield* findWorkspaceTask(laborerDatabase, workspace).pipe(
+          Effect.catchAll((error) =>
+            Effect.logWarning(
+              `[PrWatcher] Failed to find durable task for workspace ${workspaceId}: ${error.message}`
+            ).pipe(Effect.as(null))
+          )
+        )
+        if (task !== null) {
+          const normalizedState = (() => {
+            switch (prData.state?.toUpperCase()) {
+              case 'OPEN':
+                return 'open' as const
+              case 'CLOSED':
+                return 'closed' as const
+              case 'MERGED':
+                return 'merged' as const
+              default:
+                return null
+            }
+          })()
+          yield* updateServerTaskFacts(laborerDatabase, task.id, {
+            prIsDraft: prData.isDraft,
+            prNumber: prData.number,
+            prState: normalizedState,
+            prTitle: prData.title,
+            prUrl: prData.url,
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `[PrWatcher] Failed to persist PR facts for task ${task.id}: ${error.message}`
+              )
+            )
+          )
         }
 
         // PR display state and task-board state are independent durable

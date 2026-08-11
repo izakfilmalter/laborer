@@ -13,6 +13,7 @@ import {
 } from './worktree-task-translator.js'
 
 interface WorkspaceRecord {
+  readonly baseSha: string | null
   readonly branchName: string
   readonly id: string
   readonly projectId: string
@@ -156,7 +157,8 @@ const selectTranslatableWorktrees = (
     readonly isMain: boolean
     readonly path: string
   }[],
-  workspacesByCanonicalPath: ReadonlyMap<string, WorkspaceRecord>
+  workspacesByCanonicalPath: ReadonlyMap<string, WorkspaceRecord>,
+  baseShasByCanonicalPath: ReadonlyMap<string, string | null>
 ): readonly TranslatableWorktree[] => {
   const translatable: TranslatableWorktree[] = []
   for (const detected of detectedWorktrees) {
@@ -172,6 +174,10 @@ const selectTranslatableWorktrees = (
       continue
     }
     translatable.push({
+      baseSha:
+        baseShasByCanonicalPath.get(canonicalPath) ??
+        workspace?.baseSha ??
+        null,
       branch: detected.branch,
       canonicalPath,
       path: detected.path,
@@ -260,6 +266,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
         let added = 0
         let removed = 0
         let unchanged = 0
+        const baseShasByCanonicalPath = new Map<string, string | null>()
 
         for (const detected of detectedWorktrees) {
           const canonicalDetectedPath = canonicalize(detected.path)
@@ -276,6 +283,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
             defaultBranchRef,
             detected.head
           )
+          baseShasByCanonicalPath.set(canonicalDetectedPath, baseSha)
 
           const newWorkspaceId = crypto.randomUUID()
           const branchName = toWorkspaceBranchName(
@@ -317,7 +325,8 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           rootPath: canonicalRepoPath,
           worktrees: selectTranslatableWorktrees(
             detectedWorktrees,
-            allByCanonicalPath
+            allByCanonicalPath,
+            baseShasByCanonicalPath
           ),
         })
 

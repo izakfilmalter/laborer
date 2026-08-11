@@ -11,6 +11,7 @@ import { createTaskUlid } from './task-card-creator.js'
  * destroy in progress.
  */
 export interface TranslatableWorktree {
+  readonly baseSha?: string | null
   readonly branch: string | null
   /** Canonical (realpath) worktree location. */
   readonly canonicalPath: string
@@ -44,6 +45,7 @@ export const translateWorktreesToTasks = (
       let adopted = 0
       for (const worktree of input.worktrees) {
         const task = database.adoptWorktreeTask({
+          baseSha: worktree.baseSha ?? null,
           branchName: worktree.branch,
           id: createTaskUlid(),
           rootPath: input.rootPath,

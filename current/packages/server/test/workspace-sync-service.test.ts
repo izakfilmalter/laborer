@@ -53,6 +53,7 @@ const TestPrWatcherLayer = Layer.effect(
           ])
 
           return {
+            isDraft: false,
             number: null,
             state: null,
             title: null,

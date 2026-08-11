@@ -399,7 +399,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create with baseWorkspaceId branches from the parent worktree HEAD, pushes the parent branch, and records baseBranch',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database, store }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -481,6 +481,18 @@ describe('LaborerRpcs workspace management', () => {
           // Diff base is the parent HEAD at creation time.
           assert.strictEqual(childRow?.baseSha, parentHeadSha)
 
+          const parentTask = database.findTask(parent.id)
+          const childTask = database.findTask(child.id)
+          assert.isDefined(parentTask)
+          assert.isDefined(childTask)
+          assert.strictEqual(parentTask?.worktreeStatus, 'ready')
+          assert.isNumber(parentTask?.setupCompletedAt)
+          assert.strictEqual(childTask?.parentTaskId, parent.id)
+          assert.strictEqual(childTask?.baseBranch, 'feat/big-thing')
+          assert.strictEqual(childTask?.baseSha, parentHeadSha)
+          assert.strictEqual(childTask?.worktreeStatus, 'ready')
+          assert.isNumber(childTask?.setupCompletedAt)
+
           // The parent branch was auto-pushed so the child's PR base exists
           // on the remote.
           assert.strictEqual(
@@ -525,45 +537,54 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.destroy removes laborer-managed worktrees and records terminal cleanup',
     () =>
-      runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
-        Effect.gen(function* () {
-          const tempRoots: string[] = []
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => cleanupTempRoots(tempRoots))
-          )
+      runWithRpcTestContext(
+        ({ client, database, store, terminalClientRecorder }) =>
+          Effect.gen(function* () {
+            const tempRoots: string[] = []
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => cleanupTempRoots(tempRoots))
+            )
 
-          const repoPath = initRepo('rpc-workspace-destroy-laborer', tempRoots)
-          const worktreeRoot = createTempDir(
-            'rpc-workspace-destroy-laborer-root',
-            tempRoots
-          )
-          const branchName = 'feature/rpc-destroy-laborer'
+            const repoPath = initRepo(
+              'rpc-workspace-destroy-laborer',
+              tempRoots
+            )
+            const worktreeRoot = createTempDir(
+              'rpc-workspace-destroy-laborer-root',
+              tempRoots
+            )
+            const branchName = 'feature/rpc-destroy-laborer'
 
-          writeLaborerConfig(repoPath, {
-            worktreeDir: worktreeRoot,
+            writeLaborerConfig(repoPath, {
+              worktreeDir: worktreeRoot,
+            })
+            git('add laborer.json', repoPath)
+            git('commit -m "add laborer config"', repoPath)
+
+            const project = yield* client.project.add({ repoPath })
+            const workspace = yield* client.workspace.create({
+              branchName,
+              projectId: project.id,
+            })
+
+            yield* client.workspace.destroy({ workspaceId: workspace.id })
+
+            // destroyWorktree forks cleanup into a background daemon fiber.
+            // Poll until the workspace row is removed (last step in the fiber).
+            yield* waitForWorkspaceRemoval(store, workspace.id)
+
+            assert.isFalse(existsSync(workspace.worktreePath))
+            assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
+            assert.deepStrictEqual(
+              yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
+              [workspace.id]
+            )
+            assert.deepInclude(database.findTask(workspace.id), {
+              id: workspace.id,
+              worktreePath: null,
+              worktreeStatus: null,
+            })
           })
-          git('add laborer.json', repoPath)
-          git('commit -m "add laborer config"', repoPath)
-
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
-            branchName,
-            projectId: project.id,
-          })
-
-          yield* client.workspace.destroy({ workspaceId: workspace.id })
-
-          // destroyWorktree forks cleanup into a background daemon fiber.
-          // Poll until the workspace row is removed (last step in the fiber).
-          yield* waitForWorkspaceRemoval(store, workspace.id)
-
-          assert.isFalse(existsSync(workspace.worktreePath))
-          assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-          assert.deepStrictEqual(
-            yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
-            [workspace.id]
-          )
-        })
       )
   )
 
@@ -802,7 +823,7 @@ describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create transitions to errored with setup steps cleared when setup script fails',
     () =>
-      runWithRpcTestContext(({ client, store }) =>
+      runWithRpcTestContext(({ client, database, store }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -862,6 +883,15 @@ describe('LaborerRpcs workspace management', () => {
               'Timed out waiting for workspace to transition to errored'
             )
           })
+
+          assert.deepInclude(database.findTask(workspace.id), {
+            setupCompletedAt: null,
+            worktreeStatus: 'errored',
+          })
+          assert.include(
+            database.findTask(workspace.id)?.worktreeError ?? '',
+            'exit 42'
+          )
         })
       )
   )

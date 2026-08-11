@@ -168,6 +168,92 @@ describe('task provisioning', () => {
     expect(createWorktree).toHaveBeenCalledTimes(1)
   })
 
+  it('provisions an agent-filed Todo task dragged into In Progress', async () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    database.insert({
+      description: 'Ship the follow-up work',
+      id: 'task-agent',
+      rootPath: '/repo',
+      source: 'agent',
+      status: 'todo',
+      title: 'Agent staged work',
+    })
+    database.close()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const result = await Effect.runPromise(
+      handleTaskMoveAtPath(
+        { expectedRevision: 1, status: 'in_progress', taskId: 'task-agent' },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    expect(result).toMatchObject({
+      description: 'Ship the follow-up work',
+      status: 'in_progress',
+      workspaceId: workspace.id,
+    })
+    expect(createWorktree).toHaveBeenCalledTimes(1)
+    expect(createWorktree).toHaveBeenCalledWith(
+      project.id,
+      manualTaskBranchName('Agent staged work', 'task-agent'),
+      expect.any(Function),
+      undefined,
+      expect.any(Function),
+      'task-agent'
+    )
+    const bound = NodeTaskBoardDatabase.open(path)
+    expect(bound.find('task-agent')).toMatchObject({
+      branchName: workspace.branchName,
+      status: 'in_progress',
+      worktreePath: workspace.worktreePath,
+    })
+    bound.close()
+  })
+
+  it('returns a failed agent-task provisioning to Todo with a cleared branch', async () => {
+    const path = databasePath()
+    const database = NodeTaskBoardDatabase.open(path)
+    database.insert({
+      id: 'task-agent-failure',
+      rootPath: '/repo',
+      source: 'agent',
+      status: 'todo',
+      title: 'Agent broken worktree',
+    })
+    database.close()
+    const createWorktree: WorkspaceProvider['Type']['createWorktree'] = () =>
+      Effect.fail(
+        new RpcError({
+          code: 'GIT_WORKTREE_FAILED',
+          message: 'git worktree add failed',
+        })
+      )
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        handleTaskMoveAtPath(
+          {
+            expectedRevision: 1,
+            status: 'in_progress',
+            taskId: 'task-agent-failure',
+          },
+          path
+        ).pipe(Effect.provide(testLayer(createWorktree)))
+      )
+    )
+    expect(error).toMatchObject({ code: 'GIT_WORKTREE_FAILED' })
+
+    const failed = NodeTaskBoardDatabase.open(path)
+    expect(failed.find('task-agent-failure')).toMatchObject({
+      branchName: null,
+      status: 'todo',
+      worktreePath: null,
+    })
+    failed.close()
+  })
+
   it('keeps non-In-Progress moves as pure status writes', async () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)

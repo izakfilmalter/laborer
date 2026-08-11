@@ -301,11 +301,18 @@ const bindTaskWorkspace = (
     throw new Error(`Could not bind task ${taskId} to its workspace`)
   })
 
+/**
+ * Sources whose title is human-authored board text, so their workspace branch
+ * is derived from it. Slack tasks get their branch from the planner instead.
+ */
+const derivesBranchFromTitle = (source: Task['source']): boolean =>
+  source === 'manual' || source === 'agent'
+
 const taskWorkspaceBranchName = (task: Task): string | undefined => {
   if (task.branchName !== null) {
     return task.branchName
   }
-  return task.source === 'manual'
+  return derivesBranchFromTitle(task.source)
     ? manualTaskBranchName(task.title, task.id)
     : undefined
 }
@@ -348,7 +355,9 @@ const handleTaskMoveAtPathUnlocked = (
     const shouldProvision =
       status === 'in_progress' &&
       task.worktreePath === null &&
-      (task.source === 'manual' || task.source === 'slack_url')
+      (task.source === 'manual' ||
+        task.source === 'slack_url' ||
+        task.source === 'agent')
 
     // A failed Slack analysis is retried by the provisioning move itself. Do
     // not create a workspace until the planner has produced the prompt.
@@ -423,7 +432,9 @@ const handleTaskMoveAtPathUnlocked = (
           return
         }
         database.update(taskId, current.revision, {
-          branchName: current.source === 'manual' ? null : current.branchName,
+          branchName: derivesBranchFromTitle(current.source)
+            ? null
+            : current.branchName,
           status: 'todo',
           worktreePath: null,
         })

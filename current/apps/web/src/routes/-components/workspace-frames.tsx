@@ -40,6 +40,9 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
+import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
+import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
+import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import {
   usePanelActions,
@@ -540,6 +543,49 @@ export function computeSidePanelSizes(sidePanelCount: number) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent attention outline
+// ---------------------------------------------------------------------------
+
+/**
+ * Draws the agent attention outline around a whole workspace frame — its
+ * header, tab bar, and every terminal in it.
+ *
+ * Rendered as an absolutely positioned overlay rather than a border on the
+ * frame itself for two reasons: a border would inset the panes and reflow
+ * every terminal in the workspace the moment an agent finished, and an
+ * overlay draws over the panes' own edges instead of being hidden behind
+ * them. It is inert to the pointer, so clicking anywhere still lands on the
+ * terminal underneath.
+ *
+ * It shares the drop indicators' stacking level and is rendered before
+ * them, so a drag in progress still paints its edge on top of the outline.
+ */
+function WorkspaceFrameAttentionOutline({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const agentStatus = useWorkspaceAgentStatus(workspaceId)
+  const { frameClassName } = getAgentStatusSurface(agentStatus)
+
+  if (frameClassName === '') {
+    return null
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        'pointer-events-none absolute inset-0 z-10 border-2',
+        frameClassName
+      )}
+      data-agent-status={agentStatus ?? undefined}
+      data-testid="workspace-frame-attention-outline"
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
 // WorkspaceFrame
 // ---------------------------------------------------------------------------
 
@@ -820,11 +866,16 @@ function WorkspaceFrame({
 
   return (
     <div
-      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col ${isDragging ? 'opacity-40' : ''}`}
+      className={cn(
+        'relative flex flex-col',
+        isMinimized ? 'h-auto' : 'h-full',
+        isDragging && 'opacity-40'
+      )}
       data-testid="workspace-frame"
       data-workspace-id={workspaceId}
       ref={frameRef}
     >
+      <WorkspaceFrameAttentionOutline workspaceId={workspaceId} />
       {closestEdge === 'top' && (
         <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
       )}

@@ -6,8 +6,7 @@ import { queryDb } from '@livestore/livestore'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
-import { useTerminalList } from '@/hooks/use-terminal-list'
-import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
+import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import { getScopedActivePaneId } from '@/panels/window-layout-utils'
@@ -66,17 +65,9 @@ export function WorkspaceFrameHeaderContainer({
     [subLayout, globalActivePaneId]
   )
 
-  // Derive workspace-level agent status from the terminal list
-  const { terminals } = useTerminalList()
-  const workspaceAgentStatus = useMemo(() => {
-    if (!workspaceId) {
-      return null
-    }
-    const workspaceTerminals = terminals.filter(
-      (t) => t.workspaceId === workspaceId
-    )
-    return deriveWorkspaceAgentStatus(workspaceTerminals)
-  }, [terminals, workspaceId])
+  // Workspace-level agent status, shared with the frame that outlines itself
+  // for the same status.
+  const workspaceAgentStatus = useWorkspaceAgentStatus(workspaceId)
 
   const workspaceData = useMemo(() => {
     if (!workspaceId) {

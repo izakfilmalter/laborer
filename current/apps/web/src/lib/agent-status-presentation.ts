@@ -18,11 +18,14 @@
  * result" and "act on this now" differ by glyph and not only by hue.
  *
  * The same module owns the surface accents (terminal row, workspace card,
- * frame header) so the two actionable states keep one hierarchy everywhere:
- * `needs input` is the loudest surface it appears on — tint, border and a
- * glow — while `done` carries a quieter tint and border, and `working` only
- * whispers on the frame header it already owns. At-rest states accent
- * nothing, leaving the badge to say all there is to say.
+ * frame header, whole workspace frame) so the two actionable states keep
+ * one hierarchy everywhere: `needs input` is the loudest surface it appears
+ * on — tint, border and a glow — while `done` carries a quieter tint and
+ * border, and `working` only whispers on the frame header it already owns.
+ * Both actionable states outline the entire workspace frame, because a
+ * finished or blocked agent has to be findable from across a tiled screen.
+ * At-rest states accent nothing, leaving the badge to say all there is to
+ * say.
  *
  * @see apps/web/src/components/agent-status-badge.tsx — shared badge
  * @see apps/web/src/components/terminal-list.tsx — terminal rows
@@ -59,6 +62,14 @@ type AgentStatusGlyphKind = 'dot' | 'check'
 interface AgentStatusSurface {
   /** Workspace card in the sidebar. */
   readonly cardClassName: string
+  /**
+   * Outline drawn around a whole workspace frame — header, tab bar, and
+   * every terminal inside it. An 8px header bar is easy to miss on a wall
+   * of terminals, so the states worth walking back to claim the entire
+   * frame instead: the operator sees which workspace wants them before
+   * they read a single word of it.
+   */
+  readonly frameClassName: string
   /** Workspace frame header bar. */
   readonly headerClassName: string
   /** Terminal row in the sidebar. */
@@ -174,6 +185,7 @@ const AGENT_STATUS_PRESENTATION: Record<
 
 const QUIET_SURFACE: AgentStatusSurface = {
   cardClassName: '',
+  frameClassName: '',
   headerClassName: '',
   rowClassName: '',
   rowHoverClassName: 'hover:bg-accent hover:text-accent-foreground',
@@ -194,23 +206,36 @@ const QUIET_SURFACE: AgentStatusSurface = {
  * two-pixel edge the active frame uses, so a frame that wants the operator
  * is never drawn thinner than the frame they happen to be looking at; hue
  * and tint, not weight, say which of the two it is.
+ *
+ * Both attention states also outline the whole frame. A tinted header bar
+ * is legible when one workspace is open and invisible when four are tiled
+ * against a wall of scrolling output, so the cue that answers "which of
+ * these wants me?" is drawn around the workspace and its terminals rather
+ * than on a strip above them. `working` is deliberately left out: an agent
+ * mid-task is the normal state of a busy screen, and outlining it would
+ * mean outlining everything.
  */
 const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
   needs_input: {
     cardClassName:
       'border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.18)]',
+    frameClassName:
+      'border-amber-400/80 shadow-[inset_0_0_26px_-6px_rgba(251,191,36,0.5)]',
     headerClassName: 'border-b-2 border-b-amber-400/70 bg-amber-400/10',
     rowClassName: 'border-amber-400/50 bg-amber-400/10',
     rowHoverClassName: 'hover:bg-amber-400/20',
   },
   done: {
     cardClassName: 'border-violet-400/45',
-    headerClassName: 'border-b-2 border-b-violet-400/50 bg-violet-400/5',
+    frameClassName:
+      'border-violet-400/70 shadow-[inset_0_0_26px_-10px_rgba(167,139,250,0.4)]',
+    headerClassName: 'border-b-2 border-b-violet-400/60 bg-violet-400/10',
     rowClassName: 'border-violet-400/35 bg-violet-400/5',
     rowHoverClassName: 'hover:bg-violet-400/15',
   },
   working: {
     cardClassName: '',
+    frameClassName: '',
     headerClassName: 'border-b-blue-400/40 bg-blue-400/5',
     rowClassName: '',
     rowHoverClassName: QUIET_SURFACE.rowHoverClassName,

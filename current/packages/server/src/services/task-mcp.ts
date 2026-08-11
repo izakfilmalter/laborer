@@ -51,9 +51,11 @@ const Task = Schema.Struct({
 const ListProjects = Tool.make('list_projects', {
   description:
     'List registered Laborer projects and their canonical repository paths.',
-  success: Schema.Array(
-    Schema.Struct({ name: Schema.String, repoPath: Schema.String })
-  ),
+  success: Schema.Struct({
+    projects: Schema.Array(
+      Schema.Struct({ name: Schema.String, repoPath: Schema.String })
+    ),
+  }),
 })
 const CreateTask = Tool.make('create_task', {
   description:
@@ -97,7 +99,7 @@ const ListTasks = Tool.make('list_tasks', {
     search: Schema.optional(Schema.String),
     status: Schema.optional(TaskStatus),
   },
-  success: Schema.Array(Task),
+  success: Schema.Struct({ tasks: Schema.Array(Task) }),
   failure: AgentTaskError,
 })
 const GetTask = Tool.make('get_task', {
@@ -120,7 +122,8 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
   Effect.gen(function* () {
     const service = yield* AgentTaskService
     return TaskToolkit.of({
-      list_projects: () => service.listProjects(),
+      list_projects: () =>
+        service.listProjects().pipe(Effect.map((projects) => ({ projects }))),
       create_task: ({ description, path, title }) =>
         service.createTask({
           ...(description === undefined ? {} : { description }),
@@ -137,14 +140,16 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
       delete_task: ({ expected_revision, id }) =>
         service.deleteTask(id, expected_revision),
       list_tasks: ({ include_cancelled, path, search, status }) =>
-        service.listTasks({
-          ...(include_cancelled === undefined
-            ? {}
-            : { includeCancelled: include_cancelled }),
-          ...(path === undefined ? {} : { path }),
-          ...(search === undefined ? {} : { search }),
-          ...(status === undefined ? {} : { status }),
-        }),
+        service
+          .listTasks({
+            ...(include_cancelled === undefined
+              ? {}
+              : { includeCancelled: include_cancelled }),
+            ...(path === undefined ? {} : { path }),
+            ...(search === undefined ? {} : { search }),
+            ...(status === undefined ? {} : { status }),
+          })
+          .pipe(Effect.map((tasks) => ({ tasks }))),
       get_task: ({ id }) => service.getTask(id),
     })
   })

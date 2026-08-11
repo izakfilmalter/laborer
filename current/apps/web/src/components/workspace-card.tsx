@@ -670,11 +670,6 @@ function WorkspaceCard({
   const isActiveWorkspace = activeWorkspaceId === workspace.id
 
   const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
-  // One card, one coloured edge. When an agent wants the operator the edge
-  // is its own; otherwise the active workspace keeps its primary edge.
-  // Emitting both leaves the winner to stylesheet ordering rather than to
-  // intent.
-  const hasAgentAccent = agentSurface.cardClassName !== ''
   // Attention and in-flight work surface at card level; acknowledged idle and
   // unknown stay in the terminal rows that own them. The frame header answers
   // this with the same predicate, so a card and its header never disagree.
@@ -772,9 +767,10 @@ function WorkspaceCard({
         <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       }
       onActivate={onActivate}
-      // One card, one coloured edge — an agent asking for the operator wins
-      // the edge over the merely active workspace.
-      selected={isActiveWorkspace && !hasAgentAccent}
+      // Two channels, no contest: the agent accent owns the card's edge, the
+      // active workspace fills its surface. A card can be both the one you
+      // are in and the one waiting on you, and it now says so.
+      selected={isActiveWorkspace}
       subtitle={subtitle}
       title={
         <span className="block min-w-0 font-mono">

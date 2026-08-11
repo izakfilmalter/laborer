@@ -1,6 +1,11 @@
-import type { BoardTask, TaskBoardEvent } from '@laborer/shared/rpc'
+import type {
+  BoardTask,
+  SharedTaskRow,
+  TaskBoardEvent,
+} from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
+  applySharedTaskUpdates,
   applyTaskBoardEvents,
   boardTaskTitle,
   projectForTask,
@@ -26,6 +31,23 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   worktreeBotOwned: false,
   worktreeExists: false,
   worktreePath: null,
+  ...overrides,
+})
+
+const sharedTask = (overrides: Partial<SharedTaskRow> = {}): SharedTaskRow => ({
+  ...task(overrides),
+  baseBranch: null,
+  baseSha: null,
+  parentTaskId: null,
+  prIsDraft: false,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
+  setupCompletedAt: null,
+  sortOrder: null,
+  worktreeError: null,
+  worktreeStatus: null,
   ...overrides,
 })
 
@@ -104,6 +126,36 @@ describe('board task projection', () => {
     expect(updated).toMatchObject([
       { id: 'task-1', revision: 2, status: 'in_progress' },
     ])
+  })
+
+  it('preserves shared parent and PR facts while applying updates', () => {
+    const [projected] = applySharedTaskUpdates([
+      {
+        tasks: {
+          cursor: 1,
+          rows: [
+            sharedTask({
+              parentTaskId: 'parent',
+              prIsDraft: true,
+              prNumber: 421,
+              prState: 'open',
+              prTitle: 'Stream workspace surfaces',
+              prUrl: 'https://github.com/example/repo/pull/421',
+            }),
+          ],
+          type: 'snapshot',
+        },
+      },
+    ])
+
+    expect(projected).toMatchObject({
+      parentTaskId: 'parent',
+      pr: {
+        number: 421,
+        state: 'open',
+        title: 'Stream workspace surfaces',
+      },
+    })
   })
 
   it('chooses the nearest ancestor project without prefix collisions', () => {

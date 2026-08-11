@@ -955,8 +955,7 @@ function LaneBoard({
                           parentTitle={
                             task.parentTaskId === null
                               ? undefined
-                              : tasks.find(({ id }) => id === task.parentTaskId)
-                                  ?.title
+                              : tasksById.get(task.parentTaskId)?.title
                           }
                           task={task}
                           workspace={workspaceForCard(task)}
@@ -1002,7 +1001,7 @@ function LaneBoard({
               parentTitle={
                 task.parentTaskId === null
                   ? undefined
-                  : tasks.find(({ id }) => id === task.parentTaskId)?.title
+                  : tasksById.get(task.parentTaskId)?.title
               }
               task={task}
               workspace={workspaceForCard(task)}

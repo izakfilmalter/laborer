@@ -94,7 +94,9 @@ export const applySharedTaskUpdates = (
   events: readonly SharedStateUpdate[],
   initialTasks: readonly RpcBoardTask[] = []
 ): readonly BoardTask[] => {
-  const tasks = new Map(initialTasks.map((task) => [task.id, task]))
+  const tasks = new Map<string, BoardTask>(
+    initialTasks.map((task) => [task.id, toBoardTask(task)])
+  )
   for (const event of events) {
     const update = event.tasks
     if (update === undefined) {
@@ -107,11 +109,11 @@ export const applySharedTaskUpdates = (
         tasks.delete(taskId)
       }
     }
-    for (const task of update.rows) {
+    for (const task of boardTasksFromSharedRows(update.rows)) {
       tasks.set(task.id, task)
     }
   }
-  return [...tasks.values()].map(toBoardTask)
+  return [...tasks.values()]
 }
 
 export interface BoardProject {

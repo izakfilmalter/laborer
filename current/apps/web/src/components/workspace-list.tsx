@@ -262,7 +262,7 @@ function WorkspaceList({
 
   // The database owns promotion on parent deletion (`ON DELETE SET NULL`).
   const workspaceTree = useMemo(
-    () => buildWorkspaceTree(activeWorkspaces as readonly WorkspaceTreeRow[]),
+    () => buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces),
     [activeWorkspaces]
   )
 

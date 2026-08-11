@@ -43,7 +43,8 @@ export const manualTaskBranchName = (title: string): string => {
 }
 
 type SlackPlanner = (
-  slackUrl: string
+  slackUrl: string,
+  cwd?: string
 ) => Effect.Effect<SlackWorkspacePlan, RpcError>
 
 export const createTaskUlid = (time = Date.now()): string => {
@@ -133,10 +134,11 @@ export const markSlackAnalysisFailed = (
 export const runSlackTaskPlanning = (
   taskId: string,
   slackUrl: string,
+  rootPath: string,
   path = taskDatabasePath(),
   planner: SlackPlanner = planSlackWorkspace
 ): Effect.Effect<void> =>
-  planner(slackUrl).pipe(
+  planner(slackUrl, rootPath).pipe(
     Effect.flatMap((plan) =>
       updateLatest(path, taskId, {
         branchName: plan.branchName,
@@ -200,9 +202,13 @@ export const createTaskCard = (
     // provisioning path instead: it needs the plan and the workspace created
     // under one task lock, so planning it here would duplicate the analysis.
     if (slackUrl && input.status !== 'in_progress') {
-      yield* runSlackTaskPlanning(task.id, slackUrl, path, planner).pipe(
-        Effect.forkDaemon
-      )
+      yield* runSlackTaskPlanning(
+        task.id,
+        slackUrl,
+        input.rootPath,
+        path,
+        planner
+      ).pipe(Effect.forkDaemon)
     }
 
     return {

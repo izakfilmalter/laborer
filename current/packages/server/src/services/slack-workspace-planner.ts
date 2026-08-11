@@ -290,11 +290,20 @@ const terminateProcess = async (
   }
 }
 
-const executeOpenCode = async (
-  prompt: string,
-  signal: AbortSignal
-): Promise<string> => {
-  const childProcess = spawn(buildOpenCodeArgs(prompt))
+interface PlannerProcessOptions {
+  readonly argv: readonly string[]
+  readonly cwd?: string | undefined
+  readonly signal: AbortSignal
+  readonly timeoutMs?: number
+}
+
+const executePlannerProcess = async ({
+  argv,
+  cwd,
+  signal,
+  timeoutMs = OPENCODE_TIMEOUT_MS,
+}: PlannerProcessOptions): Promise<string> => {
+  const childProcess = spawn([...argv], cwd === undefined ? {} : { cwd })
   let termination: Promise<void> | undefined
   const startTermination = (): Promise<void> => {
     termination ??= terminateProcess(childProcess)
@@ -308,12 +317,14 @@ const executeOpenCode = async (
   let timeout: ReturnType<typeof setTimeout> | undefined
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeout = setTimeout(() => {
-      startTermination()
-        .catch(() => undefined)
-        .finally(() => {
-          reject(new Error('OpenCode timed out while reading Slack.'))
-        })
-    }, OPENCODE_TIMEOUT_MS)
+      // Reject before the SIGTERM lands. A terminated OpenCode exits with a
+      // nonzero status during the kill grace period, and that exit must not
+      // win the race below and masquerade as a process failure — the card
+      // badge then blames OpenCode ("exited with status 130") for what was a
+      // deadline.
+      startTermination().catch(() => undefined)
+      reject(new Error('OpenCode timed out while reading Slack.'))
+    }, timeoutMs)
   })
 
   try {
@@ -347,8 +358,18 @@ const executeOpenCode = async (
   }
 }
 
+/**
+ * Read the Slack thread with OpenCode and turn it into a workspace plan.
+ *
+ * `cwd` anchors the OpenCode run inside the task's repository. Without it the
+ * child inherits the Electron process's working directory (the user's home
+ * directory), and the OpenCode daemon has to boot a throwaway home-directory
+ * project — watchers, plugins, and MCP servers over all of `~` — before it
+ * answers, which has wedged past the analysis deadline in the field.
+ */
 const planSlackWorkspace = Effect.fn('planSlackWorkspace')(function* (
-  slackUrl: string
+  slackUrl: string,
+  cwd?: string
 ) {
   const normalizedUrl = slackUrl.trim()
   if (!isSlackMessageUrl(normalizedUrl)) {
@@ -361,7 +382,11 @@ const planSlackWorkspace = Effect.fn('planSlackWorkspace')(function* (
   const canonicalUrl = new URL(normalizedUrl).toString()
   const stdout = yield* Effect.tryPromise({
     try: (signal) =>
-      executeOpenCode(buildSlackPlannerPrompt(canonicalUrl), signal),
+      executePlannerProcess({
+        argv: buildOpenCodeArgs(buildSlackPlannerPrompt(canonicalUrl)),
+        cwd,
+        signal,
+      }),
     catch: (error) =>
       new RpcError({
         code: 'SLACK_ANALYSIS_FAILED',
@@ -386,6 +411,7 @@ export {
   buildInitialPrompt,
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
+  executePlannerProcess,
   extractOpenCodeText,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,

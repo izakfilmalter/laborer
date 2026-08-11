@@ -373,7 +373,7 @@ const handleTaskMoveAtPathUnlocked = (
           message: 'Slack task has no permalink to analyze',
         })
       }
-      const plan = yield* planSlackWorkspace(task.slackPermalink)
+      const plan = yield* planSlackWorkspace(task.slackPermalink, task.rootPath)
       task = yield* withDatabase((database) => {
         const current = database.findTask(taskId)
         if (current === null) {

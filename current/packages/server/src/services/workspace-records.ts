@@ -35,11 +35,25 @@ const projectForTask = (
 ): Project | undefined =>
   projects.find((project) => project.rootPath === task.rootPath)
 
+const WORKSPACE_PR_STATES = {
+  closed: 'CLOSED',
+  merged: 'MERGED',
+  open: 'OPEN',
+} as const satisfies Record<
+  NonNullable<LaborerTask['prState']>,
+  NonNullable<WorkspaceRecord['prState']>
+>
+
+const workspacePrState = (
+  state: LaborerTask['prState']
+): WorkspaceRecord['prState'] =>
+  state === null ? null : WORKSPACE_PR_STATES[state]
+
 const toWorkspaceRecord = (
   task: LaborerTask,
   project: Project
 ): WorkspaceRecord | null => {
-  if (task.worktreePath === null || task.branchName === null) {
+  if (task.worktreePath === null) {
     return null
   }
   let status: WorkspaceRecord['status'] = 'running'
@@ -53,13 +67,15 @@ const toWorkspaceRecord = (
     baseBranch: task.baseBranch,
     baseSha: task.baseSha,
     behindCount: null,
-    branchName: task.branchName,
+    // Detached worktrees have no branch. Keep their stable task title as the
+    // display/runtime label, matching the renderer's task projection.
+    branchName: task.branchName ?? task.title,
     createdAt: new Date(task.createdAt).toISOString(),
     errorMessage: task.worktreeError,
     id: task.id,
     origin: task.source === 'worktree' ? 'external' : 'laborer',
     prNumber: task.prNumber,
-    prState: task.prState?.toUpperCase() as WorkspaceRecord['prState'],
+    prState: workspacePrState(task.prState),
     prTitle: task.prTitle,
     prUrl: task.prUrl,
     projectId: project.id,

@@ -51,10 +51,14 @@ export const translateWorktreesToTasks = (
     if (input.worktrees.length === 0) {
       return 0
     }
-    const ownedDatabase =
-      typeof target === 'string' ? NodeTaskBoardDatabase.open(target) : null
-    const database: WorktreeAdoptionDatabase =
-      ownedDatabase ?? (target as WorktreeAdoptionDatabase)
+    let ownedDatabase: NodeTaskBoardDatabase | null = null
+    let database: WorktreeAdoptionDatabase
+    if (typeof target === 'string') {
+      ownedDatabase = NodeTaskBoardDatabase.open(target)
+      database = ownedDatabase
+    } else {
+      database = target
+    }
     try {
       let adopted = 0
       for (const worktree of input.worktrees) {

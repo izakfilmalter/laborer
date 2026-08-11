@@ -385,7 +385,8 @@ const paneSpawnGuard = createSpawnGuard()
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'laborer:panel-layout:v1:'
 
 interface StoredPanelLayout {
-  readonly windowLayout: WindowLayout | null
+  /** Untrusted persisted input; decode before treating it as a layout. */
+  readonly windowLayout: unknown | null
 }
 
 const createPanelLayoutStorageKey = (windowId: string) =>
@@ -406,11 +407,7 @@ const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
 
     const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
-      return {
-        windowLayout:
-          (parsed as { readonly windowLayout?: WindowLayout | null })
-            .windowLayout ?? null,
-      }
+      return { windowLayout: Reflect.get(parsed, 'windowLayout') ?? null }
     }
   } catch {
     return { windowLayout: null }
@@ -471,7 +468,8 @@ export function usePanelLayout() {
   )
 
   const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
-    return readStoredPanelLayout(panelWindowId).windowLayout ?? undefined
+    return decodeWindowLayout(readStoredPanelLayout(panelWindowId).windowLayout)
+      .windowLayout
   }, [panelWindowId])
 
   // Read and decode the hierarchical window layout from localStorage.

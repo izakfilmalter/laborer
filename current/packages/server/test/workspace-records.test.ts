@@ -29,6 +29,16 @@ describe('task-backed workspace records', () => {
           worktreeStatus: 'ready',
         })
         database.insertTask({
+          branchName: null,
+          id: 'task-detached-worktree',
+          rootPath: '/repo',
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'detached-abc123',
+          worktreePath: '/repo-detached-worktree',
+          worktreeStatus: 'ready',
+        })
+        database.insertTask({
           id: 'task-todo',
           rootPath: '/repo',
           source: 'manual',
@@ -36,7 +46,7 @@ describe('task-backed workspace records', () => {
           title: 'Todo',
         })
 
-        expect(listWorkspaceRecords(database)).toHaveLength(1)
+        expect(listWorkspaceRecords(database)).toHaveLength(2)
         expect(findWorkspaceRecord(database, 'task-worktree')).toMatchObject({
           branchName: 'feature/shared-db',
           id: 'task-worktree',
@@ -45,6 +55,13 @@ describe('task-backed workspace records', () => {
           worktreePath: '/repo-worktree',
         })
         expect(findWorkspaceRecord(database, 'task-todo')).toBeNull()
+        expect(
+          findWorkspaceRecord(database, 'task-detached-worktree')
+        ).toMatchObject({
+          branchName: 'detached-abc123',
+          id: 'task-detached-worktree',
+          worktreePath: '/repo-detached-worktree',
+        })
       }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
     )
   })

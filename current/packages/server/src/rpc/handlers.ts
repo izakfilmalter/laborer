@@ -35,6 +35,7 @@ import { subscribeToTaskBoard } from '../services/task-board-reader.js'
 import {
   createTaskCard,
   manualTaskBranchName,
+  markSlackAnalysisFailed,
 } from '../services/task-card-creator.js'
 import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
@@ -502,6 +503,33 @@ export const handleTaskMoveAtPath = (
     handleTaskMoveAtPathUnlocked(payload, databasePath)
   )
 
+/**
+ * Analysis and provisioning for a Slack card created directly in In Progress.
+ * The move path plans the thread and creates the workspace under the task
+ * lock; if the planner never produced a prompt, the card is marked failed so
+ * the board offers a retry rather than analyzing forever.
+ */
+const analyzeAndProvisionSlackCard = (taskId: string, databasePath: string) =>
+  handleTaskMoveAtPath(
+    { expectedRevision: 1, status: 'in_progress', taskId },
+    databasePath
+  ).pipe(
+    Effect.catchAll((error) =>
+      markSlackAnalysisFailed(taskId, databasePath).pipe(
+        Effect.catchAll((markError) =>
+          Effect.logError(
+            `[task-board] Slack provisioning failed for ${taskId}; the failure marker could not be stored: ${markError.message}`
+          )
+        ),
+        Effect.zipRight(
+          Effect.logWarning(
+            `[task-board] Slack provisioning failed for ${taskId}: ${error.message}`
+          )
+        )
+      )
+    )
+  )
+
 export const handleTaskCreateAtPath = (
   input: {
     readonly rootPath: string
@@ -511,16 +539,17 @@ export const handleTaskCreateAtPath = (
   databasePath = taskDatabasePath()
 ) =>
   Effect.gen(function* () {
-    const entersInProgress = input.status === 'in_progress'
-    const created = yield* createTaskCard(
-      {
-        rootPath: input.rootPath,
-        status: entersInProgress ? 'todo' : input.status,
-        text: input.text,
-      },
-      databasePath
-    )
-    if (!(entersInProgress && created.source === 'manual')) {
+    const created = yield* createTaskCard(input, databasePath)
+    if (input.status !== 'in_progress') {
+      return { ...created, description: null, workspaceId: null }
+    }
+    if (created.source === 'slack_url') {
+      // Analyzing a Slack thread spawns an agent and can run for minutes, so
+      // the card stays in the column it was added to and its workspace
+      // follows once the planner has named the work.
+      yield* analyzeAndProvisionSlackCard(created.id, databasePath).pipe(
+        Effect.forkDaemon
+      )
       return { ...created, description: null, workspaceId: null }
     }
     const moved = yield* handleTaskMoveAtPath(

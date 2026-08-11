@@ -281,7 +281,7 @@ function SlackAnalysisBadge({ task }: { readonly task: BoardTask }) {
     return (
       <Badge
         className="gap-1 border-destructive/30 bg-destructive/10 text-destructive"
-        title="Reading the Slack thread failed. The card stays in Todo — open the thread to check it."
+        title="Reading the Slack thread failed. Open the thread to check it; moving the card into In Progress retries the analysis."
         variant="outline"
       >
         <TriangleAlert aria-hidden="true" className="size-3" />
@@ -621,7 +621,7 @@ function AddCardComposer({
       setValue('')
       setConfirmation(
         created.source === 'slack_url'
-          ? 'Slack card added to Todo — analyzing in the background.'
+          ? `Slack card added to ${column.title} — analyzing in the background.`
           : `Card added to ${column.title}.`
       )
     } catch (cause) {
@@ -644,9 +644,9 @@ function AddCardComposer({
       return {
         className: 'text-muted-foreground',
         text:
-          column.id === 'todo'
-            ? 'Slack link — analyzed in the background.'
-            : 'Slack link — added to Todo and analyzed in the background.',
+          column.id === 'in_progress'
+            ? 'Slack link — analyzed in the background, then a workspace opens.'
+            : 'Slack link — analyzed in the background.',
       }
     }
     if (intent === 'unrecognized-link') {

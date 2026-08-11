@@ -109,6 +109,27 @@ const updateLatest = (
     }
   })
 
+/**
+ * Mark a Slack card whose analysis never produced a prompt as failed, so the
+ * board shows a retry instead of an indefinite spinner. A card that already
+ * carries its prompt is left alone: its analysis did finish, and whatever went
+ * wrong afterwards is not an analysis failure.
+ */
+export const markSlackAnalysisFailed = (
+  taskId: string,
+  path = taskDatabasePath()
+): Effect.Effect<void, RpcError> =>
+  withDatabase(path, (database) => {
+    const task = database.find(taskId)
+    return task !== null && task.description === null
+  }).pipe(
+    Effect.flatMap((unplanned) =>
+      unplanned
+        ? updateLatest(path, taskId, { executionStatus: 'failed' })
+        : Effect.void
+    )
+  )
+
 export const runSlackTaskPlanning = (
   taskId: string,
   slackUrl: string,
@@ -168,14 +189,17 @@ export const createTaskCard = (
         id: createTaskUlid(),
         rootPath: input.rootPath,
         title: slackUrl ?? text,
-        status: slackUrl ? 'todo' : input.status,
+        status: input.status,
         source: slackUrl ? 'slack_url' : 'manual',
         slackPermalink: slackUrl,
         executionStatus: slackUrl ? 'queued' : null,
       })
     )
 
-    if (slackUrl) {
+    // A Slack card dropped straight into In Progress is analyzed by the
+    // provisioning path instead: it needs the plan and the workspace created
+    // under one task lock, so planning it here would duplicate the analysis.
+    if (slackUrl && input.status !== 'in_progress') {
       yield* runSlackTaskPlanning(task.id, slackUrl, path, planner).pipe(
         Effect.forkDaemon
       )
@@ -184,6 +208,6 @@ export const createTaskCard = (
     return {
       id: task.id,
       source: slackUrl === null ? ('manual' as const) : ('slack_url' as const),
-      status: slackUrl === null ? input.status : ('todo' as const),
+      status: input.status,
     }
   })

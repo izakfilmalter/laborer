@@ -111,7 +111,7 @@ describe('task provisioning', () => {
     expect(createWorktree).toHaveBeenCalledTimes(1)
     expect(createWorktree).toHaveBeenCalledWith(
       project.id,
-      manualTaskBranchName('Start now', created.id),
+      manualTaskBranchName('Start now'),
       expect.any(Function),
       undefined,
       expect.any(Function),
@@ -197,7 +197,7 @@ describe('task provisioning', () => {
     expect(createWorktree).toHaveBeenCalledTimes(1)
     expect(createWorktree).toHaveBeenCalledWith(
       project.id,
-      manualTaskBranchName('Agent staged work', 'task-agent'),
+      manualTaskBranchName('Agent staged work'),
       expect.any(Function),
       undefined,
       expect.any(Function),

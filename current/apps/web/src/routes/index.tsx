@@ -21,7 +21,7 @@ import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
-import { extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
@@ -1248,32 +1248,38 @@ function HomeComponent() {
                   />
                   {/* Kanban board overlay — semi-transparent so the panel
                       sessions remain visible underneath; cards stay solid
-                      (bg-card). Appears/disappears instantly, no animation. */}
-                  {boardOverlayOpen && (
-                    <section
-                      aria-label="Task board"
-                      className="absolute inset-x-0 bottom-0 z-20 flex flex-col border-t bg-background/70 shadow-2xl"
-                      style={{
-                        height: `${boardOverlayHeight.fraction * 100}%`,
-                      }}
+                      (bg-card). Appears/disappears instantly, no animation.
+                      Stays mounted while dismissed (hidden via CSS) so board
+                      state such as search text survives closing. */}
+                  <section
+                    aria-label="Task board"
+                    className={cn(
+                      'absolute inset-x-0 bottom-0 z-20 flex flex-col border-t bg-background/70 shadow-2xl',
+                      !boardOverlayOpen && 'hidden'
+                    )}
+                    style={{
+                      height: `${boardOverlayHeight.fraction * 100}%`,
+                    }}
+                  >
+                    <button
+                      aria-label="Resize board"
+                      className="relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      onPointerCancel={handleBoardResizeEnd}
+                      onPointerDown={handleBoardResizeStart}
+                      onPointerMove={handleBoardResizeMove}
+                      onPointerUp={handleBoardResizeEnd}
+                      tabIndex={-1}
+                      type="button"
                     >
-                      <button
-                        aria-label="Resize board"
-                        className="relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                        onPointerCancel={handleBoardResizeEnd}
-                        onPointerDown={handleBoardResizeStart}
-                        onPointerMove={handleBoardResizeMove}
-                        onPointerUp={handleBoardResizeEnd}
-                        tabIndex={-1}
-                        type="button"
-                      >
-                        <div className="z-10 flex h-1.5 w-8 shrink-0 rounded-sm bg-border" />
-                      </button>
-                      <div className="min-h-0 flex-1">
-                        <TaskBoard collapseState={collapseState} />
-                      </div>
-                    </section>
-                  )}
+                      <div className="z-10 flex h-1.5 w-8 shrink-0 rounded-sm bg-border" />
+                    </button>
+                    <div className="min-h-0 flex-1">
+                      <TaskBoard
+                        collapseState={collapseState}
+                        open={boardOverlayOpen}
+                      />
+                    </div>
+                  </section>
                 </div>
               </div>
             )}

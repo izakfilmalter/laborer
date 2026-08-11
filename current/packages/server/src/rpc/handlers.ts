@@ -313,7 +313,7 @@ const taskWorkspaceBranchName = (task: Task): string | undefined => {
     return task.branchName
   }
   return derivesBranchFromTitle(task.source)
-    ? manualTaskBranchName(task.title, task.id)
+    ? manualTaskBranchName(task.title)
     : undefined
 }
 

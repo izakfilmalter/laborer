@@ -1,16 +1,27 @@
 import { Search, X } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Input } from '@/components/ui/input'
 
 /** Local search input for the board toolbar. */
 function BoardSearch({
   value,
   onChange,
+  open,
 }: {
   readonly value: string
   readonly onChange: (value: string) => void
+  readonly open: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // The board overlay stays mounted (hidden via CSS) while dismissed, so
+  // mount-time autoFocus would fire once against a display:none input and
+  // never again. Focus follows the overlay opening instead.
+  useEffect(() => {
+    if (open) {
+      inputRef.current?.focus()
+    }
+  }, [open])
 
   const handleClear = () => {
     onChange('')
@@ -22,7 +33,6 @@ function BoardSearch({
       <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
         aria-label="Search cards"
-        autoFocus
         className="h-7 pr-7 pl-7"
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {

@@ -1,6 +1,6 @@
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
-import { Context, Duration, Effect, Layer, TestClock } from 'effect'
+import { Context, Duration, Effect, Layer, Logger, TestClock } from 'effect'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
@@ -114,9 +114,14 @@ describe('PrWatcher', () => {
   )
 
   it.scoped(
-    'checkPr attempts to check stopped workspaces instead of skipping them',
-    () =>
-      Effect.gen(function* () {
+    'clears stale PR data without warning when a stopped workspace path is missing',
+    () => {
+      const logs: string[] = []
+      const logger = Logger.make(({ message }) => {
+        logs.push(String(message))
+      })
+
+      return Effect.gen(function* () {
         const storeContext = yield* Layer.build(TestLaborerStore)
         const { store } = Context.get(storeContext, LaborerStore)
 
@@ -160,11 +165,8 @@ describe('PrWatcher', () => {
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
-        // checkPr should NOT short-circuit for a stopped workspace.
-        // gh pr view will fail (no real repo at /tmp/...) and return EMPTY_PR,
-        // which will be committed as a workspacePrUpdated event, overwriting
-        // the previously-set MERGED state. If checkPr short-circuits (current
-        // bug), the old MERGED state remains untouched in LiveStore.
+        // A missing stopped workspace should still clear stale PR data, but it
+        // should not be reported as a failure to spawn the gh executable.
         yield* prWatcher.checkPr('workspace-stopped')
 
         // After checkPr, the workspace PR data should be updated.
@@ -176,9 +178,16 @@ describe('PrWatcher', () => {
         assert.strictEqual(
           workspaceAfter?.prState,
           null,
-          'checkPr should have committed a workspacePrUpdated event (clearing the stale MERGED state) instead of short-circuiting'
+          'checkPr should clear stale PR data for a missing worktree'
         )
-      })
+        assert.isFalse(
+          logs.some((message) =>
+            message.includes('[PrWatcher] Failed to run gh pr view')
+          ),
+          'a missing worktree should not be reported as a gh spawn failure'
+        )
+      }).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger)))
+    }
   )
 
   it.scoped('refreshes polling coverage for an adopted workspace', () =>

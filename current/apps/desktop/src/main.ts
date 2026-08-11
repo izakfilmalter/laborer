@@ -1,4 +1,4 @@
-import { watch } from 'node:fs'
+import { watch, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
@@ -174,6 +174,7 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
  * Utility processes are forked in both dev and production modes.
  */
 const isDev = Boolean(VITE_DEV_SERVER_URL)
+const desktopSmokeTestFile = process.env.LABORER_DESKTOP_SMOKE_TEST_FILE
 
 const desktopAppName = resolveDesktopAppName({
   isDevelopment: isDev,
@@ -319,7 +320,9 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   })
 
   window.once('ready-to-show', () => {
-    window.show()
+    if (!desktopSmokeTestFile) {
+      window.show()
+    }
   })
 
   if (VITE_DEV_SERVER_URL) {
@@ -332,6 +335,18 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   window.webContents.on('did-finish-load', () => {
     broadcastUpdateStateToWindow(window)
+    if (desktopSmokeTestFile) {
+      try {
+        writeFileSync(
+          desktopSmokeTestFile,
+          `${JSON.stringify({ url: window.webContents.getURL() })}\n`,
+          'utf8'
+        )
+      } catch (error) {
+        console.error('[main] Could not write desktop smoke marker', error)
+        app.exit(1)
+      }
+    }
   })
 
   // Preserve the last visible window's existing close-to-tray behavior, but

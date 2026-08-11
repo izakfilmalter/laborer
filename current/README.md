@@ -136,6 +136,22 @@ SSH config entries are not deleted automatically. Remove any resources you no
 longer need in Docker or Daytona directly; Daytona resources may continue to
 incur charges until deleted.
 
+### Cleaning up removed LiveStore data
+
+Laborer now uses the shared `laborer.sqlite` database. Old LiveStore server
+databases and renderer OPFS files are intentionally left in place during the
+upgrade. Close Laborer, preview the obsolete paths, and then delete them
+manually if desired:
+
+```bash
+bun run cleanup:livestore --dry-run
+bun run cleanup:livestore --delete
+```
+
+The cleanup command is never run by application startup, install, update, or
+build scripts. It removes only the enumerated LiveStore locations and does not
+remove the shared `laborer.sqlite` database.
+
 ## Available Scripts
 
 | Command | Description |
@@ -147,6 +163,7 @@ incur charges until deleted.
 | `bun run test` | Run all tests (single pass) |
 | `bun run test:watch` | Run tests in watch mode |
 | `bun run check` | Run typecheck + format fix + tests |
+| `bun run cleanup:livestore --dry-run` | Preview obsolete LiveStore files (manual cleanup only) |
 | `bun run format` | Check Biome formatting and linting |
 | `bun run format:fix` | Auto-fix formatting and linting |
 | `bun run dist:desktop:dmg` | Build macOS desktop DMG |

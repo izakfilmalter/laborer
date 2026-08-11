@@ -6,6 +6,7 @@ import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
@@ -21,6 +22,7 @@ const tempRoots: string[] = []
 
 const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provideMerge(RepositoryWatchCoordinator.layer),
   Layer.provideMerge(BranchStateTracker.layer),
   Layer.provideMerge(TestFileWatcherClientLayer),
@@ -66,21 +68,15 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const worktreePath = join(repoPath, '.worktrees', 'external')
       git(`worktree add -b ${branchName} ${worktreePath}`, repoPath)
 
-      const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
       const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'destroy-external',
-        })
-      )
+      const registry = yield* ProjectRegistry
+      const project = yield* registry.addProject(repoPath)
       store.commit(
         events.workspaceCreated({
           id: workspaceId,
-          projectId,
+          projectId: project.id,
           taskSource: null,
           branchName,
           worktreePath,
@@ -107,21 +103,15 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const worktreePath = join(repoPath, '.worktrees', 'laborer')
       git(`worktree add -b ${branchName} ${worktreePath}`, repoPath)
 
-      const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
       const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'destroy-laborer',
-        })
-      )
+      const registry = yield* ProjectRegistry
+      const project = yield* registry.addProject(repoPath)
       store.commit(
         events.workspaceCreated({
           id: workspaceId,
-          projectId,
+          projectId: project.id,
           taskSource: null,
           branchName,
           worktreePath,

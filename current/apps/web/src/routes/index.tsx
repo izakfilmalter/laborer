@@ -1,6 +1,6 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
@@ -9,6 +9,7 @@ import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { projectViewsAtom } from '@/atoms/shared-state'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
@@ -76,9 +77,6 @@ function HomeRoute() {
 export const Route = createFileRoute('/')({
   component: HomeRoute,
 })
-
-/** LiveStore query for projects (used by sidebar and WelcomeEmptyState). */
-const sidebarProjects$ = queryDb(projects, { label: 'sidebarProjects' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 
@@ -151,7 +149,7 @@ function HomeComponent() {
       panelActions.windowLayout.tabs.length === 0)
 
   const store = useLaborerStore()
-  const projectList = store.useQuery(sidebarProjects$)
+  const projectList = useAtomValue(projectViewsAtom)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
 

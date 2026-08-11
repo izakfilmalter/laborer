@@ -1,18 +1,16 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { workspaces } from '@laborer/shared/schema'
 import type { PanelNode } from '@laborer/shared/types'
 import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
 import { queryDb } from '@livestore/livestore'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { projectViewsAtom } from '@/atoms/shared-state'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import { getScopedActivePaneId } from '@/panels/window-layout-utils'
-
-/** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
-const allProjects$ = queryDb(projects, { label: 'headerProjects' })
 
 /** LiveStore query for workspaces. */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
@@ -48,7 +46,7 @@ export function WorkspaceFrameHeaderContainer({
   readonly treeIsOpen?: boolean
 }) {
   const store = useLaborerStore()
-  const projectList = store.useQuery(allProjects$)
+  const projectList = useAtomValue(projectViewsAtom)
   const workspaceList = store.useQuery(allWorkspaces$)
   const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()

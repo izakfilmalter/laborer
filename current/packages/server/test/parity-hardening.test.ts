@@ -28,6 +28,7 @@ import {
   type FileEventSubscription,
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
@@ -164,6 +165,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
    * ProjectRegistry + RepositoryIdentity service path.
    */
   const RegistryTestLayer = ProjectRegistry.layer.pipe(
+    Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
     Layer.provide(RepositoryWatchCoordinator.layer),
     Layer.provide(BranchStateTracker.layer),
     Layer.provide(ConfigService.layer),
@@ -214,56 +216,21 @@ describe('Persisted identity migration and dedupe hardening', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped(
-    'backfill populates identity for legacy project with null repoId',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-backfill-null', tempRoots)
-        const registry = yield* ProjectRegistry
-        const { store } = yield* LaborerStore
-        const identity = yield* RepositoryIdentity
-        const resolvedIdentity = yield* identity.resolve(repoPath)
+  it.scoped('does not migrate projects from the obsolete LiveStore', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('hardening-backfill-null', tempRoots)
+      const registry = yield* ProjectRegistry
+      const { store } = yield* LaborerStore
+      store.commit(
+        events.projectCreated({
+          id: 'legacy-null-identity',
+          repoPath,
+          name: 'legacy-null-identity',
+        })
+      )
 
-        // Seed a legacy project missing identity fields
-        store.commit(
-          events.projectCreated({
-            id: 'legacy-null-identity',
-            repoPath,
-            name: 'legacy-null-identity',
-          })
-        )
-
-        // Verify the stored record initially has null identity
-        const beforeBackfill = store.query(
-          tables.projects.where('id', 'legacy-null-identity')
-        ) as readonly {
-          readonly repoId: string | null
-          readonly canonicalGitCommonDir: string | null
-        }[]
-        assert.isNull(beforeBackfill[0]?.repoId)
-        assert.isNull(beforeBackfill[0]?.canonicalGitCommonDir)
-
-        // Listing projects triggers lazy backfill
-        const [project] = yield* registry.listProjects()
-        assert.strictEqual(project?.repoId, resolvedIdentity.repoId)
-        assert.strictEqual(
-          project?.canonicalGitCommonDir,
-          resolvedIdentity.canonicalGitCommonDir
-        )
-
-        // Verify the store was durably updated
-        const afterBackfill = store.query(
-          tables.projects.where('id', 'legacy-null-identity')
-        ) as readonly {
-          readonly repoId: string | null
-          readonly canonicalGitCommonDir: string | null
-        }[]
-        assert.strictEqual(afterBackfill[0]?.repoId, resolvedIdentity.repoId)
-        assert.strictEqual(
-          afterBackfill[0]?.canonicalGitCommonDir,
-          resolvedIdentity.canonicalGitCommonDir
-        )
-      }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
+      assert.deepStrictEqual(yield* registry.listProjects(), [])
+    }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
   )
 
   it.scoped(

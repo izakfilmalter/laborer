@@ -1,7 +1,7 @@
 /**
  * Shared-task-db kanban board — an overlay above the panel area (Cmd+K).
  *
- * One global board where each LiveStore project is a collapsible swim
+ * One global board where each shared-database project is a collapsible swim
  * lane (Todo / In Progress / In Review / Done per lane). Lane collapse
  * shares the sidebar's project collapse state instance, so collapsing a
  * project in either place collapses it in both, live in-session.
@@ -12,12 +12,10 @@
  * The renderer subscribes to typed snapshots/deltas and never opens SQLite.
  */
 
-import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
-import { Cause } from 'effect'
 import {
   AlignLeft,
   Bot,
@@ -38,16 +36,13 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  installSharedStateUpdateAtom,
-  makeSharedStateEventsAtom,
-} from '@/atoms/shared-state'
+import { projectViewsAtom, taskRowsAtom } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
-  applySharedTaskUpdates,
   type BoardTask,
   type BoardTaskStatus,
+  boardTasksFromSharedRows,
   boardTaskTitle,
   projectForTask,
   slackAnalysisState,
@@ -111,7 +106,6 @@ import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
-const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
 const boardWorkspaces$ = queryDb(workspaces, { label: 'boardWorkspaces' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
@@ -1450,7 +1444,7 @@ function TaskDetailDialog({
 }
 
 /**
- * The kanban board: one lane per LiveStore project, collapse state
+ * The kanban board: one lane per shared-database project, collapse state
  * shared with the sidebar's project groups (same keys, same instance).
  */
 function TaskBoard({
@@ -1468,7 +1462,8 @@ function TaskBoard({
   readonly open: boolean
 }) {
   const store = useLaborerStore()
-  const projectList = store.useQuery(boardProjects$)
+  const projectList = useAtomValue(projectViewsAtom)
+  const sharedTaskRows = useAtomValue(taskRowsAtom)
   const workspaceList = store.useQuery(boardWorkspaces$)
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
@@ -1487,25 +1482,9 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
-  const sharedStateEventsAtom = useMemo(makeSharedStateEventsAtom, [])
-  const rpcResult = useAtomValue(sharedStateEventsAtom)
-  const pullNext = useAtomSet(sharedStateEventsAtom)
-  const installSharedStateUpdate = useAtomSet(installSharedStateUpdateAtom)
-
   useEffect(() => {
-    if (Result.isSuccess(rpcResult) && !rpcResult.waiting) {
-      for (const update of rpcResult.value.items) {
-        installSharedStateUpdate(update)
-      }
-      setBoardTasks((current) =>
-        applySharedTaskUpdates(rpcResult.value.items, current)
-      )
-      // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
-      pullNext(undefined as void)
-    } else if (Result.isFailure(rpcResult)) {
-      setBoardTasks([])
-    }
-  }, [installSharedStateUpdate, pullNext, rpcResult])
+    setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
+  }, [sharedTaskRows])
 
   // Closing hands focus back to the card control that opened the terminal, so
   // a keyboard user lands where they left rather than at the top of the board.
@@ -1751,11 +1730,6 @@ function TaskBoard({
           {searching && lanes.length === 0 && (
             <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
               No matching cards
-            </div>
-          )}
-          {Result.isFailure(rpcResult) && (
-            <div className="flex items-center justify-center p-8 text-destructive text-sm">
-              Task board unavailable: {String(Cause.squash(rpcResult.cause))}
             </div>
           )}
         </div>

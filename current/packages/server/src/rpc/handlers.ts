@@ -69,7 +69,7 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
             return
           }
           const project = yield* registry
-            .addProject(rootPath)
+            .addProject(rootPath, false)
             .pipe(
               Effect.catchAll((error) =>
                 Effect.logWarning(
@@ -85,26 +85,17 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
     )
   })
 
-const getProjectFromStore = (projectId: string) =>
+const getProject = (projectId: string) =>
   Effect.gen(function* () {
-    const { store } = yield* LaborerStore
-    const project = store.query(tables.projects.where('id', projectId))[0]
-
-    if (!project) {
-      return yield* new RpcError({
-        message: `Project not found: ${projectId}`,
-        code: 'NOT_FOUND',
-      })
-    }
-
-    return project
+    const registry = yield* ProjectRegistry
+    return yield* registry.getProject(projectId)
   })
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService
 
-    const project = yield* getProjectFromStore(projectId)
+    const project = yield* getProject(projectId)
     return yield* configService
       .resolveConfig(project.repoPath, project.name)
       .pipe(
@@ -166,7 +157,7 @@ export const handleConfigUpdate = ({
 
     const configService = yield* ConfigService
 
-    const project = yield* getProjectFromStore(projectId)
+    const project = yield* getProject(projectId)
     yield* configService.writeProjectConfig(project.repoPath, config)
   })
 
@@ -754,7 +745,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       ),
     'task.create': ({ projectId, status, text }) =>
       Effect.gen(function* () {
-        const project = yield* getProjectFromStore(projectId)
+        const project = yield* getProject(projectId)
         return yield* handleTaskCreateAtPath({
           rootPath: project.repoPath,
           status,

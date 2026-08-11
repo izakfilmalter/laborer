@@ -10,6 +10,7 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { SyncStatusBridge } from '@/components/sync-status-bridge'
 import { SyncStatusProvider } from '@/components/sync-status-context'
@@ -91,6 +92,7 @@ function RootComponent() {
               <SidecarRuntimeBoundary>
                 {(generation) => (
                   <AtomRegistryProvider key={`atom-registry-${generation}`}>
+                    <SharedStateBridge />
                     <AppSettingsProvider>
                       <SyncStatusProvider>
                         <div className="h-svh">

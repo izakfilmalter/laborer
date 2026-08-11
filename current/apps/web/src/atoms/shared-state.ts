@@ -108,6 +108,13 @@ export const taskRowsAtom = Atom.make((get) => get(authoritativeTasksAtom).rows)
 export const projectRowsAtom = Atom.make(
   (get) => get(authoritativeProjectsAtom).rows
 )
+/** Legacy renderer shape while workspace surfaces still call the root repoPath. */
+export const projectViewsAtom = Atom.make((get) =>
+  get(projectRowsAtom).map((project) => ({
+    ...project,
+    repoPath: project.rootPath,
+  }))
+)
 export const settingRowsAtom = Atom.make(
   (get) => get(authoritativeSettingsAtom).rows
 )

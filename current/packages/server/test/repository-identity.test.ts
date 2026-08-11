@@ -6,6 +6,7 @@ import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
@@ -21,6 +22,7 @@ const tempRoots: string[] = []
 const IdentityTestLayer = RepositoryIdentity.layer
 
 const RegistryTestLayer = ProjectRegistry.layer.pipe(
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(RepositoryWatchCoordinator.layer),
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),
@@ -282,14 +284,11 @@ describe('ProjectRegistry canonical deduplication', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped('listing legacy projects lazily backfills persisted identity', () =>
+  it.scoped('ignores projects that exist only in the obsolete LiveStore', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('registry-legacy-backfill', tempRoots)
       const registry = yield* ProjectRegistry
       const { store } = yield* LaborerStore
-      const identity = yield* RepositoryIdentity
-      const resolvedIdentity = yield* identity.resolve(repoPath)
-
       store.commit(
         events.projectCreated({
           id: 'legacy-project',
@@ -298,28 +297,7 @@ describe('ProjectRegistry canonical deduplication', () => {
         })
       )
 
-      const [project] = yield* registry.listProjects()
-
-      assert.strictEqual(project?.id, 'legacy-project')
-      assert.strictEqual(project?.repoPath, resolvedIdentity.canonicalRoot)
-      assert.strictEqual(project?.repoId, resolvedIdentity.repoId)
-      assert.strictEqual(
-        project?.canonicalGitCommonDir,
-        resolvedIdentity.canonicalGitCommonDir
-      )
-
-      assert.deepStrictEqual(
-        store.query(tables.projects.where('id', 'legacy-project')),
-        [
-          {
-            id: 'legacy-project',
-            repoPath: resolvedIdentity.canonicalRoot,
-            repoId: resolvedIdentity.repoId,
-            canonicalGitCommonDir: resolvedIdentity.canonicalGitCommonDir,
-            name: 'legacy-project',
-          },
-        ]
-      )
+      assert.deepStrictEqual(yield* registry.listProjects(), [])
     }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
   )
 

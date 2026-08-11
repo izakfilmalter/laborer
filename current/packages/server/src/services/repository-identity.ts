@@ -9,7 +9,8 @@
  * All returned paths are canonicalized through realpath so that
  * symlinks and alternate path representations collapse to the same
  * identity. A stable repository identifier is derived from the
- * canonical common git directory.
+ * canonical upstream repository when one is configured, falling back to the
+ * canonical common git directory for repositories without a remote.
  *
  * This service is the foundation for preventing duplicate project
  * registrations and for scoping watcher lifecycle to logical
@@ -86,11 +87,35 @@ const canonicalize = (path: string): string => {
 
 /**
  * Derive a stable, short repository identifier from the canonical
- * common git directory path. Uses SHA-256 truncated to 16 hex chars.
+ * repository key. Uses SHA-256 truncated to 16 hex chars.
  */
-const deriveRepoId = (canonicalGitCommonDir: string): string => {
-  const hash = createHash('sha256').update(canonicalGitCommonDir).digest('hex')
+const deriveRepoId = (repositoryKey: string): string => {
+  const hash = createHash('sha256').update(repositoryKey).digest('hex')
   return hash.slice(0, 16)
+}
+
+const SCP_REMOTE_PATTERN = /^(?:[^@/]+@)?([^:/]+):(.+)$/
+const GIT_SUFFIX_PATTERN = /\.git\/?$/
+const TRAILING_SLASH_PATTERN = /\/$/
+
+const trimRemotePath = (value: string): string =>
+  value.replace(GIT_SUFFIX_PATTERN, '').replace(TRAILING_SLASH_PATTERN, '')
+
+/** Collapse the common URL spellings for one git remote into one identity. */
+const normalizeRemote = (remote: string): string => {
+  const scp = SCP_REMOTE_PATTERN.exec(remote)
+  if (scp && !remote.includes('://')) {
+    return `${scp[1]?.toLowerCase()}/${trimRemotePath(scp[2] ?? '')}`
+  }
+  try {
+    const url = new URL(remote)
+    if (url.protocol === 'file:') {
+      return `file:${trimRemotePath(canonicalize(url.pathname))}`
+    }
+    return `${url.hostname.toLowerCase()}${trimRemotePath(url.pathname)}`
+  } catch {
+    return trimRemotePath(canonicalize(remote))
+  }
 }
 
 class RepositoryIdentity extends Context.Tag('@laborer/RepositoryIdentity')<
@@ -157,8 +182,17 @@ class RepositoryIdentity extends Context.Tag('@laborer/RepositoryIdentity')<
           const canonicalGitDir = canonicalize(resolve(absolutePath, rawGitDir))
           const isMainWorktree = canonicalGitDir === canonicalGitCommonDir
 
-          // 6. Derive a stable repository identifier
-          const repoId = deriveRepoId(canonicalGitCommonDir)
+          // 6. Prefer a clone-stable remote identity. Repositories without an
+          // origin remain checkout-local, which is the only identity available.
+          const origin = yield* runGit(
+            ['remote', 'get-url', 'origin'],
+            absolutePath
+          ).pipe(Effect.option)
+          const repositoryKey =
+            origin._tag === 'Some'
+              ? `remote:${normalizeRemote(origin.value)}`
+              : `gitdir:${canonicalGitCommonDir}`
+          const repoId = deriveRepoId(repositoryKey)
 
           return {
             canonicalRoot,

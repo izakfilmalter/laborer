@@ -748,6 +748,13 @@ export class NativeLaborerDatabase {
     return row === undefined ? null : rowToProject(row)
   }
 
+  findProjectByRepoId(repoId: string): Project | null {
+    const row = this.#database
+      .prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE repo_id = ?`)
+      .get(repoId)
+    return row === undefined ? null : rowToProject(row)
+  }
+
   listProjects(): readonly Project[] {
     const rows = this.#database
       .prepare(

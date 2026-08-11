@@ -69,6 +69,10 @@ import {
   FileWatcherClient,
   FileWatcherRpcPort,
 } from './services/file-watcher-client.js'
+import {
+  LaborerDatabase,
+  LaborerDatabaseLive,
+} from './services/laborer-database.js'
 import { LaborerStore, LaborerStoreLive } from './services/laborer-store.js'
 import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
@@ -326,12 +330,14 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       )
 
       const store = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const config = yield* ConfigService
       const repoId = yield* RepositoryIdentity
       const ready = yield* DeferredServicesReady
 
       const CoreDeps = Layer.mergeAll(
         Layer.succeed(LaborerStore, store),
+        Layer.succeed(LaborerDatabase, laborerDatabase),
         Layer.succeed(ConfigService, config),
         Layer.succeed(RepositoryIdentity, repoId),
         Layer.succeed(DeferredServicesReady, ready)
@@ -432,6 +438,7 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provideMerge(ConfigService.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
+  Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie)),
   Layer.provideMerge(LaborerStoreLive)
 )
 

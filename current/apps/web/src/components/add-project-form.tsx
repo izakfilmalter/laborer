@@ -8,7 +8,7 @@
  * Both paths call the `project.add` mutation with the selected/entered
  * directory path.
  *
- * Success: project appears in the list (via LiveStore), toast shown.
+ * Success: project appears through the shared-state stream, toast shown.
  * Error: server validation error displayed in a toast.
  *
  * @see Issue #27: Add Project form

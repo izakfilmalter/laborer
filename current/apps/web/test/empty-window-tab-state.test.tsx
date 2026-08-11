@@ -27,6 +27,12 @@ const SELECT_WORKSPACE_REGEX = /Select a workspace to add to this tab/
 // ---------------------------------------------------------------------------
 
 const addWorkspaceToCurrentTabMock = vi.fn()
+const { projectResults } = vi.hoisted(() => ({
+  projectResults: { current: [] as MockProject[] },
+}))
+const { workspaceResults } = vi.hoisted(() => ({
+  workspaceResults: { current: [] as MockWorkspace[] },
+}))
 
 const mockActions: PanelActions = {
   assignTerminalToPane: vi.fn(),
@@ -94,9 +100,14 @@ interface MockProject {
   name: string
 }
 
-// Query results array: [workspaces, projects] set per test
-const queryResults: unknown[][] = []
-let queryCallIndex = 0
+// LiveStore now supplies only workspaces; projects come from shared-state atoms.
+vi.mock('@effect-atom/atom-react/Hooks', () => ({
+  useAtomValue: () => projectResults.current,
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  projectViewsAtom: Symbol.for('projectViews'),
+}))
 
 vi.mock('@livestore/livestore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@livestore/livestore')>()
@@ -108,11 +119,7 @@ vi.mock('@livestore/livestore', async (importOriginal) => {
 
 vi.mock('@/livestore/store', () => ({
   useLaborerStore: () => ({
-    useQuery: () => {
-      const result = queryResults[queryCallIndex] ?? []
-      queryCallIndex += 1
-      return result
-    },
+    useQuery: () => workspaceResults.current,
   }),
 }))
 
@@ -182,10 +189,8 @@ function setupQueryResults(
   workspaceData: MockWorkspace[],
   projectData: MockProject[]
 ) {
-  // The component calls useQuery twice: first for workspaces, then for projects
-  queryResults.length = 0
-  queryResults.push(workspaceData, projectData)
-  queryCallIndex = 0
+  workspaceResults.current = workspaceData
+  projectResults.current = projectData
 }
 
 afterEach(() => {
@@ -197,8 +202,8 @@ afterEach(() => {
     writable: true,
     configurable: true,
   })
-  queryResults.length = 0
-  queryCallIndex = 0
+  workspaceResults.current = []
+  projectResults.current = []
 })
 
 // ---------------------------------------------------------------------------

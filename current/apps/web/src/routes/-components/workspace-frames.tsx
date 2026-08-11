@@ -5,7 +5,8 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
-import { projects, workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { workspaces } from '@laborer/shared/schema'
 import type {
   PanelNode,
   PaneType,
@@ -21,6 +22,7 @@ import type {
   GroupImperativeHandle,
   PanelImperativeHandle,
 } from 'react-resizable-panels'
+import { projectViewsAtom } from '@/atoms/shared-state'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -182,9 +184,6 @@ export function EmptyPanelTabState({
 const allWorkspacesForPicker$ = queryDb(workspaces, {
   label: 'emptyWindowTabWorkspaces',
 })
-const allProjectsForPicker$ = queryDb(projects, {
-  label: 'emptyWindowTabProjects',
-})
 
 // ---------------------------------------------------------------------------
 // Empty window tab state — workspace picker
@@ -218,7 +217,7 @@ export function EmptyWindowTabState() {
   const actions = usePanelActions()
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspacesForPicker$)
-  const projectList = store.useQuery(allProjectsForPicker$)
+  const projectList = useAtomValue(projectViewsAtom)
 
   // Collect workspace IDs that are already open in any window tab
   const openWorkspaceIds = useMemo(() => {

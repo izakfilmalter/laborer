@@ -1,6 +1,7 @@
 import type {
   BoardTask as RpcBoardTask,
   SharedStateUpdate,
+  SharedTaskRow,
   TaskBoardEvent,
 } from '@laborer/shared/rpc'
 
@@ -44,6 +45,10 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
   pr: null,
   worktreeState: worktreeState(task),
 })
+
+export const boardTasksFromSharedRows = (
+  tasks: readonly SharedTaskRow[]
+): readonly BoardTask[] => tasks.map(toBoardTask)
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */
 export const applyTaskBoardEvents = (

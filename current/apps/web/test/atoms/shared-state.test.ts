@@ -1,4 +1,4 @@
-import type { SharedTaskRow } from '@laborer/shared/rpc'
+import type { SharedProjectRow, SharedTaskRow } from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
   type AuthoritativeSharedState,
@@ -43,6 +43,17 @@ const empty: AuthoritativeSharedState = {
   tasks: { cursor: 0, rows: [] },
 }
 
+const project = (rootPath: string, revision = 1): SharedProjectRow => ({
+  canonicalGitCommonDir: `${rootPath}/.git`,
+  createdAt: 1,
+  id: 'project-one',
+  name: 'one',
+  repoId: 'repo-one',
+  revision,
+  rootPath,
+  updatedAt: revision,
+})
+
 describe('applySharedStateUpdate', () => {
   it('installs snapshots and applies explicit deletion deltas', () => {
     const snapshotted = applySharedStateUpdate(empty, {
@@ -80,5 +91,33 @@ describe('applySharedStateUpdate', () => {
 
     expect(duplicate.tasks.rows[0]?.id).toBe('stale')
     expect(reconnected.tasks.rows[0]?.id).toBe('fresh')
+  })
+
+  it('applies project registration, re-point, and removal updates', () => {
+    const registered = applySharedStateUpdate(empty, {
+      projects: { cursor: 1, rows: [project('/first')], type: 'snapshot' },
+    })
+    const rePointed = applySharedStateUpdate(registered, {
+      projects: {
+        cursor: 2,
+        deletedRowIds: [],
+        rows: [project('/second', 2)],
+        type: 'delta',
+      },
+    })
+    const removed = applySharedStateUpdate(rePointed, {
+      projects: {
+        cursor: 3,
+        deletedRowIds: ['project-one'],
+        rows: [],
+        type: 'delta',
+      },
+    })
+
+    expect(rePointed.projects).toEqual({
+      cursor: 2,
+      rows: [project('/second', 2)],
+    })
+    expect(removed.projects).toEqual({ cursor: 3, rows: [] })
   })
 })

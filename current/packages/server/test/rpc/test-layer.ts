@@ -14,6 +14,7 @@ import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
@@ -204,6 +205,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(TestLaborerStore)
 )
 
@@ -214,13 +216,15 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
   Layer.provide(DeferredServicesReadyTrueLayer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(TestLaborerStore),
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 export const TestLaborerRpcClient = RpcTest.makeClient(LaborerRpcs)
 
 interface ScopedTestRpcContext {
   readonly client: Effect.Effect.Success<typeof TestLaborerRpcClient>
+  readonly database: LaborerDatabase['Type']['database']
   readonly store: LaborerStore['Type']['store']
   readonly terminalClientRecorder: TestTerminalClientRecorder['Type']
 }
@@ -239,10 +243,11 @@ export const makeScopedTestRpcContext: Effect.Effect<
     Effect.provide(Layer.succeedContext(context))
   )
   const { store } = Context.get(context, LaborerStore)
+  const { database } = Context.get(context, LaborerDatabase)
   const terminalClientRecorder = Context.get(
     context,
     TestTerminalClientRecorder
   )
 
-  return { client, store, terminalClientRecorder }
+  return { client, database, store, terminalClientRecorder }
 })

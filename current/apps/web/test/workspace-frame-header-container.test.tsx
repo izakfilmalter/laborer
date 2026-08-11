@@ -1,16 +1,23 @@
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { refreshPrMock, mutationMap, useLaborerStoreMock, activePaneIdMock } =
-  vi.hoisted(() => ({
-    refreshPrMock: vi.fn().mockResolvedValue(undefined),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    useLaborerStoreMock: vi.fn(),
-    activePaneIdMock: vi.fn(),
-  }))
+const {
+  refreshPrMock,
+  mutationMap,
+  useLaborerStoreMock,
+  activePaneIdMock,
+  projectRowsMock,
+} = vi.hoisted(() => ({
+  refreshPrMock: vi.fn().mockResolvedValue(undefined),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  useLaborerStoreMock: vi.fn(),
+  activePaneIdMock: vi.fn(),
+  projectRowsMock: vi.fn(),
+}))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
+  useAtomValue: projectRowsMock,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -80,30 +87,26 @@ describe('WorkspaceFrameHeaderContainer', () => {
     refreshPrMock.mockClear()
     activePaneIdMock.mockReset()
     useLaborerStoreMock.mockReset()
+    projectRowsMock.mockReset()
   })
 
   it('refreshes PR status when a pane in the workspace becomes focused', async () => {
     activePaneIdMock.mockReturnValue('pane-1')
+    projectRowsMock.mockReturnValue([{ id: 'project-1', name: 'Demo' }])
     useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'headerProjects') {
-          return [{ id: 'project-1', name: 'Demo' }]
-        }
-
-        return [
-          {
-            id: 'ws-1',
-            projectId: 'project-1',
-            branchName: 'feature/demo',
-            prNumber: null,
-            prState: null,
-            prTitle: null,
-            prUrl: null,
-            aheadCount: null,
-            behindCount: null,
-          },
-        ]
-      },
+      useQuery: () => [
+        {
+          id: 'ws-1',
+          projectId: 'project-1',
+          branchName: 'feature/demo',
+          prNumber: null,
+          prState: null,
+          prTitle: null,
+          prUrl: null,
+          aheadCount: null,
+          behindCount: null,
+        },
+      ],
     })
 
     render(
@@ -126,6 +129,7 @@ describe('WorkspaceFrameHeaderContainer', () => {
 
   it('does not refresh PR status when no pane in the workspace is focused', () => {
     activePaneIdMock.mockReturnValue(null)
+    projectRowsMock.mockReturnValue([])
     useLaborerStoreMock.mockReturnValue({
       useQuery: () => [],
     })

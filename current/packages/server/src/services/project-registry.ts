@@ -1,46 +1,16 @@
-/**
- * ProjectRegistry — Effect Service
- *
- * Manages the set of projects (repos) the user is working with.
- * Validates paths are git repositories and stores/retrieves projects
- * via LiveStore.
- *
- * Uses RepositoryIdentity to resolve canonical repository metadata,
- * ensuring that repo root, nested path, symlinked path, and linked
- * worktree inputs all map to the same logical project.
- *
- * Usage:
- * ```ts
- * const program = Effect.gen(function* () {
- *   const registry = yield* ProjectRegistry
- *   const project = yield* registry.addProject("/path/to/repo")
- * })
- * ```
- *
- * Issue #21: addProject method
- * Issue #22: removeProject method
- * Issue #23: listProjects + getProject methods
- *
- * @see PRD-opencode-inspired-repo-watching.md — Issue 6: addProject performs
- *   canonical discovery, initial worktree reconciliation, initial branch
- *   refresh, and watcher startup before returning the project as ready.
- */
-
 import { basename } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
+import { events } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
 import { BranchStateTracker } from './branch-state-tracker.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { LaborerStore } from './laborer-store.js'
+import type { Project } from './native-laborer-database.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { RepositoryWatchCoordinator } from './repository-watch-coordinator.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
 
-/**
- * Shape of a project record returned by the registry.
- * Matches the LiveStore projects table columns.
- */
-interface ProjectRecord {
+export interface ProjectRecord {
   readonly canonicalGitCommonDir: string | null
   readonly id: string
   readonly name: string
@@ -48,11 +18,23 @@ interface ProjectRecord {
   readonly repoPath: string
 }
 
+const projectRecord = (project: Project): ProjectRecord => ({
+  ...project,
+  repoPath: project.rootPath,
+})
+
+const databaseRpcError = (operation: string, cause: unknown) =>
+  new RpcError({
+    code: 'PROJECT_DATABASE_ERROR',
+    message: `Could not ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  })
+
 class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
   ProjectRegistry,
   {
     readonly addProject: (
-      repoPath: string
+      repoPath: string,
+      rePointExisting?: boolean
     ) => Effect.Effect<ProjectRecord, RpcError>
     readonly removeProject: (projectId: string) => Effect.Effect<void, RpcError>
     readonly listProjects: () => Effect.Effect<readonly ProjectRecord[], never>
@@ -64,55 +46,48 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
   static readonly layer = Layer.effect(
     ProjectRegistry,
     Effect.gen(function* () {
+      const database = yield* LaborerDatabase
       const { store } = yield* LaborerStore
       const repoIdentity = yield* RepositoryIdentity
       const worktreeReconciler = yield* WorktreeReconciler
       const branchTracker = yield* BranchStateTracker
       const watchCoordinator = yield* RepositoryWatchCoordinator
 
-      const withBestEffortBackfill = (project: ProjectRecord) =>
-        backfillProjectIdentity(project).pipe(
-          Effect.catchAll(() => Effect.succeed(project))
-        )
-
-      const backfillProjectIdentity = Effect.fn(
-        'ProjectRegistry.backfillProjectIdentity'
-      )(function* (project: ProjectRecord) {
-        if (project.repoId !== null && project.canonicalGitCommonDir !== null) {
+      const prepareProject = (project: ProjectRecord) =>
+        Effect.gen(function* () {
+          yield* worktreeReconciler
+            .reconcile(project.id, project.repoPath)
+            .pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning(
+                  `Initial worktree reconciliation failed for project ${project.repoPath}: ${error.message}`
+                )
+              )
+            )
+          yield* branchTracker
+            .refreshBranches(project.id)
+            .pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning(
+                  `Initial branch refresh failed for project ${project.repoPath}: ${error.message}`
+                )
+              )
+            )
+          yield* watchCoordinator.watchProject(
+            project.id,
+            project.repoPath,
+            project.name,
+            project.canonicalGitCommonDir ?? undefined
+          )
           return project
-        }
-
-        const identity = yield* repoIdentity.resolve(project.repoPath)
-        const backfilledProject = {
-          ...project,
-          repoPath: identity.canonicalRoot,
-          repoId: identity.repoId,
-          canonicalGitCommonDir: identity.canonicalGitCommonDir,
-        } satisfies ProjectRecord
-
-        store.commit(
-          events.projectRepositoryIdentityBackfilled({
-            id: project.id,
-            repoPath: identity.canonicalRoot,
-            repoId: identity.repoId,
-            canonicalGitCommonDir: identity.canonicalGitCommonDir,
-          })
-        )
-
-        return backfilledProject
-      })
+        })
 
       const addProject = Effect.fn('ProjectRegistry.addProject')(function* (
-        repoPath: string
+        repoPath: string,
+        rePointExisting = true
       ) {
-        // 1. Resolve canonical repository identity
-        // This validates the path exists, is a directory, and is inside
-        // a git repository. It also resolves symlinks and finds the
-        // true checkout root.
         const identity = yield* repoIdentity.resolve(repoPath).pipe(
           Effect.mapError((error) => {
-            // Distinguish between path-level issues and git-level
-            // issues so downstream consumers get appropriate codes.
             const isPathError =
               error.message.includes('does not exist') ||
               error.message.includes('not a directory')
@@ -124,138 +99,142 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
             })
           })
         )
-
-        const canonicalRoot = identity.canonicalRoot
-
-        // 2. Check if the logical repository is already registered.
-        // Comparing only checkout roots misses the case where the user
-        // adds a linked worktree path for a repository that already has
-        // its main checkout registered, so dedupe on repo identity.
-        const existingProject = yield* Effect.forEach(
-          store.query(tables.projects),
-          (project) =>
-            Effect.gen(function* () {
-              if (project.repoId === identity.repoId) {
-                return project
-              }
-
-              const backfilledProject = yield* backfillProjectIdentity(
-                project
-              ).pipe(
-                Effect.match({
-                  onFailure: () => undefined,
-                  onSuccess: (resolvedProject) => resolvedProject,
-                })
-              )
-
-              return backfilledProject?.repoId === identity.repoId
-                ? backfilledProject
-                : undefined
-            })
-        ).pipe(
-          Effect.map((projects) =>
-            projects.find((project) => project !== undefined)
+        const existing = yield* database
+          .run('find project by repository identity', (db) =>
+            db.findProjectByRepoId(identity.repoId)
           )
-        )
+          .pipe(
+            Effect.mapError((cause) => databaseRpcError('read projects', cause))
+          )
 
-        if (existingProject) {
+        if (existing && !rePointExisting) {
+          return projectRecord(existing)
+        }
+        if (
+          existing?.rootPath === identity.canonicalRoot ||
+          existing?.canonicalGitCommonDir === identity.canonicalGitCommonDir
+        ) {
           return yield* new RpcError({
-            message: `${repoPath} resolves to the already registered repository ${existingProject.repoPath} (project ${existingProject.name})`,
+            message: `${repoPath} resolves to the already registered repository ${existing.rootPath} (project ${existing.name})`,
             code: 'ALREADY_REGISTERED',
           })
         }
+        const name = basename(identity.canonicalRoot)
+        const stored = existing
+          ? yield* database
+              .run(
+                're-point project',
+                (db) =>
+                  db.updateProject(existing.id, existing.revision, {
+                    canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                    name,
+                    rootPath: identity.canonicalRoot,
+                  }).row
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  databaseRpcError('re-point project', cause)
+                )
+              )
+          : yield* database
+              .run(
+                'register project',
+                (db) =>
+                  db.insertProject({
+                    id: crypto.randomUUID(),
+                    name,
+                    rootPath: identity.canonicalRoot,
+                    repoId: identity.repoId,
+                    canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                  }).row
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  databaseRpcError('register project', cause)
+                )
+              )
 
-        // 3. Derive project name from the canonical checkout root
-        const name = basename(canonicalRoot)
-
-        // 4. Generate a unique ID
-        const id = crypto.randomUUID()
-
-        // 5. Commit ProjectCreated event to LiveStore using canonical path
-        const project = {
-          id,
-          repoPath: canonicalRoot,
-          repoId: identity.repoId,
-          canonicalGitCommonDir: identity.canonicalGitCommonDir,
-          name,
+        // Keep legacy server-only workspace services alive during the
+        // expand phase. Renderer project reads are exclusively shared-state.
+        if (existing) {
+          store.commit(
+            events.projectRepositoryIdentityBackfilled({
+              id: stored.id,
+              repoPath: stored.rootPath,
+              repoId: stored.repoId,
+              canonicalGitCommonDir: stored.canonicalGitCommonDir,
+            })
+          )
+        } else {
+          store.commit(
+            events.projectCreated({
+              id: stored.id,
+              name: stored.name,
+              repoPath: stored.rootPath,
+              repoId: stored.repoId,
+              canonicalGitCommonDir: stored.canonicalGitCommonDir,
+            })
+          )
         }
 
-        store.commit(events.projectCreated(project))
-
-        yield* worktreeReconciler
-          .reconcile(id, canonicalRoot)
-          .pipe(
-            Effect.catchAll((error) =>
-              Effect.logWarning(
-                `Initial worktree reconciliation failed for project ${canonicalRoot}: ${error.message}`
-              )
-            )
-          )
-
-        // Initial branch refresh ensures workspace records have
-        // current branch names before the project is returned as
-        // ready. This must run after reconciliation has created
-        // workspace records.
-        yield* branchTracker
-          .refreshBranches(id)
-          .pipe(
-            Effect.catchAll((error) =>
-              Effect.logWarning(
-                `Initial branch refresh failed for project ${canonicalRoot}: ${error.message}`
-              )
-            )
-          )
-
-        yield* watchCoordinator.watchProject(
-          id,
-          canonicalRoot,
-          name,
-          identity.canonicalGitCommonDir
-        )
-
-        return project
+        return yield* prepareProject(projectRecord(stored))
       })
 
       const removeProject = Effect.fn('ProjectRegistry.removeProject')(
         function* (projectId: string) {
-          // 1. Validate the project exists
-          const existingProjects = store.query(
-            tables.projects.where('id', projectId)
-          )
-
-          if (existingProjects.length === 0) {
+          const existing = yield* database
+            .run('find project', (db) => db.findProject(projectId))
+            .pipe(
+              Effect.mapError((cause) =>
+                databaseRpcError('read project', cause)
+              )
+            )
+          if (existing === null) {
             return yield* new RpcError({
               message: `Project not found: ${projectId}`,
               code: 'NOT_FOUND',
             })
           }
-
           yield* watchCoordinator.unwatchProject(projectId)
-
-          // 2. Commit ProjectRemoved event to LiveStore
+          yield* database
+            .run('remove project', (db) =>
+              db.deleteProject(projectId, existing.revision)
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                databaseRpcError('remove project', cause)
+              )
+            )
           store.commit(events.projectRemoved({ id: projectId }))
         }
       )
 
       const listProjects = () =>
-        Effect.forEach(store.query(tables.projects), (project) =>
-          withBestEffortBackfill(project as ProjectRecord)
-        )
+        database
+          .run('list projects', (db) => db.listProjects().map(projectRecord))
+          .pipe(
+            Effect.catchAll((cause) =>
+              Effect.logError(databaseRpcError('list projects', cause)).pipe(
+                Effect.as([] as readonly ProjectRecord[])
+              )
+            )
+          )
 
       const getProject = Effect.fn('ProjectRegistry.getProject')(function* (
         projectId: string
       ) {
-        const results = store.query(tables.projects.where('id', projectId))
-
-        if (results.length === 0) {
+        const project = yield* database
+          .run('find project', (db) => db.findProject(projectId))
+          .pipe(
+            Effect.mapError((cause) => databaseRpcError('read project', cause))
+          )
+        if (project === null) {
           return yield* new RpcError({
             message: `Project not found: ${projectId}`,
             code: 'NOT_FOUND',
           })
         }
-
-        // Safe: length > 0 guaranteed by the check above
-        return yield* withBestEffortBackfill(results[0] as ProjectRecord)
+        return projectRecord(project)
       })
 
       return ProjectRegistry.of({

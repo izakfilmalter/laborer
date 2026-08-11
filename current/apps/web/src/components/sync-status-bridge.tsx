@@ -15,16 +15,14 @@
  * @see apps/web/src/components/sync-status-context.tsx — the context being updated
  */
 
-import { projects, workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { Effect, Fiber, Stream } from 'effect'
 import { useEffect, useMemo, useRef } from 'react'
+import { projectViewsAtom } from '@/atoms/shared-state'
 import { useSyncStatusUpdate } from '@/components/sync-status-context'
 import { useLaborerStore } from '@/livestore/store'
-
-const syncStatusBridgeProjects$ = queryDb(projects, {
-  label: 'syncStatusBridgeProjects',
-})
 
 const syncStatusBridgeWorkspaces$ = queryDb(workspaces, {
   label: 'syncStatusBridgeWorkspaces',
@@ -38,7 +36,7 @@ function SyncStatusBridge(): null {
   const store = useLaborerStore()
   const setSyncState = useSyncStatusUpdate()
   const mountedRef = useRef(true)
-  const projectList = store.useQuery(syncStatusBridgeProjects$)
+  const projectList = useAtomValue(projectViewsAtom)
   const workspaceList = store.useQuery(syncStatusBridgeWorkspaces$)
   const liveStoreSnapshot = useMemo(
     () =>

@@ -7,6 +7,7 @@ import { Effect, Exit, Layer, Scope } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
@@ -44,6 +45,7 @@ const deriveIdentity = (repoPath: string) => {
  * ProjectRegistry sits at the top, consuming all repo-watching services.
  */
 const TestLayer = ProjectRegistry.layer.pipe(
+  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(RepositoryWatchCoordinator.layer),
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),

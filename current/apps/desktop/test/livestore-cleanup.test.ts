@@ -42,6 +42,19 @@ describe('LiveStore cleanup', () => {
     )
   })
 
+  it('ignores relative XDG paths and uses the Linux home fallback', () => {
+    const targets = enumerateLiveStoreCleanupTargets({
+      environment: { DATA_DIR: 'relative-data', XDG_CONFIG_HOME: 'relative' },
+      homeDirectory: '/home/tester',
+      platform: 'linux',
+    })
+    const paths = targets.map((target) => target.path)
+
+    expect(paths).toContain('/home/tester/.config/laborer/data/laborer')
+    expect(paths).toContain('/home/tester/.config/Laborer/File System')
+    expect(paths.every((path) => path.startsWith('/home/tester/'))).toBe(true)
+  })
+
   it('defaults to observation and removes only explicit targets on request', async () => {
     const root = await mkdtemp(join(tmpdir(), 'laborer-livestore-cleanup-'))
     temporaryDirectories.push(root)

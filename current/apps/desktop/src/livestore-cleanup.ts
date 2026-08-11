@@ -13,6 +13,13 @@ export interface CleanupEnvironment {
   readonly XDG_CONFIG_HOME?: string
 }
 
+function absoluteEnvironmentPath(
+  value: string | undefined
+): string | undefined {
+  const candidate = value?.trim()
+  return candidate && isAbsolute(candidate) ? candidate : undefined
+}
+
 function addDesktopLocations(options: {
   readonly appDataRoot: string
   readonly dataDirectories: Set<string>
@@ -68,11 +75,13 @@ export function enumerateLiveStoreCleanupTargets(options?: {
 
   // The server adapter's development default.
   dataDirectories.add(join(homeDirectory, '.config', 'laborer', 'data'))
-  if (environment.XDG_CONFIG_HOME && isAbsolute(environment.XDG_CONFIG_HOME)) {
-    dataDirectories.add(join(environment.XDG_CONFIG_HOME, 'laborer', 'data'))
+  const xdgConfigHome = absoluteEnvironmentPath(environment.XDG_CONFIG_HOME)
+  if (xdgConfigHome) {
+    dataDirectories.add(join(xdgConfigHome, 'laborer', 'data'))
   }
-  if (environment.DATA_DIR && isAbsolute(environment.DATA_DIR)) {
-    dataDirectories.add(environment.DATA_DIR)
+  const configuredDataDirectory = absoluteEnvironmentPath(environment.DATA_DIR)
+  if (configuredDataDirectory) {
+    dataDirectories.add(configuredDataDirectory)
   }
 
   if (platform === 'darwin') {
@@ -92,9 +101,9 @@ export function enumerateLiveStoreCleanupTargets(options?: {
   } else {
     const appDataRoot =
       platform === 'win32'
-        ? environment.APPDATA
-        : environment.XDG_CONFIG_HOME || join(homeDirectory, '.config')
-    if (appDataRoot && isAbsolute(appDataRoot)) {
+        ? absoluteEnvironmentPath(environment.APPDATA)
+        : (xdgConfigHome ?? join(homeDirectory, '.config'))
+    if (appDataRoot) {
       addDesktopLocations({
         appDataRoot,
         dataDirectories,

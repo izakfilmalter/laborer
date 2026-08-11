@@ -215,6 +215,56 @@ function sleep(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function terminateProcessGroup(pid: number): void {
+  const groupPid = -pid
+  try {
+    process.kill(groupPid, 'SIGTERM')
+  } catch {
+    return
+  }
+
+  const shutdownDeadline = Date.now() + 5000
+  while (Date.now() < shutdownDeadline) {
+    if (!isProcessRunning(groupPid)) {
+      return
+    }
+    sleep(50)
+  }
+
+  try {
+    process.kill(groupPid, 'SIGKILL')
+  } catch {
+    // The packaged app and its subprocesses completed graceful shutdown.
+  }
+}
+
+function hasValidSmokeMarker(markerPath: string): boolean {
+  if (!existsSync(markerPath)) {
+    return false
+  }
+
+  try {
+    const marker: unknown = JSON.parse(readFileSync(markerPath, 'utf8'))
+    return (
+      typeof marker === 'object' &&
+      marker !== null &&
+      'url' in marker &&
+      marker.url === 'laborer://app/'
+    )
+  } catch {
+    return false
+  }
+}
+
 function resolveGitCommitHash(): string {
   const result = spawnSync('git', ['rev-parse', '--short=12', 'HEAD'], {
     cwd: REPO_ROOT,
@@ -475,30 +525,39 @@ function smokeTestPackagedApp(stageAppDir: string): void {
   const stateRoot = join(smokeRoot, 'state')
   const databasePath = join(stateRoot, 'laborer', 'laborer.sqlite')
   const output = VERBOSE ? 'inherit' : 'ignore'
-  const child = spawn(executablePath, [], {
-    env: {
-      ...process.env,
-      HOME: smokeRoot,
-      XDG_CONFIG_HOME: join(smokeRoot, 'config'),
-      XDG_STATE_HOME: stateRoot,
-      LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
-    },
-    stdio: ['ignore', output, output],
-  })
-  const childPid = child.pid
-  if (childPid === undefined) {
-    throw new Error('Packaged app did not start')
-  }
-
-  const startedAt = Date.now()
+  let childPid: number | undefined
   try {
+    const child = spawn(executablePath, [], {
+      detached: true,
+      env: {
+        HOME: smokeRoot,
+        LANG: process.env.LANG ?? 'en_US.UTF-8',
+        LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
+        LABORER_DISABLE_AUTO_UPDATE: '1',
+        PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+        SHELL: process.env.SHELL ?? '/bin/zsh',
+        TMPDIR: smokeRoot,
+        XDG_CONFIG_HOME: join(smokeRoot, 'config'),
+        XDG_STATE_HOME: stateRoot,
+      },
+      stdio: ['ignore', output, output],
+    })
+    // A failed spawn reports both an undefined pid and an asynchronous error.
+    // The listener prevents that error from escaping after this function throws.
+    child.once('error', () => undefined)
+    childPid = child.pid
+    if (childPid === undefined) {
+      throw new Error('Packaged app did not start')
+    }
+
+    const startedAt = Date.now()
     while (Date.now() - startedAt < PACKAGED_SMOKE_TIMEOUT_MS) {
-      if (child.exitCode !== null) {
-        throw new Error(
-          `Packaged app exited before smoke readiness (exit ${String(child.exitCode)})`
-        )
+      // This script intentionally blocks between probes, so ChildProcess
+      // events and exitCode cannot be used to observe liveness here.
+      if (!isProcessRunning(childPid)) {
+        throw new Error('Packaged app exited before smoke readiness')
       }
-      if (existsSync(markerPath) && existsSync(databasePath)) {
+      if (hasValidSmokeMarker(markerPath) && existsSync(databasePath)) {
         log(
           'Packaged app loaded its renderer against the shared laborer.sqlite'
         )
@@ -510,22 +569,8 @@ function smokeTestPackagedApp(stageAppDir: string): void {
       `Packaged app did not load its renderer and shared database within ${String(PACKAGED_SMOKE_TIMEOUT_MS)}ms`
     )
   } finally {
-    if (child.exitCode === null) {
-      child.kill('SIGTERM')
-      const shutdownDeadline = Date.now() + 5000
-      while (Date.now() < shutdownDeadline) {
-        try {
-          process.kill(childPid, 0)
-          sleep(50)
-        } catch {
-          break
-        }
-      }
-      try {
-        process.kill(childPid, 'SIGKILL')
-      } catch {
-        // The packaged app completed its graceful shutdown.
-      }
+    if (childPid !== undefined) {
+      terminateProcessGroup(childPid)
     }
     rmSync(smokeRoot, { force: true, recursive: true })
   }

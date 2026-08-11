@@ -98,17 +98,55 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
 })
 
 describe('task card details', () => {
-  it('makes agent-authored and described cards distinct', async () => {
-    const onOpen = vi.fn()
-    render(<TaskBoardCard onOpen={onOpen} task={task()} />)
+  it('makes agent-authored and described cards distinct', () => {
+    render(<TaskBoardCard onOpen={vi.fn()} task={task()} />)
 
     expect(screen.getByText('Agent staged')).toBeTruthy()
     expect(screen.getByText('Has description')).toBeTruthy()
+  })
+
+  it('sends the card body to the work and leaves editing to its own button', async () => {
+    const onActivate = vi.fn()
+    const onOpen = vi.fn()
+    render(
+      <TaskBoardCard
+        hasWorkspace
+        onActivate={onActivate}
+        onOpen={onOpen}
+        task={task()}
+      />
+    )
 
     await userEvent.click(screen.getByText('Improve task details'))
+    expect(onActivate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-1' })
+    )
+    expect(onOpen).not.toHaveBeenCalled()
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Edit Improve task details' })
+    )
     expect(onOpen).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'task-1' })
     )
+  })
+
+  it('says where the card leads, workspace or form', () => {
+    const { rerender } = render(
+      <TaskBoardCard hasWorkspace onActivate={vi.fn()} task={task()} />
+    )
+    expect(
+      screen.getByRole('button', {
+        name: 'Open workspace for Improve task details',
+      })
+    ).toBeTruthy()
+
+    rerender(<TaskBoardCard onActivate={vi.fn()} task={task()} />)
+    expect(
+      screen.getByRole('button', {
+        name: 'Card details for Improve task details',
+      })
+    ).toBeTruthy()
   })
 
   it('edits and saves title and plain-text description with the card revision', async () => {

@@ -70,6 +70,33 @@ export interface BoardProject {
   readonly repoPath: string
 }
 
+/** The workspace fields the board needs to recognise a card's workspace. */
+export interface BoardWorkspace {
+  readonly id: string
+  readonly status: string
+  readonly worktreePath: string
+}
+
+/**
+ * The workspace a card's work already lives in, if any.
+ *
+ * The worktree path is the identity both surfaces agree on: a card and a
+ * workspace pointing at the same directory are the same piece of work. A card
+ * with no worktree — a Todo nobody has started — has no workspace to open, and
+ * says so by returning nothing rather than guessing from a branch name.
+ */
+export const workspaceForTask = <Workspace extends BoardWorkspace>(
+  task: Pick<BoardTask, 'worktreePath'>,
+  workspaces: readonly Workspace[]
+): Workspace | undefined =>
+  task.worktreePath === null
+    ? undefined
+    : workspaces.find(
+        (workspace) =>
+          workspace.status !== 'destroyed' &&
+          workspace.worktreePath === task.worktreePath
+      )
+
 export const slackAnalysisState = (
   task: Pick<BoardTask, 'executionMirror' | 'description' | 'source'>
 ): SlackAnalysisState => {

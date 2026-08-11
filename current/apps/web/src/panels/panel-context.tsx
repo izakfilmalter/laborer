@@ -141,6 +141,16 @@ interface PanelActions {
    */
   readonly closeWorkspace: (workspaceId: string) => void
   /**
+   * Bring a workspace forward and put keyboard focus inside it.
+   *
+   * Reveals the workspace where it already lives — switching window tabs if
+   * needed — and focuses the pane it was last on. A workspace that is not
+   * open anywhere is added to the current window tab first.
+   *
+   * @param workspaceId - The workspace to reveal and focus
+   */
+  readonly focusWorkspace: (workspaceId: string) => void
+  /**
    * Close all panes belonging to a workspace without confirmation.
    *
    * Identical to closeWorkspace but bypasses the running-process

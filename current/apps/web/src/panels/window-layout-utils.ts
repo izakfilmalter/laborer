@@ -2125,6 +2125,7 @@ export {
   reorderWindowTabs,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActivePaneFromLeaf,
   resolveActiveWorkspaceId,
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,

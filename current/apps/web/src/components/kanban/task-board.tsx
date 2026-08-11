@@ -1570,6 +1570,8 @@ function TaskBoard({
     install: (taskId: string, overlay: TaskOptimisticOverlay) =>
       installTaskOverlay({ overlay, taskId }),
     isConflict: (error: unknown) => extractErrorCode(error) === 'CAS_CONFLICT',
+    isDefinitiveFailure: (error: unknown) =>
+      extractErrorCode(error) !== undefined,
     mutationId: () => crypto.randomUUID(),
     send: async (command: {
       readonly expectedRevision: number

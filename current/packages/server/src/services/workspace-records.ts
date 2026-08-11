@@ -33,7 +33,17 @@ const projectForTask = (
   task: LaborerTask,
   projects: readonly Project[]
 ): Project | undefined =>
-  projects.find((project) => project.rootPath === task.rootPath)
+  projects
+    .filter(
+      (project) =>
+        project.rootPath === task.rootPath ||
+        task.rootPath.startsWith(
+          project.rootPath.endsWith('/')
+            ? project.rootPath
+            : `${project.rootPath}/`
+        )
+    )
+    .sort((left, right) => right.rootPath.length - left.rootPath.length)[0]
 
 const WORKSPACE_PR_STATES = {
   closed: 'CLOSED',

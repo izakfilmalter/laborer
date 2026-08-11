@@ -39,6 +39,8 @@ export interface OptimisticTaskMoveDependencies {
   readonly getAuthoritativeTask: (taskId: string) => SharedTaskRow | undefined
   readonly install: (taskId: string, overlay: TaskOptimisticOverlay) => void
   readonly isConflict: (error: unknown) => boolean
+  /** True when the server replied and therefore definitely rejected the write. */
+  readonly isDefinitiveFailure: (error: unknown) => boolean
   readonly mutationId: () => string
   readonly send: (command: TaskMoveCommand) => Promise<TaskMoveConfirmation>
 }
@@ -154,7 +156,12 @@ export class OptimisticTaskMoveQueue {
         }
       })
       .catch((error: unknown) => {
-        if (!this.#dependencies.isConflict(error)) {
+        if (
+          !(
+            this.#dependencies.isConflict(error) ||
+            this.#dependencies.isDefinitiveFailure(error)
+          )
+        ) {
           // The command may have committed. Its ledger token is authoritative.
           if (card.inFlight?.mutationId === pending.mutationId) {
             card.ambiguous = true
@@ -166,6 +173,8 @@ export class OptimisticTaskMoveQueue {
           }
           return
         }
+        // CAS conflicts and other application-level rejections definitely did
+        // not commit. Only transport failures retain the overlay for polling.
         this.#dependencies.clear(taskId, pending.mutationId)
         if (card.inFlight?.mutationId === pending.mutationId) {
           card.inFlight = null

@@ -56,14 +56,14 @@ const applyTableUpdate = <Row>(
   update: AnyTableUpdate<Row>,
   id: (row: Row) => string
 ): AuthoritativeTable<Row> => {
-  if (
-    update.cursor < current.cursor ||
-    (update.type === 'delta' && update.cursor === current.cursor)
-  ) {
-    return current
-  }
   if (update.type === 'snapshot') {
+    // A new subscription owns a fresh server cursor. Its snapshot remains
+    // authoritative even when the database was replaced or its ledger was
+    // pruned below the cursor retained by this renderer.
     return { cursor: update.cursor, rows: update.rows }
+  }
+  if (update.cursor <= current.cursor) {
+    return current
   }
   const rows = new Map(current.rows.map((row) => [id(row), row]))
   for (const deletedId of update.deletedRowIds) {

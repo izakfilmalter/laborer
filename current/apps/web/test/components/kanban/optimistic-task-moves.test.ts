@@ -75,6 +75,7 @@ const setup = () => {
     getAuthoritativeTask: () => authoritative,
     install: (taskId, overlay) => overlays.set(taskId, overlay.mutationId),
     isConflict: (error) => error === 'conflict',
+    isDefinitiveFailure: (error) => error === 'rejected',
     mutationId: () => `move-${++nextId}`,
     send: (command) => {
       const response = deferred<TaskMoveConfirmation>()
@@ -117,6 +118,15 @@ describe('OptimisticTaskMoveQueue', () => {
     state.overlays.delete('task-1')
     state.queue.observeMutationIds(['move-1'])
     expect(state.overlays.get('task-1')).toBeUndefined()
+  })
+
+  it('clears an overlay when the server definitively rejects the move', async () => {
+    const state = setup()
+    state.queue.move('task-1', { sortOrder: 2, status: 'in_review' })
+    state.sends[0]?.response.reject('rejected')
+    await vi.waitFor(() => expect(state.overlays.size).toBe(0))
+
+    expect(state.clear).toHaveBeenCalledWith('task-1', 'move-1')
   })
 
   it('recognizes an early receipt from a full ledger batch', async () => {

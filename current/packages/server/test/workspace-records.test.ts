@@ -18,6 +18,13 @@ describe('task-backed workspace records', () => {
           repoId: 'repo-1',
           rootPath: '/repo',
         })
+        database.insertProject({
+          canonicalGitCommonDir: '/repo/packages/nested/.git',
+          id: 'project-nested',
+          name: 'Nested',
+          repoId: 'repo-nested',
+          rootPath: '/repo/packages/nested',
+        })
         database.insertTask({
           branchName: 'feature/shared-db',
           id: 'task-worktree',
@@ -26,6 +33,16 @@ describe('task-backed workspace records', () => {
           status: 'in_progress',
           title: 'Shared DB',
           worktreePath: '/repo-worktree',
+          worktreeStatus: 'ready',
+        })
+        database.insertTask({
+          branchName: 'feature/nested',
+          id: 'task-nested',
+          rootPath: '/repo/packages/nested/app',
+          source: 'manual',
+          status: 'in_progress',
+          title: 'Nested task',
+          worktreePath: '/repo-nested-worktree',
           worktreeStatus: 'ready',
         })
         database.insertTask({
@@ -46,7 +63,7 @@ describe('task-backed workspace records', () => {
           title: 'Todo',
         })
 
-        expect(listWorkspaceRecords(database)).toHaveLength(2)
+        expect(listWorkspaceRecords(database)).toHaveLength(3)
         expect(findWorkspaceRecord(database, 'task-worktree')).toMatchObject({
           branchName: 'feature/shared-db',
           id: 'task-worktree',
@@ -55,6 +72,10 @@ describe('task-backed workspace records', () => {
           worktreePath: '/repo-worktree',
         })
         expect(findWorkspaceRecord(database, 'task-todo')).toBeNull()
+        expect(findWorkspaceRecord(database, 'task-nested')).toMatchObject({
+          id: 'task-nested',
+          projectId: 'project-nested',
+        })
         expect(
           findWorkspaceRecord(database, 'task-detached-worktree')
         ).toMatchObject({

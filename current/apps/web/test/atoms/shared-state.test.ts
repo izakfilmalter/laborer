@@ -87,7 +87,7 @@ describe('applySharedStateUpdate', () => {
     expect(changed.tasks).toEqual({ cursor: 2, rows: [task('two', 2)] })
   })
 
-  it('ignores duplicate deltas but accepts an equal-cursor reconnect snapshot', () => {
+  it('ignores duplicate deltas but accepts authoritative reconnect snapshots', () => {
     const current: AuthoritativeSharedState = {
       ...empty,
       tasks: { cursor: 2, rows: [task('stale')] },
@@ -101,11 +101,12 @@ describe('applySharedStateUpdate', () => {
       },
     })
     const reconnected = applySharedStateUpdate(duplicate, {
-      tasks: { cursor: 2, rows: [task('fresh')], type: 'snapshot' },
+      tasks: { cursor: 1, rows: [task('fresh')], type: 'snapshot' },
     })
 
     expect(duplicate.tasks.rows[0]?.id).toBe('stale')
     expect(reconnected.tasks.rows[0]?.id).toBe('fresh')
+    expect(reconnected.tasks.cursor).toBe(1)
   })
 
   it('applies project registration, re-point, and removal updates', () => {

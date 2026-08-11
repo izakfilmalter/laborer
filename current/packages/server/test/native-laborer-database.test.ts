@@ -121,6 +121,109 @@ describe('NativeLaborerDatabase', () => {
       status: 'in_progress',
     })
     expect(database.taskChangesAfter(0)).toHaveLength(2)
+    const deleted = database.deleteTask('task-1', 2, 'delete-1', 40)
+    expect(deleted).toMatchObject({
+      cursor: 3,
+      row: { revision: 2, status: 'in_progress' },
+    })
+    expect(database.findTask('task-1')).toBeNull()
+    expect(database.taskChangesAfter(0)).toHaveLength(3)
+    database.close()
+  })
+
+  it('applies project and setting CAS mutations with one ledger row each', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const project = database.insertProject(
+      {
+        id: 'project-1',
+        name: 'Before',
+        rootPath: '/repo',
+        repoId: 'repo-1',
+        canonicalGitCommonDir: '/repo/.git',
+      },
+      'project-insert',
+      10
+    )
+    const updatedProject = database.updateProject(
+      project.row.id,
+      project.row.revision,
+      { name: 'After' },
+      'project-update',
+      20
+    )
+    expect(updatedProject.row).toMatchObject({ name: 'After', revision: 2 })
+    expect(() =>
+      database.updateProject(
+        project.row.id,
+        project.row.revision,
+        { name: 'Stale' },
+        'project-stale',
+        30
+      )
+    ).toThrow(LaborerDatabaseStaleRevisionError)
+    const deletedProject = database.deleteProject(
+      updatedProject.row.id,
+      updatedProject.row.revision,
+      'project-delete',
+      40
+    )
+    expect(deletedProject.row).toEqual(updatedProject.row)
+
+    const setting = database.insertSetting(
+      'github.token',
+      'before',
+      'setting-insert',
+      50
+    )
+    const updatedSetting = database.updateSetting(
+      setting.row.key,
+      setting.row.revision,
+      'after',
+      'setting-update',
+      60
+    )
+    expect(updatedSetting.row).toMatchObject({ value: 'after', revision: 2 })
+    const deletedSetting = database.deleteSetting(
+      updatedSetting.row.key,
+      updatedSetting.row.revision,
+      'setting-delete',
+      70
+    )
+    expect(deletedSetting.row).toEqual(updatedSetting.row)
+
+    expect(
+      database.stateChangesAfter(0).map(({ mutationId }) => mutationId)
+    ).toEqual([
+      'project-insert',
+      'project-update',
+      'project-delete',
+      'setting-insert',
+      'setting-update',
+      'setting-delete',
+    ])
+    database.close()
+  })
+
+  it('rolls back constraint failures without appending ledger rows', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    database.insertProject({
+      id: 'project-1',
+      name: 'First',
+      rootPath: '/first',
+      repoId: 'same-repo',
+      canonicalGitCommonDir: '/first/.git',
+    })
+    expect(() =>
+      database.insertProject({
+        id: 'project-2',
+        name: 'Second',
+        rootPath: '/second',
+        repoId: 'same-repo',
+        canonicalGitCommonDir: '/second/.git',
+      })
+    ).toThrow()
+    expect(database.listProjects()).toHaveLength(1)
+    expect(database.stateChangesAfter(0)).toHaveLength(1)
     database.close()
   })
 

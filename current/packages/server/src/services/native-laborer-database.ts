@@ -223,7 +223,39 @@ const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const MAX_LEDGER_READ = 1000
+const MAX_TABLE_ROWS = 10_000
 const BUSY_MESSAGE = /SQLITE_BUSY|SQLITE_BUSY_SNAPSHOT|database is locked/i
+
+const TASK_PATCH_FIELDS = [
+  'actionName',
+  'baseBranch',
+  'baseSha',
+  'branchName',
+  'description',
+  'executionId',
+  'executionStatus',
+  'parentTaskId',
+  'prIsDraft',
+  'prNumber',
+  'prState',
+  'prTitle',
+  'prUrl',
+  'rootPath',
+  'setupCompletedAt',
+  'slackPermalink',
+  'sortOrder',
+  'status',
+  'title',
+  'worktreeError',
+  'worktreePath',
+  'worktreeStatus',
+] as const satisfies readonly (keyof LaborerTaskPatch)[]
+const PROJECT_PATCH_FIELDS = [
+  'canonicalGitCommonDir',
+  'name',
+  'repoId',
+  'rootPath',
+] as const satisfies readonly (keyof ProjectPatch)[]
 
 const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   actionName: 'action_name',
@@ -271,6 +303,10 @@ const integer = (value: unknown, column: string): number =>
   typeof value === 'number' && Number.isSafeInteger(value)
     ? value
     : invalidColumn(column)
+const revision = (value: unknown, column: string): number => {
+  const parsed = integer(value, column)
+  return parsed >= 1 ? parsed : invalidColumn(column)
+}
 const nullableInteger = (value: unknown, column: string): number | null =>
   value === null ? null : integer(value, column)
 const nullableNumber = (value: unknown, column: string): number | null => {
@@ -294,6 +330,18 @@ const nullableEnum = <A extends string>(
   values: readonly A[],
   column: string
 ): A | null => (value === null ? null : enumValue(value, values, column))
+
+const boundedRows = (
+  rows: readonly unknown[],
+  table: 'tasks' | 'projects' | 'app_settings'
+): readonly unknown[] => {
+  if (rows.length > MAX_TABLE_ROWS) {
+    throw new Error(
+      `Laborer database ${table} read exceeds the ${MAX_TABLE_ROWS} row limit`
+    )
+  }
+  return rows
+}
 
 const rowToTask = (value: unknown): LaborerTask => {
   const row = sqliteRow(value)
@@ -320,7 +368,13 @@ const rowToTask = (value: unknown): LaborerTask => {
     ),
     id: string(row.id, 'tasks.id'),
     parentTaskId: nullableString(row.parent_task_id, 'tasks.parent_task_id'),
-    prIsDraft: integer(row.pr_is_draft, 'tasks.pr_is_draft') === 1,
+    prIsDraft: (() => {
+      const value = integer(row.pr_is_draft, 'tasks.pr_is_draft')
+      if (value !== 0 && value !== 1) {
+        return invalidColumn('tasks.pr_is_draft')
+      }
+      return value === 1
+    })(),
     prNumber: nullableInteger(row.pr_number, 'tasks.pr_number'),
     prState: nullableEnum(
       row.pr_state,
@@ -329,7 +383,7 @@ const rowToTask = (value: unknown): LaborerTask => {
     ),
     prTitle: nullableString(row.pr_title, 'tasks.pr_title'),
     prUrl: nullableString(row.pr_url, 'tasks.pr_url'),
-    revision: integer(row.revision, 'tasks.revision'),
+    revision: revision(row.revision, 'tasks.revision'),
     rootPath: string(row.root_path, 'tasks.root_path'),
     setupCompletedAt: nullableInteger(
       row.setup_completed_at,
@@ -373,7 +427,7 @@ const rowToProject = (value: unknown): Project => {
     id: string(row.id, 'projects.id'),
     name: string(row.name, 'projects.name'),
     repoId: string(row.repo_id, 'projects.repo_id'),
-    revision: integer(row.revision, 'projects.revision'),
+    revision: revision(row.revision, 'projects.revision'),
     rootPath: string(row.root_path, 'projects.root_path'),
     updatedAt: integer(row.updated_at, 'projects.updated_at'),
   }
@@ -384,7 +438,7 @@ const rowToSetting = (value: unknown): AppSetting => {
   return {
     createdAt: integer(row.created_at, 'app_settings.created_at'),
     key: string(row.key, 'app_settings.key'),
-    revision: integer(row.revision, 'app_settings.revision'),
+    revision: revision(row.revision, 'app_settings.revision'),
     updatedAt: integer(row.updated_at, 'app_settings.updated_at'),
     value: string(row.value, 'app_settings.value'),
   }
@@ -441,7 +495,13 @@ export class NativeLaborerDatabase {
     options: LaborerDatabaseOptions = {}
   ): NativeLaborerDatabase {
     mkdirSync(dirname(path), { recursive: true })
-    return new NativeLaborerDatabase(new DatabaseSync(path), options)
+    const database = new DatabaseSync(path)
+    try {
+      return new NativeLaborerDatabase(database, options)
+    } catch (cause) {
+      database.close()
+      throw cause
+    }
   }
 
   static open(
@@ -491,10 +551,12 @@ export class NativeLaborerDatabase {
   }
 
   listTasks(): readonly LaborerTask[] {
-    return this.#database
-      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id`)
-      .all()
-      .map(rowToTask)
+    const rows = this.#database
+      .prepare(
+        `SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id LIMIT ?`
+      )
+      .all(MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'tasks').map(rowToTask)
   }
 
   insertTask(
@@ -554,9 +616,9 @@ export class NativeLaborerDatabase {
     mutationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
-    const entries = (Object.keys(patch) as (keyof LaborerTaskPatch)[]).map(
-      (field) => [field, patch[field]] as const
-    )
+    const entries = TASK_PATCH_FIELDS.filter((field) =>
+      Object.hasOwn(patch, field)
+    ).map((field) => [field, patch[field]] as const)
     if (entries.length === 0) {
       throw new Error('A task update requires at least one field')
     }
@@ -648,12 +710,13 @@ export class NativeLaborerDatabase {
   }
 
   listProjects(): readonly Project[] {
-    return this.#database
+    const rows = this.#database
       .prepare(
-        `SELECT ${PROJECT_COLUMNS} FROM projects ORDER BY created_at, id`
+        `SELECT ${PROJECT_COLUMNS} FROM projects
+          ORDER BY created_at, id LIMIT ?`
       )
-      .all()
-      .map(rowToProject)
+      .all(MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'projects').map(rowToProject)
   }
 
   insertProject(
@@ -694,9 +757,9 @@ export class NativeLaborerDatabase {
     mutationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Project> {
-    const entries = (Object.keys(patch) as (keyof ProjectPatch)[]).map(
-      (field) => [field, patch[field]] as const
-    )
+    const entries = PROJECT_PATCH_FIELDS.filter((field) =>
+      Object.hasOwn(patch, field)
+    ).map((field) => [field, patch[field]] as const)
     if (entries.length === 0) {
       throw new Error('A project update requires at least one field')
     }
@@ -767,10 +830,12 @@ export class NativeLaborerDatabase {
   }
 
   listSettings(): readonly AppSetting[] {
-    return this.#database
-      .prepare(`SELECT ${SETTING_COLUMNS} FROM app_settings ORDER BY key`)
-      .all()
-      .map(rowToSetting)
+    const rows = this.#database
+      .prepare(
+        `SELECT ${SETTING_COLUMNS} FROM app_settings ORDER BY key LIMIT ?`
+      )
+      .all(MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'app_settings').map(rowToSetting)
   }
 
   insertSetting(
@@ -947,8 +1012,13 @@ export class NativeLaborerDatabase {
       for (const [index, row] of applied.entries()) {
         const name = string(row.name, 'migration name')
         const migration = taskDbMigrations[index]
-        if (migration === undefined || migration.name !== name) {
+        if (migration === undefined) {
           throw new LaborerDatabaseSchemaTooNewError(name)
+        }
+        if (migration.name !== name) {
+          throw new Error(
+            `Laborer database migration ledger is out of order: expected ${migration.name}, found ${name}`
+          )
         }
         const hash = createHash('sha256').update(migration.sql).digest('hex')
         if (hash !== string(row.hash, 'migration hash')) {

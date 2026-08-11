@@ -37,7 +37,10 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
       rePointExisting?: boolean
     ) => Effect.Effect<ProjectRecord, RpcError>
     readonly removeProject: (projectId: string) => Effect.Effect<void, RpcError>
-    readonly listProjects: () => Effect.Effect<readonly ProjectRecord[], never>
+    readonly listProjects: () => Effect.Effect<
+      readonly ProjectRecord[],
+      RpcError
+    >
     readonly getProject: (
       projectId: string
     ) => Effect.Effect<ProjectRecord, RpcError>
@@ -213,11 +216,7 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
         database
           .run('list projects', (db) => db.listProjects().map(projectRecord))
           .pipe(
-            Effect.catchAll((cause) =>
-              Effect.logError(databaseRpcError('list projects', cause)).pipe(
-                Effect.as([] as readonly ProjectRecord[])
-              )
-            )
+            Effect.mapError((cause) => databaseRpcError('list projects', cause))
           )
 
       const getProject = Effect.fn('ProjectRegistry.getProject')(function* (

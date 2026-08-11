@@ -35,9 +35,12 @@ interface CardShellProps
    */
   readonly onActivate?: (() => void) | undefined
   /**
-   * Draws the active edge. The card's resting edge is a ring rather than a
-   * border, so the accent has to be one too — a border colour on a card with
-   * no border width paints nothing at all.
+   * Marks the card the operator is currently in. It fills rather than
+   * outlines: the edge is the attention channel — an agent that is blocked
+   * or has a result waiting — and a bright edge on the card you are already
+   * looking at is noise competing with the one cue worth interrupting for.
+   * A lifted surface answers "you are here" without raising its voice, and
+   * leaves an active card that also wants you legible as both at once.
    */
   readonly selected?: boolean | undefined
   /** Secondary line under the title, usually a branch name. */
@@ -69,9 +72,13 @@ function CardShell({
     <Card
       className={cn(
         // Only a card that goes somewhere answers the pointer, and never over
-        // the top of the active edge it would otherwise recolour.
+        // the top of the active surface it would otherwise repaint.
         onActivate && !selected && 'transition-shadow hover:ring-foreground/25',
-        selected && 'ring-2 ring-primary',
+        // Fill, not outline: a lifted surface for "you are here", so the ring
+        // stays free for a status that actually wants the operator. The edge
+        // is only nudged up a step, which the light theme needs — its accent
+        // and card sit a hair apart and the fill alone would say nothing.
+        selected && 'bg-accent/50 ring-foreground/25',
         className
       )}
       data-slot="card-shell"

@@ -60,7 +60,13 @@ type AgentStatusGlyphKind = 'dot' | 'check'
  * "stay quiet": an at-rest agent should not tint a row, card, or header.
  */
 interface AgentStatusSurface {
-  /** Workspace card in the sidebar. */
+  /**
+   * Workspace card in the sidebar. The card's resting edge is a ring rather
+   * than a border, so an accent edge has to be a ring too — a border colour
+   * on a card with no border width paints nothing at all. The edge is the
+   * card's attention channel; the active workspace fills its surface instead
+   * (see `CardShell`), so a card can be both without either cue losing.
+   */
   readonly cardClassName: string
   /**
    * Outline drawn around a whole workspace frame — header, tab bar, and
@@ -207,6 +213,11 @@ const QUIET_SURFACE: AgentStatusSurface = {
  * is never drawn thinner than the frame they happen to be looking at; hue
  * and tint, not weight, say which of the two it is.
  *
+ * On the sidebar card the two states own the edge outright, because the
+ * active workspace says "you are here" with a filled surface instead. Weight
+ * ranks them there: `needs input` doubles the ring and glows, `done` keeps
+ * the resting hairline and only recolours it.
+ *
  * Both attention states also outline the whole frame. A tinted header bar
  * is legible when one workspace is open and invisible when four are tiled
  * against a wall of scrolling output, so the cue that answers "which of
@@ -218,7 +229,7 @@ const QUIET_SURFACE: AgentStatusSurface = {
 const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
   needs_input: {
     cardClassName:
-      'border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.18)]',
+      'ring-2 ring-amber-400/70 shadow-[0_0_10px_rgba(251,191,36,0.18)]',
     frameClassName:
       'border-amber-400/80 shadow-[inset_0_0_26px_-6px_rgba(251,191,36,0.5)]',
     headerClassName: 'border-b-2 border-b-amber-400/70 bg-amber-400/10',
@@ -226,7 +237,7 @@ const AGENT_STATUS_SURFACE: Record<AgentDisplayStatus, AgentStatusSurface> = {
     rowHoverClassName: 'hover:bg-amber-400/20',
   },
   done: {
-    cardClassName: 'border-violet-400/45',
+    cardClassName: 'ring-1 ring-violet-400/60',
     frameClassName:
       'border-violet-400/70 shadow-[inset_0_0_26px_-10px_rgba(167,139,250,0.4)]',
     headerClassName: 'border-b-2 border-b-violet-400/60 bg-violet-400/10',

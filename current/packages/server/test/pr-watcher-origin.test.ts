@@ -1,4 +1,7 @@
 // @effect-diagnostics effect/preferSchemaOverJson:off
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
@@ -72,7 +75,20 @@ const createSpawnMock = (
   }) as typeof spawn
 }
 
-const createWorkspace = (store: LaborerStore['Type']['store']) => {
+/**
+ * PrWatcher skips workspaces whose worktree directory is missing before it
+ * ever spawns `gh`, so these tests need a real directory on disk. The scope
+ * removes it when each test ends.
+ */
+const makeWorktreeDir = Effect.acquireRelease(
+  Effect.sync(() => mkdtempSync(join(tmpdir(), 'pr-watcher-origin-'))),
+  (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))
+)
+
+const createWorkspace = (
+  store: LaborerStore['Type']['store'],
+  worktreePath: string
+) => {
   store.commit(
     events.projectCreated({
       id: 'project-1',
@@ -88,7 +104,7 @@ const createWorkspace = (store: LaborerStore['Type']['store']) => {
       projectId: 'project-1',
       taskSource: null,
       branchName: 'feature/fork-pr',
-      worktreePath: '/tmp/workspace-1',
+      worktreePath,
       status: 'running',
       origin: 'laborer',
       createdAt: new Date().toISOString(),
@@ -128,6 +144,7 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
+        const worktreePath = yield* makeWorktreeDir
         const storeContext = yield* Layer.build(TestLaborerStore)
         const { store } = Context.get(storeContext, LaborerStore)
         const prWatcherContext = yield* Layer.build(
@@ -148,7 +165,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
-        createWorkspace(store)
+        createWorkspace(store, worktreePath)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
         yield* prWatcher.checkPr('workspace-1')
@@ -205,6 +222,7 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
+        const worktreePath = yield* makeWorktreeDir
         const storeContext = yield* Layer.build(TestLaborerStore)
         const { store } = Context.get(storeContext, LaborerStore)
         const prWatcherContext = yield* Layer.build(
@@ -215,7 +233,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
-        createWorkspace(store)
+        createWorkspace(store, worktreePath)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
 

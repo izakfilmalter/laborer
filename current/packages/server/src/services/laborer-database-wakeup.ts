@@ -13,7 +13,13 @@ const keyForPath = (path: string): string =>
  */
 export const notifyLaborerDatabaseWrite = (path: string): void => {
   for (const listener of listenersByPath.get(keyForPath(path)) ?? []) {
-    listener()
+    try {
+      listener()
+    } catch {
+      // A wakeup is only a latency hint after the transaction committed. One
+      // broken subscriber must not make that durable write appear to fail or
+      // prevent the remaining subscribers from observing it.
+    }
   }
 }
 

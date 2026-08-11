@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
+import { onLaborerDatabaseWrite } from '../src/services/laborer-database-wakeup.js'
 import {
   LaborerDatabaseBusyError,
   LaborerDatabaseSchemaTooNewError,
@@ -279,6 +280,28 @@ describe('NativeLaborerDatabase', () => {
     })
     expect(reopened.taskChangesAfter(0)).toHaveLength(2)
     reopened.close()
+  })
+
+  it('does not let a failed post-commit wakeup misreport a durable write', () => {
+    const path = databasePath()
+    const database = NativeLaborerDatabase.open(path)
+    let healthyWakeups = 0
+    const removeBroken = onLaborerDatabaseWrite(path, () => {
+      throw new Error('broken subscriber')
+    })
+    const removeHealthy = onLaborerDatabaseWrite(path, () => {
+      healthyWakeups += 1
+    })
+
+    try {
+      expect(() => database.insertSetting('theme', 'dark')).not.toThrow()
+      expect(database.findSetting('theme')?.value).toBe('dark')
+      expect(healthyWakeups).toBe(1)
+    } finally {
+      removeBroken()
+      removeHealthy()
+      database.close()
+    }
   })
 
   it('retries WAL lock contention and reports a typed busy failure', () => {

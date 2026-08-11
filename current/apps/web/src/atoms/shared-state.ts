@@ -52,13 +52,13 @@ const applyTableUpdate = <Row>(
     return current
   }
   if (update.type === 'snapshot') {
-    return { cursor: update.cursor, rows: update.rows as readonly Row[] }
+    return { cursor: update.cursor, rows: update.rows }
   }
   const rows = new Map(current.rows.map((row) => [id(row), row]))
   for (const deletedId of update.deletedRowIds) {
     rows.delete(deletedId)
   }
-  for (const row of update.rows as readonly Row[]) {
+  for (const row of update.rows) {
     rows.set(id(row), row)
   }
   return { cursor: update.cursor, rows: [...rows.values()] }

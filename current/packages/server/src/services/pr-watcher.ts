@@ -29,6 +29,7 @@ import {
   Layer,
   pipe,
   Ref,
+  Schema,
 } from 'effect'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
 import { LaborerDatabase } from './laborer-database.js'
@@ -55,6 +56,15 @@ interface PrData {
   readonly title: string | null
   readonly url: string | null
 }
+
+const GhPrData = Schema.Struct({
+  isDraft: Schema.optional(Schema.Boolean),
+  number: Schema.optional(Schema.NullOr(Schema.Number)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+})
+const GhPrDataJson = Schema.parseJson(GhPrData)
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
@@ -183,20 +193,12 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return EMPTY_PR
         }
 
-        const parseResult = yield* Effect.try({
-          try: () =>
-            JSON.parse(spawnResult.stdout.trim()) as {
-              number?: number
-              isDraft?: boolean
-              url?: string
-              title?: string
-              state?: string
-            },
-          catch: () => 'json-parse-failed' as const,
-        }).pipe(
+        const parseResult = yield* Schema.decodeUnknown(GhPrDataJson)(
+          spawnResult.stdout.trim()
+        ).pipe(
           Effect.catchAll(() =>
             Effect.logWarning(
-              `[PrWatcher] Failed to parse gh pr view output: ${spawnResult.stdout.slice(0, 200)}`
+              '[PrWatcher] Failed to parse gh pr view output'
             ).pipe(Effect.as(undefined))
           )
         )

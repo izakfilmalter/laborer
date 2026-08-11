@@ -699,7 +699,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const beginTaskProvisioning = Effect.fn(
         'WorkspaceProvider.beginTaskProvisioning'
       )(function* (input: {
-        readonly baseWorkspace: WorkspaceRecord | undefined
+        readonly baseWorkspace:
+          | Pick<WorkspaceRecord, 'id' | 'taskSource' | 'worktreePath'>
+          | undefined
         readonly rootPath: string
         readonly taskSource: string | undefined
         readonly workspace: WorkspaceRecord
@@ -743,8 +745,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           yield* persistWorkspaceFacts(
             updateServerTaskFacts(laborerDatabase, taskId, {
               baseBranch: input.workspace.baseBranch,
+              baseSha: null,
               branchName: input.workspace.branchName,
               parentTaskId: parentTask?.id ?? existingTask.parentTaskId,
+              setupCompletedAt: null,
               worktreeError: null,
               worktreePath: input.workspace.worktreePath,
               worktreeStatus: 'provisioning',
@@ -1174,7 +1178,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // renderer compatibility. A legacy workspace created without a task
           // becomes its own worktree-source task.
           const taskId = yield* beginTaskProvisioning({
-            baseWorkspace: baseWorkspace as WorkspaceRecord | undefined,
+            baseWorkspace,
             rootPath: project.repoPath,
             taskSource,
             workspace,

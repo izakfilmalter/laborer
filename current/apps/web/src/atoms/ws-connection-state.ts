@@ -4,13 +4,18 @@ export type WsConnectionUiState =
   | 'error'
   | 'offline'
   | 'reconnecting'
-export type WsReconnectPhase = 'attempting' | 'exhausted' | 'idle' | 'waiting'
+export type WsReconnectPhase = 'attempting' | 'idle' | 'waiting'
 
 export const WS_RECONNECT_INITIAL_DELAY_MS = 1000
 export const WS_RECONNECT_BACKOFF_FACTOR = 2
 export const WS_RECONNECT_MAX_DELAY_MS = 64_000
-export const WS_RECONNECT_MAX_RETRIES = 7
-export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1
+/**
+ * How long after a retry sequence starts before the backoff rewinds to the
+ * initial delay. Reconnection itself never gives up — the loopback backend
+ * outliving the renderer socket (OS sleep/wake) must never permanently kill
+ * the RPC client. See `wsReconnectRetrySchedule` in laborer-client.ts.
+ */
+export const WS_RECONNECT_RESET_AFTER_MS = 30_000
 
 export interface WsConnectionStatus {
   readonly attemptCount: number
@@ -25,7 +30,6 @@ export interface WsConnectionStatus {
   readonly online: boolean
   readonly phase: 'connected' | 'connecting' | 'disconnected' | 'idle'
   readonly reconnectAttemptCount: number
-  readonly reconnectMaxAttempts: number
   readonly reconnectPhase: WsReconnectPhase
   readonly socketUrl: string | null
 }
@@ -43,7 +47,6 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   online: typeof navigator === 'undefined' ? true : navigator.onLine !== false,
   phase: 'idle',
   reconnectAttemptCount: 0,
-  reconnectMaxAttempts: WS_RECONNECT_MAX_ATTEMPTS,
   reconnectPhase: 'idle',
   socketUrl: null,
 })
@@ -178,20 +181,20 @@ export function resetWsConnectionStateForTests(): void {
   }
 }
 
-export function getWsReconnectDelayMsForRetry(
-  retryIndex: number
-): number | null {
-  if (
-    !Number.isInteger(retryIndex) ||
-    retryIndex < 0 ||
-    retryIndex >= WS_RECONNECT_MAX_RETRIES
-  ) {
-    return null
-  }
+/**
+ * Predicted delay before the retry at `retryIndex` (0-based). Retries never
+ * exhaust; the delay backs off exponentially and clamps at
+ * {@link WS_RECONNECT_MAX_DELAY_MS}. This mirrors the authoritative
+ * `wsReconnectRetrySchedule` in laborer-client.ts (which additionally rewinds
+ * to the initial delay after {@link WS_RECONNECT_RESET_AFTER_MS}).
+ */
+export function getWsReconnectDelayMsForRetry(retryIndex: number): number {
+  const safeIndex =
+    Number.isInteger(retryIndex) && retryIndex > 0 ? retryIndex : 0
 
   return Math.min(
     Math.round(
-      WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** retryIndex
+      WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** safeIndex
     ),
     WS_RECONNECT_MAX_DELAY_MS
   )
@@ -207,21 +210,14 @@ function applyDisconnectState(
   >
 ): WsConnectionStatus {
   const disconnectedAt = current.disconnectedAt ?? isoNow()
+  // A single attempt can emit both `error` and `close`; only the first of
+  // the pair computes the next retry prediction.
   const nextRetryDelayMs =
-    current.nextRetryAt !== null || current.reconnectPhase === 'exhausted'
+    current.nextRetryAt !== null
       ? null
       : getWsReconnectDelayMsForRetry(
           Math.max(0, current.reconnectAttemptCount - 1)
         )
-  let reconnectPhase: WsReconnectPhase = 'waiting'
-  if (
-    current.reconnectPhase === 'waiting' ||
-    current.reconnectPhase === 'exhausted'
-  ) {
-    reconnectPhase = current.reconnectPhase
-  } else if (nextRetryDelayMs === null) {
-    reconnectPhase = 'exhausted'
-  }
 
   return {
     ...current,
@@ -232,6 +228,6 @@ function applyDisconnectState(
         ? current.nextRetryAt
         : new Date(Date.now() + nextRetryDelayMs).toISOString(),
     phase: 'disconnected',
-    reconnectPhase,
+    reconnectPhase: 'waiting',
   }
 }

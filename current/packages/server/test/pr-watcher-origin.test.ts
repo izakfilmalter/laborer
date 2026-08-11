@@ -1,4 +1,7 @@
 // @effect-diagnostics effect/preferSchemaOverJson:off
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Context, Effect, Layer } from 'effect'
 import { afterEach, vi } from 'vitest'
@@ -71,7 +74,20 @@ const createSpawnMock = (
   }) as typeof spawn
 }
 
-const createWorkspace = (database: NativeLaborerDatabase) => {
+/**
+ * PrWatcher skips workspaces whose worktree directory is missing before it
+ * ever spawns `gh`, so these tests need a real directory on disk. The scope
+ * removes it when each test ends.
+ */
+const makeWorktreeDir = Effect.acquireRelease(
+  Effect.sync(() => mkdtempSync(join(tmpdir(), 'pr-watcher-origin-'))),
+  (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))
+)
+
+const createWorkspace = (
+  database: NativeLaborerDatabase,
+  worktreePath: string
+) => {
   database.insertProject({
     canonicalGitCommonDir: '/tmp/.git',
     id: 'project-1',
@@ -86,7 +102,7 @@ const createWorkspace = (database: NativeLaborerDatabase) => {
     source: 'worktree',
     status: 'in_progress',
     title: 'Fork PR',
-    worktreePath: '/tmp',
+    worktreePath,
     worktreeStatus: 'ready',
   })
 }
@@ -124,9 +140,10 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
+        const worktreePath = yield* makeWorktreeDir
         const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
         const { database } = Context.get(databaseContext, LaborerDatabase)
-        createWorkspace(database)
+        createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(Layer.succeedContext(databaseContext)),
@@ -202,9 +219,10 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
+        const worktreePath = yield* makeWorktreeDir
         const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
         const { database } = Context.get(databaseContext, LaborerDatabase)
-        createWorkspace(database)
+        createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),

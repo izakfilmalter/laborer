@@ -18,12 +18,14 @@ import { Context, Duration, Effect, Layer, Schedule } from 'effect'
 
 import { getBackendRpcWsUrl } from '@/lib/desktop'
 import {
-  getWsReconnectDelayMsForRetry,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
-  WS_RECONNECT_MAX_RETRIES,
+  WS_RECONNECT_BACKOFF_FACTOR,
+  WS_RECONNECT_INITIAL_DELAY_MS,
+  WS_RECONNECT_MAX_DELAY_MS,
+  WS_RECONNECT_RESET_AFTER_MS,
 } from './ws-connection-state'
 
 function createTrackingWebSocket(
@@ -63,11 +65,35 @@ function createTrackingWebSocket(
   return socket
 }
 
-const retrySchedule = Schedule.addDelay(
-  Schedule.recurs(WS_RECONNECT_MAX_RETRIES),
-  (retryCount) =>
-    Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)
-)
+/**
+ * Reconnection policy for the loopback RPC WebSocket.
+ *
+ * `RpcClient.makeProtocolSocket` drives ONE schedule instance for the whole
+ * client lifetime: every disconnect — including a clean close after hours of
+ * stable connection — steps the same schedule, and its state is never reset
+ * on a successful reconnect. A terminating schedule (the old
+ * `Schedule.recurs(7)`) therefore budgeted 7 reconnects per app session
+ * TOTAL; once spent (a few OS sleep/wake cycles was enough), the protocol
+ * fiber died, the error was cached, and every later RPC failed permanently
+ * with `RpcClientError: Error in socket` until the app restarted.
+ *
+ * So the schedule must never terminate. Delays back off exponentially and
+ * are capped at {@link WS_RECONNECT_MAX_DELAY_MS} by the union with the
+ * spaced schedule (union takes the smaller delay and continues while either
+ * schedule continues). `Schedule.resetAfter` rewinds the backoff to the
+ * initial delay once {@link WS_RECONNECT_RESET_AFTER_MS} has elapsed since
+ * the retry sequence began, so an outage after a long stable connection
+ * starts back at the fast initial delay instead of the cap.
+ *
+ * Exported for regression tests only.
+ */
+export const wsReconnectRetrySchedule = Schedule.union(
+  Schedule.exponential(
+    WS_RECONNECT_INITIAL_DELAY_MS,
+    WS_RECONNECT_BACKOFF_FACTOR
+  ),
+  Schedule.spaced(WS_RECONNECT_MAX_DELAY_MS)
+).pipe(Schedule.resetAfter(Duration.millis(WS_RECONNECT_RESET_AFTER_MS)))
 
 const trackingWebSocketConstructorLayer = Layer.succeed(
   WebSocketConstructor,
@@ -87,7 +113,7 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
       Layer.provide(trackingWebSocketConstructorLayer)
     )
     const protocol = yield* RpcClient.layerProtocolSocket({
-      retrySchedule,
+      retrySchedule: wsReconnectRetrySchedule,
       retryTransientErrors: true,
     }).pipe(
       Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),

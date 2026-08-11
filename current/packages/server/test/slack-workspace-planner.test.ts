@@ -1,9 +1,13 @@
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { describe, expect, it } from 'vitest'
 import {
   buildInitialPrompt,
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
+  executePlannerProcess,
   extractOpenCodeText,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
@@ -140,6 +144,34 @@ describe('Slack workspace planner', () => {
     expect(args).toContain('--auto')
     expect(args).not.toContain('--agent')
     expect(args).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('reports a deadline as a timeout, not as the exit status of the killed process', async () => {
+    // Regression: a SIGTERM-terminated OpenCode exits nonzero (130) within
+    // the kill grace period, and that exit used to win the race against the
+    // deferred timeout rejection — the board then showed "OpenCode exited
+    // with status 130." for what was actually the analysis deadline.
+    await expect(
+      executePlannerProcess({
+        argv: ['sleep', '60'],
+        signal: new AbortController().signal,
+        timeoutMs: 100,
+      })
+    ).rejects.toThrow('OpenCode timed out while reading Slack.')
+  })
+
+  it('runs the planner process in the provided working directory', async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), 'planner-cwd-')))
+    try {
+      const stdout = await executePlannerProcess({
+        argv: ['pwd'],
+        cwd: directory,
+        signal: new AbortController().signal,
+      })
+      expect(stdout.trim()).toBe(directory)
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
   })
 
   it('marks Slack content as untrusted in the planner prompt', () => {

@@ -92,7 +92,9 @@ describe('task card creation', () => {
       status: 'todo',
       title: slackPlan.title,
     })
-    expect(planner).toHaveBeenCalledWith(SLACK_PERMALINK)
+    // The analysis runs inside the card's repository so OpenCode reuses the
+    // already-booted project instead of booting one for the home directory.
+    expect(planner).toHaveBeenCalledWith(SLACK_PERMALINK, '/repo')
   })
 
   it('keeps a Slack card in the In Progress column it was added to', async () => {
@@ -154,6 +156,7 @@ describe('task card creation', () => {
       runSlackTaskPlanning(
         'slack-card',
         'https://example.slack.com/archives/C1/p1',
+        '/repo',
         path,
         () =>
           Effect.succeed({
@@ -194,6 +197,7 @@ describe('task card creation', () => {
       runSlackTaskPlanning(
         'failed-card',
         'https://example.slack.com/archives/C1/p1',
+        '/repo',
         path,
         () =>
           Effect.fail(

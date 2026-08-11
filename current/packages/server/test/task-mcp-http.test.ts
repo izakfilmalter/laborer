@@ -155,6 +155,18 @@ describe('task MCP HTTP endpoint', () => {
               params: { arguments: {}, name: 'list_projects' },
             })
             expect(projects.response.status).toBe(200)
+            expect(JSON.parse(projects.text)).toMatchObject([
+              {
+                result: {
+                  structuredContent: {
+                    projects: [
+                      { name: 'First', repoPath: firstProject },
+                      { name: 'Second', repoPath: secondProject },
+                    ],
+                  },
+                },
+              },
+            ])
             expect(projects.text).toContain('First')
             expect(projects.text).toContain(firstProject)
             expect(projects.text).toContain('Second')
@@ -165,6 +177,18 @@ describe('task MCP HTTP endpoint', () => {
               method: 'tools/call',
               params: { arguments: {}, name: 'list_tasks' },
             })
+            expect(JSON.parse(defaultList.text)).toMatchObject([
+              {
+                result: {
+                  structuredContent: {
+                    tasks: expect.arrayContaining([
+                      expect.objectContaining({ id: 'task-visible' }),
+                      expect.objectContaining({ id: 'task-other-project' }),
+                    ]),
+                  },
+                },
+              },
+            ])
             expect(defaultList.text).toContain('task-visible')
             expect(defaultList.text).toContain('task-other-project')
             expect(defaultList.text).not.toContain('task-cancelled')

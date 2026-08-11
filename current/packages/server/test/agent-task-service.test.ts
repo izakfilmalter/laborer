@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,6 +30,34 @@ const fixture = () => {
 }
 
 describe('AgentTaskService', () => {
+  it('resolves an external Git worktree to its registered project', async () => {
+    const { layer, root } = fixture()
+    const worktree = `${root}-linked`
+    execFileSync('git', ['init', '--initial-branch=main'], { cwd: root })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: root,
+    })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root })
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], {
+      cwd: root,
+    })
+    execFileSync('git', ['worktree', 'add', '-b', 'feature/linked', worktree], {
+      cwd: root,
+    })
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const created = yield* service.createTask({
+          path: worktree,
+          title: 'From linked worktree',
+        })
+        expect(created.rootPath).toBe(root)
+        expect(yield* service.listTasks({ path: worktree })).toEqual([created])
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
   it('creates, filters, updates, and soft-deletes agent tasks with ledger writes', async () => {
     const { databasePath, layer, root } = fixture()
     await Effect.runPromise(

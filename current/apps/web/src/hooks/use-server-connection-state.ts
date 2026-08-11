@@ -33,13 +33,6 @@ export function deriveServerConnectionState(
     }
   }
 
-  if (transport.reconnectPhase === 'exhausted') {
-    return {
-      state: 'down',
-      error: transport.lastError ?? SERVER_DOWN_MESSAGE,
-    }
-  }
-
   if (
     transportState === 'connected' &&
     (server.state === 'healthy' || server.state === 'unresponsive')

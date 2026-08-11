@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema } from 'effect'
@@ -41,6 +43,19 @@ const nearestProject = (
   projects
     .filter((project) => pathContains(project.repoPath, path))
     .sort((left, right) => right.repoPath.length - left.repoPath.length)[0]
+
+const linkedWorktreeMainPath = (path: string): string | undefined => {
+  try {
+    const commonDirectory = execFileSync(
+      'git',
+      ['-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'],
+      { cwd: path, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim()
+    return dirname(realpathSync(resolve(path, commonDirectory)))
+  } catch {
+    return undefined
+  }
+}
 
 const invalid = (message: string): AgentTaskError =>
   new AgentTaskError({ code: 'INVALID_INPUT', message })
@@ -171,7 +186,9 @@ export class AgentTaskService extends Context.Tag(
                 }),
             })
             const projects = yield* listProjects()
-            const project = nearestProject(canonical, projects)
+            const project =
+              nearestProject(canonical, projects) ??
+              nearestProject(linkedWorktreeMainPath(canonical) ?? '', projects)
             if (!project) {
               return yield* new AgentTaskError({
                 code: 'UNKNOWN_PROJECT',

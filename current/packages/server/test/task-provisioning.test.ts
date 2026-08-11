@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
-import { Effect, Layer } from 'effect'
+import { Deferred, Effect, Layer } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import {
   handleTaskCreateAtPath,
@@ -14,9 +14,48 @@ import { ProjectRegistry } from '../src/services/project-registry.js'
 import { manualTaskBranchName } from '../src/services/task-card-creator.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../src/services/workspace-sync-service.js'
+import { waitFor } from './helpers/timing-helpers.js'
+
+// Analyzing a Slack thread spawns an agent, so the planner is stubbed and each
+// test drives it directly.
+const slackPlanner = vi.hoisted(() => ({
+  plan: vi.fn<
+    (permalink: string) => Effect.Effect<
+      {
+        readonly branchName: string
+        readonly initialPrompt: string
+        readonly title: string
+        readonly workType: 'bug' | 'feature'
+      },
+      RpcError
+    >
+  >(),
+}))
+
+vi.mock('../src/services/slack-workspace-planner.js', () => ({
+  planSlackWorkspace: (permalink: string) => slackPlanner.plan(permalink),
+}))
 
 const databasePath = (): string =>
   join(mkdtempSync(join(tmpdir(), 'laborer-provisioning-')), 'tasks.sqlite')
+
+const SLACK_PERMALINK = 'https://example.slack.com/archives/C1/p1'
+const slackPlan = {
+  branchName: 'slack/fix-auth',
+  initialPrompt: 'Fix the auth flow',
+  title: 'Fix auth flow',
+  workType: 'bug',
+} as const
+
+/** Read a card through its own connection, the way another process would. */
+const storedTask = (path: string, id: string) => {
+  const database = NodeTaskBoardDatabase.open(path)
+  try {
+    return database.find(id)
+  } finally {
+    database.close()
+  }
+}
 
 const project = {
   canonicalGitCommonDir: '/repo/.git',
@@ -479,5 +518,99 @@ describe('task provisioning', () => {
     const retried = NodeTaskBoardDatabase.open(path)
     expect(retried.find('task-3')?.worktreePath).toBe(workspace.worktreePath)
     retried.close()
+  })
+
+  it('keeps a Slack card in In Progress while it is analyzed, then provisions it', async () => {
+    const path = databasePath()
+    const analysis = await Effect.runPromise(Deferred.make<void>())
+    slackPlanner.plan.mockReturnValue(
+      Deferred.await(analysis).pipe(Effect.as(slackPlan))
+    )
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const created = await Effect.runPromise(
+      handleTaskCreateAtPath(
+        { rootPath: '/repo', status: 'in_progress', text: SLACK_PERMALINK },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    // The card belongs to the column it was added to from the first render,
+    // not once the thread has been read.
+    expect(created).toMatchObject({
+      source: 'slack_url',
+      status: 'in_progress',
+      workspaceId: null,
+    })
+    expect(storedTask(path, created.id)).toMatchObject({
+      description: null,
+      executionStatus: 'queued',
+      status: 'in_progress',
+      worktreePath: null,
+    })
+    expect(createWorktree).not.toHaveBeenCalled()
+
+    await Effect.runPromise(Deferred.succeed(analysis, undefined))
+    await waitFor(
+      () =>
+        Promise.resolve(
+          storedTask(path, created.id)?.worktreePath === workspace.worktreePath
+        ),
+      5000,
+      'the analyzed Slack card to be provisioned'
+    )
+
+    expect(storedTask(path, created.id)).toMatchObject({
+      branchName: workspace.branchName,
+      description: slackPlan.initialPrompt,
+      executionStatus: null,
+      status: 'in_progress',
+      title: slackPlan.title,
+    })
+    expect(createWorktree).toHaveBeenCalledWith(
+      project.id,
+      slackPlan.branchName,
+      expect.any(Function),
+      undefined,
+      expect.any(Function),
+      created.id
+    )
+  })
+
+  it('marks a Slack card added to In Progress failed when analysis fails', async () => {
+    const path = databasePath()
+    slackPlanner.plan.mockReturnValue(
+      Effect.fail(
+        new RpcError({
+          code: 'SLACK_ANALYSIS_FAILED',
+          message: 'planner unavailable',
+        })
+      )
+    )
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const created = await Effect.runPromise(
+      handleTaskCreateAtPath(
+        { rootPath: '/repo', status: 'in_progress', text: SLACK_PERMALINK },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    await waitFor(
+      () =>
+        Promise.resolve(
+          storedTask(path, created.id)?.executionStatus === 'failed'
+        ),
+      5000,
+      'the failed Slack analysis to be recorded'
+    )
+    // The card stays where it was added, showing a failure the board can
+    // explain, rather than an unprovisioned card that claims to be analyzing.
+    expect(storedTask(path, created.id)).toMatchObject({
+      description: null,
+      status: 'in_progress',
+      worktreePath: null,
+    })
+    expect(createWorktree).not.toHaveBeenCalled()
   })
 })

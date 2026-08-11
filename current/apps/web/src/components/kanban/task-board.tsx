@@ -1351,8 +1351,10 @@ function TaskDetailDialog({
  */
 function TaskBoard({
   collapseState,
+  open,
 }: {
   readonly collapseState: CollapseState
+  readonly open: boolean
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
@@ -1561,7 +1563,11 @@ function TaskBoard({
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center border-b px-3">
-        <BoardSearch onChange={setSearchQuery} value={searchQuery} />
+        <BoardSearch
+          onChange={setSearchQuery}
+          open={open}
+          value={searchQuery}
+        />
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">

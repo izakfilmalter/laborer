@@ -1,5 +1,7 @@
 # Sub-workspace lineage is derived from branch names, not stored parent IDs
 
+> **Superseded by [ADR 0009](0009-sub-task-lineage-explicit-parent-task-id.md).** With the LiveStore removal, the persisted entity is the durable task and sub-task lineage is a stored `parent_task_id`.
+
 A sub-workspace stores only `baseBranch` — the branch its PR targets, captured from the parent workspace at creation time. There is no `parentWorkspaceId`. The sidebar tree is derived at render time by matching `baseBranch` against live workspaces' `branchName`.
 
 ## Why

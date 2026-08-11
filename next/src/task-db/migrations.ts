@@ -41,4 +41,28 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       "utf8"
     ),
   },
+  {
+    name: "0004_task_worktree_pr_columns",
+    sql: readFileSync(
+      new URL(
+        "./migrations/0004_task_worktree_pr_columns.sql",
+        import.meta.url
+      ),
+      "utf8"
+    ),
+  },
+  {
+    name: "0005_projects",
+    sql: readFileSync(
+      new URL("./migrations/0005_projects.sql", import.meta.url),
+      "utf8"
+    ),
+  },
+  {
+    name: "0006_app_settings_and_ledger",
+    sql: readFileSync(
+      new URL("./migrations/0006_app_settings_and_ledger.sql", import.meta.url),
+      "utf8"
+    ),
+  },
 ];

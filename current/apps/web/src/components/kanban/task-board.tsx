@@ -17,7 +17,7 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
-import { Cause, Effect, Stream } from 'effect'
+import { Cause, Effect, Schedule, Stream } from 'effect'
 import {
   AlignLeft,
   Bot,
@@ -1491,7 +1491,22 @@ function TaskBoard({
             // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
             client('task.board.subscribe', undefined as void)
           ),
-          Stream.unwrap
+          Stream.unwrap,
+          // A dropped backend socket (OS sleep/wake) fails this stream even
+          // though the protocol reconnects underneath. Every fresh
+          // subscription starts with a full snapshot and
+          // `applyTaskBoardEvents` clears on snapshot, so resubscribing is
+          // safe — the board self-heals instead of dying with "Task board
+          // unavailable" until app restart. Defects still surface.
+          Stream.tapErrorCause((cause) =>
+            Effect.sync(() => {
+              console.warn(
+                '[TaskBoard] subscription failed, resubscribing',
+                Cause.squash(cause)
+              )
+            })
+          ),
+          Stream.retry(Schedule.spaced('2 seconds'))
         ),
         { disableAccumulation: true }
       ),

@@ -15,17 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const {
-  destroyFn,
-  mutationMap,
-  queryDbMock,
-  useLaborerStoreMock,
-  workspaceRowsRef,
-} = vi.hoisted(() => ({
+const { destroyFn, mutationMap, workspaceRowsRef } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  useLaborerStoreMock: vi.fn(),
   workspaceRowsRef: { current: [] as unknown[] },
 }))
 
@@ -64,18 +56,6 @@ vi.mock('@/atoms/laborer-client', () => ({
     },
     query: () => Symbol.for('query:stub'),
   },
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: queryDbMock,
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: useLaborerStoreMock,
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: { name: 'workspaces' },
 }))
 
 vi.mock('sonner', () => ({
@@ -213,14 +193,6 @@ const makeWorkspace = (
 
 const mockStore = (workspaces: unknown[]) => {
   workspaceRowsRef.current = workspaces
-  useLaborerStoreMock.mockReturnValue({
-    useQuery: (query: { label: string }) => {
-      if (query.label === 'workspaceList') {
-        return workspaces
-      }
-      return []
-    },
-  })
 }
 
 // ---------------------------------------------------------------------------

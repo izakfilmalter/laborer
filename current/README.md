@@ -48,9 +48,9 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React 19, TanStack Router, Tailwind CSS v4, shadcn/ui, xterm.js, LiveStore (OPFS-backed SQLite) |
+| Frontend | React 19, TanStack Router, Tailwind CSS v4, shadcn/ui, xterm.js, Effect atoms |
 | Desktop | Electron 40, electron-builder, electron-updater |
-| Backend | Effect TS, @effect/rpc, node-pty, @parcel/watcher, LiveStore (better-sqlite3) |
+| Backend | Effect TS, @effect/rpc, node-pty, @parcel/watcher, shared SQLite |
 | Tooling | Bun, Turborepo, Biome (Ultracite), Vitest, Playwright |
 
 ## Getting Started
@@ -92,8 +92,7 @@ While `current` is running, external local agents can manage board tasks through
 the token-free streamable-HTTP MCP endpoint at `http://127.0.0.1:3773/mcp`.
 Set `LABORER_SERVER_PORT` to pin another port. The active address is written to
 `~/.local/state/laborer/server.json` (or `$XDG_STATE_HOME/laborer/server.json`).
-The endpoint is loopback-only; `/rpc` and `/sync` retain their existing token
-checks.
+The endpoint is loopback-only; `/rpc` retains its existing token check.
 
 In development, Turborepo runs all services as separate processes. In production, the Electron main process spawns backend services as sidecar child processes with health monitoring and automatic crash recovery.
 

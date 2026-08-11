@@ -28,7 +28,6 @@ import type {
   WatchFileEvent,
 } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
-import { tables } from '@laborer/shared/schema'
 import { formatPatch, structuredPatch } from 'diff'
 import {
   Array as Arr,
@@ -42,7 +41,11 @@ import {
 import ignore from 'ignore'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
-import { LaborerStore } from './laborer-store.js'
+import {
+  LaborerDatabase,
+  type LaborerDatabaseService,
+} from './laborer-database.js'
+import { findWorkspaceRecord } from './workspace-records.js'
 
 // ── Directory ignore rules ──────────────────────────────────────
 // Directories that are skipped entirely during listing. These are
@@ -215,28 +218,19 @@ const fileNodeOrder: Order.Order<FileNode> = Order.make((a, b) => {
  * Returns the workspace record or fails with an RpcError.
  */
 const lookupWorkspace = (
-  store: LaborerStore['Type']['store'],
+  laborerDatabase: LaborerDatabaseService,
   workspaceId: string
 ) =>
   Effect.gen(function* () {
-    const workspaceOpt = pipe(
-      store.query(tables.workspaces),
-      Arr.findFirst((w) => w.id === workspaceId)
+    const workspace = yield* laborerDatabase.read(
+      'find workspace for file operation',
+      (database) => findWorkspaceRecord(database, workspaceId)
     )
 
-    if (workspaceOpt._tag === 'None') {
+    if (workspace === null) {
       return yield* new RpcError({
         message: `Workspace not found: ${workspaceId}`,
         code: 'NOT_FOUND',
-      })
-    }
-
-    const workspace = workspaceOpt.value
-
-    if (workspace.status === 'destroyed') {
-      return yield* new RpcError({
-        message: `Workspace ${workspaceId} has been destroyed`,
-        code: 'INVALID_STATE',
       })
     }
 
@@ -907,7 +901,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
   static readonly layer = Layer.scoped(
     FileService,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const fileWatcherClient = yield* FileWatcherClient
 
       const list = (
@@ -915,7 +909,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
         dir?: string
       ): Effect.Effect<readonly FileNode[], RpcError> =>
         Effect.gen(function* () {
-          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
 
           const targetDir =
@@ -933,7 +927,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
         filePath: string
       ): Effect.Effect<FileContent, RpcError> =>
         Effect.gen(function* () {
-          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
           const fullPath = resolve(worktreeRoot, filePath)
 
@@ -1013,7 +1007,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
         workspaceId: string
       ): Effect.Effect<readonly FileInfo[], RpcError> =>
         Effect.gen(function* () {
-          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           return yield* computeStatus(workspace.worktreePath)
         })
 
@@ -1021,7 +1015,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
         workspaceId: string
       ): Effect.Effect<readonly FileDiffEntry[], RpcError> =>
         Effect.gen(function* () {
-          const workspace = yield* lookupWorkspace(store, workspaceId)
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
 
           // File list with line stats + batched tracked-change patches,
@@ -1058,7 +1052,10 @@ class FileService extends Context.Tag('@laborer/FileService')<
       ): Stream.Stream<FileWatcherEvent, RpcError> =>
         Stream.unwrap(
           Effect.gen(function* () {
-            const workspace = yield* lookupWorkspace(store, workspaceId)
+            const workspace = yield* lookupWorkspace(
+              laborerDatabase,
+              workspaceId
+            )
             const worktreePath = workspace.worktreePath
 
             // Subscribe a recursive file watcher on the worktree

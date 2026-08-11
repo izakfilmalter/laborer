@@ -30,12 +30,11 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
 import { BranchStateTracker } from './branch-state-tracker.js'
 import { ConfigService } from './config-service.js'
 import { FileWatcherClient } from './file-watcher-client.js'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import {
   REPO_WATCH_DEBOUNCE_MS,
   REPO_WATCH_RECONCILE_COOLDOWN_MS,
@@ -187,7 +186,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
   static readonly layer = Layer.scoped(
     RepositoryWatchCoordinator,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
       const branchTracker = yield* BranchStateTracker
       const repoIdentity = yield* RepositoryIdentity
@@ -209,15 +208,6 @@ class RepositoryWatchCoordinator extends Context.Tag(
           repoId: identity.repoId,
           canonicalGitCommonDir: identity.canonicalGitCommonDir,
         } satisfies ProjectRecord
-
-        store.commit(
-          events.projectRepositoryIdentityBackfilled({
-            id: project.id,
-            repoPath: identity.canonicalRoot,
-            repoId: identity.repoId,
-            canonicalGitCommonDir: identity.canonicalGitCommonDir,
-          })
-        )
 
         return updatedProject
       })
@@ -801,8 +791,18 @@ class RepositoryWatchCoordinator extends Context.Tag(
 
       const watchAll = Effect.fn('RepositoryWatchCoordinator.watchAll')(
         function* () {
+          const persistedProjects = yield* laborerDatabase.read(
+            'list repository watches',
+            (database) => database.listProjects()
+          )
           const projects = yield* Effect.forEach(
-            store.query(tables.projects),
+            persistedProjects.map((project) => ({
+              canonicalGitCommonDir: project.canonicalGitCommonDir,
+              id: project.id,
+              name: project.name,
+              repoId: project.repoId,
+              repoPath: project.rootPath,
+            })),
             (project) =>
               ensurePersistedIdentity(project as ProjectRecord).pipe(
                 Effect.catchAll((error) =>

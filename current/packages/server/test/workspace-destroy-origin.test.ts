@@ -1,28 +1,31 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
-import { git, initRepo } from './helpers/git-helpers.js'
+import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
+const originalXdgStateHome = process.env.XDG_STATE_HOME
+process.env.XDG_STATE_HOME = createTempDir(
+  'workspace-destroy-task-state',
+  tempRoots
+)
+
+const DatabaseTestLayer = LaborerDatabase.testLayer().pipe(Layer.orDie)
 
 const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
-  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provideMerge(RepositoryWatchCoordinator.layer),
   Layer.provideMerge(BranchStateTracker.layer),
   Layer.provideMerge(TestFileWatcherClientLayer),
@@ -30,29 +33,28 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(WorktreeDetector.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(ConfigService.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(DatabaseTestLayer)
 )
 
-/**
- * Poll until the workspace row is removed from LiveStore.
- * destroyWorktree forks cleanup into a background daemon fiber, so the
- * workspace row deletion (the last step) signals that all cleanup is done.
- */
 const waitForWorkspaceRemoval = (workspaceId: string) =>
   Effect.gen(function* () {
-    const { store } = yield* LaborerStore
+    const { database } = yield* LaborerDatabase
     const maxAttempts = 100
     for (let i = 0; i < maxAttempts; i++) {
       yield* Effect.sleep('100 millis')
-      const rows = store.query(tables.workspaces.where('id', workspaceId))
-      if (rows.length === 0) {
+      if (database.findTask(workspaceId)?.worktreePath === null) {
         return
       }
     }
-    assert.fail('Timed out waiting for workspace row to be removed')
+    assert.fail('Timed out waiting for task worktree facts to be cleared')
   })
 
 afterAll(() => {
+  if (originalXdgStateHome === undefined) {
+    process.env.XDG_STATE_HOME = undefined
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome
+  }
   for (const root of tempRoots) {
     if (existsSync(root)) {
       rmSync(root, { recursive: true, force: true })
@@ -69,23 +71,19 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       git(`worktree add -b ${branchName} ${worktreePath}`, repoPath)
 
       const workspaceId = crypto.randomUUID()
-
-      const { store } = yield* LaborerStore
+      const { database } = yield* LaborerDatabase
+      database.insertTask({
+        branchName,
+        id: workspaceId,
+        rootPath: realpathSync(repoPath),
+        source: 'worktree',
+        status: 'in_progress',
+        title: branchName,
+        worktreePath: realpathSync(worktreePath),
+        worktreeStatus: 'ready',
+      })
       const registry = yield* ProjectRegistry
-      const project = yield* registry.addProject(repoPath)
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId: project.id,
-          taskSource: null,
-          branchName,
-          worktreePath,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      yield* registry.addProject(repoPath)
 
       const provider = yield* WorkspaceProvider
       yield* provider.destroyWorktree(workspaceId)
@@ -104,23 +102,19 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       git(`worktree add -b ${branchName} ${worktreePath}`, repoPath)
 
       const workspaceId = crypto.randomUUID()
-
-      const { store } = yield* LaborerStore
+      const { database } = yield* LaborerDatabase
+      database.insertTask({
+        branchName,
+        id: workspaceId,
+        rootPath: realpathSync(repoPath),
+        source: 'manual',
+        status: 'in_progress',
+        title: branchName,
+        worktreePath: realpathSync(worktreePath),
+        worktreeStatus: 'ready',
+      })
       const registry = yield* ProjectRegistry
-      const project = yield* registry.addProject(repoPath)
-      store.commit(
-        events.workspaceCreated({
-          id: workspaceId,
-          projectId: project.id,
-          taskSource: null,
-          branchName,
-          worktreePath,
-          status: 'stopped',
-          origin: 'laborer',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
+      yield* registry.addProject(repoPath)
 
       const provider = yield* WorkspaceProvider
       yield* provider.destroyWorktree(workspaceId)

@@ -15,21 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  destroyFn,
-  isElectronMock,
-  mutationMap,
-  queryDbMock,
-  useLaborerStoreMock,
-  workspaceRows,
-} = vi.hoisted(() => ({
-  destroyFn: vi.fn(),
-  isElectronMock: vi.fn(() => false),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  useLaborerStoreMock: vi.fn(),
-  workspaceRows: { current: [] as unknown[] },
-}))
+const { destroyFn, isElectronMock, mutationMap, workspaceRows } = vi.hoisted(
+  () => ({
+    destroyFn: vi.fn(),
+    isElectronMock: vi.fn(() => false),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    workspaceRows: { current: [] as unknown[] },
+  })
+)
 
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
@@ -72,18 +65,6 @@ vi.mock('@/atoms/laborer-client', () => ({
     },
     query: () => Symbol.for('query:stub'),
   },
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: queryDbMock,
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: useLaborerStoreMock,
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: { name: 'workspaces' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -233,14 +214,6 @@ const makeWorkspace = (
 /** Configure the mock store with the given workspaces. */
 const mockStore = (workspaces: unknown[]) => {
   workspaceRows.current = workspaces
-  useLaborerStoreMock.mockReturnValue({
-    useQuery: (query: { label: string }) => {
-      if (query.label === 'workspaceList') {
-        return workspaces
-      }
-      return []
-    },
-  })
 }
 
 // ---------------------------------------------------------------------------

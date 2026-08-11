@@ -89,24 +89,8 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
   reorder: vi.fn(),
 }))
 
-// Mock LiveStore dependencies (needed because workspace-frames.tsx imports
-// @laborer/shared/schema which uses State from @livestore/livestore)
-vi.mock('@livestore/livestore', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@livestore/livestore')>()
-  return {
-    ...actual,
-    queryDb: vi.fn(() => ({})),
-  }
-})
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => [],
-  }),
-}))
-
 // Mock PanelManager, DiffPane, resizable, and header to avoid
-// transitive LiveStore / xterm / heavyweight dependency imports
+// Mock xterm and other heavyweight transitive dependencies.
 vi.mock('@/panels/panel-manager', () => ({
   PanelManager: ({ layout }: { layout: unknown }) => (
     <div data-testid="panel-manager">{layout ? 'has-layout' : 'empty'}</div>

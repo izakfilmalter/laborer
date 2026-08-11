@@ -1,10 +1,8 @@
 import { basename } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
-import { events } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
 import { BranchStateTracker } from './branch-state-tracker.js'
 import { LaborerDatabase } from './laborer-database.js'
-import { LaborerStore } from './laborer-store.js'
 import type { Project } from './native-laborer-database.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { RepositoryWatchCoordinator } from './repository-watch-coordinator.js'
@@ -50,7 +48,6 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
     ProjectRegistry,
     Effect.gen(function* () {
       const database = yield* LaborerDatabase
-      const { store } = yield* LaborerStore
       const repoIdentity = yield* RepositoryIdentity
       const worktreeReconciler = yield* WorktreeReconciler
       const branchTracker = yield* BranchStateTracker
@@ -157,29 +154,6 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
                 )
               )
 
-        // Keep legacy server-only workspace services alive during the
-        // expand phase. Renderer project reads are exclusively shared-state.
-        if (existing) {
-          store.commit(
-            events.projectRepositoryIdentityBackfilled({
-              id: stored.id,
-              repoPath: stored.rootPath,
-              repoId: stored.repoId,
-              canonicalGitCommonDir: stored.canonicalGitCommonDir,
-            })
-          )
-        } else {
-          store.commit(
-            events.projectCreated({
-              id: stored.id,
-              name: stored.name,
-              repoPath: stored.rootPath,
-              repoId: stored.repoId,
-              canonicalGitCommonDir: stored.canonicalGitCommonDir,
-            })
-          )
-        }
-
         return yield* prepareProject(projectRecord(stored))
       })
 
@@ -208,7 +182,6 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
                 databaseRpcError('remove project', cause)
               )
             )
-          store.commit(events.projectRemoved({ id: projectId }))
         }
       )
 

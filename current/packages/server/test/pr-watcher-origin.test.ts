@@ -1,15 +1,13 @@
 // @effect-diagnostics effect/preferSchemaOverJson:off
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
 import { afterEach, vi } from 'vitest'
 import type { SpawnResult } from '../src/lib/spawn.js'
 import { spawn } from '../src/lib/spawn.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 vi.mock('../src/lib/spawn.js', () => ({
   spawn: vi.fn(),
@@ -73,29 +71,24 @@ const createSpawnMock = (
   }) as typeof spawn
 }
 
-const createWorkspace = (store: LaborerStore['Type']['store']) => {
-  store.commit(
-    events.projectCreated({
-      id: 'project-1',
-      repoPath: '/tmp',
-      name: 'Test project',
-      repoId: null,
-      canonicalGitCommonDir: null,
-    })
-  )
-  store.commit(
-    events.workspaceCreated({
-      id: 'workspace-1',
-      projectId: 'project-1',
-      taskSource: null,
-      branchName: 'feature/fork-pr',
-      worktreePath: '/tmp',
-      status: 'running',
-      origin: 'laborer',
-      createdAt: new Date().toISOString(),
-      baseSha: null,
-    })
-  )
+const createWorkspace = (database: NativeLaborerDatabase) => {
+  database.insertProject({
+    canonicalGitCommonDir: '/tmp/.git',
+    id: 'project-1',
+    name: 'Test project',
+    repoId: 'test-project',
+    rootPath: '/tmp',
+  })
+  database.insertTask({
+    branchName: 'feature/fork-pr',
+    id: 'workspace-1',
+    rootPath: '/tmp',
+    source: 'worktree',
+    status: 'in_progress',
+    title: 'Fork PR',
+    worktreePath: '/tmp',
+    worktreeStatus: 'ready',
+  })
 }
 
 afterEach(() => {
@@ -131,20 +124,9 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
         const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
         const { database } = Context.get(databaseContext, LaborerDatabase)
-        database.insertTask({
-          branchName: 'feature/fork-pr',
-          id: 'workspace-1',
-          rootPath: '/tmp',
-          source: 'worktree',
-          status: 'in_progress',
-          title: 'Fork PR',
-          worktreePath: '/tmp',
-          worktreeStatus: 'ready',
-        })
+        createWorkspace(database)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(Layer.succeedContext(databaseContext)),
@@ -158,25 +140,16 @@ describe('PrWatcher fork origin PR lookup', () => {
                     }),
                 })
               )
-            ),
-            Layer.provide(Layer.succeedContext(storeContext))
+            )
           )
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
-
-        createWorkspace(store)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
         yield* prWatcher.checkPr('workspace-1')
 
         assert.strictEqual(prData.number, 42)
         assert.strictEqual(prData.url, 'https://github.com/acme/fork/pull/42')
-
-        const workspace = store
-          .query(tables.workspaces)
-          .find((row) => row.id === 'workspace-1')
-        assert.strictEqual(workspace?.prNumber, 42)
-        assert.strictEqual(workspace?.prTitle, 'Origin fork PR')
         assert.deepInclude(database.findTask('workspace-1'), {
           prIsDraft: true,
           prNumber: 42,
@@ -229,18 +202,16 @@ describe('PrWatcher fork origin PR lookup', () => {
           })
         )
 
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
+        const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+        const { database } = Context.get(databaseContext, LaborerDatabase)
+        createWorkspace(database)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
             Layer.provide(PrTaskTransitions.noopLayer),
-            Layer.provide(LaborerDatabase.testLayer()),
-            Layer.provide(Layer.succeedContext(storeContext))
+            Layer.provide(Layer.succeedContext(databaseContext))
           )
         )
         const prWatcher = Context.get(prWatcherContext, PrWatcher)
-
-        createWorkspace(store)
 
         const prData = yield* prWatcher.checkPr('workspace-1')
 

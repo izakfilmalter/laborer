@@ -18,7 +18,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useBeforeQuit } from '@/hooks/use-before-quit'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
-import { LiveStoreProvider } from '@/livestore/provider'
 import { QuitAppDialog } from '@/routes/-components/close-dialogs'
 
 import '../index.css'
@@ -93,10 +92,8 @@ function RootComponent() {
                     <SharedStateBridge />
                     <AppSettingsProvider>
                       <div className="h-svh">
-                        <LiveStoreProvider key={`livestore-${generation}`}>
-                          <AppSettingsModal />
-                          <Outlet />
-                        </LiveStoreProvider>
+                        <AppSettingsModal />
+                        <Outlet />
                       </div>
                     </AppSettingsProvider>
                     <Toaster richColors />

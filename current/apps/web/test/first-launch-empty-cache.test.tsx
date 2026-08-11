@@ -1,12 +1,12 @@
 /**
- * Tests for first-launch empty cache handling.
+ * Tests for first-launch empty shared-state handling.
  *
- * When the LiveStore OPFS cache is empty (first launch or cache cleared),
- * all tables are empty and the UI must render meaningful placeholder/onboarding
+ * When the authoritative task snapshot is empty, all views must render
+ * meaningful placeholder/onboarding
  * content instead of broken empty tables or plain text stubs.
  *
  * These tests verify that key views handle the empty-store scenario gracefully
- * and that data populates reactively when sync delivers events.
+ * and that data populates reactively when the server stream delivers updates.
  *
  * @see Issue #3: First-launch empty cache handling
  */
@@ -21,21 +21,14 @@ const CREATE_WORKSPACE_PATTERN = /create.*workspace/i
 // Hoisted mocks — WorkspaceList
 // ---------------------------------------------------------------------------
 
-const {
-  destroyFn,
-  isElectronMock,
-  mutationMap,
-  queryDbMock,
-  useLaborerStoreMock,
-  workspaceRowsRef,
-} = vi.hoisted(() => ({
-  destroyFn: vi.fn(),
-  isElectronMock: vi.fn(() => false),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  queryDbMock: vi.fn((_table, options: { label: string }) => options),
-  useLaborerStoreMock: vi.fn(),
-  workspaceRowsRef: { current: [] as Record<string, unknown>[] },
-}))
+const { destroyFn, isElectronMock, mutationMap, workspaceRowsRef } = vi.hoisted(
+  () => ({
+    destroyFn: vi.fn(),
+    isElectronMock: vi.fn(() => false),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    workspaceRowsRef: { current: [] as Record<string, unknown>[] },
+  })
+)
 
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
@@ -78,18 +71,6 @@ vi.mock('@/atoms/laborer-client', () => ({
     },
     query: () => Symbol.for('query:stub'),
   },
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: queryDbMock,
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: useLaborerStoreMock,
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: { name: 'workspaces' },
 }))
 
 vi.mock('@/lib/toast', () => ({
@@ -204,11 +185,7 @@ describe('First-launch empty cache handling', () => {
   })
 
   // Tracer bullet: empty workspace list shows onboarding content
-  it('workspace list shows onboarding content when store has no workspaces', () => {
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: () => [],
-    })
-
+  it('workspace list shows onboarding content when snapshot has no workspaces', () => {
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Should use the Empty component pattern — not just plain "No workspaces" text
@@ -219,10 +196,6 @@ describe('First-launch empty cache handling', () => {
   })
 
   it('workspace list shows guidance description in empty state', () => {
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: () => [],
-    })
-
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Should have a description guiding the user to create their first workspace
@@ -230,7 +203,7 @@ describe('First-launch empty cache handling', () => {
   })
 
   it('workspace list updates reactively when data arrives via sync', () => {
-    // Start with empty store (simulating first launch)
+    // Start with an empty snapshot (simulating first launch)
     const { rerender } = render(
       <WorkspaceList projectId="project-1" repoPath="/repo" />
     )
@@ -241,7 +214,7 @@ describe('First-launch empty cache handling', () => {
       screen.getByText('No workspaces').closest('[data-slot="empty"]')
     ).toBeTruthy()
 
-    // Simulate data arriving via sync — LiveStore reactivity re-renders
+    // Simulate data arriving via the authoritative server stream.
     workspaceRowsRef.current = [
       {
         id: 'ws-1',
@@ -269,15 +242,11 @@ describe('First-launch empty cache handling', () => {
     expect(screen.getAllByText('feature/first').length).toBeGreaterThan(0)
   })
 
-  it('no console errors or rendering crashes with empty store', () => {
+  it('no console errors or rendering crashes with an empty snapshot', () => {
     const consoleErrorSpy = vi
       .spyOn(console, 'error')
       .mockImplementation(vi.fn())
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(vi.fn())
-
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: () => [],
-    })
 
     // Should not throw during render
     expect(() => {

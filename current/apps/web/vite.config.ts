@@ -73,8 +73,5 @@ export default defineConfig(({ mode }) => {
     worker: {
       format: 'es',
     },
-    optimizeDeps: {
-      exclude: ['@livestore/adapter-web'],
-    },
   }
 })

@@ -112,20 +112,6 @@ vi.mock('@/atoms/shared-state', () => ({
   workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
-vi.mock('@livestore/livestore', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@livestore/livestore')>()
-  return {
-    ...actual,
-    queryDb: vi.fn(() => ({})),
-  }
-})
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => workspaceResults.current,
-  }),
-}))
-
 // Stub drag-and-drop (required by workspace-frames.tsx imports)
 vi.mock('@atlaskit/pragmatic-drag-and-drop/element/adapter', () => ({
   draggable: () => () => undefined,

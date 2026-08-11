@@ -26,22 +26,6 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: () => vi.fn(),
 }))
 
-vi.mock('@livestore/livestore', () => ({
-  queryDb: vi.fn(() => ({ table: 'mock' })),
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: { table: 'workspaces' },
-}))
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => [],
-    query: () => [],
-    commit: vi.fn(),
-  }),
-}))
-
 vi.mock('@/atoms/laborer-client', () => ({
   LaborerClient: {
     mutation: vi.fn(() => Symbol('mutation')),

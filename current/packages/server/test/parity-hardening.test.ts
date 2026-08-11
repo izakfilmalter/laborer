@@ -18,7 +18,6 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
@@ -29,7 +28,6 @@ import {
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
@@ -37,7 +35,6 @@ import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
 
@@ -153,7 +150,7 @@ const createCoordinatorTestLayer = (
         })
       )
     ),
-    Layer.provideMerge(TestLaborerStore)
+    Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
   )
 }
 
@@ -165,7 +162,6 @@ describe('Persisted identity migration and dedupe hardening', () => {
    * ProjectRegistry + RepositoryIdentity service path.
    */
   const RegistryTestLayer = ProjectRegistry.layer.pipe(
-    Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
     Layer.provide(RepositoryWatchCoordinator.layer),
     Layer.provide(BranchStateTracker.layer),
     Layer.provide(ConfigService.layer),
@@ -173,7 +169,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
     Layer.provide(WorktreeReconciler.layer),
     Layer.provide(WorktreeDetector.layer),
     Layer.provide(RepositoryIdentity.layer),
-    Layer.provideMerge(TestLaborerStore)
+    Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
   )
 
   const RegistryWithIdentityTestLayer = RegistryTestLayer.pipe(
@@ -190,13 +186,8 @@ describe('Persisted identity migration and dedupe hardening', () => {
         const project = yield* registry.addProject(repoPath)
 
         // Verify persisted identity was written
-        const { store } = yield* LaborerStore
-        const [record] = store.query(
-          tables.projects.where('id', project.id)
-        ) as readonly {
-          readonly repoId: string | null
-          readonly canonicalGitCommonDir: string | null
-        }[]
+        const { database } = yield* LaborerDatabase
+        const record = database.findProject(project.id)
         assert.isNotNull(record?.repoId, 'repoId should be persisted')
         assert.isNotNull(
           record?.canonicalGitCommonDir,
@@ -216,18 +207,9 @@ describe('Persisted identity migration and dedupe hardening', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped('does not migrate projects from the obsolete LiveStore', () =>
+  it.scoped('starts with no implicitly migrated projects', () =>
     Effect.gen(function* () {
-      const repoPath = initRepo('hardening-backfill-null', tempRoots)
       const registry = yield* ProjectRegistry
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: 'legacy-null-identity',
-          repoPath,
-          name: 'legacy-null-identity',
-        })
-      )
 
       assert.deepStrictEqual(yield* registry.listProjects(), [])
     }).pipe(Effect.provide(RegistryWithIdentityTestLayer))

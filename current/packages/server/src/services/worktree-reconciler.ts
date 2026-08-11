@@ -1,26 +1,19 @@
 import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { RpcError } from '@laborer/shared/rpc'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { RepositoryIdentity } from './repository-identity.js'
+import {
+  listWorkspaceRecords,
+  type WorkspaceRecord,
+} from './workspace-records.js'
 import { WorktreeDetector } from './worktree-detector.js'
 import {
   type TranslatableWorktree,
   translateWorktreesToTasks,
 } from './worktree-task-translator.js'
-
-interface WorkspaceRecord {
-  readonly baseSha: string | null
-  readonly branchName: string
-  readonly id: string
-  readonly projectId: string
-  readonly status: string
-  readonly taskSource: string | null
-  readonly worktreePath: string
-}
 
 export interface ReconcileResult {
   readonly added: number
@@ -167,17 +160,11 @@ const selectTranslatableWorktrees = (
     }
     const canonicalPath = canonicalize(detected.path)
     const workspace = workspacesByCanonicalPath.get(canonicalPath)
-    if (
-      workspace !== undefined &&
-      (workspace.taskSource !== null || workspace.status === 'destroyed')
-    ) {
+    if (workspace !== undefined) {
       continue
     }
     translatable.push({
-      baseSha:
-        baseShasByCanonicalPath.get(canonicalPath) ??
-        workspace?.baseSha ??
-        null,
+      baseSha: baseShasByCanonicalPath.get(canonicalPath) ?? null,
       branch: detected.branch,
       canonicalPath,
       path: detected.path,
@@ -198,7 +185,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
   static readonly layer = Layer.effect(
     WorktreeReconciler,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const detector = yield* WorktreeDetector
       const repoIdentity = yield* RepositoryIdentity
 
@@ -227,9 +214,13 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           `[WorktreeReconciler] project=${projectId} detected ${detectedWorktrees.length} worktrees, defaultBranchRef=${defaultBranchRef}. Worktrees: ${detectedWorktrees.map((w) => `${w.branch ?? 'detached'}(isMain=${w.isMain}, head=${w.head.slice(0, 8)})`).join(', ')}`
         )
 
-        const allWorkspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        ) as readonly WorkspaceRecord[]
+        const allWorkspaces = yield* laborerDatabase.read(
+          'list workspaces for reconciliation',
+          (database) =>
+            listWorkspaceRecords(database).filter(
+              (workspace) => workspace.projectId === projectId
+            )
+        )
 
         // Filter out workspaces that should not be candidates for removal:
         //
@@ -239,7 +230,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
         //   `git worktree list`. Removing would race with the background
         //   setup fiber.
         const existingWorkspaces = allWorkspaces.filter(
-          (w) => w.status !== 'destroyed' && w.status !== 'creating'
+          (w) => w.status !== 'creating'
         )
 
         // Canonicalize existing workspace paths for comparison so that
@@ -285,28 +276,13 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           )
           baseShasByCanonicalPath.set(canonicalDetectedPath, baseSha)
 
-          const newWorkspaceId = crypto.randomUUID()
           const branchName = toWorkspaceBranchName(
             detected.branch,
             detected.head
           )
 
           yield* Effect.log(
-            `[WorktreeReconciler] ADDING external workspace: id=${newWorkspaceId.slice(0, 8)} project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'} status=stopped`
-          )
-
-          store.commit(
-            events.workspaceCreated({
-              id: newWorkspaceId,
-              projectId,
-              taskSource: null,
-              branchName,
-              worktreePath: canonicalDetectedPath,
-              status: 'stopped',
-              origin: 'external',
-              createdAt: new Date().toISOString(),
-              baseSha,
-            })
+            `[WorktreeReconciler] ADDING external workspace: project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'}`
           )
           added += 1
         }
@@ -317,18 +293,40 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
             continue
           }
 
-          store.commit(events.workspaceDestroyed({ id: workspace.id }))
+          yield* laborerDatabase
+            .run('release missing worktree', (database) => {
+              const task = database.findTask(workspace.id)
+              if (task !== null) {
+                database.updateTask(task.id, task.revision, {
+                  worktreeError: null,
+                  worktreePath: null,
+                  worktreeStatus: null,
+                })
+              }
+            })
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new RpcError({
+                    code: 'WORKTREE_RECONCILE_FAILED',
+                    message: `Failed to release missing worktree ${workspace.id}`,
+                  })
+              )
+            )
           removed += 1
         }
 
-        yield* translateWorktreesToTasks({
-          rootPath: canonicalRepoPath,
-          worktrees: selectTranslatableWorktrees(
-            detectedWorktrees,
-            allByCanonicalPath,
-            baseShasByCanonicalPath
-          ),
-        })
+        yield* translateWorktreesToTasks(
+          {
+            rootPath: canonicalRepoPath,
+            worktrees: selectTranslatableWorktrees(
+              detectedWorktrees,
+              allByCanonicalPath,
+              baseShasByCanonicalPath
+            ),
+          },
+          laborerDatabase.database
+        )
 
         if (added > 0 || removed > 0) {
           yield* Effect.log(

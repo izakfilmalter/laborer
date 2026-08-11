@@ -38,20 +38,6 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
   reorder: vi.fn(),
 }))
 
-vi.mock('@livestore/livestore', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@livestore/livestore')>()
-  return {
-    ...actual,
-    queryDb: vi.fn(() => ({})),
-  }
-})
-
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => [],
-  }),
-}))
-
 vi.mock('@/panels/panel-manager', () => ({
   PanelManager: () => <div data-testid="panel-manager" />,
 }))

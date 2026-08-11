@@ -1,7 +1,7 @@
 /**
  * Tests that the root route renders content without a server running.
  *
- * With the removal of ServerGate (Issue #6), LiveStoreProvider and route
+ * With the removal of ServerGate (Issue #6), Application providers and route
  * content render immediately during Phase 1 (Starting) — no blocking
  * overlay prevents interaction.
  *
@@ -19,7 +19,7 @@ import { useWhenPhase } from '../src/hooks/use-when-phase'
 
 /**
  * Minimal component simulating what the root route does post-ServerGate removal:
- * LiveStoreProvider and route content render immediately in any phase.
+ * Application providers and route content render immediately in any phase.
  */
 function RootContent() {
   const { phase } = useLifecyclePhase()
@@ -30,7 +30,7 @@ function RootContent() {
       <span data-testid="current-phase">{phase}</span>
       <span data-testid="is-ready">{String(isReady)}</span>
       <div data-testid="route-content">Route content is visible</div>
-      <div data-testid="livestore-area">LiveStore area is visible</div>
+      <div data-testid="application-area">Application area is visible</div>
     </div>
   )
 }
@@ -68,9 +68,9 @@ describe('Root route without ServerGate', () => {
         'Route content is visible'
       )
 
-      // LiveStore area renders immediately — no gate prevents it
-      expect(screen.getByTestId('livestore-area').textContent).toBe(
-        'LiveStore area is visible'
+      // Application area renders immediately — no gate prevents it
+      expect(screen.getByTestId('application-area').textContent).toBe(
+        'Application area is visible'
       )
     } finally {
       globalThis.fetch = originalFetch

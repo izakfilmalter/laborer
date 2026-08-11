@@ -2,7 +2,7 @@
  * Maps worktree setup step keys to human-readable display labels.
  *
  * The step keys are stored in the `worktreeSetupStep` column of the
- * workspaces LiveStore table and emitted via `v1.WorktreeSetupStepChanged`
+ * workspace setup stream
  * events during background workspace creation.
  *
  * Shared between the workspace card list and the empty terminal pane so

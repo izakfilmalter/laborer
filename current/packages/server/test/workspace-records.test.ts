@@ -1,0 +1,51 @@
+import { Effect, Layer } from 'effect'
+import { describe, expect, it } from 'vitest'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import {
+  findWorkspaceRecord,
+  listWorkspaceRecords,
+} from '../src/services/workspace-records.js'
+
+describe('task-backed workspace records', () => {
+  it('projects only tasks that currently own a worktree', async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const { database } = yield* LaborerDatabase
+        database.insertProject({
+          canonicalGitCommonDir: '/repo/.git',
+          id: 'project-1',
+          name: 'Repo',
+          repoId: 'repo-1',
+          rootPath: '/repo',
+        })
+        database.insertTask({
+          branchName: 'feature/shared-db',
+          id: 'task-worktree',
+          rootPath: '/repo',
+          source: 'manual',
+          status: 'in_progress',
+          title: 'Shared DB',
+          worktreePath: '/repo-worktree',
+          worktreeStatus: 'ready',
+        })
+        database.insertTask({
+          id: 'task-todo',
+          rootPath: '/repo',
+          source: 'manual',
+          status: 'todo',
+          title: 'Todo',
+        })
+
+        expect(listWorkspaceRecords(database)).toHaveLength(1)
+        expect(findWorkspaceRecord(database, 'task-worktree')).toMatchObject({
+          branchName: 'feature/shared-db',
+          id: 'task-worktree',
+          projectId: 'project-1',
+          status: 'running',
+          worktreePath: '/repo-worktree',
+        })
+        expect(findWorkspaceRecord(database, 'task-todo')).toBeNull()
+      }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
+    )
+  })
+})

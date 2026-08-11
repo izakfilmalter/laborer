@@ -4,7 +4,7 @@ import { createEnv } from '@t3-oss/env-core'
 import { z } from 'zod'
 
 /**
- * Default data directory for LiveStore persistence.
+ * Default data directory for server runtime state.
  * Uses `~/.config/laborer/data` so all worktrees share the same database.
  */
 const defaultDataDir = join(homedir(), '.config', 'laborer', 'data')

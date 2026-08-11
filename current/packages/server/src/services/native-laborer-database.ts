@@ -257,6 +257,9 @@ const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const MAX_LEDGER_READ = 1000
 const MAX_TABLE_ROWS = 10_000
+const pathContains = (parent: string, child: string): boolean =>
+  parent === child ||
+  child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
 const BUSY_MESSAGE = /SQLITE_BUSY|SQLITE_BUSY_SNAPSHOT|database is locked/i
 
 const TASK_PATCH_FIELDS = [
@@ -675,6 +678,76 @@ export class NativeLaborerDatabase {
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, mutationId)
       return { row: this.#requireTask(input.id), cursor }
+    })
+  }
+
+  /** Atomically adopt an unclaimed git worktree as an in-progress task. */
+  adoptWorktreeTask(
+    input: {
+      readonly baseSha?: string | null
+      readonly branchName: string | null
+      readonly id: string
+      readonly rootPath: string
+      readonly title: string
+      readonly worktreePath: string
+      readonly worktreePathAliases: readonly string[]
+    },
+    changedAt = Date.now()
+  ): LaborerTask | null {
+    const aliases = [
+      ...new Set([input.worktreePath, ...input.worktreePathAliases]),
+    ]
+    return this.#writeTransaction(() => {
+      const pathClaim = this.#database
+        .prepare(
+          `SELECT 1 FROM tasks
+           WHERE worktree_path IN (${aliases.map(() => '?').join(', ')})
+           LIMIT 1`
+        )
+        .get(...aliases)
+      if (pathClaim !== undefined) {
+        return null
+      }
+
+      if (input.branchName !== null) {
+        const branchClaimed = this.#database
+          .prepare(
+            `SELECT root_path FROM tasks
+             WHERE branch_name = ? LIMIT ?`
+          )
+          .all(input.branchName, MAX_TABLE_ROWS)
+          .some((row) => {
+            const rootPath = string(sqliteRow(row).root_path, 'root_path')
+            return (
+              pathContains(rootPath, input.rootPath) ||
+              pathContains(input.rootPath, rootPath)
+            )
+          })
+        if (branchClaimed) {
+          return null
+        }
+      }
+
+      this.#database
+        .prepare(`INSERT INTO tasks (
+          id, root_path, title, status, source, execution_id, action_name,
+          execution_status, slack_permalink, worktree_path, branch_name,
+          description, created_at, updated_at, revision, base_sha,
+          worktree_status
+        ) VALUES (?, ?, ?, 'in_progress', 'worktree', NULL, NULL, NULL, NULL,
+          ?, ?, NULL, ?, ?, 1, ?, 'ready')`)
+        .run(
+          input.id,
+          input.rootPath,
+          input.title,
+          input.worktreePath,
+          input.branchName,
+          changedAt,
+          changedAt,
+          input.baseSha ?? null
+        )
+      this.#appendTaskChange(input.id, changedAt, null)
+      return this.#requireTask(input.id)
     })
   }
 

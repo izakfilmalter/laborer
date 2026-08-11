@@ -100,22 +100,9 @@ vi.mock('@/components/ui/panel-type-picker', () => ({
 }))
 
 // Mock the store and atom hooks used by EmptyTerminalPane / EmptyDevServerPane
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: () => [],
-  }),
-}))
 
 vi.mock('@/hooks/use-spawn-terminal', () => ({
   useSpawnTerminal: () => vi.fn(),
-}))
-
-vi.mock('@laborer/shared/schema', () => ({
-  workspaces: {},
-}))
-
-vi.mock('@livestore/livestore', () => ({
-  queryDb: () => ({}),
 }))
 
 vi.mock('@/lib/toast', () => ({

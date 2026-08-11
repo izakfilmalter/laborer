@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import type { RpcError } from '@laborer/shared/rpc'
-import { events } from '@laborer/shared/schema'
 import { Effect, Ref, type Scope } from 'effect'
 import { initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
@@ -43,19 +42,16 @@ const makeWorkspaceFixture = (
     const worktreePath = join(repoPath, '.worktrees', workspaceId)
 
     mkdirSync(worktreePath, { recursive: true })
-    context.store.commit(
-      events.workspaceCreated({
-        baseSha: null,
-        branchName: 'feature/rpc-terminal',
-        createdAt: new Date().toISOString(),
-        id: workspaceId,
-        origin: 'external',
-        projectId: project.id,
-        status: 'running',
-        taskSource: null,
-        worktreePath,
-      })
-    )
+    context.database.insertTask({
+      branchName: 'feature/rpc-terminal',
+      id: workspaceId,
+      rootPath: project.repoPath,
+      source: 'worktree',
+      status: 'in_progress',
+      title: 'feature/rpc-terminal',
+      worktreePath,
+      worktreeStatus: 'ready',
+    })
 
     return { projectId: project.id, workspaceId }
   })

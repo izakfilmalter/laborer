@@ -1,12 +1,10 @@
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Context, Duration, Effect, Layer, Logger, TestClock } from 'effect'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { waitFor } from './helpers/timing-helpers.js'
 
 type PrWatcherService = Context.Tag.Service<typeof PrWatcher>
@@ -26,359 +24,263 @@ const waitForPollingState = (
     )
   )
 
-/**
- * Helper: build a PrWatcher from a pre-built store context.
- * Returns both the PrWatcher service and the underlying store for assertions.
- */
-const buildPrWatcher = (storeContext: Context.Context<LaborerStore>) =>
+const insertProject = (database: NativeLaborerDatabase) => {
+  database.insertProject({
+    canonicalGitCommonDir: '/tmp/.git',
+    id: 'project-1',
+    name: 'Test project',
+    repoId: 'test-project',
+    rootPath: '/tmp',
+  })
+}
+
+const insertWorkspace = (
+  database: NativeLaborerDatabase,
+  input: {
+    readonly branchName: string
+    readonly id: string
+    readonly source?: 'manual' | 'worktree'
+    readonly worktreePath: string
+  }
+) =>
+  database.insertTask({
+    branchName: input.branchName,
+    id: input.id,
+    rootPath: '/tmp',
+    source: input.source ?? 'manual',
+    status: 'in_progress',
+    title: input.branchName,
+    worktreePath: input.worktreePath,
+    worktreeStatus: 'ready',
+  }).row
+
+const buildPrWatcher = (databaseContext: Context.Context<LaborerDatabase>) =>
   Effect.gen(function* () {
     const prWatcherContext = yield* Layer.build(
       PrWatcher.layer.pipe(
         Layer.provide(PrTaskTransitions.noopLayer),
-        Layer.provide(LaborerDatabase.testLayer()),
-        Layer.provide(Layer.succeedContext(storeContext))
+        Layer.provide(Layer.succeedContext(databaseContext))
       )
     )
     return Context.get(prWatcherContext, PrWatcher)
+  })
+
+const withDatabase = <A, E, R>(
+  run: (
+    database: NativeLaborerDatabase,
+    databaseContext: Context.Context<LaborerDatabase>
+  ) => Effect.Effect<A, E, R>
+) =>
+  Effect.gen(function* () {
+    const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+    const { database } = Context.get(databaseContext, LaborerDatabase)
+    insertProject(database)
+    return yield* run(database, databaseContext)
   })
 
 describe('PrWatcher', () => {
   it.scoped(
     'bootstraps polling for persisted active workspaces on startup',
     () =>
-      Effect.gen(function* () {
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
-
-        store.commit(
-          events.workspaceCreated({
-            id: 'workspace-running',
-            projectId: 'project-1',
-            taskSource: null,
+      withDatabase((database, databaseContext) =>
+        Effect.gen(function* () {
+          insertWorkspace(database, {
             branchName: 'feature/pr-status',
+            id: 'workspace-running',
             worktreePath: '/tmp/workspace-running',
-            status: 'running',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
           })
-        )
 
-        const prWatcherContext = yield* Layer.build(
-          PrWatcher.layer.pipe(
-            Layer.provide(PrTaskTransitions.noopLayer),
-            Layer.provide(LaborerDatabase.testLayer()),
-            Layer.provide(Layer.succeedContext(storeContext))
-          )
-        )
-        const prWatcher = Context.get(prWatcherContext, PrWatcher)
+          const prWatcher = yield* buildPrWatcher(databaseContext)
+          yield* waitForPollingState(prWatcher, 'workspace-running', true)
 
-        yield* waitForPollingState(prWatcher, 'workspace-running', true)
-        const isPolling = yield* prWatcher.isPolling('workspace-running')
-
-        assert.isTrue(isPolling)
-      })
+          assert.isTrue(yield* prWatcher.isPolling('workspace-running'))
+        })
+      )
   )
 
   it.scoped(
-    'bootstraps background polling for stopped workspaces on startup',
+    'bootstraps background polling for externally adopted workspaces on startup',
     () =>
-      Effect.gen(function* () {
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
-
-        store.commit(
-          events.workspaceCreated({
-            id: 'workspace-stopped',
-            projectId: 'project-1',
-            taskSource: null,
+      withDatabase((database, databaseContext) =>
+        Effect.gen(function* () {
+          insertWorkspace(database, {
             branchName: 'feature/stopped',
+            id: 'workspace-stopped',
+            source: 'worktree',
             worktreePath: '/tmp/workspace-stopped',
-            status: 'stopped',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
           })
-        )
 
-        const prWatcherContext = yield* Layer.build(
-          PrWatcher.layer.pipe(
-            Layer.provide(PrTaskTransitions.noopLayer),
-            Layer.provide(LaborerDatabase.testLayer()),
-            Layer.provide(Layer.succeedContext(storeContext))
-          )
-        )
-        const prWatcher = Context.get(prWatcherContext, PrWatcher)
+          const prWatcher = yield* buildPrWatcher(databaseContext)
+          yield* waitForPollingState(prWatcher, 'workspace-stopped', true)
 
-        yield* waitForPollingState(prWatcher, 'workspace-stopped', true)
-        const isPolling = yield* prWatcher.isPolling('workspace-stopped')
-
-        assert.isTrue(isPolling)
-      })
+          assert.isTrue(yield* prWatcher.isPolling('workspace-stopped'))
+        })
+      )
   )
 
   it.scoped(
-    'clears stale PR data without warning when a stopped workspace path is missing',
+    'clears stale PR data without warning when a workspace path is missing',
     () => {
       const logs: string[] = []
       const logger = Logger.make(({ message }) => {
         logs.push(String(message))
       })
 
-      return Effect.gen(function* () {
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
-
-        // Create a stopped workspace and pre-populate it with PR data
-        // to simulate a workspace that previously had a known PR state.
-        store.commit(
-          events.workspaceCreated({
-            id: 'workspace-stopped',
-            projectId: 'project-1',
-            taskSource: null,
+      return withDatabase((database, databaseContext) =>
+        Effect.gen(function* () {
+          database.insertTask({
             branchName: 'feature/stopped-pr',
-            worktreePath: '/tmp/workspace-stopped-pr',
-            status: 'stopped',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
-        store.commit(
-          events.workspacePrUpdated({
             id: 'workspace-stopped',
             prNumber: 42,
-            prUrl: 'https://github.com/test/repo/pull/42',
+            prState: 'merged',
             prTitle: 'Test PR',
-            prState: 'MERGED',
+            prUrl: 'https://github.com/test/repo/pull/42',
+            rootPath: '/tmp',
+            source: 'worktree',
+            status: 'in_progress',
+            title: 'Test PR',
+            worktreePath: '/tmp/workspace-stopped-pr',
+            worktreeStatus: 'ready',
           })
-        )
 
-        // Verify the pre-populated PR state is set
-        const workspaceBefore = store
-          .query(tables.workspaces)
-          .find((w) => w.id === 'workspace-stopped')
-        assert.strictEqual(workspaceBefore?.prState, 'MERGED')
-        assert.strictEqual(workspaceBefore?.prNumber, 42)
+          const workspaceBefore = database.findTask('workspace-stopped')
+          assert.strictEqual(workspaceBefore?.prState, 'merged')
+          assert.strictEqual(workspaceBefore?.prNumber, 42)
 
-        const prWatcherContext = yield* Layer.build(
-          PrWatcher.layer.pipe(
-            Layer.provide(PrTaskTransitions.noopLayer),
-            Layer.provide(LaborerDatabase.testLayer()),
-            Layer.provide(Layer.succeedContext(storeContext))
+          const prWatcher = yield* buildPrWatcher(databaseContext)
+          yield* prWatcher.checkPr('workspace-stopped')
+
+          const workspaceAfter = database.findTask('workspace-stopped')
+          assert.strictEqual(
+            workspaceAfter?.prState,
+            null,
+            'checkPr should clear stale PR data for a missing worktree'
           )
-        )
-        const prWatcher = Context.get(prWatcherContext, PrWatcher)
-
-        // A missing stopped workspace should still clear stale PR data, but it
-        // should not be reported as a failure to spawn the gh executable.
-        yield* prWatcher.checkPr('workspace-stopped')
-
-        // After checkPr, the workspace PR data should be updated.
-        // Since gh pr view fails (fake path), it returns EMPTY_PR and commits
-        // null values — overwriting the old MERGED state.
-        const workspaceAfter = store
-          .query(tables.workspaces)
-          .find((w) => w.id === 'workspace-stopped')
-        assert.strictEqual(
-          workspaceAfter?.prState,
-          null,
-          'checkPr should clear stale PR data for a missing worktree'
-        )
-        assert.isFalse(
-          logs.some((message) =>
-            message.includes('[PrWatcher] Failed to run gh pr view')
-          ),
-          'a missing worktree should not be reported as a gh spawn failure'
-        )
-      }).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger)))
+          assert.isFalse(
+            logs.some((message) =>
+              message.includes('[PrWatcher] Failed to run gh pr view')
+            ),
+            'a missing worktree should not be reported as a gh spawn failure'
+          )
+        })
+      ).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger)))
     }
   )
 
   it.scoped('refreshes polling coverage for an adopted workspace', () =>
-    Effect.gen(function* () {
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
-      const prWatcher = yield* buildPrWatcher(storeContext)
-
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-adopted',
-          projectId: 'project-1',
-          taskSource: null,
+    withDatabase((database, databaseContext) =>
+      Effect.gen(function* () {
+        const prWatcher = yield* buildPrWatcher(databaseContext)
+        insertWorkspace(database, {
           branchName: 'laborer/adopted',
+          id: 'workspace-adopted',
+          source: 'worktree',
           worktreePath: '/tmp/workspace-adopted',
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
         })
-      )
 
-      yield* prWatcher.refreshPolling()
-      yield* waitForPollingState(prWatcher, 'workspace-adopted', true)
-      assert.isTrue(yield* prWatcher.isPolling('workspace-adopted'))
-    })
+        yield* prWatcher.refreshPolling()
+        yield* waitForPollingState(prWatcher, 'workspace-adopted', true)
+        assert.isTrue(yield* prWatcher.isPolling('workspace-adopted'))
+      })
+    )
   )
 
   it.scoped('periodically discovers an adopted workspace', () =>
-    Effect.gen(function* () {
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
-      const prWatcher = yield* buildPrWatcher(storeContext)
+    withDatabase((database, databaseContext) =>
+      Effect.gen(function* () {
+        const prWatcher = yield* buildPrWatcher(databaseContext)
 
-      // Let the startup coverage pass finish while the store is empty.
-      yield* Effect.yieldNow()
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-periodically-adopted',
-          projectId: 'project-1',
-          taskSource: null,
+        yield* Effect.yieldNow()
+        insertWorkspace(database, {
           branchName: 'laborer/periodically-adopted',
+          id: 'workspace-periodically-adopted',
+          source: 'worktree',
           worktreePath: '/tmp/workspace-periodically-adopted',
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
         })
-      )
 
-      assert.isFalse(
-        yield* prWatcher.isPolling('workspace-periodically-adopted')
-      )
-      yield* TestClock.adjust(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
-      yield* Effect.yieldNow()
-      assert.isTrue(
-        yield* prWatcher.isPolling('workspace-periodically-adopted')
-      )
-    })
+        assert.isFalse(
+          yield* prWatcher.isPolling('workspace-periodically-adopted')
+        )
+        yield* TestClock.adjust(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
+        yield* Effect.yieldNow()
+        assert.isTrue(
+          yield* prWatcher.isPolling('workspace-periodically-adopted')
+        )
+      })
+    )
   )
 
-  it.scoped('polling coverage continuously polls stopped workspaces', () =>
-    Effect.gen(function* () {
-      const storeContext = yield* Layer.build(TestLaborerStore)
-      const { store } = Context.get(storeContext, LaborerStore)
-
-      // Create a stopped workspace with pre-populated PR data.
-      // The first polling pass should refresh the persisted PR state and the
-      // polling fiber must remain registered for later background checks.
-      store.commit(
-        events.workspaceCreated({
-          id: 'workspace-stopped-boot',
-          projectId: 'project-1',
-          taskSource: null,
+  it.scoped('polling coverage continuously polls adopted workspaces', () =>
+    withDatabase((database, databaseContext) =>
+      Effect.gen(function* () {
+        database.insertTask({
           branchName: 'feature/stopped-boot',
-          worktreePath: '/tmp/workspace-stopped-boot',
-          status: 'stopped',
-          origin: 'laborer',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
-      store.commit(
-        events.workspacePrUpdated({
           id: 'workspace-stopped-boot',
           prNumber: 99,
-          prUrl: 'https://github.com/test/repo/pull/99',
+          prState: 'open',
           prTitle: 'Boot PR',
-          prState: 'OPEN',
+          prUrl: 'https://github.com/test/repo/pull/99',
+          rootPath: '/tmp',
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'Boot PR',
+          worktreePath: '/tmp/workspace-stopped-boot',
+          worktreeStatus: 'ready',
         })
-      )
-
-      // Verify PR state before bootstrap
-      const before = store
-        .query(tables.workspaces)
-        .find((w) => w.id === 'workspace-stopped-boot')
-      assert.strictEqual(before?.prState, 'OPEN')
-
-      // Building PrWatcher starts polling coverage.
-      const prWatcherContext = yield* Layer.build(
-        PrWatcher.layer.pipe(
-          Layer.provide(PrTaskTransitions.noopLayer),
-          Layer.provide(LaborerDatabase.testLayer()),
-          Layer.provide(Layer.succeedContext(storeContext))
+        assert.strictEqual(
+          database.findTask('workspace-stopped-boot')?.prState,
+          'open'
         )
-      )
-      const prWatcher = Context.get(prWatcherContext, PrWatcher)
 
-      yield* waitForPollingState(prWatcher, 'workspace-stopped-boot', true)
-      const isPolling = yield* prWatcher.isPolling('workspace-stopped-boot')
-      assert.isTrue(isPolling, 'stopped workspaces should poll continuously')
-
-      yield* Effect.promise(() =>
-        waitFor(
-          async () =>
-            store
-              .query(tables.workspaces)
-              .find((w) => w.id === 'workspace-stopped-boot')?.prState === null,
-          5000,
-          'stopped workspace bootstrap PR check'
+        const prWatcher = yield* buildPrWatcher(databaseContext)
+        yield* waitForPollingState(prWatcher, 'workspace-stopped-boot', true)
+        assert.isTrue(
+          yield* prWatcher.isPolling('workspace-stopped-boot'),
+          'adopted workspaces should poll continuously'
         )
-      )
 
-      // The first check overwrites stale OPEN state with EMPTY_PR because the
-      // fake worktree path has no repository.
-      const after = store
-        .query(tables.workspaces)
-        .find((w) => w.id === 'workspace-stopped-boot')
-      assert.strictEqual(
-        after?.prState,
-        null,
-        'polling coverage should check stopped workspaces'
-      )
-    })
+        yield* Effect.promise(() =>
+          waitFor(
+            async () =>
+              database.findTask('workspace-stopped-boot')?.prState === null,
+            5000,
+            'adopted workspace bootstrap PR check'
+          )
+        )
+        assert.strictEqual(
+          database.findTask('workspace-stopped-boot')?.prState,
+          null,
+          'polling coverage should check adopted workspaces'
+        )
+      })
+    )
   )
 
   it.scoped(
-    'checkPr removes workspace from LiveStore and stops polling when workspace is not found',
+    'checkPr stops polling when the durable workspace task is not found',
     () =>
-      Effect.gen(function* () {
-        const storeContext = yield* Layer.build(TestLaborerStore)
-        const { store } = Context.get(storeContext, LaborerStore)
-
-        // Create a running workspace so PrWatcher starts polling for it.
-        store.commit(
-          events.workspaceCreated({
-            id: 'workspace-vanishing',
-            projectId: 'project-1',
-            taskSource: null,
+      withDatabase((database, databaseContext) =>
+        Effect.gen(function* () {
+          const task = insertWorkspace(database, {
             branchName: 'feature/vanish',
+            id: 'workspace-vanishing',
             worktreePath: '/tmp/workspace-vanishing',
-            status: 'running',
-            origin: 'laborer',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
           })
-        )
+          const prWatcher = yield* buildPrWatcher(databaseContext)
 
-        // Building PrWatcher starts continuous polling.
-        const prWatcher = yield* buildPrWatcher(storeContext)
+          yield* waitForPollingState(prWatcher, 'workspace-vanishing', true)
+          assert.isTrue(yield* prWatcher.isPolling('workspace-vanishing'))
 
-        // Verify polling is active
-        yield* waitForPollingState(prWatcher, 'workspace-vanishing', true)
-        const pollingBefore = yield* prWatcher.isPolling('workspace-vanishing')
-        assert.isTrue(pollingBefore, 'should be polling after bootstrap')
+          database.deleteTask(task.id, task.revision)
+          assert.isNull(database.findTask('workspace-vanishing'))
 
-        // Now destroy the workspace externally (simulating another service
-        // removing it from LiveStore while PrWatcher is still polling).
-        store.commit(events.workspaceDestroyed({ id: 'workspace-vanishing' }))
+          yield* prWatcher.checkPr('workspace-vanishing')
 
-        // Confirm it's gone from LiveStore
-        const wsGone = store
-          .query(tables.workspaces)
-          .find((w) => w.id === 'workspace-vanishing')
-        assert.isUndefined(wsGone, 'workspace should be removed from store')
-
-        // Call checkPr directly — this should detect the workspace is gone,
-        // log the situation, and stop the polling fiber.
-        yield* prWatcher.checkPr('workspace-vanishing')
-
-        // Polling should now be stopped for this workspace.
-        const pollingAfter = yield* prWatcher.isPolling('workspace-vanishing')
-        assert.isFalse(
-          pollingAfter,
-          'polling should stop when workspace is not found in LiveStore'
-        )
-      })
+          assert.isFalse(
+            yield* prWatcher.isPolling('workspace-vanishing'),
+            'polling should stop when the durable workspace task is absent'
+          )
+        })
+      )
   )
 })

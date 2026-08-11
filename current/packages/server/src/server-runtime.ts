@@ -15,11 +15,6 @@ import { LaborerRpcsLive } from './rpc/handlers.js'
 import { AgentTaskService } from './services/agent-task-service.js'
 import { serverDiscoveryLayer } from './services/server-discovery.js'
 import {
-  SharedSyncBackendServiceLive,
-  SyncRpcHandlersLive,
-  SyncWsRpc,
-} from './services/sync-backend.js'
-import {
   mcpOriginGuard,
   TaskMcpProtocolLayer,
   TaskMcpToolsLayer,
@@ -27,7 +22,6 @@ import {
 import { InfrastructureLayer } from './utility-main.js'
 
 const PortSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 65_535))
-const SYNC_TOKEN_PATH_PATTERN = /^\/sync\/([^/]+)$/
 
 export interface ServerRuntimeConfigShape {
   readonly authToken: string | undefined
@@ -83,21 +77,6 @@ export function isAuthorizedWebSocketUrl(
   return !authToken || url.searchParams.get('token') === authToken
 }
 
-export function isAuthorizedSyncWebSocketUrl(
-  url: URL,
-  authToken: string | undefined
-): boolean {
-  if (!authToken) {
-    return true
-  }
-
-  const pathToken = url.pathname.match(SYNC_TOKEN_PATH_PATTERN)?.[1]
-  return (
-    url.searchParams.get('token') === authToken ||
-    (pathToken !== undefined && decodeURIComponent(pathToken) === authToken)
-  )
-}
-
 const authorizeWebSocketRequest = (authToken: string | undefined) =>
   Effect.gen(function* () {
     if (!authToken) {
@@ -113,32 +92,6 @@ const authorizeWebSocketRequest = (authToken: string | undefined) =>
     }
 
     if (!isAuthorizedWebSocketUrl(url.value, authToken)) {
-      return yield* HttpServerResponse.text(
-        'Unauthorized WebSocket connection',
-        {
-          status: 401,
-        }
-      )
-    }
-
-    return undefined
-  })
-
-const authorizeSyncWebSocketRequest = (authToken: string | undefined) =>
-  Effect.gen(function* () {
-    if (!authToken) {
-      return undefined
-    }
-
-    const request = yield* HttpServerRequest.HttpServerRequest
-    const url = HttpServerRequest.toURL(request)
-    if (Option.isNone(url)) {
-      return yield* HttpServerResponse.text('Invalid WebSocket URL', {
-        status: 400,
-      })
-    }
-
-    if (!isAuthorizedSyncWebSocketUrl(url.value, authToken)) {
       return yield* HttpServerResponse.text(
         'Unauthorized WebSocket connection',
         {
@@ -172,28 +125,6 @@ const authedWebSocketRoute = (
     )
   )
 
-const authedSyncWebSocketRoute = (
-  path: `/${string}`,
-  authToken: string | undefined,
-  websocketApp: Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    never,
-    HttpServerRequest.HttpServerRequest | Scope.Scope
-  >
-) =>
-  HttpRouter.Default.use((router) =>
-    router.get(
-      path,
-      Effect.gen(function* () {
-        const unauthorized = yield* authorizeSyncWebSocketRequest(authToken)
-        if (unauthorized) {
-          return unauthorized
-        }
-        return yield* websocketApp
-      })
-    )
-  )
-
 const makeRoutesLayer = Layer.unwrapScoped(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
@@ -202,32 +133,6 @@ const makeRoutesLayer = Layer.unwrapScoped(
     ).pipe(
       Effect.provide(
         Layer.mergeAll(LaborerRpcsLive, RpcSerialization.layerJson)
-      )
-    )
-
-    const syncWebSocketApp = yield* RpcServer.toHttpAppWebsocket(
-      SyncWsRpc
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          SyncRpcHandlersLive.pipe(Layer.provide(SharedSyncBackendServiceLive)),
-          RpcSerialization.layerJson
-        )
-      )
-    )
-
-    // Connection lifecycle logging for sync clients. The handler effect
-    // runs for the duration of the WebSocket connection, so completion
-    // (or interruption) marks the disconnect. This is the primary
-    // diagnostic for silently dropped renderer sync subscriptions.
-    const loggedSyncWebSocketApp = Effect.sync(() => {
-      console.log('[server-runtime] Sync WebSocket client connected')
-    }).pipe(
-      Effect.zipRight(syncWebSocketApp),
-      Effect.ensuring(
-        Effect.sync(() => {
-          console.log('[server-runtime] Sync WebSocket client disconnected')
-        })
       )
     )
 
@@ -241,12 +146,6 @@ const makeRoutesLayer = Layer.unwrapScoped(
         router.get('/', HttpServerResponse.empty({ status: 204 }))
       ),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
-      authedWebSocketRoute('/sync', config.authToken, loggedSyncWebSocketApp),
-      authedSyncWebSocketRoute(
-        `/sync/${encodeURIComponent(config.authToken ?? '')}`,
-        config.authToken,
-        loggedSyncWebSocketApp
-      ),
       mcpLayer
     )
   })

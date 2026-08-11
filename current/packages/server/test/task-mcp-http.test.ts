@@ -15,7 +15,8 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { Effect, Layer, Schedule } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { AgentTaskService } from '../src/services/agent-task-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { serverDiscoveryLayer } from '../src/services/server-discovery.js'
 import {
@@ -36,6 +37,25 @@ const rpc = (port: number, body: unknown, origin?: string) =>
       method: 'POST',
     }).then(async (response) => ({ response, text: await response.text() }))
   )
+
+const projectDatabaseLayer = (
+  path: string,
+  projects: readonly { id: string; name: string; rootPath: string }[]
+) => {
+  const database = NativeLaborerDatabase.connect(path)
+  database.initialize()
+  for (const project of projects) {
+    database.insertProject({
+      canonicalGitCommonDir: project.rootPath,
+      id: project.id,
+      name: project.name,
+      repoId: `repo-${project.id}`,
+      rootPath: project.rootPath,
+    })
+  }
+  database.close()
+  return LaborerDatabase.layer(path).pipe(Layer.orDie)
+}
 
 describe('task MCP HTTP endpoint', () => {
   it('reads projects and filtered task rows and publishes the bound port', async () => {
@@ -78,14 +98,10 @@ describe('task MCP HTTP endpoint', () => {
     database.close()
 
     const nodeServer = createServer()
-    const storeLayer = Layer.succeed(LaborerStore, {
-      store: {
-        query: () => [
-          { id: 'project-1', name: 'First', repoPath: firstProject },
-          { id: 'project-2', name: 'Second', repoPath: secondProject },
-        ],
-      } as never,
-    })
+    const databaseLayer = projectDatabaseLayer(databasePath, [
+      { id: 'project-1', name: 'First', rootPath: firstProject },
+      { id: 'project-2', name: 'Second', rootPath: secondProject },
+    ])
     const serverLayer = Layer.mergeAll(
       TaskMcpToolsLayer,
       HttpRouter.Default.serve(mcpOriginGuard),
@@ -99,7 +115,7 @@ describe('task MCP HTTP endpoint', () => {
           port: 0,
         })
       ),
-      Layer.provide(storeLayer)
+      Layer.provide(databaseLayer)
     )
 
     try {
@@ -216,11 +232,9 @@ describe('task MCP HTTP endpoint', () => {
     })
     seededDatabase.close()
     const nodeServer = createServer()
-    const storeLayer = Layer.succeed(LaborerStore, {
-      store: {
-        query: () => [{ id: 'project-1', name: 'Project', repoPath: root }],
-      } as never,
-    })
+    const databaseLayer = projectDatabaseLayer(databasePath, [
+      { id: 'project-1', name: 'Project', rootPath: root },
+    ])
     const serverLayer = Layer.mergeAll(
       TaskMcpToolsLayer,
       HttpRouter.Default.serve(mcpOriginGuard)
@@ -233,7 +247,7 @@ describe('task MCP HTTP endpoint', () => {
           port: 0,
         })
       ),
-      Layer.provide(storeLayer)
+      Layer.provide(databaseLayer)
     )
 
     try {

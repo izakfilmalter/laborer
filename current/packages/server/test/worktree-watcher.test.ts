@@ -1,22 +1,23 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
+import { listWorkspaceRecords } from '../src/services/workspace-records.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
+const TestDatabaseLayer = LaborerDatabase.testLayer().pipe(Layer.orDie)
 
 const TestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(BranchStateTracker.layer),
@@ -25,8 +26,47 @@ const TestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(TestDatabaseLayer)
 )
+
+const createProject = (
+  database: NativeLaborerDatabase,
+  projectId: string,
+  repoPath: string
+) =>
+  database.insertProject({
+    canonicalGitCommonDir: realpathSync(join(repoPath, '.git')),
+    id: projectId,
+    name: projectId,
+    repoId: projectId,
+    rootPath: realpathSync(repoPath),
+  })
+
+const createWorkspace = (
+  database: NativeLaborerDatabase,
+  repoPath: string,
+  workspaceId: string,
+  branchName: string,
+  worktreePath: string
+) =>
+  database.insertTask({
+    branchName,
+    id: workspaceId,
+    rootPath: realpathSync(repoPath),
+    source: 'worktree',
+    status: 'in_progress',
+    title: branchName,
+    worktreePath,
+    worktreeStatus: 'ready',
+  })
+
+const projectWorkspaces = (
+  database: NativeLaborerDatabase,
+  projectId: string
+) =>
+  listWorkspaceRecords(database).filter(
+    (workspace) => workspace.projectId === projectId
+  )
 
 afterAll(() => {
   for (const root of tempRoots) {
@@ -43,11 +83,18 @@ describe('RepositoryWatchCoordinator', () => {
       const linkedPath = join(repoPath, '.worktrees', 'watcher-one')
 
       const coordinator = yield* RepositoryWatchCoordinator
+      const { database } = yield* LaborerDatabase
+      createProject(database, 'project-watch-1', repoPath)
+      createWorkspace(
+        database,
+        repoPath,
+        'workspace-missing-before-add',
+        'watcher/missing',
+        join(repoPath, '.worktrees', 'missing')
+      )
       yield* coordinator.watchProject('project-watch-1', repoPath)
       // Allow @parcel/watcher FSEvents subscription to fully initialize
       yield* Effect.promise(() => delay(500))
-
-      const { store } = yield* LaborerStore
 
       git(`worktree add -b watcher/one ${linkedPath}`, repoPath)
 
@@ -55,12 +102,18 @@ describe('RepositoryWatchCoordinator', () => {
         waitForWithNudge(
           () =>
             Promise.resolve(
-              store.query(
-                tables.workspaces.where('projectId', 'project-watch-1')
-              ).length === 2
+              projectWorkspaces(database, 'project-watch-1').length === 0
             ),
           repoPath
         )
+      )
+
+      createWorkspace(
+        database,
+        repoPath,
+        'workspace-watcher-one',
+        'watcher/one',
+        realpathSync(linkedPath)
       )
 
       git(`worktree remove --force ${linkedPath}`, repoPath)
@@ -69,9 +122,7 @@ describe('RepositoryWatchCoordinator', () => {
         waitForWithNudge(
           () =>
             Promise.resolve(
-              store.query(
-                tables.workspaces.where('projectId', 'project-watch-1')
-              ).length === 1
+              projectWorkspaces(database, 'project-watch-1').length === 0
             ),
           repoPath
         )
@@ -86,21 +137,26 @@ describe('RepositoryWatchCoordinator', () => {
       const linkedB = join(repoPath, '.worktrees', 'watcher-b')
 
       const coordinator = yield* RepositoryWatchCoordinator
+      const { database } = yield* LaborerDatabase
+      createProject(database, 'project-watch-2', repoPath)
       yield* coordinator.watchProject('project-watch-2', repoPath)
       // Allow @parcel/watcher FSEvents subscription to fully initialize
       yield* Effect.promise(() => delay(500))
 
-      const { store } = yield* LaborerStore
-
       git(`worktree add -b watcher/a ${linkedA}`, repoPath)
+      createWorkspace(
+        database,
+        repoPath,
+        'workspace-watcher-a',
+        'watcher/a',
+        realpathSync(linkedA)
+      )
 
       yield* Effect.promise(() =>
         waitForWithNudge(
           () =>
             Promise.resolve(
-              store.query(
-                tables.workspaces.where('projectId', 'project-watch-2')
-              ).length === 2
+              projectWorkspaces(database, 'project-watch-2').length === 1
             ),
           repoPath
         )
@@ -108,12 +164,17 @@ describe('RepositoryWatchCoordinator', () => {
 
       yield* coordinator.unwatchProject('project-watch-2')
 
+      createWorkspace(
+        database,
+        repoPath,
+        'workspace-unwatched-missing',
+        'watcher/unwatched-missing',
+        join(repoPath, '.worktrees', 'unwatched-missing')
+      )
       git(`worktree add -b watcher/b ${linkedB}`, repoPath)
       yield* Effect.promise(() => delay(1500))
 
-      const rows = store.query(
-        tables.workspaces.where('projectId', 'project-watch-2')
-      )
+      const rows = projectWorkspaces(database, 'project-watch-2')
       assert.strictEqual(rows.length, 2)
     }).pipe(Effect.provide(TestLayer))
   )
@@ -126,47 +187,44 @@ describe('RepositoryWatchCoordinator', () => {
       git(`worktree add -b watcher/all-a ${linkedA}`, repoA)
 
       const coordinator = yield* RepositoryWatchCoordinator
-      const { store } = yield* LaborerStore
+      const { database } = yield* LaborerDatabase
 
       // Allow the daemon watchAll (fired during layer construction)
       // to complete on the empty store before seeding projects.
       yield* Effect.promise(() => delay(200))
 
-      store.commit(
-        events.projectCreated({
-          id: 'project-watch-all-a',
-          repoPath: repoA,
-          name: 'watch-all-a',
-        })
+      createProject(database, 'project-watch-all-a', repoA)
+      createProject(database, 'project-watch-all-b', repoB)
+      createWorkspace(
+        database,
+        repoA,
+        'workspace-watch-all-a',
+        'watcher/all-a',
+        realpathSync(linkedA)
       )
-      store.commit(
-        events.projectCreated({
-          id: 'project-watch-all-b',
-          repoPath: repoB,
-          name: 'watch-all-b',
-        })
+      createWorkspace(
+        database,
+        repoB,
+        'workspace-watch-all-b-missing',
+        'watcher/all-b-missing',
+        join(repoB, '.worktrees', 'missing')
       )
 
       yield* coordinator.watchAll()
 
-      // After watchAll, reconciliation should have run synchronously
-      // for both projects: repoA has main + linked worktree (2),
-      // repoB has only the main checkout (1).
-      const rowsA = store.query(
-        tables.workspaces.where('projectId', 'project-watch-all-a')
-      )
-      const rowsB = store.query(
-        tables.workspaces.where('projectId', 'project-watch-all-b')
-      )
+      // After watchAll, reconciliation retains the linked worktree and
+      // releases the missing worktree record.
+      const rowsA = projectWorkspaces(database, 'project-watch-all-a')
+      const rowsB = projectWorkspaces(database, 'project-watch-all-b')
       assert.strictEqual(
         rowsA.length,
-        2,
-        'watchAll should reconcile both worktrees for repoA'
+        1,
+        'watchAll should retain the linked worktree for repoA'
       )
       assert.strictEqual(
         rowsB.length,
-        1,
-        'watchAll should reconcile main checkout for repoB'
+        0,
+        'watchAll should release the missing worktree for repoB'
       )
     }).pipe(Effect.provide(TestLayer))
   )
@@ -179,11 +237,18 @@ describe('RepositoryWatchCoordinator', () => {
         const linkedPath = join(repoPath, '.worktrees', 'watcher-late-create')
 
         const coordinator = yield* RepositoryWatchCoordinator
+        const { database } = yield* LaborerDatabase
+        createProject(database, 'project-watch-3', repoPath)
+        createWorkspace(
+          database,
+          repoPath,
+          'workspace-watch-late-missing',
+          'watcher/late-missing',
+          join(repoPath, '.worktrees', 'missing')
+        )
         yield* coordinator.watchProject('project-watch-3', repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
-
-        const { store } = yield* LaborerStore
 
         git(`worktree add -b watcher/late ${linkedPath}`, repoPath)
 
@@ -191,9 +256,7 @@ describe('RepositoryWatchCoordinator', () => {
           waitForWithNudge(
             () =>
               Promise.resolve(
-                store.query(
-                  tables.workspaces.where('projectId', 'project-watch-3')
-                ).length === 2
+                projectWorkspaces(database, 'project-watch-3').length === 0
               ),
             repoPath
           )

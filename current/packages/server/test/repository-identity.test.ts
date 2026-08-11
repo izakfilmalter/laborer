@@ -1,13 +1,11 @@
 import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
@@ -15,14 +13,19 @@ import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
+const originalXdgStateHome = process.env.XDG_STATE_HOME
+process.env.XDG_STATE_HOME = createTempDir(
+  'repository-identity-task-state',
+  tempRoots
+)
 
 const IdentityTestLayer = RepositoryIdentity.layer
 
+const DatabaseTestLayer = LaborerDatabase.testLayer().pipe(Layer.orDie)
+
 const RegistryTestLayer = ProjectRegistry.layer.pipe(
-  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(RepositoryWatchCoordinator.layer),
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),
@@ -30,7 +33,7 @@ const RegistryTestLayer = ProjectRegistry.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(DatabaseTestLayer)
 )
 
 // Merge RepositoryIdentity into the registry test layer so tests can
@@ -40,6 +43,11 @@ const RegistryWithIdentityTestLayer = RegistryTestLayer.pipe(
 )
 
 afterAll(() => {
+  if (originalXdgStateHome === undefined) {
+    process.env.XDG_STATE_HOME = undefined
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome
+  }
   for (const root of tempRoots) {
     if (existsSync(root)) {
       rmSync(root, { recursive: true, force: true })
@@ -224,10 +232,10 @@ describe('ProjectRegistry canonical deduplication', () => {
         assert.include(result.message, 'already registered')
 
         // Confirm only one project exists
-        const { store } = yield* LaborerStore
-        const projects = store.query(tables.projects)
+        const { database } = yield* LaborerDatabase
+        const projects = database.listProjects()
         const matchingProjects = projects.filter(
-          (p) => p.repoPath === project.repoPath
+          (candidate) => candidate.rootPath === project.repoPath
         )
         assert.strictEqual(matchingProjects.length, 1)
       }).pipe(Effect.provide(RegistryTestLayer))
@@ -251,10 +259,10 @@ describe('ProjectRegistry canonical deduplication', () => {
       assert.include(result.message, 'already registered')
 
       // Confirm only one project exists
-      const { store } = yield* LaborerStore
-      const projects = store.query(tables.projects)
+      const { database } = yield* LaborerDatabase
+      const projects = database.listProjects()
       const matchingProjects = projects.filter(
-        (p) => p.repoPath === project.repoPath
+        (candidate) => candidate.rootPath === project.repoPath
       )
       assert.strictEqual(matchingProjects.length, 1)
     }).pipe(Effect.provide(RegistryTestLayer))
@@ -275,30 +283,13 @@ describe('ProjectRegistry canonical deduplication', () => {
 
         assert.include(result.message, 'already registered')
 
-        const { store } = yield* LaborerStore
-        const matchingProjects = store
-          .query(tables.projects)
-          .filter((candidate) => candidate.repoPath === project.repoPath)
+        const { database } = yield* LaborerDatabase
+        const matchingProjects = database
+          .listProjects()
+          .filter((candidate) => candidate.rootPath === project.repoPath)
 
         assert.strictEqual(matchingProjects.length, 1)
       }).pipe(Effect.provide(RegistryTestLayer))
-  )
-
-  it.scoped('ignores projects that exist only in the obsolete LiveStore', () =>
-    Effect.gen(function* () {
-      const repoPath = initRepo('registry-legacy-backfill', tempRoots)
-      const registry = yield* ProjectRegistry
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.projectCreated({
-          id: 'legacy-project',
-          repoPath,
-          name: 'legacy-project',
-        })
-      )
-
-      assert.deepStrictEqual(yield* registry.listProjects(), [])
-    }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
   )
 
   it.scoped(

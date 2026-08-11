@@ -178,7 +178,7 @@ function HomeComponent() {
     [windowLayout, getWorkspacePrState]
   )
 
-  // Fullscreen pane state — transient UI mode (not persisted to LiveStore).
+  // Fullscreen pane state — transient UI mode.
   // When set, only the fullscreened pane is shown, hiding all other
   // workspaces and sibling panes. The workspace bar header remains visible.
   const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null)
@@ -205,13 +205,13 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Diff panel state — transient UI mode (not persisted to LiveStore).
+  // Diff panel state — transient UI mode.
   // Each workspace manages its own diff viewer visibility independently.
   const [diffPaneWorkspaceIds, setDiffPaneWorkspaceIds] = useState<
     readonly string[]
   >([])
 
-  // Tree panel state — transient UI mode (not persisted to LiveStore).
+  // Tree panel state — transient UI mode.
   // Each workspace manages its own file tree visibility independently.
   const [treePaneWorkspaceIds, setTreePaneWorkspaceIds] = useState<
     readonly string[]

@@ -46,7 +46,6 @@ import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
-import { TestLaborerStore } from '../helpers/test-store.js'
 
 // ---------------------------------------------------------------------------
 // Helper: adapt Node.js worker_threads MessagePort to RpcMessagePort
@@ -103,8 +102,7 @@ function buildServerLayer(port: RpcMessagePort) {
     Layer.provide(DeferredServiceStubs),
     Layer.provide(DeferredServicesReadyLayer),
     Layer.provide(ConfigService.layer),
-    Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
-    Layer.provide(TestLaborerStore)
+    Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
   )
 }
 

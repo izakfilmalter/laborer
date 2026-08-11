@@ -2,7 +2,6 @@ import { closeSync, openSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  isAuthorizedSyncWebSocketUrl,
   isAuthorizedWebSocketUrl,
   readBootstrapConfig,
 } from '../src/server-runtime.js'
@@ -61,21 +60,6 @@ describe('server runtime bootstrap', () => {
     expect(
       isAuthorizedWebSocketUrl(
         new URL('ws://127.0.0.1:2100/rpc?token=wrong-token'),
-        'secret-token'
-      )
-    ).toBe(false)
-  })
-
-  it('authorizes sync websocket URLs with token in the path', () => {
-    expect(
-      isAuthorizedSyncWebSocketUrl(
-        new URL('ws://127.0.0.1:2100/sync/secret-token?storeId=laborer'),
-        'secret-token'
-      )
-    ).toBe(true)
-    expect(
-      isAuthorizedSyncWebSocketUrl(
-        new URL('ws://127.0.0.1:2100/sync/wrong-token?storeId=laborer'),
         'secret-token'
       )
     ).toBe(false)

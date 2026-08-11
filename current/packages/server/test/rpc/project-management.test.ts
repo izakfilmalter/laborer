@@ -7,7 +7,6 @@ import {
 } from 'node:fs'
 import { basename, join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { tables } from '@laborer/shared/schema'
 import { Effect, Either, type Scope } from 'effect'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
@@ -32,9 +31,9 @@ const runWithRpcTestContext = <A, E>(
 
 describe('LaborerRpcs project management', () => {
   it.scoped(
-    'project.add registers a real git repo and materializes detected worktrees',
+    'project.add registers a real git repo with canonical identity',
     () =>
-      runWithRpcTestContext(({ client, database, store }) =>
+      runWithRpcTestContext(({ client, database }) =>
         Effect.gen(function* () {
           const tempRoots: string[] = []
           yield* Effect.addFinalizer(() =>
@@ -65,17 +64,7 @@ describe('LaborerRpcs project management', () => {
           assert.strictEqual(storedProject?.name, basename(canonicalRepoPath))
           assert.strictEqual(database.stateChangesAfter(0).length, 1)
 
-          const workspaces = store.query(
-            tables.workspaces.where('projectId', project.id)
-          )
-
-          assert.strictEqual(workspaces.length, 2)
-          assert.isTrue(
-            workspaces.every((workspace) => workspace.origin === 'external')
-          )
-          assert.isTrue(
-            workspaces.every((workspace) => workspace.status === 'stopped')
-          )
+          assert.isTrue(existsSync(linkedWorktreePath))
         })
       )
   )

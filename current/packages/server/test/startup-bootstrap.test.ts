@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto'
 import { existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { events, tables } from '@laborer/shared/schema'
 import { Effect, Exit, Layer, Scope } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import type {
+  LaborerTask,
+  NativeLaborerDatabase,
+} from '../src/services/native-laborer-database.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
@@ -16,7 +18,6 @@ import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
-import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitFor, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
@@ -40,12 +41,45 @@ const deriveIdentity = (repoPath: string) => {
   }
 }
 
+const insertProject = (
+  database: NativeLaborerDatabase,
+  id: string,
+  repoPath: string,
+  name: string
+) => {
+  const identity = deriveIdentity(repoPath)
+  return database.insertProject({
+    canonicalGitCommonDir: identity.canonicalGitCommonDir,
+    id,
+    name,
+    repoId: identity.repoId,
+    rootPath: identity.canonicalRoot,
+  }).row
+}
+
+const listProjectWorkspaces = (
+  database: NativeLaborerDatabase,
+  projectId: string
+): readonly LaborerTask[] => {
+  const project = database.findProject(projectId)
+  if (project === null) {
+    return []
+  }
+  return database
+    .listTasks()
+    .filter(
+      (task) =>
+        task.rootPath === project.rootPath &&
+        task.worktreePath !== null &&
+        task.branchName !== null
+    )
+}
+
 /**
  * Full service stack matching production layer composition.
  * ProjectRegistry sits at the top, consuming all repo-watching services.
  */
 const TestLayer = ProjectRegistry.layer.pipe(
-  Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)),
   Layer.provide(RepositoryWatchCoordinator.layer),
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),
@@ -53,7 +87,7 @@ const TestLayer = ProjectRegistry.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provideMerge(TestLaborerStore)
+  Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
 afterAll(() => {
@@ -75,23 +109,17 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         const registry = yield* ProjectRegistry
         const project = yield* registry.addProject(repoPath)
-
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         // After addProject returns, workspace records should already
         // exist with correct branch names — no waiting needed.
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', project.id)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const workspaces = listProjectWorkspaces(database, project.id)
 
         // Both the main worktree and the linked worktree should be present
         assert.strictEqual(
           workspaces.length,
-          2,
-          'Both worktrees should be reconciled before project is ready'
+          1,
+          'The linked worktree should be reconciled before project is ready'
         )
 
         // Branch names should already be populated from initial refresh
@@ -99,10 +127,6 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         assert.isTrue(
           branchNames.includes('feature/boot-test'),
           'Linked worktree branch should be set'
-        )
-        assert.isTrue(
-          branchNames.some((b) => b === 'main' || b === 'master'),
-          'Main worktree branch should be set'
         )
       }).pipe(Effect.provide(TestLayer))
   )
@@ -116,7 +140,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       // Allow @parcel/watcher FSEvents subscription to fully initialize
       yield* Effect.promise(() => delay(500))
 
-      const { store } = yield* LaborerStore
+      const { database } = yield* LaborerDatabase
 
       // After addProject, the watcher should be running. Creating a
       // worktree should be detected automatically via the coordinator.
@@ -127,19 +151,16 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         waitForWithNudge(
           () =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', project.id))
-                .length === 2
+              listProjectWorkspaces(database, project.id).length === 1
             ),
           repoPath
         )
       )
 
-      const workspaces = store.query(
-        tables.workspaces.where('projectId', project.id)
-      )
+      const workspaces = listProjectWorkspaces(database, project.id)
       assert.strictEqual(
         workspaces.length,
-        2,
+        1,
         'Watcher should detect new worktree after addProject'
       )
     }).pipe(Effect.provide(TestLayer))
@@ -148,18 +169,22 @@ describe('Startup bootstrap and project lifecycle integration', () => {
   it.scoped('server boot restores watchers for all persisted projects', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('boot-restore', tempRoots)
+      const existingWorktreePath = join(
+        repoPath,
+        '.worktrees',
+        'boot-restore-existing'
+      )
+      git(
+        `worktree add -b feature/boot-restore-existing ${existingWorktreePath}`,
+        repoPath
+      )
 
       // Simulate a prior server session: seed a project directly
-      // into the store before building the coordinator layer.
-      const { store } = yield* LaborerStore
+      // into the database before building the coordinator layer.
+      const laborerDatabase = yield* LaborerDatabase
+      const { database } = laborerDatabase
       const projectId = 'project-boot-restore'
-      store.commit(
-        events.projectCreated({
-          id: projectId,
-          repoPath,
-          name: 'boot-restore',
-        })
-      )
+      insertProject(database, projectId, repoPath, 'boot-restore')
 
       // Build the coordinator layer (which calls watchAll at startup)
       const CoordinatorLayer = RepositoryWatchCoordinator.layer.pipe(
@@ -174,9 +199,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       // Use a manual scope to simulate server lifecycle
       const scope = yield* Scope.make()
 
-      const storeLayer = Layer.succeed(LaborerStore, LaborerStore.of({ store }))
-
-      const fullLayer = CoordinatorLayer.pipe(Layer.provide(storeLayer))
+      const databaseLayer = Layer.succeed(LaborerDatabase, laborerDatabase)
+      const fullLayer = CoordinatorLayer.pipe(Layer.provide(databaseLayer))
 
       yield* Layer.buildWithScope(fullLayer, scope)
 
@@ -186,17 +210,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         waitFor(
           () =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length > 0
+              listProjectWorkspaces(database, projectId).length === 1
             ),
           10_000,
           'watchAll reconciliation for persisted project'
         )
       )
 
-      const workspaces = store.query(
-        tables.workspaces.where('projectId', projectId)
-      )
+      const workspaces = listProjectWorkspaces(database, projectId)
       assert.isAbove(
         workspaces.length,
         0,
@@ -212,15 +233,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         waitForWithNudge(
           () =>
             Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length === 2
+              listProjectWorkspaces(database, projectId).length === 2
             ),
           repoPath
         )
       )
 
       yield* Scope.close(scope, Exit.succeed(undefined))
-    }).pipe(Effect.provide(TestLaborerStore))
+    }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
   it.scoped(
@@ -231,30 +251,27 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         const worktreePath = join(repoPath, '.worktrees', 'boot-offline-wt')
 
         // Simulate prior server session state: project and one workspace
-        const { store } = yield* LaborerStore
+        const laborerDatabase = yield* LaborerDatabase
+        const { database } = laborerDatabase
         const projectId = 'project-boot-offline'
         const workspaceId = crypto.randomUUID()
 
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath,
-            name: 'boot-offline',
-          })
+        const project = insertProject(
+          database,
+          projectId,
+          repoPath,
+          'boot-offline'
         )
-        store.commit(
-          events.workspaceCreated({
-            id: workspaceId,
-            projectId,
-            taskSource: null,
-            branchName: 'main',
-            worktreePath: repoPath,
-            status: 'stopped',
-            origin: 'external',
-            createdAt: new Date().toISOString(),
-            baseSha: null,
-          })
-        )
+        database.insertTask({
+          branchName: 'main',
+          id: workspaceId,
+          rootPath: project.rootPath,
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'main',
+          worktreePath: project.rootPath,
+          worktreeStatus: 'ready',
+        })
 
         // Simulate offline changes:
         // 1. Switch branch on main worktree
@@ -274,12 +291,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         const scope = yield* Scope.make()
 
-        const storeLayer = Layer.succeed(
-          LaborerStore,
-          LaborerStore.of({ store })
-        )
-
-        const fullLayer = CoordinatorLayer.pipe(Layer.provide(storeLayer))
+        const databaseLayer = Layer.succeed(LaborerDatabase, laborerDatabase)
+        const fullLayer = CoordinatorLayer.pipe(Layer.provide(databaseLayer))
 
         yield* Layer.buildWithScope(fullLayer, scope)
 
@@ -289,17 +302,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           waitFor(
             () =>
               Promise.resolve(
-                store.query(tables.workspaces.where('projectId', projectId))
-                  .length === 2
+                listProjectWorkspaces(database, projectId).length === 2
               ),
             10_000,
             'watchAll reconciliation for offline worktree addition'
           )
         )
 
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        )
+        const workspaces = listProjectWorkspaces(database, projectId)
         assert.strictEqual(
           workspaces.length,
           2,
@@ -310,11 +320,9 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         yield* Effect.promise(() =>
           waitFor(
             () => {
-              const ws = store.query(
-                tables.workspaces.where('id', workspaceId)
-              ) as readonly { readonly branchName: string }[]
               return Promise.resolve(
-                ws[0]?.branchName === 'feature/offline-change'
+                database.findTask(workspaceId)?.branchName ===
+                  'feature/offline-change'
               )
             },
             10_000,
@@ -322,17 +330,15 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           )
         )
 
-        const mainWorkspace = store.query(
-          tables.workspaces.where('id', workspaceId)
-        ) as readonly { readonly branchName: string }[]
+        const mainWorkspace = database.findTask(workspaceId)
         assert.strictEqual(
-          mainWorkspace[0]?.branchName,
+          mainWorkspace?.branchName,
           'feature/offline-change',
           'Startup should refresh stale branch names from offline changes'
         )
 
         yield* Scope.close(scope, Exit.succeed(undefined))
-      }).pipe(Effect.provide(TestLaborerStore))
+      }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
   it.scoped(
@@ -352,21 +358,15 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         const registry = yield* ProjectRegistry
         const project = yield* registry.addProject(repoPath)
-
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         // All three worktrees should be present immediately after add
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', project.id)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const workspaces = listProjectWorkspaces(database, project.id)
 
         assert.strictEqual(
           workspaces.length,
-          3,
-          'All three worktrees should be detected'
+          2,
+          'Both linked worktrees should be detected'
         )
 
         // Branch names should reflect actual git state, including the
@@ -388,12 +388,11 @@ describe('Startup bootstrap and project lifecycle integration', () => {
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('boot-public-e2e', tempRoots)
-        const canonicalRepoPath = realpathSync(repoPath)
         const linkedA = join(repoPath, '.worktrees', 'boot-public-a')
         const linkedB = join(repoPath, '.worktrees', 'boot-public-b')
 
         const registry = yield* ProjectRegistry
-        const { store } = yield* LaborerStore
+        const { database } = yield* LaborerDatabase
 
         const project = yield* registry.addProject(repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
@@ -408,15 +407,10 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', project.id)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listProjectWorkspaces(database, project.id)
 
             return Promise.resolve(
-              workspaces.length === 2 &&
+              workspaces.length === 1 &&
                 workspaces.some(
                   (workspace) =>
                     workspace.worktreePath === realpathSync(linkedA)
@@ -429,15 +423,10 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', project.id)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listProjectWorkspaces(database, project.id)
 
             return Promise.resolve(
-              workspaces.length === 3 &&
+              workspaces.length === 2 &&
                 workspaces.some(
                   (workspace) => workspace.branchName === 'feature/public-b'
                 )
@@ -449,19 +438,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', project.id)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listProjectWorkspaces(database, project.id)
 
             const worktreePaths = workspaces.map(
               (workspace) => workspace.worktreePath
             )
             return Promise.resolve(
-              workspaces.length === 2 &&
-                new Set(worktreePaths).size === 2 &&
+              workspaces.length === 1 &&
+                new Set(worktreePaths).size === 1 &&
                 workspaces.some(
                   (workspace) => workspace.branchName === 'feature/public-b'
                 )
@@ -470,22 +454,17 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         )
         yield* Effect.promise(() => delay(700))
 
-        git('checkout -b feature/public-main-refresh', repoPath)
+        git('checkout -b feature/public-b-refresh', linkedB)
 
         yield* Effect.promise(() =>
           waitForWithNudge(() => {
-            const workspaces = store.query(
-              tables.workspaces.where('projectId', project.id)
-            ) as readonly {
-              readonly branchName: string
-              readonly worktreePath: string
-            }[]
+            const workspaces = listProjectWorkspaces(database, project.id)
 
             return Promise.resolve(
               workspaces.some(
                 (workspace) =>
-                  workspace.worktreePath === canonicalRepoPath &&
-                  workspace.branchName === 'feature/public-main-refresh'
+                  workspace.worktreePath === realpathSync(linkedB) &&
+                  workspace.branchName === 'feature/public-b-refresh'
               )
             )
           }, repoPath)
@@ -506,17 +485,16 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         // Seed a project with fully-populated identity fields,
         // simulating a project created by a prior server session
         // that already wrote repoId and canonicalGitCommonDir.
-        const { store } = yield* LaborerStore
+        const laborerDatabase = yield* LaborerDatabase
+        const { database } = laborerDatabase
         const projectId = 'project-boot-persisted'
-        store.commit(
-          events.projectCreated({
-            id: projectId,
-            repoPath: identity.canonicalRoot,
-            repoId: identity.repoId,
-            canonicalGitCommonDir: identity.canonicalGitCommonDir,
-            name: 'boot-persisted-identity',
-          })
-        )
+        database.insertProject({
+          canonicalGitCommonDir: identity.canonicalGitCommonDir,
+          id: projectId,
+          name: 'boot-persisted-identity',
+          repoId: identity.repoId,
+          rootPath: identity.canonicalRoot,
+        })
 
         // Build the coordinator layer — watchAll should use the
         // persisted canonicalGitCommonDir directly, skipping
@@ -531,11 +509,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         )
 
         const scope = yield* Scope.make()
-        const storeLayer = Layer.succeed(
-          LaborerStore,
-          LaborerStore.of({ store })
-        )
-        const fullLayer = CoordinatorLayer.pipe(Layer.provide(storeLayer))
+        const databaseLayer = Layer.succeed(LaborerDatabase, laborerDatabase)
+        const fullLayer = CoordinatorLayer.pipe(Layer.provide(databaseLayer))
 
         yield* Layer.buildWithScope(fullLayer, scope)
 
@@ -545,8 +520,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           waitFor(
             () =>
               Promise.resolve(
-                store.query(tables.workspaces.where('projectId', projectId))
-                  .length === 2
+                listProjectWorkspaces(database, projectId).length === 1
               ),
             10_000,
             'watchAll reconciliation for persisted identity'
@@ -555,13 +529,11 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         // Verify worktree reconciliation ran: both the main
         // checkout and the linked worktree should have workspace records.
-        const workspaces = store.query(
-          tables.workspaces.where('projectId', projectId)
-        )
+        const workspaces = listProjectWorkspaces(database, projectId)
         assert.strictEqual(
           workspaces.length,
-          2,
-          'Startup with persisted identity should reconcile all worktrees'
+          1,
+          'Startup with persisted identity should reconcile the linked worktree'
         )
 
         // Verify the watcher is running by adding another worktree
@@ -573,15 +545,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           waitForWithNudge(
             () =>
               Promise.resolve(
-                store.query(tables.workspaces.where('projectId', projectId))
-                  .length === 3
+                listProjectWorkspaces(database, projectId).length === 2
               ),
             repoPath
           )
         )
 
         yield* Scope.close(scope, Exit.succeed(undefined))
-      }).pipe(Effect.provide(TestLaborerStore))
+      }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
   it.scoped(
@@ -598,37 +569,28 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         // ── Phase 1: Fresh registration ──────────────────────────
         const registry = yield* ProjectRegistry
         const freshProject = yield* registry.addProject(repoPath)
-        const { store } = yield* LaborerStore
+        const laborerDatabase = yield* LaborerDatabase
+        const { database } = laborerDatabase
 
-        const freshWorkspaces = store.query(
-          tables.workspaces.where('projectId', freshProject.id)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const freshWorkspaces = listProjectWorkspaces(database, freshProject.id)
 
         const freshBranches = freshWorkspaces.map((w) => w.branchName).sort()
         const freshPaths = freshWorkspaces.map((w) => w.worktreePath).sort()
 
         assert.strictEqual(
           freshWorkspaces.length,
-          3,
-          'Fresh registration should detect all three worktrees'
+          2,
+          'Fresh registration should detect both linked worktrees'
         )
 
         // Verify the project has persisted identity
-        const freshProjectRecord = store.query(
-          tables.projects.where('id', freshProject.id)
-        ) as readonly {
-          readonly repoId: string | null
-          readonly canonicalGitCommonDir: string | null
-        }[]
+        const freshProjectRecord = database.findProject(freshProject.id)
         assert.isNotNull(
-          freshProjectRecord[0]?.repoId,
+          freshProjectRecord?.repoId,
           'Fresh project should have persisted repoId'
         )
         assert.isNotNull(
-          freshProjectRecord[0]?.canonicalGitCommonDir,
+          freshProjectRecord?.canonicalGitCommonDir,
           'Fresh project should have persisted canonicalGitCommonDir'
         )
 
@@ -639,15 +601,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         // ── Phase 2: Simulate restart with persisted identity ────
         const restoredProjectId = 'project-boot-parity-restored'
-        store.commit(
-          events.projectCreated({
-            id: restoredProjectId,
-            repoPath: freshProject.repoPath,
-            repoId: freshProject.repoId,
-            canonicalGitCommonDir: freshProject.canonicalGitCommonDir,
-            name: freshProject.name,
-          })
-        )
+        database.insertProject({
+          canonicalGitCommonDir: freshProject.canonicalGitCommonDir ?? '',
+          id: restoredProjectId,
+          name: freshProject.name,
+          repoId: freshProject.repoId ?? '',
+          rootPath: freshProject.repoPath,
+        })
 
         const CoordinatorLayer = RepositoryWatchCoordinator.layer.pipe(
           Layer.provide(BranchStateTracker.layer),
@@ -659,11 +619,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         )
 
         const scope = yield* Scope.make()
-        const storeLayer = Layer.succeed(
-          LaborerStore,
-          LaborerStore.of({ store })
-        )
-        const fullLayer = CoordinatorLayer.pipe(Layer.provide(storeLayer))
+        const databaseLayer = Layer.succeed(LaborerDatabase, laborerDatabase)
+        const fullLayer = CoordinatorLayer.pipe(Layer.provide(databaseLayer))
 
         yield* Layer.buildWithScope(fullLayer, scope)
 
@@ -673,9 +630,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           waitFor(
             () =>
               Promise.resolve(
-                store.query(
-                  tables.workspaces.where('projectId', restoredProjectId)
-                ).length === freshWorkspaces.length
+                listProjectWorkspaces(database, restoredProjectId).length ===
+                  freshWorkspaces.length
               ),
             10_000,
             'watchAll reconciliation for restored project'
@@ -683,12 +639,10 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         )
 
         // Compare restored state against fresh registration state
-        const restoredWorkspaces = store.query(
-          tables.workspaces.where('projectId', restoredProjectId)
-        ) as readonly {
-          readonly branchName: string
-          readonly worktreePath: string
-        }[]
+        const restoredWorkspaces = listProjectWorkspaces(
+          database,
+          restoredProjectId
+        )
 
         const restoredBranches = restoredWorkspaces
           .map((w) => w.branchName)

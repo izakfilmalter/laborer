@@ -29,13 +29,6 @@ vi.mock('@/atoms/terminal-service-client', () => ({
   TerminalServiceClient: { mutation: (name: string) => name },
 }))
 
-vi.mock('@livestore/livestore', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@livestore/livestore')>()),
-  queryDb: vi.fn(() => ({})),
-}))
-
-vi.mock('@/livestore/store', () => ({ useLaborerStore: vi.fn() }))
-
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), info: vi.fn() },
 }))

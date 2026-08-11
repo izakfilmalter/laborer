@@ -1,9 +1,8 @@
 import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { tables } from '@laborer/shared/schema'
 import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
-import { LaborerStore } from './laborer-store.js'
+import { LaborerDatabase } from './laborer-database.js'
 import { WORKTREE_WATCHER_DEBOUNCE_MS } from './polling-intervals.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
 
@@ -73,7 +72,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
   static readonly layer = Layer.scoped(
     WorktreeWatcher,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
+      const laborerDatabase = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
       const runtime = yield* Effect.runtime<never>()
       const statesRef = yield* Ref.make(new Map<string, ProjectWatchState>())
@@ -252,12 +251,15 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
       })
 
       const watchAll = Effect.fn('WorktreeWatcher.watchAll')(function* () {
-        const projects = store.query(tables.projects)
-        yield* Effect.forEach(projects, (project) =>
-          reconcileWithWarning(project.id, project.repoPath, 'startup')
+        const projects = yield* laborerDatabase.read(
+          'list watched projects',
+          (db) => db.listProjects()
         )
         yield* Effect.forEach(projects, (project) =>
-          watchProject(project.id, project.repoPath)
+          reconcileWithWarning(project.id, project.rootPath, 'startup')
+        )
+        yield* Effect.forEach(projects, (project) =>
+          watchProject(project.id, project.rootPath)
         )
       })
 

@@ -1,12 +1,12 @@
 /**
  * TerminalManager — Effect Service (Terminal Package)
  *
- * Manages terminal instances with in-memory-only state. No LiveStore
+ * Manages terminal instances with in-memory-only state.
  * dependency, no WorkspaceProvider dependency. All spawn parameters
  * (command, args, cwd, env, cols, rows) are provided at call time.
  *
  * Key differences from the server's TerminalManager:
- * - No LiveStore: terminal state is ephemeral, in-memory only
+ * - Terminal state is ephemeral and in-memory only
  * - No WorkspaceProvider: env vars and cwd are passed at spawn time
  * - Stopped terminal retention: when a PTY exits, the terminal entry
  *   remains in memory with status "stopped" (preserving command and config

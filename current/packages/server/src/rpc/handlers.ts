@@ -18,16 +18,14 @@ import {
   LaborerRpcs,
   RpcError,
 } from '@laborer/shared/rpc'
-import { tables } from '@laborer/shared/schema'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Array, Effect, pipe, Stream } from 'effect'
+import { Array, Effect, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
-import { LaborerStore } from '../services/laborer-store.js'
 import {
   LaborerDatabaseStaleRevisionError,
   type LaborerTask,
@@ -1034,23 +1032,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'editor.open': ({ workspaceId, filePath }) =>
       Effect.gen(function* () {
-        const { store } = yield* LaborerStore
+        const workspaceProvider = yield* WorkspaceProvider
+        const workspace =
+          yield* workspaceProvider.findWorkspaceForTask(workspaceId)
 
-        // 1. Look up the workspace to get worktreePath
-        const allWorkspaces = store.query(tables.workspaces)
-        const workspaceOpt = pipe(
-          allWorkspaces,
-          Array.findFirst((w) => w.id === workspaceId)
-        )
-
-        if (workspaceOpt._tag === 'None') {
+        if (workspace === null) {
           return yield* new RpcError({
             message: `Workspace not found: ${workspaceId}`,
             code: 'NOT_FOUND',
           })
         }
-
-        const workspace = workspaceOpt.value
 
         // 2. Build the target path
         const targetPath = filePath

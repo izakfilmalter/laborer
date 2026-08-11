@@ -46,6 +46,11 @@ const attempt = <A>(
 
 export interface LaborerDatabaseService {
   readonly database: NativeLaborerDatabase
+  /** Read/projection helper. A read failure is an invariant defect. */
+  readonly read: <A>(
+    operation: string,
+    read: (database: NativeLaborerDatabase) => A
+  ) => Effect.Effect<A>
   readonly run: <A>(
     operation: string,
     run: (database: NativeLaborerDatabase) => A
@@ -91,6 +96,8 @@ export const makeLaborerDatabaseLayer = (
       Effect.map((database) =>
         LaborerDatabase.of({
           database,
+          read: (operation, read) =>
+            attempt(operation, () => read(database)).pipe(Effect.orDie),
           run: (operation, run) => attempt(operation, () => run(database)),
         })
       )

@@ -5,7 +5,7 @@
  * instance that manages atom subscriptions, lifecycle, and the Effect
  * runtime for AtomRpc clients.
  *
- * Place this inside ThemeProvider and alongside LiveStoreProvider in the
+ * Place this inside ThemeProvider in the
  * root layout so all components have access to both systems.
  *
  * @see Issue #20: AtomRpc client setup

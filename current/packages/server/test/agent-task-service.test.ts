@@ -4,20 +4,26 @@ import { join } from 'node:path'
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { AgentTaskService } from '../src/services/agent-task-service.js'
-import { LaborerStore } from '../src/services/laborer-store.js'
+import { LaborerDatabase } from '../src/services/laborer-database.js'
+import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 
 const fixture = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-agent-task-')))
   const databasePath = join(root, 'tasks.sqlite')
   const project = { id: 'project-1', name: 'Project', repoPath: root }
-  const storeLayer = Layer.succeed(LaborerStore, {
-    store: {
-      query: () => [project],
-    } as never,
+  const database = NativeLaborerDatabase.connect(databasePath)
+  database.initialize()
+  database.insertProject({
+    canonicalGitCommonDir: root,
+    id: project.id,
+    name: project.name,
+    repoId: 'repo-1',
+    rootPath: project.repoPath,
   })
+  database.close()
   const layer = AgentTaskService.layer(databasePath).pipe(
-    Layer.provide(storeLayer)
+    Layer.provide(LaborerDatabase.layer(databasePath).pipe(Layer.orDie))
   )
   return { databasePath, layer, root }
 }

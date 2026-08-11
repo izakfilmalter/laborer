@@ -39,7 +39,6 @@ import {
   TerminalRpcs,
 } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
   Context,
@@ -55,7 +54,6 @@ import {
 } from 'effect'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { writeClaudeStatusHooks } from './claude-status-hooks.js'
-import { LaborerStore } from './laborer-store.js'
 import {
   installOpenCodeStatusPlugin,
   writeAgentHookDiscovery,
@@ -429,7 +427,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   static readonly layer = Layer.scoped(
     TerminalClient,
     Effect.gen(function* () {
-      const { store } = yield* LaborerStore
       const workspaceProvider = yield* WorkspaceProvider
 
       if (process.env.NODE_ENV !== 'test') {
@@ -778,26 +775,14 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           command?: string,
           initialPrompt?: string
         ) {
-          // 1. Validate workspace exists and get its info from LiveStore
-          const allWorkspaces = store.query(tables.workspaces)
-          const workspaceOpt = pipe(
-            allWorkspaces,
-            Arr.findFirst((w) => w.id === workspaceId)
-          )
+          // 1. Validate the task currently owns a worktree.
+          const workspace =
+            yield* workspaceProvider.findWorkspaceForTask(workspaceId)
 
-          if (workspaceOpt._tag === 'None') {
+          if (workspace === null) {
             return yield* new RpcError({
               message: `Workspace not found: ${workspaceId}`,
               code: 'NOT_FOUND',
-            })
-          }
-
-          const workspace = workspaceOpt.value
-
-          if (workspace.status === 'destroyed') {
-            return yield* new RpcError({
-              message: `Workspace ${workspaceId} has been destroyed — cannot spawn terminal`,
-              code: 'INVALID_STATE',
             })
           }
 

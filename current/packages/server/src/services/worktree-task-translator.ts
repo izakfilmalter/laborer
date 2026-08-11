@@ -4,11 +4,22 @@ import { Effect } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import { createTaskUlid } from './task-card-creator.js'
 
+interface WorktreeAdoptionDatabase {
+  readonly adoptWorktreeTask: (input: {
+    readonly baseSha?: string | null
+    readonly branchName: string | null
+    readonly id: string
+    readonly rootPath: string
+    readonly title: string
+    readonly worktreePath: string
+    readonly worktreePathAliases: readonly string[]
+  }) => unknown | null
+}
+
 /**
  * A git worktree the reconciler considers eligible for a board card: not the
  * main checkout, not prunable, and not currently claimed by an in-flight
- * provisioning workspace (LiveStore `taskSource`) or a laborer-managed
- * destroy in progress.
+ * provisioning task or a laborer-managed destroy in progress.
  */
 export interface TranslatableWorktree {
   readonly baseSha?: string | null
@@ -34,13 +45,16 @@ export const translateWorktreesToTasks = (
     readonly rootPath: string
     readonly worktrees: readonly TranslatableWorktree[]
   },
-  path = taskDatabasePath()
+  target: string | WorktreeAdoptionDatabase = taskDatabasePath()
 ): Effect.Effect<number> =>
   Effect.try(() => {
     if (input.worktrees.length === 0) {
       return 0
     }
-    const database = NodeTaskBoardDatabase.open(path)
+    const ownedDatabase =
+      typeof target === 'string' ? NodeTaskBoardDatabase.open(target) : null
+    const database: WorktreeAdoptionDatabase =
+      ownedDatabase ?? (target as WorktreeAdoptionDatabase)
     try {
       let adopted = 0
       for (const worktree of input.worktrees) {
@@ -59,7 +73,7 @@ export const translateWorktreesToTasks = (
       }
       return adopted
     } finally {
-      database.close()
+      ownedDatabase?.close()
     }
   }).pipe(
     Effect.tap((adopted) =>

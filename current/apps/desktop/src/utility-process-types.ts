@@ -121,21 +121,6 @@ export interface TerminalDataPortMessage {
 }
 
 /**
- * Sent by the main process to transfer a dedicated LiveStore sync
- * MessagePort to the server utility process. The actual MessagePort
- * is in the `ports` array of the MessageEvent.
- *
- * The server utility process serves `SyncWsRpc` (Pull/Push) handlers
- * over this port, enabling the renderer's LiveStore worker to sync
- * events without WebSocket.
- *
- * @see Issue #11: LiveStore sync over MessagePort
- */
-export interface SyncPortMessage {
-  readonly type: 'sync-port'
-}
-
-/**
  * Sent by the main process to transfer a MessagePort for terminal RPC
  * to the server utility process. The actual MessagePort is in the
  * `ports` array of the MessageEvent.
@@ -175,7 +160,6 @@ export interface WorkspacePresenceMessage {
 export type UtilityProcessParentMessage =
   | PortTransferMessage
   | TerminalDataPortMessage
-  | SyncPortMessage
   | TerminalRpcPortMessage
   | FileWatcherRpcPortMessage
   | WorkspacePresenceMessage

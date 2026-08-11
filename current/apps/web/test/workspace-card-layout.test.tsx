@@ -15,14 +15,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { destroyFn, mutationMap, queryDbMock, useLaborerStoreMock } = vi.hoisted(
-  () => ({
-    destroyFn: vi.fn(),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    queryDbMock: vi.fn((_table, options: { label: string }) => options),
-    useLaborerStoreMock: vi.fn(),
-  })
-)
+const {
+  destroyFn,
+  mutationMap,
+  queryDbMock,
+  useLaborerStoreMock,
+  workspaceRowsRef,
+} = vi.hoisted(() => ({
+  destroyFn: vi.fn(),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  queryDbMock: vi.fn((_table, options: { label: string }) => options),
+  useLaborerStoreMock: vi.fn(),
+  workspaceRowsRef: { current: [] as unknown[] },
+}))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: () => ({
@@ -37,10 +42,14 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
-  useAtomValue: () => ({
-    _tag: 'Success',
-    value: {},
-  }),
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceRowsRef.current
+      : { _tag: 'Success', value: {} },
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -203,6 +212,7 @@ const makeWorkspace = (
 })
 
 const mockStore = (workspaces: unknown[]) => {
+  workspaceRowsRef.current = workspaces
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {

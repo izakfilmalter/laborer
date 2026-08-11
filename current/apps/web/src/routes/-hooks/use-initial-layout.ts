@@ -1,12 +1,8 @@
-import { workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { LeafNode, SplitNode, WindowLayout } from '@laborer/shared/types'
-import { queryDb } from '@livestore/livestore'
 import { useMemo } from 'react'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { useTerminalList } from '@/hooks/use-terminal-list'
-import { useLaborerStore } from '@/livestore/store'
-
-/** LiveStore query for building the default panel layout. */
-const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
 /**
  * Build a seed `WindowLayout` from a panel tree root and workspace ID.
@@ -53,9 +49,9 @@ function buildSeedWindowLayout(
 }
 
 /**
- * Computes an initial panel layout from the current LiveStore state.
+ * Computes an initial panel layout from streamed tasks and live terminals.
  *
- * Returns a complete `WindowLayout` ready to be committed to LiveStore
+ * Returns a complete `WindowLayout` ready to be persisted to localStorage
  * when no persisted layout exists yet.
  *
  * - Multiple running terminals -> horizontal SplitNode (side-by-side panes)
@@ -64,9 +60,8 @@ function buildSeedWindowLayout(
  * - No workspaces -> undefined (PanelManager shows empty state)
  */
 export function useInitialLayout(): WindowLayout | undefined {
-  const store = useLaborerStore()
   const { terminals: terminalList } = useTerminalList()
-  const workspaceList = store.useQuery(allWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
 
   return useMemo(() => {
     const runningTerminals = terminalList.filter((t) => t.status === 'running')

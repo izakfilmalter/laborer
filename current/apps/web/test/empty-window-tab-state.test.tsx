@@ -87,7 +87,7 @@ vi.mock('@/panels/panel-context', () => ({
   useActiveWorkspaceId: () => null,
 }))
 
-// Mock LiveStore — provides workspace and project data
+// Mock the combined shared-state projections.
 interface MockWorkspace {
   branchName: string
   id: string
@@ -100,13 +100,16 @@ interface MockProject {
   name: string
 }
 
-// LiveStore now supplies only workspaces; projects come from shared-state atoms.
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
-  useAtomValue: () => projectResults.current,
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceResults.current
+      : projectResults.current,
 }))
 
 vi.mock('@/atoms/shared-state', () => ({
   projectViewsAtom: Symbol.for('projectViews'),
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@livestore/livestore', async (importOriginal) => {

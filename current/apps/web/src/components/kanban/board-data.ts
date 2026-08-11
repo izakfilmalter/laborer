@@ -21,6 +21,7 @@ export interface BoardPr {
 export interface BoardTask extends RpcBoardTask {
   readonly branch: string | null
   readonly executionMirror: ExecutionMirror
+  readonly parentTaskId: string | null
   readonly pr: BoardPr | null
   readonly worktreeState: WorktreeState
 }
@@ -42,13 +43,30 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
   ...task,
   branch: task.branchName,
   executionMirror: task.executionStatus,
+  parentTaskId: null,
   pr: null,
   worktreeState: worktreeState(task),
 })
 
 export const boardTasksFromSharedRows = (
   tasks: readonly SharedTaskRow[]
-): readonly BoardTask[] => tasks.map(toBoardTask)
+): readonly BoardTask[] =>
+  tasks.map((task) => ({
+    ...toBoardTask(task),
+    parentTaskId: task.parentTaskId,
+    pr:
+      task.prNumber === null ||
+      task.prState === null ||
+      task.prTitle === null ||
+      task.prUrl === null
+        ? null
+        : {
+            number: task.prNumber,
+            state: task.prState,
+            title: task.prTitle,
+            url: task.prUrl,
+          },
+  }))
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */
 export const applyTaskBoardEvents = (

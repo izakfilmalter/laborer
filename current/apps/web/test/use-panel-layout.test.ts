@@ -53,6 +53,11 @@ const {
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: () => spawnTerminalMock,
+  useAtomValue: () => workspaceRowsRef.current,
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@laborer/shared/schema', () => ({

@@ -16,17 +16,11 @@
  */
 
 import { useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { workspaces } from '@laborer/shared/schema'
-import { queryDb } from '@livestore/livestore'
 import { Effect, Fiber, Stream } from 'effect'
 import { useEffect, useMemo, useRef } from 'react'
-import { projectViewsAtom } from '@/atoms/shared-state'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { useSyncStatusUpdate } from '@/components/sync-status-context'
 import { useLaborerStore } from '@/livestore/store'
-
-const syncStatusBridgeWorkspaces$ = queryDb(workspaces, {
-  label: 'syncStatusBridgeWorkspaces',
-})
 
 /**
  * Renderless component that bridges LiveStore sync status to the
@@ -37,7 +31,7 @@ function SyncStatusBridge(): null {
   const setSyncState = useSyncStatusUpdate()
   const mountedRef = useRef(true)
   const projectList = useAtomValue(projectViewsAtom)
-  const workspaceList = store.useQuery(syncStatusBridgeWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const liveStoreSnapshot = useMemo(
     () =>
       JSON.stringify({

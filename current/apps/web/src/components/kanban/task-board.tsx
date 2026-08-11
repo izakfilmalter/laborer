@@ -13,9 +13,7 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
-import { queryDb } from '@livestore/livestore'
 import {
   AlignLeft,
   Bot,
@@ -36,7 +34,11 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { projectViewsAtom, taskRowsAtom } from '@/atoms/shared-state'
+import {
+  projectViewsAtom,
+  taskRowsAtom,
+  workspaceViewsAtom,
+} from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
@@ -102,11 +104,9 @@ import {
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
-const boardWorkspaces$ = queryDb(workspaces, { label: 'boardWorkspaces' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
@@ -344,6 +344,7 @@ function TaskBoardCard({
   onAttach,
   onCancel,
   onOpen,
+  parentTitle,
   workspace,
 }: {
   readonly task: BoardTask
@@ -355,6 +356,7 @@ function TaskBoardCard({
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
   readonly onOpen?: (task: BoardTask) => void
+  readonly parentTitle?: string | undefined
   /** The workspace this card's work already runs in, if any. */
   readonly workspace?: BoardCardWorkspace | undefined
 }) {
@@ -439,6 +441,11 @@ function TaskBoardCard({
   const boardBadges = (
     <>
       <SourceBadge source={task.source} />
+      {parentTitle && (
+        <Badge className="max-w-full shrink truncate" variant="secondary">
+          Parent: {parentTitle}
+        </Badge>
+      )}
       {task.description !== null && (
         <Tooltip>
           <TooltipTrigger
@@ -945,6 +952,12 @@ function LaneBoard({
                           onAttach={onAttach}
                           onCancel={onCancelTask}
                           onOpen={onOpenTask}
+                          parentTitle={
+                            task.parentTaskId === null
+                              ? undefined
+                              : tasks.find(({ id }) => id === task.parentTaskId)
+                                  ?.title
+                          }
                           task={task}
                           workspace={workspaceForCard(task)}
                         />
@@ -986,6 +999,11 @@ function LaneBoard({
           return (
             <TaskBoardCard
               isOverlay
+              parentTitle={
+                task.parentTaskId === null
+                  ? undefined
+                  : tasks.find(({ id }) => id === task.parentTaskId)?.title
+              }
               task={task}
               workspace={workspaceForCard(task)}
             />
@@ -1461,10 +1479,9 @@ function TaskBoard({
   readonly onDismiss: () => void
   readonly open: boolean
 }) {
-  const store = useLaborerStore()
   const projectList = useAtomValue(projectViewsAtom)
   const sharedTaskRows = useAtomValue(taskRowsAtom)
-  const workspaceList = store.useQuery(boardWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])

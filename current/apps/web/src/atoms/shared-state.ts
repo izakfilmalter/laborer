@@ -115,6 +115,104 @@ export const projectViewsAtom = Atom.make((get) =>
     repoPath: project.rootPath,
   }))
 )
+
+export interface WorkspaceView {
+  readonly aheadCount: number | null
+  readonly baseBranch: string | null
+  readonly baseSha: string | null
+  readonly behindCount: number | null
+  readonly branchName: string
+  readonly createdAt: string
+  readonly errorMessage: string | null
+  readonly id: string
+  readonly origin: 'laborer' | 'external'
+  readonly parentTaskId: string | null
+  readonly prIsDraft: boolean
+  readonly prNumber: number | null
+  readonly projectId: string
+  readonly prState: string | null
+  readonly prTitle: string | null
+  readonly prUrl: string | null
+  readonly status: string
+  readonly taskSource: string
+  readonly worktreePath: string
+  readonly worktreeSetupStep: string | null
+}
+
+const projectForRoot = (
+  rootPath: string,
+  projects: readonly SharedProjectRow[]
+): SharedProjectRow | undefined =>
+  projects
+    .filter(
+      (project) =>
+        project.rootPath === rootPath ||
+        rootPath.startsWith(
+          project.rootPath.endsWith('/')
+            ? project.rootPath
+            : `${project.rootPath}/`
+        )
+    )
+    .sort((left, right) => right.rootPath.length - left.rootPath.length)[0]
+
+const workspaceStatus = (
+  status: NonNullable<SharedTaskRow['worktreeStatus']>
+): WorkspaceView['status'] => {
+  if (status === 'provisioning') {
+    return 'creating'
+  }
+  return status === 'errored' ? 'errored' : 'running'
+}
+
+/**
+ * UI workspaces are streamed tasks that currently own a worktree. Tasks with
+ * unknown project roots remain durable but stay hidden until that project is
+ * registered again.
+ */
+export const workspaceViewsFromRows = (
+  tasks: readonly SharedTaskRow[],
+  projects: readonly SharedProjectRow[]
+): readonly WorkspaceView[] => {
+  const views: WorkspaceView[] = []
+
+  for (const task of tasks) {
+    if (task.worktreePath === null || task.worktreeStatus === null) {
+      continue
+    }
+    const project = projectForRoot(task.rootPath, projects)
+    if (!project) {
+      continue
+    }
+    views.push({
+      aheadCount: null,
+      baseBranch: task.baseBranch,
+      baseSha: task.baseSha,
+      behindCount: null,
+      branchName: task.branchName ?? task.title,
+      createdAt: String(task.createdAt),
+      errorMessage: task.worktreeError,
+      id: task.id,
+      origin: task.source === 'worktree' ? 'external' : 'laborer',
+      parentTaskId: task.parentTaskId,
+      prIsDraft: task.prIsDraft,
+      prNumber: task.prNumber,
+      projectId: project.id,
+      prState: task.prState?.toUpperCase() ?? null,
+      prTitle: task.prTitle,
+      prUrl: task.prUrl,
+      status: workspaceStatus(task.worktreeStatus),
+      taskSource: task.id,
+      worktreePath: task.worktreePath,
+      worktreeSetupStep: null,
+    })
+  }
+
+  return views
+}
+
+export const workspaceViewsAtom = Atom.make((get) =>
+  workspaceViewsFromRows(get(taskRowsAtom), get(projectRowsAtom))
+)
 export const settingRowsAtom = Atom.make(
   (get) => get(authoritativeSettingsAtom).rows
 )

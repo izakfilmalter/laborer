@@ -38,11 +38,10 @@ import {
   useAtomValue,
 } from '@effect-atom/atom-react/Hooks'
 import type { FileNode } from '@laborer/shared/rpc'
-import { workspaces } from '@laborer/shared/schema'
-import { queryDb } from '@livestore/livestore'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
   ContextMenu,
@@ -54,7 +53,6 @@ import {
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import { invalidateFromWatcher } from '@/panes/file-tree/invalidate-from-watcher'
 import {
   FileTreeView,
@@ -72,9 +70,6 @@ interface TreePaneProps {
 // ---------------------------------------------------------------------------
 // Module-level atoms — shared across all TreePaneContent instances.
 // ---------------------------------------------------------------------------
-
-/** Query all workspaces to look up worktreePath for a given workspaceId. */
-const allWorkspaces$ = queryDb(workspaces, { label: 'treePaneWorkspaces' })
 
 /** Mutation atom for opening files in the user's configured editor. */
 const editorOpenMutation = LaborerClient.mutation('editor.open')
@@ -267,8 +262,7 @@ const getWatcherAtom = (workspaceId: string) => {
  * item before allowing the menu to open.
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
-  const store = useLaborerStore()
-  const workspaceRows = store.useQuery(allWorkspaces$)
+  const workspaceRows = useAtomValue(workspaceViewsAtom)
   const listFiles = useAtomSet(fileListMutation, { mode: 'promise' })
 
   // Look up the workspace's worktreePath for building absolute file paths.

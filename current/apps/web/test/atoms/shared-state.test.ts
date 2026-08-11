@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   type AuthoritativeSharedState,
   applySharedStateUpdate,
+  workspaceViewsFromRows,
 } from '../../src/atoms/shared-state'
 
 const task = (id: string, revision = 1): SharedTaskRow => ({
@@ -150,5 +151,53 @@ describe('applySharedStateUpdate', () => {
       cursor: 2,
       rows: [setting('second', 2)],
     })
+  })
+})
+
+describe('workspaceViewsFromRows', () => {
+  it('projects persisted task lifecycle and PR facts into workspace UI rows', () => {
+    const row: SharedTaskRow = {
+      ...task('child'),
+      branchName: 'feat/child',
+      parentTaskId: 'parent',
+      prIsDraft: true,
+      prNumber: 421,
+      prState: 'open',
+      prTitle: 'Stream workspaces',
+      prUrl: 'https://github.com/example/repo/pull/421',
+      source: 'worktree',
+      worktreeError: 'setup failed',
+      worktreePath: '/repo/.worktrees/child',
+      worktreeStatus: 'errored',
+    }
+
+    expect(workspaceViewsFromRows([row], [project('/repo')])).toEqual([
+      expect.objectContaining({
+        branchName: 'feat/child',
+        errorMessage: 'setup failed',
+        id: 'child',
+        origin: 'external',
+        parentTaskId: 'parent',
+        prIsDraft: true,
+        prNumber: 421,
+        prState: 'OPEN',
+        status: 'errored',
+        worktreePath: '/repo/.worktrees/child',
+      }),
+    ])
+  })
+
+  it('hides tasks without worktrees and tasks whose project is unregistered', () => {
+    const noWorktree = task('todo')
+    const unknownProject = {
+      ...task('unknown'),
+      rootPath: '/unknown',
+      worktreePath: '/unknown/worktree',
+      worktreeStatus: 'ready' as const,
+    }
+
+    expect(
+      workspaceViewsFromRows([noWorktree, unknownProject], [project('/repo')])
+    ).toEqual([])
   })
 })

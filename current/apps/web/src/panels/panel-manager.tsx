@@ -43,18 +43,18 @@
  * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
-import { workspaces } from '@laborer/shared/schema'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type {
   LeafNode,
   PanelNode,
   PaneType,
   SplitNode,
 } from '@laborer/shared/types'
-import { queryDb } from '@livestore/livestore'
 import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { Button } from '@/components/ui/button'
 import {
@@ -84,7 +84,6 @@ import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
-import { useLaborerStore } from '@/livestore/store'
 import {
   useActivePaneId,
   useFullscreenPaneId,
@@ -98,8 +97,6 @@ import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
 import { TerminalPane } from '@/panes/terminal-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
-
-const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
 
 /**
  * MIME type for terminal drag data. Must match the value used in
@@ -169,8 +166,7 @@ interface EmptyTerminalPaneProps {
  * CTA so the user can retry or select a workspace.
  */
 function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
-  const store = useLaborerStore()
-  const workspaceList = store.useQuery(allWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const panelActions = usePanelActions()
   const spawnTerminal = useSpawnTerminal()
   const [isSpawning, setIsSpawning] = useState(false)

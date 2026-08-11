@@ -27,12 +27,14 @@ const {
   mutationMap,
   queryDbMock,
   useLaborerStoreMock,
+  workspaceRowsRef,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
   useLaborerStoreMock: vi.fn(),
+  workspaceRowsRef: { current: [] as Record<string, unknown>[] },
 }))
 
 vi.mock('@/lib/desktop', () => ({
@@ -54,10 +56,14 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
-  useAtomValue: () => ({
-    _tag: 'Success',
-    value: {},
-  }),
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceRowsRef.current
+      : { _tag: 'Success', value: {} },
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -194,6 +200,7 @@ describe('First-launch empty cache handling', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    workspaceRowsRef.current = []
   })
 
   // Tracer bullet: empty workspace list shows onboarding content
@@ -224,17 +231,6 @@ describe('First-launch empty cache handling', () => {
 
   it('workspace list updates reactively when data arrives via sync', () => {
     // Start with empty store (simulating first launch)
-    let workspaceData: Record<string, unknown>[] = []
-
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return workspaceData
-        }
-        return []
-      },
-    })
-
     const { rerender } = render(
       <WorkspaceList projectId="project-1" repoPath="/repo" />
     )
@@ -246,7 +242,7 @@ describe('First-launch empty cache handling', () => {
     ).toBeTruthy()
 
     // Simulate data arriving via sync — LiveStore reactivity re-renders
-    workspaceData = [
+    workspaceRowsRef.current = [
       {
         id: 'ws-1',
         projectId: 'project-1',

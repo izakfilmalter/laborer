@@ -1,15 +1,13 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
-import { workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
-import { queryDb } from '@livestore/livestore'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { createFileRoute } from '@tanstack/react-router'
 import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { projectViewsAtom } from '@/atoms/shared-state'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
@@ -23,7 +21,6 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { cn, extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
@@ -79,11 +76,6 @@ export const Route = createFileRoute('/')({
 })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-
-/** LiveStore query for workspaces (used by sidebar search filtering). */
-const sidebarWorkspaces$ = queryDb(workspaces, {
-  label: 'sidebarWorkspaces',
-})
 
 const toggleWorkspacePanel = (
   workspaceIds: readonly string[],
@@ -148,9 +140,8 @@ function HomeComponent() {
     (panelActions.windowLayout !== undefined &&
       panelActions.windowLayout.tabs.length === 0)
 
-  const store = useLaborerStore()
   const projectList = useAtomValue(projectViewsAtom)
-  const workspaceList = store.useQuery(sidebarWorkspaces$)
+  const workspaceList = useAtomValue(workspaceViewsAtom)
   const hasProjects = projectList.length > 0
 
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
@@ -909,7 +900,7 @@ function HomeComponent() {
   const [searchQuery, setSearchQuery] = useState('')
 
   // Filter projects and determine which to show based on search query.
-  // A project is shown if its name matches OR any of its non-destroyed
+  // A project is shown if its name matches OR any of its streamed
   // workspace branch names match. Matching is case-insensitive substring.
   const { filteredProjects, matchingProjectIds } = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()

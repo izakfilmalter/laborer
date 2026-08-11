@@ -21,12 +21,14 @@ const {
   mutationMap,
   queryDbMock,
   useLaborerStoreMock,
+  workspaceRows,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
   useLaborerStoreMock: vi.fn(),
+  workspaceRows: { current: [] as unknown[] },
 }))
 
 vi.mock('@/lib/desktop', () => ({
@@ -48,10 +50,14 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
-  useAtomValue: () => ({
-    _tag: 'Success',
-    value: {},
-  }),
+  useAtomValue: (atom: symbol) =>
+    atom === Symbol.for('workspaceViews')
+      ? workspaceRows.current
+      : { _tag: 'Success', value: {} },
+}))
+
+vi.mock('@/atoms/shared-state', () => ({
+  workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -226,6 +232,7 @@ const makeWorkspace = (
 
 /** Configure the mock store with the given workspaces. */
 const mockStore = (workspaces: unknown[]) => {
+  workspaceRows.current = workspaces
   useLaborerStoreMock.mockReturnValue({
     useQuery: (query: { label: string }) => {
       if (query.label === 'workspaceList') {

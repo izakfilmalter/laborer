@@ -18,6 +18,7 @@
  * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
  */
 
+import { existsSync } from 'node:fs'
 import { events, tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
@@ -138,15 +139,29 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         worktreePath: string,
         branchName: string
       ) {
+        // A workspace can outlive its directory (for example when its project
+        // is removed). Node reports a missing cwd as `spawn gh ENOENT`, which
+        // is indistinguishable from a missing executable unless we check the
+        // worktree first.
+        if (!existsSync(worktreePath)) {
+          return EMPTY_PR
+        }
+
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
           branchName,
           'number,url,title,state',
-          () => 'gh-spawn-failed' as const
+          (error) => error
         ).pipe(
-          Effect.catchAll((tag) => {
+          Effect.catchAll((error) => {
+            // The directory may have disappeared between the existence check
+            // and spawn. Treat that like the pre-spawn missing-path case.
+            if (!existsSync(worktreePath)) {
+              return Effect.succeed(undefined)
+            }
+
             return Effect.logWarning(
-              `[PrWatcher] Failed to run gh pr view: ${tag}`
+              `[PrWatcher] Failed to run gh pr view in ${worktreePath}: ${String(error)}`
             ).pipe(Effect.as(undefined))
           })
         )

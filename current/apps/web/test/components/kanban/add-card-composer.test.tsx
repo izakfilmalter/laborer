@@ -86,6 +86,75 @@ describe('add card composer', () => {
     })
   })
 
+  it('queues the deferred agent open for a Slack card created in In Progress', async () => {
+    const slackUrl = 'https://acme.slack.com/archives/C123/p1700000000000000'
+    createTask.mockResolvedValue({
+      id: 'task-1',
+      source: 'slack_url',
+      workspaceId: null,
+    })
+    const onSlackCardQueued = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <AddCardComposer
+        column={{
+          dotClassName: 'bg-muted',
+          id: 'in_progress',
+          title: 'In Progress',
+        }}
+        composerId="test-composer"
+        onClose={vi.fn()}
+        onSlackCardQueued={onSlackCardQueued}
+        projectId="project-1"
+      />
+    )
+
+    await user.click(
+      screen.getByRole('textbox', {
+        name: 'Card title or Slack message link for In Progress',
+      })
+    )
+    await user.paste(slackUrl)
+
+    await waitFor(() => {
+      expect(onSlackCardQueued).toHaveBeenCalledWith('task-1')
+    })
+  })
+
+  it('does not queue a deferred agent open outside In Progress', async () => {
+    const slackUrl = 'https://acme.slack.com/archives/C123/p1700000000000000'
+    createTask.mockResolvedValue({
+      id: 'task-1',
+      source: 'slack_url',
+      workspaceId: null,
+    })
+    const onSlackCardQueued = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <AddCardComposer
+        column={{ dotClassName: 'bg-muted', id: 'todo', title: 'Todo' }}
+        composerId="test-composer"
+        onClose={vi.fn()}
+        onSlackCardQueued={onSlackCardQueued}
+        projectId="project-1"
+      />
+    )
+
+    await user.click(
+      screen.getByRole('textbox', {
+        name: 'Card title or Slack message link for Todo',
+      })
+    )
+    await user.paste(slackUrl)
+
+    await waitFor(() => {
+      expect(createTask).toHaveBeenCalled()
+    })
+    expect(onSlackCardQueued).not.toHaveBeenCalled()
+  })
+
   it('does not immediately create a card for other pasted text', async () => {
     const user = userEvent.setup()
 

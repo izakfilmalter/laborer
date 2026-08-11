@@ -50,7 +50,10 @@ import {
   workspaceForTask,
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
-import { openProvisionedAgent } from '@/components/kanban/provisioned-agent'
+import {
+  openProvisionedAgent,
+  resolvePendingAgentOpen,
+} from '@/components/kanban/provisioned-agent'
 import {
   TerminalAttachButton,
   WorktreeChip,
@@ -640,11 +643,18 @@ function AddCardComposer({
   column,
   composerId,
   onClose,
+  onSlackCardQueued,
   projectId,
 }: {
   readonly column: BoardColumn
   readonly composerId: string
   readonly onClose: (reason: ComposerCloseReason) => void
+  /**
+   * A Slack card was created directly in In Progress, so its analysis and
+   * workspace are being provisioned by a detached server fiber; the board
+   * opens the agent once that workspace lands.
+   */
+  readonly onSlackCardQueued?: (taskId: string) => void
   readonly projectId: string
 }) {
   const [value, setValue] = useState('')
@@ -673,6 +683,13 @@ function AddCardComposer({
         created,
         panelActions?.autoOpenAgentWhenWorkspaceReady
       )
+      if (
+        created.source === 'slack_url' &&
+        column.id === 'in_progress' &&
+        created.workspaceId === null
+      ) {
+        onSlackCardQueued?.(created.id)
+      }
       setValue('')
       setConfirmation(
         created.source === 'slack_url'
@@ -808,6 +825,7 @@ function LaneBoard({
   onCancelTask,
   onMoveTask,
   onOpenTask,
+  onSlackCardQueued,
   projectId,
   tasks,
   workspaceForCard,
@@ -822,6 +840,7 @@ function LaneBoard({
     status: Exclude<BoardTaskStatus, 'cancelled'>
   ) => Promise<void>
   readonly onOpenTask: (task: BoardTask) => void
+  readonly onSlackCardQueued: (taskId: string) => void
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
   /** The workspace a card's work runs in, once it has one. */
@@ -926,6 +945,7 @@ function LaneBoard({
                     column={column}
                     composerId={composerId}
                     onClose={closeComposer}
+                    onSlackCardQueued={onSlackCardQueued}
                     projectId={projectId}
                   />
                 )}
@@ -1527,6 +1547,38 @@ function TaskBoard({
     }
   }, [pullNext, rpcResult])
 
+  // Slack cards created directly in In Progress are planned and provisioned
+  // by a detached server fiber, so their create response carries no workspace
+  // id. Remember them and open the agent — seeded with the planned prompt —
+  // once the board's task deltas and the LiveStore workspace rows agree the
+  // work has a workspace.
+  const pendingSlackAgentOpensRef = useRef<Set<string>>(new Set())
+  const queueSlackAgentOpen = (taskId: string) => {
+    pendingSlackAgentOpensRef.current.add(taskId)
+  }
+  useEffect(() => {
+    const pending = pendingSlackAgentOpensRef.current
+    for (const taskId of pending) {
+      const resolution = resolvePendingAgentOpen(
+        boardTasks.find((task) => task.id === taskId),
+        workspaceList
+      )
+      if (resolution._tag === 'wait') {
+        continue
+      }
+      pending.delete(taskId)
+      if (resolution._tag === 'open') {
+        openProvisionedAgent(
+          {
+            description: resolution.description,
+            workspaceId: resolution.workspaceId,
+          },
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+      }
+    }
+  }, [boardTasks, workspaceList, panelActions])
+
   // Closing hands focus back to the card control that opened the terminal, so
   // a keyboard user lands where they left rather than at the top of the board.
   const closeTerminal = () => {
@@ -1760,6 +1812,7 @@ function TaskBoard({
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
                     onOpenTask={(task) => setSelectedTaskId(task.id)}
+                    onSlackCardQueued={queueSlackAgentOpen}
                     projectId={project.id}
                     tasks={visibleTasks}
                     workspaceForCard={(task) => workspaceForCard(task, project)}

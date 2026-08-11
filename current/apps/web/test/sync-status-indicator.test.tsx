@@ -1,148 +1,168 @@
-/**
- * Tests for LiveStore sync status indicator.
- *
- * Verifies that:
- * - Sync indicator is always visible regardless of sync state
- * - Sync indicator reflects the current sync status (starting, healthy, unknown)
- * - Indicator does not cause layout shifts (fixed dimensions)
- *
- * @see Issue #2: LiveStore sync status indicator
- */
-
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  recordWsConnectionAttempt,
+  recordWsConnectionClosed,
+  recordWsConnectionErrored,
+  recordWsConnectionOpened,
+  resetWsConnectionStateForTests,
+  setBrowserOnlineStatus,
+} from '../src/atoms/ws-connection-state'
 import { LifecyclePhaseProvider } from '../src/components/lifecycle-phase-context'
 import { ServiceStatusDots } from '../src/components/service-status-dots'
-import {
-  SyncStatusProvider,
-  useSyncStatusUpdate,
-} from '../src/components/sync-status-context'
 import { mockFetch } from './helpers/mock-fetch'
 
-describe('LiveStore sync status indicator', () => {
+describe('server connection status indicator', () => {
   const originalFetch = globalThis.fetch
+  let serverHealthy = true
 
-  /** Mock all sidecar services as healthy so we can focus on sync indicator. */
-  function mockAllSidecarsHealthy() {
+  function mockSidecarHealth() {
     mockFetch((url) => {
-      if (
-        url === '/server-health' ||
-        url === '/terminal-health' ||
-        url === '/file-watcher-health'
-      ) {
+      if (url === '/server-health') {
+        return serverHealthy
+          ? Promise.resolve({ ok: true })
+          : Promise.reject(new Error('server down'))
+      }
+      if (url === '/terminal-health' || url === '/file-watcher-health') {
         return Promise.resolve({ ok: true })
       }
       return Promise.reject(new Error('not ready'))
     })
   }
 
-  /** Helper component that sets sync status via context using useEffect. */
-  function SyncStatusSetter({
-    isConnected,
-  }: {
-    readonly isConnected: boolean
-  }) {
-    const setSyncState = useSyncStatusUpdate()
-    useEffect(() => {
-      setSyncState(isConnected ? { state: 'healthy' } : { state: 'starting' })
-    }, [isConnected, setSyncState])
-    return null
-  }
-
   beforeEach(() => {
     vi.useFakeTimers()
+    serverHealthy = true
+    resetWsConnectionStateForTests()
+    mockSidecarHealth()
   })
 
   afterEach(() => {
     cleanup()
+    resetWsConnectionStateForTests()
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
 
-  it('sync indicator renders when sync status is syncing', async () => {
-    mockAllSidecarsHealthy()
-
+  function renderIndicator() {
     render(
       <LifecyclePhaseProvider>
-        <SyncStatusProvider>
-          <SyncStatusSetter isConnected={false} />
-          <ServiceStatusDots />
-        </SyncStatusProvider>
+        <ServiceStatusDots />
       </LifecyclePhaseProvider>
     )
+  }
 
+  async function flushHealthCheck() {
     await act(async () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+  }
 
-    const syncIndicator = screen.getByTestId('sync-indicator')
-    expect(syncIndicator).toBeTruthy()
+  it('reports healthy only when server health and RPC are connected', async () => {
+    renderIndicator()
+    await flushHealthCheck()
+
+    act(() => {
+      recordWsConnectionAttempt('ws://localhost/rpc')
+      recordWsConnectionOpened()
+    })
+
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('healthy')
   })
 
-  it('sync indicator visible when sync status is connected/idle', async () => {
-    mockAllSidecarsHealthy()
+  it('reports reconnecting when an established RPC connection closes', async () => {
+    recordWsConnectionAttempt('ws://localhost/rpc')
+    recordWsConnectionOpened()
+    renderIndicator()
+    await flushHealthCheck()
 
-    render(
-      <LifecyclePhaseProvider>
-        <SyncStatusProvider>
-          <SyncStatusSetter isConnected={true} />
-          <ServiceStatusDots />
-        </SyncStatusProvider>
-      </LifecyclePhaseProvider>
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+    act(() => {
+      recordWsConnectionClosed({ code: 1006 })
     })
 
-    // Sync indicator is always visible
-    const syncIndicator = screen.getByTestId('sync-indicator')
-    expect(syncIndicator).toBeTruthy()
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe(
+      'reconnecting'
+    )
   })
 
-  it('sync indicator visible when no sync status set (unknown/default)', async () => {
-    mockAllSidecarsHealthy()
+  it('reports down while offline and recovers after a sidecar restart', async () => {
+    recordWsConnectionAttempt('ws://localhost/rpc')
+    recordWsConnectionOpened()
+    renderIndicator()
+    await flushHealthCheck()
 
-    render(
-      <LifecyclePhaseProvider>
-        <SyncStatusProvider>
-          <ServiceStatusDots />
-        </SyncStatusProvider>
-      </LifecyclePhaseProvider>
+    act(() => {
+      setBrowserOnlineStatus(false)
+      recordWsConnectionClosed({ code: 1006, reason: 'server restarted' })
+    })
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('down')
+
+    act(() => {
+      setBrowserOnlineStatus(true)
+      recordWsConnectionAttempt('ws://localhost/rpc')
+    })
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe(
+      'reconnecting'
     )
 
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+    act(() => {
+      recordWsConnectionOpened()
     })
-
-    // Sync indicator is always visible, even when unknown
-    const syncIndicator = screen.getByTestId('sync-indicator')
-    expect(syncIndicator).toBeTruthy()
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('healthy')
   })
 
-  it('sync indicator does not cause layout shifts (fixed dimensions)', async () => {
-    mockAllSidecarsHealthy()
+  it('reports down when the initial RPC connection fails', async () => {
+    renderIndicator()
+    await flushHealthCheck()
 
-    render(
-      <LifecyclePhaseProvider>
-        <SyncStatusProvider>
-          <SyncStatusSetter isConnected={false} />
-          <ServiceStatusDots />
-        </SyncStatusProvider>
-      </LifecyclePhaseProvider>
-    )
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+    act(() => {
+      recordWsConnectionAttempt('ws://localhost/rpc')
+      recordWsConnectionErrored('connection refused')
     })
 
-    const syncIndicator = screen.getByTestId('sync-indicator')
-    // Badge-based indicator has fixed height (h-5) from Badge base styles.
-    expect(syncIndicator.className).toContain('h-5')
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('down')
+  })
+
+  it('tracks a server sidecar restart through down and reconnecting', async () => {
+    recordWsConnectionAttempt('ws://localhost/rpc')
+    recordWsConnectionOpened()
+    renderIndicator()
+    await flushHealthCheck()
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('healthy')
+
+    serverHealthy = false
+    act(() => {
+      recordWsConnectionClosed({ code: 1006 })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('down')
+
+    serverHealthy = true
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe(
+      'reconnecting'
+    )
+
+    act(() => {
+      recordWsConnectionAttempt('ws://localhost/rpc')
+      recordWsConnectionOpened()
+    })
+    expect(screen.getByTestId('sync-indicator').dataset.state).toBe('healthy')
+  })
+
+  it('retains fixed badge dimensions in every connection state', async () => {
+    renderIndicator()
+    await flushHealthCheck()
+
+    expect(screen.getByTestId('sync-indicator').className).toContain('h-5')
+    expect(screen.getByTestId('sync-indicator').textContent).toContain(
+      'Connection'
+    )
   })
 })

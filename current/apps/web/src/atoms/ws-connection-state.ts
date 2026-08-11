@@ -49,6 +49,7 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
 })
 
 let wsConnectionStatus = INITIAL_WS_CONNECTION_STATUS
+const wsConnectionListeners = new Set<() => void>()
 
 function isoNow(): string {
   return new Date().toISOString()
@@ -58,11 +59,24 @@ function updateWsConnectionStatus(
   updater: (current: WsConnectionStatus) => WsConnectionStatus
 ): WsConnectionStatus {
   wsConnectionStatus = updater(wsConnectionStatus)
+  for (const listener of wsConnectionListeners) {
+    listener()
+  }
   return wsConnectionStatus
 }
 
 export function getWsConnectionStatus(): WsConnectionStatus {
   return wsConnectionStatus
+}
+
+/** Subscribe to transport changes for React's useSyncExternalStore. */
+export function subscribeToWsConnectionStatus(
+  listener: () => void
+): () => void {
+  wsConnectionListeners.add(listener)
+  return () => {
+    wsConnectionListeners.delete(listener)
+  }
 }
 
 export function getWsConnectionUiState(
@@ -159,6 +173,9 @@ export function resetWsReconnectBackoff(): WsConnectionStatus {
 
 export function resetWsConnectionStateForTests(): void {
   wsConnectionStatus = INITIAL_WS_CONNECTION_STATUS
+  for (const listener of wsConnectionListeners) {
+    listener()
+  }
 }
 
 export function getWsReconnectDelayMsForRetry(

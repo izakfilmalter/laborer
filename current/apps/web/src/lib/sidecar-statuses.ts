@@ -22,6 +22,8 @@ type ServiceState =
   | { readonly state: 'unknown' }
   | { readonly state: 'starting' }
   | { readonly state: 'healthy' }
+  | { readonly state: 'reconnecting' }
+  | { readonly state: 'down'; readonly error: string }
   | { readonly state: 'unresponsive' }
   | { readonly state: 'crashed'; readonly error: string }
   | { readonly state: 'restarting'; readonly delayMs: number }
@@ -99,10 +101,14 @@ function getStatusColor(state: ServiceState): StatusColor {
     }
     case 'starting':
     case 'restarting':
+    case 'reconnecting':
     case 'unresponsive': {
       return 'yellow'
     }
     case 'crashed': {
+      return 'red'
+    }
+    case 'down': {
       return 'red'
     }
     case 'unknown': {
@@ -125,6 +131,12 @@ function getStatusLabel(state: ServiceState): string {
     }
     case 'healthy': {
       return 'Healthy'
+    }
+    case 'reconnecting': {
+      return 'Reconnecting'
+    }
+    case 'down': {
+      return `Down: ${state.error}`
     }
     case 'unresponsive': {
       return 'Unresponsive — click to restart'

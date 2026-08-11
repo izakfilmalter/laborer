@@ -12,8 +12,6 @@ import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-li
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
-import { SyncStatusBridge } from '@/components/sync-status-bridge'
-import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -94,15 +92,12 @@ function RootComponent() {
                   <AtomRegistryProvider key={`atom-registry-${generation}`}>
                     <SharedStateBridge />
                     <AppSettingsProvider>
-                      <SyncStatusProvider>
-                        <div className="h-svh">
-                          <LiveStoreProvider key={`livestore-${generation}`}>
-                            <SyncStatusBridge />
-                            <AppSettingsModal />
-                            <Outlet />
-                          </LiveStoreProvider>
-                        </div>
-                      </SyncStatusProvider>
+                      <div className="h-svh">
+                        <LiveStoreProvider key={`livestore-${generation}`}>
+                          <AppSettingsModal />
+                          <Outlet />
+                        </LiveStoreProvider>
+                      </div>
                     </AppSettingsProvider>
                     <Toaster richColors />
                     <PhaseTransitionDriver />

@@ -109,12 +109,7 @@ describe('task card details', () => {
     const onActivate = vi.fn()
     const onOpen = vi.fn()
     render(
-      <TaskBoardCard
-        hasWorkspace
-        onActivate={onActivate}
-        onOpen={onOpen}
-        task={task()}
-      />
+      <TaskBoardCard onActivate={onActivate} onOpen={onOpen} task={task()} />
     )
 
     await userEvent.click(screen.getByText('Improve task details'))
@@ -131,17 +126,9 @@ describe('task card details', () => {
     )
   })
 
-  it('says where the card leads, workspace or form', () => {
-    const { rerender } = render(
-      <TaskBoardCard hasWorkspace onActivate={vi.fn()} task={task()} />
-    )
-    expect(
-      screen.getByRole('button', {
-        name: 'Open workspace for Improve task details',
-      })
-    ).toBeTruthy()
+  it('says the body leads to the card while no workspace exists', () => {
+    render(<TaskBoardCard onActivate={vi.fn()} task={task()} />)
 
-    rerender(<TaskBoardCard onActivate={vi.fn()} task={task()} />)
     expect(
       screen.getByRole('button', {
         name: 'Card details for Improve task details',

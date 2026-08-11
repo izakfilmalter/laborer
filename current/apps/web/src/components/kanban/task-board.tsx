@@ -35,7 +35,13 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
+  authoritativeTasksAtom,
+  clearTaskOptimisticOverlayAtom,
+  confirmTaskOptimisticMoveAtom,
+  installTaskOptimisticOverlayAtom,
   projectViewsAtom,
+  type TaskOptimisticOverlay,
+  taskMutationReceiptAtom,
   taskRowsAtom,
   workspaceViewsAtom,
 } from '@/atoms/shared-state'
@@ -51,6 +57,10 @@ import {
   workspaceForTask,
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
+import {
+  fractionalOrderAt,
+  OptimisticTaskMoveQueue,
+} from '@/components/kanban/optimistic-task-moves'
 import { openProvisionedAgent } from '@/components/kanban/provisioned-agent'
 import {
   TerminalAttachButton,
@@ -130,8 +140,8 @@ const BOARD_COLUMNS: readonly BoardColumn[] = [
 ]
 
 /**
- * Group tasks into rendered columns, newest first. Cancelled cards are
- * dropped here — the board never shows them.
+ * Group tasks into rendered columns. Explicit manual rank wins; unranked new
+ * and incoming cards remain newest-first at the top.
  */
 function buildColumnTasks(
   tasks: readonly BoardTask[]
@@ -141,7 +151,18 @@ function buildColumnTasks(
     byColumn[column.id] = []
   }
   const doneCutoff = Date.now() - DONE_RETENTION_MS
-  const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.sortOrder === null && b.sortOrder === null) {
+      return b.createdAt - a.createdAt
+    }
+    if (a.sortOrder === null) {
+      return -1
+    }
+    if (b.sortOrder === null) {
+      return 1
+    }
+    return a.sortOrder - b.sortOrder || b.createdAt - a.createdAt
+  })
   for (const task of sorted) {
     if (
       task.status === 'cancelled' ||
@@ -824,8 +845,9 @@ function LaneBoard({
   readonly onCancelTask: (task: BoardTask) => void
   readonly onMoveTask: (
     task: BoardTask,
-    status: Exclude<BoardTaskStatus, 'cancelled'>
-  ) => Promise<void>
+    status: Exclude<BoardTaskStatus, 'cancelled'>,
+    sortOrder: number
+  ) => void
   readonly onOpenTask: (task: BoardTask) => void
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
@@ -845,7 +867,13 @@ function LaneBoard({
   // lane, so a card arriving in the background never steals a half-typed
   // composer or its focus.
   const signature = useMemo(
-    () => tasks.map((task) => `${task.id}:${String(task.revision)}`).join(','),
+    () =>
+      tasks
+        .map(
+          (task) =>
+            `${task.id}:${String(task.revision)}:${task.status}:${String(task.sortOrder)}`
+        )
+        .join(','),
     [tasks]
   )
   const [syncedSignature, setSyncedSignature] = useState(signature)
@@ -869,10 +897,7 @@ function LaneBoard({
     <Kanban
       className="w-full min-w-0"
       getItemValue={(task: BoardTask) => task.id}
-      onMove={({ event, activeContainer, overContainer }) => {
-        if (activeContainer === overContainer) {
-          return
-        }
+      onMove={({ event, overContainer }) => {
         const task = tasksById.get(String(event.active.id))
         const status = BOARD_COLUMNS.find(
           (column) => column.id === overContainer
@@ -881,9 +906,13 @@ function LaneBoard({
           setColumnTasks(buildColumnTasks(tasks))
           return
         }
-        onMoveTask(task, status).catch(() => {
+        const destination = columnTasks[overContainer] ?? []
+        const index = destination.findIndex(({ id }) => id === task.id)
+        if (index < 0) {
           setColumnTasks(buildColumnTasks(tasks))
-        })
+          return
+        }
+        onMoveTask(task, status, fractionalOrderAt(destination, index))
       }}
       onValueChange={setColumnTasks}
       value={columnTasks}
@@ -1480,6 +1509,8 @@ function TaskBoard({
 }) {
   const projectList = useAtomValue(projectViewsAtom)
   const sharedTaskRows = useAtomValue(taskRowsAtom)
+  const authoritativeTasks = useAtomValue(authoritativeTasksAtom).rows
+  const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
   const workspaceList = useAtomValue(workspaceViewsAtom)
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
@@ -1498,6 +1529,53 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
+  const installTaskOverlay = useAtomSet(installTaskOptimisticOverlayAtom)
+  const clearTaskOverlay = useAtomSet(clearTaskOptimisticOverlayAtom)
+  const confirmTaskMove = useAtomSet(confirmTaskOptimisticMoveAtom)
+  const authoritativeTasksRef = useRef(authoritativeTasks)
+  authoritativeTasksRef.current = authoritativeTasks
+  const moveQueueRef = useRef<OptimisticTaskMoveQueue | null>(null)
+  const moveDependencies = {
+    clear: (taskId: string, mutationId: string) =>
+      clearTaskOverlay({ mutationId, taskId }),
+    confirm: (
+      confirmation: {
+        readonly cursor: number
+        readonly row: (typeof authoritativeTasks)[number]
+      },
+      mutationId: string
+    ) => confirmTaskMove({ ...confirmation, mutationId }),
+    getAuthoritativeTask: (taskId: string) =>
+      authoritativeTasksRef.current.find(({ id }) => id === taskId),
+    install: (taskId: string, overlay: TaskOptimisticOverlay) =>
+      installTaskOverlay({ overlay, taskId }),
+    isConflict: (error: unknown) => extractErrorCode(error) === 'CAS_CONFLICT',
+    mutationId: () => crypto.randomUUID(),
+    send: async (command: {
+      readonly expectedRevision: number
+      readonly mutationId: string
+      readonly sortOrder: number | null
+      readonly status: BoardTaskStatus
+      readonly taskId: string
+    }) => {
+      const result = await moveTask({ payload: command })
+      if (result.workspaceId !== null) {
+        openProvisionedAgent(
+          result,
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+      }
+      return { cursor: result.cursor, row: result.row }
+    },
+  }
+  if (moveQueueRef.current === null) {
+    moveQueueRef.current = new OptimisticTaskMoveQueue(moveDependencies)
+  } else {
+    moveQueueRef.current.configure(moveDependencies)
+  }
+  useEffect(() => {
+    moveQueueRef.current?.observeMutationIds(taskMutationReceipt.mutationIds)
+  }, [taskMutationReceipt])
   useEffect(() => {
     setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
   }, [sharedTaskRows])
@@ -1647,30 +1725,12 @@ function TaskBoard({
     onDismiss()
   }
 
-  const persistMove = async (
+  const persistMove = (
     task: BoardTask,
-    status: Exclude<BoardTaskStatus, 'cancelled'>
+    status: Exclude<BoardTaskStatus, 'cancelled'>,
+    sortOrder: number
   ) => {
-    try {
-      const result = await moveTask({
-        payload: {
-          expectedRevision: task.revision,
-          status,
-          taskId: task.id,
-        },
-      })
-      if (result.workspaceId !== null) {
-        openProvisionedAgent(
-          result,
-          panelActions?.autoOpenAgentWhenWorkspaceReady
-        )
-      }
-    } catch (error) {
-      toast.error(`Could not move “${task.title}”`, {
-        description: extractErrorMessage(error),
-      })
-      throw error
-    }
+    moveQueueRef.current?.move(task.id, { sortOrder, status })
   }
 
   const cancelTask = (task: BoardTask) => {
@@ -1679,6 +1739,8 @@ function TaskBoard({
     moveTask({
       payload: {
         expectedRevision: task.revision,
+        mutationId: crypto.randomUUID(),
+        sortOrder: task.sortOrder,
         status: 'cancelled',
         taskId: task.id,
       },

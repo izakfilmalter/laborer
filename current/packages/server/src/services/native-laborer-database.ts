@@ -350,6 +350,28 @@ const nullableNumber = (value: unknown, column: string): number | null => {
     ? value
     : invalidColumn(column)
 }
+const nextTaskSortOrder = (
+  database: DatabaseSync,
+  status: TaskStatus
+): number =>
+  nullableNumber(
+    sqliteRow(
+      database
+        .prepare(
+          `SELECT COALESCE(MIN(sort_order), 0) - 1 AS sort_order
+           FROM tasks WHERE status = ?`
+        )
+        .get(status)
+    ).sort_order,
+    'tasks.sort_order'
+  ) ?? 0
+const taskSortOrder = (
+  database: DatabaseSync,
+  input: Pick<NewLaborerTask, 'sortOrder' | 'status'>
+): number | null =>
+  input.sortOrder === undefined
+    ? nextTaskSortOrder(database, input.status)
+    : input.sortOrder
 const enumValue = <A extends string>(
   value: unknown,
   values: readonly A[],
@@ -612,6 +634,7 @@ export class NativeLaborerDatabase {
   ): MutationResult<LaborerTask> {
     const createdAt = input.createdAt ?? changedAt
     return this.#writeTransaction(() => {
+      const sortOrder = taskSortOrder(this.#database, input)
       this.#database
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
@@ -648,7 +671,7 @@ export class NativeLaborerDatabase {
           input.prTitle ?? null,
           input.prState ?? null,
           input.prIsDraft ? 1 : 0,
-          input.sortOrder ?? null
+          sortOrder
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, mutationId)
       return { row: this.#requireTask(input.id), cursor }

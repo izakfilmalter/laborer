@@ -312,8 +312,9 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+          description, created_at, updated_at, revision, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+          (SELECT COALESCE(MIN(sort_order), 0) - 1 FROM tasks WHERE status = ?))`)
         .run(
           input.id,
           input.rootPath,
@@ -328,7 +329,8 @@ export class NodeTaskBoardDatabase {
           input.branchName ?? null,
           input.description ?? null,
           createdAt,
-          changedAt
+          changedAt,
+          input.status
         )
       this.#appendChange(input.id, changedAt)
       const task = this.find(input.id)
@@ -403,9 +405,12 @@ export class NodeTaskBoardDatabase {
 
       const result = this.#database
         .prepare(`UPDATE tasks
-          SET status = ?, updated_at = ?, revision = revision + 1
+          SET status = ?,
+              sort_order = (SELECT COALESCE(MIN(sort_order), 0) - 1
+                            FROM tasks WHERE status = ?),
+              updated_at = ?, revision = revision + 1
           WHERE id = ? AND revision = ?`)
-        .run(status, changedAt, id, expectedRevision)
+        .run(status, status, changedAt, id, expectedRevision)
       if (result.changes === 0) {
         throw new Error(`Task changed while moving: ${id}`)
       }
@@ -553,9 +558,12 @@ export class NodeTaskBoardDatabase {
 
           const result = this.#database
             .prepare(`UPDATE tasks
-              SET status = ?, updated_at = ?, revision = revision + 1
+              SET status = ?,
+                  sort_order = (SELECT COALESCE(MIN(sort_order), 0) - 1
+                                FROM tasks WHERE status = ?),
+                  updated_at = ?, revision = revision + 1
               WHERE id = ? AND revision = ?`)
-            .run(status, changedAt, task.id, task.revision)
+            .run(status, status, changedAt, task.id, task.revision)
           if (result.changes === 0) {
             throw new StalePrTaskTransition()
           }

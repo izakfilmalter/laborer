@@ -28,7 +28,11 @@ import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
 import { LaborerStore } from '../services/laborer-store.js'
-import { LaborerDatabaseStaleRevisionError } from '../services/native-laborer-database.js'
+import {
+  LaborerDatabaseStaleRevisionError,
+  type LaborerTask,
+  NativeLaborerDatabase,
+} from '../services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
@@ -201,6 +205,100 @@ const taskMoveError = (cause: unknown) =>
     message: cause instanceof Error ? cause.message : 'Unable to move task',
   })
 
+const taskMoveFailureMessage = (cause: unknown, taskId: string): string => {
+  if (cause instanceof LaborerDatabaseStaleRevisionError) {
+    return `Task changed while moving: ${taskId}`
+  }
+  return cause instanceof Error ? cause.message : 'Unable to move task'
+}
+
+const isLegacyProvisioningReplay = (
+  task: Task,
+  status: TaskStatus,
+  sortOrder: number | null | undefined,
+  mutationId: string | null
+): boolean =>
+  mutationId === null && sortOrder === undefined && task.status === status
+
+const sharedTaskRow = (task: LaborerTask) => {
+  const worktree = inspectTaskWorktree(task.worktreePath, task.executionId)
+  return {
+    ...task,
+    worktreeBotOwned: worktree.botOwned,
+    worktreeExists: worktree.exists,
+  }
+}
+
+const commitTaskMove = (
+  path: string,
+  taskId: string,
+  expectedRevision: number,
+  status: TaskStatus,
+  sortOrder: number | null | undefined,
+  mutationId: string | null
+) =>
+  Effect.try({
+    try: () => {
+      const database = NativeLaborerDatabase.open(path)
+      try {
+        return database.updateTask(
+          taskId,
+          expectedRevision,
+          sortOrder === undefined ? { status } : { sortOrder, status },
+          mutationId
+        )
+      } finally {
+        database.close()
+      }
+    },
+    catch: (cause) =>
+      new RpcError({
+        code:
+          cause instanceof LaborerDatabaseStaleRevisionError
+            ? 'CAS_CONFLICT'
+            : 'TASK_MOVE_FAILED',
+        message: taskMoveFailureMessage(cause, taskId),
+      }),
+  })
+
+const readCommittedTask = (path: string, taskId: string) =>
+  Effect.try({
+    try: () => {
+      const database = NativeLaborerDatabase.open(path)
+      try {
+        const snapshot = database.snapshot()
+        const row = snapshot.tasks.find(({ id }) => id === taskId)
+        if (row === undefined) {
+          throw new Error(`Task not found: ${taskId}`)
+        }
+        return { cursor: snapshot.taskCursor, row }
+      } finally {
+        database.close()
+      }
+    },
+    catch: taskMoveError,
+  })
+
+const commitOrReplayTaskMove = (input: {
+  readonly expectedRevision: number
+  readonly legacyProvisioningReplay: boolean
+  readonly mutationId: string | null
+  readonly path: string
+  readonly sortOrder: number | null | undefined
+  readonly status: TaskStatus
+  readonly taskId: string
+}) =>
+  input.legacyProvisioningReplay
+    ? readCommittedTask(input.path, input.taskId)
+    : commitTaskMove(
+        input.path,
+        input.taskId,
+        input.expectedRevision,
+        input.status,
+        input.sortOrder,
+        input.mutationId
+      )
+
 interface TaskMoveLock {
   readonly semaphore: Effect.Semaphore
   users: number
@@ -315,10 +413,14 @@ const taskWorkspaceBranchName = (task: Task): string | undefined => {
 const handleTaskMoveAtPathUnlocked = (
   {
     expectedRevision,
+    mutationId = null,
+    sortOrder,
     status,
     taskId,
   }: {
     readonly expectedRevision: number
+    readonly mutationId?: string | null
+    readonly sortOrder?: number | null
     readonly status: TaskStatus
     readonly taskId: string
   },
@@ -340,9 +442,15 @@ const handleTaskMoveAtPathUnlocked = (
       })
     }
     let task: Task = initialTask
-    if (task.revision !== expectedRevision && task.status !== status) {
+    const legacyProvisioningReplay = isLegacyProvisioningReplay(
+      task,
+      status,
+      sortOrder,
+      mutationId
+    )
+    if (task.revision !== expectedRevision && !legacyProvisioningReplay) {
       return yield* new RpcError({
-        code: 'TASK_MOVE_FAILED',
+        code: 'CAS_CONFLICT',
         message: `Task changed while moving: ${taskId}`,
       })
     }
@@ -388,9 +496,17 @@ const handleTaskMoveAtPathUnlocked = (
       })
     }
 
-    task = yield* withDatabase((database) =>
-      database.move(taskId, task.revision, status)
-    )
+    const committed = yield* commitOrReplayTaskMove({
+      expectedRevision: task.revision,
+      legacyProvisioningReplay,
+      mutationId,
+      path,
+      sortOrder,
+      status,
+      taskId,
+    })
+    task = committed.row
+    const cursor = committed.cursor
 
     // An In Progress task without a binding is incomplete durable work. This
     // deliberately retries after a crash between the status write and
@@ -398,8 +514,10 @@ const handleTaskMoveAtPathUnlocked = (
     // creating duplicates in this server process.
     if (!(shouldProvision && task.worktreePath === null)) {
       return {
+        cursor,
         description: null,
         revision: task.revision,
+        row: sharedTaskRow(committed.row),
         status: task.status,
         updatedAt: task.updatedAt,
         workspaceId: null,
@@ -475,11 +593,14 @@ const handleTaskMoveAtPathUnlocked = (
     // title that cannot produce a usable slug.
     task = yield* bindTaskWorkspace(path, taskId, workspace)
 
+    const authoritative = yield* readCommittedTask(path, taskId)
     return {
+      cursor: authoritative.cursor,
       description: task.description,
-      revision: task.revision,
-      status: task.status,
-      updatedAt: task.updatedAt,
+      revision: authoritative.row.revision,
+      row: sharedTaskRow(authoritative.row),
+      status: authoritative.row.status,
+      updatedAt: authoritative.row.updatedAt,
       workspaceId: workspace.id,
     }
   })
@@ -487,6 +608,8 @@ const handleTaskMoveAtPathUnlocked = (
 export const handleTaskMoveAtPath = (
   payload: {
     readonly expectedRevision: number
+    readonly mutationId?: string | null
+    readonly sortOrder?: number | null
     readonly status: TaskStatus
     readonly taskId: string
   },
@@ -564,6 +687,8 @@ export const handleTaskCreateAtPath = (
 
 export const handleTaskMove = (payload: {
   readonly expectedRevision: number
+  readonly mutationId: string
+  readonly sortOrder: number | null
   readonly status: TaskStatus
   readonly taskId: string
 }) => handleTaskMoveAtPath(payload)

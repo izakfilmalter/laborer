@@ -646,20 +646,27 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  /** Revision-CAS status write used by both card drags and cancellation. */
+  /** Revision-CAS status/manual-order write used by card drags and cancellation. */
   Rpc.make('task.move', {
     success: Schema.Struct({
+      cursor: Schema.NonNegativeInt,
       /** Non-null only when this move provisioned a new workspace. */
       workspaceId: Schema.NullOr(Schema.String),
       /** Stored task description to inject into the newly launched agent. */
       description: Schema.NullOr(Schema.String),
       revision: Schema.Int,
+      row: SharedTaskRow,
       status: StoredTaskStatus,
       updatedAt: Schema.Int,
     }),
     error: RpcError,
     payload: {
-      expectedRevision: Schema.Int,
+      expectedRevision: Schema.Positive.pipe(Schema.int()),
+      mutationId: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      sortOrder: Schema.NullOr(Schema.Number),
       status: StoredTaskStatus,
       taskId: Schema.String,
     },

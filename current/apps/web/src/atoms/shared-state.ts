@@ -20,6 +20,17 @@ export interface AuthoritativeSharedState {
   readonly tasks: AuthoritativeTable<SharedTaskRow>
 }
 
+export interface TaskOptimisticOverlay {
+  readonly expectedRevision: number
+  readonly mutationId: string
+  readonly patch: Pick<SharedTaskRow, 'sortOrder' | 'status'>
+}
+
+export interface TaskMutationReceipt {
+  readonly mutationIds: readonly string[]
+  readonly sequence: number
+}
+
 const initialState: AuthoritativeSharedState = {
   projects: { cursor: 0, rows: [] },
   settings: { cursor: 0, rows: [] },
@@ -85,13 +96,114 @@ export const applySharedStateUpdate = (
 export const authoritativeSharedStateAtom =
   Atom.make<AuthoritativeSharedState>(initialState)
 
+/** Drag intent is deliberately separate from the authoritative stream. */
+export const taskOptimisticOverlaysAtom = Atom.make<
+  ReadonlyMap<string, TaskOptimisticOverlay>
+>(new Map())
+
+/** A bounded notification edge used to release transport-ambiguous moves. */
+export const taskMutationReceiptAtom = Atom.make<TaskMutationReceipt>({
+  mutationIds: [],
+  sequence: 0,
+})
+
+export const settleTaskOverlays = (
+  current: ReadonlyMap<string, TaskOptimisticOverlay>,
+  mutationIds: readonly string[]
+): ReadonlyMap<string, TaskOptimisticOverlay> => {
+  const settled = new Set(mutationIds)
+  const overlays = new Map(current)
+  for (const [taskId, overlay] of overlays) {
+    if (settled.has(overlay.mutationId)) {
+      overlays.delete(taskId)
+    }
+  }
+  return overlays
+}
+
 export const installSharedStateUpdateAtom = Atom.writable(
   (get) => get(authoritativeSharedStateAtom),
-  (context, update: SharedStateUpdate) =>
+  (context, update: SharedStateUpdate) => {
     context.set(
       authoritativeSharedStateAtom,
       applySharedStateUpdate(context.get(authoritativeSharedStateAtom), update)
     )
+    const mutationIds =
+      update.tasks?.type === 'delta' ? (update.tasks.mutationIds ?? []) : []
+    if (mutationIds.length === 0) {
+      return
+    }
+    const overlays = settleTaskOverlays(
+      context.get(taskOptimisticOverlaysAtom),
+      mutationIds
+    )
+    context.set(taskOptimisticOverlaysAtom, overlays)
+    const receipt = context.get(taskMutationReceiptAtom)
+    context.set(taskMutationReceiptAtom, {
+      mutationIds,
+      sequence: receipt.sequence + 1,
+    })
+  }
+)
+
+export const installTaskOptimisticOverlayAtom = Atom.writable(
+  (get) => get(taskOptimisticOverlaysAtom),
+  (
+    context,
+    input: { readonly taskId: string; readonly overlay: TaskOptimisticOverlay }
+  ) => {
+    const overlays = new Map(context.get(taskOptimisticOverlaysAtom))
+    overlays.set(input.taskId, input.overlay)
+    context.set(taskOptimisticOverlaysAtom, overlays)
+  }
+)
+
+export const clearTaskOptimisticOverlayAtom = Atom.writable(
+  (get) => get(taskOptimisticOverlaysAtom),
+  (
+    context,
+    input: { readonly mutationId: string; readonly taskId: string }
+  ) => {
+    const overlays = context.get(taskOptimisticOverlaysAtom)
+    if (overlays.get(input.taskId)?.mutationId !== input.mutationId) {
+      return
+    }
+    const next = new Map(overlays)
+    next.delete(input.taskId)
+    context.set(taskOptimisticOverlaysAtom, next)
+  }
+)
+
+export const confirmTaskOptimisticMoveAtom = Atom.writable(
+  (get) => get(authoritativeSharedStateAtom),
+  (
+    context,
+    input: {
+      readonly cursor: number
+      readonly mutationId: string
+      readonly row: SharedTaskRow
+    }
+  ) => {
+    const state = context.get(authoritativeSharedStateAtom)
+    const current = state.tasks.rows.find(({ id }) => id === input.row.id)
+    if (current === undefined || input.row.revision >= current.revision) {
+      const rows = new Map(state.tasks.rows.map((row) => [row.id, row]))
+      rows.set(input.row.id, input.row)
+      context.set(authoritativeSharedStateAtom, {
+        ...state,
+        tasks: {
+          cursor: Math.max(state.tasks.cursor, input.cursor),
+          rows: [...rows.values()],
+        },
+      })
+    }
+    const overlays = context.get(taskOptimisticOverlaysAtom)
+    if (overlays.get(input.row.id)?.mutationId === input.mutationId) {
+      const next = new Map(overlays)
+      next.delete(input.row.id)
+      context.set(taskOptimisticOverlaysAtom, next)
+    }
+  }
 )
 
 export const authoritativeTasksAtom = Atom.make(
@@ -104,7 +216,13 @@ export const authoritativeSettingsAtom = Atom.make(
   (get) => get(authoritativeSharedStateAtom).settings
 )
 
-export const taskRowsAtom = Atom.make((get) => get(authoritativeTasksAtom).rows)
+export const taskRowsAtom = Atom.make((get) => {
+  const overlays = get(taskOptimisticOverlaysAtom)
+  return get(authoritativeTasksAtom).rows.map((row) => {
+    const overlay = overlays.get(row.id)
+    return overlay === undefined ? row : { ...row, ...overlay.patch }
+  })
+})
 export const projectRowsAtom = Atom.make(
   (get) => get(authoritativeProjectsAtom).rows
 )

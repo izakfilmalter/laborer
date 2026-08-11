@@ -23,6 +23,7 @@ export interface BoardTask extends RpcBoardTask {
   readonly executionMirror: ExecutionMirror
   readonly parentTaskId: string | null
   readonly pr: BoardPr | null
+  readonly sortOrder: number | null
   readonly worktreeState: WorktreeState
 }
 
@@ -45,6 +46,7 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
   executionMirror: task.executionStatus,
   parentTaskId: null,
   pr: null,
+  sortOrder: null,
   worktreeState: worktreeState(task),
 })
 

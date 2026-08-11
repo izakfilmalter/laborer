@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   type AuthoritativeSharedState,
   applySharedStateUpdate,
+  settleTaskOverlays,
   workspaceViewsFromRows,
 } from '../../src/atoms/shared-state'
 
@@ -199,5 +200,23 @@ describe('workspaceViewsFromRows', () => {
     expect(
       workspaceViewsFromRows([noWorktree, unknownProject], [project('/repo')])
     ).toEqual([])
+  })
+})
+
+describe('optimistic overlay ownership', () => {
+  it('does not let confirmation A clear a newer overlay B', () => {
+    const overlays = new Map([
+      [
+        'task-1',
+        {
+          expectedRevision: 1,
+          mutationId: 'move-b',
+          patch: { sortOrder: 2, status: 'in_review' as const },
+        },
+      ],
+    ])
+
+    expect(settleTaskOverlays(overlays, ['move-a'])).toEqual(overlays)
+    expect(settleTaskOverlays(overlays, ['move-b']).size).toBe(0)
   })
 })

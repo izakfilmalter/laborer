@@ -40,7 +40,7 @@ import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
   installSharedStateUpdateAtom,
-  sharedStateEventsAtom,
+  makeSharedStateEventsAtom,
 } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -1487,6 +1487,7 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
+  const sharedStateEventsAtom = useMemo(makeSharedStateEventsAtom, [])
   const rpcResult = useAtomValue(sharedStateEventsAtom)
   const pullNext = useAtomSet(sharedStateEventsAtom)
   const installSharedStateUpdate = useAtomSet(installSharedStateUpdateAtom)

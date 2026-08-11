@@ -122,13 +122,14 @@ export const settingsByKeyAtom = Atom.make(
     new Map(get(settingRowsAtom).map((setting) => [setting.key, setting]))
 )
 
-export const sharedStateEventsAtom = LaborerClient.runtime.pull(
-  LaborerClient.pipe(
-    Effect.map((client) =>
-      // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-      client('state.subscribe', undefined as void)
+export const makeSharedStateEventsAtom = () =>
+  LaborerClient.runtime.pull(
+    LaborerClient.pipe(
+      Effect.map((client) =>
+        // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+        client('state.subscribe', undefined as void)
+      ),
+      Stream.unwrap
     ),
-    Stream.unwrap
-  ),
-  { disableAccumulation: true }
-)
+    { disableAccumulation: true }
+  )

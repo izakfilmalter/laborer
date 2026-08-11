@@ -45,6 +45,7 @@ import {
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
 import {
   CreateWorkspaceForm,
@@ -65,13 +66,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import {
   Collapsible,
   CollapsibleContent,
@@ -638,6 +632,42 @@ function DestroyWorkspaceButton({
   )
 }
 
+/**
+ * The workspace's lifecycle state as a chip. An errored workspace carries its
+ * failure in a tooltip rather than on the chip, so one bad workspace cannot
+ * push every sibling card out of shape.
+ */
+function WorkspaceStatusBadge({
+  errorMessage,
+  status,
+}: {
+  readonly errorMessage: string | null
+  readonly status: string
+}) {
+  const badge = (
+    <Badge
+      className={cn('shrink-0 border', getStatusClasses(status))}
+      variant="outline"
+    >
+      <StatusDot status={status} />
+      {status}
+    </Badge>
+  )
+
+  if (status !== 'errored' || errorMessage === null) {
+    return badge
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger>{badge}</TooltipTrigger>
+      <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
+        {errorMessage}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function WorkspaceItem({
   workspace,
   isRootWorkspace,
@@ -662,148 +692,118 @@ function WorkspaceItem({
   const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
 
   return (
-    <Card
-      className={cn(
-        isActiveWorkspace && !hasAgentAccent && 'border-primary',
-        // Steady edges rather than a pulsing card: the whole card animating
-        // made its text hard to read, so the motion now lives only in the
-        // status badge's dot. A blocked agent glows, an unseen result does
-        // not — the sidebar's loudest card should be the one to act on.
-        agentSurface.cardClassName
-      )}
-      data-agent-status={workspaceAgentStatus ?? undefined}
-      data-testid={`workspace-card-${workspace.branchName}`}
-      size="sm"
-    >
-      <CardHeader className="gap-2">
-        {/* Row 1 — Git: branch name, PR info, and destroy action */}
-        <div className="flex min-w-0 flex-wrap items-start gap-2">
-          <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
-            <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <CardTitle className="min-w-0 font-mono text-sm">
-              <CopyableValue
-                copyLabel="Copy branch name"
-                extraCopyValues={[
-                  {
-                    value: workspace.worktreePath,
-                    label: 'Copy worktree path',
-                  },
-                ]}
-                value={workspace.branchName}
-              />
-            </CardTitle>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {showsAgentStatus ? (
-              <AggregateAgentStatusBadge
-                className="shrink-0"
-                status={workspaceAgentStatus}
-              />
-            ) : null}
-            <GitHubPrStatusBadge
-              prNumber={workspace.prNumber}
-              prState={workspace.prState}
-              prTitle={workspace.prTitle}
-              prUrl={workspace.prUrl}
+    <CardShell
+      actions={
+        <>
+          {showsAgentStatus ? (
+            <AggregateAgentStatusBadge
+              className="shrink-0"
+              status={workspaceAgentStatus}
             />
-            <WorkspaceSyncStatus
-              aheadCount={workspace.aheadCount}
-              behindCount={workspace.behindCount}
-              workspaceId={workspace.id}
-            />
-            {!isRootWorkspace && showCreateSubWorkspaceAction && (
-              <CreateWorkspaceForm
-                baseWorkspace={{
-                  id: workspace.id,
-                  branchName: workspace.branchName,
-                }}
-                onPendingCreationChange={onPendingCreationChange}
-                projectId={workspace.projectId}
-                projectName={projectName}
-                trigger={
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <DialogTrigger
-                          render={
-                            <Button
-                              aria-label={`Create sub-workspace from ${workspace.branchName}`}
-                              className="size-6"
-                              size="icon-sm"
-                              variant="ghost"
-                            />
-                          }
-                        />
-                      }
-                    >
-                      <GitBranchPlus className="size-3.5 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      Create sub-workspace from this branch
-                    </TooltipContent>
-                  </Tooltip>
-                }
-              />
-            )}
-            {!isRootWorkspace && (
-              <DestroyWorkspaceButton
-                branchName={workspace.branchName}
-                workspaceId={workspace.id}
-              />
-            )}
-          </div>
-        </div>
-        {!isRootWorkspace && (
-          <div className="flex justify-end">
-            {workspace.status === 'errored' && workspace.errorMessage ? (
-              <Tooltip>
-                <TooltipTrigger>
-                  <Badge
-                    className={cn(
-                      'shrink-0 border',
-                      getStatusClasses(workspace.status)
-                    )}
-                    variant="outline"
-                  >
-                    <StatusDot status={workspace.status} />
-                    {workspace.status}
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
-                  {workspace.errorMessage}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Badge
-                className={cn(
-                  'shrink-0 border',
-                  getStatusClasses(workspace.status)
-                )}
-                variant="outline"
-              >
-                <StatusDot status={workspace.status} />
-                {workspace.status}
-              </Badge>
-            )}
-          </div>
-        )}
-      </CardHeader>
-      <CardContent>
-        {workspace.worktreeSetupStep != null && (
-          <div className="mb-2 flex items-center gap-2 text-warning text-xs">
-            <Spinner className="size-3 text-warning" />
-            {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
-          </div>
-        )}
-        <div className="border-t pt-2">
-          <TerminalList
-            onAgentStatusChange={setWorkspaceAgentStatus}
-            projectId={workspace.projectId}
+          ) : null}
+          <GitHubPrStatusBadge
+            prNumber={workspace.prNumber}
+            prState={workspace.prState}
+            prTitle={workspace.prTitle}
+            prUrl={workspace.prUrl}
+          />
+          <WorkspaceSyncStatus
+            aheadCount={workspace.aheadCount}
+            behindCount={workspace.behindCount}
             workspaceId={workspace.id}
           />
+          {!isRootWorkspace && showCreateSubWorkspaceAction && (
+            <CreateWorkspaceForm
+              baseWorkspace={{
+                id: workspace.id,
+                branchName: workspace.branchName,
+              }}
+              onPendingCreationChange={onPendingCreationChange}
+              projectId={workspace.projectId}
+              projectName={projectName}
+              trigger={
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DialogTrigger
+                        render={
+                          <Button
+                            aria-label={`Create sub-workspace from ${workspace.branchName}`}
+                            className="size-6"
+                            size="icon-sm"
+                            variant="ghost"
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <GitBranchPlus className="size-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Create sub-workspace from this branch
+                  </TooltipContent>
+                </Tooltip>
+              }
+            />
+          )}
+          {!isRootWorkspace && (
+            <DestroyWorkspaceButton
+              branchName={workspace.branchName}
+              workspaceId={workspace.id}
+            />
+          )}
+        </>
+      }
+      badges={
+        isRootWorkspace ? null : (
+          <WorkspaceStatusBadge
+            errorMessage={workspace.errorMessage}
+            status={workspace.status}
+          />
+        )
+      }
+      // Steady edges rather than a pulsing card: the whole card animating
+      // made its text hard to read, so the motion now lives only in the
+      // status badge's dot. A blocked agent glows, an unseen result does
+      // not — the sidebar's loudest card should be the one to act on.
+      className={agentSurface.cardClassName}
+      data-agent-status={workspaceAgentStatus ?? undefined}
+      data-testid={`workspace-card-${workspace.branchName}`}
+      icon={
+        <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      }
+      // One card, one coloured edge — an agent asking for the operator wins
+      // the edge over the merely active workspace.
+      selected={isActiveWorkspace && !hasAgentAccent}
+      title={
+        <span className="block min-w-0 font-mono">
+          <CopyableValue
+            copyLabel="Copy branch name"
+            extraCopyValues={[
+              {
+                value: workspace.worktreePath,
+                label: 'Copy worktree path',
+              },
+            ]}
+            value={workspace.branchName}
+          />
+        </span>
+      }
+    >
+      {workspace.worktreeSetupStep != null && (
+        <div className="mb-2 flex items-center gap-2 text-warning text-xs">
+          <Spinner className="size-3 text-warning" />
+          {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
         </div>
-      </CardContent>
-    </Card>
+      )}
+      <div className="border-t pt-2">
+        <TerminalList
+          onAgentStatusChange={setWorkspaceAgentStatus}
+          projectId={workspace.projectId}
+          workspaceId={workspace.id}
+        />
+      </div>
+    </CardShell>
   )
 }
 
@@ -963,31 +963,25 @@ function PendingWorkspaceItem({
   const phaseLabel = isAnalyzing ? 'Reading Slack thread' : 'Creating workspace'
 
   return (
-    <Card
+    <CardShell
+      actions={
+        <Badge
+          className="shrink-0 border border-warning/30 bg-warning/10 text-warning"
+          variant="outline"
+        >
+          <Spinner className="size-3" />
+          {isAnalyzing ? 'planning' : 'creating'}
+        </Badge>
+      }
       aria-label={`${phaseLabel}: ${branchLabel}`}
       aria-live="polite"
       className="border-warning/30 bg-warning/5"
       data-testid={`pending-workspace-${creation.id}`}
+      icon={<GitBranch className="size-4 shrink-0 text-muted-foreground" />}
       role="status"
-      size="sm"
-    >
-      <CardHeader className="gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <GitBranch className="size-4 shrink-0 text-muted-foreground" />
-          <CardTitle className="min-w-0 flex-1 truncate font-mono text-sm">
-            {branchLabel}
-          </CardTitle>
-          <Badge
-            className="shrink-0 border border-warning/30 bg-warning/10 text-warning"
-            variant="outline"
-          >
-            <Spinner className="size-3" />
-            {isAnalyzing ? 'planning' : 'creating'}
-          </Badge>
-        </div>
-        <CardDescription className="text-xs">{phaseLabel}</CardDescription>
-      </CardHeader>
-    </Card>
+      subtitle={<p className="text-muted-foreground text-xs">{phaseLabel}</p>}
+      title={<span className="block truncate font-mono">{branchLabel}</span>}
+    />
   )
 }
 

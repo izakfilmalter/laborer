@@ -985,6 +985,10 @@ function HomeComponent() {
     setBoardOverlayOpen((open) => !open)
   }, [])
 
+  const closeBoardOverlay = useCallback(() => {
+    setBoardOverlayOpen(false)
+  }, [])
+
   useHotkeySequence(['Meta+K'], (event) => {
     event.preventDefault()
     toggleBoardOverlay()
@@ -1276,6 +1280,7 @@ function HomeComponent() {
                     <div className="min-h-0 flex-1">
                       <TaskBoard
                         collapseState={collapseState}
+                        onDismiss={closeBoardOverlay}
                         open={boardOverlayOpen}
                       />
                     </div>

@@ -5,6 +5,7 @@ import {
   boardTaskTitle,
   projectForTask,
   slackAnalysisState,
+  workspaceForTask,
 } from '@/components/kanban/board-data'
 
 const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
@@ -168,5 +169,43 @@ describe('board task projection', () => {
         title: 'https://example.com/docs',
       })
     ).toEqual({ isPlaceholder: false, text: 'https://example.com/docs' })
+  })
+})
+
+describe('the workspace a card leads to', () => {
+  const workspace = (
+    overrides: Partial<{
+      id: string
+      status: string
+      worktreePath: string
+    }> = {}
+  ) => ({
+    id: 'ws-1',
+    status: 'running',
+    worktreePath: '/repo.worktrees/task',
+    ...overrides,
+  })
+
+  it('matches the workspace sharing the card’s worktree path', () => {
+    expect(
+      workspaceForTask({ worktreePath: '/repo.worktrees/task' }, [
+        workspace({ id: 'ws-other', worktreePath: '/repo.worktrees/other' }),
+        workspace(),
+      ])?.id
+    ).toBe('ws-1')
+  })
+
+  it('leads nowhere for a card whose work has no worktree yet', () => {
+    expect(workspaceForTask({ worktreePath: null }, [workspace()])).toBe(
+      undefined
+    )
+  })
+
+  it('ignores a destroyed workspace that still shares the path', () => {
+    expect(
+      workspaceForTask({ worktreePath: '/repo.worktrees/task' }, [
+        workspace({ status: 'destroyed' }),
+      ])
+    ).toBe(undefined)
   })
 })

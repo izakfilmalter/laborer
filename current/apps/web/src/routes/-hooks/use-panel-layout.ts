@@ -70,6 +70,7 @@ import {
   reorderWindowTabs,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActivePaneFromLeaf,
   saveFocusedPaneId,
   switchWindowTab,
   switchWindowTabByIndex,
@@ -1702,6 +1703,44 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitWindowLayout]
   )
 
+  /**
+   * Bring a workspace forward and put keyboard focus inside it.
+   *
+   * Callers that name a workspace — a board card, a search result — should
+   * not have to know about tabs or panes to say "take me there". A workspace
+   * that is open somewhere is revealed where it already lives, because
+   * following a link should not rearrange the layout behind it; one that is
+   * open nowhere lands in the current tab, matching the workspace picker.
+   */
+  const handleFocusWorkspace = useCallback(
+    (workspaceId: string) => {
+      const location = persistedWindowLayout
+        ? findWorkspaceLocation(persistedWindowLayout, workspaceId)
+        : undefined
+
+      if (!(persistedWindowLayout && location)) {
+        handleAddWorkspaceToCurrentTab(workspaceId)
+        return
+      }
+
+      const revealed =
+        location.tabId === persistedWindowLayout.activeTabId
+          ? persistedWindowLayout
+          : switchWindowTab(persistedWindowLayout, location.tabId)
+
+      const leaf = getAllWorkspaceTileLeaves(revealed).find(
+        (candidate) => candidate.id === location.tileId
+      )
+      const paneId = leaf ? resolveActivePaneFromLeaf(leaf) : undefined
+      const focused = paneId ? saveFocusedPaneId(revealed, paneId) : revealed
+
+      if (focused !== persistedWindowLayout) {
+        commitWindowLayout('workspace-focused', focused)
+      }
+    },
+    [persistedWindowLayout, handleAddWorkspaceToCurrentTab, commitWindowLayout]
+  )
+
   // -------------------------------------------------------------------
   // Panel tab actions — operate on workspaces within the WindowLayout.
   // -------------------------------------------------------------------
@@ -2193,6 +2232,7 @@ export function usePanelLayout() {
       updatePaneType: handleUpdatePaneType,
       closePane: handleClosePane,
       closeWorkspace: handleCloseWorkspace,
+      focusWorkspace: handleFocusWorkspace,
       forceCloseWorkspace: handleCloseWorkspace,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
@@ -2225,6 +2265,7 @@ export function usePanelLayout() {
       handleUpdatePaneType,
       handleClosePane,
       handleCloseWorkspace,
+      handleFocusWorkspace,
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,

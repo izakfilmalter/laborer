@@ -14,7 +14,7 @@
 
 import { Result } from '@effect-atom/atom'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { projects } from '@laborer/shared/schema'
+import { projects, workspaces } from '@laborer/shared/schema'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { queryDb } from '@livestore/livestore'
 import { Cause, Effect, Stream } from 'effect'
@@ -38,6 +38,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
   applyTaskBoardEvents,
@@ -46,6 +47,7 @@ import {
   boardTaskTitle,
   projectForTask,
   slackAnalysisState,
+  workspaceForTask,
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
 import { openProvisionedAgent } from '@/components/kanban/provisioned-agent'
@@ -64,7 +66,7 @@ import {
 } from '@/components/reui/kanban'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+
 import {
   Dialog,
   DialogContent,
@@ -102,6 +104,7 @@ import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
 const boardProjects$ = queryDb(projects, { label: 'boardProjects' })
+const boardWorkspaces$ = queryDb(workspaces, { label: 'boardWorkspaces' })
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
@@ -309,12 +312,22 @@ function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
 const terminalAttachButtonId = (taskId: string): string =>
   `terminal-attach-${taskId}`
 
+/**
+ * One card on the board, wearing the sidebar's card shape.
+ *
+ * Activating a card takes you to its work: the workspace it runs in once one
+ * exists, and otherwise the card's own details, because a Todo nobody has
+ * started has no workspace to go to yet. Editing is its own button — a card
+ * whose body opens a workspace cannot also open a form.
+ */
 function TaskBoardCard({
   task,
   attachBlocked = false,
   attached = false,
   attaching = false,
+  hasWorkspace = false,
   isOverlay = false,
+  onActivate,
   onAttach,
   onCancel,
   onOpen,
@@ -323,7 +336,10 @@ function TaskBoardCard({
   readonly attachBlocked?: boolean
   readonly attached?: boolean
   readonly attaching?: boolean
+  /** Whether activating this card lands on a workspace rather than its form. */
+  readonly hasWorkspace?: boolean
   readonly isOverlay?: boolean
+  readonly onActivate?: (task: BoardTask) => void
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
   readonly onOpen?: (task: BoardTask) => void
@@ -337,107 +353,79 @@ function TaskBoardCard({
 
   const analysis = slackAnalysisState(task)
   const title = boardTaskTitle(task)
-  // The card body opens the detail dialog, but its chips own their own
-  // clicks — opening a PR or a terminal should not also open the dialog.
-  const openDetail = (event: React.MouseEvent) => {
-    if (event.target instanceof Element && event.target.closest('a,button')) {
-      return
-    }
-    onOpen?.(task)
-  }
+  const activate = isOverlay || !onActivate ? undefined : () => onActivate(task)
   return (
-    <Card
+    <CardShell
+      actions={
+        <>
+          {task.slackPermalink && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Open Slack thread"
+                    onClick={openSlack}
+                    size="icon-xs"
+                    variant="ghost"
+                  />
+                }
+              >
+                <ExternalLink className="size-3.5 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent>Open Slack thread</TooltipContent>
+            </Tooltip>
+          )}
+          {!isOverlay && onOpen && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={`Edit ${title.text}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpen(task)
+                    }}
+                    size="icon-xs"
+                    variant="ghost"
+                  />
+                }
+              >
+                <Pencil className="size-3.5 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent>Edit card</TooltipContent>
+            </Tooltip>
+          )}
+          {!isOverlay && task.source !== 'execution' && onCancel && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={`Cancel ${title.text}`}
+                    className="hover:bg-destructive/10 hover:text-destructive"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onCancel(task)
+                    }}
+                    size="icon-xs"
+                    variant="ghost"
+                  />
+                }
+              >
+                <X className="size-3.5 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent>Cancel task</TooltipContent>
+            </Tooltip>
+          )}
+        </>
+      }
+      activateLabel={
+        hasWorkspace
+          ? `Open workspace for ${title.text}`
+          : `Card details for ${title.text}`
+      }
       aria-busy={analysis === 'analyzing' ? true : undefined}
-      className={cn(
-        'cursor-grab gap-0 rounded-md py-0 shadow-xs ring-foreground/10 transition-colors hover:ring-foreground/20',
-        attached && 'ring-1 ring-ring/40',
-        isOverlay && 'cursor-grabbing shadow-lg'
-      )}
-      onClick={openDetail}
-    >
-      <CardContent className="flex flex-col gap-2 px-3 py-2.5">
-        {/* Title row: title takes the slack, card actions grouped hard right */}
-        <div className="flex items-start gap-2">
-          <p
-            className={cn(
-              'line-clamp-2 min-w-0 flex-1 font-medium text-sm leading-snug',
-              // An unnamed Slack card is a stand-in until the planner names it.
-              title.isPlaceholder && 'text-muted-foreground italic'
-            )}
-          >
-            {title.text}
-          </p>
-          <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
-            {task.slackPermalink && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      aria-label="Open Slack thread"
-                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      onClick={openSlack}
-                      type="button"
-                    />
-                  }
-                >
-                  <ExternalLink className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent>Open Slack thread</TooltipContent>
-              </Tooltip>
-            )}
-            {!isOverlay && onOpen && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      aria-label={`Card details for ${title.text}`}
-                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onOpen(task)
-                      }}
-                      type="button"
-                    />
-                  }
-                >
-                  <Pencil className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent>Card details</TooltipContent>
-              </Tooltip>
-            )}
-            {!isOverlay && task.source !== 'execution' && onCancel && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      aria-label={`Cancel ${title.text}`}
-                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onCancel(task)
-                      }}
-                      type="button"
-                    />
-                  }
-                >
-                  <X className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent>Cancel task</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        </div>
-
-        {/* Branch row */}
-        {task.branch && (
-          <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-            <GitBranch className="size-3 shrink-0" />
-            <span className="truncate font-mono text-xs">{task.branch}</span>
-          </div>
-        )}
-
-        {/* Meta chips: source, execution mirror, PR, worktree state, terminal */}
-        <div className="flex flex-wrap items-center gap-1.5">
+      badges={
+        <>
           <SourceBadge source={task.source} />
           {task.description !== null && (
             <Tooltip>
@@ -484,9 +472,33 @@ function TaskBoardCard({
               onAttach={() => onAttach?.(task)}
             />
           )}
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+      className={cn(
+        attached && 'ring-1 ring-ring/40',
+        isOverlay && 'shadow-lg'
+      )}
+      onActivate={activate}
+      subtitle={
+        task.branch ? (
+          <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+            <GitBranch className="size-3 shrink-0" />
+            <span className="truncate font-mono text-xs">{task.branch}</span>
+          </div>
+        ) : null
+      }
+      title={
+        <span
+          className={cn(
+            'line-clamp-2',
+            // An unnamed Slack card is a stand-in until the planner names it.
+            title.isPlaceholder && 'text-muted-foreground italic'
+          )}
+        >
+          {title.text}
+        </span>
+      }
+    />
   )
 }
 
@@ -716,15 +728,18 @@ function AddCardComposer({
 function LaneBoard({
   attachedTaskId,
   attachingTaskId,
+  onActivateTask,
   onAttach,
   onCancelTask,
   onMoveTask,
   onOpenTask,
   projectId,
   tasks,
+  workspaceBackedTaskIds,
 }: {
   readonly attachedTaskId: string | null
   readonly attachingTaskId: string | null
+  readonly onActivateTask: (task: BoardTask) => void
   readonly onAttach: (task: BoardTask) => void
   readonly onCancelTask: (task: BoardTask) => void
   readonly onMoveTask: (
@@ -734,6 +749,8 @@ function LaneBoard({
   readonly onOpenTask: (task: BoardTask) => void
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
+  /** Cards whose work already has a workspace to open. */
+  readonly workspaceBackedTaskIds: ReadonlySet<string>
 }) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
@@ -851,6 +868,8 @@ function LaneBoard({
                           }
                           attached={attachedTaskId === task.id}
                           attaching={attachingTaskId === task.id}
+                          hasWorkspace={workspaceBackedTaskIds.has(task.id)}
+                          onActivate={onActivateTask}
                           onAttach={onAttach}
                           onCancel={onCancelTask}
                           onOpen={onOpenTask}
@@ -1351,13 +1370,21 @@ function TaskDetailDialog({
  */
 function TaskBoard({
   collapseState,
+  onDismiss,
   open,
 }: {
   readonly collapseState: CollapseState
+  /**
+   * Put the board away. It is an overlay over the very panes a card sends you
+   * to, so following a card has to close it; only the owner of the overlay
+   * knows how.
+   */
+  readonly onDismiss: () => void
   readonly open: boolean
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(boardProjects$)
+  const workspaceList = store.useQuery(boardWorkspaces$)
   const panelActions = usePanelActions()
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
@@ -1515,6 +1542,30 @@ function TaskBoard({
   // form — which decides for itself whether to adopt it or protect a draft.
   const selectedTask = boardTasks.find((task) => task.id === selectedTaskId)
 
+  // Which cards can hand the operator a workspace, decided once per render so
+  // a card and the click it answers never disagree about where it leads.
+  const workspaceBackedTaskIds = new Set(
+    boardTasks
+      .filter((task) => workspaceForTask(task, workspaceList) !== undefined)
+      .map((task) => task.id)
+  )
+
+  /**
+   * A card's body leads to its work. Once the work has a workspace, the board
+   * hands the operator over to it and gets out of the way; until then the card
+   * itself is all there is, so the form opens rather than leaving the click
+   * unanswered.
+   */
+  const activateTask = (task: BoardTask) => {
+    const workspace = workspaceForTask(task, workspaceList)
+    if (workspace === undefined) {
+      setSelectedTaskId(task.id)
+      return
+    }
+    panelActions?.focusWorkspace(workspace.id)
+    onDismiss()
+  }
+
   const persistMove = async (
     task: BoardTask,
     status: Exclude<BoardTaskStatus, 'cancelled'>
@@ -1598,12 +1649,14 @@ function TaskBoard({
                   <LaneBoard
                     attachedTaskId={attachedTerminal?.taskId ?? null}
                     attachingTaskId={attachingTaskId}
+                    onActivateTask={activateTask}
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
                     onOpenTask={(task) => setSelectedTaskId(task.id)}
                     projectId={project.id}
                     tasks={visibleTasks}
+                    workspaceBackedTaskIds={workspaceBackedTaskIds}
                   />
                 )}
               </div>

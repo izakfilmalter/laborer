@@ -9,6 +9,7 @@ import { useAppSettings } from '@/components/app-settings-context'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
+import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { Button } from './ui/button'
@@ -135,14 +136,10 @@ export function AppSettingsModal() {
       setIsExchanging(true)
 
       try {
-        const parsed = new URL(url)
-        const code = parsed.searchParams.get('code')
-
-        if (!code) {
-          setError('No authorization code found in the URL.')
-          setIsExchanging(false)
-          return
-        }
+        const code = parseGithubOAuthCallback(url, csrfStateRef.current)
+        // Consume the one-time state before doing asynchronous work so a
+        // duplicated protocol callback cannot start a second exchange.
+        csrfStateRef.current = ''
 
         const result = await exchangeCode({ payload: { code } })
 
@@ -240,6 +237,7 @@ export function AppSettingsModal() {
         setError(null)
         setIsExchanging(false)
         setAgentInitialized(false)
+        csrfStateRef.current = ''
       }
       onOpenChange(nextOpen)
     },

@@ -1,5 +1,5 @@
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either, type Scope } from 'effect'
+import { Effect, Either, Exit, type Scope } from 'effect'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
 type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
@@ -77,6 +77,24 @@ describe('LaborerRpcs app settings', () => {
           'token-two'
         )
         assert.strictEqual(database.stateChangesAfter(0).length, 2)
+      })
+    )
+  )
+
+  it.scoped('rejects oversized setting values at the RPC boundary', () =>
+    runWithRpcTestContext(({ client, database }) =>
+      Effect.gen(function* () {
+        const result = yield* client.appSetting
+          .set({
+            expectedRevision: 0,
+            key: 'github_desktop_token',
+            mutationId: 'oversized-setting',
+            value: 'x'.repeat(16_385),
+          })
+          .pipe(Effect.exit)
+
+        assert.isTrue(Exit.isFailure(result))
+        assert.isNull(database.findSetting('github_desktop_token'))
       })
     )
   )

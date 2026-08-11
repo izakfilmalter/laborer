@@ -3,6 +3,10 @@ import { Schema } from 'effect'
 import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
+const APP_SETTING_KEY_MAX_LENGTH = 128
+const APP_SETTING_VALUE_MAX_LENGTH = 16_384
+const MUTATION_ID_MAX_LENGTH = 128
+
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
 // ---------------------------------------------------------------------------
@@ -612,9 +616,15 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       expectedRevision: Schema.NonNegativeInt,
-      key: Schema.String,
-      mutationId: Schema.String,
-      value: Schema.String,
+      key: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(APP_SETTING_KEY_MAX_LENGTH)
+      ),
+      mutationId: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      value: Schema.String.pipe(Schema.maxLength(APP_SETTING_VALUE_MAX_LENGTH)),
     },
   }),
 

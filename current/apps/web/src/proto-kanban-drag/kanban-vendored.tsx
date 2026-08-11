@@ -1,0 +1,769 @@
+/** biome-ignore-all lint: vendored reui kanban component (https://v1.reui.io/docs/kanban) */
+/** biome-ignore-all format: vendored reui kanban component */
+/**
+ * PROTOTYPE FORK (#407) of components/reui/kanban.tsx — throwaway.
+ *
+ * One change: handleDragOver no longer arrayMoves items *within* a column
+ * while hovering. That state mutation is redundant with dnd-kit's sortable
+ * transforms (which already preview the gap) and it oscillates against
+ * MeasuringStrategy.Always — swap → remeasure → collision flips to the other
+ * neighbour → swap back — crashing React with "Maximum update depth
+ * exceeded" whenever a drag crosses a column and then hovers occupied card
+ * area. The upstream component has this latent bug in production.
+ */
+
+import { mergeProps } from '@base-ui/react/merge-props'
+import { useRender } from '@base-ui/react/use-render'
+import {
+  type CollisionDetection,
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+  type DragOverEvent,
+  DragOverlay,
+  type DragStartEvent,
+  type DropAnimation,
+  defaultDropAnimationSideEffects,
+  getFirstCollision,
+  KeyboardSensor,
+  MeasuringStrategy,
+  type Modifiers,
+  MouseSensor,
+  pointerWithin,
+  rectIntersection,
+  TouchSensor,
+  type UniqueIdentifier,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  type AnimateLayoutChanges,
+  arrayMove,
+  defaultAnimateLayoutChanges,
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import * as React from 'react'
+import {
+  type CSSProperties,
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
+
+import { cn } from '@/lib/utils'
+
+interface KanbanContextProps<T> {
+  activeId: UniqueIdentifier | null
+  columnIds: string[]
+  columns: Record<string, T[]>
+  findContainer: (id: UniqueIdentifier) => string | undefined
+  getItemId: (item: T) => string
+  isColumn: (id: UniqueIdentifier) => boolean
+  modifiers: Modifiers | undefined
+  setActiveId: (id: UniqueIdentifier | null) => void
+  setColumns: (columns: Record<string, T[]>) => void
+}
+
+const KanbanContext = createContext<KanbanContextProps<any>>({
+  columns: {},
+  setColumns: () => {},
+  getItemId: () => '',
+  columnIds: [],
+  activeId: null,
+  setActiveId: () => {},
+  findContainer: () => undefined,
+  isColumn: () => false,
+  modifiers: undefined,
+})
+
+const ColumnContext = createContext<{
+  attributes: DraggableAttributes
+  listeners: DraggableSyntheticListeners | undefined
+  isDragging: boolean | undefined
+  disabled: boolean | undefined
+}>({
+  attributes: {} as DraggableAttributes,
+  listeners: undefined,
+  isDragging: false,
+  disabled: false,
+})
+
+const ItemContext = createContext<{
+  listeners: DraggableSyntheticListeners | undefined
+  isDragging: boolean | undefined
+  disabled: boolean | undefined
+}>({
+  listeners: undefined,
+  isDragging: false,
+  disabled: false,
+})
+
+const IsOverlayContext = createContext(false)
+
+const animateLayoutChanges: AnimateLayoutChanges = (args) =>
+  defaultAnimateLayoutChanges({ ...args, wasDragging: true })
+
+const dropAnimationConfig: DropAnimation = {
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: {
+      active: {
+        opacity: '0.4',
+      },
+    },
+  }),
+}
+
+export interface KanbanMoveEvent {
+  activeContainer: string
+  activeIndex: number
+  event: DragEndEvent
+  overContainer: string
+  overIndex: number
+}
+
+export interface KanbanRootProps<T> extends Omit<useRender.ComponentProps<'div'>, 'children'> {
+  children: ReactNode
+  getItemValue: (item: T) => string
+  modifiers?: Modifiers
+  onMove?: (event: KanbanMoveEvent) => void
+  onValueChange: (value: Record<string, T[]>) => void
+  value: Record<string, T[]>
+}
+
+function Kanban<T>({
+  value,
+  onValueChange,
+  getItemValue,
+  children,
+  className,
+  render,
+  onMove,
+  modifiers,
+  ...props
+}: KanbanRootProps<T>) {
+  const columns = value
+  const setColumns = onValueChange
+  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null)
+  const dragStartContainerRef = useRef<string | null>(null)
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 10,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  const columnIds = useMemo(() => Object.keys(columns), [columns])
+
+  const isColumn = useCallback(
+    (id: UniqueIdentifier) => columnIds.includes(id as string),
+    [columnIds],
+  )
+
+  const findContainer = useCallback(
+    (id: UniqueIdentifier) => {
+      if (isColumn(id)) return id as string
+      return columnIds.find((key) =>
+        (columns[key] ?? []).some((item) => getItemValue(item) === id)
+      )
+    },
+    [columns, columnIds, getItemValue, isColumn],
+  )
+
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      setActiveId(event.active.id)
+      dragStartContainerRef.current = findContainer(event.active.id) ?? null
+    },
+    [findContainer],
+  )
+
+  // dnd-kit's canonical MultipleContainers collision strategy (fork addition):
+  // pointerWithin first, rectIntersection fallback, column hits resolved to
+  // their closest inner item, and a lastOverId memory so remeasure-induced
+  // collision recomputes can't oscillate right after a cross-column move.
+  const lastOverId = useRef<UniqueIdentifier | null>(null)
+  const recentlyMovedToNewContainer = useRef(false)
+  // Cooldown between cross-container preview moves: right after a move the
+  // droppable rects are stale for a few frames, and collisions computed on
+  // them can point back at the previous container — re-parenting the card
+  // every commit until React's nested-update limit kills the page. Letting
+  // measurements settle before the next container move breaks the cycle;
+  // human-speed crossings never notice 150ms.
+  const lastCrossMoveTime = useRef(0)
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      recentlyMovedToNewContainer.current = false
+    })
+  }, [columns])
+
+  const collisionDetectionStrategy: CollisionDetection = useCallback(
+    (args) => {
+      if (isColumn(args.active.id)) {
+        return closestCenter({
+          ...args,
+          droppableContainers: args.droppableContainers.filter((container) =>
+            isColumn(container.id),
+          ),
+        })
+      }
+      const pointerIntersections = pointerWithin(args)
+      const intersections =
+        pointerIntersections.length > 0 ? pointerIntersections : rectIntersection(args)
+      let overId = getFirstCollision(intersections, 'id')
+      if (overId != null) {
+        if (isColumn(overId)) {
+          const containerItemIds = (columns[overId as string] ?? []).map(getItemValue)
+          if (containerItemIds.length > 0) {
+            overId =
+              closestCenter({
+                ...args,
+                droppableContainers: args.droppableContainers.filter(
+                  (container) =>
+                    container.id !== overId &&
+                    containerItemIds.includes(container.id as string),
+                ),
+              })[0]?.id ?? overId
+          }
+        }
+        lastOverId.current = overId
+        return [{ id: overId }]
+      }
+      if (recentlyMovedToNewContainer.current) {
+        lastOverId.current = args.active.id
+      }
+      return lastOverId.current != null ? [{ id: lastOverId.current }] : []
+    },
+    [columns, isColumn, getItemValue],
+  )
+
+  // Live preview: items part to open the drop slot while dragging, including
+  // across columns. When `onMove` is set the preview still mutates the
+  // controlled value; consumers persist the final layout from `onMove`.
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const { active, over } = event
+      if (!over) return
+
+      if (isColumn(active.id)) return
+
+      const activeContainer = findContainer(active.id)
+      const overContainer = findContainer(over.id)
+
+      if (!activeContainer || !overContainer) {
+        return
+      }
+
+      if (activeContainer !== overContainer) {
+        const now = Date.now()
+        if (now - lastCrossMoveTime.current < 150) {
+          return
+        }
+        lastCrossMoveTime.current = now
+        // PROTOTYPE debug hook (throwaway)
+        ;(window as any).__dragLog?.push(
+          `over=${String(over.id)} activeC=${activeContainer} overC=${overContainer}`
+        )
+        const activeItems = columns[activeContainer] ?? []
+        const overItems = columns[overContainer] ?? []
+
+        const activeIndex = activeItems.findIndex((item: T) => getItemValue(item) === active.id)
+        let overIndex = overItems.findIndex((item: T) => getItemValue(item) === over.id)
+
+        // If dropping on the column itself, not an item
+        if (isColumn(over.id)) {
+          overIndex = overItems.length
+        }
+
+        const newActiveItems = [...activeItems]
+        const newOverItems = [...overItems]
+        const [movedItem] = newActiveItems.splice(activeIndex, 1)
+        if (movedItem === undefined) return
+        newOverItems.splice(overIndex, 0, movedItem)
+
+        recentlyMovedToNewContainer.current = true
+        setColumns({
+          ...columns,
+          [activeContainer]: newActiveItems,
+          [overContainer]: newOverItems,
+        })
+      }
+      // Same-container hover intentionally does NOT mutate state: dnd-kit's
+      // sortable transforms already preview the reorder, and mutating here
+      // oscillates against MeasuringStrategy.Always (see header).
+    },
+    [findContainer, getItemValue, isColumn, setColumns, columns],
+  )
+
+  const handleDragCancel = useCallback(() => {
+    setActiveId(null)
+    dragStartContainerRef.current = null
+  }, [])
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      setActiveId(null)
+      const dragStartContainer = dragStartContainerRef.current
+      dragStartContainerRef.current = null
+
+      if (!over) return
+
+      // Handle item move callback
+      if (onMove && !isColumn(active.id)) {
+        const activeContainer = dragStartContainer ?? findContainer(active.id)
+        const overContainer = findContainer(over.id)
+
+        if (activeContainer && overContainer) {
+          const activeItems = columns[activeContainer] ?? []
+          const overItems = columns[overContainer] ?? []
+          const activeIndex = activeItems.findIndex(
+            (item: T) => getItemValue(item) === active.id,
+          )
+          const overIndex = isColumn(over.id)
+            ? overItems.length
+            : overItems.findIndex((item: T) => getItemValue(item) === over.id)
+
+          onMove({
+            event,
+            activeContainer,
+            activeIndex,
+            overContainer,
+            overIndex,
+          })
+        }
+        return
+      }
+
+      // Handle column reordering
+      if (isColumn(active.id) && isColumn(over.id)) {
+        const activeIndex = columnIds.indexOf(active.id as string)
+        const overIndex = columnIds.indexOf(over.id as string)
+        if (activeIndex !== overIndex) {
+          const newOrder = arrayMove(Object.keys(columns), activeIndex, overIndex)
+          const newColumns: Record<string, T[]> = {}
+          newOrder.forEach((key) => {
+            newColumns[key] = columns[key] ?? []
+          })
+          setColumns(newColumns)
+        }
+        return
+      }
+
+      const activeContainer = findContainer(active.id)
+      const overContainer = findContainer(over.id)
+
+      // Handle item reordering within the same column
+      if (activeContainer && overContainer && activeContainer === overContainer) {
+        const container = activeContainer
+        const containerItems = columns[container] ?? []
+        const activeIndex = containerItems.findIndex(
+          (item: T) => getItemValue(item) === active.id,
+        )
+        const overIndex = containerItems.findIndex((item: T) => getItemValue(item) === over.id)
+
+        if (activeIndex !== overIndex) {
+          setColumns({
+            ...columns,
+            [container]: arrayMove(containerItems, activeIndex, overIndex),
+          })
+        }
+      }
+    },
+    [columnIds, columns, findContainer, getItemValue, isColumn, setColumns, onMove],
+  )
+
+  const contextValue = useMemo(
+    () => ({
+      columns,
+      setColumns,
+      getItemId: getItemValue,
+      columnIds,
+      activeId,
+      setActiveId,
+      findContainer,
+      isColumn,
+      modifiers,
+    }),
+    [columns, setColumns, getItemValue, columnIds, activeId, findContainer, isColumn, modifiers],
+  )
+
+  const defaultProps = {
+    'data-slot': 'kanban',
+    'data-dragging': activeId !== null,
+    className: cn(activeId !== null && 'cursor-grabbing!', className),
+    children,
+  }
+
+  return (
+    <KanbanContext.Provider value={contextValue}>
+      <DndContext
+        collisionDetection={collisionDetectionStrategy}
+        measuring={{
+          droppable: {
+            strategy: MeasuringStrategy.Always,
+          },
+        }}
+        {...(modifiers === undefined ? {} : { modifiers })}
+        onDragCancel={handleDragCancel}
+        onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
+        onDragStart={handleDragStart}
+        sensors={sensors}
+      >
+        {useRender({
+          defaultTagName: 'div',
+          render,
+          props: mergeProps<'div'>(defaultProps, props),
+        })}
+      </DndContext>
+    </KanbanContext.Provider>
+  )
+}
+
+export type KanbanBoardProps = useRender.ComponentProps<'div'>
+
+function KanbanBoard({ className, render, ...props }: KanbanBoardProps) {
+  const { columnIds } = useContext(KanbanContext)
+
+  const defaultProps = {
+    'data-slot': 'kanban-board',
+    className: cn('grid auto-rows-fr gap-4 sm:grid-cols-3', className),
+    children: props.children,
+  }
+
+  return (
+    <SortableContext items={columnIds} strategy={rectSortingStrategy}>
+      {useRender({
+        defaultTagName: 'div',
+        render,
+        props: mergeProps<'div'>(defaultProps, props),
+      })}
+    </SortableContext>
+  )
+}
+
+export interface KanbanColumnProps extends useRender.ComponentProps<'div'> {
+  disabled?: boolean
+  value: string
+}
+
+function KanbanColumn({ value, className, render, disabled, ...props }: KanbanColumnProps) {
+  const isOverlay = useContext(IsOverlayContext)
+
+  const {
+    setNodeRef,
+    transform,
+    transition,
+    attributes,
+    listeners,
+    isDragging: isSortableDragging,
+  } = useSortable({
+    id: value,
+    disabled: disabled || isOverlay,
+    animateLayoutChanges,
+  })
+
+  if (isOverlay) {
+    const defaultProps = {
+      'data-slot': 'kanban-column',
+      'data-value': value,
+      'data-dragging': true,
+      className: cn('group/kanban-column flex flex-col', className),
+      children: props.children,
+    }
+
+    return (
+      <ColumnContext.Provider
+        value={{
+          attributes: {} as DraggableAttributes,
+          listeners: undefined,
+          isDragging: true,
+          disabled: false,
+        }}
+      >
+        {useRender({
+          defaultTagName: 'div',
+          render,
+          props: mergeProps<'div'>(defaultProps, props),
+        })}
+      </ColumnContext.Provider>
+    )
+  }
+
+  const { activeId, isColumn } = useContext(KanbanContext)
+  const isColumnDragging = activeId ? isColumn(activeId) : false
+
+  const style = {
+    transition,
+    transform: CSS.Transform.toString(transform),
+  } as CSSProperties
+
+  const defaultProps = {
+    'data-slot': 'kanban-column',
+    'data-value': value,
+    'data-dragging': isSortableDragging,
+    'data-disabled': disabled,
+    ref: setNodeRef,
+    style,
+    className: cn(
+      'group/kanban-column flex flex-col',
+      isSortableDragging && 'opacity-50 z-50',
+      disabled && 'opacity-50',
+      className,
+    ),
+    children: props.children,
+  }
+
+  return (
+    <ColumnContext.Provider
+      value={{
+        attributes,
+        listeners,
+        isDragging: isColumnDragging,
+        disabled,
+      }}
+    >
+      {useRender({
+        defaultTagName: 'div',
+        render,
+        props: mergeProps<'div'>(defaultProps, props),
+      })}
+    </ColumnContext.Provider>
+  )
+}
+
+export interface KanbanColumnHandleProps extends useRender.ComponentProps<'div'> {
+  cursor?: boolean
+}
+
+function KanbanColumnHandle({
+  className,
+  render,
+  cursor = true,
+  ...props
+}: KanbanColumnHandleProps) {
+  const { attributes, listeners, isDragging, disabled } = useContext(ColumnContext)
+
+  const defaultProps = {
+    'data-slot': 'kanban-column-handle',
+    'data-dragging': isDragging,
+    'data-disabled': disabled,
+    ...attributes,
+    ...listeners,
+    className: cn(
+      'opacity-0 transition-opacity group-hover/kanban-column:opacity-100',
+      cursor && (isDragging ? 'cursor-grabbing!' : 'cursor-grab!'),
+      className,
+    ),
+    children: props.children,
+  }
+
+  return useRender({
+    defaultTagName: 'div',
+    render,
+    props: mergeProps<'div'>(defaultProps, props),
+  })
+}
+
+export interface KanbanItemProps extends useRender.ComponentProps<'div'> {
+  disabled?: boolean
+  value: string
+}
+
+function KanbanItem({ value, className, render, disabled, ...props }: KanbanItemProps) {
+  const isOverlay = useContext(IsOverlayContext)
+
+  const {
+    setNodeRef,
+    transform,
+    transition,
+    attributes,
+    listeners,
+    isDragging: isSortableDragging,
+  } = useSortable({
+    id: value,
+    disabled: disabled || isOverlay,
+    animateLayoutChanges,
+  })
+
+  if (isOverlay) {
+    const defaultProps = {
+      'data-slot': 'kanban-item',
+      'data-value': value,
+      'data-dragging': true,
+      className: cn(className),
+      children: props.children,
+    }
+
+    return (
+      <ItemContext.Provider value={{ listeners: undefined, isDragging: true, disabled: false }}>
+        {useRender({
+          defaultTagName: 'div',
+          render,
+          props: mergeProps<'div'>(defaultProps, props),
+        })}
+      </ItemContext.Provider>
+    )
+  }
+
+  const { activeId, isColumn } = useContext(KanbanContext)
+  const isItemDragging = activeId ? !isColumn(activeId) : false
+
+  const style = {
+    transition,
+    transform: CSS.Transform.toString(transform),
+  } as CSSProperties
+
+  const defaultProps = {
+    'data-slot': 'kanban-item',
+    'data-value': value,
+    'data-dragging': isSortableDragging,
+    'data-disabled': disabled,
+    ref: setNodeRef,
+    style,
+    ...attributes,
+    ...listeners,
+    className: cn(isSortableDragging && 'opacity-50 z-50', disabled && 'opacity-50', className),
+    children: props.children,
+  }
+
+  return (
+    <ItemContext.Provider
+      value={{ listeners, isDragging: isItemDragging, disabled }}
+    >
+      {useRender({
+        defaultTagName: 'div',
+        render,
+        props: mergeProps<'div'>(defaultProps, props),
+      })}
+    </ItemContext.Provider>
+  )
+}
+
+export interface KanbanItemHandleProps extends useRender.ComponentProps<'div'> {
+  cursor?: boolean
+}
+
+function KanbanItemHandle({ className, render, cursor = true, ...props }: KanbanItemHandleProps) {
+  const { listeners, isDragging, disabled } = useContext(ItemContext)
+
+  const defaultProps = {
+    'data-slot': 'kanban-item-handle',
+    'data-dragging': isDragging,
+    'data-disabled': disabled,
+    ...listeners,
+    className: cn(cursor && (isDragging ? 'cursor-grabbing!' : 'cursor-grab!'), className),
+    children: props.children,
+  }
+
+  return useRender({
+    defaultTagName: 'div',
+    render,
+    props: mergeProps<'div'>(defaultProps, props),
+  })
+}
+
+export interface KanbanColumnContentProps extends useRender.ComponentProps<'div'> {
+  value: string
+}
+
+function KanbanColumnContent({ value, className, render, ...props }: KanbanColumnContentProps) {
+  const { columns, getItemId } = useContext(KanbanContext)
+
+  const itemIds = useMemo(
+    () => (columns[value] ?? []).map(getItemId),
+    [columns, getItemId, value]
+  )
+
+  const defaultProps = {
+    'data-slot': 'kanban-column-content',
+    className: cn('flex flex-col gap-2', className),
+    children: props.children,
+  }
+
+  return (
+    <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+      {useRender({
+        defaultTagName: 'div',
+        render,
+        props: mergeProps<'div'>(defaultProps, props),
+      })}
+    </SortableContext>
+  )
+}
+
+export interface KanbanOverlayProps extends Omit<
+  React.ComponentProps<typeof DragOverlay>,
+  'children'
+> {
+  children?:
+    | ReactNode
+    | ((params: { value: UniqueIdentifier; variant: 'column' | 'item' }) => ReactNode)
+}
+
+function KanbanOverlay({ children, className, ...props }: KanbanOverlayProps) {
+  const { activeId, isColumn, modifiers } = useContext(KanbanContext)
+  const [mounted, setMounted] = useState(false)
+
+  useLayoutEffect(() => setMounted(true), [])
+
+  const variant = activeId ? (isColumn(activeId) ? 'column' : 'item') : 'item'
+
+  const content =
+    activeId && children
+      ? typeof children === 'function'
+        ? children({ value: activeId, variant })
+        : children
+      : null
+
+  if (!mounted) return null
+
+  return createPortal(
+    <DragOverlay
+      className={cn('z-50', activeId && 'cursor-grabbing', className)}
+      dropAnimation={dropAnimationConfig}
+      {...(modifiers === undefined ? {} : { modifiers })}
+      {...props}
+    >
+      <IsOverlayContext.Provider value={true}>{content}</IsOverlayContext.Provider>
+    </DragOverlay>,
+    document.body,
+  )
+}
+
+export {
+  Kanban,
+  KanbanBoard,
+  KanbanColumn,
+  KanbanColumnHandle,
+  KanbanItem,
+  KanbanItemHandle,
+  KanbanColumnContent,
+  KanbanOverlay,
+}

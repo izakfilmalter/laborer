@@ -183,8 +183,32 @@ describe('agent status surface accents', () => {
     const working = getAgentStatusSurface('working')
 
     expect(working.cardClassName).toBe('')
+    expect(working.frameClassName).toBe('')
     expect(working.rowClassName).toBe('')
     expect(working.headerClassName).not.toBe('')
+  })
+
+  it('outlines the whole frame for the states worth walking back for', () => {
+    // A header strip is invisible on a screen of tiled terminals; the two
+    // states that want the operator claim the frame around them instead.
+    for (const status of ['needs_input', 'done'] as const) {
+      expect(getAgentStatusSurface(status).frameClassName).not.toBe('')
+    }
+
+    for (const status of ['idle', 'unknown'] as const) {
+      expect(getAgentStatusSurface(status).frameClassName).toBe('')
+    }
+
+    expect(getAgentStatusSurface(null).frameClassName).toBe('')
+    expect(getAgentStatusSurface(undefined).frameClassName).toBe('')
+  })
+
+  it('keeps the frame outline hues apart so two frames never look alike', () => {
+    const attention = getAgentStatusSurface('needs_input')
+    const done = getAgentStatusSurface('done')
+
+    expect(attention.frameClassName).toContain('amber')
+    expect(done.frameClassName).toContain('violet')
   })
 
   it('inks every hued label at the same weight for both themes', () => {

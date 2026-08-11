@@ -578,9 +578,10 @@ function AddCardButton({
 type ComposerCloseReason = 'cancel' | 'blur'
 
 /**
- * The inline card composer for one column: Enter commits, Esc cancels. It
- * stays open after a commit so several cards can be typed in a row, and it
- * reports what the text will become before it is committed.
+ * The inline card composer for one column: Enter commits, pasting a complete
+ * Slack permalink commits immediately, and Esc cancels. It stays open after a
+ * commit so several cards can be typed in a row, and it reports what the text
+ * will become before it is committed.
  */
 function AddCardComposer({
   column,
@@ -603,8 +604,9 @@ function AddCardComposer({
   const trimmed = value.trim()
   const intent = composerIntent(trimmed)
 
-  const submit = async () => {
-    if (intent === 'empty' || submitting) {
+  const submit = async (text = trimmed) => {
+    const submissionText = text.trim()
+    if (composerIntent(submissionText) === 'empty' || submitting) {
       return
     }
     setSubmitting(true)
@@ -612,7 +614,7 @@ function AddCardComposer({
     setConfirmation(null)
     try {
       const created = await createTask({
-        payload: { projectId, status: column.id, text: trimmed },
+        payload: { projectId, status: column.id, text: submissionText },
       })
       openProvisionedAgent(
         created,
@@ -701,6 +703,26 @@ function AddCardComposer({
               event.preventDefault()
               submit()
             }
+          }}
+          onPaste={(event) => {
+            const pastedText = event.clipboardData.getData('text')
+            const input = event.currentTarget
+            const selectionStart = input.selectionStart ?? input.value.length
+            const selectionEnd = input.selectionEnd ?? selectionStart
+            const nextValue = `${input.value.slice(0, selectionStart)}${pastedText}${input.value.slice(selectionEnd)}`
+            const nextText = nextValue.trim()
+
+            if (!isSlackMessageUrl(nextText)) {
+              return
+            }
+
+            // Submit the post-paste value directly. Waiting for React state
+            // would submit the value from the render before the paste.
+            event.preventDefault()
+            setValue(nextValue)
+            setError(null)
+            setConfirmation(null)
+            submit(nextText)
           }}
           placeholder="Title, or paste a Slack link"
           // Read-only rather than disabled: a disabled input drops focus, so
@@ -1744,4 +1766,4 @@ function TaskBoard({
   )
 }
 
-export { TaskBoard, TaskBoardCard, TaskDetailDialog }
+export { AddCardComposer, TaskBoard, TaskBoardCard, TaskDetailDialog }

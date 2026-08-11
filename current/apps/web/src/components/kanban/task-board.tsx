@@ -96,6 +96,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  WorkspaceCard,
+  type WorkspaceCardWorkspace,
+} from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { openExternalUrl } from '@/lib/desktop'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
@@ -312,12 +316,24 @@ function toPrBadgeState(state: 'open' | 'merged' | 'closed'): string {
 const terminalAttachButtonId = (taskId: string): string =>
   `terminal-attach-${taskId}`
 
+/** A card's workspace, and the project context the workspace card needs. */
+interface BoardCardWorkspace {
+  /** Whether the workspace is the project's own checkout. */
+  readonly isRoot: boolean
+  readonly projectName: string
+  readonly row: WorkspaceCardWorkspace
+}
+
 /**
- * One card on the board, wearing the sidebar's card shape.
+ * One card on the board — the sidebar's card, wherever the work is shown.
  *
- * Activating a card takes you to its work: the workspace it runs in once one
- * exists, and otherwise the card's own details, because a Todo nobody has
- * started has no workspace to go to yet. Editing is its own button — a card
+ * A card whose work already has a workspace *is* that workspace's card, so a
+ * piece of work reads and behaves the same on both surfaces. Until then the
+ * card is all there is, and it says so: a lighter shell with the worktree
+ * affordances that stand in for a workspace nobody has created yet.
+ *
+ * Activating a card takes you to its work: the workspace it runs in, or the
+ * card's own details while there is none. Editing is its own button — a card
  * whose body opens a workspace cannot also open a form.
  */
 function TaskBoardCard({
@@ -325,24 +341,24 @@ function TaskBoardCard({
   attachBlocked = false,
   attached = false,
   attaching = false,
-  hasWorkspace = false,
   isOverlay = false,
   onActivate,
   onAttach,
   onCancel,
   onOpen,
+  workspace,
 }: {
   readonly task: BoardTask
   readonly attachBlocked?: boolean
   readonly attached?: boolean
   readonly attaching?: boolean
-  /** Whether activating this card lands on a workspace rather than its form. */
-  readonly hasWorkspace?: boolean
   readonly isOverlay?: boolean
   readonly onActivate?: (task: BoardTask) => void
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
   readonly onOpen?: (task: BoardTask) => void
+  /** The workspace this card's work already runs in, if any. */
+  readonly workspace?: BoardCardWorkspace | undefined
 }) {
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -354,113 +370,150 @@ function TaskBoardCard({
   const analysis = slackAnalysisState(task)
   const title = boardTaskTitle(task)
   const activate = isOverlay || !onActivate ? undefined : () => onActivate(task)
+
+  // What the board adds to whichever card shape shows this task: its Slack
+  // thread, the form that names it, and the cancel that takes it off the board.
+  const boardActions = (
+    <>
+      {task.slackPermalink && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Open Slack thread"
+                onClick={openSlack}
+                size="icon-xs"
+                variant="ghost"
+              />
+            }
+          >
+            <ExternalLink className="size-3.5 text-muted-foreground" />
+          </TooltipTrigger>
+          <TooltipContent>Open Slack thread</TooltipContent>
+        </Tooltip>
+      )}
+      {!isOverlay && onOpen && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={`Edit ${title.text}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpen(task)
+                }}
+                size="icon-xs"
+                variant="ghost"
+              />
+            }
+          >
+            <Pencil className="size-3.5 text-muted-foreground" />
+          </TooltipTrigger>
+          <TooltipContent>Edit card</TooltipContent>
+        </Tooltip>
+      )}
+      {!isOverlay && task.source !== 'execution' && onCancel && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={`Cancel ${title.text}`}
+                className="hover:bg-destructive/10 hover:text-destructive"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCancel(task)
+                }}
+                size="icon-xs"
+                variant="ghost"
+              />
+            }
+          >
+            <X className="size-3.5 text-muted-foreground" />
+          </TooltipTrigger>
+          <TooltipContent>Cancel task</TooltipContent>
+        </Tooltip>
+      )}
+    </>
+  )
+
+  // Where the card came from, and what is happening to it — the chips a
+  // workspace has no way of knowing about.
+  const boardBadges = (
+    <>
+      <SourceBadge source={task.source} />
+      {task.description !== null && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label="Has description"
+                className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground"
+                role="img"
+              />
+            }
+          >
+            <AlignLeft aria-hidden="true" className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Has description</TooltipContent>
+        </Tooltip>
+      )}
+      <SlackAnalysisBadge task={task} />
+      {/*
+        While a Slack card is still being read, its analysis badge already
+        speaks for the execution — two badges would say the same thing twice.
+        Once the card is named, the mirror is about the run itself, so a failed
+        run still surfaces here.
+      */}
+      {analysis === null && (
+        <ExecutionMirrorBadge mirror={task.executionMirror} />
+      )}
+      {task.pr && (
+        <GitHubPrStatusBadge
+          prNumber={task.pr.number}
+          prState={toPrBadgeState(task.pr.state)}
+          prTitle={task.pr.title}
+          prUrl={task.pr.url}
+        />
+      )}
+    </>
+  )
+
+  // Work that already has a workspace is shown as that workspace: same
+  // branch, same status, same terminals, same Agent / New controls the
+  // sidebar offers. The board keeps only what is its own.
+  if (workspace) {
+    return (
+      <WorkspaceCard
+        actions={boardActions}
+        activateLabel={`Open workspace for ${title.text}`}
+        badges={boardBadges}
+        isRootWorkspace={workspace.isRoot}
+        onActivate={activate}
+        projectName={workspace.projectName}
+        showCreateSubWorkspaceAction={false}
+        // Destroying a workspace belongs where the workspace lives. The
+        // board's destructive act is cancelling the card.
+        showDestroyAction={false}
+        subtitle={
+          <p className="line-clamp-2 text-muted-foreground text-xs">
+            {title.text}
+          </p>
+        }
+        workspace={workspace.row}
+      />
+    )
+  }
+
+  // Nothing has started yet, so there is no workspace to wear. The card
+  // stands in for one: what it is, and whether a worktree is waiting on disk.
   return (
     <CardShell
-      actions={
-        <>
-          {task.slackPermalink && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Open Slack thread"
-                    onClick={openSlack}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <ExternalLink className="size-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>Open Slack thread</TooltipContent>
-            </Tooltip>
-          )}
-          {!isOverlay && onOpen && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={`Edit ${title.text}`}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onOpen(task)
-                    }}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Pencil className="size-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>Edit card</TooltipContent>
-            </Tooltip>
-          )}
-          {!isOverlay && task.source !== 'execution' && onCancel && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={`Cancel ${title.text}`}
-                    className="hover:bg-destructive/10 hover:text-destructive"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onCancel(task)
-                    }}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <X className="size-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>Cancel task</TooltipContent>
-            </Tooltip>
-          )}
-        </>
-      }
-      activateLabel={
-        hasWorkspace
-          ? `Open workspace for ${title.text}`
-          : `Card details for ${title.text}`
-      }
+      actions={boardActions}
+      activateLabel={`Card details for ${title.text}`}
       aria-busy={analysis === 'analyzing' ? true : undefined}
       badges={
         <>
-          <SourceBadge source={task.source} />
-          {task.description !== null && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    aria-label="Has description"
-                    className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground"
-                    role="img"
-                  />
-                }
-              >
-                <AlignLeft aria-hidden="true" className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Has description</TooltipContent>
-            </Tooltip>
-          )}
-          <SlackAnalysisBadge task={task} />
-          {/*
-            While a Slack card is still being read, its analysis badge already
-            speaks for the execution — two badges would say the same thing
-            twice. Once the card is named, the mirror is about the run itself,
-            so a failed run still surfaces here.
-          */}
-          {analysis === null && (
-            <ExecutionMirrorBadge mirror={task.executionMirror} />
-          )}
-          {task.pr && (
-            <GitHubPrStatusBadge
-              prNumber={task.pr.number}
-              prState={toPrBadgeState(task.pr.state)}
-              prTitle={task.pr.title}
-              prUrl={task.pr.url}
-            />
-          )}
+          {boardBadges}
           <WorktreeChip card={task} />
           {!isOverlay && (
             <TerminalAttachButton
@@ -757,7 +810,7 @@ function LaneBoard({
   onOpenTask,
   projectId,
   tasks,
-  workspaceBackedTaskIds,
+  workspaceForCard,
 }: {
   readonly attachedTaskId: string | null
   readonly attachingTaskId: string | null
@@ -771,8 +824,8 @@ function LaneBoard({
   readonly onOpenTask: (task: BoardTask) => void
   readonly projectId: string
   readonly tasks: readonly BoardTask[]
-  /** Cards whose work already has a workspace to open. */
-  readonly workspaceBackedTaskIds: ReadonlySet<string>
+  /** The workspace a card's work runs in, once it has one. */
+  readonly workspaceForCard: (task: BoardTask) => BoardCardWorkspace | undefined
 }) {
   const [columnTasks, setColumnTasks] = useState<Record<string, BoardTask[]>>(
     () => buildColumnTasks(tasks)
@@ -890,12 +943,12 @@ function LaneBoard({
                           }
                           attached={attachedTaskId === task.id}
                           attaching={attachingTaskId === task.id}
-                          hasWorkspace={workspaceBackedTaskIds.has(task.id)}
                           onActivate={onActivateTask}
                           onAttach={onAttach}
                           onCancel={onCancelTask}
                           onOpen={onOpenTask}
                           task={task}
+                          workspace={workspaceForCard(task)}
                         />
                       </KanbanItemHandle>
                     </KanbanItem>
@@ -932,7 +985,13 @@ function LaneBoard({
           if (!task) {
             return null
           }
-          return <TaskBoardCard isOverlay task={task} />
+          return (
+            <TaskBoardCard
+              isOverlay
+              task={task}
+              workspace={workspaceForCard(task)}
+            />
+          )
         }}
       </KanbanOverlay>
     </Kanban>
@@ -1564,13 +1623,23 @@ function TaskBoard({
   // form — which decides for itself whether to adopt it or protect a draft.
   const selectedTask = boardTasks.find((task) => task.id === selectedTaskId)
 
-  // Which cards can hand the operator a workspace, decided once per render so
-  // a card and the click it answers never disagree about where it leads.
-  const workspaceBackedTaskIds = new Set(
-    boardTasks
-      .filter((task) => workspaceForTask(task, workspaceList) !== undefined)
-      .map((task) => task.id)
-  )
+  /**
+   * The workspace a card's work runs in, resolved once per card so the card
+   * it renders and the click it answers never disagree about where it leads.
+   */
+  const workspaceForCard = (
+    task: BoardTask,
+    project: { readonly name: string; readonly repoPath: string }
+  ) => {
+    const row = workspaceForTask(task, workspaceList)
+    return row === undefined
+      ? undefined
+      : {
+          isRoot: row.worktreePath === project.repoPath,
+          projectName: project.name,
+          row,
+        }
+  }
 
   /**
    * A card's body leads to its work. Once the work has a workspace, the board
@@ -1678,7 +1747,7 @@ function TaskBoard({
                     onOpenTask={(task) => setSelectedTaskId(task.id)}
                     projectId={project.id}
                     tasks={visibleTasks}
-                    workspaceBackedTaskIds={workspaceBackedTaskIds}
+                    workspaceForCard={(task) => workspaceForCard(task, project)}
                   />
                 )}
               </div>

@@ -28,6 +28,12 @@ const ALL_STATUSES: readonly AgentStatus[] = [
 /** The shared ink weight every hued status label uses. */
 const HUED_LABEL_INK = /text-[a-z]+-400/
 
+/** A hued accent drawn on the one edge a card actually has. */
+const HUED_RING = /\bring-[a-z]+-400\//
+
+/** A hued accent drawn on a border the card has no width for. */
+const HUED_BORDER = /\bborder-[a-z]+-400\//
+
 const snapshot = (
   status: AgentStatus,
   overrides: { stale?: boolean; source?: 'hook' | 'ps' } = {}
@@ -133,6 +139,18 @@ describe('agent status surface accents', () => {
     expect(attention.headerClassName).not.toBe(done.headerClassName)
     expect(done.rowClassName).not.toBe('')
     expect(done.cardClassName).not.toBe('')
+  })
+
+  it('draws card accents as rings, the only edge a card actually has', () => {
+    // The card's resting edge is `ring-1`, with no border width anywhere, so
+    // a `border-*` colour paints nothing — an attention state that renders
+    // as an invisible edge is the failure this asserts against.
+    for (const status of ['needs_input', 'done'] as const) {
+      const cardClassName = getAgentStatusSurface(status).cardClassName
+
+      expect(cardClassName).toMatch(HUED_RING)
+      expect(cardClassName).not.toMatch(HUED_BORDER)
+    }
   })
 
   it('reserves the loudest card treatment for a blocked agent', () => {

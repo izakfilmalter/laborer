@@ -645,6 +645,12 @@ export class LaborerRpcs extends RpcGroup.make(
     }),
     error: RpcError,
     payload: {
+      /**
+       * Renderer-minted task ULID so the optimistic card and the stored row
+       * share one identity. Re-sending the same id is an idempotent retry.
+       * Omitted by older callers; the server then mints the id itself.
+       */
+      id: Schema.optional(Schema.String),
       projectId: Schema.String,
       status: Schema.Literals(['todo', 'in_progress', 'in_review', 'done']),
       text: Schema.String.check(

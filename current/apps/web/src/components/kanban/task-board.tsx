@@ -14,6 +14,7 @@
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
+import { createTaskUlid } from '@laborer/shared/task-ulid'
 import {
   AlignLeft,
   Bot,
@@ -34,10 +35,15 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { pendingTaskRow } from '@/atoms/optimistic-task-writes'
 import {
   authoritativeTasksAtom,
+  clearTaskCreateOverlayAtom,
+  clearTaskEditOverlayAtom,
   clearTaskOptimisticOverlayAtom,
   confirmTaskOptimisticMoveAtom,
+  installTaskCreateOverlayAtom,
+  installTaskEditOverlayAtom,
   installTaskOptimisticOverlayAtom,
   projectViewsAtom,
   type TaskOptimisticOverlay,
@@ -58,6 +64,7 @@ import {
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
 import {
+  effectiveSortOrder,
   fractionalOrderAt,
   OptimisticTaskMoveQueue,
 } from '@/components/kanban/optimistic-task-moves'
@@ -143,8 +150,10 @@ const BOARD_COLUMNS: readonly BoardColumn[] = [
 ]
 
 /**
- * Group tasks into rendered columns. Explicit manual rank wins; unranked new
- * and incoming cards remain newest-first at the top.
+ * Group tasks into rendered columns. Cards sort by their effective rank —
+ * explicit manual rank wins, and unranked new and incoming cards derive a
+ * newest-first rank at the top — so a drag that mints a rank between any two
+ * neighbors lands exactly where it was dropped.
  */
 function buildColumnTasks(
   tasks: readonly BoardTask[]
@@ -154,18 +163,10 @@ function buildColumnTasks(
     byColumn[column.id] = []
   }
   const doneCutoff = Date.now() - DONE_RETENTION_MS
-  const sorted = [...tasks].sort((a, b) => {
-    if (a.sortOrder === null && b.sortOrder === null) {
-      return b.createdAt - a.createdAt
-    }
-    if (a.sortOrder === null) {
-      return -1
-    }
-    if (b.sortOrder === null) {
-      return 1
-    }
-    return a.sortOrder - b.sortOrder || b.createdAt - a.createdAt
-  })
+  const sorted = [...tasks].sort(
+    (a, b) =>
+      effectiveSortOrder(a) - effectiveSortOrder(b) || b.createdAt - a.createdAt
+  )
   for (const task of sorted) {
     if (
       task.status === 'cancelled' ||
@@ -671,6 +672,7 @@ function AddCardComposer({
   onClose,
   onSlackCardQueued,
   projectId,
+  projectRootPath,
 }: {
   readonly column: BoardColumn
   readonly composerId: string
@@ -682,59 +684,77 @@ function AddCardComposer({
    */
   readonly onSlackCardQueued?: (taskId: string) => void
   readonly projectId: string
+  /** Canonical repo root for the lane, mirrored onto the optimistic row. */
+  readonly projectRootPath: string
 }) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
+  const installCreateOverlay = useAtomSet(installTaskCreateOverlayAtom)
+  const clearCreateOverlay = useAtomSet(clearTaskCreateOverlayAtom)
   const panelActions = usePanelActions()
   const trimmed = value.trim()
   const intent = composerIntent(trimmed)
 
-  const submit = async (text = trimmed) => {
+  const submit = (text = trimmed) => {
     const submissionText = text.trim()
-    if (composerIntent(submissionText) === 'empty' || submitting) {
+    const submissionIntent = composerIntent(submissionText)
+    if (submissionIntent === 'empty') {
       return
     }
-    setSubmitting(true)
     setError(null)
-    setConfirmation(null)
-    try {
-      const created = await createTask({
-        payload: { projectId, status: column.id, text: submissionText },
+
+    // Optimistic: the composer mints the card's id and the card renders from
+    // the synthesized row now. The overlay settles when the authoritative
+    // stream stores the id; a rejected create withdraws the card and puts
+    // the text back so it can be corrected.
+    const id = createTaskUlid()
+    installCreateOverlay(
+      pendingTaskRow({
+        id,
+        now: Date.now(),
+        rootPath: projectRootPath,
+        status: column.id,
+        text: submissionText,
       })
-      openProvisionedAgent(
-        created,
-        panelActions?.autoOpenAgentWhenWorkspaceReady
-      )
-      if (
-        created.source === 'slack_url' &&
-        column.id === 'in_progress' &&
-        created.workspaceId === null
-      ) {
-        onSlackCardQueued?.(created.id)
-      }
-      setValue('')
-      setConfirmation(
-        created.source === 'slack_url'
-          ? `Slack card added to ${column.title} — analyzing in the background.`
-          : `Card added to ${column.title}.`
-      )
-    } catch (cause) {
-      // Keep the text so the person can correct it and try again.
-      setError(extractErrorMessage(cause))
-    } finally {
-      setSubmitting(false)
-      inputRef.current?.focus()
-    }
+    )
+    setValue('')
+    setConfirmation(
+      submissionIntent === 'slack'
+        ? `Slack card added to ${column.title} — analyzing in the background.`
+        : `Card added to ${column.title}.`
+    )
+
+    createTask({
+      payload: { id, projectId, status: column.id, text: submissionText },
+    })
+      .then((created) => {
+        openProvisionedAgent(
+          created,
+          panelActions?.autoOpenAgentWhenWorkspaceReady
+        )
+        if (
+          created.source === 'slack_url' &&
+          column.id === 'in_progress' &&
+          created.workspaceId === null
+        ) {
+          onSlackCardQueued?.(created.id)
+        }
+      })
+      .catch((cause: unknown) => {
+        clearCreateOverlay(id)
+        setConfirmation(null)
+        setError(extractErrorMessage(cause))
+        // Put the rejected text back to be corrected — unless the person has
+        // already started typing the next card.
+        setValue((current) => (current.length === 0 ? submissionText : current))
+        inputRef.current?.focus()
+      })
   }
 
   const hint = (() => {
-    if (submitting) {
-      return { className: 'text-muted-foreground', text: 'Adding…' }
-    }
     if (error !== null) {
       return { className: 'text-destructive', text: error }
     }
@@ -766,11 +786,9 @@ function AddCardComposer({
     <div className="flex flex-col gap-1 px-2 pt-1.5" id={composerId}>
       <InputGroup className="bg-background">
         <InputGroupAddon>
-          {submitting && <Spinner aria-hidden="true" className="size-3.5" />}
-          {!submitting && intent === 'slack' && (
+          {intent === 'slack' ? (
             <Slack aria-hidden="true" className="size-3.5" />
-          )}
-          {!(submitting || intent === 'slack') && (
+          ) : (
             <SquarePen aria-hidden="true" className="size-3.5" />
           )}
         </InputGroupAddon>
@@ -782,7 +800,7 @@ function AddCardComposer({
           className="text-xs"
           onBlur={() => {
             // An abandoned empty composer closes itself; typed text stays put.
-            if (!submitting && trimmed.length === 0) {
+            if (trimmed.length === 0) {
               onClose('blur')
             }
           }}
@@ -821,9 +839,6 @@ function AddCardComposer({
             submit(nextText)
           }}
           placeholder="Title, or paste a Slack link"
-          // Read-only rather than disabled: a disabled input drops focus, so
-          // the caret would leave the composer on every commit.
-          readOnly={submitting}
           ref={inputRef}
           value={value}
         />
@@ -853,6 +868,7 @@ function LaneBoard({
   onOpenTask,
   onSlackCardQueued,
   projectId,
+  projectRootPath,
   tasks,
   workspaceForCard,
 }: {
@@ -869,6 +885,8 @@ function LaneBoard({
   readonly onOpenTask: (task: BoardTask) => void
   readonly onSlackCardQueued: (taskId: string) => void
   readonly projectId: string
+  /** Canonical repo root for the lane, mirrored onto optimistic rows. */
+  readonly projectRootPath: string
   readonly tasks: readonly BoardTask[]
   /** The workspace a card's work runs in, once it has one. */
   readonly workspaceForCard: (task: BoardTask) => BoardCardWorkspace | undefined
@@ -981,6 +999,7 @@ function LaneBoard({
                     onClose={closeComposer}
                     onSlackCardQueued={onSlackCardQueued}
                     projectId={projectId}
+                    projectRootPath={projectRootPath}
                   />
                 )}
                 <KanbanColumnContent
@@ -1121,7 +1140,6 @@ function TaskDetailFooter({
   onCancel,
   onDiscard,
   onKeepEditing,
-  saving,
 }: {
   readonly canSave: boolean
   readonly confirmingDiscard: boolean
@@ -1129,14 +1147,8 @@ function TaskDetailFooter({
   readonly onCancel: () => void
   readonly onDiscard: () => void
   readonly onKeepEditing: () => void
-  readonly saving: boolean
 }) {
-  const status = (() => {
-    if (saving) {
-      return 'Saving…'
-    }
-    return dirty ? 'Unsaved changes' : 'No changes yet'
-  })()
+  const status = dirty ? 'Unsaved changes' : 'No changes yet'
 
   if (confirmingDiscard) {
     return (
@@ -1165,16 +1177,10 @@ function TaskDetailFooter({
         aria-live="polite"
         className="flex min-h-5 items-center gap-1.5 text-muted-foreground text-xs"
       >
-        {saving && <Spinner aria-hidden="true" className="size-3" />}
         {status}
       </p>
       <div className="flex flex-col-reverse gap-2 sm:flex-row">
-        <Button
-          disabled={saving}
-          onClick={onCancel}
-          type="button"
-          variant="outline"
-        >
+        <Button onClick={onCancel} type="button" variant="outline">
           Cancel
         </Button>
         <Button disabled={!canSave} type="submit">
@@ -1200,12 +1206,34 @@ function TaskDetailFooter({
  * for the eye. Edits are held locally until Save, so an unfinished rewrite is
  * never half-committed, and an attempt to leave with unsaved work asks first
  * instead of dropping it.
+ *
+ * Save is optimistic: the dialog hands the draft to `onSave` and closes at
+ * once. A rejected save reopens the dialog with the draft restored and the
+ * failure explained via `initialDraft` / `initialBanner`.
  */
 function TaskDetailDialog({
+  initialBanner = null,
+  initialDraft = null,
   onOpenChange,
+  onSave,
   task,
 }: {
+  /** Shown until the draft changes — how the previous save failed. */
+  readonly initialBanner?: {
+    readonly message: string
+    readonly tone: 'error' | 'warning'
+  } | null
+  /** A rejected save's draft, restored instead of the stored values. */
+  readonly initialDraft?: {
+    readonly description: string
+    readonly title: string
+  } | null
   readonly onOpenChange: (open: boolean) => void
+  readonly onSave: (draft: {
+    readonly description: string | null
+    readonly expectedRevision: number
+    readonly title: string
+  }) => void
   readonly task: BoardTask
 }) {
   const presented = boardTaskTitle(task)
@@ -1214,22 +1242,22 @@ function TaskDetailDialog({
   // prompt and the card keeps its stand-in until someone names it.
   const incomingTitle = presented.isPlaceholder ? '' : task.title
   const incomingDescription = task.description ?? ''
-  const [title, setTitle] = useState(incomingTitle)
-  const [description, setDescription] = useState(incomingDescription)
+  const [title, setTitle] = useState(initialDraft?.title ?? incomingTitle)
+  const [description, setDescription] = useState(
+    initialDraft?.description ?? incomingDescription
+  )
   // What the draft is measured against: the card as it stood when the form
-  // last took its values from the board.
+  // last took its values from the board. A recovery reopen baselines against
+  // the newer card on purpose, so the next deliberate Save applies over it.
   const [baseline, setBaseline] = useState({
     description: incomingDescription,
     revision: task.revision,
     title: incomingTitle,
   })
-  const [saving, setSaving] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   const [changedElsewhere, setChangedElsewhere] = useState(false)
-  const [saveError, setSaveError] = useState<{
-    readonly conflict: boolean
-    readonly message: string
-  } | null>(null)
+  // How the previous save failed; cleared the moment the draft moves on.
+  const [recoveryBanner, setRecoveryBanner] = useState(initialBanner)
   // The field the caret was last in, so leaving the discard question can put it
   // back where it was instead of dropping focus on the body.
   const lastFieldRef = useRef<HTMLElement | null>(null)
@@ -1238,14 +1266,13 @@ function TaskDetailDialog({
   const titleMessageId = `${fieldId}-title-message`
   const descriptionId = `${fieldId}-description`
   const descriptionHelpId = `${fieldId}-description-help`
-  const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
   const normalizedDescription = description.length === 0 ? null : description
   const trimmedTitle = title.trim()
   const dirty = title !== baseline.title || description !== baseline.description
   // Only scold about an empty title once the person has emptied it themselves.
   const titleMissing = dirty && trimmedTitle.length === 0
   const hasTitleMessage = titleMissing || presented.isPlaceholder
-  const canSave = dirty && trimmedTitle.length > 0 && !saving
+  const canSave = dirty && trimmedTitle.length > 0
 
   // The board keeps polling while this dialog is open. A card that changed
   // elsewhere replaces an untouched form outright, so the fields never show a
@@ -1256,13 +1283,11 @@ function TaskDetailDialog({
       return
     }
     if (dirty) {
+      // Keep the revision the draft started from. A poll arriving just
+      // before Save must not silently advance the CAS and let this draft
+      // overwrite the newer card — the rejected save reopens with the draft
+      // and a conflict banner, and that reopen baselines against the winner.
       setChangedElsewhere(true)
-      // Keep the revision the draft started from until a CAS conflict proves
-      // it stale. Otherwise a poll arriving just before Save would silently
-      // advance the CAS and let this draft overwrite the newer card.
-      if (saveError?.conflict) {
-        setBaseline((current) => ({ ...current, revision: task.revision }))
-      }
       return
     }
     setTitle(incomingTitle)
@@ -1273,13 +1298,12 @@ function TaskDetailDialog({
       title: incomingTitle,
     })
     setChangedElsewhere(false)
-    setSaveError(null)
+    setRecoveryBanner(null)
   }, [
     baseline.revision,
     dirty,
     incomingDescription,
     incomingTitle,
-    saveError?.conflict,
     task.revision,
   ])
 
@@ -1301,13 +1325,7 @@ function TaskDetailDialog({
         tone: 'warning' as const,
       }
     }
-    if (saveError) {
-      return {
-        message: saveError.message,
-        tone: saveError.conflict ? ('warning' as const) : ('error' as const),
-      }
-    }
-    return null
+    return recoveryBanner
   })()
 
   /**
@@ -1315,9 +1333,6 @@ function TaskDetailDialog({
    * unsaved work asks; a second one takes the answer and discards.
    */
   const requestClose = () => {
-    if (saving) {
-      return
-    }
     if (dirty && !confirmingDiscard) {
       setConfirmingDiscard(true)
       return
@@ -1325,39 +1340,21 @@ function TaskDetailDialog({
     onOpenChange(false)
   }
 
-  const save = async () => {
+  /**
+   * Optimistic: the draft is handed to the board and the dialog closes at
+   * once. The board patches the card immediately and brings the dialog back
+   * with this draft if the server rejects the write.
+   */
+  const save = () => {
     if (!canSave) {
       return
     }
-    setSaving(true)
-    setSaveError(null)
-    try {
-      await updateTask({
-        payload: {
-          description: normalizedDescription,
-          expectedRevision: baseline.revision,
-          taskId: task.id,
-          title: trimmedTitle,
-        },
-      })
-      onOpenChange(false)
-    } catch (error) {
-      const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
-      const message = conflict
-        ? 'This card changed elsewhere. Your edits are still here — save again once the newer version lands to apply them over it.'
-        : extractErrorMessage(error)
-      if (conflict && task.revision !== baseline.revision) {
-        // The board poll already supplied the winning row. Advance only after
-        // surfacing the conflict so the next deliberate Save can overwrite it.
-        setBaseline((current) => ({ ...current, revision: task.revision }))
-      }
-      setSaveError({ conflict, message })
-      toast.error(conflict ? 'Card changed elsewhere' : 'Could not save card', {
-        description: message,
-      })
-    } finally {
-      setSaving(false)
-    }
+    onSave({
+      description: normalizedDescription,
+      expectedRevision: baseline.revision,
+      title: trimmedTitle,
+    })
+    onOpenChange(false)
   }
 
   return (
@@ -1415,7 +1412,7 @@ function TaskDetailDialog({
               maxLength={TITLE_LIMIT}
               onChange={(event) => {
                 setTitle(event.target.value)
-                setSaveError(null)
+                setRecoveryBanner(null)
                 setConfirmingDiscard(false)
               }}
               onFocus={(event) => {
@@ -1424,9 +1421,6 @@ function TaskDetailDialog({
               placeholder={
                 presented.isPlaceholder ? presented.text : 'Name this card'
               }
-              // Read-only rather than disabled: a disabled field drops focus
-              // mid-save and the caret would jump out of the person's edit.
-              readOnly={saving}
               value={title}
             />
             {titleMissing && (
@@ -1461,14 +1455,13 @@ function TaskDetailDialog({
               maxLength={DESCRIPTION_LIMIT}
               onChange={(event) => {
                 setDescription(event.target.value)
-                setSaveError(null)
+                setRecoveryBanner(null)
                 setConfirmingDiscard(false)
               }}
               onFocus={(event) => {
                 lastFieldRef.current = event.currentTarget
               }}
               placeholder="What should the agent know or do?"
-              readOnly={saving}
               value={description}
             />
             <FieldDescription className="text-xs" id={descriptionHelpId}>
@@ -1501,7 +1494,6 @@ function TaskDetailDialog({
             onCancel={requestClose}
             onDiscard={() => onOpenChange(false)}
             onKeepEditing={() => setConfirmingDiscard(false)}
-            saving={saving}
           />
         </form>
       </DialogContent>
@@ -1536,6 +1528,16 @@ function TaskBoard({
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  // A rejected optimistic save: reopens the detail dialog with the draft
+  // restored and the failure explained, so nothing typed is ever lost.
+  const [editRecovery, setEditRecovery] = useState<{
+    readonly attempt: number
+    readonly description: string
+    readonly message: string
+    readonly taskId: string
+    readonly tone: 'error' | 'warning'
+    readonly title: string
+  } | null>(null)
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
@@ -1549,8 +1551,11 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
+  const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
   const installTaskOverlay = useAtomSet(installTaskOptimisticOverlayAtom)
   const clearTaskOverlay = useAtomSet(clearTaskOptimisticOverlayAtom)
+  const installEditOverlay = useAtomSet(installTaskEditOverlayAtom)
+  const clearEditOverlay = useAtomSet(clearTaskEditOverlayAtom)
   const confirmTaskMove = useAtomSet(confirmTaskOptimisticMoveAtom)
   const authoritativeTasksRef = useRef(authoritativeTasks)
   authoritativeTasksRef.current = authoritativeTasks
@@ -1746,6 +1751,56 @@ function TaskBoard({
   const selectedTask = boardTasks.find((task) => task.id === selectedTaskId)
 
   /**
+   * Optimistic card edit. The overlay patches the card the instant the
+   * dialog hands over its draft; it settles when the authoritative row
+   * leaves the draft's revision. A rejected write clears the overlay and
+   * reopens the dialog with the draft and the failure, so a conflict or an
+   * outage never costs the person their text.
+   */
+  const saveTaskEdit = (
+    taskId: string,
+    draft: {
+      readonly description: string | null
+      readonly expectedRevision: number
+      readonly title: string
+    }
+  ) => {
+    installEditOverlay({
+      overlay: {
+        expectedRevision: draft.expectedRevision,
+        patch: { description: draft.description, title: draft.title },
+      },
+      taskId,
+    })
+    updateTask({
+      payload: {
+        description: draft.description,
+        expectedRevision: draft.expectedRevision,
+        taskId,
+        title: draft.title,
+      },
+    }).catch((error: unknown) => {
+      clearEditOverlay(taskId)
+      const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
+      const message = conflict
+        ? 'This card changed elsewhere while saving. Your edits are below — Save again to apply them over the newer version.'
+        : extractErrorMessage(error)
+      setEditRecovery((current) => ({
+        attempt: (current?.attempt ?? 0) + 1,
+        description: draft.description ?? '',
+        message,
+        taskId,
+        title: draft.title,
+        tone: conflict ? 'warning' : 'error',
+      }))
+      setSelectedTaskId(taskId)
+      toast.error(conflict ? 'Card changed elsewhere' : 'Could not save card', {
+        description: message,
+      })
+    })
+  }
+
+  /**
    * The workspace a card's work runs in, resolved once per card so the card
    * it renders and the click it answers never disagree about where it leads.
    */
@@ -1850,9 +1905,16 @@ function TaskBoard({
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
-                    onOpenTask={(task) => setSelectedTaskId(task.id)}
+                    onOpenTask={(task) => {
+                      // A rescue draft belongs to its own card only.
+                      setEditRecovery((current) =>
+                        current?.taskId === task.id ? current : null
+                      )
+                      setSelectedTaskId(task.id)
+                    }}
                     onSlackCardQueued={queueSlackAgentOpen}
                     projectId={project.id}
+                    projectRootPath={project.repoPath}
                     tasks={visibleTasks}
                     workspaceForCard={(task) => workspaceForCard(task, project)}
                   />
@@ -1924,12 +1986,33 @@ function TaskBoard({
       )}
       {selectedTask && (
         <TaskDetailDialog
-          key={selectedTask.id}
+          initialBanner={
+            editRecovery?.taskId === selectedTask.id
+              ? { message: editRecovery.message, tone: editRecovery.tone }
+              : null
+          }
+          initialDraft={
+            editRecovery?.taskId === selectedTask.id
+              ? {
+                  description: editRecovery.description,
+                  title: editRecovery.title,
+                }
+              : null
+          }
+          // The attempt count remounts the dialog when a failure lands while
+          // it is already open, so the restored draft actually takes.
+          key={
+            editRecovery?.taskId === selectedTask.id
+              ? `${selectedTask.id}:recovery-${String(editRecovery.attempt)}`
+              : selectedTask.id
+          }
           onOpenChange={(open) => {
             if (!open) {
               setSelectedTaskId(null)
+              setEditRecovery(null)
             }
           }}
+          onSave={(draft) => saveTaskEdit(selectedTask.id, draft)}
           task={selectedTask}
         />
       )}

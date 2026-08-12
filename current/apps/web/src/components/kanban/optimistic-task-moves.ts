@@ -199,17 +199,32 @@ export class OptimisticTaskMoveQueue {
   }
 }
 
+/**
+ * The total ordering key for a column. Ranked cards sort by their explicit
+ * rank; unranked cards (rows minted without a `sort_order`, e.g. by the
+ * Slack-native app) derive a key from their creation time, so newer unranked
+ * cards float to the top above every explicitly ranked card. Deriving the key
+ * from the row's own immutable `createdAt` keeps it stable across renders and
+ * clients, which lets a drop next to an unranked neighbor mint a persistent
+ * rank relative to that neighbor instead of falling to the bottom of the
+ * column.
+ */
+export const effectiveSortOrder = (
+  task: Pick<SharedTaskRow, 'createdAt' | 'sortOrder'>
+): number => task.sortOrder ?? -task.createdAt
+
 /** Fractional rank for the final slot represented by an already-reordered list. */
 export const fractionalOrderAt = (
-  tasks: readonly Pick<SharedTaskRow, 'sortOrder'>[],
+  tasks: readonly Pick<SharedTaskRow, 'createdAt' | 'sortOrder'>[],
   index: number
 ): number => {
-  const before = index > 0 ? tasks[index - 1]?.sortOrder : null
-  const after = index + 1 < tasks.length ? tasks[index + 1]?.sortOrder : null
-  if (before !== null && before !== undefined) {
-    return after !== null && after !== undefined
-      ? before + (after - before) / 2
-      : before + 1
+  const beforeTask = index > 0 ? tasks[index - 1] : undefined
+  const afterTask = index + 1 < tasks.length ? tasks[index + 1] : undefined
+  const before =
+    beforeTask === undefined ? null : effectiveSortOrder(beforeTask)
+  const after = afterTask === undefined ? null : effectiveSortOrder(afterTask)
+  if (before !== null) {
+    return after !== null ? before + (after - before) / 2 : before + 1
   }
-  return after !== null && after !== undefined ? after - 1 : 0
+  return after !== null ? after - 1 : 0
 }

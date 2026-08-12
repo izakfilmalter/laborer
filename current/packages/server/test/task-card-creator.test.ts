@@ -2,12 +2,12 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
+import { createTaskUlid } from '@laborer/shared/task-ulid'
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import {
   createTaskCard,
-  createTaskUlid,
   manualTaskBranchName,
   runSlackTaskPlanning,
 } from '../src/services/task-card-creator.js'
@@ -220,5 +220,81 @@ describe('task card creation', () => {
 
   it('encodes sortable timestamps in generated identifiers', () => {
     expect(createTaskUlid(2).slice(0, 10)).toBe('0000000002')
+  })
+
+  it('stores a renderer-minted id so the optimistic card and the row agree', async () => {
+    const path = databasePath()
+    const id = createTaskUlid()
+
+    const result = await Effect.runPromise(
+      createTaskCard(
+        { id, rootPath: '/repo', status: 'todo', text: 'Ship' },
+        path
+      )
+    )
+
+    expect(result).toMatchObject({ id, inserted: true })
+    expect(storedTask(path, id)).toMatchObject({ title: 'Ship' })
+  })
+
+  it('treats a resent id as an idempotent replay, not a duplicate card', async () => {
+    const path = databasePath()
+    const id = createTaskUlid()
+    const create = createTaskCard(
+      { id, rootPath: '/repo', status: 'todo', text: 'Ship' },
+      path
+    )
+
+    await Effect.runPromise(create)
+    const replay = await Effect.runPromise(create)
+
+    expect(replay).toMatchObject({ id, inserted: false, source: 'manual' })
+    const database = NodeTaskBoardDatabase.open(path)
+    try {
+      // One stored card and one ledger entry — the replay wrote nothing.
+      expect(database.readChanges(0).cursor).toBe(1)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('replaying a Slack card does not restart its analysis', async () => {
+    const path = databasePath()
+    const id = createTaskUlid()
+    const planner = vi.fn(() => Effect.succeed(slackPlan))
+    const create = createTaskCard(
+      { id, rootPath: '/repo', status: 'todo', text: SLACK_PERMALINK },
+      path,
+      planner
+    )
+
+    await Effect.runPromise(create)
+    await waitFor(
+      () =>
+        Promise.resolve(
+          storedTask(path, id)?.description === slackPlan.initialPrompt
+        ),
+      5000,
+      'the Slack thread to be analyzed'
+    )
+    const replay = await Effect.runPromise(create)
+
+    expect(replay).toMatchObject({ id, inserted: false, source: 'slack_url' })
+    expect(planner).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an id that is not a task ULID', async () => {
+    const path = databasePath()
+
+    const result = await Effect.runPromise(
+      Effect.flip(
+        createTaskCard(
+          { id: 'not-a-ulid', rootPath: '/repo', status: 'todo', text: 'Ship' },
+          path
+        )
+      )
+    )
+
+    expect(result).toMatchObject({ code: 'INVALID_INPUT' })
   })
 })

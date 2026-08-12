@@ -48,7 +48,7 @@ type CrashCallback = () => void
 // Service Definition
 // ---------------------------------------------------------------------------
 
-class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
+class PtyHostClient extends Context.Service<
   PtyHostClient,
   {
     /**
@@ -103,7 +103,7 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
      */
     readonly onCrash: (callback: CrashCallback) => void
   }
->() {}
+>()('@laborer/PtyHostClient') {}
 
 export { PtyHostClient }
 export type {

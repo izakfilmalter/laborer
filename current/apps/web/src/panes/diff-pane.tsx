@@ -11,7 +11,7 @@
  *
  * 1. On mount, `file.diff(workspaceId)` fetches every changed file with
  *    its unified diff patch in one round-trip
- * 2. `file.watcher.subscribe(workspaceId)` streams file change events;
+ * 2. `file['watcher.subscribe'](workspaceId)` streams file change events;
  *    relevant events schedule a debounced refresh of the batched diff
  * 3. Stale-while-revalidate: the previous diff stays visible while a
  *    refresh is in flight — the loading screen only shows when there is
@@ -53,18 +53,18 @@
  * @see docs/lazy-file-service/PRD.md — Lazy File Service PRD
  */
 
-import { Atom, Result } from '@effect-atom/atom'
 import {
   useAtomMount,
   useAtomRefresh,
   useAtomSet,
   useAtomValue,
-} from '@effect-atom/atom-react/Hooks'
+} from '@effect/atom-react/Hooks'
 import type { FileDiffEntry } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
 import { FileDiff, Virtualizer } from '@pierre/diffs/react'
 import { Cause, Effect, Option, Schedule } from 'effect'
+import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import {
   ExternalLink,
   FileCode2,

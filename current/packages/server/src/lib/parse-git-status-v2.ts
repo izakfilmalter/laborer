@@ -245,7 +245,7 @@ const dispatchEntry = (
  * Order GitStatusEntry by path for consistent output.
  */
 const gitStatusEntryOrder = Order.mapInput(
-  Order.string,
+  Order.String,
   (entry: GitStatusEntry) => entry.path
 )
 

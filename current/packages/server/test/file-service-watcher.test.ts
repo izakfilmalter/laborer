@@ -89,7 +89,7 @@ const seedWorkspace = (
  */
 const collectOneEvent = (
   stream: Stream.Stream<FileWatcherEvent, unknown>,
-  recorder: TestFileWatcherClientRecorder['Type'],
+  recorder: TestFileWatcherClientRecorder['Service'],
   repoPath: string,
   eventOverride?: {
     type?: 'add' | 'change' | 'delete'

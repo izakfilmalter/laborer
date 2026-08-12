@@ -14,7 +14,7 @@
  * @see Issue #27: Add Project form
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import { FolderPlus } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'

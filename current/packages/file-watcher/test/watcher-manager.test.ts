@@ -45,7 +45,7 @@ interface MockSubscription {
 const createMockFileWatcher = () => {
   const subscriptions = new Map<string, MockSubscription[]>()
 
-  const mockService: FileWatcher['Type'] = {
+  const mockService: FileWatcher['Service'] = {
     subscribe: (path, onChange, onError, options) =>
       Effect.sync(() => {
         const sub: MockSubscription = {

@@ -19,15 +19,15 @@ class PrTaskTransitionError extends Error {
   }
 }
 
-class PrTaskTransitions extends Context.Tag('@laborer/PrTaskTransitions')<
+class PrTaskTransitions extends Context.Service<
   PrTaskTransitions,
   {
     readonly transition: (
       input: PrTaskTransitionInput
     ) => Effect.Effect<void, PrTaskTransitionError>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/PrTaskTransitions') {
+  static readonly layer = Layer.effect(
     PrTaskTransitions,
     Effect.acquireRelease(
       Effect.sync((): { database: NodeTaskBoardDatabase | undefined } => ({

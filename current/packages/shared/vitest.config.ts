@@ -11,10 +11,5 @@ export default defineConfig({
         maxThreads: 3,
       },
     },
-    server: {
-      deps: {
-        inline: ['@effect/vitest'],
-      },
-    },
   },
 })

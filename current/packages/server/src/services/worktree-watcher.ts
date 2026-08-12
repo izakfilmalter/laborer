@@ -58,7 +58,7 @@ const resolveGitCommonDir = (
     return resolve(repoPath, raw)
   })
 
-class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
+class WorktreeWatcher extends Context.Service<
   WorktreeWatcher,
   {
     readonly watchAll: () => Effect.Effect<void, never>
@@ -68,8 +68,8 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
     ) => Effect.Effect<void, never>
     readonly unwatchProject: (projectId: string) => Effect.Effect<void, never>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/WorktreeWatcher') {
+  static readonly layer = Layer.effect(
     WorktreeWatcher,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -96,7 +96,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
       ): Effect.Effect<void, never> =>
         reconciler.reconcile(projectId, repoPath).pipe(
           Effect.asVoid,
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Worktree reconciliation failed for project ${projectId} (${reason}): ${error.message}`
             )
@@ -202,7 +202,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
           },
           catch: (cause) => new GitCommandError({ message: String(cause) }),
         }).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Failed to watch worktrees for project ${projectId}: ${error.message}`
             ).pipe(Effect.as(null))
@@ -217,7 +217,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
         yield* unwatchProject(projectId)
 
         const gitDirPath = yield* resolveGitCommonDir(repoPath).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Failed to resolve git common dir for project ${projectId}: ${error.message}`
             ).pipe(Effect.as(null))

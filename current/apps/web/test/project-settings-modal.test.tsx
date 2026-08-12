@@ -52,7 +52,7 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: useAtomSetMock,
   useAtomValue: useAtomValueMock,
 }))

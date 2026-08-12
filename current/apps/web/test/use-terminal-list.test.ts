@@ -11,7 +11,7 @@ const { listTerminalsFn, mutationMap, atomValueMap } = vi.hoisted(() => ({
   atomValueMap: new Map<unknown, unknown>(),
 }))
 
-vi.mock('@effect-atom/atom', () => ({
+vi.mock('effect/unstable/reactivity', () => ({
   Atom: {
     keepAlive: (atom: unknown) => atom,
   },
@@ -22,7 +22,7 @@ vi.mock('@effect-atom/atom', () => ({
   },
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: (atom: unknown) => {
     return (
       atomValueMap.get(atom) ?? {

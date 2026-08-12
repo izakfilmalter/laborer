@@ -6,9 +6,9 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { HttpServer } from '@effect/platform'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer, Schema } from 'effect'
+import { HttpServer } from 'effect/unstable/http'
 
 const defaultDiscoveryFile = () =>
   join(dirname(taskDatabasePath()), 'server.json')
@@ -18,7 +18,7 @@ const DiscoveryRecord = Schema.Struct({
   port: Schema.Int,
   url: Schema.String,
 })
-const DiscoveryJson = Schema.parseJson(DiscoveryRecord)
+const DiscoveryJson = Schema.fromJsonString(DiscoveryRecord)
 
 export const serverDiscoveryLayer = (
   fallback: {
@@ -27,7 +27,7 @@ export const serverDiscoveryLayer = (
   },
   discoveryFile = defaultDiscoveryFile()
 ) =>
-  Layer.scopedDiscard(
+  Layer.effectDiscard(
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer
       const address = server.address

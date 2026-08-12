@@ -20,7 +20,6 @@
     "./slack-url": "./src/slack-url.ts"
   },
   "dependencies": {
-    "@effect/rpc": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
@@ -28,6 +27,6 @@
     "@laborer/config": "workspace:*",
     "@types/node": "^25.3.3",
     "typescript": "catalog:",
-    "vitest": "^3.2.4"
+    "vitest": "^4.0.17"
   }
 }

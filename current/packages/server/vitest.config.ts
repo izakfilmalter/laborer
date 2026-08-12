@@ -26,10 +26,5 @@ export default defineConfig({
         maxForks: 1,
       },
     },
-    server: {
-      deps: {
-        inline: ['@effect/vitest'],
-      },
-    },
   },
 })

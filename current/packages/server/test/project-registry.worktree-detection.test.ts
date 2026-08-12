@@ -49,7 +49,7 @@ afterAll(() => {
 })
 
 describe('ProjectRegistry integration with worktree detection', () => {
-  it.scoped(
+  it.effect(
     'addProject registers the project and detects main and linked worktrees',
     () =>
       Effect.gen(function* () {

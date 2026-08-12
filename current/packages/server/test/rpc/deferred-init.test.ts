@@ -77,12 +77,12 @@ describe('Deferred service initialization (Issue #14)', () => {
 
   describe('makeRefDelegatingService', () => {
     // Define a simple test service for these tests
-    class TestService extends Context.Tag('@test/TestService')<
+    class TestService extends Context.Service<
       TestService,
       {
         readonly getValue: () => Effect.Effect<string, RpcError>
       }
-    >() {}
+    >()('@test/TestService') {}
 
     it.effect('proxy returns SERVICE_INITIALIZING before real service', () =>
       Effect.gen(function* () {

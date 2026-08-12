@@ -17,17 +17,11 @@
     "./services/watcher-manager": "./src/services/watcher-manager.ts"
   },
   "dependencies": {
-    "@effect/cluster": "catalog:",
-    "@effect/experimental": "catalog:",
-    "@effect/platform": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/rpc": "catalog:",
-    "@effect/sql": "catalog:",
-    "@effect/workflow": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@parcel/watcher": "^2.5.6",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@effect/platform-node": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -36,6 +30,6 @@
     "tsdown": "^0.20.3",
     "tsx": "^4.19.4",
     "typescript": "catalog:",
-    "vitest": "^3.2.4"
+    "vitest": "^4.0.17"
   }
 }

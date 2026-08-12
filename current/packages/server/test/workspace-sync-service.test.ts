@@ -20,14 +20,12 @@ afterAll(() => {
   }
 })
 
-class TestPrWatcherRecorder extends Context.Tag(
-  '@laborer/test/TestPrWatcherRecorder'
-)<
+class TestPrWatcherRecorder extends Context.Service<
   TestPrWatcherRecorder,
   {
     readonly checkPrCalls: Ref.Ref<readonly string[]>
   }
->() {}
+>()('@laborer/test/TestPrWatcherRecorder') {}
 
 const TestPrWatcherRecorderLayer = Layer.effect(
   TestPrWatcherRecorder,
@@ -144,7 +142,7 @@ const createWorkspace = (
 }
 
 describe('WorkspaceSyncService', () => {
-  it.scoped(
+  it.effect(
     'returns WORKSPACE_NOT_FOUND when the workspace does not exist',
     () =>
       Effect.gen(function* () {
@@ -167,7 +165,7 @@ describe('WorkspaceSyncService', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('returns null counts when no upstream is configured', () =>
+  it.effect('returns null counts when no upstream is configured', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('sync-no-upstream', tempRoots)
       const { database } = yield* LaborerDatabase
@@ -185,7 +183,7 @@ describe('WorkspaceSyncService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('rejects sync checks after a workspace releases its worktree', () =>
+  it.effect('rejects sync checks after a workspace releases its worktree', () =>
     Effect.gen(function* () {
       const { localPath, remotePath } = initRemoteRepo('sync-destroyed')
       const remoteClonePath = createRemoteClone(
@@ -227,7 +225,7 @@ describe('WorkspaceSyncService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('tracks ahead and behind commit counts for upstream branches', () =>
+  it.effect('tracks ahead and behind commit counts for upstream branches', () =>
     Effect.gen(function* () {
       const { localPath, remotePath } = initRemoteRepo('sync-ahead-behind')
       const remoteClonePath = createRemoteClone(remotePath, 'sync-remote-work')
@@ -252,7 +250,7 @@ describe('WorkspaceSyncService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('pushes local commits and refreshes PR state after push', () =>
+  it.effect('pushes local commits and refreshes PR state after push', () =>
     Effect.gen(function* () {
       const { localPath, remotePath } = initRemoteRepo('sync-push')
 
@@ -281,7 +279,7 @@ describe('WorkspaceSyncService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('pulls remote commits and clears behind count after pull', () =>
+  it.effect('pulls remote commits and clears behind count after pull', () =>
     Effect.gen(function* () {
       const { localPath, remotePath } = initRemoteRepo('sync-pull')
       const remoteClonePath = createRemoteClone(

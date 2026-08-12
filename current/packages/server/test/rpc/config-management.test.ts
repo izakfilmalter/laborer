@@ -55,7 +55,7 @@ const writeLaborerConfig = (
 }
 
 describe('LaborerRpcs config management', () => {
-  it.scoped(
+  it.effect(
     'config.get resolves config through real service layers with field provenance',
     () =>
       runWithRpcTestContext(({ client }) =>
@@ -79,8 +79,8 @@ describe('LaborerRpcs config management', () => {
             setupScripts: ['bun install', 'bun test'],
           })
 
-          const project = yield* client.project.add({ repoPath })
-          const config = yield* client.config.get({ projectId: project.id })
+          const project = yield* client['project.add']({ repoPath })
+          const config = yield* client['config.get']({ projectId: project.id })
 
           // Config source paths are resolved relative to the
           // canonical project root, so canonicalize expectations.
@@ -105,7 +105,7 @@ describe('LaborerRpcs config management', () => {
       )
   )
 
-  it.scoped('config.get returns NOT_FOUND for a missing project', () =>
+  it.effect('config.get returns NOT_FOUND for a missing project', () =>
     runWithRpcTestContext(({ client }) =>
       Effect.gen(function* () {
         const result = yield* client.config
@@ -126,7 +126,7 @@ describe('LaborerRpcs config management', () => {
     )
   )
 
-  it.scoped(
+  it.effect(
     'config.update writes project config through the RPC contract and makes it retrievable',
     () =>
       runWithRpcTestContext(({ client }) =>
@@ -142,9 +142,9 @@ describe('LaborerRpcs config management', () => {
             customField: 'preserve-me',
           })
 
-          const project = yield* client.project.add({ repoPath })
+          const project = yield* client['project.add']({ repoPath })
 
-          yield* client.config.update({
+          yield* client['config.update']({
             projectId: project.id,
             config: {
               agent: 'opencode2',
@@ -162,7 +162,9 @@ describe('LaborerRpcs config management', () => {
           assert.match(writtenConfig, SETUP_SCRIPTS_PATTERN)
           assert.match(writtenConfig, WORKTREE_DIR_PATTERN)
 
-          const resolved = yield* client.config.get({ projectId: project.id })
+          const resolved = yield* client['config.get']({
+            projectId: project.id,
+          })
 
           assert.deepStrictEqual(resolved, {
             agent: { source: canonicalConfigPath, value: 'opencode2' },

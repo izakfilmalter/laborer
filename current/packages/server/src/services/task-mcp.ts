@@ -1,10 +1,10 @@
-import { McpServer, Tool, Toolkit } from '@effect/ai'
+import { Effect, Layer, Option, Schema } from 'effect'
+import { McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import {
   HttpMiddleware,
   HttpServerRequest,
   HttpServerResponse,
-} from '@effect/platform'
-import { Effect, Layer, Option, Schema } from 'effect'
+} from 'effect/unstable/http'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 
 const TaskStatus = Schema.Literal(
@@ -73,7 +73,7 @@ const UpdateTask = Tool.make('update_task', {
     'Update only the title and/or description of a non-Execution task using revision CAS.',
   parameters: {
     description: Schema.optional(Schema.NullOr(Schema.String)),
-    expected_revision: Schema.Positive.pipe(Schema.int()),
+    expected_revision: Schema.Positive.pipe(Schema.isInt()),
     id: Schema.String,
     title: Schema.optional(Schema.String),
   },
@@ -84,7 +84,7 @@ const DeleteTask = Tool.make('delete_task', {
   description:
     'Soft-delete a task by changing its status to cancelled using revision CAS.',
   parameters: {
-    expected_revision: Schema.Positive.pipe(Schema.int()),
+    expected_revision: Schema.Positive.pipe(Schema.isInt()),
     id: Schema.String,
   },
   success: Task,

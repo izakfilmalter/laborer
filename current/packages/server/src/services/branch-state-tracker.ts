@@ -112,7 +112,7 @@ const getCurrentBranch = (
     return branch
   })
 
-class BranchStateTracker extends Context.Tag('@laborer/BranchStateTracker')<
+class BranchStateTracker extends Context.Service<
   BranchStateTracker,
   {
     /**
@@ -125,7 +125,7 @@ class BranchStateTracker extends Context.Tag('@laborer/BranchStateTracker')<
       projectId: string
     ) => Effect.Effect<BranchRefreshResult, RpcError>
   }
->() {
+>()('@laborer/BranchStateTracker') {
   static readonly layer = Layer.effect(
     BranchStateTracker,
     Effect.gen(function* () {
@@ -149,7 +149,7 @@ class BranchStateTracker extends Context.Tag('@laborer/BranchStateTracker')<
           for (const workspace of activeWorkspaces) {
             const currentBranch = yield* getCurrentBranch(
               workspace.worktreePath
-            ).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            ).pipe(Effect.catch(() => Effect.succeed(null)))
 
             checked += 1
 

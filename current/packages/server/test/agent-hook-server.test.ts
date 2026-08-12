@@ -13,7 +13,7 @@ import {
 describe('agent hook server', () => {
   const receivedReports: Array<{ id: string; report: AgentStatusReport }> = []
   let terminals: AgentHookTerminal[] = []
-  let scope: Scope.CloseableScope
+  let scope: Scope.Closeable
   let port = 0
   let workspaceDir = ''
   let otherDir = ''

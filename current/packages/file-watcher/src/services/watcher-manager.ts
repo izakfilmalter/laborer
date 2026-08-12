@@ -19,7 +19,7 @@
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, PubSub, Ref, Runtime } from 'effect'
+import { Context, Effect, Layer, PubSub, Ref } from 'effect'
 import {
   FileWatcher,
   type WatchEvent,
@@ -194,11 +194,11 @@ interface WatcherManagerService {
   ) => Effect.Effect<void>
 }
 
-class WatcherManager extends Context.Tag('@laborer/WatcherManager')<
+class WatcherManager extends Context.Service<
   WatcherManager,
   WatcherManagerService
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/WatcherManager') {
+  static readonly layer = Layer.effect(
     WatcherManager,
     Effect.gen(function* () {
       const fileWatcher = yield* FileWatcher
@@ -213,8 +213,8 @@ class WatcherManager extends Context.Tag('@laborer/WatcherManager')<
         return `sub_${nextId}`
       }
 
-      const currentRuntime = yield* Effect.runtime<never>()
-      const runSync = Runtime.runSync(currentRuntime)
+      const context = yield* Effect.context<never>()
+      const runSync = Effect.runSyncWith(context)
 
       const createWatchSubscription = (
         managed: ManagedSubscription
@@ -268,7 +268,7 @@ class WatcherManager extends Context.Tag('@laborer/WatcherManager')<
               : { recursive: managed.recursive }
           )
           .pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `Failed to create watcher for ${managed.path}: ${error.message}`
               ).pipe(Effect.as(null))

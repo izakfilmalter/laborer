@@ -173,7 +173,7 @@ const selectTranslatableWorktrees = (
   return translatable
 }
 
-class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
+class WorktreeReconciler extends Context.Service<
   WorktreeReconciler,
   {
     reconcile: (
@@ -181,7 +181,7 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
       repoPath: string
     ) => Effect.Effect<ReconcileResult, RpcError>
   }
->() {
+>()('@laborer/WorktreeReconciler') {
   static readonly layer = Layer.effect(
     WorktreeReconciler,
     Effect.gen(function* () {

@@ -133,7 +133,7 @@ const createTestLayer = (params: {
 }
 
 describe('RepositoryWatchCoordinator hardening', () => {
-  it.scoped('coalesces heavy churn into stable refresh behavior', () => {
+  it.effect('coalesces heavy churn into stable refresh behavior', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -190,7 +190,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }).pipe(Effect.provide(TestLayer))
   })
 
-  it.scoped(
+  it.effect(
     'startup restore reuses persisted repository identity without re-resolving',
     () => {
       const reconcileCalls = { current: 0 }
@@ -338,7 +338,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     )
   })
 
-  it.scoped('ignores late watcher callbacks after project teardown', () => {
+  it.effect('ignores late watcher callbacks after project teardown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -394,7 +394,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }).pipe(Effect.provide(TestLayer))
   })
 
-  it.scoped('ignores late watcher callbacks after scope shutdown', () => {
+  it.effect('ignores late watcher callbacks after scope shutdown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -446,7 +446,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     })
   })
 
-  it.scoped(
+  it.effect(
     'watchProject is idempotent — re-calling for the same project replaces previous watchers',
     () => {
       const reconcileCalls = { current: 0 }
@@ -518,7 +518,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }
   )
 
-  it.scoped(
+  it.effect(
     'only files ending with HEAD trigger branch refresh; worktrees trigger reconciliation',
     () => {
       const reconcileCalls = { current: 0 }
@@ -625,7 +625,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }
   )
 
-  it.scoped(
+  it.effect(
     'non-HEAD git changes (refs/heads/main, index, config) do not trigger branch refresh',
     () => {
       const reconcileCalls = { current: 0 }

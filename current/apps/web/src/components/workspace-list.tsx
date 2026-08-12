@@ -21,7 +21,7 @@
  * @see Issue #160: UI for detected workspaces
  */
 
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import {
   buildWorkspaceTree,
   type WorkspaceTreeNode,

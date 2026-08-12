@@ -21,13 +21,12 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
-
-import { RpcClient, RpcServer } from '@effect/rpc'
 import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Chunk, Effect, Exit, Layer, Scope, Stream } from 'effect'
+import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { FileWatcherRpcsLive } from '../src/rpc/handlers.js'
@@ -84,8 +83,8 @@ type FileWatcherRpcClient = Effect.Effect.Success<typeof MakeFileWatcherClient>
 // Shared state across tests
 // ---------------------------------------------------------------------------
 
-let serverScope: Scope.CloseableScope
-let clientScope: Scope.CloseableScope
+let serverScope: Scope.Closeable
+let clientScope: Scope.Closeable
 let client: FileWatcherRpcClient
 let testDir: string
 
@@ -120,7 +119,7 @@ beforeAll(async () => {
   client = await Effect.runPromise(
     MakeFileWatcherClient.pipe(
       Effect.provideService(RpcClient.Protocol, clientProtocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 })
@@ -145,7 +144,7 @@ afterAll(async () => {
 describe('FileWatcherRpcs via MessagePort', () => {
   it('watcher.subscribe creates a subscription via MessagePort', async () => {
     const result = await Effect.runPromise(
-      client.watcher.subscribe({ path: testDir, recursive: true })
+      client['watcher.subscribe']({ path: testDir, recursive: true })
     )
 
     expect(result).toHaveProperty('id')
@@ -153,59 +152,59 @@ describe('FileWatcherRpcs via MessagePort', () => {
     expect(result).toHaveProperty('recursive', true)
 
     // Clean up
-    await Effect.runPromise(client.watcher.unsubscribe({ id: result.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: result.id }))
   })
 
   it('watcher.list returns active subscriptions via MessagePort', async () => {
     // Create a subscription first
     const sub = await Effect.runPromise(
-      client.watcher.subscribe({ path: testDir })
+      client['watcher.subscribe']({ path: testDir })
     )
 
-    const list = await Effect.runPromise(client.watcher.list())
+    const list = await Effect.runPromise(client['watcher.list']())
     expect(list.length).toBeGreaterThanOrEqual(1)
     expect(list.some((s) => s.id === sub.id)).toBe(true)
 
     // Clean up
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub.id }))
   })
 
   it('watcher.unsubscribe removes a subscription via MessagePort', async () => {
     const sub = await Effect.runPromise(
-      client.watcher.subscribe({ path: testDir })
+      client['watcher.subscribe']({ path: testDir })
     )
 
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub.id }))
 
-    const list = await Effect.runPromise(client.watcher.list())
+    const list = await Effect.runPromise(client['watcher.list']())
     expect(list.some((s) => s.id === sub.id)).toBe(false)
   })
 
   it('watcher.updateIgnore changes ignore patterns via MessagePort', async () => {
     const sub = await Effect.runPromise(
-      client.watcher.subscribe({ path: testDir })
+      client['watcher.subscribe']({ path: testDir })
     )
 
     await Effect.runPromise(
-      client.watcher.updateIgnore({
+      client['watcher.updateIgnore']({
         id: sub.id,
         ignoreGlobs: ['node_modules/**', '.git/**'],
       })
     )
 
     // Verify the subscription still exists after update
-    const list = await Effect.runPromise(client.watcher.list())
+    const list = await Effect.runPromise(client['watcher.list']())
     const updated = list.find((s) => s.id === sub.id)
     expect(updated).toBeDefined()
 
     // Clean up
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub.id }))
   })
 
   it('watcher.events streams file change events via MessagePort', async () => {
     // Subscribe to the test directory
     const sub = await Effect.runPromise(
-      client.watcher.subscribe({ path: testDir, recursive: true })
+      client['watcher.subscribe']({ path: testDir, recursive: true })
     )
 
     // Start listening for events
@@ -241,16 +240,16 @@ describe('FileWatcherRpcs via MessagePort', () => {
     }
 
     // Clean up
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub.id }))
   })
 
   it('handles multiple concurrent requests via MessagePort', async () => {
     const [sub1, sub2, sub3] = await Promise.all([
-      Effect.runPromise(client.watcher.subscribe({ path: testDir })),
+      Effect.runPromise(client['watcher.subscribe']({ path: testDir })),
       Effect.runPromise(
-        client.watcher.subscribe({ path: testDir, recursive: false })
+        client['watcher.subscribe']({ path: testDir, recursive: false })
       ),
-      Effect.runPromise(client.watcher.list()),
+      Effect.runPromise(client['watcher.list']()),
     ])
 
     expect(sub1).toHaveProperty('id')
@@ -259,7 +258,7 @@ describe('FileWatcherRpcs via MessagePort', () => {
     expect(Array.isArray(sub3)).toBe(true)
 
     // Clean up
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub1.id }))
-    await Effect.runPromise(client.watcher.unsubscribe({ id: sub2.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub1.id }))
+    await Effect.runPromise(client['watcher.unsubscribe']({ id: sub2.id }))
   })
 })

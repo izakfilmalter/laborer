@@ -10,15 +10,14 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { Rpc, RpcGroup, RpcServer } from '@effect/rpc'
+import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+import { Rpc, RpcGroup, RpcServer } from 'effect/unstable/rpc'
 import type {
   FromClientEncoded,
   FromServerEncoded,
   ResponseChunkEncoded,
   ResponseExitEncoded,
-} from '@effect/rpc/RpcMessage'
-import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+} from 'effect/unstable/rpc/RpcMessage'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RpcMessagePort } from '../src/rpc-transport-messageport.js'
 import { layerProtocolMessagePort } from '../src/rpc-transport-messageport.js'
@@ -27,9 +26,12 @@ import { layerProtocolMessagePort } from '../src/rpc-transport-messageport.js'
 // Test RPC definitions
 // ---------------------------------------------------------------------------
 
-class TestRpcError extends Schema.TaggedError<TestRpcError>()('TestRpcError', {
-  message: Schema.String,
-}) {}
+class TestRpcError extends Schema.TaggedErrorClass<TestRpcError>()(
+  'TestRpcError',
+  {
+    message: Schema.String,
+  }
+) {}
 
 const TestRpcs = RpcGroup.make(
   Rpc.make('echo', {
@@ -132,7 +134,7 @@ describe('layerProtocolMessagePort', () => {
   let channel: MessageChannel
   let serverPort: import('node:worker_threads').MessagePort
   let clientPort: import('node:worker_threads').MessagePort
-  let scope: Scope.CloseableScope
+  let scope: Scope.Closeable
   let requestCounter: number
 
   beforeEach(async () => {

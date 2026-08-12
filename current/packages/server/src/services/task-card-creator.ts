@@ -147,14 +147,14 @@ export const runSlackTaskPlanning = (
         title: plan.title,
       })
     ),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       updateLatest(path, taskId, { executionStatus: 'failed' }).pipe(
-        Effect.catchAll((updateError) =>
+        Effect.catch((updateError) =>
           Effect.logError(
             `[task-board] Slack analysis failed for ${taskId}; the failure marker could not be stored: ${updateError.message}`
           )
         ),
-        Effect.zipRight(
+        Effect.andThen(
           Effect.logWarning(
             `[task-board] Slack analysis failed for ${taskId}: ${error.message}`
           )
@@ -208,7 +208,7 @@ export const createTaskCard = (
         input.rootPath,
         path,
         planner
-      ).pipe(Effect.forkDaemon)
+      ).pipe(Effect.forkDetach)
     }
 
     return {

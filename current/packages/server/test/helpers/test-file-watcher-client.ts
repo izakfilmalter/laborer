@@ -54,9 +54,7 @@ interface RecordedIgnoreUpdate {
  * from test assertions. Provides refs for subscribe/unsubscribe
  * calls and a function to emit synthetic file events.
  */
-class TestFileWatcherClientRecorder extends Context.Tag(
-  '@laborer/test/TestFileWatcherClientRecorder'
-)<
+class TestFileWatcherClientRecorder extends Context.Service<
   TestFileWatcherClientRecorder,
   {
     /** All subscribe calls made to the mock. */
@@ -76,7 +74,7 @@ class TestFileWatcherClientRecorder extends Context.Tag(
      */
     readonly handlers: FileEventHandler[]
   }
->() {}
+>()('@laborer/test/TestFileWatcherClientRecorder') {}
 
 // ── No-op stub layer ────────────────────────────────────────────
 
@@ -118,7 +116,10 @@ const TestFileWatcherClientRecordingLayer = Layer.effect(
     const recorder = yield* TestFileWatcherClientRecorder
     let subCounter = 0
 
-    const subscribe: FileWatcherClient['Type']['subscribe'] = (path, options) =>
+    const subscribe: FileWatcherClient['Service']['subscribe'] = (
+      path,
+      options
+    ) =>
       Effect.gen(function* () {
         subCounter += 1
         const sub: RecordedSubscription = {
@@ -131,12 +132,12 @@ const TestFileWatcherClientRecordingLayer = Layer.effect(
         return sub
       })
 
-    const unsubscribe: FileWatcherClient['Type']['unsubscribe'] = (id) =>
+    const unsubscribe: FileWatcherClient['Service']['unsubscribe'] = (id) =>
       Ref.update(recorder.unsubscribedIds, (ids) => [...ids, id]).pipe(
         Effect.asVoid
       )
 
-    const updateIgnore: FileWatcherClient['Type']['updateIgnore'] = (
+    const updateIgnore: FileWatcherClient['Service']['updateIgnore'] = (
       id,
       ignoreGlobs
     ) =>
@@ -157,7 +158,7 @@ const TestFileWatcherClientRecordingLayer = Layer.effect(
       }
     }
 
-    const listSubscriptions: FileWatcherClient['Type']['listSubscriptions'] =
+    const listSubscriptions: FileWatcherClient['Service']['listSubscriptions'] =
       () =>
         Ref.get(recorder.subscribedPaths).pipe(Effect.map((subs) => [...subs]))
 
@@ -210,7 +211,7 @@ const TestFileWatcherClientRecordingWithRecorderLayer =
  * Use this when integration tests need real filesystem events
  * to trigger coordinator reconciliation / branch refresh.
  */
-const TestFileWatcherClientRealLayer = Layer.scoped(
+const TestFileWatcherClientRealLayer = Layer.effect(
   FileWatcherClient,
   Effect.gen(function* () {
     const watcherManager = yield* WatcherManager
@@ -235,7 +236,10 @@ const TestFileWatcherClientRealLayer = Layer.scoped(
       Effect.forkScoped
     )
 
-    const subscribe: FileWatcherClient['Type']['subscribe'] = (path, options) =>
+    const subscribe: FileWatcherClient['Service']['subscribe'] = (
+      path,
+      options
+    ) =>
       watcherManager.subscribe(
         path,
         options?.recursive,
@@ -244,10 +248,10 @@ const TestFileWatcherClientRealLayer = Layer.scoped(
           : undefined
       )
 
-    const unsubscribe: FileWatcherClient['Type']['unsubscribe'] = (id) =>
+    const unsubscribe: FileWatcherClient['Service']['unsubscribe'] = (id) =>
       watcherManager.unsubscribe(id)
 
-    const updateIgnore: FileWatcherClient['Type']['updateIgnore'] = (
+    const updateIgnore: FileWatcherClient['Service']['updateIgnore'] = (
       id,
       ignoreGlobs
     ) => watcherManager.updateIgnore(id, ignoreGlobs)
@@ -264,7 +268,7 @@ const TestFileWatcherClientRealLayer = Layer.scoped(
       }
     }
 
-    const listSubscriptions: FileWatcherClient['Type']['listSubscriptions'] =
+    const listSubscriptions: FileWatcherClient['Service']['listSubscriptions'] =
       () => watcherManager.list()
 
     return FileWatcherClient.of({

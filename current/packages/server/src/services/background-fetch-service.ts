@@ -215,14 +215,12 @@ interface FetchScheduleState {
   /** Path to the FETCH_HEAD file for guard checks */
   readonly fetchHeadPath: string
   /** The fiber running the fetch loop */
-  readonly fiber: Fiber.RuntimeFiber<void, never>
+  readonly fiber: Fiber.Fiber<void, never>
   /** Set of workspace IDs sharing this schedule */
   readonly workspaceIds: Set<string>
 }
 
-class BackgroundFetchService extends Context.Tag(
-  '@laborer/BackgroundFetchService'
-)<
+class BackgroundFetchService extends Context.Service<
   BackgroundFetchService,
   {
     /**
@@ -244,8 +242,8 @@ class BackgroundFetchService extends Context.Tag(
      */
     readonly fetchNow: (workspaceId: string) => Effect.Effect<boolean>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/BackgroundFetchService') {
+  static readonly layer = Layer.effect(
     BackgroundFetchService,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -390,7 +388,7 @@ class BackgroundFetchService extends Context.Tag(
           const fetchHeadPath = yield* resolveFetchHeadPath(worktreePath)
           const fiber = yield* fetchLoop(worktreePath, repoRoot).pipe(
             Effect.asVoid,
-            Effect.forkDaemon
+            Effect.forkDetach
           )
 
           yield* Ref.update(schedules, (map) => {

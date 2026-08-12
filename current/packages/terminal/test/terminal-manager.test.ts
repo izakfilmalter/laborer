@@ -55,7 +55,7 @@ const TestLayer = TerminalManager.layer.pipe(Layer.provideMerge(directLayer))
 // Helper: run an Effect program against the test layer
 // ---------------------------------------------------------------------------
 
-let scope: Scope.CloseableScope
+let scope: Scope.Closeable
 let testContext: Context.Context<TerminalManager | PtyHostClient>
 
 const runEffect = <A, E>(

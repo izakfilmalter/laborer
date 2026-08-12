@@ -7,7 +7,7 @@ import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { waitFor } from './helpers/timing-helpers.js'
 
-type PrWatcherService = Context.Tag.Service<typeof PrWatcher>
+type PrWatcherService = Context.Service.Shape<typeof PrWatcher>
 
 const waitForPollingState = (
   prWatcher: PrWatcherService,
@@ -79,7 +79,7 @@ const withDatabase = <A, E, R>(
   })
 
 describe('PrWatcher', () => {
-  it.scoped(
+  it.effect(
     'bootstraps polling for persisted active workspaces on startup',
     () =>
       withDatabase((database, databaseContext) =>
@@ -98,7 +98,7 @@ describe('PrWatcher', () => {
       )
   )
 
-  it.scoped(
+  it.effect(
     'bootstraps background polling for externally adopted workspaces on startup',
     () =>
       withDatabase((database, databaseContext) =>
@@ -118,7 +118,7 @@ describe('PrWatcher', () => {
       )
   )
 
-  it.scoped(
+  it.effect(
     'clears stale PR data without warning when a workspace path is missing',
     () => {
       const logs: string[] = []
@@ -167,7 +167,7 @@ describe('PrWatcher', () => {
     }
   )
 
-  it.scoped('refreshes polling coverage for an adopted workspace', () =>
+  it.effect('refreshes polling coverage for an adopted workspace', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         const prWatcher = yield* buildPrWatcher(databaseContext)
@@ -185,7 +185,7 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped('periodically discovers an adopted workspace', () =>
+  it.effect('periodically discovers an adopted workspace', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         const prWatcher = yield* buildPrWatcher(databaseContext)
@@ -210,7 +210,7 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped('polling coverage continuously polls adopted workspaces', () =>
+  it.effect('polling coverage continuously polls adopted workspaces', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         database.insertTask({
@@ -256,7 +256,7 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped(
+  it.effect(
     'checkPr stops polling when the durable workspace task is not found',
     () =>
       withDatabase((database, databaseContext) =>

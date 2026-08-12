@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { PanelNode } from '@laborer/shared/types'
 import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
 import { useEffect, useMemo } from 'react'

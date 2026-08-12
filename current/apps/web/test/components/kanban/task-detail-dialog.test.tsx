@@ -10,7 +10,7 @@ const { toastError, updateTask } = vi.hoisted(() => ({
   updateTask: vi.fn(),
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) =>
     atom === 'task.update' ? updateTask : vi.fn(),
   useAtomValue: vi.fn(),

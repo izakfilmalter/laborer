@@ -31,13 +31,13 @@
  * @see Issue 6: Client tree pane — Lazy per-directory fetching
  */
 
-import { Result } from '@effect-atom/atom'
 import {
   useAtomMount,
   useAtomSet,
   useAtomValue,
-} from '@effect-atom/atom-react/Hooks'
+} from '@effect/atom-react/Hooks'
 import type { FileNode } from '@laborer/shared/rpc'
+import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'

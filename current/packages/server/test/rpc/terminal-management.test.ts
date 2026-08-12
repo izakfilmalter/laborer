@@ -37,7 +37,7 @@ const makeWorkspaceFixture = (
 > =>
   Effect.gen(function* () {
     const repoPath = initRepo('rpc-terminal-management', tempRoots)
-    const project = yield* context.client.project.add({ repoPath })
+    const project = yield* context.client['project.add']({ repoPath })
     const workspaceId = crypto.randomUUID()
     const worktreePath = join(repoPath, '.worktrees', workspaceId)
 
@@ -57,7 +57,7 @@ const makeWorkspaceFixture = (
   })
 
 describe('LaborerRpcs terminal management', () => {
-  it.scoped('terminal.spawn delegates to the terminal client boundary', () =>
+  it.effect('terminal.spawn delegates to the terminal client boundary', () =>
     runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
@@ -69,7 +69,7 @@ describe('LaborerRpcs terminal management', () => {
           { client, terminalClientRecorder, ...context },
           tempRoots
         )
-        const terminal = yield* client.terminal.spawn({
+        const terminal = yield* client['terminal.spawn']({
           workspaceId,
           command: 'pnpm test',
         })

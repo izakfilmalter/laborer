@@ -24,7 +24,7 @@ export interface AgentTaskListFilters {
   readonly status?: TaskStatus
 }
 
-export class AgentTaskError extends Schema.TaggedError<AgentTaskError>()(
+export class AgentTaskError extends Schema.TaggedErrorClass<AgentTaskError>()(
   'AgentTaskError',
   {
     code: Schema.String,
@@ -124,9 +124,7 @@ const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
     },
   })
 
-export class AgentTaskService extends Context.Tag(
-  '@laborer/server/AgentTaskService'
-)<
+export class AgentTaskService extends Context.Service<
   AgentTaskService,
   {
     readonly createTask: (input: {
@@ -150,7 +148,7 @@ export class AgentTaskService extends Context.Tag(
       readonly title?: string
     }) => Effect.Effect<Task, AgentTaskError>
   }
->() {
+>()('@laborer/server/AgentTaskService') {
   static layer(
     path = taskDatabasePath()
   ): Layer.Layer<AgentTaskService, never, LaborerDatabase> {

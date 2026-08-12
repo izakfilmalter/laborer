@@ -16,7 +16,7 @@
  * @see packages/shared/src/rpc.ts — terminal.spawn RPC definition
  */
 
-import { useAtomMount, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomMount, useAtomValue } from '@effect/atom-react/Hooks'
 import { Effect, Runtime } from 'effect'
 import { useCallback } from 'react'
 

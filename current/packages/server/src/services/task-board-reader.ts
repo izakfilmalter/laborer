@@ -34,9 +34,9 @@ const toEvent = (read: TaskRead): TaskBoardEvent => ({
  */
 export const subscribeToTaskBoard = (
   path?: string,
-  pollInterval: Duration.DurationInput = DEFAULT_POLL_INTERVAL
+  pollInterval: Duration.Input = DEFAULT_POLL_INTERVAL
 ): Stream.Stream<TaskBoardEvent, RpcError> =>
-  Stream.unwrapScoped(
+  Stream.unwrap(
     Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => NodeTaskBoardDatabase.open(path ?? taskDatabasePath()),

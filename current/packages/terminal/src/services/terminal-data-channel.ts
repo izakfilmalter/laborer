@@ -32,7 +32,7 @@
 
 import type { TerminalRpcError } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Deferred, Effect, PubSub, Runtime, type Scope } from 'effect'
+import { type Context, Deferred, Effect, PubSub, type Scope } from 'effect'
 import { PtyHostClient } from './pty-host-client.js'
 import {
   type TerminalLifecycleEvent,
@@ -213,7 +213,8 @@ const attachDataChannel = (
     yield* Effect.forkScoped(
       Effect.gen(function* () {
         while (true) {
-          const event: TerminalLifecycleEvent = yield* lifecycleQueue.take
+          const event: TerminalLifecycleEvent =
+            yield* PubSub.take(lifecycleQueue)
           if (event._tag === 'Exited' && event.id === terminalId) {
             portSend(encodeStatus('stopped', event.exitCode))
           } else if (
@@ -268,7 +269,7 @@ const attachDataChannel = (
     // Completing this Deferred ends the channel and runs the finalizer.
     const portClosed = yield* Deferred.make<void>()
     const closeListener = (): void => {
-      Deferred.unsafeDone(portClosed, Effect.void)
+      Deferred.doneUnsafe(portClosed, Effect.void)
     }
 
     if (typeof port.on === 'function') {
@@ -325,10 +326,10 @@ const attachDataChannel = (
 const handleTerminalDataPort = (
   port: RpcMessagePort,
   terminalId: string,
-  runtime: Runtime.Runtime<TerminalManager | PtyHostClient>
+  context: Context.Context<TerminalManager | PtyHostClient>
 ): void => {
   const program = attachDataChannel(port, terminalId).pipe(Effect.scoped)
-  Runtime.runFork(runtime)(program)
+  Effect.runForkWith(context)(program)
 }
 
 export { attachDataChannel, handleTerminalDataPort, parseClientMessage }

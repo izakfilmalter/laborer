@@ -14,10 +14,10 @@
  * @see packages/server/test/rpc/test-layer.ts — Server RPC test pattern
  */
 
-import { RpcTest } from '@effect/rpc'
 import { assert, describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { RpcTest } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
@@ -52,8 +52,8 @@ const TestTerminalRpcClient = RpcTest.makeClient(TerminalRpcs)
  */
 type TerminalRpcClient = Effect.Effect.Success<typeof TestTerminalRpcClient>
 
-let layerScope: Scope.CloseableScope
-let clientScope: Scope.CloseableScope
+let layerScope: Scope.Closeable
+let clientScope: Scope.Closeable
 let client: TerminalRpcClient
 
 /** Small delay to allow async PTY events to propagate through IPC. */
@@ -77,7 +77,7 @@ beforeAll(async () => {
   client = await Effect.runPromise(
     TestTerminalRpcClient.pipe(
       Effect.provide(Layer.succeedContext(context)),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 }, 30_000)
@@ -104,7 +104,7 @@ describe(
 
     it('terminal.spawn creates a terminal and returns TerminalInfo', async () => {
       const result = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "rpc-spawn-test"',
           cwd: TEST_CWD,
           cols: 80,
@@ -128,7 +128,7 @@ describe(
 
     it('terminal.spawn with args passes them through the RPC layer', async () => {
       const result = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: '/bin/echo',
           args: ['rpc', 'args', 'test'],
           cwd: TEST_CWD,
@@ -151,7 +151,7 @@ describe(
 
     it('terminal.write sends data to a running terminal without error', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -164,20 +164,20 @@ describe(
 
       // Write should succeed without error
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'rpc-write-test\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     it('terminal.write fails for a nonexistent terminal', async () => {
       const result = await run(
         Effect.either(
-          client.terminal.write({
+          client['terminal.write']({
             id: 'nonexistent-terminal-id',
             data: 'should-fail',
           })
@@ -193,7 +193,7 @@ describe(
 
     it('terminal.resize changes dimensions through the RPC layer', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -206,7 +206,7 @@ describe(
 
       // Resize should succeed without error
       await run(
-        client.terminal.resize({
+        client['terminal.resize']({
           id: terminal.id,
           cols: 120,
           rows: 40,
@@ -215,20 +215,20 @@ describe(
 
       // Verify PTY is still alive by writing to it
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'after-rpc-resize\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     it('terminal.resize fails for a nonexistent terminal', async () => {
       const result = await run(
         Effect.either(
-          client.terminal.resize({
+          client['terminal.resize']({
             id: 'nonexistent-terminal-id',
             cols: 100,
             rows: 50,
@@ -245,7 +245,7 @@ describe(
 
     it('terminal.kill marks a terminal as stopped through the RPC layer', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -256,11 +256,11 @@ describe(
 
       await delay(500)
 
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
 
       // Verify via list that it's stopped (not removed)
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
       const found = terminals.find(
         (t: { readonly id: string }) => t.id === terminal.id
       )
@@ -270,7 +270,9 @@ describe(
 
     it('terminal.kill fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(client.terminal.kill({ id: 'nonexistent-terminal-id' }))
+        Effect.either(
+          client['terminal.kill']({ id: 'nonexistent-terminal-id' })
+        )
       )
 
       assert.isTrue(Either.isLeft(result))
@@ -282,7 +284,7 @@ describe(
 
     it('terminal.remove fully deletes a terminal through the RPC layer', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "to-be-removed-rpc"',
           cwd: TEST_CWD,
           cols: 80,
@@ -294,7 +296,7 @@ describe(
       await delay(2000)
 
       // Terminal should be stopped after echo exits
-      const beforeRemove = await run(client.terminal.list())
+      const beforeRemove = await run(client['terminal.list']())
       assert.strictEqual(
         beforeRemove.find((t: { readonly id: string }) => t.id === terminal.id)
           ?.status,
@@ -302,10 +304,10 @@ describe(
       )
 
       // Remove it through RPC
-      await run(client.terminal.remove({ id: terminal.id }))
+      await run(client['terminal.remove']({ id: terminal.id }))
 
       // Should no longer appear in list
-      const afterRemove = await run(client.terminal.list())
+      const afterRemove = await run(client['terminal.list']())
       assert.isUndefined(
         afterRemove.find((t: { readonly id: string }) => t.id === terminal.id)
       )
@@ -313,7 +315,9 @@ describe(
 
     it('terminal.remove fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(client.terminal.remove({ id: 'nonexistent-terminal-id' }))
+        Effect.either(
+          client['terminal.remove']({ id: 'nonexistent-terminal-id' })
+        )
       )
 
       assert.isTrue(Either.isLeft(result))
@@ -325,7 +329,7 @@ describe(
 
     it('terminal.restart respawns a stopped terminal through the RPC layer', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -337,11 +341,13 @@ describe(
       await delay(500)
 
       // Kill it
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
 
       // Restart through RPC
-      const restarted = await run(client.terminal.restart({ id: terminal.id }))
+      const restarted = await run(
+        client['terminal.restart']({ id: terminal.id })
+      )
 
       assert.strictEqual(restarted.id, terminal.id)
       assert.strictEqual(restarted.command, 'cat')
@@ -352,20 +358,20 @@ describe(
 
       // Verify it's alive by writing
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'after-rpc-restart\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     it('terminal.restart fails for a nonexistent terminal', async () => {
       const result = await run(
         Effect.either(
-          client.terminal.restart({ id: 'nonexistent-terminal-id' })
+          client['terminal.restart']({ id: 'nonexistent-terminal-id' })
         )
       )
 
@@ -381,7 +387,7 @@ describe(
 
       // Spawn a long-running terminal
       const running = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -392,7 +398,7 @@ describe(
 
       // Spawn a short-lived terminal
       const shortLived = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "rpc-list-done"',
           cwd: TEST_CWD,
           cols: 80,
@@ -403,7 +409,7 @@ describe(
 
       await delay(2000)
 
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
 
       const runningTerminal = terminals.find(
         (t: { readonly id: string }) => t.id === running.id
@@ -422,7 +428,7 @@ describe(
       assert.strictEqual(stoppedTerminal?.hasChildProcess, false)
 
       // Clean up
-      await run(client.terminal.kill({ id: running.id }))
+      await run(client['terminal.kill']({ id: running.id }))
     })
 
     // -----------------------------------------------------------------------
@@ -440,7 +446,7 @@ describe(
       }> = []
 
       // Get the event stream from the RPC client
-      const eventStream = client.terminal.events()
+      const eventStream = client['terminal.events']()
 
       // Run a collector in the background that collects a limited number
       // of events with a timeout, using Effect.runFork to avoid scope issues
@@ -453,7 +459,7 @@ describe(
             })
           ),
           Effect.timeout('5 seconds'),
-          Effect.catchAll(() => Effect.void)
+          Effect.catch(() => Effect.void)
         )
       )
 
@@ -462,7 +468,7 @@ describe(
 
       // Spawn a terminal — should produce a Spawned event
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "rpc-events-test"',
           cwd: TEST_CWD,
           cols: 80,
@@ -496,7 +502,7 @@ describe(
     it('terminal.list includes foregroundProcess field through the RPC schema', async () => {
       // Spawn 'cat' which blocks on stdin — the shell execs into cat
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -508,7 +514,7 @@ describe(
       // Give the process time to start
       await delay(1000)
 
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
       const found = terminals.find((t) => t.id === terminal.id)
 
       assert.isDefined(found)
@@ -518,12 +524,12 @@ describe(
       assert.strictEqual(found?.foregroundProcess?.category, 'unknown')
       assert.strictEqual(typeof found?.foregroundProcess?.label, 'string')
 
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     it('terminal.spawn returns foregroundProcess as null initially', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -536,12 +542,12 @@ describe(
       assert.strictEqual(terminal.foregroundProcess, null)
 
       await delay(500)
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     it('terminal.list returns null foregroundProcess for stopped terminals', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "rpc-fg-stopped"',
           cwd: TEST_CWD,
           cols: 80,
@@ -553,14 +559,14 @@ describe(
       // Wait for echo to finish
       await delay(2000)
 
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
       const found = terminals.find((t) => t.id === terminal.id)
 
       assert.isDefined(found)
       assert.strictEqual(found?.status, 'stopped')
       assert.strictEqual(found?.foregroundProcess, null)
 
-      await run(client.terminal.remove({ id: terminal.id }))
+      await run(client['terminal.remove']({ id: terminal.id }))
     })
 
     // -----------------------------------------------------------------------
@@ -570,7 +576,7 @@ describe(
     it('terminal.spawn with id field uses the provided ID', async () => {
       const customId = 'rpc-custom-id-test-12345'
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -582,7 +588,7 @@ describe(
 
       assert.strictEqual(terminal.id, customId)
 
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
 
     // -----------------------------------------------------------------------
@@ -611,7 +617,7 @@ describe(
       }> = []
 
       // Get the event stream from the RPC client
-      const eventStream = client.terminal.events()
+      const eventStream = client['terminal.events']()
 
       const collectFiber = Effect.runFork(
         eventStream.pipe(
@@ -622,7 +628,7 @@ describe(
             })
           ),
           Effect.timeout('5 seconds'),
-          Effect.catchAll(() => Effect.void)
+          Effect.catch(() => Effect.void)
         )
       )
 
@@ -631,7 +637,7 @@ describe(
 
       // Spawn a terminal
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -669,7 +675,7 @@ describe(
       }
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
     })
   }
 )

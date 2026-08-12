@@ -99,7 +99,7 @@ afterAll(() => {
 })
 
 describe('Startup bootstrap and project lifecycle integration', () => {
-  it.scoped(
+  it.effect(
     'project add performs canonical discovery and initial refresh before returning ready state',
     () =>
       Effect.gen(function* () {
@@ -131,7 +131,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('project add starts the repository watcher coordinator', () =>
+  it.effect('project add starts the repository watcher coordinator', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('boot-add-watcher', tempRoots)
 
@@ -166,7 +166,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('server boot restores watchers for all persisted projects', () =>
+  it.effect('server boot restores watchers for all persisted projects', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('boot-restore', tempRoots)
       const existingWorktreePath = join(
@@ -243,7 +243,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
     }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
-  it.scoped(
+  it.effect(
     'server boot reconciles worktree and branch state that changed while offline',
     () =>
       Effect.gen(function* () {
@@ -341,7 +341,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
-  it.scoped(
+  it.effect(
     'project add through public API returns ready state with all refreshes complete',
     () =>
       Effect.gen(function* () {
@@ -383,7 +383,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'public repo-watching stack stays consistent across branch refresh and worktree churn',
     () =>
       Effect.gen(function* () {
@@ -472,7 +472,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'server boot restores watchers for projects with persisted identity without re-resolving',
     () =>
       Effect.gen(function* () {
@@ -555,7 +555,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
   )
 
-  it.scoped(
+  it.effect(
     'startup restore produces the same workspace and branch state as fresh registration',
     () =>
       Effect.gen(function* () {

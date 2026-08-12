@@ -1,4 +1,3 @@
-import { Atom } from '@effect-atom/atom'
 import type {
   SharedProjectRow,
   SharedSettingRow,
@@ -6,6 +5,7 @@ import type {
   SharedTaskRow,
 } from '@laborer/shared/rpc'
 import { Effect, Stream } from 'effect'
+import { Atom } from 'effect/unstable/reactivity'
 
 import { LaborerClient } from './laborer-client'
 

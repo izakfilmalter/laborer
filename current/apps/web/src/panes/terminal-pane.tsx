@@ -38,7 +38,7 @@
  * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import { FitAddon } from '@xterm/addon-fit'
 import { ImageAddon } from '@xterm/addon-image'
 import { type ISearchResultChangeEvent, SearchAddon } from '@xterm/addon-search'

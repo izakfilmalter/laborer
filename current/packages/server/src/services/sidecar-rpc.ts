@@ -14,11 +14,11 @@
  * @see Issue #20: Build script update + port reservation removal
  */
 
-import type { Rpc, RpcGroup } from '@effect/rpc'
-import { RpcClient } from '@effect/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Effect, Layer, Schedule, Scope } from 'effect'
+import type { Rpc, RpcGroup } from 'effect/unstable/rpc'
+import { RpcClient } from 'effect/unstable/rpc'
 
 /**
  * Retry schedule for sidecar event stream reconnections (unbounded).
@@ -40,7 +40,7 @@ export const sidecarEventStreamSchedule = Schedule.exponential('1 second').pipe(
  * via `Layer.buildWithScope` so that listeners and the queue drain
  * fiber survive for the lifetime of the scope (instead of being torn
  * down when `RpcClient.make` returns, which is what happens with
- * `Effect.provide(Layer.scoped(...))`).
+ * `Effect.provide(Layer.effect(...))`).
  *
  * @see Issue #13: Server-to-terminal MessagePort channel
  */
@@ -51,7 +51,7 @@ export const createMessagePortRpcClient = <Rpcs extends Rpc.Any>(
 ) =>
   Effect.flatMap(
     Layer.buildWithScope(
-      Layer.scoped(RpcClient.Protocol, makeClientProtocolMessagePort(port)),
+      Layer.effect(RpcClient.Protocol, makeClientProtocolMessagePort(port)),
       scope
     ),
     (context) =>

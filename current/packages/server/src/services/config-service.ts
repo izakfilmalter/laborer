@@ -176,7 +176,7 @@ const readConfigFile = (
           cause,
         }),
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.gen(function* () {
           yield* Effect.logWarning(
             `${error.message}: ${String(error.cause)}`
@@ -198,7 +198,7 @@ const readConfigFile = (
           cause,
         }),
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.gen(function* () {
           yield* Effect.logWarning(
             `${error.message}: ${String(error.cause)}`
@@ -251,7 +251,7 @@ const readRawConfigObject = (
           cause,
         }),
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.gen(function* () {
           yield* Effect.logWarning(
             `${error.message}: ${String(error.cause)}`
@@ -273,7 +273,7 @@ const readRawConfigObject = (
           cause,
         }),
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.gen(function* () {
           yield* Effect.logWarning(
             `${error.message}: ${String(error.cause)}`
@@ -366,7 +366,7 @@ const writeJsonAtomic = (
   content: Record<string, unknown>
 ): Effect.Effect<void, never> =>
   writeJsonAtomicStrict(targetPath, content).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
         Effect.annotateLogs('module', logPrefix)
       )
@@ -422,7 +422,7 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
             cause,
           }),
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
             Effect.annotateLogs('module', logPrefix)
           )
@@ -518,7 +518,7 @@ const mergeConfigs = (
  * Provides config resolution and reading for project and global configs.
  * Stateless service — reads files on each call (no caching).
  */
-class ConfigService extends Context.Tag('@laborer/ConfigService')<
+class ConfigService extends Context.Service<
   ConfigService,
   {
     /**
@@ -559,7 +559,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
       updates: ProjectConfigUpdates
     ) => Effect.Effect<void, never>
   }
->() {
+>()('@laborer/ConfigService') {
   static readonly layer = Layer.succeed(
     ConfigService,
     ConfigService.of({

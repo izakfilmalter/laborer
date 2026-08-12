@@ -10,11 +10,11 @@
  * @see packages/server/src/utility-main.ts — Server utility process entry
  */
 
-import { layerWebSocket, WebSocketConstructor } from '@effect/platform/Socket'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
-import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Duration, Effect, Layer, Schedule } from 'effect'
+import { AtomRpc } from 'effect/unstable/reactivity'
+import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
+import { Socket } from 'effect/unstable/socket'
 
 import { getBackendRpcWsUrl } from '@/lib/desktop'
 import {
@@ -96,11 +96,11 @@ export const wsReconnectRetrySchedule = Schedule.union(
 ).pipe(Schedule.resetAfter(Duration.millis(WS_RECONNECT_RESET_AFTER_MS)))
 
 const trackingWebSocketConstructorLayer = Layer.succeed(
-  WebSocketConstructor,
+  Socket.WebSocketConstructor,
   createTrackingWebSocket
 )
 
-const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
+const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.effect(
   RpcClient.Protocol,
   Effect.gen(function* () {
     const rpcUrl = getBackendRpcWsUrl()
@@ -109,7 +109,7 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
         'Server backend is not running — could not resolve WebSocket URL'
       )
     }
-    const socketLayer = layerWebSocket(rpcUrl).pipe(
+    const socketLayer = Socket.layerWebSocket(rpcUrl).pipe(
       Layer.provide(trackingWebSocketConstructorLayer)
     )
     const protocol = yield* RpcClient.layerProtocolSocket({
@@ -132,7 +132,7 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
  */
 export const ConfigReactivityKeys = ['config'] as const
 
-export class LaborerClient extends AtomRpc.Tag<LaborerClient>()(
+export class LaborerClient extends AtomRpc.Service<LaborerClient>()(
   'LaborerClient',
   {
     group: LaborerRpcs,

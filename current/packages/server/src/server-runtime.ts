@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { NodeHttpServer } from '@effect/platform-node'
+import { LaborerRpcs } from '@laborer/shared/rpc'
+import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
 import {
   HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from '@effect/platform'
-import { NodeHttpServer } from '@effect/platform-node'
-import { RpcSerialization, RpcServer } from '@effect/rpc'
-import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
+} from 'effect/unstable/http'
+import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { AgentTaskService } from './services/agent-task-service.js'
 import { serverDiscoveryLayer } from './services/server-discovery.js'
@@ -21,7 +21,10 @@ import {
 } from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
-const PortSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 65_535))
+const PortSchema = Schema.Number.pipe(
+  Schema.isInt(),
+  Schema.isBetween(1, 65_535)
+)
 
 export interface ServerRuntimeConfigShape {
   readonly authToken: string | undefined
@@ -29,11 +32,12 @@ export interface ServerRuntimeConfigShape {
   readonly port: number
 }
 
-export class ServerRuntimeConfig extends Context.Tag(
-  '@laborer/server/ServerRuntimeConfig'
-)<ServerRuntimeConfig, ServerRuntimeConfigShape>() {}
+export class ServerRuntimeConfig extends Context.Service<
+  ServerRuntimeConfig,
+  ServerRuntimeConfigShape
+>()('@laborer/server/ServerRuntimeConfig') {}
 
-class McpLoopbackRequiredError extends Schema.TaggedError<McpLoopbackRequiredError>()(
+class McpLoopbackRequiredError extends Schema.TaggedErrorClass<McpLoopbackRequiredError>()(
   'McpLoopbackRequiredError',
   { message: Schema.String }
 ) {}
@@ -125,7 +129,7 @@ const authedWebSocketRoute = (
     )
   )
 
-const makeRoutesLayer = Layer.unwrapScoped(
+const makeRoutesLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
     const rpcWebSocketApp = yield* RpcServer.toHttpAppWebsocket(
@@ -151,7 +155,7 @@ const makeRoutesLayer = Layer.unwrapScoped(
   })
 )
 
-export const makeServerLayer = Layer.unwrapEffect(
+export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
     if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {

@@ -10,10 +10,10 @@
  * Also verifies deferred RPCs return SERVICE_INITIALIZING errors.
  */
 
-import { RpcTest } from '@effect/rpc'
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Chunk, Context, Effect, Layer, Option, Ref, Stream } from 'effect'
+import { RpcTest } from 'effect/unstable/rpc'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import {
@@ -69,10 +69,10 @@ const CoreOnlyRpcClient = RpcTest.makeClient(LaborerRpcs).pipe(
 )
 
 describe('Core layers (Issue #13)', () => {
-  it.scoped('health.check responds with only core layers', () =>
+  it.effect('health.check responds with only core layers', () =>
     Effect.gen(function* () {
       const client = yield* CoreOnlyRpcClient
-      const response = yield* client.health.check()
+      const response = yield* client['health.check']()
 
       assert.strictEqual(response.status, 'ok')
       assert.isTrue(Number.isFinite(response.uptime))
@@ -80,33 +80,33 @@ describe('Core layers (Issue #13)', () => {
     })
   )
 
-  it.scoped('server starts without terminal or file-watcher sidecars', () =>
+  it.effect('server starts without terminal or file-watcher sidecars', () =>
     Effect.gen(function* () {
       // This test proves the RPC layer can be built and serve health
       // checks without the terminal or file-watcher sidecars running.
       // The CoreOnlyRpcLayer doesn't include TerminalClient.layer or
       // FileWatcherClient.layer — only placeholder proxies.
       const client = yield* CoreOnlyRpcClient
-      const response = yield* client.health.check()
+      const response = yield* client['health.check']()
 
       assert.strictEqual(response.status, 'ok')
     })
   )
 
-  it.scoped('database-backed core RPCs work with only core layers', () =>
+  it.effect('database-backed core RPCs work with only core layers', () =>
     Effect.gen(function* () {
       const client = yield* CoreOnlyRpcClient
 
       // Building and serving the core RPC proves the database layer is
       // available without any deferred services.
-      const response = yield* client.health.check()
+      const response = yield* client['health.check']()
       assert.isTrue(response.uptime >= 0)
     })
   )
 })
 
 describe('Deferred service proxies (Issue #14)', () => {
-  it.scoped(
+  it.effect(
     'deferred service RPC returns SERVICE_INITIALIZING error before init',
     () =>
       Effect.gen(function* () {
@@ -114,7 +114,7 @@ describe('Deferred service proxies (Issue #14)', () => {
 
         // Calling a deferred-service RPC should fail with
         // SERVICE_INITIALIZING error, not a defect or missing service.
-        const result = yield* client.project.list().pipe(
+        const result = yield* client['project.list']().pipe(
           Effect.matchEffect({
             onSuccess: () => Effect.succeed('success' as const),
             onFailure: (error) => Effect.succeed(error),
@@ -130,7 +130,7 @@ describe('Deferred service proxies (Issue #14)', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'core RPCs continue working regardless of deferred service state',
     () =>
       Effect.gen(function* () {
@@ -138,7 +138,7 @@ describe('Deferred service proxies (Issue #14)', () => {
 
         // health.check is a core RPC — it should always work,
         // even when all deferred services return SERVICE_INITIALIZING.
-        const response = yield* client.health.check()
+        const response = yield* client['health.check']()
         assert.strictEqual(response.status, 'ok')
       })
   )
@@ -171,7 +171,7 @@ const makeScopedInitStatusContext = Effect.gen(function* () {
 })
 
 describe('Lifecycle init status (Issue #15)', () => {
-  it.scoped(
+  it.effect(
     'lifecycle.initStatus stream emits { ready: false } initially',
     () =>
       Effect.gen(function* () {
@@ -188,7 +188,7 @@ describe('Lifecycle init status (Issue #15)', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'lifecycle.initStatus stream completes with { ready: true } after deferred services init',
     () =>
       Effect.gen(function* () {
@@ -211,12 +211,12 @@ describe('Lifecycle init status (Issue #15)', () => {
       })
   )
 
-  it.scoped('lifecycle.initStatus works alongside other core RPCs', () =>
+  it.effect('lifecycle.initStatus works alongside other core RPCs', () =>
     Effect.gen(function* () {
       const { client } = yield* makeScopedInitStatusContext
 
       // Both core RPCs should work in the same session
-      const health = yield* client.health.check()
+      const health = yield* client['health.check']()
       const first = yield* client.lifecycle
         .initStatus()
         .pipe(Stream.take(1), Stream.runHead)

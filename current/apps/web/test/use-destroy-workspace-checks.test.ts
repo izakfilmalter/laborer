@@ -9,7 +9,7 @@ const { checkDirtyFn, mutationMap, refreshTerminalsFn, terminalsState } =
     terminalsState: { terminals: [] as readonly unknown[] },
   }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
     return mutationMap.get(atom) ?? vi.fn()
   },

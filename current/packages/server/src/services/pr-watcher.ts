@@ -56,7 +56,7 @@ const GhPrData = Schema.Struct({
   title: Schema.optional(Schema.NullOr(Schema.String)),
   url: Schema.optional(Schema.NullOr(Schema.String)),
 })
-const GhPrDataJson = Schema.parseJson(GhPrData)
+const GhPrDataJson = Schema.fromJsonString(GhPrData)
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
@@ -71,7 +71,7 @@ const EMPTY_PR: PrData = {
   state: null,
 }
 
-class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
+class PrWatcher extends Context.Service<
   PrWatcher,
   {
     /**
@@ -124,8 +124,8 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
     /** Ensure every currently non-destroyed workspace has a polling fiber. */
     readonly refreshPolling: () => Effect.Effect<void>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/PrWatcher') {
+  static readonly layer = Layer.effect(
     PrWatcher,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -133,7 +133,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
       // Track active polling fibers per workspace.
       const pollingFibers = yield* Ref.make<
-        Map<string, Fiber.RuntimeFiber<void, never>>
+        Map<string, Fiber.Fiber<void, never>>
       >(new Map())
       const startingWorkspaces = yield* Ref.make<ReadonlySet<string>>(new Set())
 
@@ -162,7 +162,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           'number,url,title,state,isDraft',
           (error) => error
         ).pipe(
-          Effect.catchAll((error) => {
+          Effect.catch((error) => {
             // The directory may have disappeared between the existence check
             // and spawn. Treat that like the pre-spawn missing-path case.
             if (!existsSync(worktreePath)) {
@@ -184,10 +184,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return EMPTY_PR
         }
 
-        const parseResult = yield* Schema.decodeUnknown(GhPrDataJson)(
+        const parseResult = yield* Schema.decodeUnknownEffect(GhPrDataJson)(
           spawnResult.stdout.trim()
         ).pipe(
-          Effect.catchAll(() =>
+          Effect.catch(() =>
             Effect.logWarning(
               '[PrWatcher] Failed to parse gh pr view output'
             ).pipe(Effect.as(undefined))
@@ -264,7 +264,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         }
 
         const task = yield* findWorkspaceTask(laborerDatabase, workspace).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `[PrWatcher] Failed to find durable task for workspace ${workspaceId}: ${error.message}`
             ).pipe(Effect.as(null))
@@ -290,7 +290,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             prTitle: prData.title,
             prUrl: prData.url,
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `[PrWatcher] Failed to persist PR facts for task ${task.id}: ${error.message}`
               )
@@ -319,7 +319,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
               prState: prData.state,
             })
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `[PrWatcher] Failed to move task for workspace ${workspaceId}: ${error.message}`
                 )
@@ -366,7 +366,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             : PR_BACKGROUND_POLL_INTERVAL_MS
 
           yield* checkPr(workspaceId).pipe(
-            Effect.catchAllCause((cause) =>
+            Effect.catchCause((cause) =>
               Effect.logWarning(
                 `[PrWatcher] polling check failed for workspace ${workspaceId}: ${String(cause)}`
               )
@@ -375,7 +375,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           yield* Effect.sleep(Duration.millis(interval))
         }).pipe(Effect.forever, Effect.asVoid)
 
-        const fiber = yield* Effect.forkDaemon(pollEffect)
+        const fiber = yield* Effect.forkDetach(pollEffect)
 
         yield* Ref.update(pollingFibers, (fibers) => {
           const next = new Map(fibers)
@@ -466,12 +466,12 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
       // Re-scan at the background tier so reconciler-adopted worktrees gain a
       // watcher after startup.
       const refreshPollingCoverage = refreshPolling().pipe(
-        Effect.catchAllCause((cause) =>
+        Effect.catchCause((cause) =>
           Effect.logWarning(
             `[PrWatcher] polling coverage refresh failed: ${String(cause)}`
           )
         ),
-        Effect.zipRight(
+        Effect.andThen(
           Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
         )
       )

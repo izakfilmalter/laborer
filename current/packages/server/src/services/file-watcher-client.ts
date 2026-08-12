@@ -26,7 +26,6 @@
  */
 
 import { NodeSocket } from '@effect/platform-node'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
 import {
   FileWatcherRpcError,
   FileWatcherRpcs,
@@ -34,6 +33,7 @@ import {
 } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { Context, Effect, Layer, Option, Scope, Stream } from 'effect'
+import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import {
   createMessagePortRpcClient,
   sidecarEventStreamSchedule,
@@ -65,12 +65,12 @@ interface FileEventSubscription {
  *
  * @see Issue #14: File-watcher as utility process
  */
-class FileWatcherRpcPort extends Context.Tag('@laborer/FileWatcherRpcPort')<
+class FileWatcherRpcPort extends Context.Service<
   FileWatcherRpcPort,
   { readonly awaitPort: Effect.Effect<RpcMessagePort> }
->() {}
+>()('@laborer/FileWatcherRpcPort') {}
 
-class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
+class FileWatcherClient extends Context.Service<
   FileWatcherClient,
   {
     /**
@@ -128,8 +128,8 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
       FileWatcherRpcError
     >
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/FileWatcherClient') {
+  static readonly layer = Layer.effect(
     FileWatcherClient,
     Effect.gen(function* () {
       // Capture the layer's scope so lazy connection can use it later.
@@ -201,7 +201,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
           )
 
           // Start event stream subscription
-          yield* client.watcher.events().pipe(
+          yield* client['watcher.events']().pipe(
             Stream.tap((event) =>
               Effect.sync(() => {
                 for (const handler of [...handlers]) {
@@ -212,7 +212,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
             Stream.runDrain,
             // Retry with exponential backoff if the file-watcher service disconnects
             Effect.retry(sidecarEventStreamSchedule),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `File watcher event stream ended: ${String(error)}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -240,44 +240,45 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
       const provideLayerScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.provideService(Scope.Scope, layerScope))
 
-      const subscribe: FileWatcherClient['Type']['subscribe'] = (
+      const subscribe: FileWatcherClient['Service']['subscribe'] = (
         path,
         options
       ) =>
         Effect.gen(function* () {
           const client = yield* provideLayerScope(getOrCreateClient)
           return yield* provideLayerScope(
-            client.watcher
-              .subscribe({
-                path,
-                recursive: options?.recursive,
-                ignoreGlobs:
-                  options?.ignoreGlobs !== undefined
-                    ? [...options.ignoreGlobs]
-                    : undefined,
-              })
-              .pipe(Effect.mapError(mapError))
+            client['watcher.subscribe']({
+              path,
+              recursive: options?.recursive,
+              ignoreGlobs:
+                options?.ignoreGlobs !== undefined
+                  ? [...options.ignoreGlobs]
+                  : undefined,
+            }).pipe(Effect.mapError(mapError))
           )
         }).pipe(Effect.mapError(mapError))
 
-      const unsubscribe: FileWatcherClient['Type']['unsubscribe'] = (id) =>
+      const unsubscribe: FileWatcherClient['Service']['unsubscribe'] = (id) =>
         Effect.gen(function* () {
           const client = yield* provideLayerScope(getOrCreateClient)
           return yield* provideLayerScope(
-            client.watcher.unsubscribe({ id }).pipe(Effect.mapError(mapError))
+            client['watcher.unsubscribe']({ id }).pipe(
+              Effect.mapError(mapError)
+            )
           )
         }).pipe(Effect.mapError(mapError))
 
-      const updateIgnore: FileWatcherClient['Type']['updateIgnore'] = (
+      const updateIgnore: FileWatcherClient['Service']['updateIgnore'] = (
         id,
         ignoreGlobs
       ) =>
         Effect.gen(function* () {
           const client = yield* provideLayerScope(getOrCreateClient)
           return yield* provideLayerScope(
-            client.watcher
-              .updateIgnore({ id, ignoreGlobs: [...ignoreGlobs] })
-              .pipe(Effect.mapError(mapError))
+            client['watcher.updateIgnore']({
+              id,
+              ignoreGlobs: [...ignoreGlobs],
+            }).pipe(Effect.mapError(mapError))
           )
         }).pipe(Effect.mapError(mapError))
 
@@ -295,12 +296,12 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
         }
       }
 
-      const listSubscriptions: FileWatcherClient['Type']['listSubscriptions'] =
+      const listSubscriptions: FileWatcherClient['Service']['listSubscriptions'] =
         () =>
           Effect.gen(function* () {
             const client = yield* provideLayerScope(getOrCreateClient)
             return yield* provideLayerScope(
-              client.watcher.list().pipe(Effect.mapError(mapError))
+              client['watcher.list']().pipe(Effect.mapError(mapError))
             )
           }).pipe(Effect.mapError(mapError))
 

@@ -111,7 +111,7 @@ const createTestLayerWithRecording = (
   )
 
 describe('RepositoryWatchCoordinator scoped lifecycle', () => {
-  it.scoped(
+  it.effect(
     'each registered project gets a scoped watcher coordinator tied to its lifecycle',
     () =>
       Effect.gen(function* () {
@@ -162,7 +162,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'coordinator watches the canonical common git dir for metadata changes',
     () =>
       Effect.gen(function* () {
@@ -207,7 +207,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       })
   )
 
-  it.scoped('removing a project tears down its watchers cleanly', () =>
+  it.effect('removing a project tears down its watchers cleanly', () =>
     Effect.gen(function* () {
       const recording = createRecordingClientLayer()
       const repoPath = initRepo('coord-teardown-1', tempRoots)
@@ -266,7 +266,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
     })
   )
 
-  it.scoped(
+  it.effect(
     'server shutdown tears down watcher resources through scoped service disposal',
     () =>
       Effect.gen(function* () {
@@ -304,7 +304,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       )
   )
 
-  it.scoped('uses FileWatcherClient abstraction for subscriptions', () =>
+  it.effect('uses FileWatcherClient abstraction for subscriptions', () =>
     Effect.gen(function* () {
       const recording = createRecordingClientLayer()
       const repoPath = initRepo('coord-abstraction-1', tempRoots)

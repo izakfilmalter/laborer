@@ -146,9 +146,7 @@ class RepositoryWatchCoordinatorError extends Data.TaggedError(
   readonly message: string
 }> {}
 
-class RepositoryWatchCoordinator extends Context.Tag(
-  '@laborer/RepositoryWatchCoordinator'
-)<
+class RepositoryWatchCoordinator extends Context.Service<
   RepositoryWatchCoordinator,
   {
     /**
@@ -182,8 +180,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
      */
     readonly watchAll: () => Effect.Effect<void, never>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/RepositoryWatchCoordinator') {
+  static readonly layer = Layer.effect(
     RepositoryWatchCoordinator,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -266,7 +264,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           runPromise(
             fileWatcherClient
               .unsubscribe(subId)
-              .pipe(Effect.catchAll(() => Effect.void))
+              .pipe(Effect.catch(() => Effect.void))
           ).catch(() => undefined)
         }
       }
@@ -279,7 +277,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               next.delete(subId)
               return next
             }).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 Ref.update(subscriptionPurposeRef, (map) => {
                   const next = new Map(map)
                   next.delete(subId)
@@ -312,7 +310,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
       ): Effect.Effect<void, never> =>
         reconciler.reconcile(projectId, repoPath).pipe(
           Effect.asVoid,
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Worktree reconciliation failed for project ${projectId} (${reason}): ${error.message}`
             )
@@ -325,7 +323,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
       ): Effect.Effect<void, never> =>
         branchTracker.refreshBranches(projectId).pipe(
           Effect.asVoid,
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Branch refresh failed for project ${projectId} (${reason}): ${error.message}`
             )
@@ -410,7 +408,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               projectId: state.projectId,
               detail: `${reason}; attempting recovery now`,
             }).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 Ref.get(statesRef).pipe(
                   Effect.flatMap((states) => {
                     const latest = states.get(state.projectId)
@@ -546,7 +544,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
                 })
               })
             ),
-            Effect.zipRight(
+            Effect.andThen(
               reconcileWithWarning(state.projectId, state.repoPath, reason)
             )
           )
@@ -587,7 +585,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
             registerSubscription(sub.id, projectId, 'git-dir')
           ),
           Effect.map((sub) => sub.id),
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             logWatcherWarning('Failed to watch git dir', {
               projectId,
               path: gitDirPath,
@@ -610,7 +608,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               registerSubscription(sub.id, projectId, 'worktrees')
             ),
             Effect.map((sub) => sub.id),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               logWatcherWarning('Failed to watch worktrees dir', {
                 projectId,
                 path: worktreesDir,
@@ -638,7 +636,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               registerSubscription(sub.id, projectId, 'repo-root')
             ),
             Effect.map((sub) => sub.id),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               logWatcherWarning('Failed to watch repo root', {
                 projectId,
                 path: repoPath,
@@ -677,7 +675,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
         const resolvedConfig = yield* configService
           .resolveConfig(repoPath, projectName)
           .pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `Failed to resolve config for project ${projectId}: ${String(error)}`
               ).pipe(Effect.as(null))
@@ -769,7 +767,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           const identity = yield* repoIdentity
             .resolve(repoPath)
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `Failed to resolve repo identity for project ${projectId}: ${error.message}`
                 ).pipe(Effect.as(null))
@@ -805,7 +803,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
             })),
             (project) =>
               ensurePersistedIdentity(project as ProjectRecord).pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.logWarning(
                     `Failed to backfill repo identity for project ${project.id}: ${error.message}`
                   ).pipe(Effect.as(project))
@@ -856,9 +854,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
       // Forked as a daemon so the layer completes immediately — watchAll
       // may block on FileWatcherClient RPC subscribe calls which depend
       // on the file-watcher utility process responding to each subscription.
-      yield* Effect.forkDaemon(
+      yield* Effect.forkDetach(
         watchAll().pipe(
-          Effect.catchAllCause((cause) =>
+          Effect.catchCause((cause) =>
             Effect.logError(
               '[RepositoryWatchCoordinator] watchAll bootstrap failed',
               cause

@@ -41,7 +41,7 @@ vi.mock('@/hooks/use-terminal-list', () => ({
   }),
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: (atom: symbol) =>
     atom === Symbol.for('workspaceViews')

@@ -43,13 +43,13 @@
  */
 
 import { createServer } from 'node:http'
-import { HttpRouter } from '@effect/platform'
 import { NodeHttpServer } from '@effect/platform-node'
-import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { Context, Effect, Fiber, Layer, pipe, Ref, Stream } from 'effect'
+import { HttpRouter } from 'effect/unstable/http'
+import { RpcServer } from 'effect/unstable/rpc'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { AgentTaskService } from './services/agent-task-service.js'
@@ -307,7 +307,7 @@ const DeferredServiceStack = WorkspaceProvider.layer.pipe(
  * Provides cheap Ref-backed proxies immediately, then swaps each proxy to the
  * real implementation as the background service groups finish building.
  */
-const DeferredServicesProxyLive = Layer.scopedContext(
+const DeferredServicesProxyLive = Layer.effectContext(
   Effect.gen(function* () {
     const fileService = yield* makeRefDelegatingService(FileService, {
       watcherSubscribe: () =>
@@ -372,7 +372,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           Context.get(stackCtx, WorkspaceSyncService)
         )
       }).pipe(
-        Effect.catchAllCause((cause) =>
+        Effect.catchCause((cause) =>
           Effect.logError('[deferred-init] Service stack init failed', cause)
         ),
         Effect.forkScoped
@@ -393,7 +393,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         )
         yield* Ref.set(terminalClient.ref, Context.get(termCtx, TerminalClient))
       }).pipe(
-        Effect.catchAllCause((cause) =>
+        Effect.catchCause((cause) =>
           Effect.logError('[deferred-init] TerminalClient init failed', cause)
         ),
         Effect.forkScoped
@@ -406,7 +406,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         '[deferred-init] All groups complete — DeferredServicesReady set to true'
       )
     }).pipe(
-      Effect.catchAllCause((cause) =>
+      Effect.catchCause((cause) =>
         Effect.gen(function* () {
           yield* Effect.logError('Deferred services failed to initialize')
           yield* Effect.logError(cause)

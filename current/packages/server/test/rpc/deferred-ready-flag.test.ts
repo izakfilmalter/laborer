@@ -21,10 +21,10 @@
  * @see File tree git status: DeferredServicesReady never set to true
  */
 
-import { RpcTest } from '@effect/rpc'
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Chunk, Effect, Stream } from 'effect'
+import { RpcTest } from 'effect/unstable/rpc'
 import { TestLaborerRpcLayer } from './test-layer.js'
 
 describe('DeferredServicesReady flag (file-tree-git-status)', () => {
@@ -40,7 +40,7 @@ describe('DeferredServicesReady flag (file-tree-git-status)', () => {
    * EXPECTED: FAIL (RED) — TestLaborerRpcLayer uses DeferredServicesReadyLayer
    * which starts at `false` and is never set to `true`.
    */
-  it.scoped(
+  it.effect(
     'lifecycle.initStatus stream emits ready=true when all services are built',
     () =>
       Effect.gen(function* () {

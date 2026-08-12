@@ -16,9 +16,8 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
 import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+import { Rpc, RpcClient, RpcGroup, RpcServer } from 'effect/unstable/rpc'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   layerProtocolMessagePort,
@@ -32,9 +31,12 @@ import { makeClientProtocolMessagePort } from '../src/rpc-transport-messageport-
 // Test RPC definitions
 // ---------------------------------------------------------------------------
 
-class TestRpcError extends Schema.TaggedError<TestRpcError>()('TestRpcError', {
-  message: Schema.String,
-}) {}
+class TestRpcError extends Schema.TaggedErrorClass<TestRpcError>()(
+  'TestRpcError',
+  {
+    message: Schema.String,
+  }
+) {}
 
 const TestRpcs = RpcGroup.make(
   Rpc.make('echo', {
@@ -113,13 +115,13 @@ async function buildServerAndClient() {
   const clientScope = Effect.runSync(Scope.make())
   const protocol = await Effect.runPromise(
     makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
   const client: any = await Effect.runPromise(
     RpcClient.make(TestRpcs).pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 
@@ -225,13 +227,13 @@ describe('makeClientProtocolMessagePort', () => {
     const disconnectClientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-        Scope.extend(disconnectClientScope)
+        Scope.provide(disconnectClientScope)
       )
     )
     const disconnectClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(disconnectClientScope)
+        Scope.provide(disconnectClientScope)
       )
     )
 
@@ -267,13 +269,13 @@ describe('makeClientProtocolMessagePort', () => {
     const cleanupClientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-        Scope.extend(cleanupClientScope)
+        Scope.provide(cleanupClientScope)
       )
     )
     const cleanupClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(cleanupClientScope)
+        Scope.provide(cleanupClientScope)
       )
     )
 
@@ -412,14 +414,14 @@ describe('heartbeat timeout detection', () => {
     const clientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
@@ -514,13 +516,13 @@ describe('heartbeat timeout detection', () => {
     const clientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
@@ -599,12 +601,12 @@ describe('heartbeat timeout detection', () => {
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort), {
         heartbeatEnabled: false,
-      }).pipe(Scope.extend(clientScope))
+      }).pipe(Scope.provide(clientScope))
     )
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 

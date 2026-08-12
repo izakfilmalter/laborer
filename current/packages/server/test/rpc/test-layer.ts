@@ -1,4 +1,3 @@
-import { RpcTest } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import {
   Context,
@@ -8,6 +7,7 @@ import {
   type Scope,
   SubscriptionRef,
 } from 'effect'
+import { RpcTest } from 'effect/unstable/rpc'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
@@ -27,9 +27,7 @@ import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
 import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
 
-class TestTerminalClientRecorder extends Context.Tag(
-  '@laborer/test/TestTerminalClientRecorder'
-)<
+class TestTerminalClientRecorder extends Context.Service<
   TestTerminalClientRecorder,
   {
     readonly killAllForWorkspaceCalls: Ref.Ref<readonly string[]>
@@ -40,7 +38,7 @@ class TestTerminalClientRecorder extends Context.Tag(
       }[]
     >
   }
->() {}
+>()('@laborer/test/TestTerminalClientRecorder') {}
 
 const TestTerminalClientRecorderLayer = Layer.effect(
   TestTerminalClientRecorder,
@@ -220,8 +218,8 @@ export const TestLaborerRpcClient = RpcTest.makeClient(LaborerRpcs)
 
 interface ScopedTestRpcContext {
   readonly client: Effect.Effect.Success<typeof TestLaborerRpcClient>
-  readonly database: LaborerDatabase['Type']['database']
-  readonly terminalClientRecorder: TestTerminalClientRecorder['Type']
+  readonly database: LaborerDatabase['Service']['database']
+  readonly terminalClientRecorder: TestTerminalClientRecorder['Service']
 }
 
 export const makeTestRpcClient = TestLaborerRpcClient.pipe(

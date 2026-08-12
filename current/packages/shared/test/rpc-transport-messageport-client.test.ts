@@ -62,6 +62,8 @@ const TestRpcs = RpcGroup.make(
   })
 )
 
+type TestClient = RpcClient.FromGroup<typeof TestRpcs>
+
 const TestRpcsLive = TestRpcs.toLayer(
   Effect.succeed({
     echo: ({ input }) => Effect.succeed(input),
@@ -118,7 +120,7 @@ async function buildServerAndClient() {
       Scope.provide(clientScope)
     )
   )
-  const client: any = await Effect.runPromise(
+  const client: TestClient = await Effect.runPromise(
     RpcClient.make(TestRpcs).pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
       Scope.provide(clientScope)
@@ -139,7 +141,7 @@ async function buildServerAndClient() {
 // ---------------------------------------------------------------------------
 
 describe('makeClientProtocolMessagePort', () => {
-  let client: any
+  let client: TestClient
   let cleanup: () => Promise<void>
 
   beforeEach(async () => {
@@ -206,6 +208,49 @@ describe('makeClientProtocolMessagePort', () => {
     expect(r3).toBe('third')
   })
 
+  it('routes responses when one protocol is shared by multiple clients', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const serverScope = Effect.runSync(Scope.make())
+    const clientScope = Effect.runSync(Scope.make())
+
+    await Effect.runPromise(
+      Layer.buildWithScope(
+        RpcServer.layer(TestRpcs).pipe(
+          Layer.provide(layerProtocolMessagePort(toRpcPort(port1))),
+          Layer.provide(TestRpcsLive)
+        ),
+        serverScope
+      ).pipe(Effect.asVoid)
+    )
+
+    const protocol = await Effect.runPromise(
+      makeClientProtocolMessagePort(toRpcPort(port2), {
+        heartbeatEnabled: false,
+      }).pipe(Scope.provide(clientScope))
+    )
+    const makeClient = () =>
+      Effect.runPromise(
+        RpcClient.make(TestRpcs).pipe(
+          Effect.provideService(RpcClient.Protocol, protocol),
+          Scope.provide(clientScope)
+        )
+      )
+    const [firstClient, secondClient] = await Promise.all([
+      makeClient(),
+      makeClient(),
+    ])
+
+    const [first, second] = await Promise.all([
+      Effect.runPromise(firstClient.echo({ input: 'first client' })),
+      Effect.runPromise(secondClient.echo({ input: 'second client' })),
+    ])
+    expect(first).toBe('first client')
+    expect(second).toBe('second client')
+
+    await Effect.runPromise(Scope.close(clientScope, Exit.void))
+    await Effect.runPromise(Scope.close(serverScope, Exit.void))
+  })
+
   // -----------------------------------------------------------------------
   // Port disconnection
   // -----------------------------------------------------------------------
@@ -230,7 +275,7 @@ describe('makeClientProtocolMessagePort', () => {
         Scope.provide(disconnectClientScope)
       )
     )
-    const disconnectClient: any = await Effect.runPromise(
+    const disconnectClient: TestClient = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
         Scope.provide(disconnectClientScope)
@@ -262,7 +307,7 @@ describe('makeClientProtocolMessagePort', () => {
         heartbeatEnabled: false,
       }).pipe(Scope.provide(clientScope))
     )
-    const rpcClient: any = await Effect.runPromise(
+    const rpcClient: TestClient = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
         Scope.provide(clientScope)
@@ -306,7 +351,7 @@ describe('makeClientProtocolMessagePort', () => {
         Scope.provide(cleanupClientScope)
       )
     )
-    const cleanupClient: any = await Effect.runPromise(
+    const cleanupClient: TestClient = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
         Scope.provide(cleanupClientScope)
@@ -452,7 +497,7 @@ describe('heartbeat timeout detection', () => {
       )
     )
 
-    const rpcClient: any = await Effect.runPromise(
+    const rpcClient: TestClient = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
         Scope.provide(clientScope)
@@ -562,7 +607,7 @@ describe('heartbeat timeout detection', () => {
         heartbeatEnabled: false,
       }).pipe(Scope.provide(clientScope))
     )
-    const rpcClient: any = await Effect.runPromise(
+    const rpcClient: TestClient = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
         Scope.provide(clientScope)

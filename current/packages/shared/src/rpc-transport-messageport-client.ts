@@ -141,21 +141,25 @@ export const makeClientProtocolMessagePort = (
       const messageQueue =
         yield* Queue.unbounded<RpcMessage.FromServerEncoded>()
 
-      // This transport is point-to-point and each protocol instance belongs to
-      // exactly one RpcClient. If it is ever shared, replace this fixed routing
-      // with request-id -> client-id routing before supporting multiplexing.
-      let singleClientId: number | undefined
+      // A protocol Layer can be shared by more than one RpcClient even though
+      // the underlying MessagePort is point-to-point. Route request-scoped
+      // responses back to the client that sent the request; connection-wide
+      // failures are broadcast to every client using this protocol.
+      const requestClients = new Map<string | number, number>()
 
-      const getSingleClientId = (): number | undefined => {
-        if (singleClientId !== undefined) {
-          return singleClientId
+      const dispatchResponse = (data: RpcMessage.FromServerEncoded) => {
+        if ('requestId' in data) {
+          const clientId = requestClients.get(data.requestId)
+          if (clientId !== undefined) {
+            if (data._tag === 'Exit') {
+              requestClients.delete(data.requestId)
+            }
+            return writeResponse(clientId, data)
+          }
         }
-        const iterator = clientIds.values()
-        const first = iterator.next()
-        if (!first.done) {
-          singleClientId = first.value
-        }
-        return singleClientId
+        return Effect.forEach(clientIds, (clientId) =>
+          writeResponse(clientId, data)
+        )
       }
 
       // Mutable flag tracking whether the port has been closed by the remote
@@ -171,12 +175,7 @@ export const makeClientProtocolMessagePort = (
 
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
-        Effect.flatMap((data) => {
-          const clientId = getSingleClientId()
-          return clientId === undefined
-            ? Effect.void
-            : writeResponse(clientId, data)
-        }),
+        Effect.flatMap(dispatchResponse),
         Effect.forever,
         Effect.forkScoped
       )
@@ -338,7 +337,6 @@ export const makeClientProtocolMessagePort = (
 
       return {
         send(clientId, request, transferables) {
-          singleClientId ??= clientId
           // Check if the port has been closed before attempting to send.
           // This provides a fast failure path instead of silently posting
           // the message into a dead port.
@@ -353,17 +351,24 @@ export const makeClientProtocolMessagePort = (
               })
             )
           }
+          if (request._tag === 'Request') {
+            requestClients.set(request.id, clientId)
+          }
           return Effect.try({
             try: () => {
               port.postMessage(request, transferables as readonly unknown[])
             },
-            catch: (cause) =>
-              new RpcClientError.RpcClientError({
+            catch: (cause) => {
+              if (request._tag === 'Request') {
+                requestClients.delete(request.id)
+              }
+              return new RpcClientError.RpcClientError({
                 reason: new RpcClientError.RpcClientDefect({
                   message: 'Failed to send MessagePort request',
                   cause,
                 }),
-              }),
+              })
+            },
           })
         },
         supportsAck: false,

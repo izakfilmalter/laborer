@@ -56,6 +56,10 @@ const TestRpcs = RpcGroup.make(
     payload: { message: Schema.String },
   }),
 
+  Rpc.make('hang', {
+    success: Schema.Void,
+  }),
+
   Rpc.make('count', {
     success: Schema.Number,
     stream: true,
@@ -68,6 +72,7 @@ const TestRpcsLive = TestRpcs.toLayer(
     echo: ({ input }) => Effect.succeed(input),
     add: ({ a, b }) => Effect.succeed(a + b),
     fail: ({ message }) => Effect.fail(new TestRpcError({ message })),
+    hang: () => Effect.never,
     count: ({ count }) => Stream.range(0, count - 1).pipe(Stream.map((n) => n)),
   })
 )
@@ -244,8 +249,14 @@ describe('makeClientProtocolMessagePort', () => {
     )
     expect(result).toBe('before disconnect')
 
-    // Close server (simulating disconnection)
+    const pendingRequest = Effect.runPromise(disconnectClient.hang())
+
+    // Close server while a request is pending (simulating disconnection).
     await Effect.runPromise(Scope.close(disconnectServerScope, Exit.void))
+
+    await expect(pendingRequest).rejects.toMatchObject({
+      reason: { _tag: 'RpcClientDefect' },
+    })
 
     // Clean up client
     await Effect.runPromise(Scope.close(disconnectClientScope, Exit.void))

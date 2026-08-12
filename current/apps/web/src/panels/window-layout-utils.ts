@@ -32,12 +32,6 @@ import {
 } from '@laborer/shared/types'
 import { Result, Schema } from 'effect'
 
-// Shared recursive schemas intentionally expose only their decoded type, which
-// erases their concrete (service-free) decoder view. Restore that view at this
-// decode boundary while preserving the decoded type.
-const decodeUnknownResult = <A>(schema: Schema.Schema<A>) =>
-  Schema.decodeUnknownResult(schema as unknown as Schema.ConstraintDecoder<A>)
-
 import { generateId } from './id-utils'
 import { removePanelTab } from './panel-tab-utils'
 
@@ -1288,7 +1282,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function decodeWindowLayout(input: unknown): RepairWindowLayoutResult {
   // Step 1: Try strict Schema decode first (fast path for valid data)
-  const decodeResult = decodeUnknownResult(WindowLayoutSchema)(input)
+  const decodeResult = Schema.decodeUnknownResult(WindowLayoutSchema)(input)
 
   if (Result.isSuccess(decodeResult)) {
     // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
@@ -1427,10 +1421,10 @@ function deepEqual(a: WindowLayout, b: WindowLayout): boolean {
 }
 
 // Schema decoders (cached at module level for performance)
-const decodeWindowTab = decodeUnknownResult(WindowTabSchema)
-const decodePanelNode = decodeUnknownResult(PanelNodeSchema)
-const decodePanelTab = decodeUnknownResult(PanelTabSchema)
-const decodeTileNode = decodeUnknownResult(WorkspaceTileNodeSchema)
+const decodeWindowTab = Schema.decodeUnknownResult(WindowTabSchema)
+const decodePanelNode = Schema.decodeUnknownResult(PanelNodeSchema)
+const decodePanelTab = Schema.decodeUnknownResult(PanelTabSchema)
+const decodeTileNode = Schema.decodeUnknownResult(WorkspaceTileNodeSchema)
 
 /**
  * Lenient decode of a WindowLayout from `unknown` input.

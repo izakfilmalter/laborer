@@ -261,10 +261,18 @@ function WorkspaceList({
   )
 
   // The database owns promotion on parent deletion (`ON DELETE SET NULL`).
-  const workspaceTree = useMemo(
-    () => buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces),
-    [activeWorkspaces]
-  )
+  // The root workspace (the main checkout, worktreePath === repoPath) is
+  // always pinned to the top of the tree.
+  const workspaceTree = useMemo(() => {
+    const tree = buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces)
+    const rootNodes = tree.filter(
+      (node) => node.workspace.worktreePath === repoPath
+    )
+    const otherNodes = tree.filter(
+      (node) => node.workspace.worktreePath !== repoPath
+    )
+    return [...rootNodes, ...otherNodes]
+  }, [activeWorkspaces, repoPath])
 
   if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {
     return (

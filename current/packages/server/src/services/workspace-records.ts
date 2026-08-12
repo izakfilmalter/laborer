@@ -1,3 +1,8 @@
+import {
+  projectIdFromRootWorkspaceId,
+  ROOT_WORKSPACE_BRANCH_LABEL,
+  rootWorkspaceId,
+} from '@laborer/shared/root-workspace'
 import type {
   LaborerTask,
   NativeLaborerDatabase,
@@ -110,10 +115,46 @@ export const listWorkspaceRecords = (
   })
 }
 
+/**
+ * The project's main checkout as a synthetic workspace record. It never has
+ * a task row — the reconciler skips `isMain` worktrees — so id-based
+ * resolution (terminal spawn, file tree, editor, git actions) synthesizes it
+ * from the project row. It is deliberately absent from
+ * {@link listWorkspaceRecords} so polling services (PR watcher, branch
+ * tracker, reconciler) never treat the main checkout as tracked work.
+ */
+const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
+  aheadCount: null,
+  baseBranch: null,
+  baseSha: null,
+  behindCount: null,
+  branchName: ROOT_WORKSPACE_BRANCH_LABEL,
+  createdAt: new Date(project.createdAt).toISOString(),
+  errorMessage: null,
+  id: rootWorkspaceId(project.id),
+  origin: 'external',
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
+  projectId: project.id,
+  status: 'running',
+  taskSource: rootWorkspaceId(project.id),
+  worktreePath: project.rootPath,
+  worktreeSetupStep: null,
+})
+
 export const findWorkspaceRecord = (
   database: NativeLaborerDatabase,
   workspaceId: string
 ): WorkspaceRecord | null => {
+  const rootProjectId = projectIdFromRootWorkspaceId(workspaceId)
+  if (rootProjectId !== null) {
+    const project = database
+      .listProjects()
+      .find(({ id }) => id === rootProjectId)
+    return project === undefined ? null : rootWorkspaceRecord(project)
+  }
   const task = database.findTask(workspaceId)
   if (task === null) {
     return null

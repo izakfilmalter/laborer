@@ -177,6 +177,7 @@ describe('workspaceViewsFromRows', () => {
     }
 
     expect(workspaceViewsFromRows([row], [project('/repo')])).toEqual([
+      expect.objectContaining({ id: 'root-project-one' }),
       expect.objectContaining({
         branchName: 'feat/child',
         errorMessage: 'setup failed',
@@ -205,6 +206,7 @@ describe('workspaceViewsFromRows', () => {
     }
 
     expect(workspaceViewsFromRows([row], [project('/repo')])).toEqual([
+      expect.objectContaining({ id: 'root-project-one' }),
       expect.objectContaining({
         branchName: 'hubspot-paste-import',
         id: 'legacy',
@@ -226,7 +228,33 @@ describe('workspaceViewsFromRows', () => {
 
     expect(
       workspaceViewsFromRows([noWorktree, unknownProject], [project('/repo')])
-    ).toEqual([])
+    ).toEqual([expect.objectContaining({ id: 'root-project-one' })])
+  })
+
+  it('always synthesizes the root workspace ahead of task-backed workspaces', () => {
+    // The main checkout never has a task row — the reconciler skips isMain
+    // worktrees — yet the sidebar must always show it, pinned to the top.
+    const row: SharedTaskRow = {
+      ...task('feature'),
+      branchName: 'feat/one',
+      source: 'worktree',
+      worktreePath: '/repo/.worktrees/one',
+      worktreeStatus: 'ready',
+    }
+
+    const views = workspaceViewsFromRows([row], [project('/repo')])
+
+    expect(views[0]).toEqual(
+      expect.objectContaining({
+        branchName: 'root',
+        id: 'root-project-one',
+        parentTaskId: null,
+        projectId: 'project-one',
+        status: 'running',
+        worktreePath: '/repo',
+      })
+    )
+    expect(views).toHaveLength(2)
   })
 })
 

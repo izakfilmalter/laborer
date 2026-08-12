@@ -8,6 +8,68 @@ export type RecoveredSession =
   | { readonly status: "incomplete" }
   | { readonly status: "succeeded"; readonly text: readonly string[] };
 
+export type RecoveryObservation =
+  | { readonly type: "api_failure" }
+  | { readonly type: "session_active" }
+  | {
+      readonly assistant?: Record<string, unknown>;
+      readonly type: "session_inactive";
+    };
+
+export interface RecoveryPollContext {
+  readonly apiFailingSinceMs?: number;
+  readonly deadlineMs: number;
+  readonly nowMs: number;
+}
+
+export type RecoveryDecision =
+  | { readonly outcome: RecoveredSession; readonly type: "settled" }
+  | { readonly apiFailingSinceMs?: number; readonly type: "wait" };
+
+/**
+ * The OpenCode service auto-updates itself in place (npm swaps the CLI
+ * binary and the daemon restarts), which makes every `opencode2` spawn fail
+ * for a short window. A recovery verdict of "ambiguous" aborts the whole
+ * pipeline stage, so only give up after a sustained outage rather than a
+ * fixed number of failed polls.
+ */
+export const API_OUTAGE_GRACE_MS = 10 * 60_000;
+
+export const decideRecoveryStep = (
+  observation: RecoveryObservation,
+  context: RecoveryPollContext
+): RecoveryDecision => {
+  if (context.nowMs >= context.deadlineMs) {
+    return { outcome: { status: "ambiguous" }, type: "settled" };
+  }
+  switch (observation.type) {
+    case "api_failure": {
+      const apiFailingSinceMs = context.apiFailingSinceMs ?? context.nowMs;
+      if (context.nowMs - apiFailingSinceMs >= API_OUTAGE_GRACE_MS) {
+        return { outcome: { status: "ambiguous" }, type: "settled" };
+      }
+      return { apiFailingSinceMs, type: "wait" };
+    }
+    case "session_active": {
+      return { type: "wait" };
+    }
+    case "session_inactive": {
+      const outcome =
+        observation.assistant === undefined
+          ? ({ status: "ambiguous" } as const)
+          : classifyRecoveredAssistant(observation.assistant);
+      if (outcome.status === "ambiguous") {
+        // A restarting daemon reports an empty active list while it resumes
+        // the interrupted turn, so a mid-flight assistant message here does
+        // not mean the session is lost. The durable message log settles once
+        // the resumed turn completes; keep waiting until the deadline.
+        return { type: "wait" };
+      }
+      return { outcome, type: "settled" };
+    }
+  }
+};
+
 export const classifyRecoveredAssistant = (
   assistant: Record<string, unknown>
 ): RecoveredSession => {

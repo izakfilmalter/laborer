@@ -7,8 +7,9 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import {
-  classifyRecoveredAssistant,
+  decideRecoveryStep,
   type RecoveredSession,
+  type RecoveryObservation,
 } from "./recovery.ts";
 
 interface Options {
@@ -254,36 +255,43 @@ async function recoverSession(
   sessionId: string
 ): Promise<RecoveredSession | undefined> {
   const deadline = Date.now() + options.recoveryTimeoutSeconds * 1000;
-  let consecutiveApiFailures = 0;
+  let apiFailingSinceMs: number | undefined;
   let lastProgressAt = 0;
   while (true) {
-    const active = await runCaptured(["api", "get", "/api/session/active"]);
-    const payload = parseRecord(active.stdout);
-    if (
-      active.exitCode !== 0 ||
-      payload === undefined ||
-      !isRecord(payload.data)
-    ) {
-      consecutiveApiFailures += 1;
-      if (consecutiveApiFailures >= 3 || Date.now() >= deadline) {
-        return { status: "ambiguous" };
-      }
-    } else {
-      consecutiveApiFailures = 0;
-      if (!(sessionId in payload.data)) {
-        break;
-      }
-      if (Date.now() >= deadline) {
-        return { status: "ambiguous" };
-      }
-      if (Date.now() - lastProgressAt >= 30_000) {
-        process.stdout.write(
-          `OpenCode event transport disconnected; session ${sessionId} is still running server-side. Waiting for its durable outcome.\n`
-        );
-        lastProgressAt = Date.now();
-      }
+    const observation = await observeSession(sessionId);
+    const decision = decideRecoveryStep(observation, {
+      ...(apiFailingSinceMs === undefined ? {} : { apiFailingSinceMs }),
+      deadlineMs: deadline,
+      nowMs: Date.now(),
+    });
+    if (decision.type === "settled") {
+      return decision.outcome;
+    }
+    apiFailingSinceMs = decision.apiFailingSinceMs;
+    if (Date.now() - lastProgressAt >= 30_000) {
+      process.stdout.write(
+        `OpenCode event transport disconnected; waiting for the durable outcome of session ${sessionId} (${observation.type.replaceAll("_", " ")}).\n`
+      );
+      lastProgressAt = Date.now();
     }
     await sleep(options.recoveryPollSeconds * 1000);
+  }
+}
+
+async function observeSession(
+  sessionId: string
+): Promise<RecoveryObservation> {
+  const active = await runCaptured(["api", "get", "/api/session/active"]);
+  const activePayload = parseRecord(active.stdout);
+  if (
+    active.exitCode !== 0 ||
+    activePayload === undefined ||
+    !isRecord(activePayload.data)
+  ) {
+    return { type: "api_failure" };
+  }
+  if (sessionId in activePayload.data) {
+    return { type: "session_active" };
   }
   const messages = await runCaptured([
     "api",
@@ -291,20 +299,20 @@ async function recoverSession(
     `/api/session/${encodeURIComponent(sessionId)}/message?limit=1&order=desc`,
   ]);
   if (messages.exitCode !== 0) {
-    return { status: "ambiguous" };
+    return { type: "session_inactive" };
   }
   const payload = parseRecord(messages.stdout);
   if (payload === undefined || !Array.isArray(payload.data)) {
-    return { status: "ambiguous" };
+    return { type: "session_inactive" };
   }
   const assistant = payload.data.find(
     (message): message is Record<string, unknown> =>
       isRecord(message) && message.type === "assistant"
   );
-  if (assistant === undefined) {
-    return { status: "ambiguous" };
-  }
-  return classifyRecoveredAssistant(assistant);
+  return {
+    ...(assistant === undefined ? {} : { assistant }),
+    type: "session_inactive",
+  };
 }
 
 async function runCaptured(

@@ -40,6 +40,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -143,6 +144,19 @@ function Kanban<T>({
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null)
   const dragStartContainerRef = useRef<string | null>(null)
 
+  // dnd-kit's DndContext never tears down the active sensor when it unmounts
+  // mid-drag: the sensor's document-level mousemove/mouseup listeners survive
+  // and keep dispatching drag callbacks into this unmounted tree. Anything
+  // those callbacks reach (owner state, the effect-atom registry) may already
+  // be disposed by then, so the drag handlers bail once the component is gone.
+  const unmountedRef = useRef(false)
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+    }
+  }, [])
+
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: {
@@ -190,6 +204,7 @@ function Kanban<T>({
   // controlled value; consumers persist the final layout from `onMove`.
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
+      if (unmountedRef.current) return
       const { active, over } = event
       if (!over) return
 
@@ -251,6 +266,7 @@ function Kanban<T>({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      if (unmountedRef.current) return
       const { active, over } = event
       setActiveId(null)
       const dragStartContainer = dragStartContainerRef.current

@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@effect-atom/atom', () => ({
+vi.mock('effect/unstable/reactivity', () => ({
   Atom: {
     keepAlive: (atom: unknown) => atom,
   },
@@ -24,7 +24,7 @@ vi.mock('@effect-atom/atom', () => ({
   },
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: () => ({ _tag: 'Success', waiting: false, value: [] }),
   useAtomSet: () => vi.fn(),
 }))

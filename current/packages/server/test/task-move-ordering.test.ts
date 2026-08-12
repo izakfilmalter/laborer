@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { handleTaskMoveAtPath } from '../src/rpc/handlers.js'
 import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
@@ -72,11 +72,11 @@ describe('task.move manual ordering', () => {
           taskId: 'move-me',
         },
         path
-      ).pipe(Effect.either)
+      ).pipe(Effect.result)
 
-      assert.isTrue(Either.isLeft(result))
-      if (Either.isLeft(result)) {
-        assert.strictEqual(result.left.code, 'CAS_CONFLICT')
+      assert.isTrue(Result.isFailure(result))
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.code, 'CAS_CONFLICT')
       }
       const database = NativeLaborerDatabase.open(path)
       assert.strictEqual(database.findTask('move-me')?.status, 'done')

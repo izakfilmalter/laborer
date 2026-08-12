@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
+import { Context, Data, Effect, Layer, Ref } from 'effect'
 import { LaborerDatabase } from './laborer-database.js'
 import { WORKTREE_WATCHER_DEBOUNCE_MS } from './polling-intervals.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
@@ -58,7 +58,7 @@ const resolveGitCommonDir = (
     return resolve(repoPath, raw)
   })
 
-class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
+class WorktreeWatcher extends Context.Service<
   WorktreeWatcher,
   {
     readonly watchAll: () => Effect.Effect<void, never>
@@ -68,13 +68,13 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
     ) => Effect.Effect<void, never>
     readonly unwatchProject: (projectId: string) => Effect.Effect<void, never>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/WorktreeWatcher') {
+  static readonly layer = Layer.effect(
     WorktreeWatcher,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
-      const runtime = yield* Effect.runtime<never>()
+      const runtime = yield* Effect.context<never>()
       const statesRef = yield* Ref.make(new Map<string, ProjectWatchState>())
 
       const clearTimer = (state: ProjectWatchState): void => {
@@ -96,14 +96,14 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
       ): Effect.Effect<void, never> =>
         reconciler.reconcile(projectId, repoPath).pipe(
           Effect.asVoid,
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Worktree reconciliation failed for project ${projectId} (${reason}): ${error.message}`
             )
           )
         )
 
-      const runPromise = Runtime.runPromise(runtime)
+      const runPromise = Effect.runPromiseWith(runtime)
 
       const scheduleReconcile = (
         state: ProjectWatchState,
@@ -202,7 +202,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
           },
           catch: (cause) => new GitCommandError({ message: String(cause) }),
         }).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Failed to watch worktrees for project ${projectId}: ${error.message}`
             ).pipe(Effect.as(null))
@@ -217,7 +217,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
         yield* unwatchProject(projectId)
 
         const gitDirPath = yield* resolveGitCommonDir(repoPath).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Failed to resolve git common dir for project ${projectId}: ${error.message}`
             ).pipe(Effect.as(null))

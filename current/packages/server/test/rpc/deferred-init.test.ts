@@ -12,7 +12,7 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import type { RpcError } from '@laborer/shared/rpc'
-import { Context, Effect, Ref } from 'effect'
+import { Context, Effect, Ref, SubscriptionRef } from 'effect'
 import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
@@ -77,12 +77,12 @@ describe('Deferred service initialization (Issue #14)', () => {
 
   describe('makeRefDelegatingService', () => {
     // Define a simple test service for these tests
-    class TestService extends Context.Tag('@test/TestService')<
+    class TestService extends Context.Service<
       TestService,
       {
         readonly getValue: () => Effect.Effect<string, RpcError>
       }
-    >() {}
+    >()('@test/TestService') {}
 
     it.effect('proxy returns SERVICE_INITIALIZING before real service', () =>
       Effect.gen(function* () {
@@ -135,7 +135,7 @@ describe('Deferred service initialization (Issue #14)', () => {
     it.effect('starts as false', () =>
       Effect.gen(function* () {
         const { ref } = yield* DeferredServicesReady
-        const isReady = yield* Ref.get(ref)
+        const isReady = yield* SubscriptionRef.get(ref)
         assert.isFalse(isReady)
       }).pipe(Effect.provide(DeferredServicesReadyLayer))
     )
@@ -143,8 +143,8 @@ describe('Deferred service initialization (Issue #14)', () => {
     it.effect('can be set to true', () =>
       Effect.gen(function* () {
         const { ref } = yield* DeferredServicesReady
-        yield* Ref.set(ref, true)
-        const isReady = yield* Ref.get(ref)
+        yield* SubscriptionRef.set(ref, true)
+        const isReady = yield* SubscriptionRef.get(ref)
         assert.isTrue(isReady)
       }).pipe(Effect.provide(DeferredServicesReadyLayer))
     )

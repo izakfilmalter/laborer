@@ -1,6 +1,6 @@
 # Current: Legacy Desktop App
 
-`current/` is the legacy Laborer desktop application: a Bun/Turborepo monorepo with React 19, Electron, Effect 3, and Effect RPC. Its service and package map is documented in `README.md`.
+`current/` is the legacy Laborer desktop application: a Bun/Turborepo monorepo with React 19, Electron, Effect 4, and integrated Effect RPC. Its service and package map is documented in `README.md`.
 
 ## Commands
 
@@ -24,7 +24,7 @@ Run commands from the repository root:
 - React 19 accepts `ref` as a prop; match that style instead of introducing `forwardRef`.
 - Add regression coverage beside the affected package. Use `@effect/vitest` for Effect-heavy tests and existing package conventions elsewhere.
 
-## Effect 3
+## Effect 4
 
 Before writing Effect code:
 
@@ -32,4 +32,4 @@ Before writing Effect code:
 2. Read the relevant guides with `effect-solutions show <topic>...`.
 3. Search `@effect` for real implementations.
 
-This app pins Effect 3.x and matching `@effect/*` packages. Verify APIs against `current/package.json` and local usage; do not copy Effect 4-only patterns into this implementation.
+This app pins Effect 4 in lockstep with `next/`. Prefer narrow `Context.Service` contracts, explicit layers, scoped resources, Schema boundary codecs, tagged expected errors, and established `effect/unstable/*` imports. Verify beta APIs against `current/package.json`, `next/`, and the installed Effect source.

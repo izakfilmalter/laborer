@@ -51,7 +51,7 @@ const {
   },
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: () => spawnTerminalMock,
   useAtomValue: () => workspaceRowsRef.current,
 }))

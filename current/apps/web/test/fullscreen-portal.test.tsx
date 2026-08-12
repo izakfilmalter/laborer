@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // --- Mocks (declared before imports of the modules under test) ---
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: () => ({ _tag: 'Success', value: [] }),
   useAtomSet: () => vi.fn(),
 }))

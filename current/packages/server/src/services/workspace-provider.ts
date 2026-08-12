@@ -164,7 +164,7 @@ const originBranchExists = (
         message: `Failed to check origin branch existence: ${branchName}`,
         code: 'GIT_CHECK_FAILED',
       }),
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+  }).pipe(Effect.catch(() => Effect.succeed(false)))
 
 const buildWorktreeAddArgs = (params: {
   readonly baseRef?: string | undefined
@@ -507,18 +507,23 @@ const validateWorktree = (
     // Uses Effect.try so that a realpathSync failure (e.g. race condition
     // where the directory was removed between existsSync and here) falls
     // back to raw path comparison instead of killing the fiber with a defect.
-    const { normalizedToplevel, normalizedWorktree } = yield* Effect.try({
-      try: () => ({
-        normalizedWorktree: realpathSync(worktreePath),
-        normalizedToplevel: toplevelResult
-          ? realpathSync(toplevelResult)
-          : null,
-      }),
-      catch: () => ({
-        normalizedWorktree: worktreePath,
-        normalizedToplevel: toplevelResult,
-      }),
-    }).pipe(Effect.merge)
+    const { normalizedToplevel, normalizedWorktree } = yield* Effect.sync(
+      () => {
+        try {
+          return {
+            normalizedWorktree: realpathSync(worktreePath),
+            normalizedToplevel: toplevelResult
+              ? realpathSync(toplevelResult)
+              : null,
+          }
+        } catch {
+          return {
+            normalizedWorktree: worktreePath,
+            normalizedToplevel: toplevelResult,
+          }
+        }
+      }
+    )
     return {
       directoryExists: true,
       isGitWorkTree: workTreeResult,
@@ -564,7 +569,7 @@ const buildValidationErrorMessage = (
   return `Worktree validation failed: ${failures.join('; ')}`
 }
 
-class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
+class WorkspaceProvider extends Context.Service<
   WorkspaceProvider,
   {
     /**
@@ -656,21 +661,21 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       workspaceId: string
     ) => Effect.Effect<Record<string, string>, RpcError>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/WorkspaceProvider') {
+  static readonly layer = Layer.effect(
     WorkspaceProvider,
     Effect.gen(function* () {
       const scope = yield* Effect.scope
       // Track background workspace-setup fibers per workspace so
       // destroyWorktree can interrupt them before cleaning up.
       const setupFibers = yield* Ref.make(
-        new Map<string, Fiber.RuntimeFiber<void, never>>()
+        new Map<string, Fiber.Fiber<void, never>>()
       )
       // Track in-flight destroy fibers by worktree path so a new create
       // for the same branch/path can wait for the actual cleanup fiber to
       // finish instead of guessing with a timeout.
       const destroyFibers = yield* Ref.make(
-        new Map<string, Fiber.RuntimeFiber<void, never>>()
+        new Map<string, Fiber.Fiber<void, never>>()
       )
       const laborerDatabase = yield* LaborerDatabase
       const registry = yield* ProjectRegistry
@@ -815,7 +820,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   message: `Failed to remove stale worktree directory: ${worktreePath}`,
                   code: 'FILESYSTEM_ERROR',
                 }),
-            }).pipe(Effect.catchAll(() => Effect.void))
+            }).pipe(Effect.catch(() => Effect.void))
           }
 
           // Prune stale git worktree references
@@ -833,7 +838,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 message: 'Failed to prune worktree references',
                 code: 'GIT_WORKTREE_FAILED',
               }),
-          }).pipe(Effect.catchAll(() => Effect.void))
+          }).pipe(Effect.catch(() => Effect.void))
 
           // Create the git worktree, reusing the branch if it exists.
           // If the user typed a branch that only exists on origin, create the
@@ -990,7 +995,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   `Best-effort push of base branch ${branchName} failed (exit ${exitCode}): ${stderr.trim()}`
                 )
           ),
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(
               `Best-effort push of base branch ${branchName} failed: ${error.message}`
             )
@@ -1170,7 +1175,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             // open agent panels) as soon as the worktree directory is ready.
             if (onReady) {
               yield* onReady(id).pipe(
-                Effect.catchAll((err) =>
+                Effect.catch((err) =>
                   Effect.logWarning(
                     `onReady callback failed for workspace ${id}: ${err.message}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1199,7 +1204,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             // e.g. realpathSync failure) are caught. With plain catchAll,
             // a defect would kill the background fiber silently and leave
             // the workspace permanently stuck in 'creating' status.
-            Effect.catchAllCause((cause) =>
+            Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 const prettyMessage = Cause.pretty(cause)
                 yield* Effect.logWarning(
@@ -1209,27 +1214,23 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 // Extract a user-facing error message from the cause.
                 // For expected failures (RpcError), use the error message.
                 // For defects (thrown exceptions), use the pretty-printed cause.
-                const failureOption = Cause.failureOption(cause)
-                const errorMessage =
-                  failureOption._tag === 'Some'
-                    ? String(failureOption.value)
-                    : prettyMessage
+                const errorMessage = String(Cause.squash(cause))
 
                 yield* updateServerTaskFacts(laborerDatabase, taskId, {
                   worktreeError: errorMessage,
                   worktreeStatus: 'errored',
                 }).pipe(
-                  Effect.catchAll((databaseError) =>
+                  Effect.catch((databaseError) =>
                     Effect.logError(
                       `Could not persist errored worktree state for task ${taskId}: ${databaseError.message}`
                     )
                   )
                 )
 
+                const squashed = Cause.squash(cause)
                 const failure =
-                  failureOption._tag === 'Some' &&
-                  failureOption.value instanceof RpcError
-                    ? failureOption.value
+                  squashed instanceof RpcError
+                    ? squashed
                     : new RpcError({
                         code: 'WORKSPACE_SETUP_FAILED',
                         message: errorMessage,
@@ -1376,7 +1377,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 }),
             }).pipe(
               // If we can't check (e.g. directory already gone), skip the check
-              Effect.catchAll((err) =>
+              Effect.catch((err) =>
                 Effect.logWarning(
                   `Dirty check failed (skipping): ${String(err)}`
                 ).pipe(
@@ -1483,7 +1484,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     Effect.annotateLogs('module', logPrefix)
                   )
                 ),
-                Effect.catchAll((err) =>
+                Effect.catch((err) =>
                   Effect.logWarning(
                     `Fallback rm -rf failed: ${String(err)}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1515,7 +1516,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     `git worktree prune result: exitCode=${exitCode}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
                 ),
-                Effect.catchAll((err) =>
+                Effect.catch((err) =>
                   Effect.logWarning(
                     `Fallback git worktree prune failed: ${String(err)}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1538,7 +1539,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   message: `Failed to prune worktree references: ${String(err)}`,
                   code: 'GIT_WORKTREE_FAILED',
                 }),
-            }).pipe(Effect.catchAll(() => Effect.void))
+            }).pipe(Effect.catch(() => Effect.void))
 
             // Delete the branch
             yield* Effect.tryPromise({
@@ -1570,7 +1571,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                       `Deleted branch ${workspace.branchName}`
                     ).pipe(Effect.annotateLogs('module', logPrefix))
               ),
-              Effect.catchAll((err) =>
+              Effect.catch((err) =>
                 Effect.logWarning(
                   `Failed to delete branch: ${String(err)}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1600,14 +1601,14 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               `Workspace ${workspaceId} (${workspace.branchName}) destroyed successfully`
             ).pipe(Effect.annotateLogs('module', logPrefix))
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logError(
                 `Background cleanup failed for workspace ${workspaceId}: ${String(error)}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
             )
           )
 
-          const cleanupFiber = yield* Effect.forkDaemon(backgroundCleanup)
+          const cleanupFiber = yield* Effect.forkDetach(backgroundCleanup)
 
           yield* Ref.update(destroyFibers, (m) => {
             const next = new Map(m)
@@ -1674,7 +1675,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 code: 'GIT_CHECK_FAILED',
               }),
           }).pipe(
-            Effect.catchAll((err) =>
+            Effect.catch((err) =>
               Effect.logWarning(
                 `Dirty check failed (skipping): ${String(err)}`
               ).pipe(

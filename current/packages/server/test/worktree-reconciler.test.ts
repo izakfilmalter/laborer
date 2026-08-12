@@ -84,7 +84,7 @@ afterAll(() => {
 })
 
 describe('WorktreeReconciler', () => {
-  it.scoped('creates external tasks for detected linked worktrees', () =>
+  it.effect('creates external tasks for detected linked worktrees', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-create', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'feature-c')
@@ -106,7 +106,7 @@ describe('WorktreeReconciler', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('leaves matching existing workspace records untouched', () =>
+  it.effect('leaves matching existing workspace records untouched', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-unchanged', tempRoots)
       const [mainWorktreePath] = getDetectedWorktreePaths(repoPath)
@@ -141,7 +141,7 @@ describe('WorktreeReconciler', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('removes stale workspace records not present on disk', () =>
+  it.effect('removes stale workspace records not present on disk', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-stale', tempRoots)
       const stalePath = join(repoPath, '.worktrees', 'missing')
@@ -169,7 +169,7 @@ describe('WorktreeReconciler', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'does not remove workspaces with creating status whose worktree is not yet on disk',
     () =>
       Effect.gen(function* () {
@@ -202,7 +202,7 @@ describe('WorktreeReconciler', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('handles mixed add, remove, and unchanged reconciliation', () =>
+  it.effect('handles mixed add, remove, and unchanged reconciliation', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-mixed', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'feature-mixed')
@@ -252,7 +252,7 @@ describe('WorktreeReconciler', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('derives base SHA from merge-base for detected worktrees', () =>
+  it.effect('derives base SHA from merge-base for detected worktrees', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-base-sha', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'feature-base-sha')
@@ -285,7 +285,7 @@ describe('WorktreeReconciler', () => {
 // ---------------------------------------------------------------------------
 
 describe('WorktreeReconciler historical remote-only workspaces', () => {
-  it.scoped('removes workspaces with an empty worktreePath as stale', () =>
+  it.effect('removes workspaces with an empty worktreePath as stale', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-remote-stale', tempRoots)
 
@@ -317,7 +317,7 @@ describe('WorktreeReconciler historical remote-only workspaces', () => {
 // ---------------------------------------------------------------------------
 
 describe('WorktreeReconciler canonical path support', () => {
-  it.scoped('stores canonical worktree paths in workspace records', () =>
+  it.effect('stores canonical worktree paths in workspace records', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-canonical-paths', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'feature-canon')
@@ -346,7 +346,7 @@ describe('WorktreeReconciler canonical path support', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'reconciles linked worktrees outside the main checkout under the correct project',
     () =>
       Effect.gen(function* () {
@@ -384,7 +384,7 @@ describe('WorktreeReconciler canonical path support', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'does not create duplicate tasks when reconciling with symlinked repo path',
     () =>
       Effect.gen(function* () {
@@ -428,7 +428,7 @@ describe('WorktreeReconciler canonical path support', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'canonicalizes existing workspace paths when comparing against detected worktrees',
     () =>
       Effect.gen(function* () {
@@ -465,7 +465,7 @@ describe('WorktreeReconciler canonical path support', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'reconciles worktrees with shared git dir consistently across multiple worktrees',
     () =>
       Effect.gen(function* () {
@@ -513,7 +513,7 @@ describe('WorktreeReconciler canonical path support', () => {
 })
 
 describe('WorktreeReconciler task translation', () => {
-  it.scoped(
+  it.effect(
     'translates linked worktrees into worktree-source tasks, skipping main',
     () =>
       Effect.gen(function* () {
@@ -538,7 +538,7 @@ describe('WorktreeReconciler task translation', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'does not duplicate tasks across repeated reconciles and skips task-bound workspaces',
     () =>
       Effect.gen(function* () {

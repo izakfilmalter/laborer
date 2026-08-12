@@ -77,7 +77,7 @@ afterAll(() => {
 })
 
 describe('RepositoryWatchCoordinator', () => {
-  it.scoped('reconciles on worktree add and remove', () =>
+  it.effect('reconciles on worktree add and remove', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('watcher-add-remove', tempRoots)
       const linkedPath = join(repoPath, '.worktrees', 'watcher-one')
@@ -130,7 +130,7 @@ describe('RepositoryWatchCoordinator', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('unwatchProject stops future reconciliation', () =>
+  it.effect('unwatchProject stops future reconciliation', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('watcher-unwatch', tempRoots)
       const linkedA = join(repoPath, '.worktrees', 'watcher-a')
@@ -179,7 +179,7 @@ describe('RepositoryWatchCoordinator', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('watchAll reconciles existing projects and starts watchers', () =>
+  it.effect('watchAll reconciles existing projects and starts watchers', () =>
     Effect.gen(function* () {
       const repoA = initRepo('watcher-all-a', tempRoots)
       const repoB = initRepo('watcher-all-b', tempRoots)
@@ -229,7 +229,7 @@ describe('RepositoryWatchCoordinator', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'handles repos with no .git/worktrees until first linked worktree',
     () =>
       Effect.gen(function* () {

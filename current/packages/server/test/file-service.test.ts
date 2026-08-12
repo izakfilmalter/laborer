@@ -81,7 +81,7 @@ const seedWorkspace = (
 
 describe('FileService', () => {
   // --- Behavior 1: Basic listing with correct shape ---
-  it.scoped('list returns files and directories with correct shape', () =>
+  it.effect('list returns files and directories with correct shape', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-shape', tempRoots)
       mkdirSync(join(repoPath, 'src'), { recursive: true })
@@ -123,7 +123,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 2: Sort order (directories first, then alphabetical) ---
-  it.scoped('list sorts directories before files, alphabetical within', () =>
+  it.effect('list sorts directories before files, alphabetical within', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-sort', tempRoots)
       mkdirSync(join(repoPath, 'zebra'), { recursive: true })
@@ -185,7 +185,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 3: Ignored directories are skipped ---
-  it.scoped('list skips ignored directories (node_modules, .git, etc)', () =>
+  it.effect('list skips ignored directories (node_modules, .git, etc)', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-ignored-dirs', tempRoots)
       mkdirSync(join(repoPath, 'node_modules'), { recursive: true })
@@ -212,7 +212,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 4: Ignored files are skipped ---
-  it.scoped('list skips OS metadata files (.DS_Store, Thumbs.db)', () =>
+  it.effect('list skips OS metadata files (.DS_Store, Thumbs.db)', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-ignored-files', tempRoots)
       writeFileSync(join(repoPath, '.DS_Store'), '')
@@ -238,7 +238,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 5: Subdirectory listing ---
-  it.scoped('list with dir parameter returns subdirectory children', () =>
+  it.effect('list with dir parameter returns subdirectory children', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-subdir', tempRoots)
       mkdirSync(join(repoPath, 'src/components'), { recursive: true })
@@ -267,7 +267,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 6: Path traversal rejection ---
-  it.scoped('list rejects path traversal outside worktree root', () =>
+  it.effect('list rejects path traversal outside worktree root', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-traversal', tempRoots)
 
@@ -293,7 +293,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 7: NOT_FOUND for unknown workspace ---
-  it.scoped('list fails with NOT_FOUND for unknown workspace', () =>
+  it.effect('list fails with NOT_FOUND for unknown workspace', () =>
     Effect.gen(function* () {
       const fileService = yield* FileService
       const result = yield* fileService.list('nonexistent-workspace-id').pipe(
@@ -312,7 +312,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 8: Tasks without worktrees are not workspaces ---
-  it.scoped(
+  it.effect(
     'list fails with NOT_FOUND after a workspace loses its worktree',
     () =>
       Effect.gen(function* () {
@@ -344,7 +344,7 @@ describe('FileService', () => {
   // =================================================================
 
   // --- Behavior 9: Read a text file returns correct content ---
-  it.scoped('read returns text file content with type "text"', () =>
+  it.effect('read returns text file content with type "text"', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-text', tempRoots)
       writeFileSync(join(repoPath, 'hello.txt'), 'Hello, world!\n')
@@ -368,7 +368,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 10: Read a modified tracked file returns diff and patch ---
-  it.scoped('read returns diff and patch for a modified tracked file', () =>
+  it.effect('read returns diff and patch for a modified tracked file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-diff', tempRoots)
       writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2\n')
@@ -402,7 +402,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 11: Read a staged-but-not-committed file returns diff ---
-  it.scoped('read returns diff via --staged fallback for staged changes', () =>
+  it.effect('read returns diff via --staged fallback for staged changes', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-staged', tempRoots)
       writeFileSync(join(repoPath, 'staged.txt'), 'original\n')
@@ -429,7 +429,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 12: Read an unmodified file returns no diff ---
-  it.scoped('read returns no diff/patch for an unmodified tracked file', () =>
+  it.effect('read returns no diff/patch for an unmodified tracked file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-clean', tempRoots)
       writeFileSync(join(repoPath, 'clean.txt'), 'no changes\n')
@@ -452,7 +452,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 13: Read a newly created (untracked) file ---
-  it.scoped('read returns content but no diff for an untracked file', () =>
+  it.effect('read returns content but no diff for an untracked file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-untracked', tempRoots)
       writeFileSync(join(repoPath, 'new-file.txt'), 'brand new\n')
@@ -475,7 +475,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 14: Read a binary file returns type "binary" ---
-  it.scoped('read returns type "binary" for binary file extensions', () =>
+  it.effect('read returns type "binary" for binary file extensions', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-binary', tempRoots)
       writeFileSync(join(repoPath, 'app.exe'), Buffer.from([0, 1, 2, 3]))
@@ -494,7 +494,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 15: Read an image file returns base64 with mimeType ---
-  it.scoped('read returns base64 content with mimeType for image files', () =>
+  it.effect('read returns base64 content with mimeType for image files', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-image', tempRoots)
       // Write a minimal 1x1 PNG (smallest valid PNG file)
@@ -520,7 +520,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 16: Read a non-existent file returns empty content ---
-  it.scoped('read returns empty content for a non-existent file', () =>
+  it.effect('read returns empty content for a non-existent file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-missing', tempRoots)
 
@@ -538,7 +538,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 17: Read rejects path traversal ---
-  it.scoped('read rejects path traversal outside worktree root', () =>
+  it.effect('read rejects path traversal outside worktree root', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-read-traversal', tempRoots)
 
@@ -566,7 +566,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 18: Read from non-existent workspace returns NOT_FOUND ---
-  it.scoped('read fails with NOT_FOUND for unknown workspace', () =>
+  it.effect('read fails with NOT_FOUND for unknown workspace', () =>
     Effect.gen(function* () {
       const fileService = yield* FileService
       const result = yield* fileService
@@ -591,7 +591,7 @@ describe('FileService', () => {
   // =================================================================
 
   // --- Behavior 19: Modified file appears with status "modified" and line counts ---
-  it.scoped(
+  it.effect(
     'status returns modified file with correct added/removed counts',
     () =>
       Effect.gen(function* () {
@@ -630,7 +630,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 20: Newly created (untracked) file appears with status "added" ---
-  it.scoped(
+  it.effect(
     'status returns untracked file with status "added" and line count',
     () =>
       Effect.gen(function* () {
@@ -655,7 +655,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 21: Deleted file appears with status "deleted" ---
-  it.scoped('status returns deleted file with status "deleted"', () =>
+  it.effect('status returns deleted file with status "deleted"', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-status-deleted', tempRoots)
       writeFileSync(join(repoPath, 'to-delete.txt'), 'goodbye\n')
@@ -684,7 +684,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 22: Clean working tree returns empty array ---
-  it.scoped('status returns empty array for clean working tree', () =>
+  it.effect('status returns empty array for clean working tree', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-status-clean', tempRoots)
       // initRepo already commits README.md, so the tree is clean
@@ -706,7 +706,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 23: All three types in same response ---
-  it.scoped('status returns modified, added, and deleted files together', () =>
+  it.effect('status returns modified, added, and deleted files together', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-status-all', tempRoots)
       writeFileSync(join(repoPath, 'modify-me.txt'), 'original\n')
@@ -739,7 +739,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 24: NOT_FOUND for unknown workspace ---
-  it.scoped('status fails with NOT_FOUND for unknown workspace', () =>
+  it.effect('status fails with NOT_FOUND for unknown workspace', () =>
     Effect.gen(function* () {
       const fileService = yield* FileService
       const result = yield* fileService.status('nonexistent-workspace-id').pipe(
@@ -762,7 +762,7 @@ describe('FileService', () => {
   // =================================================================
 
   // --- Behavior 25: File matching .gitignore pattern gets ignored: true ---
-  it.scoped('list marks files matching .gitignore patterns as ignored', () =>
+  it.effect('list marks files matching .gitignore patterns as ignored', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-gitignore-file', tempRoots)
       writeFileSync(join(repoPath, '.gitignore'), '*.log\n')
@@ -796,7 +796,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 26: Directory matching .gitignore pattern gets ignored: true ---
-  it.scoped(
+  it.effect(
     'list marks directories matching .gitignore patterns as ignored (trailing / semantics)',
     () =>
       Effect.gen(function* () {
@@ -833,7 +833,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 27: .ignore file patterns are also applied ---
-  it.scoped('list applies .ignore file patterns alongside .gitignore', () =>
+  it.effect('list applies .ignore file patterns alongside .gitignore', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-dotignore', tempRoots)
       writeFileSync(join(repoPath, '.gitignore'), '*.log\n')
@@ -869,7 +869,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 28: Entries not matching any pattern get ignored: false ---
-  it.scoped(
+  it.effect(
     'list returns ignored: false for entries not matching any ignore pattern',
     () =>
       Effect.gen(function* () {
@@ -905,7 +905,7 @@ describe('FileService', () => {
   )
 
   // --- Behavior 29: Missing .gitignore/.ignore files handled gracefully ---
-  it.scoped(
+  it.effect(
     'list returns all entries with ignored: false when no gitignore/ignore files exist',
     () =>
       Effect.gen(function* () {
@@ -939,7 +939,7 @@ describe('FileService', () => {
 
 describe('FileService.diff', () => {
   // --- Modified tracked file gets a patch from the batched git diff ---
-  it.scoped('diff returns a patch for a modified tracked file', () =>
+  it.effect('diff returns a patch for a modified tracked file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-modified', tempRoots)
       writeFileSync(join(repoPath, 'tracked.txt'), 'line 1\nline 2\n')
@@ -967,7 +967,7 @@ describe('FileService.diff', () => {
   )
 
   // --- Untracked file gets a /dev/null no-index patch ---
-  it.scoped('diff returns an all-additions patch for an untracked file', () =>
+  it.effect('diff returns an all-additions patch for an untracked file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-untracked', tempRoots)
       writeFileSync(join(repoPath, 'brand-new.txt'), 'hello\nworld\n')
@@ -991,7 +991,7 @@ describe('FileService.diff', () => {
   )
 
   // --- Deleted file gets a deletions patch from the batched git diff ---
-  it.scoped('diff returns a deletions patch for a deleted file', () =>
+  it.effect('diff returns a deletions patch for a deleted file', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-deleted', tempRoots)
       writeFileSync(join(repoPath, 'to-delete.txt'), 'goodbye\n')
@@ -1017,7 +1017,7 @@ describe('FileService.diff', () => {
   )
 
   // --- Staged changes are included (git diff HEAD covers index) ---
-  it.scoped('diff includes staged-but-uncommitted changes', () =>
+  it.effect('diff includes staged-but-uncommitted changes', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-staged', tempRoots)
       writeFileSync(join(repoPath, 'staged.txt'), 'original\n')
@@ -1043,7 +1043,7 @@ describe('FileService.diff', () => {
   )
 
   // --- All change types in one batched response ---
-  it.scoped('diff returns modified, added, and deleted entries together', () =>
+  it.effect('diff returns modified, added, and deleted entries together', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-all', tempRoots)
       writeFileSync(join(repoPath, 'modify-me.txt'), 'original\n')
@@ -1074,7 +1074,7 @@ describe('FileService.diff', () => {
   )
 
   // --- Clean tree returns an empty array ---
-  it.scoped('diff returns empty array for a clean working tree', () =>
+  it.effect('diff returns empty array for a clean working tree', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('file-svc-diff-clean', tempRoots)
 
@@ -1091,7 +1091,7 @@ describe('FileService.diff', () => {
   )
 
   // --- Unknown workspace fails with NOT_FOUND ---
-  it.scoped('diff fails with NOT_FOUND for unknown workspace', () =>
+  it.effect('diff fails with NOT_FOUND for unknown workspace', () =>
     Effect.gen(function* () {
       const fileService = yield* FileService
       const result = yield* fileService.diff('nonexistent-workspace-id').pipe(

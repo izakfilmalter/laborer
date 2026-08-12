@@ -16,22 +16,21 @@
 
 import { strict as assert } from 'node:assert/strict'
 import { MessageChannel } from 'node:worker_threads'
-
-import { RpcClient, RpcServer } from '@effect/rpc'
 import { describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import {
+  type Context,
   Effect,
   Exit,
   Fiber,
   Layer,
   ManagedRuntime,
-  Runtime,
   Scope,
 } from 'effect'
+import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
@@ -68,7 +67,7 @@ function toRpcPort(
 // ---------------------------------------------------------------------------
 
 const MakeTerminalClient = RpcClient.make(TerminalRpcs)
-type TerminalRpcClient = Effect.Effect.Success<typeof MakeTerminalClient>
+type TerminalRpcClient = Effect.Success<typeof MakeTerminalClient>
 
 /**
  * Services layer — provides both TerminalManager and PtyHostClient.
@@ -78,14 +77,14 @@ const ServicesLayer = Layer.merge(TerminalManager.layer, PtyDirectLayer).pipe(
   Layer.provide(PtyDirectLayer)
 )
 
-let clientScope: Scope.CloseableScope
+let clientScope: Scope.Closeable
 let client: TerminalRpcClient
 /** ManagedRuntime with shared services for data channel handlers. */
 let managedRt: ManagedRuntime.ManagedRuntime<
   TerminalManager | PtyHostClient,
   never
 >
-let dataChannelRuntime: Runtime.Runtime<TerminalManager | PtyHostClient>
+let dataChannelRuntime: Context.Context<TerminalManager | PtyHostClient>
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -111,19 +110,19 @@ beforeAll(async () => {
 
   // Create managed runtime — shares services between RPC and data channels.
   managedRt = ManagedRuntime.make(FullLayer)
-  dataChannelRuntime = await managedRt.runtime()
+  dataChannelRuntime = await managedRt.context()
 
   // Build RPC client.
   clientScope = Effect.runSync(Scope.make())
   const protocol = await Effect.runPromise(
     makeClientProtocolMessagePort(toRpcPort(rpcPort2)).pipe(
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
   client = await Effect.runPromise(
     MakeTerminalClient.pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 }, 30_000)
@@ -141,7 +140,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
   it('receives PTY output data via data channel port', async () => {
     // Spawn a terminal via RPC.
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "data-channel-output-test"',
         cwd: TEST_CWD,
         cols: 80,
@@ -159,7 +158,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     })
 
     // Attach the data channel using the shared runtime.
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -207,7 +206,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
   it('sends input data from renderer to PTY via data channel', async () => {
     // Spawn a terminal that reads input (cat).
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: '/bin/cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -224,7 +223,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -253,14 +252,14 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     expect(hasEcho).toBe(true)
 
     // Kill the terminal and clean up.
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
   it('sends screenState before live output when attaching to an active terminal', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'printf "snapshot-marker\n"; exec /bin/cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -278,7 +277,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -300,14 +299,14 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     assert.strictEqual(screenStateMessage.type, 'screenState')
     expect(screenStateMessage.data).toContain('snapshot-marker')
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
   it('sends replay payload and replayComplete when attaching to a revived terminal', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'printf "live-process\n"; exec /bin/cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -316,7 +315,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
         yield* terminalManager.setRevivedReplayEvent(terminal.id, {
@@ -368,7 +367,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -434,14 +433,14 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     }
     assert.strictEqual(replayCompleteMessage.type, 'replayComplete')
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
   it('sends partial command replay state when attaching to a revived terminal', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'printf "live-process\n"; exec /bin/cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -450,7 +449,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
         yield* terminalManager.setRevivedReplayEvent(terminal.id, {
@@ -490,7 +489,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -551,14 +550,14 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     }
     assert.strictEqual(replayCompleteMessage.type, 'replayComplete')
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
   it('sends trusted runtime command state in replay payloads for revived terminals', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command:
           'printf \'\\033]633;P;Cwd=/tmp\\007\\033]633;B\\007\\033]633;E;git\\x20status;%s\\007\\033]633;C\\007\\033]633;D;0\\007\' "$VSCODE_NONCE"; sleep 5',
         cwd: TEST_CWD,
@@ -568,7 +567,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
 
@@ -599,7 +598,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -644,7 +643,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       }),
     ])
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
@@ -652,7 +651,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
   it('sends flow control ack from renderer to utility process', async () => {
     // Spawn a terminal.
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "ack-test"',
         cwd: TEST_CWD,
         cols: 80,
@@ -664,7 +663,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     // Create a data channel.
     const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -685,7 +684,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
   it('closes data channel port when terminal exits', async () => {
     // Spawn a short-lived terminal.
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "exit-test"',
         cwd: TEST_CWD,
         cols: 80,
@@ -702,7 +701,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -738,7 +737,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), 'nonexistent-terminal-id').pipe(
         Effect.scoped
       )
@@ -763,7 +762,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
   it('finalizes the channel when the renderer port closes', async () => {
     // Spawn a long-lived terminal so exit cannot end the channel.
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'sleep 30',
         cwd: TEST_CWD,
         cols: 80,
@@ -777,7 +776,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       // Drain output; content is irrelevant here.
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -791,13 +790,13 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     const exit = await run(Fiber.await(fiber).pipe(Effect.timeout('5 seconds')))
     expect(Exit.isSuccess(exit)).toBe(true)
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
   })
 
   it('data channel is separate from RPC channel', async () => {
     // Spawn a terminal via RPC.
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "separate-channels"',
         cwd: TEST_CWD,
         cols: 80,
@@ -814,14 +813,14 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       dataMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
     await delay(1000)
 
     // Verify RPC still works independently — list terminals via RPC.
-    const terminals = await run(client.terminal.list())
+    const terminals = await run(client['terminal.list']())
     expect(terminals.length > 0).toBe(true)
 
     // Verify data channel received data.

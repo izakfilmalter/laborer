@@ -176,7 +176,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
     Layer.provideMerge(RepositoryIdentity.layer)
   )
 
-  it.scoped(
+  it.effect(
     'dedupe by persisted repoId prevents duplicate across separate registration calls',
     () =>
       Effect.gen(function* () {
@@ -207,7 +207,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped('starts with no implicitly migrated projects', () =>
+  it.effect('starts with no implicitly migrated projects', () =>
     Effect.gen(function* () {
       const registry = yield* ProjectRegistry
 
@@ -215,7 +215,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
     }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'worktree dedupe works via persisted repoId even when raw paths differ',
     () =>
       Effect.gen(function* () {
@@ -245,7 +245,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
 // ── 2. FileWatcherClient ignore passthrough ─────────────────────
 
 describe('FileWatcherClient ignore passthrough hardening', () => {
-  it.scoped(
+  it.effect(
     'repo-root subscription is created with recursive watching enabled',
     () =>
       Effect.gen(function* () {
@@ -293,7 +293,7 @@ describe('FileWatcherClient ignore passthrough hardening', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'config-driven watchIgnore patterns are included in watcher-level ignore globs',
     () =>
       Effect.gen(function* () {
@@ -353,7 +353,7 @@ describe('FileWatcherClient ignore passthrough hardening', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'git-dir subscription does not receive ignore globs (only repo-root does)',
     () =>
       Effect.gen(function* () {

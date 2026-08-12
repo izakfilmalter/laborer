@@ -32,7 +32,7 @@ import { TerminalManager } from '../src/services/terminal-manager.js'
 
 const TestLayer = TerminalManager.layer.pipe(Layer.provideMerge(directLayer))
 
-let scope: Scope.CloseableScope
+let scope: Scope.Closeable
 let testContext: Context.Context<TerminalManager | PtyHostClient>
 
 const runEffect = <A, E>(

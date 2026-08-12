@@ -1,19 +1,21 @@
-import { McpServer, Tool, Toolkit } from '@effect/ai'
+import { PositiveInt } from '@laborer/shared/rpc'
+import { Effect, Layer, Option, Schema } from 'effect'
+import { McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import {
+  Headers,
   HttpMiddleware,
   HttpServerRequest,
   HttpServerResponse,
-} from '@effect/platform'
-import { Effect, Layer, Option, Schema } from 'effect'
+} from 'effect/unstable/http'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 
-const TaskStatus = Schema.Literal(
+const TaskStatus = Schema.Literals([
   'todo',
   'in_progress',
   'in_review',
   'done',
-  'cancelled'
-)
+  'cancelled',
+])
 const Task = Schema.Struct({
   actionName: Schema.NullOr(Schema.String),
   branchName: Schema.NullOr(Schema.String),
@@ -21,27 +23,27 @@ const Task = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal(
+    Schema.Literals([
       'queued',
       'running',
       'cancelling',
       'completed',
       'failed',
       'cancelled',
-      'needs-attention'
-    )
+      'needs-attention',
+    ])
   ),
   id: Schema.String,
   revision: Schema.Int,
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
-  source: Schema.Literal(
+  source: Schema.Literals([
     'execution',
     'manual',
     'slack_url',
     'agent',
-    'worktree'
-  ),
+    'worktree',
+  ]),
   status: TaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,
@@ -60,51 +62,51 @@ const ListProjects = Tool.make('list_projects', {
 const CreateTask = Tool.make('create_task', {
   description:
     'Stage a todo task on the Laborer board. This never starts work or provisions a worktree.',
-  parameters: {
+  parameters: Schema.Struct({
     description: Schema.optional(Schema.NullOr(Schema.String)),
     path: Schema.String,
     title: Schema.String,
-  },
+  }),
   success: Task,
   failure: AgentTaskError,
 })
 const UpdateTask = Tool.make('update_task', {
   description:
     'Update only the title and/or description of a non-Execution task using revision CAS.',
-  parameters: {
+  parameters: Schema.Struct({
     description: Schema.optional(Schema.NullOr(Schema.String)),
-    expected_revision: Schema.Positive.pipe(Schema.int()),
+    expected_revision: PositiveInt,
     id: Schema.String,
     title: Schema.optional(Schema.String),
-  },
+  }),
   success: Task,
   failure: AgentTaskError,
 })
 const DeleteTask = Tool.make('delete_task', {
   description:
     'Soft-delete a task by changing its status to cancelled using revision CAS.',
-  parameters: {
-    expected_revision: Schema.Positive.pipe(Schema.int()),
+  parameters: Schema.Struct({
+    expected_revision: PositiveInt,
     id: Schema.String,
-  },
+  }),
   success: Task,
   failure: AgentTaskError,
 })
 const ListTasks = Tool.make('list_tasks', {
   description:
     'List board tasks, excluding cancelled tasks by default. Search matches title and branch.',
-  parameters: {
+  parameters: Schema.Struct({
     include_cancelled: Schema.optional(Schema.Boolean),
     path: Schema.optional(Schema.String),
     search: Schema.optional(Schema.String),
     status: Schema.optional(TaskStatus),
-  },
+  }),
   success: Schema.Struct({ tasks: Schema.Array(Task) }),
   failure: AgentTaskError,
 })
 const GetTask = Tool.make('get_task', {
   description: 'Fetch the full shared task row by id.',
-  parameters: { id: Schema.String },
+  parameters: Schema.Struct({ id: Schema.String }),
   success: Task,
   failure: AgentTaskError,
 })
@@ -118,6 +120,17 @@ export const TaskToolkit = Toolkit.make(
   GetTask
 )
 
+const exposeErrorCode = <A>(effect: Effect.Effect<A, AgentTaskError>) =>
+  effect.pipe(
+    Effect.mapError(
+      (error) =>
+        new AgentTaskError({
+          code: error.code,
+          message: `${error.code}: ${error.message}`,
+        })
+    )
+  )
+
 const TaskToolkitHandlers = TaskToolkit.toLayer(
   Effect.gen(function* () {
     const service = yield* AgentTaskService
@@ -125,23 +138,27 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
       list_projects: () =>
         service.listProjects().pipe(Effect.map((projects) => ({ projects }))),
       create_task: ({ description, path, title }) =>
-        service.createTask({
-          ...(description === undefined ? {} : { description }),
-          path,
-          title,
-        }),
+        exposeErrorCode(
+          service.createTask({
+            ...(description === undefined ? {} : { description }),
+            path,
+            title,
+          })
+        ),
       update_task: ({ description, expected_revision, id, title }) =>
-        service.updateTask({
-          ...(description === undefined ? {} : { description }),
-          ...(title === undefined ? {} : { title }),
-          expectedRevision: expected_revision,
-          id,
-        }),
+        exposeErrorCode(
+          service.updateTask({
+            ...(description === undefined ? {} : { description }),
+            ...(title === undefined ? {} : { title }),
+            expectedRevision: expected_revision,
+            id,
+          })
+        ),
       delete_task: ({ expected_revision, id }) =>
-        service.deleteTask(id, expected_revision),
+        exposeErrorCode(service.deleteTask(id, expected_revision)),
       list_tasks: ({ include_cancelled, path, search, status }) =>
-        service
-          .listTasks({
+        exposeErrorCode(
+          service.listTasks({
             ...(include_cancelled === undefined
               ? {}
               : { includeCancelled: include_cancelled }),
@@ -149,8 +166,8 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
             ...(search === undefined ? {} : { search }),
             ...(status === undefined ? {} : { status }),
           })
-          .pipe(Effect.map((tasks) => ({ tasks }))),
-      get_task: ({ id }) => service.getTask(id),
+        ).pipe(Effect.map((tasks) => ({ tasks }))),
+      get_task: ({ id }) => exposeErrorCode(service.getTask(id)),
     })
   })
 )
@@ -190,15 +207,25 @@ export const mcpOriginGuard = HttpMiddleware.make((app) =>
     const url = HttpServerRequest.toURL(request)
     const origin = request.headers.origin
     if (
-      Option.isSome(url) &&
-      url.value.pathname === '/mcp' &&
-      origin !== undefined &&
-      !isAllowedMcpOrigin(origin)
+      Option.isNone(url) ||
+      url.value.pathname !== '/mcp' ||
+      origin === undefined
     ) {
-      return yield* HttpServerResponse.text('Forbidden MCP origin', {
+      return yield* app
+    }
+    if (!isAllowedMcpOrigin(origin)) {
+      return HttpServerResponse.text('Forbidden MCP origin', {
         status: 403,
       })
     }
-    return yield* app
+
+    // McpServer accepts requests without Origin. Validate Laborer's broader
+    // loopback-any-port policy above, then hide Origin from its exact matcher.
+    return yield* app.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        request.modify({ headers: Headers.remove(request.headers, 'origin') })
+      )
+    )
   })
 )

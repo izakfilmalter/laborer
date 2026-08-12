@@ -5,7 +5,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   PanelNode,
   PaneType,

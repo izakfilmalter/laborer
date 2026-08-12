@@ -1,5 +1,5 @@
-import { Result } from '@effect-atom/atom'
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { useEffect, useMemo } from 'react'
 import {
   installSharedStateUpdateAtom,

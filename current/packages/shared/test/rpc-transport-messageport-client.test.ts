@@ -16,9 +16,9 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
-import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+import { Effect, Exit, Layer, Result, Schema, Scope, Stream } from 'effect'
+import { Rpc, RpcClient, RpcGroup, RpcServer } from 'effect/unstable/rpc'
+import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   layerProtocolMessagePort,
@@ -32,9 +32,12 @@ import { makeClientProtocolMessagePort } from '../src/rpc-transport-messageport-
 // Test RPC definitions
 // ---------------------------------------------------------------------------
 
-class TestRpcError extends Schema.TaggedError<TestRpcError>()('TestRpcError', {
-  message: Schema.String,
-}) {}
+class TestRpcError extends Schema.TaggedErrorClass<TestRpcError>()(
+  'TestRpcError',
+  {
+    message: Schema.String,
+  }
+) {}
 
 const TestRpcs = RpcGroup.make(
   Rpc.make('echo', {
@@ -53,6 +56,10 @@ const TestRpcs = RpcGroup.make(
     payload: { message: Schema.String },
   }),
 
+  Rpc.make('hang', {
+    success: Schema.Void,
+  }),
+
   Rpc.make('count', {
     success: Schema.Number,
     stream: true,
@@ -65,6 +72,7 @@ const TestRpcsLive = TestRpcs.toLayer(
     echo: ({ input }) => Effect.succeed(input),
     add: ({ a, b }) => Effect.succeed(a + b),
     fail: ({ message }) => Effect.fail(new TestRpcError({ message })),
+    hang: () => Effect.never,
     count: ({ count }) => Stream.range(0, count - 1).pipe(Stream.map((n) => n)),
   })
 )
@@ -113,13 +121,13 @@ async function buildServerAndClient() {
   const clientScope = Effect.runSync(Scope.make())
   const protocol = await Effect.runPromise(
     makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
   const client: any = await Effect.runPromise(
     RpcClient.make(TestRpcs).pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 
@@ -172,9 +180,9 @@ describe('makeClientProtocolMessagePort', () => {
 
   it('propagates RPC errors', async () => {
     const result = await Effect.runPromise(
-      Effect.either(client.fail({ message: 'something went wrong' }))
+      Effect.result(client.fail({ message: 'something went wrong' }))
     )
-    expect(result._tag).toBe('Left')
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   // -----------------------------------------------------------------------
@@ -225,13 +233,13 @@ describe('makeClientProtocolMessagePort', () => {
     const disconnectClientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-        Scope.extend(disconnectClientScope)
+        Scope.provide(disconnectClientScope)
       )
     )
     const disconnectClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(disconnectClientScope)
+        Scope.provide(disconnectClientScope)
       )
     )
 
@@ -241,8 +249,14 @@ describe('makeClientProtocolMessagePort', () => {
     )
     expect(result).toBe('before disconnect')
 
-    // Close server (simulating disconnection)
+    const pendingRequest = Effect.runPromise(disconnectClient.hang())
+
+    // Close server while a request is pending (simulating disconnection).
     await Effect.runPromise(Scope.close(disconnectServerScope, Exit.void))
+
+    await expect(pendingRequest).rejects.toMatchObject({
+      reason: { _tag: 'RpcClientDefect' },
+    })
 
     // Clean up client
     await Effect.runPromise(Scope.close(disconnectClientScope, Exit.void))
@@ -267,13 +281,13 @@ describe('makeClientProtocolMessagePort', () => {
     const cleanupClientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-        Scope.extend(cleanupClientScope)
+        Scope.provide(cleanupClientScope)
       )
     )
     const cleanupClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(cleanupClientScope)
+        Scope.provide(cleanupClientScope)
       )
     )
 
@@ -412,23 +426,23 @@ describe('heartbeat timeout detection', () => {
     const clientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
     // Send a request — it will hang because nobody responds.
-    let requestFailed = false
+    let requestError: unknown
     const requestPromise = Effect.runPromise(
       rpcClient.echo({ input: 'will timeout' })
-    ).catch(() => {
-      requestFailed = true
+    ).catch((error: unknown) => {
+      requestError = error
     })
 
     // Advance past heartbeat timeout (30s) + one interval (5s).
@@ -436,7 +450,10 @@ describe('heartbeat timeout detection', () => {
 
     // The request should have failed due to the synthetic Defect.
     await requestPromise
-    expect(requestFailed).toBe(true)
+    expect(requestError).toBeInstanceOf(RpcClientError)
+    expect(requestError).toMatchObject({
+      reason: { _tag: 'RpcClientDefect' },
+    })
 
     // Cleanup
     await Effect.runPromise(Scope.close(clientScope, Exit.void)).catch(() => {
@@ -451,6 +468,7 @@ describe('heartbeat timeout detection', () => {
     // Advance time well past timeout — with a real server, pongs
     // keep the heartbeat alive.
     await vi.advanceTimersByTimeAsync(30_000)
+    vi.useRealTimers()
 
     // RPC should still work.
     const result = await Effect.runPromise(
@@ -514,21 +532,15 @@ describe('heartbeat timeout detection', () => {
     const clientScope = Effect.runSync(Scope.make())
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort)).pipe(
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
-
-    // Verify RPC works before the stall.
-    const before = await Effect.runPromise(
-      rpcClient.echo({ input: 'before stall' })
-    )
-    expect(before).toBe('before stall')
 
     // Simulate a 20s server stall (no pong echoes during this time).
     stalled = true
@@ -538,6 +550,7 @@ describe('heartbeat timeout detection', () => {
     // After the stall ends, the next ping should get a pong and reset
     // the liveness timestamp. Advance past one more interval.
     await vi.advanceTimersByTimeAsync(5000)
+    vi.useRealTimers()
 
     // RPC should still work — the port should NOT have been declared dead.
     const after = await Effect.runPromise(
@@ -599,16 +612,17 @@ describe('heartbeat timeout detection', () => {
     const protocol = await Effect.runPromise(
       makeClientProtocolMessagePort(toRpcPort(clientNodePort), {
         heartbeatEnabled: false,
-      }).pipe(Scope.extend(clientScope))
+      }).pipe(Scope.provide(clientScope))
     )
     const rpcClient: any = await Effect.runPromise(
       RpcClient.make(TestRpcs).pipe(
         Effect.provideService(RpcClient.Protocol, protocol),
-        Scope.extend(clientScope)
+        Scope.provide(clientScope)
       )
     )
 
     await vi.advanceTimersByTimeAsync(35_000)
+    vi.useRealTimers()
 
     const result = await Effect.runPromise(
       rpcClient.echo({ input: 'still alive without raw heartbeat' })

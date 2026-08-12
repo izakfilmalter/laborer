@@ -28,16 +28,7 @@ import {
   type AgentStatusSnapshot,
   TerminalRpcError,
 } from '@laborer/shared/rpc'
-import {
-  Cause,
-  Context,
-  Effect,
-  Layer,
-  PubSub,
-  Ref,
-  Runtime,
-  Schedule,
-} from 'effect'
+import { Context, Effect, Layer, PubSub, Ref, Schedule } from 'effect'
 import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
 import type {
@@ -794,7 +785,7 @@ type TerminalLifecycleEvent =
 // Service Definition
 // ---------------------------------------------------------------------------
 
-class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
+class TerminalManager extends Context.Service<
   TerminalManager,
   {
     /**
@@ -937,16 +928,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     /** The PubSub for lifecycle events. Consumers subscribe to receive events. */
     readonly lifecycleEvents: PubSub.PubSub<TerminalLifecycleEvent>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/terminal/TerminalManager') {
+  static readonly layer = Layer.effect(
     TerminalManager,
     Effect.gen(function* () {
       const ptyHostClient = yield* PtyHostClient
       const gracePeriodMs = parseGracePeriodMs()
 
-      const runtime = yield* Effect.runtime<never>()
-      const runSync = Runtime.runSync(runtime)
-      const runFork = Runtime.runFork(runtime)
+      const context = yield* Effect.context<never>()
+      const runSync = Effect.runSyncWith(context)
+      const runFork = Effect.runForkWith(context)
 
       // In-memory map of terminal ID → ManagedTerminal.
       // Both running AND stopped terminals are stored here.
@@ -1111,7 +1102,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
       /** Publish a lifecycle event (fire-and-forget). */
       const emitEvent = (event: TerminalLifecycleEvent): void => {
-        runFork(lifecyclePubSub.publish(event))
+        runFork(PubSub.publish(lifecyclePubSub, event))
       }
 
       /** Emit semantic completion before the terminal stop clears status. */
@@ -1226,7 +1217,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             }).pipe(
               Effect.tapDefect((cause) =>
                 Effect.logWarning(
-                  `Failed grace-period cleanup for terminal ${terminalId}: ${Cause.pretty(cause)}`
+                  `Failed grace-period cleanup for terminal ${terminalId}: ${String(cause)}`
                 ).pipe(Effect.annotateLogs('module', logPrefix))
               )
             )
@@ -1997,7 +1988,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             }).pipe(
               Effect.tapDefect((cause) =>
                 Effect.logWarning(
-                  `Failed to kill terminal ${terminal.id} during workspace cleanup: ${Cause.pretty(cause)}`
+                  `Failed to kill terminal ${terminal.id} during workspace cleanup: ${String(cause)}`
                 )
               )
             ),
@@ -2047,7 +2038,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               }).pipe(
                 Effect.tapDefect((cause) =>
                   Effect.logWarning(
-                    `Shutdown: failed to kill terminal ${terminal.id}: ${Cause.pretty(cause)}`
+                    `Shutdown: failed to kill terminal ${terminal.id}: ${String(cause)}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
                 )
               ),
@@ -2365,17 +2356,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       }).pipe(
         Effect.tapDefect((cause) =>
           Effect.logWarning(
-            `Process detection tick failed: ${Cause.pretty(cause)}`
+            `Process detection tick failed: ${String(cause)}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         ),
-        Effect.catchAllDefect(() => Effect.void)
+        Effect.catchDefect(() => Effect.void)
       )
 
       // Launch the detection fiber as a daemon so it runs for the
       // lifetime of the scoped layer and is interrupted on shutdown.
       yield* detectionTick.pipe(
         Effect.repeat(Schedule.spaced(`${DETECTION_INTERVAL_MS} millis`)),
-        Effect.forkDaemon
+        Effect.forkDetach({ startImmediately: true })
       )
 
       yield* Effect.log(

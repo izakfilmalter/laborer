@@ -23,12 +23,12 @@
  * @see .reference/effect/packages/rpc/src/RpcServer.ts (Protocol interface)
  */
 
-import { RpcServer } from '@effect/rpc'
+import { Effect, Layer, Queue, Scope } from 'effect'
+import { RpcServer } from 'effect/unstable/rpc'
 import type {
   FromClientEncoded,
   FromServerEncoded,
-} from '@effect/rpc/RpcMessage'
-import { Effect, Layer, Mailbox, Queue, Scope } from 'effect'
+} from 'effect/unstable/rpc/RpcMessage'
 
 // ---------------------------------------------------------------------------
 // Heartbeat protocol constants
@@ -101,11 +101,11 @@ const CLIENT_ID = 0
  */
 export const makeProtocolMessagePort = (
   port: RpcMessagePort
-): Effect.Effect<RpcServer.Protocol['Type'], never, Scope.Scope> =>
+): Effect.Effect<RpcServer.Protocol['Service'], never, Scope.Scope> =>
   RpcServer.Protocol.make(
     Effect.fnUntraced(function* (writeRequest) {
       const scope = yield* Effect.scope
-      const disconnects = yield* Mailbox.make<number>()
+      const disconnects = yield* Queue.unbounded<number>()
 
       // Unbounded queue bridges sync event listeners to the Effect runtime.
       const messageQueue = yield* Queue.unbounded<FromClientEncoded>()
@@ -131,11 +131,11 @@ export const makeProtocolMessagePort = (
           }
           return
         }
-        Queue.unsafeOffer(messageQueue, data as FromClientEncoded)
+        Queue.offerUnsafe(messageQueue, data as FromClientEncoded)
       }
 
       const closeHandler = (): void => {
-        disconnects.unsafeOffer(CLIENT_ID)
+        Queue.offerUnsafe(disconnects, CLIENT_ID)
       }
 
       // Attach listeners based on the port's API style.
@@ -217,4 +217,4 @@ export const makeProtocolMessagePort = (
 export const layerProtocolMessagePort = (
   port: RpcMessagePort
 ): Layer.Layer<RpcServer.Protocol> =>
-  Layer.scoped(RpcServer.Protocol, makeProtocolMessagePort(port))
+  Layer.effect(RpcServer.Protocol, makeProtocolMessagePort(port))

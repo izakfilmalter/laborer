@@ -9,11 +9,11 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either, type Scope } from 'effect'
+import { Effect, Result, type Scope } from 'effect'
 import { createTempDir, git } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
-type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
+type RpcTestContext = Effect.Success<typeof makeScopedTestRpcContext>
 
 const CUSTOM_FIELD_PATTERN = /"customField": "preserve-me"/
 const SETUP_SCRIPTS_PATTERN = /"setupScripts": \[\s+"bun install"\s+\]/m
@@ -55,7 +55,7 @@ const writeLaborerConfig = (
 }
 
 describe('LaborerRpcs config management', () => {
-  it.scoped(
+  it.effect(
     'config.get resolves config through real service layers with field provenance',
     () =>
       runWithRpcTestContext(({ client }) =>
@@ -79,8 +79,8 @@ describe('LaborerRpcs config management', () => {
             setupScripts: ['bun install', 'bun test'],
           })
 
-          const project = yield* client.project.add({ repoPath })
-          const config = yield* client.config.get({ projectId: project.id })
+          const project = yield* client['project.add']({ repoPath })
+          const config = yield* client['config.get']({ projectId: project.id })
 
           // Config source paths are resolved relative to the
           // canonical project root, so canonicalize expectations.
@@ -105,28 +105,28 @@ describe('LaborerRpcs config management', () => {
       )
   )
 
-  it.scoped('config.get returns NOT_FOUND for a missing project', () =>
+  it.effect('config.get returns NOT_FOUND for a missing project', () =>
     runWithRpcTestContext(({ client }) =>
       Effect.gen(function* () {
-        const result = yield* client.config
-          .get({ projectId: 'missing-project' })
-          .pipe(Effect.either)
+        const result = yield* client['config.get']({
+          projectId: 'missing-project',
+        }).pipe(Effect.result)
 
-        assert.isTrue(Either.isLeft(result))
-        if (Either.isRight(result)) {
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isSuccess(result)) {
           assert.fail('Expected config.get to fail for a missing project')
         }
 
-        assert.strictEqual(result.left.code, 'NOT_FOUND')
+        assert.strictEqual(result.failure.code, 'NOT_FOUND')
         assert.strictEqual(
-          result.left.message,
+          result.failure.message,
           'Project not found: missing-project'
         )
       })
     )
   )
 
-  it.scoped(
+  it.effect(
     'config.update writes project config through the RPC contract and makes it retrievable',
     () =>
       runWithRpcTestContext(({ client }) =>
@@ -142,9 +142,9 @@ describe('LaborerRpcs config management', () => {
             customField: 'preserve-me',
           })
 
-          const project = yield* client.project.add({ repoPath })
+          const project = yield* client['project.add']({ repoPath })
 
-          yield* client.config.update({
+          yield* client['config.update']({
             projectId: project.id,
             config: {
               agent: 'opencode2',
@@ -162,7 +162,9 @@ describe('LaborerRpcs config management', () => {
           assert.match(writtenConfig, SETUP_SCRIPTS_PATTERN)
           assert.match(writtenConfig, WORKTREE_DIR_PATTERN)
 
-          const resolved = yield* client.config.get({ projectId: project.id })
+          const resolved = yield* client['config.get']({
+            projectId: project.id,
+          })
 
           assert.deepStrictEqual(resolved, {
             agent: { source: canonicalConfigPath, value: 'opencode2' },

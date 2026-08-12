@@ -29,7 +29,7 @@ import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 
 describe('Lazy sidecar connections (Issue #16)', () => {
   describe('FileWatcherClient', () => {
-    it.scoped(
+    it.effect(
       'layer builds instantly without connecting to file-watcher sidecar',
       () =>
         Effect.gen(function* () {
@@ -50,7 +50,7 @@ describe('Lazy sidecar connections (Issue #16)', () => {
         })
     )
 
-    it.scoped('onFileEvent handler can be registered before connection', () =>
+    it.effect('onFileEvent handler can be registered before connection', () =>
       Effect.gen(function* () {
         const ctx = yield* Layer.build(FileWatcherClient.layer)
         const fileWatcherClient = Context.get(ctx, FileWatcherClient)
@@ -84,7 +84,7 @@ describe('Lazy sidecar connections (Issue #16)', () => {
       )
     )
 
-    it.scoped(
+    it.effect(
       'layer builds instantly without connecting to terminal sidecar',
       () =>
         Effect.gen(function* () {
@@ -102,7 +102,7 @@ describe('Lazy sidecar connections (Issue #16)', () => {
         })
     )
 
-    it.scoped(
+    it.effect(
       'killAllForWorkspace returns 0 when no terminals tracked (before connection)',
       () =>
         Effect.gen(function* () {

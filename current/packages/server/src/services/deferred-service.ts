@@ -86,7 +86,7 @@ export const makeServiceProxy = <T extends object>(
  * automatically go through to it.
  */
 export const makeRefDelegatingService = <Id, S extends object>(
-  tag: Context.Tag<Id, S>,
+  tag: Context.Key<Id, S>,
   overrides: Partial<S> = {}
 ) =>
   Effect.gen(function* () {
@@ -157,12 +157,10 @@ export const makeRefDelegatingService = <Id, S extends object>(
  * when all deferred services have initialized. Used by Issue #15
  * (Server "fully initialized" event) to signal the renderer.
  */
-export class DeferredServicesReady extends Context.Tag(
-  '@laborer/DeferredServicesReady'
-)<
+export class DeferredServicesReady extends Context.Service<
   DeferredServicesReady,
   { readonly ref: SubscriptionRef.SubscriptionRef<boolean> }
->() {}
+>()('@laborer/DeferredServicesReady') {}
 
 export const DeferredServicesReadyLayer = Layer.effect(
   DeferredServicesReady,

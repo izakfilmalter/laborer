@@ -17,7 +17,7 @@
  * @see Issue #144: Web app terminal query replacement
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { LeafNode } from '@laborer/shared/types'
 import {
   AlertTriangle,

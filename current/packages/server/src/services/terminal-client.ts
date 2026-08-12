@@ -31,7 +31,6 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { NodeSocket } from '@effect/platform-node'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
 import {
   type AgentStatusReport,
   AgentStatusSchema,
@@ -52,6 +51,7 @@ import {
   Scope,
   Stream,
 } from 'effect'
+import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { writeClaudeStatusHooks } from './claude-status-hooks.js'
 import {
@@ -96,10 +96,10 @@ interface TerminalRecord {
  *
  * @see Issue #13: Server-to-terminal MessagePort channel
  */
-class TerminalRpcPort extends Context.Tag('@laborer/TerminalRpcPort')<
+class TerminalRpcPort extends Context.Service<
   TerminalRpcPort,
   { readonly awaitPort: Effect.Effect<RpcMessagePort> }
->() {}
+>()('@laborer/TerminalRpcPort') {}
 
 export { TerminalRpcPort }
 
@@ -122,7 +122,7 @@ class AgentHookDiscoveryWriteError extends Data.TaggedError(
   'AgentHookDiscoveryWriteError'
 )<{ readonly cause: unknown }> {}
 
-const AgentHookRequestSchema = Schema.parseJson(
+const AgentHookRequestSchema = Schema.fromJsonString(
   Schema.Struct({
     /**
      * Direct terminal attribution. Used by agents whose hooks run inside the
@@ -138,10 +138,10 @@ const AgentHookRequestSchema = Schema.parseJson(
     directory: Schema.optional(Schema.String),
     status: AgentStatusSchema,
     sequence: Schema.optional(
-      Schema.Number.pipe(
-        Schema.int(),
-        Schema.greaterThanOrEqualTo(0),
-        Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
+      Schema.Number.check(
+        Schema.isInt(),
+        Schema.isGreaterThanOrEqualTo(0),
+        Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
       )
     ),
   })
@@ -278,7 +278,7 @@ const startAgentHookServer = (
   gateway: AgentHookGateway,
   scope: Scope.Scope
 ): Effect.Effect<number> =>
-  Effect.async<number>((resume) => {
+  Effect.callback<number>((resume) => {
     const reportSequences = new Map<string, number>()
 
     const forwardReport = (
@@ -369,7 +369,7 @@ const startAgentHookServer = (
     Effect.runFork(
       Scope.addFinalizer(
         scope,
-        Effect.async<void>((done) => {
+        Effect.callback<void>((done) => {
           server.close(() => done(Effect.void))
         })
       )
@@ -394,7 +394,7 @@ const buildOpenCodeSpawnCommand = (
   }
 }
 
-class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
+class TerminalClient extends Context.Service<
   TerminalClient,
   {
     /**
@@ -423,8 +423,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       workspaceId: string
     ) => Effect.Effect<number, never>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/TerminalClient') {
+  static readonly layer = Layer.effect(
     TerminalClient,
     Effect.gen(function* () {
       const workspaceProvider = yield* WorkspaceProvider
@@ -521,7 +521,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           // This handles the case where the server restarts but the terminal
           // service has existing terminals from before.
           yield* Effect.gen(function* () {
-            const existingTerminals = yield* client.terminal.list()
+            const existingTerminals = yield* client['terminal.list']()
             const initialMap = new Map<string, string>()
             for (const terminal of existingTerminals) {
               initialMap.set(terminal.id, terminal.workspaceId)
@@ -531,7 +531,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
               `Seeded terminal map with ${initialMap.size} existing terminal(s)`
             ).pipe(Effect.annotateLogs('module', logPrefix))
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `Failed to seed terminal map from terminal service: ${String(error)}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -541,7 +541,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           // Subscribe to terminal lifecycle events from the terminal service.
           // This runs as a background fiber in the layer's scope for the
           // lifetime of the layer. It keeps the workspace→terminal map in sync.
-          yield* client.terminal.events().pipe(
+          yield* client['terminal.events']().pipe(
             Stream.tap((event) =>
               Effect.gen(function* () {
                 if (event._tag === 'Spawned') {
@@ -562,7 +562,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             Stream.runDrain,
             // Retry with exponential backoff if the terminal service disconnects
             Effect.retry(sidecarEventStreamSchedule),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.logWarning(
                 `Terminal event stream ended: ${String(error)}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -581,8 +581,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           // service via the `terminal.setAgentStatus` RPC.
           const hookPort = yield* startAgentHookServer(
             {
-              setAgentStatus: (input) => client.terminal.setAgentStatus(input),
-              listTerminals: () => client.terminal.list(),
+              setAgentStatus: (input) =>
+                client['terminal.setAgentStatus'](input),
+              listTerminals: () => client['terminal.list'](),
             },
             layerScope
           )
@@ -740,24 +741,22 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           const shellArgs = command ? ['-c', agentCmd] : []
 
           const terminalInfo = yield* provideLayerScope(
-            rpcClient.terminal
-              .spawn({
-                command: shellPath,
-                args: shellArgs,
-                cwd: workspace.worktreePath,
-                env: {
-                  ...process.env,
-                  ...workspaceEnv,
-                  ...extraEnv,
-                  TERM: 'xterm-256color',
-                  COLORTERM: 'truecolor',
-                } as Record<string, string>,
-                id: terminalId,
-                cols: 80,
-                rows: 24,
-                workspaceId,
-              })
-              .pipe(Effect.catchAll(mapTerminalError))
+            rpcClient['terminal.spawn']({
+              command: shellPath,
+              args: shellArgs,
+              cwd: workspace.worktreePath,
+              env: {
+                ...process.env,
+                ...workspaceEnv,
+                ...extraEnv,
+                TERM: 'xterm-256color',
+                COLORTERM: 'truecolor',
+              } as Record<string, string>,
+              id: terminalId,
+              cols: 80,
+              rows: 24,
+              workspaceId,
+            }).pipe(Effect.catch(mapTerminalError))
           )
 
           return {
@@ -845,13 +844,15 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             workspaceTerminalIds,
             (terminalId) =>
               pipe(
-                provideLayerScope(rpcClient.terminal.kill({ id: terminalId })),
+                provideLayerScope(
+                  rpcClient['terminal.kill']({ id: terminalId })
+                ),
                 Effect.tap(() =>
                   Effect.sync(() => {
                     killedCount += 1
                   })
                 ),
-                Effect.catchAll((err) =>
+                Effect.catch((err) =>
                   Effect.logWarning(
                     `Failed to kill terminal ${terminalId} during workspace cleanup: ${String(err)}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))

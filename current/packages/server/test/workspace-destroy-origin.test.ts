@@ -63,7 +63,7 @@ afterAll(() => {
 })
 
 describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
-  it.scopedLive('removes git worktree and branch for external workspaces', () =>
+  it.live('removes git worktree and branch for external workspaces', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('destroy-external', tempRoots)
       const branchName = 'feature/external'
@@ -94,7 +94,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scopedLive('removes git worktree and branch for laborer workspaces', () =>
+  it.live('removes git worktree and branch for laborer workspaces', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('destroy-laborer', tempRoots)
       const branchName = 'feature/laborer'

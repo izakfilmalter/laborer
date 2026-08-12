@@ -18,14 +18,13 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { RpcClient, RpcServer } from '@effect/rpc'
 import { assert, describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { Effect, Exit, Fiber, Layer, Result, Scope, Stream } from 'effect'
+import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
@@ -77,10 +76,10 @@ function buildServerLayer(port: RpcMessagePort) {
  * This avoids `any` and provides full type safety for all RPC calls.
  */
 const MakeTerminalClient = RpcClient.make(TerminalRpcs)
-type TerminalRpcClient = Effect.Effect.Success<typeof MakeTerminalClient>
+type TerminalRpcClient = Effect.Success<typeof MakeTerminalClient>
 
-let serverScope: Scope.CloseableScope
-let clientScope: Scope.CloseableScope
+let serverScope: Scope.Closeable
+let clientScope: Scope.Closeable
 let client: TerminalRpcClient
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -105,13 +104,13 @@ beforeAll(async () => {
   clientScope = Effect.runSync(Scope.make())
   const protocol = await Effect.runPromise(
     makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
   client = await Effect.runPromise(
     MakeTerminalClient.pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 }, 30_000)
@@ -132,7 +131,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.spawn creates a terminal via MessagePort', async () => {
     const result = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "mp-spawn-test"',
         cwd: TEST_CWD,
         cols: 80,
@@ -158,7 +157,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.write sends data via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -170,27 +169,27 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
     await delay(500)
 
     await run(
-      client.terminal.write({
+      client['terminal.write']({
         id: terminal.id,
         data: 'mp-write-test\n',
       })
     )
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
   })
 
   it('terminal.write fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(
-        client.terminal.write({
+      Effect.result(
+        client['terminal.write']({
           id: 'mp-nonexistent-write',
           data: 'should-fail',
         })
       )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -199,7 +198,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.resize changes dimensions via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -211,7 +210,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
     await delay(500)
 
     await run(
-      client.terminal.resize({
+      client['terminal.resize']({
         id: terminal.id,
         cols: 120,
         rows: 40,
@@ -220,20 +219,20 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     // Verify PTY is still alive by writing
     await run(
-      client.terminal.write({
+      client['terminal.write']({
         id: terminal.id,
         data: 'after-mp-resize\n',
       })
     )
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
   })
 
   it('terminal.resize fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(
-        client.terminal.resize({
+      Effect.result(
+        client['terminal.resize']({
           id: 'mp-nonexistent-resize',
           cols: 100,
           rows: 50,
@@ -241,7 +240,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
       )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -250,7 +249,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.kill stops a terminal via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -261,10 +260,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     await delay(500)
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
 
-    const terminals = await run(client.terminal.list())
+    const terminals = await run(client['terminal.list']())
     const found = terminals.find(
       (t: { readonly id: string }) => t.id === terminal.id
     )
@@ -274,10 +273,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.kill fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(client.terminal.kill({ id: 'mp-nonexistent-kill' }))
+      Effect.result(client['terminal.kill']({ id: 'mp-nonexistent-kill' }))
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -286,7 +285,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.remove fully deletes a terminal via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "mp-to-be-removed"',
         cwd: TEST_CWD,
         cols: 80,
@@ -297,16 +296,16 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     await delay(2000)
 
-    const beforeRemove = await run(client.terminal.list())
+    const beforeRemove = await run(client['terminal.list']())
     assert.strictEqual(
       beforeRemove.find((t: { readonly id: string }) => t.id === terminal.id)
         ?.status,
       'stopped'
     )
 
-    await run(client.terminal.remove({ id: terminal.id }))
+    await run(client['terminal.remove']({ id: terminal.id }))
 
-    const afterRemove = await run(client.terminal.list())
+    const afterRemove = await run(client['terminal.list']())
     assert.isUndefined(
       afterRemove.find((t: { readonly id: string }) => t.id === terminal.id)
     )
@@ -314,10 +313,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.remove fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(client.terminal.remove({ id: 'mp-nonexistent-remove' }))
+      Effect.result(client['terminal.remove']({ id: 'mp-nonexistent-remove' }))
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -326,7 +325,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.restart respawns a stopped terminal via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'cat',
         cwd: TEST_CWD,
         cols: 80,
@@ -337,10 +336,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     await delay(500)
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
 
-    const restarted = await run(client.terminal.restart({ id: terminal.id }))
+    const restarted = await run(client['terminal.restart']({ id: terminal.id }))
 
     assert.strictEqual(restarted.id, terminal.id)
     assert.strictEqual(restarted.command, 'cat')
@@ -351,22 +350,24 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     // Verify alive
     await run(
-      client.terminal.write({
+      client['terminal.write']({
         id: terminal.id,
         data: 'after-mp-restart\n',
       })
     )
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
   })
 
   it('terminal.restart fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(client.terminal.restart({ id: 'mp-nonexistent-restart' }))
+      Effect.result(
+        client['terminal.restart']({ id: 'mp-nonexistent-restart' })
+      )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -375,7 +376,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.list returns terminals via MessagePort', async () => {
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'sleep 60',
         cwd: TEST_CWD,
         cols: 80,
@@ -386,14 +387,14 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
     await delay(500)
 
-    const terminals = await run(client.terminal.list())
+    const terminals = await run(client['terminal.list']())
     const found = terminals.find(
       (t: { readonly id: string }) => t.id === terminal.id
     )
     assert.isDefined(found)
     assert.strictEqual(found?.status, 'running')
 
-    await run(client.terminal.kill({ id: terminal.id }))
+    await run(client['terminal.kill']({ id: terminal.id }))
     await delay(500)
   })
 
@@ -404,13 +405,13 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   it('terminal.events streams lifecycle events via MessagePort', async () => {
     // Start listening for events
     const eventsFiber = Effect.runFork(
-      Stream.runCollect(client.terminal.events().pipe(Stream.take(1)))
+      Stream.runCollect(client['terminal.events']().pipe(Stream.take(1)))
     )
 
     await delay(200)
 
     const terminal = await run(
-      client.terminal.spawn({
+      client['terminal.spawn']({
         command: 'echo "mp-events-test"',
         cwd: TEST_CWD,
         cols: 80,

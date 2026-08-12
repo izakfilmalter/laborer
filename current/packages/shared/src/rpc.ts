@@ -1,11 +1,14 @@
-import { Rpc, RpcGroup } from '@effect/rpc'
 import { Schema } from 'effect'
+import { Rpc, RpcGroup } from 'effect/unstable/rpc'
 import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
 const MUTATION_ID_MAX_LENGTH = 128
+
+export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+export const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
 
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
@@ -68,14 +71,14 @@ export const TerminalProcessChangedEvent = Schema.TaggedStruct(
  *
  * @see Issue #142: Terminal event stream RPC
  */
-export const TerminalLifecycleEventSchema = Schema.Union(
+export const TerminalLifecycleEventSchema = Schema.Union([
   TerminalSpawnedEvent,
   TerminalStatusChangedEvent,
   TerminalExitedEvent,
   TerminalRemovedEvent,
   TerminalRestartedEvent,
-  TerminalProcessChangedEvent
-)
+  TerminalProcessChangedEvent,
+])
 
 export type TerminalLifecycleEventSchema =
   typeof TerminalLifecycleEventSchema.Type
@@ -84,7 +87,7 @@ export type TerminalLifecycleEventSchema =
 // Error Types
 // ---------------------------------------------------------------------------
 
-export class RpcError extends Schema.TaggedError<RpcError>()('RpcError', {
+export class RpcError extends Schema.TaggedErrorClass<RpcError>()('RpcError', {
   message: Schema.String,
   code: Schema.optional(Schema.String),
 }) {}
@@ -102,7 +105,7 @@ export class RpcError extends Schema.TaggedError<RpcError>()('RpcError', {
  *
  * @see Issue #137: Terminal RPC contract
  */
-export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>()(
+export class TerminalRpcError extends Schema.TaggedErrorClass<TerminalRpcError>()(
   'TerminalRpcError',
   {
     message: Schema.String,
@@ -127,13 +130,13 @@ export const ProjectResponse = Schema.Struct({
 
 export type ProjectResponse = typeof ProjectResponse.Type
 
-export const StoredTaskStatus = Schema.Literal(
+export const StoredTaskStatus = Schema.Literals([
   'todo',
   'in_progress',
   'in_review',
   'done',
-  'cancelled'
-)
+  'cancelled',
+])
 
 export const BoardTask = Schema.Struct({
   actionName: Schema.NullOr(Schema.String),
@@ -141,28 +144,28 @@ export const BoardTask = Schema.Struct({
   createdAt: Schema.Int,
   executionId: Schema.NullOr(Schema.String),
   executionStatus: Schema.NullOr(
-    Schema.Literal(
+    Schema.Literals([
       'queued',
       'running',
       'cancelling',
       'completed',
       'failed',
       'cancelled',
-      'needs-attention'
-    )
+      'needs-attention',
+    ])
   ),
   id: Schema.String,
   description: Schema.NullOr(Schema.String),
   revision: Schema.Int,
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
-  source: Schema.Literal(
+  source: Schema.Literals([
     'execution',
     'manual',
     'slack_url',
     'agent',
-    'worktree'
-  ),
+    'worktree',
+  ]),
   status: StoredTaskStatus,
   title: Schema.String,
   updatedAt: Schema.Int,
@@ -173,7 +176,7 @@ export const BoardTask = Schema.Struct({
 
 export type BoardTask = typeof BoardTask.Type
 
-export const TaskBoardEvent = Schema.Union(
+export const TaskBoardEvent = Schema.Union([
   Schema.TaggedStruct('snapshot', {
     cursor: Schema.Int,
     tasks: Schema.Array(BoardTask),
@@ -182,8 +185,8 @@ export const TaskBoardEvent = Schema.Union(
     cursor: Schema.Int,
     deletedTaskIds: Schema.Array(Schema.String),
     tasks: Schema.Array(BoardTask),
-  })
-)
+  }),
+])
 
 export type TaskBoardEvent = typeof TaskBoardEvent.Type
 
@@ -195,14 +198,14 @@ export const SharedTaskRow = Schema.Struct({
   parentTaskId: Schema.NullOr(Schema.String),
   prIsDraft: Schema.Boolean,
   prNumber: Schema.NullOr(Schema.Int),
-  prState: Schema.NullOr(Schema.Literal('open', 'closed', 'merged')),
+  prState: Schema.NullOr(Schema.Literals(['open', 'closed', 'merged'])),
   prTitle: Schema.NullOr(Schema.String),
   prUrl: Schema.NullOr(Schema.String),
   setupCompletedAt: Schema.NullOr(Schema.Int),
   sortOrder: Schema.NullOr(Schema.Finite),
   worktreeError: Schema.NullOr(Schema.String),
   worktreeStatus: Schema.NullOr(
-    Schema.Literal('provisioning', 'ready', 'errored')
+    Schema.Literals(['provisioning', 'ready', 'errored'])
   ),
 })
 export type SharedTaskRow = typeof SharedTaskRow.Type
@@ -228,8 +231,8 @@ export const SharedSettingRow = Schema.Struct({
 })
 export type SharedSettingRow = typeof SharedSettingRow.Type
 
-const tableUpdate = <Row extends Schema.Schema.Any>(row: Row) =>
-  Schema.Union(
+const tableUpdate = <Row extends Schema.Top>(row: Row) =>
+  Schema.Union([
     Schema.Struct({
       type: Schema.Literal('snapshot'),
       cursor: Schema.Int,
@@ -241,8 +244,8 @@ const tableUpdate = <Row extends Schema.Schema.Any>(row: Row) =>
       deletedRowIds: Schema.Array(Schema.String),
       mutationIds: Schema.optional(Schema.Array(Schema.String)),
       rows: Schema.Array(row),
-    })
-  )
+    }),
+  ])
 
 export const TaskTableUpdate = tableUpdate(SharedTaskRow)
 export type TaskTableUpdate = typeof TaskTableUpdate.Type
@@ -269,11 +272,11 @@ const ConfigResolvedValueStringArray = Schema.Struct({
   source: Schema.String,
 })
 
-export const AgentProviderSchema = Schema.Literal(
+export const AgentProviderSchema = Schema.Literals([
   'opencode2',
   'claude',
-  'codex'
-)
+  'codex',
+])
 
 export type AgentProvider = typeof AgentProviderSchema.Type
 
@@ -301,14 +304,14 @@ const SlackWorkspacePlanResponse = Schema.Struct({
   branchName: Schema.String,
   initialPrompt: Schema.String,
   title: Schema.String,
-  workType: Schema.Literal('bug', 'feature'),
+  workType: Schema.Literals(['bug', 'feature']),
 })
 
 const TerminalResponse = Schema.Struct({
   id: Schema.String,
   workspaceId: Schema.String,
   command: Schema.String,
-  status: Schema.Literal('running', 'stopped'),
+  status: Schema.Literals(['running', 'stopped']),
 })
 
 const PrStatusResponse = Schema.Struct({
@@ -345,7 +348,7 @@ export const FileNode = Schema.Struct({
   /** Absolute filesystem path. */
   absolute: Schema.String,
   /** Whether this entry is a file or directory. */
-  type: Schema.Literal('file', 'directory'),
+  type: Schema.Literals(['file', 'directory']),
   /** Whether this entry matches a gitignore/ignore pattern. */
   ignored: Schema.Boolean,
 })
@@ -368,7 +371,7 @@ export const FileWatcherEvent = Schema.Struct({
   /** Path of the changed file, relative to the worktree root. */
   file: Schema.String,
   /** The type of file change. */
-  event: Schema.Literal('add', 'change', 'unlink'),
+  event: Schema.Literals(['add', 'change', 'unlink']),
 })
 
 export type FileWatcherEvent = typeof FileWatcherEvent.Type
@@ -442,7 +445,7 @@ export type StructuredPatch = typeof StructuredPatch.Type
  */
 export const FileContent = Schema.Struct({
   /** Whether this is a text or binary file. */
-  type: Schema.Literal('text', 'binary'),
+  type: Schema.Literals(['text', 'binary']),
   /** File content (UTF-8 text, base64 for images, or empty for binary). */
   content: Schema.String,
   /** Raw git diff output for this file (absent if no changes). */
@@ -475,7 +478,7 @@ export const FileInfo = Schema.Struct({
   /** Number of lines removed relative to HEAD. */
   removed: Schema.Number,
   /** The type of change: added (untracked), deleted, or modified. */
-  status: Schema.Literal('added', 'deleted', 'modified'),
+  status: Schema.Literals(['added', 'deleted', 'modified']),
 })
 
 export type FileInfo = typeof FileInfo.Type
@@ -502,7 +505,7 @@ export const FileDiffEntry = Schema.Struct({
   /** Number of lines removed relative to HEAD. */
   removed: Schema.Number,
   /** The type of change: added (untracked), deleted, or modified. */
-  status: Schema.Literal('added', 'deleted', 'modified'),
+  status: Schema.Literals(['added', 'deleted', 'modified']),
   /**
    * Unified diff patch text for this file. Absent for binary files and
    * for files whose patch was truncated by the size budget.
@@ -524,7 +527,7 @@ export type FileDiffEntry = typeof FileDiffEntry.Type
  */
 export const GitStatusEntry = Schema.Struct({
   path: Schema.String,
-  status: Schema.Literal('added', 'deleted', 'modified'),
+  status: Schema.Literals(['added', 'deleted', 'modified']),
 })
 
 export type GitStatusEntry = typeof GitStatusEntry.Type
@@ -610,21 +613,23 @@ export class LaborerRpcs extends RpcGroup.make(
   /** Revision-CAS write for a global app setting. Revision 0 means absent. */
   Rpc.make('appSetting.set', {
     success: Schema.Struct({
-      cursor: Schema.NonNegativeInt,
+      cursor: NonNegativeInt,
       row: SharedSettingRow,
     }),
     error: RpcError,
     payload: {
-      expectedRevision: Schema.NonNegativeInt,
-      key: Schema.String.pipe(
-        Schema.minLength(1),
-        Schema.maxLength(APP_SETTING_KEY_MAX_LENGTH)
+      expectedRevision: NonNegativeInt,
+      key: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(APP_SETTING_KEY_MAX_LENGTH)
       ),
-      mutationId: Schema.String.pipe(
-        Schema.minLength(1),
-        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      mutationId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
       ),
-      value: Schema.String.pipe(Schema.maxLength(APP_SETTING_VALUE_MAX_LENGTH)),
+      value: Schema.String.check(
+        Schema.isMaxLength(APP_SETTING_VALUE_MAX_LENGTH)
+      ),
     },
   }),
 
@@ -633,8 +638,8 @@ export class LaborerRpcs extends RpcGroup.make(
       /** Stored task description to inject when creation provisions a workspace. */
       description: Schema.NullOr(Schema.String),
       id: Schema.String,
-      source: Schema.Literal('manual', 'slack_url'),
-      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
+      source: Schema.Literals(['manual', 'slack_url']),
+      status: Schema.Literals(['todo', 'in_progress', 'in_review', 'done']),
       /** Non-null only when creating directly in In Progress provisioned a workspace. */
       workspaceId: Schema.NullOr(Schema.String),
     }),
@@ -647,15 +652,17 @@ export class LaborerRpcs extends RpcGroup.make(
        */
       id: Schema.optional(Schema.String),
       projectId: Schema.String,
-      status: Schema.Literal('todo', 'in_progress', 'in_review', 'done'),
-      text: Schema.String.pipe(Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)),
+      status: Schema.Literals(['todo', 'in_progress', 'in_review', 'done']),
+      text: Schema.String.check(
+        Schema.isMaxLength(SLACK_MESSAGE_URL_MAX_LENGTH)
+      ),
     },
   }),
 
   /** Revision-CAS status/manual-order write used by card drags and cancellation. */
   Rpc.make('task.move', {
     success: Schema.Struct({
-      cursor: Schema.NonNegativeInt,
+      cursor: NonNegativeInt,
       /** Non-null only when this move provisioned a new workspace. */
       workspaceId: Schema.NullOr(Schema.String),
       /** Stored task description to inject into the newly launched agent. */
@@ -667,10 +674,10 @@ export class LaborerRpcs extends RpcGroup.make(
     }),
     error: RpcError,
     payload: {
-      expectedRevision: Schema.Positive.pipe(Schema.int()),
-      mutationId: Schema.String.pipe(
-        Schema.minLength(1),
-        Schema.maxLength(MUTATION_ID_MAX_LENGTH)
+      expectedRevision: PositiveInt,
+      mutationId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
       ),
       sortOrder: Schema.NullOr(Schema.Finite),
       status: StoredTaskStatus,
@@ -758,8 +765,8 @@ export class LaborerRpcs extends RpcGroup.make(
     success: SlackWorkspacePlanResponse,
     error: RpcError,
     payload: {
-      slackUrl: Schema.String.pipe(
-        Schema.maxLength(SLACK_MESSAGE_URL_MAX_LENGTH)
+      slackUrl: Schema.String.check(
+        Schema.isMaxLength(SLACK_MESSAGE_URL_MAX_LENGTH)
       ),
     },
   }),
@@ -1001,7 +1008,7 @@ export class LaborerRpcs extends RpcGroup.make(
  * - `NOT_FOUND` — no subscription with the given ID
  * - `INTERNAL_ERROR` — unexpected internal failure
  */
-export class FileWatcherRpcError extends Schema.TaggedError<FileWatcherRpcError>()(
+export class FileWatcherRpcError extends Schema.TaggedErrorClass<FileWatcherRpcError>()(
   'FileWatcherRpcError',
   {
     message: Schema.String,
@@ -1033,7 +1040,7 @@ export const WatchFileEvent = Schema.Struct({
   /** Which subscription generated this event */
   subscriptionId: Schema.String,
   /** The type of file change */
-  type: Schema.Literal('add', 'change', 'delete'),
+  type: Schema.Literals(['add', 'change', 'delete']),
   /** Relative path of the changed file within the watched directory */
   fileName: Schema.NullOr(Schema.String),
   /** Absolute path of the changed file */
@@ -1137,13 +1144,13 @@ export class FileWatcherRpcs extends RpcGroup.make(
  * - `shell` — The shell itself (zsh, bash, fish) — means idle at prompt
  * - `unknown` — A process is running but not in the known list
  */
-export const ProcessCategorySchema = Schema.Literal(
+export const ProcessCategorySchema = Schema.Literals([
   'agent',
   'editor',
   'devServer',
   'shell',
-  'unknown'
-)
+  'unknown',
+])
 
 export type ProcessCategory = typeof ProcessCategorySchema.Type
 
@@ -1163,17 +1170,17 @@ export const ForegroundProcessSchema = Schema.Struct({
 export type ForegroundProcess = typeof ForegroundProcessSchema.Type
 
 /** Semantic lifecycle state reported for an agent in a terminal. */
-export const AgentStatusSchema = Schema.Literal(
+export const AgentStatusSchema = Schema.Literals([
   'working',
   'needs_input',
   'idle',
-  'unknown'
-)
+  'unknown',
+])
 
 export type AgentStatus = typeof AgentStatusSchema.Type
 
 /** Detector that supplied the effective agent status. */
-export const AgentStatusSourceSchema = Schema.Literal('hook', 'ps')
+export const AgentStatusSourceSchema = Schema.Literals(['hook', 'ps'])
 
 export type AgentStatusSource = typeof AgentStatusSourceSchema.Type
 
@@ -1192,7 +1199,7 @@ export type AgentStatusSnapshot = typeof AgentStatusSnapshotSchema.Type
 /** Sequence-guarded lifecycle evidence accepted from an agent hook. */
 export const AgentStatusReportSchema = Schema.Struct({
   status: AgentStatusSchema,
-  sequence: Schema.NonNegativeInt,
+  sequence: NonNegativeInt,
 })
 
 export type AgentStatusReport = typeof AgentStatusReportSchema.Type
@@ -1271,9 +1278,7 @@ export class TerminalRpcs extends RpcGroup.make(
       /** Working directory for the PTY process. */
       cwd: Schema.String,
       /** Environment variables to inject into the PTY process. */
-      env: Schema.optional(
-        Schema.Record({ key: Schema.String, value: Schema.String })
-      ),
+      env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
       /**
        * Optional pre-generated terminal ID. When provided, the terminal
        * manager uses this ID instead of generating a new UUID. Allows the

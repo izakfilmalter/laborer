@@ -23,14 +23,13 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { RpcClient, RpcServer } from '@effect/rpc'
 import { assert, describe } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Effect, Exit, Layer, Option, Scope, Stream } from 'effect'
+import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
@@ -110,10 +109,10 @@ function buildServerLayer(port: RpcMessagePort) {
  * Infer the client type from `RpcClient.make(LaborerRpcs)`.
  */
 const MakeLaborerClient = RpcClient.make(LaborerRpcs)
-type LaborerRpcClient = Effect.Effect.Success<typeof MakeLaborerClient>
+type LaborerRpcClient = Effect.Success<typeof MakeLaborerClient>
 
-let serverScope: Scope.CloseableScope
-let clientScope: Scope.CloseableScope
+let serverScope: Scope.Closeable
+let clientScope: Scope.Closeable
 let client: LaborerRpcClient
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
@@ -133,13 +132,13 @@ beforeAll(async () => {
   clientScope = Effect.runSync(Scope.make())
   const protocol = await Effect.runPromise(
     makeClientProtocolMessagePort(toRpcPort(port2)).pipe(
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
   client = await Effect.runPromise(
     MakeLaborerClient.pipe(
       Effect.provideService(RpcClient.Protocol, protocol),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 }, 30_000)
@@ -159,7 +158,7 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   // -----------------------------------------------------------------------
 
   it('health.check returns ok via MessagePort', async () => {
-    const result = await run(client.health.check())
+    const result = await run(client['health.check']())
 
     assert.strictEqual(result.status, 'ok')
     assert.isTrue(Number.isFinite(result.uptime))
@@ -172,9 +171,11 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('lifecycle.initStatus stream emits ready=false via MessagePort', async () => {
     const first = await run(
-      client.lifecycle
-        .initStatus()
-        .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow))
+      client['lifecycle.initStatus']().pipe(
+        Stream.take(1),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow)
+      )
     )
 
     // With DeferredServicesReadyLayer (not yet swapped to true),
@@ -188,7 +189,7 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('deferred service RPC returns SERVICE_INITIALIZING via MessagePort', async () => {
     const result = await run(
-      client.project.list().pipe(
+      client['project.list']().pipe(
         Effect.matchEffect({
           onSuccess: () => Effect.succeed('success' as const),
           onFailure: (error) => Effect.succeed(error),
@@ -212,10 +213,12 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   it('handles multiple concurrent requests via MessagePort', async () => {
     const [health, initStatus] = await run(
       Effect.all([
-        client.health.check(),
-        client.lifecycle
-          .initStatus()
-          .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow)),
+        client['health.check'](),
+        client['lifecycle.initStatus']().pipe(
+          Stream.take(1),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow)
+        ),
       ])
     )
 
@@ -230,12 +233,12 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   it('core RPCs work while deferred services return errors', async () => {
     // Verify core RPCs work even when all deferred services are
     // in the initializing state (returning SERVICE_INITIALIZING errors)
-    const health = await run(client.health.check())
+    const health = await run(client['health.check']())
     assert.strictEqual(health.status, 'ok')
 
     // Simultaneously verify a deferred RPC fails as expected
     const projectResult = await run(
-      client.project.list().pipe(
+      client['project.list']().pipe(
         Effect.matchEffect({
           onSuccess: () => Effect.succeed('success' as const),
           onFailure: (error) => Effect.succeed(error),

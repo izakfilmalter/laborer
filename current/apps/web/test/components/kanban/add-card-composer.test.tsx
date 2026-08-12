@@ -8,7 +8,7 @@ const { createTask, openProvisionedAgent } = vi.hoisted(() => ({
   openProvisionedAgent: vi.fn(),
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) =>
     atom === 'task.create' ? createTask : vi.fn(),
   useAtomValue: vi.fn(),

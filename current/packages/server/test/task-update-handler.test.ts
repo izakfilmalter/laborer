@@ -63,7 +63,7 @@ describe('task.update RPC handler', () => {
     database.close()
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         handleTaskUpdate(
           {
             description: 'Losing description',
@@ -76,8 +76,8 @@ describe('task.update RPC handler', () => {
       )
     )
     expect(result).toMatchObject({
-      _tag: 'Left',
-      left: { code: 'CAS_CONFLICT' },
+      _tag: 'Failure',
+      failure: { code: 'CAS_CONFLICT' },
     })
 
     const unchanged = NodeTaskBoardDatabase.open(path)

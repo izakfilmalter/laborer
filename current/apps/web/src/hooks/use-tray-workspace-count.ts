@@ -11,7 +11,7 @@
  * @see packages/shared/src/desktop-bridge.ts — DesktopBridge contract
  */
 
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
 import { useEffect, useRef } from 'react'
 

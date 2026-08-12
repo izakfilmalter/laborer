@@ -264,21 +264,20 @@ function makeFileWatcher(
         : drivers
             .native(path, onChange, onError, options)
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `Native file watcher unavailable for ${path}; falling back to fs.watch. ${error.message}`
                 ).pipe(
-                  Effect.zipRight(drivers.fs(path, onChange, onError, options))
+                  Effect.andThen(drivers.fs(path, onChange, onError, options))
                 )
               )
             ),
   } satisfies FileWatcherService
 }
 
-class FileWatcher extends Context.Tag('@laborer/FileWatcher')<
-  FileWatcher,
-  FileWatcherService
->() {
+class FileWatcher extends Context.Service<FileWatcher, FileWatcherService>()(
+  '@laborer/FileWatcher'
+) {
   /**
    * Default implementation backed by Node.js `fs.watch`.
    */

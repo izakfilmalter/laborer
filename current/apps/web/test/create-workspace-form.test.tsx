@@ -58,7 +58,7 @@ const getCreateWorkspaceFormTestMocks = (): CreateWorkspaceFormTestMocks => {
 const { createWorkspaceFn, panelActionsMock, planSlackWorkspaceFn } =
   getCreateWorkspaceFormTestMocks()
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
     return getCreateWorkspaceFormTestMocks().mutationMap.get(atom) ?? vi.fn()
   },

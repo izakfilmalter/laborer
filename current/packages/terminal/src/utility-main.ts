@@ -28,14 +28,14 @@
  */
 
 import { createServer } from 'node:http'
-import { HttpMiddleware, HttpRouter } from '@effect/platform'
 import { NodeHttpServer } from '@effect/platform-node'
-import { RpcSerialization, RpcServer } from '@effect/rpc'
 import type { AgentStatus, TerminalInfo } from '@laborer/shared/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Context, Effect, Layer, ManagedRuntime, Runtime, Stream } from 'effect'
+import { Context, Effect, Layer, ManagedRuntime, Result, Stream } from 'effect'
+import { HttpMiddleware, HttpRouter } from 'effect/unstable/http'
+import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 
 import { TerminalRpcsLive } from './rpc/handlers.js'
 import { directLayer as PtyDirectLayer } from './services/pty-direct.js'
@@ -133,7 +133,7 @@ function serveRpcOnPort(
 
   const program = Layer.launch(RpcLive).pipe(
     Effect.scoped,
-    Effect.tapErrorCause((cause) =>
+    Effect.tapCause((cause) =>
       Effect.sync(() => {
         console.error(
           '[terminal-utility] serveRpcOnPort failed:',
@@ -154,8 +154,9 @@ function serveWebSocketRpc(
     Layer.provide(TerminalRpcsLive),
     Layer.provide(sharedServicesLayer)
   )
-  const ServerLive = HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
-    Layer.provide(RpcLive),
+  const ServerLive = HttpRouter.serve(RpcLive, {
+    middleware: HttpMiddleware.cors(),
+  }).pipe(
     Layer.provide(RpcSerialization.layerJson),
     Layer.provide(
       NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })
@@ -194,8 +195,8 @@ function setupSessionPersistence(
     const tm = yield* TerminalManager
 
     // Capture the runtime for synchronous access in the SIGTERM handler
-    const rt = yield* Effect.runtime<TerminalManager>()
-    const runSync = Runtime.runSync(rt)
+    const context = yield* Effect.context<TerminalManager>()
+    const runSync = Effect.runSyncWith(context)
 
     // ---------------------------------------------------------------
     // Restore persisted terminals
@@ -206,7 +207,7 @@ function setupSessionPersistence(
       )
 
       for (const saved of persistedState.terminals) {
-        const spawnResult = yield* Effect.either(
+        const spawnResult = yield* Effect.result(
           tm.spawn({
             id: saved.id,
             command: saved.command,
@@ -222,8 +223,8 @@ function setupSessionPersistence(
           })
         )
 
-        if (spawnResult._tag === 'Right') {
-          const record = spawnResult.right
+        if (Result.isSuccess(spawnResult)) {
+          const record = spawnResult.success
           persistence.registerTerminal(record.id, saved.cols, saved.rows)
           persistence.restoreReplayEvent(record.id, saved.replayEvent)
 
@@ -234,7 +235,7 @@ function setupSessionPersistence(
           )
         } else {
           console.error(
-            `[terminal-utility] Failed to restore terminal ${saved.id}: ${String(spawnResult.left)}`
+            `[terminal-utility] Failed to restore terminal ${saved.id}: ${String(spawnResult.failure)}`
           )
         }
       }
@@ -274,7 +275,7 @@ function setupSessionPersistence(
             break
         }
       })
-    ).pipe(Effect.forkDaemon)
+    ).pipe(Effect.forkDetach)
 
     // ---------------------------------------------------------------
     // SIGTERM handler for graceful shutdown serialization
@@ -544,11 +545,11 @@ async function main(): Promise<void> {
   })
 
   const managedRuntime = ManagedRuntime.make(FullLayer)
-  const runtime = await managedRuntime.runtime()
+  const context = await managedRuntime.context()
 
   // Extract the live TerminalManager from the managed runtime's context.
   const sharedServicesLayer = Layer.succeedContext(
-    Context.make(TerminalManager, Context.get(runtime.context, TerminalManager))
+    Context.make(TerminalManager, Context.get(context, TerminalManager))
   )
 
   const httpPort = Number(process.env.LABORER_TERMINAL_HTTP_PORT ?? '0')
@@ -563,7 +564,7 @@ async function main(): Promise<void> {
   // Wire up the message handler now that the runtime is ready.
   const processMessage = (msg: BufferedMessage) => {
     if (msg.type === 'data-port') {
-      handleTerminalDataPort(msg.port, msg.terminalId, runtime)
+      handleTerminalDataPort(msg.port, msg.terminalId, context)
     } else if (msg.type === 'port') {
       serveRpcOnPort(msg.port, sharedServicesLayer)
     } else {

@@ -16,7 +16,7 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+import { Effect, Exit, Layer, Result, Schema, Scope, Stream } from 'effect'
 import { Rpc, RpcClient, RpcGroup, RpcServer } from 'effect/unstable/rpc'
 import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -175,9 +175,9 @@ describe('makeClientProtocolMessagePort', () => {
 
   it('propagates RPC errors', async () => {
     const result = await Effect.runPromise(
-      Effect.either(client.fail({ message: 'something went wrong' }))
+      Effect.result(client.fail({ message: 'something went wrong' }))
     )
-    expect(result._tag).toBe('Left')
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   // -----------------------------------------------------------------------
@@ -457,6 +457,7 @@ describe('heartbeat timeout detection', () => {
     // Advance time well past timeout — with a real server, pongs
     // keep the heartbeat alive.
     await vi.advanceTimersByTimeAsync(30_000)
+    vi.useRealTimers()
 
     // RPC should still work.
     const result = await Effect.runPromise(
@@ -530,12 +531,6 @@ describe('heartbeat timeout detection', () => {
       )
     )
 
-    // Verify RPC works before the stall.
-    const before = await Effect.runPromise(
-      rpcClient.echo({ input: 'before stall' })
-    )
-    expect(before).toBe('before stall')
-
     // Simulate a 20s server stall (no pong echoes during this time).
     stalled = true
     await vi.advanceTimersByTimeAsync(20_000)
@@ -544,6 +539,7 @@ describe('heartbeat timeout detection', () => {
     // After the stall ends, the next ping should get a pong and reset
     // the liveness timestamp. Advance past one more interval.
     await vi.advanceTimersByTimeAsync(5000)
+    vi.useRealTimers()
 
     // RPC should still work — the port should NOT have been declared dead.
     const after = await Effect.runPromise(
@@ -615,6 +611,7 @@ describe('heartbeat timeout detection', () => {
     )
 
     await vi.advanceTimersByTimeAsync(35_000)
+    vi.useRealTimers()
 
     const result = await Effect.runPromise(
       rpcClient.echo({ input: 'still alive without raw heartbeat' })

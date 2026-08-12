@@ -143,11 +143,15 @@ export const makeClientProtocolMessagePort = (
   options?: MessagePortClientProtocolOptions
 ): Effect.Effect<RpcClient.Protocol['Service'], never, Scope.Scope> =>
   RpcClient.Protocol.make(
-    Effect.fnUntraced(function* (writeResponse) {
+    Effect.fnUntraced(function* (writeResponse, clientIds) {
       const scope = yield* Effect.scope
 
       // Unbounded queue bridges sync event listeners to the Effect runtime.
-      const messageQueue = yield* Queue.unbounded<FromServerEncoded>()
+      const messageQueue =
+        yield* Queue.unbounded<
+          readonly [clientId: number, response: FromServerEncoded]
+        >()
+      const requestClientMap = new Map<string | number, number>()
 
       // Mutable flag tracking whether the port has been closed by the remote
       // end. Used in `send()` to fail fast instead of posting into a dead port.
@@ -162,7 +166,7 @@ export const makeClientProtocolMessagePort = (
 
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
-        Effect.flatMap((data) => writeResponse(0, data)),
+        Effect.flatMap(([clientId, data]) => writeResponse(clientId, data)),
         Effect.forever,
         Effect.forkScoped
       )
@@ -177,7 +181,21 @@ export const makeClientProtocolMessagePort = (
         // Any real message also counts as proof of liveness (like
         // Mux's "inbound frame tracking" pattern).
         awakeTicksSinceLastPong = 0
-        Queue.offerUnsafe(messageQueue, data as FromServerEncoded)
+        const response = data as FromServerEncoded
+        if ('requestId' in response) {
+          const clientId = requestClientMap.get(response.requestId)
+          if (clientId === undefined) {
+            return
+          }
+          if (response._tag === 'Exit') {
+            requestClientMap.delete(response.requestId)
+          }
+          Queue.offerUnsafe(messageQueue, [clientId, response])
+          return
+        }
+        for (const clientId of clientIds) {
+          Queue.offerUnsafe(messageQueue, [clientId, response])
+        }
       }
 
       // When the port closes (or is detected as dead), synthesize a
@@ -206,7 +224,9 @@ export const makeClientProtocolMessagePort = (
             }),
           }),
         }
-        Queue.offerUnsafe(messageQueue, protocolError)
+        for (const clientId of clientIds) {
+          Queue.offerUnsafe(messageQueue, [clientId, protocolError])
+        }
 
         // Notify the renderer's SidecarRuntimeBoundary that a port died
         // so it can trigger a generation bump and rebuild all RPC clients.
@@ -272,7 +292,6 @@ export const makeClientProtocolMessagePort = (
           if (portState.closed) {
             return
           }
-
           awakeTicksSinceLastPong += 1
           awakeTicksSinceLastPing += 1
 
@@ -336,6 +355,11 @@ export const makeClientProtocolMessagePort = (
                 }),
               })
             )
+          }
+          if (request._tag === 'Request') {
+            requestClientMap.set(request.id, _clientId)
+          } else if (request._tag === 'Interrupt') {
+            requestClientMap.delete(request.requestId)
           }
           return Effect.try({
             try: () => {

@@ -647,6 +647,7 @@ const analyzeAndProvisionSlackCard = (taskId: string, databasePath: string) =>
 
 export const handleTaskCreateAtPath = (
   input: {
+    readonly id?: string | null
     readonly rootPath: string
     readonly status: Exclude<TaskStatus, 'cancelled'>
     readonly text: string
@@ -654,7 +655,14 @@ export const handleTaskCreateAtPath = (
   databasePath = taskDatabasePath()
 ) =>
   Effect.gen(function* () {
-    const created = yield* createTaskCard(input, databasePath)
+    const { inserted, ...created } = yield* createTaskCard(input, databasePath)
+    if (!inserted) {
+      // An idempotent replay of a client-minted id. The original request's
+      // side effects (Slack planning, workspace provisioning) already ran or
+      // are still running; repeating them would duplicate analyses and
+      // CAS-conflict against the first run's moves.
+      return { ...created, description: null, workspaceId: null }
+    }
     if (input.status !== 'in_progress') {
       return { ...created, description: null, workspaceId: null }
     }
@@ -903,10 +911,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         )
       ),
     'appSetting.set': handleAppSettingSet,
-    'task.create': ({ projectId, status, text }) =>
+    'task.create': ({ id, projectId, status, text }) =>
       Effect.gen(function* () {
         const project = yield* getProject(projectId)
         return yield* handleTaskCreateAtPath({
+          id: id ?? null,
           rootPath: project.repoPath,
           status,
           text,

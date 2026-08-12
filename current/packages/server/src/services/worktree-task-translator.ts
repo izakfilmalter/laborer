@@ -1,8 +1,8 @@
 import { basename } from 'node:path'
+import { createTaskUlid } from '@laborer/shared/task-ulid'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
-import { createTaskUlid } from './task-card-creator.js'
 
 interface WorktreeAdoptionDatabase {
   readonly adoptWorktreeTask: (input: {

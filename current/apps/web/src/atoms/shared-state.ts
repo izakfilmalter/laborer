@@ -8,6 +8,15 @@ import type {
 import { Duration, Effect, Schedule, Stream } from 'effect'
 
 import { LaborerClient } from './laborer-client'
+import {
+  applyTaskEditOverlays,
+  mergePendingTaskRows,
+  type PendingTaskRows,
+  settleTaskCreateOverlays,
+  settleTaskEditOverlays,
+  type TaskEditOverlay,
+  type TaskEditOverlays,
+} from './optimistic-task-writes'
 
 export interface AuthoritativeTable<Row> {
   readonly cursor: number
@@ -102,6 +111,21 @@ export const taskOptimisticOverlaysAtom = Atom.make<
 >(new Map())
 
 /**
+ * Cards the composer committed that the authoritative stream has not stored
+ * yet, keyed by their renderer-minted ULID. The card renders from this row
+ * instantly; the id is shared with the server, so the authoritative row
+ * replaces it in place without re-keying the card.
+ */
+export const taskCreateOverlaysAtom = Atom.make<PendingTaskRows>(new Map())
+
+/**
+ * In-flight title/description saves, keyed by task id. The board and the
+ * detail dialog read the edited values immediately; the overlay settles when
+ * the authoritative row leaves the revision the draft was based on.
+ */
+export const taskEditOverlaysAtom = Atom.make<TaskEditOverlays>(new Map())
+
+/**
  * Task IDs whose workspaces are being destroyed optimistically. The card
  * leaves the sidebar the moment destruction is confirmed in the dialog; the
  * server clears the row's worktree only after its background git cleanup
@@ -185,6 +209,57 @@ export const clearProjectRemoveOverlayAtom = Atom.writable(
   }
 )
 
+/** The composer commits a card: it renders from this row until stored. */
+export const installTaskCreateOverlayAtom = Atom.writable(
+  (get) => get(taskCreateOverlaysAtom),
+  (context, row: SharedTaskRow) => {
+    const next = new Map(context.get(taskCreateOverlaysAtom))
+    next.set(row.id, row)
+    context.set(taskCreateOverlaysAtom, next)
+  }
+)
+
+/** Withdraws a card whose create the server definitively rejected. */
+export const clearTaskCreateOverlayAtom = Atom.writable(
+  (get) => get(taskCreateOverlaysAtom),
+  (context, taskId: string) => {
+    const overlays = context.get(taskCreateOverlaysAtom)
+    if (!overlays.has(taskId)) {
+      return
+    }
+    const next = new Map(overlays)
+    next.delete(taskId)
+    context.set(taskCreateOverlaysAtom, next)
+  }
+)
+
+/** Save commits an edit: the board shows it while the write is in flight. */
+export const installTaskEditOverlayAtom = Atom.writable(
+  (get) => get(taskEditOverlaysAtom),
+  (
+    context,
+    input: { readonly overlay: TaskEditOverlay; readonly taskId: string }
+  ) => {
+    const next = new Map(context.get(taskEditOverlaysAtom))
+    next.set(input.taskId, input.overlay)
+    context.set(taskEditOverlaysAtom, next)
+  }
+)
+
+/** Reverts a rejected edit so the authoritative values show again. */
+export const clearTaskEditOverlayAtom = Atom.writable(
+  (get) => get(taskEditOverlaysAtom),
+  (context, taskId: string) => {
+    const overlays = context.get(taskEditOverlaysAtom)
+    if (!overlays.has(taskId)) {
+      return
+    }
+    const next = new Map(overlays)
+    next.delete(taskId)
+    context.set(taskEditOverlaysAtom, next)
+  }
+)
+
 /**
  * A destroy overlay lives exactly as long as the authoritative row still owns
  * a worktree. Settling on the authoritative row — rather than on the RPC
@@ -256,6 +331,20 @@ export const installSharedStateUpdateAtom = Atom.writable(
       update
     )
     context.set(authoritativeSharedStateAtom, state)
+    const createOverlays = settleTaskCreateOverlays(
+      context.get(taskCreateOverlaysAtom),
+      state.tasks.rows
+    )
+    if (createOverlays !== context.get(taskCreateOverlaysAtom)) {
+      context.set(taskCreateOverlaysAtom, createOverlays)
+    }
+    const editOverlays = settleTaskEditOverlays(
+      context.get(taskEditOverlaysAtom),
+      state.tasks.rows
+    )
+    if (editOverlays !== context.get(taskEditOverlaysAtom)) {
+      context.set(taskEditOverlaysAtom, editOverlays)
+    }
     const destroyOverlays = settleWorkspaceDestroyOverlays(
       context.get(workspaceDestroyOverlaysAtom),
       state.tasks.rows
@@ -374,10 +463,15 @@ export const authoritativeSettingsAtom = Atom.make(
 
 export const taskRowsAtom = Atom.make((get) => {
   const overlays = get(taskOptimisticOverlaysAtom)
-  return get(authoritativeTasksAtom).rows.map((row) => {
+  const stored = mergePendingTaskRows(
+    get(authoritativeTasksAtom).rows,
+    get(taskCreateOverlaysAtom)
+  )
+  const moved = stored.map((row) => {
     const overlay = overlays.get(row.id)
     return overlay === undefined ? row : { ...row, ...overlay.patch }
   })
+  return applyTaskEditOverlays(moved, get(taskEditOverlaysAtom))
 })
 export const projectRowsAtom = Atom.make((get) => {
   const removing = get(projectRemoveOverlaysAtom)

@@ -1,6 +1,7 @@
-import { randomBytes } from 'node:crypto'
 import { RpcError } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
+import { createTaskUlid, isTaskUlid } from '@laborer/shared/task-ulid'
+
 import type { TaskPatch, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect } from 'effect'
@@ -10,7 +11,6 @@ import {
   type SlackWorkspacePlan,
 } from './slack-workspace-planner.js'
 
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const MAX_CAS_ATTEMPTS = 5
 const MAX_MANUAL_TITLE_LENGTH = 100
 const MAX_MANUAL_BRANCH_SLUG_LENGTH = 48
@@ -21,6 +21,12 @@ const UNICODE_MARK_PATTERN = /\p{M}+/gu
 export type CreationColumn = Exclude<TaskStatus, 'cancelled'>
 
 export interface CreateTaskCardInput {
+  /**
+   * Renderer-minted task ULID. When present, the stored row reuses the id the
+   * optimistic card already renders under, and re-sending it is an
+   * idempotent retry rather than a duplicate card.
+   */
+  readonly id?: string | null
   readonly rootPath: string
   readonly status: CreationColumn
   readonly text: string
@@ -47,20 +53,38 @@ type SlackPlanner = (
   cwd?: string
 ) => Effect.Effect<SlackWorkspacePlan, RpcError>
 
-export const createTaskUlid = (time = Date.now()): string => {
-  let timestamp = time
-  let encodedTime = ''
-  for (let index = 0; index < 10; index += 1) {
-    encodedTime = CROCKFORD[timestamp % 32] + encodedTime
-    timestamp = Math.floor(timestamp / 32)
-  }
-  const entropy = randomBytes(16)
-  let encodedRandom = ''
-  for (let index = 0; index < 16; index += 1) {
-    encodedRandom += CROCKFORD[(entropy[index] ?? 0) % 32]
-  }
-  return encodedTime + encodedRandom
-}
+/**
+ * The stored card a client-minted id already refers to, if any. A retry
+ * after a dropped response finds the original card here instead of
+ * inserting a duplicate.
+ */
+const findReplayedCard = (
+  path: string,
+  requestedId: string | null
+): Effect.Effect<
+  {
+    readonly id: string
+    readonly inserted: false
+    readonly source: 'manual' | 'slack_url'
+  } | null,
+  RpcError
+> =>
+  requestedId === null
+    ? Effect.succeed(null)
+    : withDatabase(path, (database) => {
+        const existing = database.find(requestedId)
+        if (existing === null) {
+          return null
+        }
+        return {
+          id: existing.id,
+          inserted: false as const,
+          source:
+            existing.source === 'slack_url'
+              ? ('slack_url' as const)
+              : ('manual' as const),
+        }
+      })
 
 const databaseError = (cause: unknown) =>
   new RpcError({
@@ -185,10 +209,28 @@ export const createTaskCard = (
       })
     }
 
+    const requestedId = input.id ?? null
+    if (requestedId !== null && !isTaskUlid(requestedId)) {
+      return yield* new RpcError({
+        code: 'INVALID_INPUT',
+        message: 'Task ids must be 26-character Crockford ULIDs.',
+      })
+    }
+
     const slackUrl = isSlackUrl ? new URL(text).toString() : null
+
+    // A client-minted id makes creation idempotent: a retry after a dropped
+    // response finds the stored card instead of inserting a duplicate. The
+    // caller must not re-run side effects (planning, provisioning) for a
+    // card that already exists, so the replay is reported explicitly.
+    const replayed = yield* findReplayedCard(path, requestedId)
+    if (replayed !== null) {
+      return { ...replayed, status: input.status }
+    }
+
     const task = yield* withDatabase(path, (database) =>
       database.insert({
-        id: createTaskUlid(),
+        id: requestedId ?? createTaskUlid(),
         rootPath: input.rootPath,
         title: slackUrl ?? text,
         status: input.status,
@@ -213,6 +255,7 @@ export const createTaskCard = (
 
     return {
       id: task.id,
+      inserted: true,
       source: slackUrl === null ? ('manual' as const) : ('slack_url' as const),
       status: input.status,
     }

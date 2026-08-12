@@ -5,14 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardTask } from '@/components/kanban/board-data'
 import { TaskBoardCard, TaskDetailDialog } from '@/components/kanban/task-board'
 
-const { toastError, updateTask } = vi.hoisted(() => ({
-  toastError: vi.fn(),
-  updateTask: vi.fn(),
-}))
-
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
-  useAtomSet: (atom: unknown) =>
-    atom === 'task.update' ? updateTask : vi.fn(),
+  useAtomSet: () => vi.fn(),
   useAtomValue: vi.fn(),
 }))
 
@@ -23,7 +17,7 @@ vi.mock('@/atoms/laborer-client', () => ({
 }))
 
 vi.mock('sonner', () => ({
-  toast: { error: toastError, info: vi.fn() },
+  toast: { error: vi.fn(), info: vi.fn() },
 }))
 
 // Stub tooltip — the real trigger merges its children into `render`, so the
@@ -127,10 +121,16 @@ describe('task card details', () => {
     ).toBeTruthy()
   })
 
-  it('edits and saves title and plain-text description with the card revision', async () => {
-    updateTask.mockResolvedValue({})
+  it('hands the draft to onSave with the card revision and closes at once', async () => {
     const onOpenChange = vi.fn()
-    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+    const onSave = vi.fn()
+    render(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        task={task()}
+      />
+    )
 
     expect(screen.getByText('Agent staged')).toBeTruthy()
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
@@ -149,60 +149,88 @@ describe('task card details', () => {
     )
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
-    expect(updateTask).toHaveBeenCalledWith({
-      payload: {
-        description: 'Keep this plain.',
-        expectedRevision: 4,
-        taskId: 'task-1',
-        title: 'Polish task details',
-      },
+    expect(onSave).toHaveBeenCalledWith({
+      description: 'Keep this plain.',
+      expectedRevision: 4,
+      title: 'Polish task details',
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it('keeps the dialog open and explains a revision conflict', async () => {
-    updateTask
-      .mockRejectedValueOnce({
-        code: 'CAS_CONFLICT',
-        message: 'stale revision for task task-1',
-      })
-      .mockResolvedValueOnce({})
+  it('never advances the CAS under a live draft, so a rival write must lose honestly', async () => {
     const onOpenChange = vi.fn()
+    const onSave = vi.fn()
     const view = render(
-      <TaskDetailDialog onOpenChange={onOpenChange} task={task()} />
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        task={task()}
+      />
     )
 
     await userEvent.type(screen.getByLabelText('Description'), ' More.')
     view.rerender(
       <TaskDetailDialog
         onOpenChange={onOpenChange}
+        onSave={onSave}
         task={task({ description: 'Winning edit.', revision: 5 })}
       />
     )
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'This card changed elsewhere'
     )
-    expect(updateTask).toHaveBeenLastCalledWith({
-      payload: expect.objectContaining({ expectedRevision: 4 }),
-    })
-    expect(onOpenChange).not.toHaveBeenCalled()
-    expect(toastError).toHaveBeenCalledWith(
-      'Card changed elsewhere',
-      expect.any(Object)
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    // Still the draft's revision: the server rejects it, and the recovery
+    // reopen — not a silent CAS advance — decides the overwrite.
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 4 })
+    )
+  })
+
+  it('reopens from a rejected save with the draft, the failure, and the winning revision', async () => {
+    const onSave = vi.fn()
+    render(
+      <TaskDetailDialog
+        initialBanner={{
+          message: 'This card changed elsewhere while saving.',
+          tone: 'warning',
+        }}
+        initialDraft={{
+          description: 'Run the focused tests. More.',
+          title: 'Improve task details',
+        }}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+        task={task({ description: 'Winning edit.', revision: 5 })}
+      />
     )
 
+    // The rescued draft, not the winning card, fills the fields.
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Run the focused tests. More.')
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'changed elsewhere while saving'
+    )
+
+    // A deliberate second Save applies the draft over the newer version.
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
-    expect(updateTask).toHaveBeenLastCalledWith({
-      payload: expect.objectContaining({ expectedRevision: 5 }),
-    })
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 5 })
+    )
   })
 
   it('asks before dropping unsaved edits and can go back to editing', async () => {
     const onOpenChange = vi.fn()
-    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+    render(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={vi.fn()}
+        task={task()}
+      />
+    )
 
     await userEvent.type(screen.getByLabelText('Description'), ' And more.')
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -222,7 +250,13 @@ describe('task card details', () => {
 
   it('closes straight away when nothing was edited', async () => {
     const onOpenChange = vi.fn()
-    render(<TaskDetailDialog onOpenChange={onOpenChange} task={task()} />)
+    render(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={vi.fn()}
+        task={task()}
+      />
+    )
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -230,13 +264,14 @@ describe('task card details', () => {
 
   it('keeps a draft when the card changes elsewhere, and adopts the change when there is none', async () => {
     const { rerender } = render(
-      <TaskDetailDialog onOpenChange={vi.fn()} task={task()} />
+      <TaskDetailDialog onOpenChange={vi.fn()} onSave={vi.fn()} task={task()} />
     )
 
     await userEvent.type(screen.getByLabelText('Description'), ' Twice.')
     rerender(
       <TaskDetailDialog
         onOpenChange={vi.fn()}
+        onSave={vi.fn()}
         task={task({ description: 'Rewritten by someone else.', revision: 5 })}
       />
     )
@@ -250,11 +285,12 @@ describe('task card details', () => {
 
     cleanup()
     const untouched = render(
-      <TaskDetailDialog onOpenChange={vi.fn()} task={task()} />
+      <TaskDetailDialog onOpenChange={vi.fn()} onSave={vi.fn()} task={task()} />
     )
     untouched.rerender(
       <TaskDetailDialog
         onOpenChange={vi.fn()}
+        onSave={vi.fn()}
         task={task({ description: 'Rewritten by someone else.', revision: 5 })}
       />
     )
@@ -269,6 +305,7 @@ describe('task card details', () => {
     render(
       <TaskDetailDialog
         onOpenChange={vi.fn()}
+        onSave={vi.fn()}
         task={task({
           description: null,
           slackPermalink: 'https://acme.slack.com/archives/C123/p1700000000',

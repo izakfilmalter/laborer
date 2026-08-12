@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { createTaskUlid } from '@laborer/shared/task-ulid'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { LaborerDatabase } from './laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
-import { createTaskUlid } from './task-card-creator.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_DESCRIPTION_LENGTH = 100_000

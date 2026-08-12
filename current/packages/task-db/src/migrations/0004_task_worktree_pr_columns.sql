@@ -25,5 +25,3 @@ ALTER TABLE `tasks` ADD `sort_order` real;
 ALTER TABLE `task_changes` ADD `mutation_id` text;
 --> statement-breakpoint
 CREATE INDEX `tasks_parent_task_id_index` ON `tasks` (`parent_task_id`);
---> statement-breakpoint
-CREATE UNIQUE INDEX `tasks_worktree_path_unique` ON `tasks` (`worktree_path`) WHERE `worktree_path` IS NOT NULL;

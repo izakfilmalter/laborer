@@ -256,7 +256,7 @@ describe('NativeLaborerDatabase', () => {
     database.close()
   })
 
-  it('enforces unique worktree ownership and promotes children on deletion', () => {
+  it('keeps worktree path history insertable and promotes children on deletion', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     const parent = database.insertTask({
       id: 'parent',
@@ -277,17 +277,26 @@ describe('NativeLaborerDatabase', () => {
       title: 'Child',
     })
 
-    expect(() =>
-      database.insertTask({
-        id: 'duplicate',
+    // Retried tasks reuse a worktree path, so cancelled history and the
+    // replacement task legitimately share the same path in the database.
+    // findTaskByWorktreePath resolves the newest row for a shared path.
+    const retried = database.insertTask(
+      {
+        id: 'retried',
         rootPath: '/repo',
         source: 'worktree',
         status: 'in_progress',
-        title: 'Duplicate',
+        title: 'Retried',
         worktreePath: '/repo.worktrees/parent',
-      })
-    ).toThrow()
-    expect(database.findTask('duplicate')).toBeNull()
+      },
+      null,
+      Date.now() + 1000
+    ).row
+    expect(retried.worktreePath).toBe('/repo.worktrees/parent')
+    expect(
+      database.findTaskByWorktreePath('/repo.worktrees/parent')
+    ).toMatchObject({ id: 'retried' })
+    database.deleteTask(retried.id, retried.revision)
 
     const cleared = database.updateTask(parent.id, parent.revision, {
       worktreePath: null,

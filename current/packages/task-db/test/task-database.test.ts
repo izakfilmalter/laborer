@@ -89,6 +89,32 @@ const createPreSharedDbExpansionDatabase = (path: string): void => {
       1,
       1
     )
+  // Real 0003 databases carry duplicate worktree paths: a cancelled attempt
+  // and its retried replacement both keep the same path. Migration 0004+
+  // must accept this history instead of failing with a UNIQUE violation.
+  const insertTask = raw.query(`INSERT INTO tasks (
+      id, root_path, title, status, source, worktree_path, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  insertTask.run(
+    'cancelled-attempt',
+    '/repo',
+    'Retried task',
+    'cancelled',
+    'manual',
+    '/repo/.worktrees/retried',
+    2,
+    2
+  )
+  insertTask.run(
+    'done-retry',
+    '/repo',
+    'Retried task',
+    'done',
+    'manual',
+    '/repo/.worktrees/retried',
+    3,
+    3
+  )
   raw.close()
 }
 
@@ -165,7 +191,7 @@ describe('NativeTaskDatabase', () => {
     raw.close()
   })
 
-  it('promotes children and rejects duplicate worktree ownership', () => {
+  it('promotes children and keeps worktree path history insertable', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)
     database.insert({
@@ -195,22 +221,27 @@ describe('NativeTaskDatabase', () => {
     expect(
       raw.query('SELECT parent_task_id FROM tasks WHERE id = ?').get('child')
     ).toMatchObject({ parent_task_id: null })
-    expect(() =>
+    // Retried tasks reuse a worktree path, so cancelled history and the
+    // replacement task legitimately share the same path in the database.
+    raw
+      .query(`INSERT INTO tasks (
+        id, root_path, title, status, source, worktree_path, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        'retried',
+        '/repo',
+        'Retried',
+        'todo',
+        'manual',
+        '/repo/.worktrees/child',
+        1,
+        1
+      )
+    expect(
       raw
-        .query(`INSERT INTO tasks (
-          id, root_path, title, status, source, worktree_path, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(
-          'duplicate',
-          '/repo',
-          'Duplicate',
-          'todo',
-          'manual',
-          '/repo/.worktrees/child',
-          1,
-          1
-        )
-    ).toThrow()
+        .query('SELECT COUNT(*) AS count FROM tasks WHERE worktree_path = ?')
+        .get('/repo/.worktrees/child')
+    ).toMatchObject({ count: 2 })
     raw.close()
   })
 

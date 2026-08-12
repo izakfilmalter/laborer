@@ -615,8 +615,13 @@ export class NativeLaborerDatabase {
   }
 
   findTaskByWorktreePath(worktreePath: string): LaborerTask | null {
+    // Retried tasks reuse a worktree path, so cancelled history can share a
+    // path with the live task. Prefer the most recently updated row.
     const row = this.#database
-      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE worktree_path = ?`)
+      .prepare(
+        `SELECT ${TASK_COLUMNS} FROM tasks WHERE worktree_path = ?
+         ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1`
+      )
       .get(worktreePath)
     return row === undefined ? null : rowToTask(row)
   }

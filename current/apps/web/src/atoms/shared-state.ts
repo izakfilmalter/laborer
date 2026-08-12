@@ -5,7 +5,7 @@ import type {
   SharedStateUpdate,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
-import { Effect, Stream } from 'effect'
+import { Duration, Effect, Schedule, Stream } from 'effect'
 
 import { LaborerClient } from './laborer-client'
 
@@ -365,6 +365,30 @@ export const settingsByKeyAtom = Atom.make(
     new Map(get(settingRowsAtom).map((setting) => [setting.key, setting]))
 )
 
+export const SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS = 500
+export const SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS = 10_000
+export const SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS = 60_000
+
+/**
+ * The app owns ONE shared-state subscription for its whole lifetime. When the
+ * loopback socket drops — OS sleep/wake is enough — the in-flight
+ * `state.subscribe` stream fails, and without a retry the renderer would keep
+ * presenting its last projection forever while mutations kept landing in the
+ * shared database (the "created tasks never appear on the board" failure).
+ *
+ * Like {@link wsReconnectRetrySchedule} one layer down, this schedule must
+ * never terminate. Each retry opens a fresh subscription whose snapshot is
+ * authoritative, so no delta lost during the outage is ever needed.
+ * `Schedule.resetAfter` rewinds the backoff once the subscription has been
+ * stable, so an outage after hours of uptime retries fast again.
+ */
+export const sharedStateResubscribeSchedule = Schedule.union(
+  Schedule.exponential(SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS),
+  Schedule.spaced(SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS)
+).pipe(
+  Schedule.resetAfter(Duration.millis(SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS))
+)
+
 export const makeSharedStateEventsAtom = () =>
   LaborerClient.runtime.pull(
     LaborerClient.pipe(
@@ -372,7 +396,16 @@ export const makeSharedStateEventsAtom = () =>
         // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
         client('state.subscribe', undefined as void)
       ),
-      Stream.unwrap
+      Stream.unwrap,
+      Stream.tapError((error) =>
+        Effect.sync(() => {
+          console.warn(
+            '[shared-state] subscription failed — resubscribing for a fresh snapshot',
+            error
+          )
+        })
+      ),
+      Stream.retry(sharedStateResubscribeSchedule)
     ),
     { disableAccumulation: true }
   )

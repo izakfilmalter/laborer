@@ -1,4 +1,8 @@
 import { Atom } from '@effect-atom/atom'
+import {
+  ROOT_WORKSPACE_BRANCH_LABEL,
+  rootWorkspaceId,
+} from '@laborer/shared/root-workspace'
 import type {
   SharedProjectRow,
   SharedSettingRow,
@@ -541,15 +545,47 @@ const workspaceStatus = (
 }
 
 /**
- * UI workspaces are streamed tasks that currently own a worktree. Tasks with
- * unknown project roots remain durable but stay hidden until that project is
- * registered again.
+ * The project's main checkout as a workspace view. It has no task row — the
+ * reconciler deliberately never adopts the main worktree — so it is
+ * synthesized from the project row with the shared root-workspace id. The
+ * server's `findWorkspaceRecord` mirrors this synthesis, which is what lets
+ * terminals, the file tree, and git actions resolve the synthetic id.
+ */
+const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
+  aheadCount: null,
+  baseBranch: null,
+  baseSha: null,
+  behindCount: null,
+  branchName: ROOT_WORKSPACE_BRANCH_LABEL,
+  createdAt: String(project.createdAt),
+  errorMessage: null,
+  id: rootWorkspaceId(project.id),
+  origin: 'external',
+  parentTaskId: null,
+  prIsDraft: false,
+  prNumber: null,
+  projectId: project.id,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
+  status: 'running',
+  taskSource: rootWorkspaceId(project.id),
+  worktreePath: project.rootPath,
+  worktreeSetupStep: null,
+})
+
+/**
+ * UI workspaces are streamed tasks that currently own a worktree, plus one
+ * synthetic root workspace per registered project (the main checkout, which
+ * never has a task row). Roots come first so each project's sidebar tree
+ * keeps its root workspace at the top. Tasks with unknown project roots
+ * remain durable but stay hidden until that project is registered again.
  */
 export const workspaceViewsFromRows = (
   tasks: readonly SharedTaskRow[],
   projects: readonly SharedProjectRow[]
 ): readonly WorkspaceView[] => {
-  const views: WorkspaceView[] = []
+  const views: WorkspaceView[] = projects.map(rootWorkspaceView)
 
   for (const task of tasks) {
     if (task.worktreePath === null) {

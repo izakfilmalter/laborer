@@ -50,6 +50,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
+import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
 import { RpcError } from '@laborer/shared/rpc'
 import {
   Array as Arr,
@@ -1268,6 +1269,16 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           yield* Effect.logInfo(
             `destroyWorktree called: workspaceId=${workspaceId}, force=${String(force ?? false)}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // The synthetic root workspace is the project's main checkout.
+          // The UI never offers to destroy it; refuse defensively here too.
+          if (isRootWorkspaceId(workspaceId)) {
+            return yield* new RpcError({
+              message:
+                'The root workspace is the main git checkout and cannot be destroyed.',
+              code: 'INVALID_STATE',
+            })
+          }
 
           const workspace = yield* laborerDatabase.read(
             'find workspace to destroy',

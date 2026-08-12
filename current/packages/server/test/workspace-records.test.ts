@@ -86,4 +86,31 @@ describe('task-backed workspace records', () => {
       }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
     )
   })
+
+  it('resolves the synthetic root workspace id to the main checkout', async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const { database } = yield* LaborerDatabase
+        database.insertProject({
+          canonicalGitCommonDir: '/repo/.git',
+          id: 'project-1',
+          name: 'Repo',
+          repoId: 'repo-1',
+          rootPath: '/repo',
+        })
+
+        // The root workspace has no task row: it resolves by id so terminal
+        // spawn, file tree, and git actions can operate on the main
+        // checkout, but never appears in the polled record list.
+        expect(findWorkspaceRecord(database, 'root-project-1')).toMatchObject({
+          id: 'root-project-1',
+          projectId: 'project-1',
+          status: 'running',
+          worktreePath: '/repo',
+        })
+        expect(findWorkspaceRecord(database, 'root-unknown')).toBeNull()
+        expect(listWorkspaceRecords(database)).toHaveLength(0)
+      }).pipe(Effect.provide(LaborerDatabase.testLayer().pipe(Layer.orDie)))
+    )
+  })
 })

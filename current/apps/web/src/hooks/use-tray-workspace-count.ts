@@ -12,6 +12,7 @@
  */
 
 import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
 import { useEffect, useRef } from 'react'
 
 import { workspaceViewsAtom } from '@/atoms/shared-state'
@@ -25,8 +26,10 @@ import { getDesktopBridge } from '@/lib/desktop'
  * `desktopBridge.updateTrayWorkspaceCount()` when the count changes.
  */
 function useTrayWorkspaceCount(): void {
+  // Synthetic root workspaces (one per project, always present) are not
+  // running work — only task-backed workspaces count toward the tray badge.
   const runningWs = useAtomValue(workspaceViewsAtom).filter(
-    ({ status }) => status === 'running'
+    ({ id, status }) => status === 'running' && !isRootWorkspaceId(id)
   )
   const count = runningWs.length
   const prevCountRef = useRef<number>(-1)

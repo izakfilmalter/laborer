@@ -13,6 +13,7 @@
     "./types": "./src/types.ts",
     "./rpc": "./src/rpc.ts",
     "./workspace-tree": "./src/workspace-tree.ts",
+    "./root-workspace": "./src/root-workspace.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",
     "./rpc-transport-messageport": "./src/rpc-transport-messageport.ts",

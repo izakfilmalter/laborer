@@ -172,6 +172,7 @@ import { WorkspaceList } from '../src/components/workspace-list'
 // ---------------------------------------------------------------------------
 
 const DESTROY_WORKSPACE_RE = /destroy workspace/i
+const WORKSPACE_CARD_TESTID_RE = /^workspace-card-/
 const PROJECT_REPO_PATH = '/Users/dev/my-project'
 
 const makeWorkspace = (
@@ -290,6 +291,33 @@ describe('WorkspaceList — root workspace delete protection', () => {
       name: DESTROY_WORKSPACE_RE,
     })
     expect(destroyButtons).toHaveLength(1)
+  })
+
+  it('pins the root workspace to the top of the list', () => {
+    const linkedWorkspace = makeWorkspace({
+      id: 'linked-ws',
+      branchName: 'feature/my-feature',
+      worktreePath: '/Users/dev/my-project-worktrees/feature-my-feature',
+    })
+    const rootWorkspace = makeWorkspace({
+      id: 'root-ws',
+      branchName: 'main',
+      worktreePath: PROJECT_REPO_PATH,
+    })
+
+    // Root intentionally listed last — the sidebar must reorder it first.
+    mockStore([linkedWorkspace, rootWorkspace])
+
+    render(
+      <WorkspaceList
+        projectId="project-1"
+        projectName="my-project"
+        repoPath={PROJECT_REPO_PATH}
+      />
+    )
+
+    const cards = screen.getAllByTestId(WORKSPACE_CARD_TESTID_RE)
+    expect(cards[0]?.getAttribute('data-testid')).toBe('workspace-card-main')
   })
 
   it('shows a pending workspace instead of the empty state during Slack planning', () => {

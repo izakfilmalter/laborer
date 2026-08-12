@@ -287,8 +287,14 @@ const projectForRoot = (
     )
     .sort((left, right) => right.rootPath.length - left.rootPath.length)[0]
 
+/**
+ * A task that owns a worktree path is running unless its lifecycle column
+ * says otherwise. Rows written before the `worktree_status` column existed
+ * carry NULL with a live path, so NULL means running — the same reading as
+ * the server's workspace records.
+ */
 const workspaceStatus = (
-  status: NonNullable<SharedTaskRow['worktreeStatus']>
+  status: SharedTaskRow['worktreeStatus']
 ): WorkspaceView['status'] => {
   if (status === 'provisioning') {
     return 'creating'
@@ -308,7 +314,7 @@ export const workspaceViewsFromRows = (
   const views: WorkspaceView[] = []
 
   for (const task of tasks) {
-    if (task.worktreePath === null || task.worktreeStatus === null) {
+    if (task.worktreePath === null) {
       continue
     }
     const project = projectForRoot(task.rootPath, projects)

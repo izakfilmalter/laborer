@@ -190,6 +190,29 @@ describe('workspaceViewsFromRows', () => {
     ])
   })
 
+  it('shows a worktree-owning task whose status column predates the worktree_status migration', () => {
+    // Rows adopted before migration 0004 carry a live worktree path with a
+    // NULL worktree_status. They are workspaces all the same — the sidebar
+    // must agree with the board and the server's workspace records.
+    const row: SharedTaskRow = {
+      ...task('legacy'),
+      branchName: 'hubspot-paste-import',
+      source: 'worktree',
+      worktreePath: '/repo/.worktrees/hubspot-paste-import',
+      worktreeStatus: null,
+    }
+
+    expect(workspaceViewsFromRows([row], [project('/repo')])).toEqual([
+      expect.objectContaining({
+        branchName: 'hubspot-paste-import',
+        id: 'legacy',
+        origin: 'external',
+        status: 'running',
+        worktreePath: '/repo/.worktrees/hubspot-paste-import',
+      }),
+    ])
+  })
+
   it('hides tasks without worktrees and tasks whose project is unregistered', () => {
     const noWorktree = task('todo')
     const unknownProject = {

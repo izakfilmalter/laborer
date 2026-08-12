@@ -58,6 +58,7 @@ import {
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
 import {
+  effectiveSortOrder,
   fractionalOrderAt,
   OptimisticTaskMoveQueue,
 } from '@/components/kanban/optimistic-task-moves'
@@ -143,8 +144,10 @@ const BOARD_COLUMNS: readonly BoardColumn[] = [
 ]
 
 /**
- * Group tasks into rendered columns. Explicit manual rank wins; unranked new
- * and incoming cards remain newest-first at the top.
+ * Group tasks into rendered columns. Cards sort by their effective rank —
+ * explicit manual rank wins, and unranked new and incoming cards derive a
+ * newest-first rank at the top — so a drag that mints a rank between any two
+ * neighbors lands exactly where it was dropped.
  */
 function buildColumnTasks(
   tasks: readonly BoardTask[]
@@ -154,18 +157,10 @@ function buildColumnTasks(
     byColumn[column.id] = []
   }
   const doneCutoff = Date.now() - DONE_RETENTION_MS
-  const sorted = [...tasks].sort((a, b) => {
-    if (a.sortOrder === null && b.sortOrder === null) {
-      return b.createdAt - a.createdAt
-    }
-    if (a.sortOrder === null) {
-      return -1
-    }
-    if (b.sortOrder === null) {
-      return 1
-    }
-    return a.sortOrder - b.sortOrder || b.createdAt - a.createdAt
-  })
+  const sorted = [...tasks].sort(
+    (a, b) =>
+      effectiveSortOrder(a) - effectiveSortOrder(b) || b.createdAt - a.createdAt
+  )
   for (const task of sorted) {
     if (
       task.status === 'cancelled' ||

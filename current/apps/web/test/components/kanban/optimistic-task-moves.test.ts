@@ -1,6 +1,7 @@
 import type { SharedTaskRow } from '@laborer/shared/rpc'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  effectiveSortOrder,
   fractionalOrderAt,
   OptimisticTaskMoveQueue,
   type TaskMoveCommand,
@@ -181,15 +182,73 @@ describe('OptimisticTaskMoveQueue', () => {
 
 describe('fractionalOrderAt', () => {
   it('ranks between neighbors and beyond either edge', () => {
-    expect(fractionalOrderAt([{ sortOrder: 10 }, { sortOrder: 20 }], 0)).toBe(
-      19
-    )
     expect(
       fractionalOrderAt(
-        [{ sortOrder: 10 }, { sortOrder: 15 }, { sortOrder: 20 }],
+        [
+          { createdAt: 1, sortOrder: 10 },
+          { createdAt: 1, sortOrder: 20 },
+        ],
+        0
+      )
+    ).toBe(19)
+    expect(
+      fractionalOrderAt(
+        [
+          { createdAt: 1, sortOrder: 10 },
+          { createdAt: 1, sortOrder: 15 },
+          { createdAt: 1, sortOrder: 20 },
+        ],
         1
       )
     ).toBe(15)
-    expect(fractionalOrderAt([{ sortOrder: 10 }], 0)).toBe(0)
+    expect(fractionalOrderAt([{ createdAt: 1, sortOrder: 10 }], 0)).toBe(0)
+  })
+
+  // Regression: prod columns are full of unranked rows minted by the
+  // Slack-native app (sort_order NULL). A drag among them used to return a
+  // rank near zero, which the board comparator then sorted below the entire
+  // unranked band — every re-order snapped the card to the bottom.
+  it('keeps a card dropped between unranked neighbors at its drop slot', () => {
+    const unranked = (id: string, createdAt: number) => ({
+      createdAt,
+      id,
+      sortOrder: null,
+    })
+    // Board display order: newest unranked first.
+    const column = [
+      unranked('newest', 4000),
+      unranked('middle', 3000),
+      unranked('oldest', 2000),
+    ]
+
+    // Drag "oldest" between "newest" and "middle" (drop index 1).
+    const reordered = [column[0]!, column[2]!, column[1]!]
+    const minted = fractionalOrderAt(reordered, 1)
+    const moved = { ...reordered[1]!, sortOrder: minted }
+
+    const resorted = [column[0]!, column[1]!, moved].sort(
+      (a, b) =>
+        effectiveSortOrder(a) - effectiveSortOrder(b) ||
+        b.createdAt - a.createdAt
+    )
+    expect(resorted.map(({ id }) => id)).toEqual(['newest', 'oldest', 'middle'])
+  })
+
+  it('keeps a card dropped above all unranked cards at the top', () => {
+    const column = [
+      { createdAt: 4000, id: 'newest', sortOrder: null },
+      { createdAt: 3000, id: 'ranked', sortOrder: 0 },
+    ]
+    // Drag "ranked" to the top (drop index 0).
+    const reordered = [column[1]!, column[0]!]
+    const minted = fractionalOrderAt(reordered, 0)
+    const moved = { ...column[1]!, sortOrder: minted }
+
+    const resorted = [column[0]!, moved].sort(
+      (a, b) =>
+        effectiveSortOrder(a) - effectiveSortOrder(b) ||
+        b.createdAt - a.createdAt
+    )
+    expect(resorted.map(({ id }) => id)).toEqual(['ranked', 'newest'])
   })
 })

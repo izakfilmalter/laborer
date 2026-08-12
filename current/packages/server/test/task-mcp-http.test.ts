@@ -354,6 +354,15 @@ describe('task MCP HTTP endpoint', () => {
             expect(listed.text).toContain('delete_task')
             expect(listed.text).toContain('list_projects')
 
+            const loopbackOrigin = yield* rpc(
+              port,
+              { id: 21, jsonrpc: '2.0', method: 'tools/list', params: {} },
+              'http://localhost:6274',
+              sessionId ?? undefined
+            )
+            expect(loopbackOrigin.response.status).toBe(200)
+            expect(loopbackOrigin.text).toContain('list_projects')
+
             const forbidden = yield* rpc(
               port,
               { id: 3, jsonrpc: '2.0', method: 'tools/list', params: {} },

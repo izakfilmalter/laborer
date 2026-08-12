@@ -31,7 +31,10 @@ import {
   RpcClientDefect,
   RpcClientError,
 } from 'effect/unstable/rpc/RpcClientError'
-import type { FromServerEncoded } from 'effect/unstable/rpc/RpcMessage'
+import type {
+  ClientProtocolError,
+  FromServerEncoded,
+} from 'effect/unstable/rpc/RpcMessage'
 
 import type { RpcMessagePort } from './rpc-transport-messageport.js'
 import { PING_MESSAGE, PONG_MESSAGE } from './rpc-transport-messageport.js'
@@ -194,7 +197,7 @@ export const makeClientProtocolMessagePort = (
           heartbeatInterval = null
         }
 
-        Queue.offerUnsafe(messageQueue, {
+        const protocolError: ClientProtocolError = {
           _tag: 'ClientProtocolError',
           error: new RpcClientError({
             reason: new RpcClientDefect({
@@ -202,7 +205,8 @@ export const makeClientProtocolMessagePort = (
               cause: undefined,
             }),
           }),
-        } as unknown as FromServerEncoded)
+        }
+        Queue.offerUnsafe(messageQueue, protocolError)
 
         // Notify the renderer's SidecarRuntimeBoundary that a port died
         // so it can trigger a generation bump and rebuild all RPC clients.

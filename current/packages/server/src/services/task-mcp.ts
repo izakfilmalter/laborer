@@ -1,6 +1,8 @@
+import { PositiveInt } from '@laborer/shared/rpc'
 import { Effect, Layer, Option, Schema } from 'effect'
 import { McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import {
+  Headers,
   HttpMiddleware,
   HttpServerRequest,
   HttpServerResponse,
@@ -73,10 +75,7 @@ const UpdateTask = Tool.make('update_task', {
     'Update only the title and/or description of a non-Execution task using revision CAS.',
   parameters: Schema.Struct({
     description: Schema.optional(Schema.NullOr(Schema.String)),
-    expected_revision: Schema.Number.check(
-      Schema.isInt(),
-      Schema.isGreaterThan(0)
-    ),
+    expected_revision: PositiveInt,
     id: Schema.String,
     title: Schema.optional(Schema.String),
   }),
@@ -87,10 +86,7 @@ const DeleteTask = Tool.make('delete_task', {
   description:
     'Soft-delete a task by changing its status to cancelled using revision CAS.',
   parameters: Schema.Struct({
-    expected_revision: Schema.Number.check(
-      Schema.isInt(),
-      Schema.isGreaterThan(0)
-    ),
+    expected_revision: PositiveInt,
     id: Schema.String,
   }),
   success: Task,
@@ -220,6 +216,17 @@ export const mcpOriginGuard = HttpMiddleware.make((app) =>
         status: 403,
       })
     }
-    return yield* app
+    if (origin === undefined) {
+      return yield* app
+    }
+
+    // McpServer accepts requests without Origin. Validate Laborer's broader
+    // loopback-any-port policy above, then hide Origin from its exact matcher.
+    return yield* app.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        request.modify({ headers: Headers.remove(request.headers, 'origin') })
+      )
+    )
   })
 )

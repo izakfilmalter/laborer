@@ -18,6 +18,7 @@
 import { MessageChannel } from 'node:worker_threads'
 import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
 import { Rpc, RpcClient, RpcGroup, RpcServer } from 'effect/unstable/rpc'
+import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   layerProtocolMessagePort,
@@ -426,11 +427,11 @@ describe('heartbeat timeout detection', () => {
     )
 
     // Send a request — it will hang because nobody responds.
-    let requestFailed = false
+    let requestError: unknown
     const requestPromise = Effect.runPromise(
       rpcClient.echo({ input: 'will timeout' })
-    ).catch(() => {
-      requestFailed = true
+    ).catch((error: unknown) => {
+      requestError = error
     })
 
     // Advance past heartbeat timeout (30s) + one interval (5s).
@@ -438,7 +439,10 @@ describe('heartbeat timeout detection', () => {
 
     // The request should have failed due to the synthetic Defect.
     await requestPromise
-    expect(requestFailed).toBe(true)
+    expect(requestError).toBeInstanceOf(RpcClientError)
+    expect(requestError).toMatchObject({
+      reason: { _tag: 'RpcClientDefect' },
+    })
 
     // Cleanup
     await Effect.runPromise(Scope.close(clientScope, Exit.void)).catch(() => {

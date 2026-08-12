@@ -28,7 +28,7 @@
 import { FileWatcher } from '@laborer/file-watcher/services/file-watcher'
 import { WatcherManager } from '@laborer/file-watcher/services/watcher-manager'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, PubSub, Ref, Stream } from 'effect'
+import { Context, Effect, Layer, Ref, Stream } from 'effect'
 import {
   type FileEventHandler,
   type FileEventSubscription,
@@ -220,19 +220,15 @@ const TestFileWatcherClientRealLayer = Layer.effect(
     const handlers: FileEventHandler[] = []
 
     // Background fiber: drain PubSub and dispatch to handlers
-    yield* PubSub.subscribe(watcherManager.fileEvents).pipe(
-      Effect.flatMap((dequeue) =>
-        Stream.fromQueue(dequeue).pipe(
-          Stream.tap((event) =>
-            Effect.sync(() => {
-              for (const handler of [...handlers]) {
-                handler(event)
-              }
-            })
-          ),
-          Stream.runDrain
-        )
+    yield* Stream.fromPubSub(watcherManager.fileEvents).pipe(
+      Stream.tap((event) =>
+        Effect.sync(() => {
+          for (const handler of [...handlers]) {
+            handler(event)
+          }
+        })
       ),
+      Stream.runDrain,
       Effect.forkScoped
     )
 

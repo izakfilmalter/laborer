@@ -15,7 +15,7 @@
 import { rmSync } from 'node:fs'
 import { assert, describe, it } from '@effect/vitest'
 import type { FileWatcherEvent } from '@laborer/shared/rpc'
-import { Chunk, Effect, Fiber, Layer, Ref, Stream } from 'effect'
+import { Effect, Fiber, Layer, Ref, Stream } from 'effect'
 import { FileService } from '../src/services/file-service.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
@@ -101,7 +101,7 @@ const collectOneEvent = (
     const fiber = yield* stream.pipe(
       Stream.take(1),
       Stream.runCollect,
-      Effect.fork
+      Effect.forkChild
     )
 
     yield* Effect.sleep('100 millis')
@@ -119,7 +119,7 @@ const collectOneEvent = (
       absolutePath: eventOverride?.absolutePath ?? `${repoPath}/test.ts`,
     })
 
-    return yield* Fiber.join(fiber).pipe(Effect.map(Chunk.toArray))
+    return yield* Fiber.join(fiber)
   })
 
 describe('FileService.watcherSubscribe', () => {
@@ -138,7 +138,7 @@ describe('FileService.watcherSubscribe', () => {
       const fiber = yield* stream.pipe(
         Stream.take(1),
         Stream.runCollect,
-        Effect.fork
+        Effect.forkChild
       )
       yield* Effect.sleep('100 millis')
 
@@ -155,7 +155,7 @@ describe('FileService.watcherSubscribe', () => {
         absolutePath: `${repoPath}/src/new-file.ts`,
       })
 
-      const collected = yield* Fiber.join(fiber).pipe(Effect.map(Chunk.toArray))
+      const collected = yield* Fiber.join(fiber)
 
       assert.strictEqual(collected.length, 1)
       const event = collected[0] as FileWatcherEvent
@@ -290,7 +290,7 @@ describe('FileService.watcherSubscribe', () => {
       const fiber = yield* stream.pipe(
         Stream.take(1),
         Stream.runCollect,
-        Effect.fork
+        Effect.forkChild
       )
       yield* Effect.sleep('100 millis')
 
@@ -315,7 +315,7 @@ describe('FileService.watcherSubscribe', () => {
         absolutePath: `${repoPath}/our-file.ts`,
       })
 
-      const collected = yield* Fiber.join(fiber).pipe(Effect.map(Chunk.toArray))
+      const collected = yield* Fiber.join(fiber)
 
       assert.strictEqual(collected.length, 1)
       const event = collected[0] as FileWatcherEvent

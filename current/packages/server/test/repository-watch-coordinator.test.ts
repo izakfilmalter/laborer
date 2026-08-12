@@ -18,7 +18,6 @@ import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coo
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
-import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { delay, waitFor } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
@@ -299,9 +298,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
           recording.subscribeCalls.length,
           'All subscribed watchers should be unsubscribed on scope cleanup'
         )
-      }).pipe(
-        Effect.provide(createTestLayerWithRecording(TestFileWatcherClientLayer))
-      )
+      })
   )
 
   it.effect('uses FileWatcherClient abstraction for subscriptions', () =>
@@ -333,8 +330,6 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       )
 
       yield* Scope.close(scope, Exit.succeed(undefined))
-    }).pipe(
-      Effect.provide(createTestLayerWithRecording(TestFileWatcherClientLayer))
-    )
+    })
   )
 })

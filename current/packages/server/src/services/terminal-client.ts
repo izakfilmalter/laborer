@@ -138,7 +138,7 @@ const AgentHookRequestSchema = Schema.fromJsonString(
     directory: Schema.optional(Schema.String),
     status: AgentStatusSchema,
     sequence: Schema.optional(
-      Schema.Number.pipe(
+      Schema.Number.check(
         Schema.isInt(),
         Schema.isGreaterThanOrEqualTo(0),
         Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
@@ -278,7 +278,7 @@ const startAgentHookServer = (
   gateway: AgentHookGateway,
   scope: Scope.Scope
 ): Effect.Effect<number> =>
-  Effect.async<number>((resume) => {
+  Effect.callback<number>((resume) => {
     const reportSequences = new Map<string, number>()
 
     const forwardReport = (
@@ -369,7 +369,7 @@ const startAgentHookServer = (
     Effect.runFork(
       Scope.addFinalizer(
         scope,
-        Effect.async<void>((done) => {
+        Effect.callback<void>((done) => {
           server.close(() => done(Effect.void))
         })
       )

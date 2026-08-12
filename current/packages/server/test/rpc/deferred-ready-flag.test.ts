@@ -23,7 +23,7 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Chunk, Effect, Stream } from 'effect'
+import { Effect, Stream } from 'effect'
 import { RpcTest } from 'effect/unstable/rpc'
 import { TestLaborerRpcLayer } from './test-layer.js'
 
@@ -51,9 +51,9 @@ describe('DeferredServicesReady flag (file-tree-git-status)', () => {
         // The stream uses takeUntil(ready), so when DeferredServicesReady
         // starts at true (as in TestLaborerRpcLayer), the stream emits
         // [{ ready: true }] and completes immediately.
-        const items = yield* client.lifecycle
-          .initStatus()
-          .pipe(Stream.runCollect, Effect.map(Chunk.toArray))
+        const items = yield* client['lifecycle.initStatus']().pipe(
+          Stream.runCollect
+        )
 
         // All services are built and available — the stream should emit
         // ready=true so the client advances to LifecyclePhase.Eventually

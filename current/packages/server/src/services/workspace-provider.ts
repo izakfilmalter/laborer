@@ -506,18 +506,23 @@ const validateWorktree = (
     // Uses Effect.try so that a realpathSync failure (e.g. race condition
     // where the directory was removed between existsSync and here) falls
     // back to raw path comparison instead of killing the fiber with a defect.
-    const { normalizedToplevel, normalizedWorktree } = yield* Effect.try({
-      try: () => ({
-        normalizedWorktree: realpathSync(worktreePath),
-        normalizedToplevel: toplevelResult
-          ? realpathSync(toplevelResult)
-          : null,
-      }),
-      catch: () => ({
-        normalizedWorktree: worktreePath,
-        normalizedToplevel: toplevelResult,
-      }),
-    }).pipe(Effect.merge)
+    const { normalizedToplevel, normalizedWorktree } = yield* Effect.sync(
+      () => {
+        try {
+          return {
+            normalizedWorktree: realpathSync(worktreePath),
+            normalizedToplevel: toplevelResult
+              ? realpathSync(toplevelResult)
+              : null,
+          }
+        } catch {
+          return {
+            normalizedWorktree: worktreePath,
+            normalizedToplevel: toplevelResult,
+          }
+        }
+      }
+    )
     return {
       directoryExists: true,
       isGitWorkTree: workTreeResult,
@@ -1208,11 +1213,7 @@ class WorkspaceProvider extends Context.Service<
                 // Extract a user-facing error message from the cause.
                 // For expected failures (RpcError), use the error message.
                 // For defects (thrown exceptions), use the pretty-printed cause.
-                const failureOption = Cause.failureOption(cause)
-                const errorMessage =
-                  failureOption._tag === 'Some'
-                    ? String(failureOption.value)
-                    : prettyMessage
+                const errorMessage = String(Cause.squash(cause))
 
                 yield* updateServerTaskFacts(laborerDatabase, taskId, {
                   worktreeError: errorMessage,
@@ -1225,10 +1226,10 @@ class WorkspaceProvider extends Context.Service<
                   )
                 )
 
+                const squashed = Cause.squash(cause)
                 const failure =
-                  failureOption._tag === 'Some' &&
-                  failureOption.value instanceof RpcError
-                    ? failureOption.value
+                  squashed instanceof RpcError
+                    ? squashed
                     : new RpcError({
                         code: 'WORKSPACE_SETUP_FAILED',
                         message: errorMessage,

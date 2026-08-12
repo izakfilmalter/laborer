@@ -30,7 +30,10 @@ import {
   WindowTabSchema,
   WorkspaceTileNodeSchema,
 } from '@laborer/shared/types'
-import { Either, Schema } from 'effect'
+import { Result, Schema } from 'effect'
+
+const decodeUnknownResult = <A>(schema: Schema.Schema<A>) =>
+  Schema.decodeUnknownResult(schema as unknown as Schema.ConstraintDecoder<A>)
 
 import { generateId } from './id-utils'
 import { removePanelTab } from './panel-tab-utils'
@@ -1282,11 +1285,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function decodeWindowLayout(input: unknown): RepairWindowLayoutResult {
   // Step 1: Try strict Schema decode first (fast path for valid data)
-  const decodeResult = Schema.decodeUnknownEither(WindowLayoutSchema)(input)
+  const decodeResult = decodeUnknownResult(WindowLayoutSchema)(input)
 
-  if (Either.isRight(decodeResult)) {
+  if (Result.isSuccess(decodeResult)) {
     // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
-    const decoded = decodeResult.right
+    const decoded = decodeResult.success
     const repaired = repairTransforms(decoded)
     const wasRepaired = !deepEqual(decoded, repaired)
     return { windowLayout: repaired, wasRepaired }
@@ -1421,10 +1424,10 @@ function deepEqual(a: WindowLayout, b: WindowLayout): boolean {
 }
 
 // Schema decoders (cached at module level for performance)
-const decodeWindowTab = Schema.decodeUnknownEither(WindowTabSchema)
-const decodePanelNode = Schema.decodeUnknownEither(PanelNodeSchema)
-const decodePanelTab = Schema.decodeUnknownEither(PanelTabSchema)
-const decodeTileNode = Schema.decodeUnknownEither(WorkspaceTileNodeSchema)
+const decodeWindowTab = decodeUnknownResult(WindowTabSchema)
+const decodePanelNode = decodeUnknownResult(PanelNodeSchema)
+const decodePanelTab = decodeUnknownResult(PanelTabSchema)
+const decodeTileNode = decodeUnknownResult(WorkspaceTileNodeSchema)
 
 /**
  * Lenient decode of a WindowLayout from `unknown` input.
@@ -1473,8 +1476,8 @@ function lenientDecodeWindowLayout(input: unknown): RepairWindowLayoutResult {
 function lenientDecodeWindowTab(raw: unknown): WindowTab | undefined {
   // Try strict Schema decode first
   const result = decodeWindowTab(raw)
-  if (Either.isRight(result) && result.right.id !== '') {
-    return result.right
+  if (Result.isSuccess(result) && result.success.id !== '') {
+    return result.success
   }
 
   // Lenient: validate required fields manually
@@ -1505,8 +1508,8 @@ function lenientDecodeWindowTab(raw: unknown): WindowTab | undefined {
 function lenientDecodeTileNode(raw: unknown): WorkspaceTileNode | undefined {
   // Try strict Schema decode
   const result = decodeTileNode(raw)
-  if (Either.isRight(result)) {
-    return result.right
+  if (Result.isSuccess(result)) {
+    return result.success
   }
 
   if (!isRecord(raw) || typeof raw._tag !== 'string') {
@@ -1615,8 +1618,8 @@ function lenientDecodeTileSplit(
 function lenientDecodePanelTab(raw: unknown): PanelTab | undefined {
   // Try strict Schema decode first
   const result = decodePanelTab(raw)
-  if (Either.isRight(result) && result.right.id !== '') {
-    return result.right
+  if (Result.isSuccess(result) && result.success.id !== '') {
+    return result.success
   }
 
   // Lenient: validate required fields
@@ -1652,8 +1655,8 @@ function lenientDecodePanelTab(raw: unknown): PanelTab | undefined {
 function lenientDecodePanelNode(raw: unknown): PanelNode | undefined {
   // Try strict Schema decode first
   const result = decodePanelNode(raw)
-  if (Either.isRight(result)) {
-    return result.right
+  if (Result.isSuccess(result)) {
+    return result.success
   }
 
   if (!isRecord(raw) || typeof raw._tag !== 'string') {

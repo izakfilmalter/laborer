@@ -59,7 +59,7 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@effect/atom-react/Hooks'
-import type { FileDiffEntry } from '@laborer/shared/rpc'
+import type { FileDiffEntry, FileWatcherEvent } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
 import { FileDiff, Virtualizer } from '@pierre/diffs/react'
@@ -113,10 +113,10 @@ const DIFF_FETCH_TIMEOUT = '30 seconds'
  * with the per-attempt timeout, a fetch always terminates — either with
  * data or with an error the UI can render (with a manual retry button).
  */
-const diffRetrySchedule = Schedule.intersect(
+const diffRetrySchedule = Schedule.max([
   Schedule.exponential('1 second'),
-  Schedule.recurs(2)
-)
+  Schedule.recurs(2),
+])
 
 /**
  * Per-workspace query atom for the batched workspace diff.
@@ -130,13 +130,15 @@ const fileDiffQuery = Atom.family((workspaceId: string) =>
     Effect.flatMap(LaborerClient, (client) =>
       client('file.diff', { workspaceId })
     ).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: DIFF_FETCH_TIMEOUT,
-        onTimeout: () =>
-          new RpcError({
-            message: 'Timed out computing the workspace diff',
-            code: 'TIMEOUT',
-          }),
+        orElse: () =>
+          Effect.fail(
+            new RpcError({
+              message: 'Timed out computing the workspace diff',
+              code: 'TIMEOUT',
+            })
+          ),
       }),
       Effect.retry(diffRetrySchedule)
     )
@@ -489,14 +491,18 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
     if (!Result.isSuccess(watcherResult)) {
       return
     }
-    const { items } = watcherResult.value
+    const { items } = watcherResult.value as {
+      readonly items: readonly (FileWatcherEvent | undefined)[]
+    }
     const startIndex = lastProcessedIndexRef.current
 
     if (items.length <= startIndex) {
       return
     }
 
-    const newEvents = items.slice(startIndex).filter(Boolean)
+    const newEvents = items
+      .slice(startIndex)
+      .filter((event): event is FileWatcherEvent => event !== undefined)
     lastProcessedIndexRef.current = items.length
 
     if (hasRelevantWatcherEvent(newEvents)) {

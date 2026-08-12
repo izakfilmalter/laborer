@@ -11,7 +11,7 @@
  */
 
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Duration, Effect, Layer, Schedule } from 'effect'
+import { Duration, Effect, Layer, Schedule } from 'effect'
 import { AtomRpc } from 'effect/unstable/reactivity'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { Socket } from 'effect/unstable/socket'
@@ -87,13 +87,31 @@ function createTrackingWebSocket(
  *
  * Exported for regression tests only.
  */
-export const wsReconnectRetrySchedule = Schedule.union(
-  Schedule.exponential(
-    WS_RECONNECT_INITIAL_DELAY_MS,
-    WS_RECONNECT_BACKOFF_FACTOR
-  ),
-  Schedule.spaced(WS_RECONNECT_MAX_DELAY_MS)
-).pipe(Schedule.resetAfter(Duration.millis(WS_RECONNECT_RESET_AFTER_MS)))
+export const wsReconnectRetrySchedule = Schedule.fromStepWithMetadata(
+  Effect.sync(() => {
+    let sequenceStartedAt: number | undefined
+    let attempt = 0
+
+    return (metadata: Schedule.InputMetadata<unknown>) => {
+      if (
+        sequenceStartedAt === undefined ||
+        metadata.now - sequenceStartedAt >= WS_RECONNECT_RESET_AFTER_MS
+      ) {
+        sequenceStartedAt = metadata.now
+        attempt = 0
+      }
+      const delay = Math.min(
+        WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** attempt,
+        WS_RECONNECT_MAX_DELAY_MS
+      )
+      attempt += 1
+      return Effect.succeed([delay, Duration.millis(delay)] as [
+        number,
+        Duration.Duration,
+      ])
+    }
+  })
+)
 
 const trackingWebSocketConstructorLayer = Layer.succeed(
   Socket.WebSocketConstructor,
@@ -112,13 +130,11 @@ const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.effect(
     const socketLayer = Socket.layerWebSocket(rpcUrl).pipe(
       Layer.provide(trackingWebSocketConstructorLayer)
     )
-    const protocol = yield* RpcClient.layerProtocolSocket({
-      retrySchedule: wsReconnectRetrySchedule,
+    const protocol = yield* RpcClient.makeProtocolSocket({
+      retryPolicy: wsReconnectRetrySchedule,
       retryTransientErrors: true,
     }).pipe(
-      Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),
-      Layer.build,
-      Effect.map((context) => Context.get(context, RpcClient.Protocol))
+      Effect.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson))
     )
     return protocol
   })

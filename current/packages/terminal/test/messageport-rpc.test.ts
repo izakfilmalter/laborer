@@ -23,7 +23,7 @@ import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { Effect, Exit, Fiber, Layer, Result, Scope, Stream } from 'effect'
 import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
@@ -76,7 +76,7 @@ function buildServerLayer(port: RpcMessagePort) {
  * This avoids `any` and provides full type safety for all RPC calls.
  */
 const MakeTerminalClient = RpcClient.make(TerminalRpcs)
-type TerminalRpcClient = Effect.Effect.Success<typeof MakeTerminalClient>
+type TerminalRpcClient = Effect.Success<typeof MakeTerminalClient>
 
 let serverScope: Scope.Closeable
 let clientScope: Scope.Closeable
@@ -181,7 +181,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.write fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(
+      Effect.result(
         client['terminal.write']({
           id: 'mp-nonexistent-write',
           data: 'should-fail',
@@ -189,7 +189,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
       )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -231,7 +231,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.resize fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(
+      Effect.result(
         client['terminal.resize']({
           id: 'mp-nonexistent-resize',
           cols: 100,
@@ -240,7 +240,7 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
       )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -273,10 +273,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.kill fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(client['terminal.kill']({ id: 'mp-nonexistent-kill' }))
+      Effect.result(client['terminal.kill']({ id: 'mp-nonexistent-kill' }))
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -313,10 +313,10 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.remove fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(client['terminal.remove']({ id: 'mp-nonexistent-remove' }))
+      Effect.result(client['terminal.remove']({ id: 'mp-nonexistent-remove' }))
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------
@@ -362,12 +362,12 @@ describe('TerminalRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('terminal.restart fails for nonexistent terminal via MessagePort', async () => {
     const result = await run(
-      Effect.either(
+      Effect.result(
         client['terminal.restart']({ id: 'mp-nonexistent-restart' })
       )
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   // -----------------------------------------------------------------------

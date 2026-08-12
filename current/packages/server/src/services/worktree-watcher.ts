@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
+import { Context, Data, Effect, Layer, Ref } from 'effect'
 import { LaborerDatabase } from './laborer-database.js'
 import { WORKTREE_WATCHER_DEBOUNCE_MS } from './polling-intervals.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
@@ -74,7 +74,7 @@ class WorktreeWatcher extends Context.Service<
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
       const reconciler = yield* WorktreeReconciler
-      const runtime = yield* Effect.runtime<never>()
+      const runtime = yield* Effect.context<never>()
       const statesRef = yield* Ref.make(new Map<string, ProjectWatchState>())
 
       const clearTimer = (state: ProjectWatchState): void => {
@@ -103,7 +103,7 @@ class WorktreeWatcher extends Context.Service<
           )
         )
 
-      const runPromise = Runtime.runPromise(runtime)
+      const runPromise = Effect.runPromiseWith(runtime)
 
       const scheduleReconcile = (
         state: ProjectWatchState,

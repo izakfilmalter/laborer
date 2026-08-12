@@ -7,11 +7,11 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either, Ref, type Scope } from 'effect'
+import { Effect, Ref, Result, type Scope } from 'effect'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
-type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
+type RpcTestContext = Effect.Success<typeof makeScopedTestRpcContext>
 
 const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
@@ -492,21 +492,19 @@ describe('LaborerRpcs workspace management', () => {
   it.effect('workspace.create returns NOT_FOUND for an unknown project', () =>
     runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
-        const result = yield* client.workspace
-          .create({
-            branchName: 'feature/missing-project',
-            projectId: 'missing-project',
-          })
-          .pipe(Effect.either)
+        const result = yield* client['workspace.create']({
+          branchName: 'feature/missing-project',
+          projectId: 'missing-project',
+        }).pipe(Effect.result)
 
-        assert.isTrue(Either.isLeft(result))
-        if (Either.isRight(result)) {
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isSuccess(result)) {
           assert.fail('Expected workspace.create to fail for a missing project')
         }
 
-        assert.strictEqual(result.left.code, 'NOT_FOUND')
+        assert.strictEqual(result.failure.code, 'NOT_FOUND')
         assert.strictEqual(
-          result.left.message,
+          result.failure.message,
           'Project not found: missing-project'
         )
         assert.deepStrictEqual(database.listTasks(), [])

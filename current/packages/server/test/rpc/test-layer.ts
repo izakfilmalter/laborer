@@ -217,7 +217,7 @@ const TestLaborerRpcWithDatabaseLayer = LaborerRpcsLive.pipe(
 export const TestLaborerRpcClient = RpcTest.makeClient(LaborerRpcs)
 
 interface ScopedTestRpcContext {
-  readonly client: Effect.Effect.Success<typeof TestLaborerRpcClient>
+  readonly client: Effect.Success<typeof TestLaborerRpcClient>
   readonly database: LaborerDatabase['Service']['database']
   readonly terminalClientRecorder: TestTerminalClientRecorder['Service']
 }

@@ -207,20 +207,21 @@ describe('RepositoryWatchCoordinator hardening', () => {
         FileWatcherClient,
         FileWatcherClient.of({
           subscribe: (path, options) =>
-            Effect.sync(() => {
+            Effect.promise(() => {
               const id = `test-sub-${subscribedPaths.length + 1}`
               subscribedPaths.push(path)
               subscriptionsByPath.set(path, id)
-              return {
+              return Promise.resolve({
                 id,
                 path,
                 recursive: options?.recursive ?? false,
                 ignoreGlobs: options?.ignoreGlobs ?? [],
-              }
+              })
             }),
           unsubscribe: (id) =>
-            Effect.sync(() => {
+            Effect.promise(() => {
               unsubscribedIds.push(id)
+              return Promise.resolve()
             }),
           updateIgnore: () => Effect.void,
           onFileEvent: (handler: FileEventHandler): FileEventSubscription => {
@@ -248,9 +249,11 @@ describe('RepositoryWatchCoordinator hardening', () => {
         RepositoryIdentity,
         RepositoryIdentity.of({
           resolve: () =>
-            Effect.dieSync(() => {
+            Effect.suspend(() => {
               resolveCalls.current += 1
-              return new Error('watchAll should use persisted identity')
+              return Effect.die(
+                new Error('watchAll should use persisted identity')
+              )
             }),
         })
       )

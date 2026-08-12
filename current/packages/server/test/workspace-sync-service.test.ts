@@ -1,7 +1,7 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Result } from 'effect'
 import { afterAll } from 'vitest'
 import { BackgroundFetchService } from '../src/services/background-fetch-service.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
@@ -150,16 +150,16 @@ describe('WorkspaceSyncService', () => {
 
         const result = yield* workspaceSyncService
           .checkStatus('missing-workspace')
-          .pipe(Effect.either)
+          .pipe(Effect.result)
 
-        assert.isTrue(result._tag === 'Left')
-        if (result._tag === 'Right') {
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isSuccess(result)) {
           assert.fail('Expected missing workspace status lookup to fail')
         }
 
-        assert.strictEqual(result.left.code, 'WORKSPACE_NOT_FOUND')
+        assert.strictEqual(result.failure.code, 'WORKSPACE_NOT_FOUND')
         assert.strictEqual(
-          result.left.message,
+          result.failure.message,
           'Workspace not found: missing-workspace'
         )
       }).pipe(Effect.provide(TestLayer))
@@ -217,10 +217,10 @@ describe('WorkspaceSyncService', () => {
 
       const result = yield* workspaceSyncService
         .checkStatus('workspace-destroyed')
-        .pipe(Effect.either)
-      assert.strictEqual(result._tag, 'Left')
-      if (result._tag === 'Left') {
-        assert.strictEqual(result.left.code, 'WORKSPACE_NOT_FOUND')
+        .pipe(Effect.result)
+      assert.isTrue(Result.isFailure(result))
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.code, 'WORKSPACE_NOT_FOUND')
       }
     }).pipe(Effect.provide(TestLayer))
   )

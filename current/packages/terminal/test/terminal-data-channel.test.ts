@@ -22,12 +22,12 @@ import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import {
+  type Context,
   Effect,
   Exit,
   Fiber,
   Layer,
   ManagedRuntime,
-  Runtime,
   Scope,
 } from 'effect'
 import { RpcClient, RpcServer } from 'effect/unstable/rpc'
@@ -67,7 +67,7 @@ function toRpcPort(
 // ---------------------------------------------------------------------------
 
 const MakeTerminalClient = RpcClient.make(TerminalRpcs)
-type TerminalRpcClient = Effect.Effect.Success<typeof MakeTerminalClient>
+type TerminalRpcClient = Effect.Success<typeof MakeTerminalClient>
 
 /**
  * Services layer — provides both TerminalManager and PtyHostClient.
@@ -84,7 +84,7 @@ let managedRt: ManagedRuntime.ManagedRuntime<
   TerminalManager | PtyHostClient,
   never
 >
-let dataChannelRuntime: Runtime.Runtime<TerminalManager | PtyHostClient>
+let dataChannelRuntime: Context.Context<TerminalManager | PtyHostClient>
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -110,7 +110,7 @@ beforeAll(async () => {
 
   // Create managed runtime — shares services between RPC and data channels.
   managedRt = ManagedRuntime.make(FullLayer)
-  dataChannelRuntime = await managedRt.runtime()
+  dataChannelRuntime = await managedRt.context()
 
   // Build RPC client.
   clientScope = Effect.runSync(Scope.make())
@@ -158,7 +158,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     })
 
     // Attach the data channel using the shared runtime.
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -223,7 +223,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -277,7 +277,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -315,7 +315,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
         yield* terminalManager.setRevivedReplayEvent(terminal.id, {
@@ -367,7 +367,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -449,7 +449,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
         yield* terminalManager.setRevivedReplayEvent(terminal.id, {
@@ -489,7 +489,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -567,7 +567,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       })
     )
 
-    await Runtime.runPromise(dataChannelRuntime)(
+    await Effect.runPromiseWith(dataChannelRuntime)(
       Effect.gen(function* () {
         const terminalManager = yield* TerminalManager
 
@@ -598,7 +598,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -663,7 +663,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     // Create a data channel.
     const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -701,7 +701,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -737,7 +737,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       receivedMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), 'nonexistent-terminal-id').pipe(
         Effect.scoped
       )
@@ -776,7 +776,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       // Drain output; content is irrelevant here.
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 
@@ -813,7 +813,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       dataMessages.push(data)
     })
 
-    const fiber = Runtime.runFork(dataChannelRuntime)(
+    const fiber = Effect.runForkWith(dataChannelRuntime)(
       attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
     )
 

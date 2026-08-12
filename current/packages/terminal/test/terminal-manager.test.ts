@@ -24,11 +24,11 @@ import { assert, describe } from '@effect/vitest'
 import {
   type Context,
   Effect,
-  Either,
   Exit,
   Fiber,
   Layer,
-  Queue,
+  PubSub,
+  Result,
   Scope,
   Stream,
 } from 'effect'
@@ -571,13 +571,13 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           const tm = yield* TerminalManager
 
           // Subscribe to the PubSub (scoped — will unsubscribe when block ends)
-          const dequeue = yield* tm.lifecycleEvents.subscribe
+          const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
           // Start collecting events in a fiber
-          const collectFiber = yield* Effect.fork(
+          const collectFiber = yield* Effect.forkChild(
             Effect.gen(function* () {
               while (true) {
-                const event = yield* Queue.take(dequeue)
+                const event = yield* PubSub.take(dequeue)
                 collectedEvents.push(event)
               }
             })
@@ -662,7 +662,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           const collectFiber = yield* eventStream.pipe(
             Stream.take(1),
             Stream.runCollect,
-            Effect.fork
+            Effect.forkChild
           )
 
           // Give a moment for the subscriber to be established
@@ -1538,7 +1538,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     const result = await runEffect(
       Effect.gen(function* () {
         const tm = yield* TerminalManager
-        return yield* Effect.either(
+        return yield* Effect.result(
           tm.setAgentStatusFromHook('non-existent-terminal-id', {
             status: 'working',
             sequence: 1,
@@ -1547,7 +1547,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       })
     )
 
-    assert.isTrue(Either.isLeft(result))
+    assert.isTrue(Result.isFailure(result))
   })
 
   it('remove() clears hook status override', async () => {
@@ -1753,12 +1753,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
             const tm = yield* TerminalManager
 
             // Subscribe to lifecycle events
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -1829,12 +1829,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -1909,12 +1909,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -2010,12 +2010,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -2128,12 +2128,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -2236,12 +2236,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -2329,12 +2329,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           Effect.gen(function* () {
             const tm = yield* TerminalManager
 
-            const dequeue = yield* tm.lifecycleEvents.subscribe
+            const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-            const collectFiber = yield* Effect.fork(
+            const collectFiber = yield* Effect.forkChild(
               Effect.gen(function* () {
                 while (true) {
-                  const event = yield* Queue.take(dequeue)
+                  const event = yield* PubSub.take(dequeue)
                   collectedEvents.push(event)
                 }
               })
@@ -2423,12 +2423,12 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           })
 
           // Subscribe to lifecycle events
-          const dequeue = yield* tm.lifecycleEvents.subscribe
+          const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-          const collectFiber = yield* Effect.fork(
+          const collectFiber = yield* Effect.forkChild(
             Effect.gen(function* () {
               while (true) {
-                const event = yield* Queue.take(dequeue)
+                const event = yield* PubSub.take(dequeue)
                 collectedEvents.push(event)
               }
             })

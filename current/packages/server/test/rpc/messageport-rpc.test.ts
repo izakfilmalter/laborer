@@ -109,7 +109,7 @@ function buildServerLayer(port: RpcMessagePort) {
  * Infer the client type from `RpcClient.make(LaborerRpcs)`.
  */
 const MakeLaborerClient = RpcClient.make(LaborerRpcs)
-type LaborerRpcClient = Effect.Effect.Success<typeof MakeLaborerClient>
+type LaborerRpcClient = Effect.Success<typeof MakeLaborerClient>
 
 let serverScope: Scope.Closeable
 let clientScope: Scope.Closeable
@@ -171,9 +171,11 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
 
   it('lifecycle.initStatus stream emits ready=false via MessagePort', async () => {
     const first = await run(
-      client.lifecycle
-        .initStatus()
-        .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow))
+      client['lifecycle.initStatus']().pipe(
+        Stream.take(1),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow)
+      )
     )
 
     // With DeferredServicesReadyLayer (not yet swapped to true),
@@ -212,9 +214,11 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
     const [health, initStatus] = await run(
       Effect.all([
         client['health.check'](),
-        client.lifecycle
-          .initStatus()
-          .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow)),
+        client['lifecycle.initStatus']().pipe(
+          Stream.take(1),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow)
+        ),
       ])
     )
 

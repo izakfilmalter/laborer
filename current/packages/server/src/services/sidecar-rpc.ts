@@ -24,9 +24,10 @@ import { RpcClient } from 'effect/unstable/rpc'
  * Retry schedule for sidecar event stream reconnections (unbounded).
  * Used when a connected event stream disconnects unexpectedly.
  */
-export const sidecarEventStreamSchedule = Schedule.exponential('1 second').pipe(
-  Schedule.union(Schedule.spaced('30 seconds'))
-)
+export const sidecarEventStreamSchedule = Schedule.min([
+  Schedule.exponential('1 second'),
+  Schedule.spaced('30 seconds'),
+])
 
 /**
  * Create an RPC client for a sidecar service over a MessagePort.

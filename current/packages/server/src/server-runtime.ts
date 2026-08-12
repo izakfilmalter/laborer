@@ -21,9 +21,9 @@ import {
 } from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
-const PortSchema = Schema.Number.pipe(
+const PortSchema = Schema.Number.check(
   Schema.isInt(),
-  Schema.isBetween(1, 65_535)
+  Schema.isBetween({ minimum: 1, maximum: 65_535 })
 )
 
 export interface ServerRuntimeConfigShape {
@@ -90,18 +90,15 @@ const authorizeWebSocketRequest = (authToken: string | undefined) =>
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = HttpServerRequest.toURL(request)
     if (Option.isNone(url)) {
-      return yield* HttpServerResponse.text('Invalid WebSocket URL', {
+      return HttpServerResponse.text('Invalid WebSocket URL', {
         status: 400,
       })
     }
 
     if (!isAuthorizedWebSocketUrl(url.value, authToken)) {
-      return yield* HttpServerResponse.text(
-        'Unauthorized WebSocket connection',
-        {
-          status: 401,
-        }
-      )
+      return HttpServerResponse.text('Unauthorized WebSocket connection', {
+        status: 401,
+      })
     }
 
     return undefined
@@ -116,23 +113,22 @@ const authedWebSocketRoute = (
     HttpServerRequest.HttpServerRequest | Scope.Scope
   >
 ) =>
-  HttpRouter.Default.use((router) =>
-    router.get(
-      path,
-      Effect.gen(function* () {
-        const unauthorized = yield* authorizeWebSocketRequest(authToken)
-        if (unauthorized) {
-          return unauthorized
-        }
-        return yield* websocketApp
-      })
-    )
+  HttpRouter.add(
+    'GET',
+    path,
+    Effect.gen(function* () {
+      const unauthorized = yield* authorizeWebSocketRequest(authToken)
+      if (unauthorized) {
+        return unauthorized
+      }
+      return yield* websocketApp
+    })
   )
 
 const makeRoutesLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
-    const rpcWebSocketApp = yield* RpcServer.toHttpAppWebsocket(
+    const rpcWebSocketApp = yield* RpcServer.toHttpEffectWebsocket(
       LaborerRpcs
     ).pipe(
       Effect.provide(
@@ -146,12 +142,10 @@ const makeRoutesLayer = Layer.unwrap(
     )
 
     return Layer.mergeAll(
-      HttpRouter.Default.use((router) =>
-        router.get('/', HttpServerResponse.empty({ status: 204 }))
-      ),
+      HttpRouter.add('GET', '/', HttpServerResponse.empty({ status: 204 })),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
       mcpLayer
-    )
+    ).pipe(Layer.provideMerge(HttpRouter.layer))
   })
 )
 
@@ -177,9 +171,9 @@ export const makeServerLayer = Layer.unwrap(
     )
 
     return Layer.mergeAll(
-      HttpRouter.Default.serve((app) =>
-        mcpOriginGuard(HttpMiddleware.cors()(app))
-      ).pipe(Layer.provide(makeRoutesLayer)),
+      HttpRouter.serve(makeRoutesLayer, {
+        middleware: (app) => mcpOriginGuard(HttpMiddleware.cors()(app)),
+      }),
       listeningLogLayer,
       serverDiscoveryLayer(config)
     ).pipe(

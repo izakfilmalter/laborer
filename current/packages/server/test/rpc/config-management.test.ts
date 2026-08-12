@@ -9,11 +9,11 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either, type Scope } from 'effect'
+import { Effect, Result, type Scope } from 'effect'
 import { createTempDir, git } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
-type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
+type RpcTestContext = Effect.Success<typeof makeScopedTestRpcContext>
 
 const CUSTOM_FIELD_PATTERN = /"customField": "preserve-me"/
 const SETUP_SCRIPTS_PATTERN = /"setupScripts": \[\s+"bun install"\s+\]/m
@@ -108,18 +108,18 @@ describe('LaborerRpcs config management', () => {
   it.effect('config.get returns NOT_FOUND for a missing project', () =>
     runWithRpcTestContext(({ client }) =>
       Effect.gen(function* () {
-        const result = yield* client.config
-          .get({ projectId: 'missing-project' })
-          .pipe(Effect.either)
+        const result = yield* client['config.get']({
+          projectId: 'missing-project',
+        }).pipe(Effect.result)
 
-        assert.isTrue(Either.isLeft(result))
-        if (Either.isRight(result)) {
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isSuccess(result)) {
           assert.fail('Expected config.get to fail for a missing project')
         }
 
-        assert.strictEqual(result.left.code, 'NOT_FOUND')
+        assert.strictEqual(result.failure.code, 'NOT_FOUND')
         assert.strictEqual(
-          result.left.message,
+          result.failure.message,
           'Project not found: missing-project'
         )
       })

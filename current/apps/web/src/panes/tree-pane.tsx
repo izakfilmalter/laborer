@@ -36,7 +36,7 @@ import {
   useAtomSet,
   useAtomValue,
 } from '@effect/atom-react/Hooks'
-import type { FileNode } from '@laborer/shared/rpc'
+import type { FileNode, FileWatcherEvent } from '@laborer/shared/rpc'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -323,7 +323,9 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     if (!Result.isSuccess(watcherResult)) {
       return
     }
-    const { items } = watcherResult.value
+    const { items } = watcherResult.value as {
+      readonly items: readonly (FileWatcherEvent | undefined)[]
+    }
     const startIndex = lastProcessedIndexRef.current
 
     if (items.length <= startIndex) {

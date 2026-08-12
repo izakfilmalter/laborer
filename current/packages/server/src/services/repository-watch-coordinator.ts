@@ -30,7 +30,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
+import { Context, Data, Effect, Layer, Ref } from 'effect'
 import { BranchStateTracker } from './branch-state-tracker.js'
 import { ConfigService } from './config-service.js'
 import { FileWatcherClient } from './file-watcher-client.js'
@@ -190,7 +190,7 @@ class RepositoryWatchCoordinator extends Context.Service<
       const repoIdentity = yield* RepositoryIdentity
       const fileWatcherClient = yield* FileWatcherClient
       const configService = yield* ConfigService
-      const runtime = yield* Effect.runtime<never>()
+      const runtime = yield* Effect.context<never>()
 
       const ensurePersistedIdentity = Effect.fn(
         'RepositoryWatchCoordinator.ensurePersistedIdentity'
@@ -227,7 +227,7 @@ class RepositoryWatchCoordinator extends Context.Service<
         new Map<string, 'git-dir' | 'worktrees' | 'repo-root'>()
       )
 
-      const runPromise = Runtime.runPromise(runtime)
+      const runPromise = Effect.runPromiseWith(runtime)
 
       // ── Helpers ──────────────────────────────────────────────
 

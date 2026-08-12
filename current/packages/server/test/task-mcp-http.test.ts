@@ -25,18 +25,33 @@ import {
   TaskMcpToolsLayer,
 } from '../src/services/task-mcp.js'
 
-const rpc = (port: number, body: unknown, origin?: string) =>
-  Effect.promise(() =>
-    fetch(`http://127.0.0.1:${String(port)}/mcp`, {
+const mcpSessions = new Map<number, string>()
+
+const rpc = (
+  port: number,
+  body: unknown,
+  origin?: string,
+  sessionId?: string
+) =>
+  Effect.promise(async () => {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
       body: JSON.stringify(body),
       headers: {
         accept: 'application/json, text/event-stream',
         'content-type': 'application/json',
         ...(origin === undefined ? {} : { origin }),
+        ...((sessionId ?? mcpSessions.get(port)) === undefined
+          ? {}
+          : { 'mcp-session-id': sessionId ?? mcpSessions.get(port) }),
       },
       method: 'POST',
-    }).then(async (response) => ({ response, text: await response.text() }))
-  )
+    })
+    const assignedSession = response.headers.get('mcp-session-id')
+    if (assignedSession !== null) {
+      mcpSessions.set(port, assignedSession)
+    }
+    return { response, text: await response.text() }
+  })
 
 const projectDatabaseLayer = (
   path: string,
@@ -102,12 +117,16 @@ describe('task MCP HTTP endpoint', () => {
       { id: 'project-1', name: 'First', rootPath: firstProject },
       { id: 'project-2', name: 'Second', rootPath: secondProject },
     ])
+    const protocol = TaskMcpProtocolLayer.pipe(Layer.provide(HttpRouter.layer))
+    const routes = TaskMcpToolsLayer.pipe(Layer.provideMerge(protocol))
     const serverLayer = Layer.mergeAll(
-      TaskMcpToolsLayer,
-      HttpRouter.Default.serve(mcpOriginGuard),
+      routes.pipe(
+        Layer.provide(
+          HttpRouter.serve(protocol, { middleware: mcpOriginGuard })
+        )
+      ),
       serverDiscoveryLayer({ host: '127.0.0.1', port: 0 }, discoveryPath)
     ).pipe(
-      Layer.provide(TaskMcpProtocolLayer),
       Layer.provide(AgentTaskService.layer(databasePath)),
       Layer.provide(
         NodeHttpServer.layer(() => nodeServer, {
@@ -137,9 +156,7 @@ describe('task MCP HTTP endpoint', () => {
               JSON.parse(readFileSync(discoveryPath, 'utf8'))
             ).pipe(
               Effect.retry(
-                Schedule.spaced('5 millis').pipe(
-                  Schedule.intersect(Schedule.recurs(20))
-                )
+                Schedule.max([Schedule.spaced('5 millis'), Schedule.recurs(20)])
               )
             )
             expect(discovery).toMatchObject({
@@ -148,25 +165,41 @@ describe('task MCP HTTP endpoint', () => {
               url: `http://127.0.0.1:${String(port)}/mcp`,
             })
 
-            const projects = yield* rpc(port, {
-              id: 1,
+            const initialized = yield* rpc(port, {
+              id: 0,
               jsonrpc: '2.0',
-              method: 'tools/call',
-              params: { arguments: {}, name: 'list_projects' },
+              method: 'initialize',
+              params: {
+                capabilities: {},
+                clientInfo: { name: 'test', version: '1.0.0' },
+                protocolVersion: '2025-03-26',
+              },
             })
-            expect(projects.response.status).toBe(200)
-            expect(JSON.parse(projects.text)).toMatchObject([
+            const sessionId = initialized.response.headers.get('mcp-session-id')
+            expect(sessionId).not.toBeNull()
+
+            const projects = yield* rpc(
+              port,
               {
-                result: {
-                  structuredContent: {
-                    projects: [
-                      { name: 'First', repoPath: firstProject },
-                      { name: 'Second', repoPath: secondProject },
-                    ],
-                  },
+                id: 1,
+                jsonrpc: '2.0',
+                method: 'tools/call',
+                params: { arguments: {}, name: 'list_projects' },
+              },
+              undefined,
+              sessionId ?? undefined
+            )
+            expect(projects.response.status).toBe(200)
+            expect(JSON.parse(projects.text)).toMatchObject({
+              result: {
+                structuredContent: {
+                  projects: [
+                    { name: 'First', repoPath: firstProject },
+                    { name: 'Second', repoPath: secondProject },
+                  ],
                 },
               },
-            ])
+            })
             expect(projects.text).toContain('First')
             expect(projects.text).toContain(firstProject)
             expect(projects.text).toContain('Second')
@@ -177,18 +210,16 @@ describe('task MCP HTTP endpoint', () => {
               method: 'tools/call',
               params: { arguments: {}, name: 'list_tasks' },
             })
-            expect(JSON.parse(defaultList.text)).toMatchObject([
-              {
-                result: {
-                  structuredContent: {
-                    tasks: expect.arrayContaining([
-                      expect.objectContaining({ id: 'task-visible' }),
-                      expect.objectContaining({ id: 'task-other-project' }),
-                    ]),
-                  },
+            expect(JSON.parse(defaultList.text)).toMatchObject({
+              result: {
+                structuredContent: {
+                  tasks: expect.arrayContaining([
+                    expect.objectContaining({ id: 'task-visible' }),
+                    expect.objectContaining({ id: 'task-other-project' }),
+                  ]),
                 },
               },
-            ])
+            })
             expect(defaultList.text).toContain('task-visible')
             expect(defaultList.text).toContain('task-other-project')
             expect(defaultList.text).not.toContain('task-cancelled')
@@ -259,11 +290,15 @@ describe('task MCP HTTP endpoint', () => {
     const databaseLayer = projectDatabaseLayer(databasePath, [
       { id: 'project-1', name: 'Project', rootPath: root },
     ])
+    const protocol = TaskMcpProtocolLayer.pipe(Layer.provide(HttpRouter.layer))
+    const routes = TaskMcpToolsLayer.pipe(Layer.provideMerge(protocol))
     const serverLayer = Layer.mergeAll(
-      TaskMcpToolsLayer,
-      HttpRouter.Default.serve(mcpOriginGuard)
+      routes.pipe(
+        Layer.provide(
+          HttpRouter.serve(protocol, { middleware: mcpOriginGuard })
+        )
+      )
     ).pipe(
-      Layer.provide(TaskMcpProtocolLayer),
       Layer.provide(AgentTaskService.layer(databasePath)),
       Layer.provide(
         NodeHttpServer.layer(() => nodeServer, {
@@ -300,13 +335,20 @@ describe('task MCP HTTP endpoint', () => {
               },
             })
             expect(initialized.response.status).toBe(200)
+            const sessionId = initialized.response.headers.get('mcp-session-id')
+            expect(sessionId).not.toBeNull()
 
-            const listed = yield* rpc(port, {
-              id: 2,
-              jsonrpc: '2.0',
-              method: 'tools/list',
-              params: {},
-            })
+            const listed = yield* rpc(
+              port,
+              {
+                id: 2,
+                jsonrpc: '2.0',
+                method: 'tools/list',
+                params: {},
+              },
+              undefined,
+              sessionId ?? undefined
+            )
             expect(listed.response.status).toBe(200)
             expect(listed.text).toContain('create_task')
             expect(listed.text).toContain('delete_task')

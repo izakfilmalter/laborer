@@ -36,6 +36,7 @@ import {
   Layer,
   Order,
   pipe,
+  Queue,
   Stream,
 } from 'effect'
 import ignore from 'ignore'
@@ -1077,7 +1078,7 @@ class FileService extends Context.Service<
             // Build a push-based stream that forwards filtered watcher
             // events. Uses acquireRelease so the event handler and watcher
             // subscription are properly cleaned up on stream teardown.
-            return Stream.asyncPush<FileWatcherEvent, RpcError>((emit) =>
+            return Stream.callback<FileWatcherEvent, RpcError>((queue) =>
               Effect.acquireRelease(
                 Effect.sync(() => {
                   // Register event handler filtered to this subscription
@@ -1092,7 +1093,7 @@ class FileService extends Context.Service<
                         watchEvent.fileName ??
                         relative(worktreePath, watchEvent.absolutePath)
 
-                      emit.single({
+                      Queue.offerUnsafe(queue, {
                         file: relativePath,
                         event: mapEventType(watchEvent.type),
                       })

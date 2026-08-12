@@ -47,7 +47,16 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Context, Effect, Fiber, Layer, pipe, Ref, Stream } from 'effect'
+import {
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  pipe,
+  Ref,
+  Stream,
+  SubscriptionRef,
+} from 'effect'
 import { HttpRouter } from 'effect/unstable/http'
 import { RpcServer } from 'effect/unstable/rpc'
 
@@ -401,7 +410,7 @@ const DeferredServicesProxyLive = Layer.effectContext(
 
       yield* Fiber.join(stackFiber)
       yield* Fiber.join(terminalFiber)
-      yield* Ref.set(ready.ref, true)
+      yield* SubscriptionRef.set(ready.ref, true)
       yield* Effect.logInfo(
         '[deferred-init] All groups complete — DeferredServicesReady set to true'
       )
@@ -466,12 +475,14 @@ const selectMcpPort = (preferred: number): Promise<number> => {
 
 const makeMcpHttpLayer = (port: number) => {
   const config = { host: '127.0.0.1', port } as const
+  const routes = TaskMcpToolsLayer.pipe(
+    Layer.provideMerge(TaskMcpProtocolLayer),
+    Layer.provide(HttpRouter.layer)
+  )
   return Layer.mergeAll(
-    TaskMcpToolsLayer,
-    HttpRouter.Default.serve(mcpOriginGuard),
+    HttpRouter.serve(routes, { middleware: mcpOriginGuard }),
     serverDiscoveryLayer(config)
   ).pipe(
-    Layer.provide(TaskMcpProtocolLayer),
     Layer.provide(AgentTaskService.layer()),
     Layer.provide(NodeHttpServer.layer(createServer, config))
   )

@@ -25,7 +25,7 @@ import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Chunk, Effect, Exit, Layer, Scope, Stream } from 'effect'
+import { Effect, Exit, Layer, Scope, Stream } from 'effect'
 import { RpcClient, RpcServer } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -77,7 +77,7 @@ function buildServerLayer(port: RpcMessagePort) {
  * Infer the client type from `RpcClient.make(FileWatcherRpcs)`.
  */
 const MakeFileWatcherClient = RpcClient.make(FileWatcherRpcs)
-type FileWatcherRpcClient = Effect.Effect.Success<typeof MakeFileWatcherClient>
+type FileWatcherRpcClient = Effect.Success<typeof MakeFileWatcherClient>
 
 // ---------------------------------------------------------------------------
 // Shared state across tests
@@ -209,9 +209,11 @@ describe('FileWatcherRpcs via MessagePort', () => {
 
     // Start listening for events
     const eventsPromise = Effect.runPromise(
-      client.watcher
-        .events()
-        .pipe(Stream.take(1), Stream.runCollect, Effect.timeout('5 seconds'))
+      client['watcher.events']().pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout('5 seconds')
+      )
     )
 
     // Small delay to let the subscription initialize
@@ -226,7 +228,7 @@ describe('FileWatcherRpcs via MessagePort', () => {
       // We may or may not get an event depending on fs.watch timing,
       // but the streaming RPC should at least connect without error.
       // If we got events, verify the structure.
-      const eventsArray = Chunk.toReadonlyArray(events)
+      const eventsArray = events
       if (eventsArray.length > 0) {
         const event = eventsArray[0]
         expect(event).toHaveProperty('subscriptionId')

@@ -16,7 +16,7 @@
 
 import { assert, describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
-import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { Effect, Exit, Fiber, Layer, Result, Scope, Stream } from 'effect'
 import { RpcTest } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
@@ -50,7 +50,7 @@ const TestTerminalRpcClient = RpcTest.makeClient(TerminalRpcs)
  * Type of the RPC client returned by `RpcTest.makeClient(TerminalRpcs)`.
  * Inferred from the Effect's success type to avoid spelling complex generics.
  */
-type TerminalRpcClient = Effect.Effect.Success<typeof TestTerminalRpcClient>
+type TerminalRpcClient = Effect.Success<typeof TestTerminalRpcClient>
 
 let layerScope: Scope.Closeable
 let clientScope: Scope.Closeable
@@ -176,7 +176,7 @@ describe(
 
     it('terminal.write fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
+        Effect.result(
           client['terminal.write']({
             id: 'nonexistent-terminal-id',
             data: 'should-fail',
@@ -184,7 +184,7 @@ describe(
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -227,7 +227,7 @@ describe(
 
     it('terminal.resize fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
+        Effect.result(
           client['terminal.resize']({
             id: 'nonexistent-terminal-id',
             cols: 100,
@@ -236,7 +236,7 @@ describe(
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -270,12 +270,12 @@ describe(
 
     it('terminal.kill fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
+        Effect.result(
           client['terminal.kill']({ id: 'nonexistent-terminal-id' })
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -315,12 +315,12 @@ describe(
 
     it('terminal.remove fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
+        Effect.result(
           client['terminal.remove']({ id: 'nonexistent-terminal-id' })
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -370,12 +370,12 @@ describe(
 
     it('terminal.restart fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
+        Effect.result(
           client['terminal.restart']({ id: 'nonexistent-terminal-id' })
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------

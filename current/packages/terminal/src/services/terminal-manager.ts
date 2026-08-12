@@ -2366,7 +2366,7 @@ class TerminalManager extends Context.Service<
       // lifetime of the scoped layer and is interrupted on shutdown.
       yield* detectionTick.pipe(
         Effect.repeat(Schedule.spaced(`${DETECTION_INTERVAL_MS} millis`)),
-        Effect.forkDetach
+        Effect.forkDetach({ startImmediately: true })
       )
 
       yield* Effect.log(

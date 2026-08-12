@@ -12,13 +12,13 @@ describe('uninterruptible mutation wrapper', () => {
 
       const mutationEffect = Effect.gen(function* () {
         yield* Deferred.succeed(latch, undefined)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         completed.value = true
         return 'done'
       })
 
       const wrapped = wrapUninterruptible(mutationEffect)
-      const fiber = yield* Effect.fork(wrapped)
+      const fiber = yield* Effect.forkChild(wrapped)
 
       // Wait for the effect to start, then interrupt
       yield* Deferred.await(latch)
@@ -53,12 +53,12 @@ describe('uninterruptible mutation wrapper', () => {
 
       const mutationEffect = Effect.gen(function* () {
         yield* Deferred.succeed(latch, undefined)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         completed.value = true
         return 'done'
       })
 
-      const fiber = yield* Effect.fork(mutationEffect)
+      const fiber = yield* Effect.forkChild(mutationEffect)
       yield* Deferred.await(latch)
       yield* Fiber.interrupt(fiber)
     })

@@ -16,7 +16,7 @@ class DesktopUpdateBridgeUnavailableError extends Schema.TaggedErrorClass<Deskto
 class DesktopUpdateDownloadError extends Schema.TaggedErrorClass<DesktopUpdateDownloadError>()(
   'DesktopUpdateDownloadError',
   {
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
     message: Schema.String,
   }
 ) {}
@@ -24,7 +24,7 @@ class DesktopUpdateDownloadError extends Schema.TaggedErrorClass<DesktopUpdateDo
 class DesktopUpdateInstallError extends Schema.TaggedErrorClass<DesktopUpdateInstallError>()(
   'DesktopUpdateInstallError',
   {
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
     message: Schema.String,
   }
 ) {}
@@ -32,7 +32,7 @@ class DesktopUpdateInstallError extends Schema.TaggedErrorClass<DesktopUpdateIns
 class DesktopUpdateActionRejectedError extends Schema.TaggedErrorClass<DesktopUpdateActionRejectedError>()(
   'DesktopUpdateActionRejectedError',
   {
-    action: Schema.Literal('download', 'install'),
+    action: Schema.Literals(['download', 'install']),
     message: Schema.String,
   }
 ) {}

@@ -6,7 +6,7 @@ import { Effect, Ref, type Scope } from 'effect'
 import { initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
-type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
+type RpcTestContext = Effect.Success<typeof makeScopedTestRpcContext>
 
 const cleanupTempRoots = (tempRoots: readonly string[]) => {
   for (const root of tempRoots) {

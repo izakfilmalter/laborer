@@ -20,7 +20,7 @@ import {
 } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Array, Effect, Stream } from 'effect'
+import { Array, Effect, Semaphore, Stream, SubscriptionRef } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
@@ -298,7 +298,7 @@ const commitOrReplayTaskMove = (input: {
       )
 
 interface TaskMoveLock {
-  readonly semaphore: Effect.Semaphore
+  readonly semaphore: Semaphore.Semaphore
   users: number
 }
 
@@ -319,7 +319,7 @@ const withTaskMoveLock = <A, E, R>(
             return existing
           }
           const created: TaskMoveLock = {
-            semaphore: Effect.unsafeMakeSemaphore(1),
+            semaphore: Semaphore.makeUnsafe(1),
             users: 1,
           }
           taskMoveLocks.set(taskId, created)
@@ -861,7 +861,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Stream.unwrap(
         Effect.gen(function* () {
           const { ref } = yield* DeferredServicesReady
-          return ref.changes.pipe(
+          return SubscriptionRef.changes(ref).pipe(
             Stream.map((ready) => ({ ready })),
             // Complete after emitting { ready: true } — client only needs
             // this signal once and keeping the stream open wastes resources.

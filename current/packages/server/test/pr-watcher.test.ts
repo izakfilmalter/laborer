@@ -1,5 +1,6 @@
 import { assert, describe, it } from '@effect/vitest'
-import { Context, Duration, Effect, Layer, Logger, TestClock } from 'effect'
+import { Context, Duration, Effect, Layer, Logger } from 'effect'
+import { TestClock } from 'effect/testing'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
@@ -163,7 +164,7 @@ describe('PrWatcher', () => {
             'a missing worktree should not be reported as a gh spawn failure'
           )
         })
-      ).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger)))
+      ).pipe(Effect.provide(Logger.layer([logger])))
     }
   )
 
@@ -190,7 +191,7 @@ describe('PrWatcher', () => {
       Effect.gen(function* () {
         const prWatcher = yield* buildPrWatcher(databaseContext)
 
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         insertWorkspace(database, {
           branchName: 'laborer/periodically-adopted',
           id: 'workspace-periodically-adopted',
@@ -202,7 +203,7 @@ describe('PrWatcher', () => {
           yield* prWatcher.isPolling('workspace-periodically-adopted')
         )
         yield* TestClock.adjust(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         assert.isTrue(
           yield* prWatcher.isPolling('workspace-periodically-adopted')
         )

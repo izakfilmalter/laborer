@@ -1,7 +1,7 @@
 import { RpcError, type TaskBoardEvent } from '@laborer/shared/rpc'
 import type { TaskRead } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Duration, Effect, Option, Schedule, Stream } from 'effect'
+import { Duration, Effect, Result, Schedule, Stream } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import { inspectTaskWorktree } from './task-worktree.js'
 
@@ -72,8 +72,8 @@ export const subscribeToTaskBoard = (
                     return read._tag === 'delta' &&
                       read.tasks.length === 0 &&
                       read.deletedTaskIds.length === 0
-                      ? Option.none<TaskBoardEvent>()
-                      : Option.some(toEvent(read))
+                      ? Result.fail(undefined)
+                      : Result.succeed(toEvent(read))
                   })
                 )
               ),

@@ -17,7 +17,7 @@
  */
 
 import { useAtomMount, useAtomValue } from '@effect/atom-react/Hooks'
-import { Effect, Runtime } from 'effect'
+import { Effect } from 'effect'
 import { useCallback } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -74,7 +74,7 @@ export function useSpawnTerminal(): (args: {
 
       // Each call runs as an independent fiber — no shared arg atom,
       // no "latest-wins" interruption.
-      return Runtime.runPromise(rt)(
+      return Effect.runPromiseWith(rt)(
         Effect.gen(function* () {
           const client = yield* LaborerClient
           return yield* client('terminal.spawn', args.payload)

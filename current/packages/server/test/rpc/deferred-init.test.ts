@@ -12,7 +12,7 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import type { RpcError } from '@laborer/shared/rpc'
-import { Context, Effect, Ref } from 'effect'
+import { Context, Effect, Ref, SubscriptionRef } from 'effect'
 import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
@@ -135,7 +135,7 @@ describe('Deferred service initialization (Issue #14)', () => {
     it.effect('starts as false', () =>
       Effect.gen(function* () {
         const { ref } = yield* DeferredServicesReady
-        const isReady = yield* Ref.get(ref)
+        const isReady = yield* SubscriptionRef.get(ref)
         assert.isFalse(isReady)
       }).pipe(Effect.provide(DeferredServicesReadyLayer))
     )
@@ -143,8 +143,8 @@ describe('Deferred service initialization (Issue #14)', () => {
     it.effect('can be set to true', () =>
       Effect.gen(function* () {
         const { ref } = yield* DeferredServicesReady
-        yield* Ref.set(ref, true)
-        const isReady = yield* Ref.get(ref)
+        yield* SubscriptionRef.set(ref, true)
+        const isReady = yield* SubscriptionRef.get(ref)
         assert.isTrue(isReady)
       }).pipe(Effect.provide(DeferredServicesReadyLayer))
     )

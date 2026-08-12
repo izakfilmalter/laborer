@@ -6,15 +6,6 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     pool: 'threads',
-    poolOptions: {
-      threads: {
-        maxThreads: 3,
-      },
-    },
-    server: {
-      deps: {
-        inline: ['@effect/vitest'],
-      },
-    },
+    maxWorkers: 3,
   },
 })

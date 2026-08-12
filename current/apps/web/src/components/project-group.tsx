@@ -15,6 +15,10 @@ import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
+  clearProjectRemoveOverlayAtom,
+  installProjectRemoveOverlayAtom,
+} from '@/atoms/shared-state'
+import {
   CreateWorkspaceForm,
   type PendingWorkspaceCreation,
   type PendingWorkspaceCreationChangeHandler,
@@ -64,7 +68,6 @@ interface ProjectGroupProps {
 function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [isRemoving, setIsRemoving] = useState(false)
   const [pendingWorkspaceCreations, setPendingWorkspaceCreations] = useState<
     readonly PendingWorkspaceCreation[]
   >([])
@@ -72,6 +75,8 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
   const removeProject = useAtomSet(removeProjectMutation, {
     mode: 'promise',
   })
+  const installRemoveOverlay = useAtomSet(installProjectRemoveOverlayAtom)
+  const clearRemoveOverlay = useAtomSet(clearProjectRemoveOverlayAtom)
 
   const handlePendingCreationChange: PendingWorkspaceCreationChangeHandler =
     useCallback(
@@ -103,19 +108,22 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
       [expanded, onToggle]
     )
 
-  const handleRemove = async () => {
-    setIsRemoving(true)
-    try {
-      await removeProject({
-        payload: { projectId: project.id },
+  const handleRemove = () => {
+    // Optimistic: the group leaves the sidebar as soon as removal is
+    // confirmed. The overlay settles when the authoritative project row is
+    // deleted, and is restored if the server rejects the removal.
+    setDialogOpen(false)
+    installRemoveOverlay(project.id)
+    removeProject({
+      payload: { projectId: project.id },
+    })
+      .then(() => {
+        toast.success(`Project "${project.name}" removed`)
       })
-      toast.success(`Project "${project.name}" removed`)
-      setDialogOpen(false)
-    } catch (error: unknown) {
-      const message = extractErrorMessage(error)
-      toast.error(message)
-      setIsRemoving(false)
-    }
+      .catch((error: unknown) => {
+        clearRemoveOverlay(project.id)
+        toast.error(extractErrorMessage(error))
+      })
   }
 
   return (
@@ -207,12 +215,8 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={isRemoving}
-                  onClick={handleRemove}
-                  variant="destructive"
-                >
-                  {isRemoving ? 'Removing...' : 'Remove'}
+                <AlertDialogAction onClick={handleRemove} variant="destructive">
+                  Remove
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

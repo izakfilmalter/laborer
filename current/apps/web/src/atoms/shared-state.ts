@@ -101,6 +101,133 @@ export const taskOptimisticOverlaysAtom = Atom.make<
   ReadonlyMap<string, TaskOptimisticOverlay>
 >(new Map())
 
+/**
+ * Task IDs whose workspaces are being destroyed optimistically. The card
+ * leaves the sidebar the moment destruction is confirmed in the dialog; the
+ * server clears the row's worktree only after its background git cleanup
+ * finishes, so without this overlay the card would linger for seconds.
+ */
+export const workspaceDestroyOverlaysAtom = Atom.make<ReadonlySet<string>>(
+  new Set<string>()
+)
+
+/**
+ * Project IDs being removed optimistically. The sidebar group disappears
+ * immediately; the authoritative deletion delta settles the overlay.
+ */
+export const projectRemoveOverlaysAtom = Atom.make<ReadonlySet<string>>(
+  new Set<string>()
+)
+
+const withMember = (
+  current: ReadonlySet<string>,
+  member: string
+): ReadonlySet<string> => {
+  if (current.has(member)) {
+    return current
+  }
+  const next = new Set(current)
+  next.add(member)
+  return next
+}
+
+const withoutMember = (
+  current: ReadonlySet<string>,
+  member: string
+): ReadonlySet<string> => {
+  if (!current.has(member)) {
+    return current
+  }
+  const next = new Set(current)
+  next.delete(member)
+  return next
+}
+
+export const installWorkspaceDestroyOverlayAtom = Atom.writable(
+  (get) => get(workspaceDestroyOverlaysAtom),
+  (context, taskId: string) => {
+    context.set(
+      workspaceDestroyOverlaysAtom,
+      withMember(context.get(workspaceDestroyOverlaysAtom), taskId)
+    )
+  }
+)
+
+/** Restores the card after a rejected destroy (e.g. a dirty worktree). */
+export const clearWorkspaceDestroyOverlayAtom = Atom.writable(
+  (get) => get(workspaceDestroyOverlaysAtom),
+  (context, taskId: string) => {
+    context.set(
+      workspaceDestroyOverlaysAtom,
+      withoutMember(context.get(workspaceDestroyOverlaysAtom), taskId)
+    )
+  }
+)
+
+export const installProjectRemoveOverlayAtom = Atom.writable(
+  (get) => get(projectRemoveOverlaysAtom),
+  (context, projectId: string) => {
+    context.set(
+      projectRemoveOverlaysAtom,
+      withMember(context.get(projectRemoveOverlaysAtom), projectId)
+    )
+  }
+)
+
+/** Restores the project group after a rejected removal. */
+export const clearProjectRemoveOverlayAtom = Atom.writable(
+  (get) => get(projectRemoveOverlaysAtom),
+  (context, projectId: string) => {
+    context.set(
+      projectRemoveOverlaysAtom,
+      withoutMember(context.get(projectRemoveOverlaysAtom), projectId)
+    )
+  }
+)
+
+/**
+ * A destroy overlay lives exactly as long as the authoritative row still owns
+ * a worktree. Settling on the authoritative row — rather than on the RPC
+ * response — means the card can never flash back between the response and the
+ * subscription delta, and a stale overlay can never hide a task whose
+ * worktree was later re-provisioned.
+ */
+export const settleWorkspaceDestroyOverlays = (
+  overlays: ReadonlySet<string>,
+  tasks: readonly SharedTaskRow[]
+): ReadonlySet<string> => {
+  if (overlays.size === 0) {
+    return overlays
+  }
+  const rowsById = new Map(tasks.map((row) => [row.id, row]))
+  const next = new Set<string>()
+  for (const taskId of overlays) {
+    const row = rowsById.get(taskId)
+    if (row !== undefined && row.worktreePath !== null) {
+      next.add(taskId)
+    }
+  }
+  return next.size === overlays.size ? overlays : next
+}
+
+/** A remove overlay settles once the authoritative project row is gone. */
+export const settleProjectRemoveOverlays = (
+  overlays: ReadonlySet<string>,
+  projects: readonly SharedProjectRow[]
+): ReadonlySet<string> => {
+  if (overlays.size === 0) {
+    return overlays
+  }
+  const alive = new Set(projects.map(({ id }) => id))
+  const next = new Set<string>()
+  for (const projectId of overlays) {
+    if (alive.has(projectId)) {
+      next.add(projectId)
+    }
+  }
+  return next.size === overlays.size ? overlays : next
+}
+
 /** A bounded notification edge used to release transport-ambiguous moves. */
 export const taskMutationReceiptAtom = Atom.make<TaskMutationReceipt>({
   mutationIds: [],
@@ -124,10 +251,25 @@ export const settleTaskOverlays = (
 export const installSharedStateUpdateAtom = Atom.writable(
   (get) => get(authoritativeSharedStateAtom),
   (context, update: SharedStateUpdate) => {
-    context.set(
-      authoritativeSharedStateAtom,
-      applySharedStateUpdate(context.get(authoritativeSharedStateAtom), update)
+    const state = applySharedStateUpdate(
+      context.get(authoritativeSharedStateAtom),
+      update
     )
+    context.set(authoritativeSharedStateAtom, state)
+    const destroyOverlays = settleWorkspaceDestroyOverlays(
+      context.get(workspaceDestroyOverlaysAtom),
+      state.tasks.rows
+    )
+    if (destroyOverlays !== context.get(workspaceDestroyOverlaysAtom)) {
+      context.set(workspaceDestroyOverlaysAtom, destroyOverlays)
+    }
+    const removeOverlays = settleProjectRemoveOverlays(
+      context.get(projectRemoveOverlaysAtom),
+      state.projects.rows
+    )
+    if (removeOverlays !== context.get(projectRemoveOverlaysAtom)) {
+      context.set(projectRemoveOverlaysAtom, removeOverlays)
+    }
     const mutationIds =
       update.tasks?.type === 'delta' ? (update.tasks.mutationIds ?? []) : []
     if (mutationIds.length === 0) {
@@ -237,9 +379,11 @@ export const taskRowsAtom = Atom.make((get) => {
     return overlay === undefined ? row : { ...row, ...overlay.patch }
   })
 })
-export const projectRowsAtom = Atom.make(
-  (get) => get(authoritativeProjectsAtom).rows
-)
+export const projectRowsAtom = Atom.make((get) => {
+  const removing = get(projectRemoveOverlaysAtom)
+  const rows = get(authoritativeProjectsAtom).rows
+  return removing.size === 0 ? rows : rows.filter(({ id }) => !removing.has(id))
+})
 /** Legacy renderer shape while workspace surfaces still call the root repoPath. */
 export const projectViewsAtom = Atom.make((get) =>
   get(projectRowsAtom).map((project) => ({
@@ -348,9 +492,13 @@ export const workspaceViewsFromRows = (
   return views
 }
 
-export const workspaceViewsAtom = Atom.make((get) =>
-  workspaceViewsFromRows(get(taskRowsAtom), get(projectRowsAtom))
-)
+export const workspaceViewsAtom = Atom.make((get) => {
+  const destroying = get(workspaceDestroyOverlaysAtom)
+  const views = workspaceViewsFromRows(get(taskRowsAtom), get(projectRowsAtom))
+  return destroying.size === 0
+    ? views
+    : views.filter(({ id }) => !destroying.has(id))
+})
 export const settingRowsAtom = Atom.make(
   (get) => get(authoritativeSettingsAtom).rows
 )

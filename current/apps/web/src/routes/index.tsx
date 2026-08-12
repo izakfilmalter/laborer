@@ -7,7 +7,12 @@ import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
+import {
+  clearWorkspaceDestroyOverlayAtom,
+  installWorkspaceDestroyOverlayAtom,
+  projectViewsAtom,
+  workspaceViewsAtom,
+} from '@/atoms/shared-state'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
@@ -147,6 +152,8 @@ function HomeComponent() {
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
+  const installDestroyOverlay = useAtomSet(installWorkspaceDestroyOverlayAtom)
+  const clearDestroyOverlay = useAtomSet(clearWorkspaceDestroyOverlayAtom)
 
   /**
    * Look up the PR state for a workspace by its ID.
@@ -346,22 +353,34 @@ function HomeComponent() {
       const ws = workspaceList.find((w) => w.id === workspaceId)
       const branchName = ws?.branchName ?? 'workspace'
 
+      // Optimistic: the workspace leaves the sidebar and its panes close
+      // now. The overlay settles when the authoritative row drops its
+      // worktree, and is restored if the server rejects the destroy.
+      installDestroyOverlay(workspaceId)
+      panelActions.forceCloseWorkspace(workspaceId)
+
       const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
       destroyWorkspace({
         payload: { workspaceId, force: true },
       })
         .then(() => {
-          panelActions.forceCloseWorkspace(workspaceId)
           toast.success(`Workspace "${branchName}" destroyed successfully`, {
             id: toastId,
           })
         })
         .catch((error: unknown) => {
+          clearDestroyOverlay(workspaceId)
           const message = extractErrorMessage(error)
           toast.error(message, { id: toastId })
         })
     },
-    [destroyWorkspace, panelActions, workspaceList]
+    [
+      clearDestroyOverlay,
+      destroyWorkspace,
+      installDestroyOverlay,
+      panelActions,
+      workspaceList,
+    ]
   )
 
   /**

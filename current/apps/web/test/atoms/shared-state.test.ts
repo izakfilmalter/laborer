@@ -8,7 +8,9 @@ import {
   type AuthoritativeSharedState,
   applySharedStateUpdate,
   confirmAuthoritativeTask,
+  settleProjectRemoveOverlays,
   settleTaskOverlays,
+  settleWorkspaceDestroyOverlays,
   workspaceViewsFromRows,
 } from '../../src/atoms/shared-state'
 
@@ -264,5 +266,58 @@ describe('optimistic overlay ownership', () => {
 
     expect(confirmed.tasks.cursor).toBe(5)
     expect(streamed.tasks.rows.map(({ id }) => id)).toEqual(['moved', 'other'])
+  })
+})
+
+describe('settleWorkspaceDestroyOverlays', () => {
+  const owning = (id: string): SharedTaskRow => ({
+    ...task(id),
+    worktreePath: `/repo/.worktrees/${id}`,
+    worktreeStatus: 'ready',
+  })
+
+  it('keeps the overlay while the authoritative row still owns a worktree', () => {
+    const overlays: ReadonlySet<string> = new Set(['destroying'])
+
+    expect(
+      settleWorkspaceDestroyOverlays(overlays, [owning('destroying')])
+    ).toBe(overlays)
+  })
+
+  it('settles once the row drops its worktree, so a later re-provision is never hidden', () => {
+    const overlays: ReadonlySet<string> = new Set(['destroying'])
+    const cleared = { ...owning('destroying'), worktreePath: null }
+
+    expect(settleWorkspaceDestroyOverlays(overlays, [cleared]).size).toBe(0)
+  })
+
+  it('settles when the authoritative row is deleted outright', () => {
+    const overlays: ReadonlySet<string> = new Set(['destroying'])
+
+    expect(settleWorkspaceDestroyOverlays(overlays, []).size).toBe(0)
+  })
+
+  it('settles each overlay independently', () => {
+    const overlays: ReadonlySet<string> = new Set(['gone', 'still-owning'])
+
+    expect(
+      settleWorkspaceDestroyOverlays(overlays, [owning('still-owning')])
+    ).toEqual(new Set(['still-owning']))
+  })
+})
+
+describe('settleProjectRemoveOverlays', () => {
+  it('keeps the overlay while the authoritative project row survives', () => {
+    const overlays: ReadonlySet<string> = new Set(['project-one'])
+
+    expect(settleProjectRemoveOverlays(overlays, [project('/repo')])).toBe(
+      overlays
+    )
+  })
+
+  it('settles once the authoritative project row is deleted', () => {
+    const overlays: ReadonlySet<string> = new Set(['project-one'])
+
+    expect(settleProjectRemoveOverlays(overlays, []).size).toBe(0)
   })
 })

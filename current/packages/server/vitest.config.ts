@@ -18,13 +18,8 @@ export default defineConfig({
     // intermittently due to FSEvents batching and timing.
     retry: 3,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        // Run tests sequentially to avoid macOS FSEvents dropping
-        // events when multiple @parcel/watcher subscriptions from
-        // concurrent test files compete for filesystem notifications.
-        maxForks: 1,
-      },
-    },
+    // Run tests sequentially to avoid macOS FSEvents dropping events when
+    // concurrent test files compete for filesystem notifications.
+    maxWorkers: 1,
   },
 })

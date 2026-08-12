@@ -17,11 +17,11 @@
     "./services/watcher-manager": "./src/services/watcher-manager.ts"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@parcel/watcher": "^2.5.6",
-    "effect": "catalog:",
-    "@effect/platform-node": "catalog:"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -30,6 +30,6 @@
     "tsdown": "^0.20.3",
     "tsx": "^4.19.4",
     "typescript": "catalog:",
-    "vitest": "^4.0.17"
+    "vitest": "^4.0.18"
   }
 }

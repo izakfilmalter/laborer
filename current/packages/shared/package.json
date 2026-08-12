@@ -27,6 +27,6 @@
     "@laborer/config": "workspace:*",
     "@types/node": "^25.3.3",
     "typescript": "catalog:",
-    "vitest": "^4.0.17"
+    "vitest": "^4.0.18"
   }
 }

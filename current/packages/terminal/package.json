@@ -15,13 +15,13 @@
     ".": "./src/utility-main.ts"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "effect": "catalog:",
-    "node-pty": "1.1.0",
-    "@effect/platform-node": "catalog:"
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -30,6 +30,6 @@
     "tsdown": "^0.20.3",
     "tsx": "^4.19.4",
     "typescript": "catalog:",
-    "vitest": "^4.0.17"
+    "vitest": "^4.0.18"
   }
 }

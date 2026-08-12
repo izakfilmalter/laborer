@@ -50,6 +50,10 @@ vi.mock('@effect/atom-react/Hooks', () => ({
 }))
 
 vi.mock('@/atoms/shared-state', () => ({
+  clearWorkspaceDestroyOverlayAtom: Symbol.for('clearWorkspaceDestroyOverlay'),
+  installWorkspaceDestroyOverlayAtom: Symbol.for(
+    'installWorkspaceDestroyOverlay'
+  ),
   workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 

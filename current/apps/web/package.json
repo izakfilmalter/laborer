@@ -20,6 +20,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@effect/atom-react": "catalog:",
     "@hookform/resolvers": "^5.1.1",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
@@ -62,10 +63,10 @@
     "tw-animate-css": "^1.2.5",
     "vaul": "^1.1.2",
     "web-haptics": "^0.0.6",
-    "zod": "catalog:",
-    "@effect/atom-react": "4.0.0-beta.99"
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@laborer/config": "workspace:*",
     "@playwright/test": "^1.58.2",
     "@tanstack/react-router-devtools": "^1.141.1",

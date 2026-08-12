@@ -207,17 +207,16 @@ export const mcpOriginGuard = HttpMiddleware.make((app) =>
     const url = HttpServerRequest.toURL(request)
     const origin = request.headers.origin
     if (
-      Option.isSome(url) &&
-      url.value.pathname === '/mcp' &&
-      origin !== undefined &&
-      !isAllowedMcpOrigin(origin)
+      Option.isNone(url) ||
+      url.value.pathname !== '/mcp' ||
+      origin === undefined
     ) {
+      return yield* app
+    }
+    if (!isAllowedMcpOrigin(origin)) {
       return HttpServerResponse.text('Forbidden MCP origin', {
         status: 403,
       })
-    }
-    if (origin === undefined) {
-      return yield* app
     }
 
     // McpServer accepts requests without Origin. Validate Laborer's broader

@@ -32,6 +32,9 @@ import {
 } from '@laborer/shared/types'
 import { Result, Schema } from 'effect'
 
+// Shared recursive schemas intentionally expose only their decoded type, which
+// erases their concrete (service-free) decoder view. Restore that view at this
+// decode boundary while preserving the decoded type.
 const decodeUnknownResult = <A>(schema: Schema.Schema<A>) =>
   Schema.decodeUnknownResult(schema as unknown as Schema.ConstraintDecoder<A>)
 

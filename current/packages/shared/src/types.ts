@@ -17,30 +17,30 @@ export type TerminalId = typeof TerminalId.Type
 // Enums (Variants)
 // ---------------------------------------------------------------------------
 
-export const WorkspaceStatus = Schema.Literal(
+export const WorkspaceStatus = Schema.Literals([
   'creating',
   'running',
   'stopped',
   'errored',
-  'destroyed'
-)
+  'destroyed',
+])
 export type WorkspaceStatus = typeof WorkspaceStatus.Type
 
-export const WorkspaceOrigin = Schema.Literal('laborer', 'external')
+export const WorkspaceOrigin = Schema.Literals(['laborer', 'external'])
 export type WorkspaceOrigin = typeof WorkspaceOrigin.Type
 
-export const TerminalStatus = Schema.Literal('running', 'stopped')
+export const TerminalStatus = Schema.Literals(['running', 'stopped'])
 export type TerminalStatus = typeof TerminalStatus.Type
 
-export const PaneType = Schema.Literal(
+export const PaneType = Schema.Literals([
   'agent',
   'terminal',
   'diff',
-  'devServerTerminal'
-)
+  'devServerTerminal',
+])
 export type PaneType = typeof PaneType.Type
 
-export const SplitDirection = Schema.Literal('horizontal', 'vertical')
+export const SplitDirection = Schema.Literals(['horizontal', 'vertical'])
 export type SplitDirection = typeof SplitDirection.Type
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ export class Workspace extends Schema.Class<Workspace>('Workspace')({
   worktreePath: Schema.String,
   status: WorkspaceStatus,
   origin: WorkspaceOrigin,
-  createdAt: Schema.Date,
+  createdAt: Schema.DateFromString,
 }) {}
 
 export class Terminal extends Schema.Class<Terminal>('Terminal')({
@@ -78,7 +78,7 @@ export class Terminal extends Schema.Class<Terminal>('Terminal')({
 export class Diff extends Schema.Class<Diff>('Diff')({
   workspaceId: WorkspaceId,
   diffContent: Schema.String,
-  lastUpdated: Schema.Date,
+  lastUpdated: Schema.DateFromString,
 }) {}
 
 // ---------------------------------------------------------------------------
@@ -137,10 +137,10 @@ export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
   }
 )
 
-export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
+export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union([
   LeafNodeSchema,
-  SplitNodeSchema
-)
+  SplitNodeSchema,
+])
 
 // ---------------------------------------------------------------------------
 // Hierarchical Layout Tree (Window Tabs > Workspace Tiles > Panel Tabs)
@@ -215,7 +215,7 @@ export const WorkspaceTileSplitSchema: Schema.Schema<WorkspaceTileSplit> =
   })
 
 export const WorkspaceTileNodeSchema: Schema.Schema<WorkspaceTileNode> =
-  Schema.Union(WorkspaceTileLeafSchema, WorkspaceTileSplitSchema)
+  Schema.Union([WorkspaceTileLeafSchema, WorkspaceTileSplitSchema])
 
 // -- Window Tab -------------------------------------------------------------
 
@@ -316,13 +316,13 @@ export interface PersistedWindowLayout {
   readonly tabs: readonly PersistedWindowTab[]
 }
 
-const PersistedPaneType = Schema.Literal(
+const PersistedPaneType = Schema.Literals([
   'agent',
   'terminal',
   'diff',
   'devServerTerminal',
-  'review'
-)
+  'review',
+])
 
 const PersistedLeafNodeSchema: Schema.Schema<PersistedLeafNode> =
   Schema.TaggedStruct('LeafNode', {
@@ -346,7 +346,7 @@ const PersistedSplitNodeSchema: Schema.Schema<PersistedSplitNode> =
   })
 
 const PersistedPanelNodeSchema: Schema.Schema<PersistedPanelNode> =
-  Schema.Union(PersistedLeafNodeSchema, PersistedSplitNodeSchema)
+  Schema.Union([PersistedLeafNodeSchema, PersistedSplitNodeSchema])
 
 const PersistedPanelTabSchema: Schema.Schema<PersistedPanelTab> = Schema.Struct(
   {
@@ -379,10 +379,10 @@ const PersistedWorkspaceTileSplitSchema: Schema.Schema<PersistedWorkspaceTileSpl
   })
 
 const PersistedWorkspaceTileNodeSchema: Schema.Schema<PersistedWorkspaceTileNode> =
-  Schema.Union(
+  Schema.Union([
     PersistedWorkspaceTileLeafSchema,
-    PersistedWorkspaceTileSplitSchema
-  )
+    PersistedWorkspaceTileSplitSchema,
+  ])
 
 const PersistedWindowTabSchema: Schema.Schema<PersistedWindowTab> =
   Schema.Struct({

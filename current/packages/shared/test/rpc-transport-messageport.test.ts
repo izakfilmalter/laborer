@@ -10,15 +10,8 @@
  */
 
 import { MessageChannel } from 'node:worker_threads'
-
-import { Rpc, RpcGroup, RpcServer } from '@effect/rpc'
-import type {
-  FromClientEncoded,
-  FromServerEncoded,
-  ResponseChunkEncoded,
-  ResponseExitEncoded,
-} from '@effect/rpc/RpcMessage'
 import { Effect, Exit, Layer, Schema, Scope, Stream } from 'effect'
+import { Rpc, RpcGroup, type RpcMessage, RpcServer } from 'effect/unstable/rpc'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RpcMessagePort } from '../src/rpc-transport-messageport.js'
 import { layerProtocolMessagePort } from '../src/rpc-transport-messageport.js'
@@ -27,9 +20,12 @@ import { layerProtocolMessagePort } from '../src/rpc-transport-messageport.js'
 // Test RPC definitions
 // ---------------------------------------------------------------------------
 
-class TestRpcError extends Schema.TaggedError<TestRpcError>()('TestRpcError', {
-  message: Schema.String,
-}) {}
+class TestRpcError extends Schema.TaggedErrorClass<TestRpcError>()(
+  'TestRpcError',
+  {
+    message: Schema.String,
+  }
+) {}
 
 const TestRpcs = RpcGroup.make(
   Rpc.make('echo', {
@@ -93,11 +89,11 @@ function toRpcPort(
 
 function collectResponses(
   clientPort: import('node:worker_threads').MessagePort,
-  request: FromClientEncoded,
+  request: RpcMessage.FromClientEncoded,
   requestId: string
-): Promise<FromServerEncoded[]> {
-  return new Promise<FromServerEncoded[]>((resolve, reject) => {
-    const messages: FromServerEncoded[] = []
+): Promise<RpcMessage.FromServerEncoded[]> {
+  return new Promise<RpcMessage.FromServerEncoded[]>((resolve, reject) => {
+    const messages: RpcMessage.FromServerEncoded[] = []
     const timeout = setTimeout(() => {
       clientPort.off('message', handler)
       reject(
@@ -106,7 +102,7 @@ function collectResponses(
     }, 5000)
 
     const handler = (data: unknown): void => {
-      const msg = data as FromServerEncoded
+      const msg = data as RpcMessage.FromServerEncoded
       messages.push(msg)
 
       if (
@@ -181,7 +177,8 @@ describe('layerProtocolMessagePort', () => {
     )
 
     const exit = msgs.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id
     )
     expect(exit).toBeDefined()
     expect(exit?.exit._tag).toBe('Success')
@@ -205,7 +202,8 @@ describe('layerProtocolMessagePort', () => {
     )
 
     const exit = msgs.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id
     )
     expect(exit).toBeDefined()
     expect(exit?.exit._tag).toBe('Success')
@@ -233,7 +231,8 @@ describe('layerProtocolMessagePort', () => {
     )
 
     const exit = msgs.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id
     )
     expect(exit).toBeDefined()
     expect(exit?.exit._tag).toBe('Failure')
@@ -258,10 +257,12 @@ describe('layerProtocolMessagePort', () => {
     )
 
     const chunks = msgs.filter(
-      (m): m is ResponseChunkEncoded => m._tag === 'Chunk' && m.requestId === id
+      (m): m is RpcMessage.ResponseChunkEncoded =>
+        m._tag === 'Chunk' && m.requestId === id
     )
     const exit = msgs.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id
     )
 
     const values = chunks.flatMap((c) => [...c.values] as number[])
@@ -316,13 +317,16 @@ describe('layerProtocolMessagePort', () => {
     ])
 
     const exit1 = r1.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id1
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id1
     )
     const exit2 = r2.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id2
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id2
     )
     const exit3 = r3.find(
-      (m): m is ResponseExitEncoded => m._tag === 'Exit' && m.requestId === id3
+      (m): m is RpcMessage.ResponseExitEncoded =>
+        m._tag === 'Exit' && m.requestId === id3
     )
 
     expect(exit1).toBeDefined()

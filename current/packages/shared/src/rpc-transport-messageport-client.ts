@@ -25,10 +25,8 @@
  * @see .reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts
  */
 
-import { RpcClient } from '@effect/rpc'
-import { RpcClientError } from '@effect/rpc/RpcClientError'
-import type { FromServerEncoded } from '@effect/rpc/RpcMessage'
 import { Effect, Layer, Queue, Scope } from 'effect'
+import { RpcClient, RpcClientError, type RpcMessage } from 'effect/unstable/rpc'
 
 import type { RpcMessagePort } from './rpc-transport-messageport.js'
 import { PING_MESSAGE, PONG_MESSAGE } from './rpc-transport-messageport.js'
@@ -124,24 +122,41 @@ export const RPC_PORT_DEAD_EVENT = 'laborer:rpc-port-dead'
  * 3. Main process port tracking: proactively closes renderer ports when
  *    the utility process exits (handled externally by ipc.ts).
  *
- * When any mechanism detects a dead port, a synthetic `Defect` message is
- * injected into the response queue. The Effect RPC client treats `Defect`
- * messages by clearing all pending entries, which resolves (with failure)
- * any in-flight `Effect.async` calls — preventing modals and other UI
- * elements from getting permanently stuck in a loading state.
+ * When any mechanism detects a dead port, a `ClientProtocolError` carrying a
+ * typed `RpcClientError` is injected into the response queue. Effect RPC fails
+ * all pending entries with that transport error, preventing in-flight calls
+ * from remaining stuck while keeping expected transport loss out of defects.
  *
  * @param port - The MessagePort to send RPC requests over
  */
 export const makeClientProtocolMessagePort = (
   port: RpcMessagePort,
   options?: MessagePortClientProtocolOptions
-): Effect.Effect<RpcClient.Protocol['Type'], never, Scope.Scope> =>
+): Effect.Effect<RpcClient.Protocol['Service'], never, Scope.Scope> =>
   RpcClient.Protocol.make(
-    Effect.fnUntraced(function* (writeResponse) {
+    Effect.fnUntraced(function* (writeResponse, clientIds) {
       const scope = yield* Effect.scope
 
       // Unbounded queue bridges sync event listeners to the Effect runtime.
-      const messageQueue = yield* Queue.unbounded<FromServerEncoded>()
+      const messageQueue =
+        yield* Queue.unbounded<RpcMessage.FromServerEncoded>()
+
+      // This transport is point-to-point and each protocol instance belongs to
+      // exactly one RpcClient. If it is ever shared, replace this fixed routing
+      // with request-id -> client-id routing before supporting multiplexing.
+      let singleClientId: number | undefined
+
+      const getSingleClientId = (): number | undefined => {
+        if (singleClientId !== undefined) {
+          return singleClientId
+        }
+        const iterator = clientIds.values()
+        const first = iterator.next()
+        if (!first.done) {
+          singleClientId = first.value
+        }
+        return singleClientId
+      }
 
       // Mutable flag tracking whether the port has been closed by the remote
       // end. Used in `send()` to fail fast instead of posting into a dead port.
@@ -156,7 +171,12 @@ export const makeClientProtocolMessagePort = (
 
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
-        Effect.flatMap((data) => writeResponse(data)),
+        Effect.flatMap((data) => {
+          const clientId = getSingleClientId()
+          return clientId === undefined
+            ? Effect.void
+            : writeResponse(clientId, data)
+        }),
         Effect.forever,
         Effect.forkScoped
       )
@@ -171,17 +191,17 @@ export const makeClientProtocolMessagePort = (
         // Any real message also counts as proof of liveness (like
         // Mux's "inbound frame tracking" pattern).
         awakeTicksSinceLastPong = 0
-        Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
+        Queue.offerUnsafe(messageQueue, data as RpcMessage.FromServerEncoded)
       }
 
-      // When the port closes (or is detected as dead), synthesize a
-      // Defect response to unblock all pending RPC requests.
+      // When the port closes (or is detected as dead), synthesize a typed
+      // protocol failure to unblock all pending RPC requests.
       const closeHandler = (): void => {
         if (portState.closed) {
           return
         }
         console.warn(
-          '[rpc-client-transport] Port closed by remote end — synthesizing Defect to unblock pending requests'
+          '[rpc-client-transport] Port closed by remote end — failing pending requests'
         )
         portState.closed = true
 
@@ -191,10 +211,15 @@ export const makeClientProtocolMessagePort = (
           heartbeatInterval = null
         }
 
-        Queue.unsafeOffer(messageQueue, {
-          _tag: 'Defect',
-          defect: 'MessagePort closed unexpectedly',
-        } as unknown as FromServerEncoded)
+        Queue.offerUnsafe(messageQueue, {
+          _tag: 'ClientProtocolError',
+          error: new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: 'MessagePort closed unexpectedly',
+              cause: new Error('MessagePort closed unexpectedly'),
+            }),
+          }),
+        })
 
         // Notify the renderer's SidecarRuntimeBoundary that a port died
         // so it can trigger a generation bump and rebuild all RPC clients.
@@ -224,17 +249,19 @@ export const makeClientProtocolMessagePort = (
       }
 
       // Attach listeners based on the port's API style.
+      const nodeMessageHandler = (event: unknown): void => {
+        const data =
+          typeof event === 'object' && event !== null && 'data' in event
+            ? (event as { data: unknown }).data
+            : event
+        messageHandler(data)
+      }
+
       if (typeof port.on === 'function') {
         // Node.js / Electron MessagePortMain style.
         // MessagePortMain's 'message' event passes a MessageEvent-like
         // object { data, ports } — unwrap .data to get the raw payload.
-        port.on('message', (event: unknown) => {
-          const data =
-            typeof event === 'object' && event !== null && 'data' in event
-              ? (event as { data: unknown }).data
-              : event
-          messageHandler(data)
-        })
+        port.on('message', nodeMessageHandler)
         port.on('close', closeHandler)
       } else {
         // Web MessagePort style
@@ -296,10 +323,10 @@ export const makeClientProtocolMessagePort = (
             heartbeatInterval = null
           }
           if (typeof port.off === 'function') {
-            port.off('message', messageHandler)
+            port.off('message', nodeMessageHandler)
             port.off('close', closeHandler)
           } else if (typeof port.removeListener === 'function') {
-            port.removeListener('message', messageHandler)
+            port.removeListener('message', nodeMessageHandler)
             port.removeListener('close', closeHandler)
           } else {
             port.onmessage = null
@@ -310,16 +337,19 @@ export const makeClientProtocolMessagePort = (
       )
 
       return {
-        send(request, transferables) {
+        send(clientId, request, transferables) {
+          singleClientId ??= clientId
           // Check if the port has been closed before attempting to send.
           // This provides a fast failure path instead of silently posting
           // the message into a dead port.
           if (portState.closed) {
             return Effect.fail(
-              new RpcClientError({
-                reason: 'Protocol',
-                message:
-                  'MessagePort is closed — cannot send request. The server utility process may have restarted.',
+              new RpcClientError.RpcClientError({
+                reason: new RpcClientError.RpcClientDefect({
+                  message:
+                    'MessagePort is closed — cannot send request. The server utility process may have restarted.',
+                  cause: new Error('MessagePort is closed'),
+                }),
               })
             )
           }
@@ -328,10 +358,11 @@ export const makeClientProtocolMessagePort = (
               port.postMessage(request, transferables as readonly unknown[])
             },
             catch: (cause) =>
-              new RpcClientError({
-                reason: 'Protocol',
-                message: 'Failed to send MessagePort request',
-                cause,
+              new RpcClientError.RpcClientError({
+                reason: new RpcClientError.RpcClientDefect({
+                  message: 'Failed to send MessagePort request',
+                  cause,
+                }),
               }),
           })
         },
@@ -358,4 +389,4 @@ export const makeClientProtocolMessagePort = (
 export const layerClientProtocolMessagePort = (
   port: RpcMessagePort
 ): Layer.Layer<RpcClient.Protocol> =>
-  Layer.scoped(RpcClient.Protocol, makeClientProtocolMessagePort(port))
+  Layer.effect(RpcClient.Protocol)(makeClientProtocolMessagePort(port))

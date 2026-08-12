@@ -23,12 +23,8 @@
  * @see .reference/effect/packages/rpc/src/RpcServer.ts (Protocol interface)
  */
 
-import { RpcServer } from '@effect/rpc'
-import type {
-  FromClientEncoded,
-  FromServerEncoded,
-} from '@effect/rpc/RpcMessage'
-import { Effect, Layer, Mailbox, Queue, Scope } from 'effect'
+import { Effect, Layer, Queue, Scope } from 'effect'
+import { type RpcMessage, RpcServer } from 'effect/unstable/rpc'
 
 // ---------------------------------------------------------------------------
 // Heartbeat protocol constants
@@ -101,14 +97,15 @@ const CLIENT_ID = 0
  */
 export const makeProtocolMessagePort = (
   port: RpcMessagePort
-): Effect.Effect<RpcServer.Protocol['Type'], never, Scope.Scope> =>
+): Effect.Effect<RpcServer.Protocol['Service'], never, Scope.Scope> =>
   RpcServer.Protocol.make(
     Effect.fnUntraced(function* (writeRequest) {
       const scope = yield* Effect.scope
-      const disconnects = yield* Mailbox.make<number>()
+      const disconnects = yield* Queue.unbounded<number>()
 
       // Unbounded queue bridges sync event listeners to the Effect runtime.
-      const messageQueue = yield* Queue.unbounded<FromClientEncoded>()
+      const messageQueue =
+        yield* Queue.unbounded<RpcMessage.FromClientEncoded>()
 
       // Drain the queue in a fiber, calling writeRequest for each message.
       yield* Queue.take(messageQueue).pipe(
@@ -131,11 +128,19 @@ export const makeProtocolMessagePort = (
           }
           return
         }
-        Queue.unsafeOffer(messageQueue, data as FromClientEncoded)
+        Queue.offerUnsafe(messageQueue, data as RpcMessage.FromClientEncoded)
       }
 
       const closeHandler = (): void => {
-        disconnects.unsafeOffer(CLIENT_ID)
+        Queue.offerUnsafe(disconnects, CLIENT_ID)
+      }
+
+      const nodeMessageHandler = (event: unknown): void => {
+        const data =
+          typeof event === 'object' && event !== null && 'data' in event
+            ? (event as { data: unknown }).data
+            : event
+        messageHandler(data)
       }
 
       // Attach listeners based on the port's API style.
@@ -143,13 +148,7 @@ export const makeProtocolMessagePort = (
         // Node.js / Electron MessagePortMain style.
         // MessagePortMain's 'message' event passes a MessageEvent-like
         // object { data, ports } — unwrap .data to get the raw payload.
-        port.on('message', (event: unknown) => {
-          const data =
-            typeof event === 'object' && event !== null && 'data' in event
-              ? (event as { data: unknown }).data
-              : event
-          messageHandler(data)
-        })
+        port.on('message', nodeMessageHandler)
         port.on('close', closeHandler)
       } else {
         // Web MessagePort style
@@ -167,10 +166,10 @@ export const makeProtocolMessagePort = (
         scope,
         Effect.sync(() => {
           if (typeof port.off === 'function') {
-            port.off('message', messageHandler)
+            port.off('message', nodeMessageHandler)
             port.off('close', closeHandler)
           } else if (typeof port.removeListener === 'function') {
-            port.removeListener('message', messageHandler)
+            port.removeListener('message', nodeMessageHandler)
             port.removeListener('close', closeHandler)
           } else {
             port.onmessage = null
@@ -182,7 +181,11 @@ export const makeProtocolMessagePort = (
 
       return {
         disconnects,
-        send(_clientId: number, response: FromServerEncoded, transferables) {
+        send(
+          _clientId: number,
+          response: RpcMessage.FromServerEncoded,
+          transferables
+        ) {
           return Effect.sync(() => {
             port.postMessage(response, transferables as readonly unknown[])
           })
@@ -217,4 +220,4 @@ export const makeProtocolMessagePort = (
 export const layerProtocolMessagePort = (
   port: RpcMessagePort
 ): Layer.Layer<RpcServer.Protocol> =>
-  Layer.scoped(RpcServer.Protocol, makeProtocolMessagePort(port))
+  Layer.effect(RpcServer.Protocol)(makeProtocolMessagePort(port))

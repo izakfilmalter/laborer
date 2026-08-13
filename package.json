@@ -38,8 +38,8 @@
     "verify:runtimes": "bun run --cwd apps/bot verify:runtimes",
     "dist:desktop:dmg": "tsx scripts/build-desktop-artifact.ts",
     "dist:desktop:artifact": "tsx scripts/build-desktop-artifact.ts",
-    "format": "ultracite check",
-    "format:fix": "ultracite fix",
+    "format": "ultracite check apps packages scripts package.json tsconfig.json turbo.json biome.json",
+    "format:fix": "ultracite fix apps packages scripts package.json tsconfig.json turbo.json biome.json",
     "prepare": "effect-language-service patch"
   },
   "dependencies": {

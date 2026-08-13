@@ -12,7 +12,8 @@
     ".": "./src/task-database.ts",
     "./migrations": "./src/migrations.ts",
     "./path": "./src/path.ts",
-    "./schema": "./src/schema.sql.ts"
+    "./schema": "./src/schema.sql.ts",
+    "./ulid": "./src/task-ulid.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.44.7",

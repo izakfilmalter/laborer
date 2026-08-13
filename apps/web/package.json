@@ -24,6 +24,7 @@
     "@hookform/resolvers": "^5.1.1",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
+    "@laborer/task-db": "workspace:*",
     "@pierre/diffs": "^1.1.6",
     "@pierre/trees": "0.0.1-beta.4",
     "@tailwindcss/vite": "^4.0.15",

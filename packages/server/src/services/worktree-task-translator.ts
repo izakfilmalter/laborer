@@ -1,6 +1,6 @@
 import { basename } from 'node:path'
-import { createTaskUlid } from '@laborer/shared/task-ulid'
 import { taskDatabasePath } from '@laborer/task-db/path'
+import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Effect } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 

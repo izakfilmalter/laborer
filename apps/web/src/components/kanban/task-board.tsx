@@ -14,7 +14,7 @@
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
-import { createTaskUlid } from '@laborer/shared/task-ulid'
+import { createTaskUlid } from '@laborer/task-db/ulid'
 import {
   AlignLeft,
   Bot,

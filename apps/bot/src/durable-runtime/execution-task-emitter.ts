@@ -1,10 +1,10 @@
-import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import {
   NativeTaskDatabase,
   type Task,
   TaskStaleRevisionError,
 } from '@laborer/task-db'
+import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Console, Context, Effect, Schema } from 'effect'
 import { CreateFeatureActionInput } from '../action-catalog.ts'
 import type { ExecutionStatus } from './root-runtime.ts'
@@ -46,22 +46,7 @@ export class TaskEmissionDiagnostic extends Error {
   }
 }
 
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const SLACK_PERMALINK_TIMEOUT_MS = 5000
-const ulid = (time: number): string => {
-  let timestamp = Math.max(0, Math.min(time, 0xff_ff_ff_ff_ff_ff))
-  let encodedTime = ''
-  for (let index = 0; index < 10; index += 1) {
-    encodedTime = CROCKFORD[timestamp % 32] + encodedTime
-    timestamp = Math.floor(timestamp / 32)
-  }
-  const entropy = randomBytes(16)
-  let encodedRandom = ''
-  for (let index = 0; index < 16; index += 1) {
-    encodedRandom += CROCKFORD[(entropy[index] ?? 0) % 32]
-  }
-  return `${encodedTime}${encodedRandom}`
-}
 
 const executionInput = (
   value: unknown
@@ -225,7 +210,7 @@ export const openExecutionTaskEmitter = (
       createdAt: execution.acceptedAtUnixMs,
       executionId: execution.executionId,
       executionStatus: execution.status,
-      id: ulid(execution.acceptedAtUnixMs),
+      id: createTaskUlid(execution.acceptedAtUnixMs),
       rootPath: options.rootPath,
       source: 'execution',
       status: initialTaskStatus(execution.status),

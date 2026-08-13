@@ -1,9 +1,8 @@
 import { RpcError } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
-import { createTaskUlid, isTaskUlid } from '@laborer/shared/task-ulid'
-
 import type { TaskPatch, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
+import { createTaskUlid, isTaskUlid } from '@laborer/task-db/ulid'
 import { Effect } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import {

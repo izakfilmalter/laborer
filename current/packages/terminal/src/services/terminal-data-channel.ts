@@ -321,7 +321,7 @@ const attachDataChannel = (
  *
  * @param port - The MessagePort from the renderer
  * @param terminalId - The terminal to attach to
- * @param runtime - The Effect runtime for forking the data channel fiber
+ * @param context - The Effect services for forking the data channel fiber
  */
 const handleTerminalDataPort = (
   port: RpcMessagePort,

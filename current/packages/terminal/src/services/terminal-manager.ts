@@ -2366,6 +2366,9 @@ class TerminalManager extends Context.Service<
       // lifetime of the scoped layer and is interrupted on shutdown.
       yield* detectionTick.pipe(
         Effect.repeat(Schedule.spaced(`${DETECTION_INTERVAL_MS} millis`)),
+        // The process detector must register before layer acquisition returns;
+        // terminal-manager's OSC 133/background-process regression proves the
+        // deferred v4 default can otherwise publish a false idle transition.
         Effect.forkDetach({ startImmediately: true })
       )
 

@@ -1,7 +1,7 @@
-# Slack-native Laborer
+# Laborer bot
 
-`apps/bot/` is Laborer's primary Slack-native implementation, package
-`@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
+`apps/bot/` is Laborer's Slack bridge and local runtime, published in the
+monorepo as `@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
 entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
 subscription, delivery, streaming, and Block Kit permission UI. One Slack
 adapter serves every configured workspace through an `installationProvider`
@@ -23,6 +23,10 @@ are best effort and at-most-once; a truncated stream is not resumed and a lost
 permission click is clicked again. There is no conversational replay scheduler
 or durable Slack outbox. Action/Execution durability is independent of those
 messaging semantics.
+
+The app also contains a macOS companion that observes and controls the
+launchd-owned daemon through a versioned local protocol. The companion is a
+client: closing it does not stop ongoing work.
 
 ## Configure
 
@@ -74,16 +78,16 @@ identity and are deleted.
 
 ## Run
 
-From the repository root:
+From the repository root, start the daemon with the root alias:
 
 ```sh
-bun run --cwd apps/bot start:slack
+bun run start:bot
 ```
 
 For development, use plain Node watch restart:
 
 ```sh
-bun run --cwd apps/bot dev:slack
+bun run dev:bot
 ```
 
 A restart does not drain or replay in-flight conversational work. Changes to

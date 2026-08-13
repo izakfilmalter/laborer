@@ -1,39 +1,51 @@
 # Laborer
 
-This repository is a Bun and Turborepo monorepo containing two applications:
+Laborer connects Slack work threads, local coding runtimes, and a desktop mission-control interface. This Bun and Turborepo monorepo contains the product's cooperating apps and shared packages.
 
-- [`apps/desktop/`](./apps/desktop/) — the legacy Laborer desktop mission-control application.
-- [`apps/bot/`](./apps/bot/) — the primary Slack-native Laborer runtime.
+## Repository layout
 
-Shared packages live under [`packages/`](./packages/). Install dependencies and
-run the main build, test, typecheck, and formatting commands from the repository
-root.
+- [`apps/bot/`](./apps/bot/) — Slack bridge, local daemon, ACP runtime, registered Actions, and macOS companion.
+- [`apps/desktop/`](./apps/desktop/) — Electron shell for mission control.
+- [`apps/web/`](./apps/web/) — React mission-control interface, used in a browser or the desktop shell.
+- [`packages/`](./packages/) — shared services, domain contracts, persistence, terminal support, and tooling.
 
-The Slack runtime has one authoritative daemon: `bun run start:bot`.
-It uses `chat` + `@chat-adapter/slack` for the entire Slack plane and ACP with
-OpenCode 2 for its Conversation agent. There is no alternate production
-receiver or legacy Conversation fallback. Credential-isolated canaries are
-manual evidence gates, not alternate architectures.
+The bot and mission-control apps retain distinct runtime responsibilities while sharing contracts and durable infrastructure where their behavior overlaps.
 
-Implementation Actions continue through the OpenCode HTTP adapter. They inherit
-the user's OpenCode permission policy: Laborer does not install wildcard allows
-when creating implementation sessions. Before reusing a historical session,
-Laborer removes only exact wildcard-allow entries installed by the old adapter;
-all other session rules remain ordered and unchanged. See the
-[`bot` runtime documentation](./apps/bot/README.md) for configuration, permission,
-and recovery details.
+## Requirements
 
-The Slack-native daemon stores all runtime state under
-`~/.local/state/laborer` (or an absolute, nonblank `$XDG_STATE_HOME/laborer`),
-partitioned by authenticated Slack workspace. Its Soul, Workspace memory, and
-User-profile Markdown live outside repositories in `~/.config/laborer` (or an
-absolute, nonblank `$XDG_CONFIG_HOME/laborer`). See the
-[`bot` runtime documentation](./apps/bot/README.md) for the exact composition and
-state layout.
+- Bun 1.3.5
+- Node 24.11.1 for the bot runtime and task MCP
+- macOS for Electron packaging and launchd integration
 
 ## Development
 
-```bash
+Run commands from the repository root:
+
+```sh
 bun install
 bun run dev
 ```
+
+`dev` starts the web app, backend services, and Electron shell. To run an individual surface:
+
+```sh
+bun run --cwd apps/web dev
+bun run dev:bot
+```
+
+The repository uses one ignored root `.env.local`. Copy [`.env.example`](./.env.example) and fill only the credentials needed by the runtime you are starting.
+
+## Common commands
+
+| Command | Purpose |
+| --- | --- |
+| `bun run build` | Build all workspaces |
+| `bun run typecheck` | Typecheck all workspaces |
+| `bun run test` | Run deterministic tests once |
+| `bun run format` | Check Biome/Ultracite formatting and linting |
+| `bun run format:fix` | Apply Biome/Ultracite fixes |
+| `bun run check` | Format, typecheck, test, scan for Slack secrets, and run ACP compatibility gates |
+| `bun run start:bot` | Start the Slack daemon |
+| `bun run dist:desktop:dmg` | Build the macOS desktop DMG |
+
+See the [bot README](./apps/bot/README.md) for Slack configuration and durability, and the [desktop README](./apps/desktop/README.md) for the mission-control architecture and setup.

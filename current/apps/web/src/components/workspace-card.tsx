@@ -630,6 +630,24 @@ function DestroyWorkspaceButton({
 }
 
 /**
+ * Whether a workspace's lifecycle state has earned a chip.
+ *
+ * `running` is what a healthy workspace simply is, so chipping it spends a
+ * slot on every card in the sidebar to say nothing — and buries the one
+ * workspace that is broken in a column of identical green. The chip speaks
+ * only when the state is worth reading: still being built, no longer
+ * running, or errored.
+ *
+ * The agent status beside it asks the same question of its own vocabulary
+ * (`showsWorkspaceAgentStatus`), so both halves of the status rail stay
+ * quiet when there is nothing to report and a healthy card is just its
+ * name and the two ways to work in it.
+ */
+function showsWorkspaceStatus(status: string): boolean {
+  return status !== 'running'
+}
+
+/**
  * The workspace's lifecycle state as a chip. An errored workspace carries its
  * failure in a tooltip rather than on the chip, so one bad workspace cannot
  * push every sibling card out of shape.
@@ -688,6 +706,9 @@ function WorkspaceCard({
   // unknown stay in the terminal rows that own them. The frame header answers
   // this with the same predicate, so a card and its header never disagree.
   const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
+  // A root workspace has no lifecycle of its own to report, and a healthy one
+  // has nothing worth reporting.
+  const showsStatus = !isRootWorkspace && showsWorkspaceStatus(workspace.status)
 
   return (
     <CardShell
@@ -760,16 +781,14 @@ function WorkspaceCard({
       // control cluster, one in the chip row — made the operator assemble the
       // answer themselves.
       //
-      // A root workspace has no lifecycle of its own to report, so it keeps
-      // whatever chips its surface adds and nothing more.
       badges={
         <>
-          {isRootWorkspace ? null : (
+          {showsStatus ? (
             <WorkspaceStatusBadge
               errorMessage={workspace.errorMessage}
               status={workspace.status}
             />
-          )}
+          ) : null}
           {showsAgentStatus ? (
             <AggregateAgentStatusBadge
               className="shrink-0"

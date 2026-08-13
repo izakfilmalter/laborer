@@ -157,9 +157,27 @@ describe('board card for work that has a workspace', () => {
     )
 
     expect(screen.getByTestId('workspace-card-matching-cards')).toBeTruthy()
-    expect(screen.getByText('running')).toBeTruthy()
+    // Quiet about a healthy workspace, exactly as the sidebar is.
+    expect(screen.queryByText('running')).toBeNull()
     expect(screen.getByRole('button', { name: AGENT_RE })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New terminal' })).toBeTruthy()
+  })
+
+  it('surfaces a broken workspace on the board too', () => {
+    render(
+      <TaskBoardCard
+        onActivate={vi.fn()}
+        onCancel={vi.fn()}
+        onOpen={vi.fn()}
+        task={task}
+        workspace={{
+          ...workspace,
+          row: { ...workspace.row, status: 'errored' },
+        }}
+      />
+    )
+
+    expect(screen.getByText('errored')).toBeTruthy()
   })
 
   it('keeps the board affordances the workspace knows nothing about', () => {

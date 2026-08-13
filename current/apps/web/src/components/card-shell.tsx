@@ -132,10 +132,7 @@ function CardShell({
             a column of cards keeps one rhythm whether or not a given card has
             controls — and chips stay centred against them when they do. */}
         {badges || badgeActions ? (
-          <div
-            className="flex items-start justify-between gap-2"
-            data-slot="card-status-row"
-          >
+          <div className="flex items-start gap-2" data-slot="card-status-row">
             <div
               className={cn(
                 'flex min-w-0 flex-wrap items-center gap-1.5 empty:hidden',
@@ -146,8 +143,12 @@ function CardShell({
             >
               {badges}
             </div>
+            {/* `ml-auto` rather than `justify-between`, so the controls hold
+                the right edge even when the card has no chips to sit
+                opposite — which is the common case, since a healthy
+                workspace reports nothing. */}
             {badgeActions ? (
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="ml-auto flex shrink-0 items-center gap-1">
                 {badgeActions}
               </div>
             ) : null}

@@ -45,7 +45,7 @@ describe('merged monorepo operator plumbing', () => {
     expect(launcher).toContain('cd "$DAEMON/app"')
   })
 
-  it('loads every bot process from the root env file', async () => {
+  it('starts every bot process at the repository root with the root env', async () => {
     const manifest = JSON.parse(
       await readFile(resolve(packageRoot, 'package.json'), 'utf8')
     ) as { scripts: Record<string, string> }
@@ -56,8 +56,9 @@ describe('merged monorepo operator plumbing', () => {
       'start:chat-canary',
       'start:slack',
     ]) {
+      expect(manifest.scripts[name]).toContain('cd ../.. && node')
       expect(manifest.scripts[name]).toContain(
-        '--env-file-if-exists=../../.env.local'
+        '--env-file-if-exists=.env.local'
       )
     }
   })

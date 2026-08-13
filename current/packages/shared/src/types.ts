@@ -64,7 +64,7 @@ export class Workspace extends Schema.Class<Workspace>('Workspace')({
   worktreePath: Schema.String,
   status: WorkspaceStatus,
   origin: WorkspaceOrigin,
-  createdAt: Schema.Date,
+  createdAt: Schema.DateFromString,
 }) {}
 
 export class Terminal extends Schema.Class<Terminal>('Terminal')({
@@ -78,7 +78,7 @@ export class Terminal extends Schema.Class<Terminal>('Terminal')({
 export class Diff extends Schema.Class<Diff>('Diff')({
   workspaceId: WorkspaceId,
   diffContent: Schema.String,
-  lastUpdated: Schema.Date,
+  lastUpdated: Schema.DateFromString,
 }) {}
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ export interface SplitNode {
 
 export type PanelNode = LeafNode | SplitNode
 
-export const LeafNodeSchema: Schema.Codec<LeafNode> = Schema.TaggedStruct(
+export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
     command: Schema.optional(Schema.String),
@@ -125,19 +125,19 @@ export const LeafNodeSchema: Schema.Codec<LeafNode> = Schema.TaggedStruct(
   }
 )
 
-export const SplitNodeSchema: Schema.Codec<SplitNode> = Schema.TaggedStruct(
+export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
   'SplitNode',
   {
     id: Schema.String,
     direction: SplitDirection,
     children: Schema.Array(
-      Schema.suspend((): Schema.Codec<PanelNode> => PanelNodeSchema)
+      Schema.suspend((): Schema.Schema<PanelNode> => PanelNodeSchema)
     ),
     sizes: Schema.Array(Schema.Number),
   }
 )
 
-export const PanelNodeSchema: Schema.Codec<PanelNode> = Schema.Union([
+export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union([
   LeafNodeSchema,
   SplitNodeSchema,
 ])
@@ -159,7 +159,7 @@ export interface PanelTab {
   readonly panelLayout: PanelNode
 }
 
-export const PanelTabSchema: Schema.Codec<PanelTab> = Schema.Struct({
+export const PanelTabSchema: Schema.Schema<PanelTab> = Schema.Struct({
   id: Schema.String,
   label: Schema.optional(Schema.String),
   panelLayout: PanelNodeSchema,
@@ -194,7 +194,7 @@ export interface WorkspaceTileSplit {
 
 export type WorkspaceTileNode = WorkspaceTileLeaf | WorkspaceTileSplit
 
-export const WorkspaceTileLeafSchema: Schema.Codec<WorkspaceTileLeaf> =
+export const WorkspaceTileLeafSchema: Schema.Schema<WorkspaceTileLeaf> =
   Schema.TaggedStruct('WorkspaceTileLeaf', {
     id: Schema.String,
     workspaceId: Schema.String,
@@ -202,19 +202,19 @@ export const WorkspaceTileLeafSchema: Schema.Codec<WorkspaceTileLeaf> =
     activePanelTabId: Schema.optional(Schema.String),
   })
 
-export const WorkspaceTileSplitSchema: Schema.Codec<WorkspaceTileSplit> =
+export const WorkspaceTileSplitSchema: Schema.Schema<WorkspaceTileSplit> =
   Schema.TaggedStruct('WorkspaceTileSplit', {
     id: Schema.String,
     direction: SplitDirection,
     children: Schema.Array(
       Schema.suspend(
-        (): Schema.Codec<WorkspaceTileNode> => WorkspaceTileNodeSchema
+        (): Schema.Schema<WorkspaceTileNode> => WorkspaceTileNodeSchema
       )
     ),
     sizes: Schema.Array(Schema.Number),
   })
 
-export const WorkspaceTileNodeSchema: Schema.Codec<WorkspaceTileNode> =
+export const WorkspaceTileNodeSchema: Schema.Schema<WorkspaceTileNode> =
   Schema.Union([WorkspaceTileLeafSchema, WorkspaceTileSplitSchema])
 
 // -- Window Tab -------------------------------------------------------------
@@ -230,7 +230,7 @@ export interface WindowTab {
   readonly workspaceLayout?: WorkspaceTileNode | undefined
 }
 
-export const WindowTabSchema: Schema.Codec<WindowTab> = Schema.Struct({
+export const WindowTabSchema: Schema.Schema<WindowTab> = Schema.Struct({
   focusedWorkspaceTileId: Schema.optional(Schema.String),
   id: Schema.String,
   label: Schema.optional(Schema.String),
@@ -248,7 +248,7 @@ export interface WindowLayout {
   readonly tabs: readonly WindowTab[]
 }
 
-export const WindowLayoutSchema: Schema.Codec<WindowLayout> = Schema.Struct({
+export const WindowLayoutSchema: Schema.Schema<WindowLayout> = Schema.Struct({
   tabs: Schema.Array(WindowTabSchema),
   activeTabId: Schema.optional(Schema.String),
 })
@@ -324,7 +324,7 @@ const PersistedPaneType = Schema.Literals([
   'review',
 ])
 
-const PersistedLeafNodeSchema: Schema.Codec<PersistedLeafNode> =
+const PersistedLeafNodeSchema: Schema.Schema<PersistedLeafNode> =
   Schema.TaggedStruct('LeafNode', {
     command: Schema.optional(Schema.String),
     id: Schema.String,
@@ -333,30 +333,31 @@ const PersistedLeafNodeSchema: Schema.Codec<PersistedLeafNode> =
     workspaceId: Schema.optional(Schema.String),
   })
 
-const PersistedSplitNodeSchema: Schema.Codec<PersistedSplitNode> =
+const PersistedSplitNodeSchema: Schema.Schema<PersistedSplitNode> =
   Schema.TaggedStruct('SplitNode', {
     id: Schema.String,
     direction: SplitDirection,
     children: Schema.Array(
       Schema.suspend(
-        (): Schema.Codec<PersistedPanelNode> => PersistedPanelNodeSchema
+        (): Schema.Schema<PersistedPanelNode> => PersistedPanelNodeSchema
       )
     ),
     sizes: Schema.Array(Schema.Number),
   })
 
-const PersistedPanelNodeSchema: Schema.Codec<PersistedPanelNode> = Schema.Union(
-  [PersistedLeafNodeSchema, PersistedSplitNodeSchema]
+const PersistedPanelNodeSchema: Schema.Schema<PersistedPanelNode> =
+  Schema.Union([PersistedLeafNodeSchema, PersistedSplitNodeSchema])
+
+const PersistedPanelTabSchema: Schema.Schema<PersistedPanelTab> = Schema.Struct(
+  {
+    id: Schema.String,
+    label: Schema.optional(Schema.String),
+    panelLayout: PersistedPanelNodeSchema,
+    focusedPaneId: Schema.optional(Schema.String),
+  }
 )
 
-const PersistedPanelTabSchema: Schema.Codec<PersistedPanelTab> = Schema.Struct({
-  id: Schema.String,
-  label: Schema.optional(Schema.String),
-  panelLayout: PersistedPanelNodeSchema,
-  focusedPaneId: Schema.optional(Schema.String),
-})
-
-const PersistedWorkspaceTileLeafSchema: Schema.Codec<PersistedWorkspaceTileLeaf> =
+const PersistedWorkspaceTileLeafSchema: Schema.Schema<PersistedWorkspaceTileLeaf> =
   Schema.TaggedStruct('WorkspaceTileLeaf', {
     id: Schema.String,
     workspaceId: Schema.String,
@@ -364,26 +365,26 @@ const PersistedWorkspaceTileLeafSchema: Schema.Codec<PersistedWorkspaceTileLeaf>
     activePanelTabId: Schema.optional(Schema.String),
   })
 
-const PersistedWorkspaceTileSplitSchema: Schema.Codec<PersistedWorkspaceTileSplit> =
+const PersistedWorkspaceTileSplitSchema: Schema.Schema<PersistedWorkspaceTileSplit> =
   Schema.TaggedStruct('WorkspaceTileSplit', {
     id: Schema.String,
     direction: SplitDirection,
     children: Schema.Array(
       Schema.suspend(
-        (): Schema.Codec<PersistedWorkspaceTileNode> =>
+        (): Schema.Schema<PersistedWorkspaceTileNode> =>
           PersistedWorkspaceTileNodeSchema
       )
     ),
     sizes: Schema.Array(Schema.Number),
   })
 
-const PersistedWorkspaceTileNodeSchema: Schema.Codec<PersistedWorkspaceTileNode> =
+const PersistedWorkspaceTileNodeSchema: Schema.Schema<PersistedWorkspaceTileNode> =
   Schema.Union([
     PersistedWorkspaceTileLeafSchema,
     PersistedWorkspaceTileSplitSchema,
   ])
 
-const PersistedWindowTabSchema: Schema.Codec<PersistedWindowTab> =
+const PersistedWindowTabSchema: Schema.Schema<PersistedWindowTab> =
   Schema.Struct({
     focusedWorkspaceTileId: Schema.optional(Schema.String),
     id: Schema.String,
@@ -391,7 +392,7 @@ const PersistedWindowTabSchema: Schema.Codec<PersistedWindowTab> =
     workspaceLayout: Schema.optional(PersistedWorkspaceTileNodeSchema),
   })
 
-export const PersistedWindowLayoutSchema: Schema.Codec<PersistedWindowLayout> =
+export const PersistedWindowLayoutSchema: Schema.Schema<PersistedWindowLayout> =
   Schema.Struct({
     tabs: Schema.Array(PersistedWindowTabSchema),
     activeTabId: Schema.optional(Schema.String),

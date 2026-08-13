@@ -7,8 +7,17 @@ const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
 const MUTATION_ID_MAX_LENGTH = 128
 
-export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
-export const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
+/** An integer greater than or equal to zero at RPC and persistence boundaries. */
+export const NonNegativeInt = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0)
+)
+
+/** An integer strictly greater than zero at RPC and persistence boundaries. */
+export const PositiveInt = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThan(0)
+)
 
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas

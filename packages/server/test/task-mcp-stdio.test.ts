@@ -13,6 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { afterEach, describe, expect, it } from 'vitest'
 import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 
@@ -112,6 +113,23 @@ const callTool = async (
 }
 
 describe('task MCP stdio entry point', () => {
+  it('packages the shared migration SQL beside the MCP bundle', () => {
+    for (const migration of taskDbMigrations) {
+      expect(
+        readFileSync(
+          join(
+            import.meta.dirname,
+            '..',
+            'dist',
+            'migrations',
+            `${migration.name}.sql`
+          ),
+          'utf8'
+        )
+      ).toBe(migration.sql)
+    }
+  })
+
   it('fails before loading the runtime on unsupported Node versions', () => {
     const result = spawnSync(
       process.execPath,

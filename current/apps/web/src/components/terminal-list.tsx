@@ -398,6 +398,14 @@ interface TerminalItemProps {
 }
 
 /**
+ * Row controls sit a step behind the row's name at rest and come up to full
+ * ink when the row is pointed at or focused, so the name leads and the
+ * buttons are still always there to hit.
+ */
+const ROW_ACTION_CLASS =
+  'size-5 shrink-0 text-muted-foreground/70 transition-colors group-focus-within/row:text-muted-foreground group-hover/row:text-muted-foreground'
+
+/**
  * MIME type for terminal drag data. Using a custom MIME type ensures
  * only laborer drop targets accept the drag.
  */
@@ -686,10 +694,13 @@ function TerminalItem({
   return (
     <div
       className={cn(
-        // Rows read as a list, not as a stack of boxes: the resting edge is
-        // transparent and the resting fill is a step off the card, so the
-        // only visible edges in the card belong to rows that want something.
-        'flex w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-muted/40 py-1 pr-1 pl-1.5 text-left text-xs transition-colors',
+        // A row is its own object inside the card, not a tint of it. The
+        // resting fill is a full step up from the card surface and carries a
+        // hairline edge, so a terminal reads as a thing you can act on at a
+        // glance; hover lifts it one further step. `bg-muted/40` blended back
+        // down to almost the card colour, which is what made a column of rows
+        // read as one grey smear.
+        'group/row flex w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted py-1 pr-1 pl-1.5 text-left text-xs transition-colors',
         // A row that wants something carries a steady edge from the shared
         // vocabulary — amber to act on, violet to review — and the motion
         // stays in the badge so the label remains readable. The hover
@@ -710,7 +721,9 @@ function TerminalItem({
         type="button"
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
+        <span className="min-w-0 flex-1 truncate font-medium font-mono text-foreground">
+          {label}
+        </span>
         {agentStatus ? (
           <AgentStatusBadge className="shrink-0" snapshot={agentStatus} />
         ) : null}
@@ -732,7 +745,7 @@ function TerminalItem({
           render={
             <Button
               aria-label="Restart terminal"
-              className="size-5 shrink-0 text-muted-foreground hover:text-foreground"
+              className={cn(ROW_ACTION_CLASS, 'hover:text-foreground')}
               onClick={(e) => {
                 e.stopPropagation()
                 onRestart(terminal.id)
@@ -751,7 +764,7 @@ function TerminalItem({
           render={
             <Button
               aria-label="Close terminal"
-              className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+              className={cn(ROW_ACTION_CLASS, 'hover:text-destructive')}
               onClick={(e) => {
                 e.stopPropagation()
                 onClose(terminal.id)

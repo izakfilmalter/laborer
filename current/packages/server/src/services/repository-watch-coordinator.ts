@@ -24,7 +24,6 @@
  * via the Effect finalizer.
  *
  * @see PRD-opencode-inspired-repo-watching.md — Issues 3, 4 & 5
- * @see PRD-file-watcher-extraction.md
  */
 
 import { existsSync } from 'node:fs'

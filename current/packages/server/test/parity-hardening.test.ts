@@ -11,7 +11,6 @@
  * 3. Coverage reporting includes the updated repo-watching areas.
  *
  * @see PRD-opencode-repo-watching-alignment — Issue 7
- * @see PRD-file-watcher-extraction.md
  */
 
 import { existsSync, rmSync, writeFileSync } from 'node:fs'

@@ -6,11 +6,11 @@
 
 Run commands from the repository root:
 
-- Check formatting: `bun run --cwd current format`
-- Fix formatting: `bun run --cwd current format:fix`
-- Typecheck all workspaces: `bun run --cwd current typecheck`
-- Test all workspaces: `bun run --cwd current test`
-- Run the full check: `bun run --cwd current check`
+- Check formatting: `bun run format`
+- Fix formatting: `bun run format:fix`
+- Typecheck all workspaces: `bun run typecheck`
+- Test all workspaces: `bun run test`
+- Run the full check: `bun run check`
 
 `check` runs `format:fix`, so it may modify files. During development, run the narrowest relevant package test first; finish with the full check when feasible.
 

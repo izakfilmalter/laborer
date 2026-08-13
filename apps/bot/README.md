@@ -77,13 +77,13 @@ identity and are deleted.
 From the repository root:
 
 ```sh
-bun run --cwd next start:slack
+bun run --cwd apps/bot start:slack
 ```
 
 For development, use plain Node watch restart:
 
 ```sh
-bun run --cwd next dev:slack
+bun run --cwd apps/bot dev:slack
 ```
 
 A restart does not drain or replay in-flight conversational work. Changes to
@@ -95,8 +95,8 @@ The dedicated manual canaries remain available under isolated credentials.
 `start:chat-canary` isolates the Chat boundary with a placeholder responder:
 
 ```sh
-bun run --cwd next start:chat-canary
-bun run --cwd next start:acp-canary
+bun run --cwd apps/bot start:chat-canary
+bun run --cwd apps/bot start:acp-canary
 ```
 
 Do not run canaries against production app credentials.
@@ -112,7 +112,7 @@ does not select an alternate conversational runtime.
 Automated checks are deterministic and offline:
 
 ```sh
-bun run --cwd next check
+bun run --cwd apps/bot check
 ```
 
 `Emulate` is the Chat SDK's deterministic offline test harness, never a daemon

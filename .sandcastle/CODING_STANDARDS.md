@@ -4,7 +4,7 @@ The reviewer agents load this file during Sandcastle review.
 
 ## Scope and architecture
 
-- Default product work to the Slack-native bot workspace (`apps/bot`; `apps/bot/` on pre-flatten branches); change the legacy desktop app (`apps/desktop`, `apps/web`, and shared `packages/*`; formerly `apps/desktop/`) only when an issue explicitly concerns it.
+- Default product work to the Slack-native bot workspace (`apps/bot`; `next/` on pre-flatten branches); change the legacy desktop app (`apps/desktop`, `apps/web`, and shared `packages/*`; formerly `current/`) only when an issue explicitly concerns it.
 - Preserve the ownership boundaries and canonical language in `AGENTS.md`, the nearest implementation `AGENTS.md`, and `CONTEXT.md`.
 - The Runner owns ingestion, durable turn ordering, process supervision, and delivery. Work handlers own workflow meaning, tools, agent choice, continuation state, and repository policy.
 - Keep Slack, ACP, and OpenCode details in adapters or configured handlers rather than the generic core.
@@ -28,7 +28,7 @@ The reviewer agents load this file during Sandcastle review.
 ## Verification
 
 - Run targeted checks while iterating.
-- Format and check each affected workspace with the `format:fix` and `check` scripts declared in that tree's `package.json` (for example `bun run --cwd apps/bot format:fix` then `bun run --cwd apps/bot check`, or the root scripts once the merged root manifest provides them). On pre-flatten branches that still have `apps/desktop/` and `apps/bot/`, use those directories instead. Run every affected workspace when a change crosses workspace boundaries.
+- Format and check each affected workspace with the `format:fix` and `check` scripts declared in that tree's `package.json` (for example `bun run --cwd apps/bot format:fix` then `bun run --cwd apps/bot check`, or the root scripts once the merged root manifest provides them). On pre-flatten branches that still have `current/` and `next/`, use those directories instead. Run every affected workspace when a change crosses workspace boundaries.
 - Add deterministic regression coverage for behavior changes. Use fakes and Emulate instead of live services.
 
 ## Sandcastle workflow

@@ -19,7 +19,7 @@ supported matrix rather than describing separate production receivers.
 | `chat` | `4.37.0` | exact dependency and lockfile |
 | `@chat-adapter/slack` | `4.37.0` | exact dependency and lockfile |
 
-The final Sandcastle code-review agent owns `bun run --cwd next check` and its
+The final Sandcastle code-review agent owns `bun run --cwd apps/bot check` and its
 evidence. It performs formatting, typechecking, all credential-free
 deterministic offline tests, and the pinned real OpenCode compatibility and
 policy tests against its final reviewed PR head. The runner requires a clean,

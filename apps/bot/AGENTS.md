@@ -17,11 +17,11 @@ Keep throwaway work inside its named prototype unless the issue explicitly promo
 
 Run commands from the repository root:
 
-- Fix formatting: `bun run --cwd next format:fix`
-- Typecheck: `bun run --cwd next typecheck`
-- Test: `bun run --cwd next test`
-- Scan tracked files for Slack secrets: `bun run --cwd next check:secrets`
-- Run the full check: `bun run --cwd next check`
+- Fix formatting: `bun run --cwd apps/bot format:fix`
+- Typecheck: `bun run --cwd apps/bot typecheck`
+- Test: `bun run --cwd apps/bot test`
+- Scan tracked files for Slack secrets: `bun run --cwd apps/bot check:secrets`
+- Run the full check: `bun run --cwd apps/bot check`
 
 `check` verifies formatting but does not fix it. Run `format:fix` before the full check.
 
@@ -29,9 +29,9 @@ The live Slack entry point runs on Node because the Chat Slack adapter depends o
 
 ## Daemon Lifecycle
 
-- Start the live daemon from the repository root with `bun run --cwd next start:slack`.
+- Start the live daemon from the repository root with `bun run --cwd apps/bot start:slack`.
 - Stop it with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before starting another instance.
-- During daemon development, use `bun run --cwd next dev:slack`. Node watch mode restarts the one Chat/ACP composition; in-flight conversational work is intentionally not drained or replayed.
+- During daemon development, use `bun run --cwd apps/bot dev:slack`. Node watch mode restarts the one Chat/ACP composition; in-flight conversational work is intentionally not drained or replayed.
 - Node watch mode follows imported source files. Changes to dependencies, environment, package metadata, or Node require restarting `dev:slack`.
 
 ## Effect 4

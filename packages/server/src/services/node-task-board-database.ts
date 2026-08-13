@@ -1,34 +1,24 @@
-import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type {
-  ExecutionStatus,
-  NewTask,
-  Task,
-  TaskPatch,
-  TaskRead,
-  TaskSnapshot,
-  TaskSource,
-  TaskStatus,
+import {
+  type ExecutionStatus,
+  NativeTaskDatabase,
+  type NewTask,
+  type Task,
+  type TaskPatch,
+  type TaskRead,
+  type TaskSnapshot,
+  type TaskSource,
+  TaskStaleRevisionError,
+  type TaskStatus,
 } from '@laborer/task-db'
-import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   description, created_at, updated_at, revision`
-const MAX_SNAPSHOT_TASKS = 10_000
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
-const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
-  title: 'title',
-  status: 'status',
-  executionStatus: 'execution_status',
-  slackPermalink: 'slack_permalink',
-  worktreePath: 'worktree_path',
-  branchName: 'branch_name',
-  description: 'description',
-}
 const MAX_BRANCH_TASKS = 1000
 const MAX_CAS_ATTEMPTS = 5
 
@@ -178,167 +168,63 @@ class StalePrTaskTransition extends Error {}
 export class NodeTaskBoardDatabase {
   readonly #database: DatabaseSync
   readonly #path: string
+  readonly #shared: NativeTaskDatabase
 
-  private constructor(database: DatabaseSync, path: string) {
+  private constructor(
+    database: DatabaseSync,
+    path: string,
+    shared: NativeTaskDatabase
+  ) {
     this.#database = database
     this.#path = path
+    this.#shared = shared
   }
 
   static open(path: string): NodeTaskBoardDatabase {
     mkdirSync(dirname(path), { recursive: true })
-    const database = new DatabaseSync(path)
+    const shared = NativeTaskDatabase.open(path)
+    let database: DatabaseSync | undefined
     try {
+      database = new DatabaseSync(path)
       database.exec('PRAGMA busy_timeout = 5000')
       database.exec('PRAGMA journal_mode = WAL')
       database.exec('PRAGMA synchronous = NORMAL')
       database.exec('PRAGMA foreign_keys = ON')
-      const result = new NodeTaskBoardDatabase(database, path)
-      result.#migrate()
-      return result
+      return new NodeTaskBoardDatabase(database, path, shared)
     } catch (error) {
-      database.close()
+      database?.close()
+      shared.close()
       throw error
     }
   }
 
   close(): void {
     this.#database.close()
+    this.#shared.close()
   }
 
   snapshot(): TaskSnapshot {
-    return this.#readTransaction(() => this.#snapshotUnsafe())
+    return this.#shared.snapshot()
   }
 
   findTask(taskId: string): Task | null {
-    const row = this.#database
-      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
-      .get(taskId)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    return this.#shared.find(taskId)
   }
 
   readChanges(sequence: number, limit = 1000): TaskRead {
-    if (!(Number.isSafeInteger(sequence) && sequence >= 0)) {
-      throw new Error('A task change cursor must be a nonnegative integer')
-    }
-    if (!(Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000)) {
-      throw new Error('A task change limit must be between 1 and 1000')
-    }
-
-    return this.#readTransaction(() => {
-      const bounds = sqliteRow(
-        this.#database
-          .prepare(
-            'SELECT MIN(sequence) AS minimum, MAX(sequence) AS maximum FROM task_changes'
-          )
-          .get()
-      )
-      const minimum =
-        bounds.minimum === null
-          ? null
-          : safeInteger(bounds.minimum, 'task_changes.minimum')
-      const maximum =
-        bounds.maximum === null
-          ? null
-          : safeInteger(bounds.maximum, 'task_changes.maximum')
-      if (
-        (maximum === null && sequence > 0) ||
-        (maximum !== null && sequence > maximum) ||
-        (minimum !== null && minimum > sequence + 1)
-      ) {
-        return this.#snapshotUnsafe()
-      }
-
-      const changes = this.#database
-        .prepare(
-          'SELECT sequence, task_id FROM task_changes WHERE sequence > ? ORDER BY sequence LIMIT ?'
-        )
-        .all(sequence, limit)
-        .map(sqliteRow)
-      if (
-        changes.some(
-          (change, index) =>
-            safeInteger(change.sequence, 'task_changes.sequence') !==
-            sequence + index + 1
-        )
-      ) {
-        return this.#snapshotUnsafe()
-      }
-
-      const taskIds = [
-        ...new Set(
-          changes.map((change) =>
-            requiredString(change.task_id, 'task_changes.task_id')
-          )
-        ),
-      ]
-      const tasks: Task[] = []
-      const deletedTaskIds: string[] = []
-      const findTask = this.#database.prepare(
-        `SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`
-      )
-      for (const taskId of taskIds) {
-        const row = findTask.get(taskId)
-        if (row === undefined) {
-          deletedTaskIds.push(taskId)
-        } else {
-          tasks.push(rowToTask(sqliteRow(row)))
-        }
-      }
-
-      const last = changes.at(-1)
-      return {
-        _tag: 'delta',
-        cursor:
-          last === undefined
-            ? sequence
-            : safeInteger(last.sequence, 'task_changes.sequence'),
-        deletedTaskIds,
-        tasks,
-      }
-    })
+    return this.#shared.readChanges(sequence, limit)
   }
 
   find(id: string): Task | null {
-    const row = this.#database
-      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
-      .get(id)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    return this.#shared.find(id)
   }
 
   insert(input: NewTask, changedAt = Date.now()): Task {
-    const createdAt = input.createdAt ?? changedAt
-    return this.#writeTransaction(() => {
-      this.#database
-        .prepare(`INSERT INTO tasks (
-          id, root_path, title, status, source, execution_id, action_name,
-          execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
-          (SELECT COALESCE(MIN(sort_order), 0) - 1 FROM tasks WHERE status = ?))`)
-        .run(
-          input.id,
-          input.rootPath,
-          input.title,
-          input.status,
-          input.source,
-          input.executionId ?? null,
-          input.actionName ?? null,
-          input.executionStatus ?? null,
-          input.slackPermalink ?? null,
-          input.worktreePath ?? null,
-          input.branchName ?? null,
-          input.description ?? null,
-          createdAt,
-          changedAt,
-          input.status
-        )
-      this.#appendChange(input.id, changedAt)
-      const task = this.find(input.id)
-      if (!task) {
-        throw new Error(`Inserted task ${input.id} could not be read`)
-      }
-      return task
-    })
+    const result = this.#shared.insert(input, changedAt)
+    if (result.inserted) {
+      notifyLaborerDatabaseWrite(this.#path)
+    }
+    return result.task
   }
 
   update(
@@ -347,34 +233,17 @@ export class NodeTaskBoardDatabase {
     patch: TaskPatch,
     changedAt = Date.now()
   ): Task {
-    const entries = (Object.keys(patch) as (keyof TaskPatch)[]).map(
-      (field) => [field, patch[field]] as const
-    )
-    if (entries.length === 0) {
-      throw new Error('A task update requires at least one field')
+    let task: Task
+    try {
+      task = this.#shared.update(id, expectedRevision, patch, changedAt)
+    } catch (error) {
+      if (error instanceof TaskStaleRevisionError) {
+        throw new Error(`Task ${id} has a stale revision`, { cause: error })
+      }
+      throw error
     }
-    return this.#writeTransaction(() => {
-      const result = this.#database
-        .prepare(`UPDATE tasks SET ${entries
-          .map(([field]) => `${PATCH_COLUMNS[field]} = ?`)
-          .join(', ')}, updated_at = ?, revision = revision + 1
-          WHERE id = ? AND revision = ?`)
-        .run(
-          ...entries.map(([, value]) => value ?? null),
-          changedAt,
-          id,
-          expectedRevision
-        )
-      if (result.changes === 0) {
-        throw new Error(`Task ${id} has a stale revision`)
-      }
-      this.#appendChange(id, changedAt)
-      const task = this.find(id)
-      if (!task) {
-        throw new Error(`Updated task ${id} could not be read`)
-      }
-      return task
-    })
+    notifyLaborerDatabaseWrite(this.#path)
+    return task
   }
 
   /**
@@ -392,7 +261,7 @@ export class NodeTaskBoardDatabase {
       throw new Error('A task move requires a positive expected revision')
     }
     return this.#writeTransaction(() => {
-      const initial = this.find(id)
+      const initial = this.#findLocal(id)
       if (initial === null) {
         throw new Error(`Task not found: ${id}`)
       }
@@ -415,7 +284,7 @@ export class NodeTaskBoardDatabase {
         throw new Error(`Task changed while moving: ${id}`)
       }
       this.#appendChange(id, changedAt)
-      const moved = this.find(id)
+      const moved = this.#findLocal(id)
       if (moved === null) {
         throw new Error(`Moved task could not be read: ${id}`)
       }
@@ -502,7 +371,7 @@ export class NodeTaskBoardDatabase {
           input.baseSha ?? null
         )
       this.#appendChange(input.id, changedAt)
-      const task = this.find(input.id)
+      const task = this.#findLocal(input.id)
       if (!task) {
         throw new Error(`Adopted worktree task ${input.id} could not be read`)
       }
@@ -592,82 +461,17 @@ export class NodeTaskBoardDatabase {
     return null
   }
 
-  #snapshotUnsafe(): TaskSnapshot {
-    const rows = this.#database
-      .prepare(
-        `SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id LIMIT ?`
-      )
-      .all(MAX_SNAPSHOT_TASKS + 1)
-    if (rows.length > MAX_SNAPSHOT_TASKS) {
-      throw new Error(
-        `Task board snapshot exceeds the ${MAX_SNAPSHOT_TASKS} task limit`
-      )
-    }
-    const cursor = sqliteRow(
-      this.#database
-        .prepare(
-          'SELECT COALESCE(MAX(sequence), 0) AS cursor FROM task_changes'
-        )
-        .get()
-    )
-    return {
-      _tag: 'snapshot',
-      cursor: safeInteger(cursor.cursor, 'task_changes.cursor'),
-      tasks: rows.map((row) => rowToTask(sqliteRow(row))),
-    }
-  }
-
-  #migrate(): void {
-    this.#database.exec('BEGIN IMMEDIATE')
-    try {
-      this.#database.exec(`CREATE TABLE IF NOT EXISTS __drizzle_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        name TEXT NOT NULL UNIQUE
-      )`)
-      const applied = this.#database
-        .prepare('SELECT name, hash FROM __drizzle_migrations ORDER BY id')
-        .all()
-        .map(sqliteRow)
-      for (const [index, row] of applied.entries()) {
-        const migration = taskDbMigrations[index]
-        const name = requiredString(row.name, 'migration name')
-        if (!migration || migration.name !== name) {
-          throw new Error(
-            `Task database migration ledger is invalid at ${name}`
-          )
-        }
-        const hash = createHash('sha256').update(migration.sql).digest('hex')
-        if (hash !== requiredString(row.hash, 'migration hash')) {
-          throw new Error(`Task database migration hash mismatch: ${name}`)
-        }
-      }
-      const insertMigration = this.#database.prepare(
-        'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
-      )
-      for (const migration of taskDbMigrations.slice(applied.length)) {
-        this.#database.exec(
-          migration.sql.replaceAll('--> statement-breakpoint', '')
-        )
-        const hash = createHash('sha256').update(migration.sql).digest('hex')
-        insertMigration.run(hash, Date.now(), migration.name)
-      }
-      this.#database.exec('COMMIT')
-    } catch (error) {
-      try {
-        this.#database.exec('ROLLBACK')
-      } catch {
-        // Preserve the migration failure.
-      }
-      throw error
-    }
-  }
-
   #appendChange(taskId: string, changedAt: number): void {
     this.#database
       .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
       .run(taskId, changedAt)
+  }
+
+  #findLocal(id: string): Task | null {
+    const row = this.#database
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .get(id)
+    return row === undefined ? null : rowToTask(sqliteRow(row))
   }
 
   #writeTransaction<A>(operation: () => A): A {
@@ -701,22 +505,6 @@ export class NodeTaskBoardDatabase {
           Math.min(250, 10 * 2 ** (attempt - 1) * (0.5 + Math.random()))
         )
       }
-    }
-  }
-
-  #readTransaction<A>(operation: () => A): A {
-    this.#database.exec('BEGIN')
-    try {
-      const result = operation()
-      this.#database.exec('COMMIT')
-      return result
-    } catch (error) {
-      try {
-        this.#database.exec('ROLLBACK')
-      } catch {
-        // Preserve the read failure.
-      }
-      throw error
     }
   }
 }

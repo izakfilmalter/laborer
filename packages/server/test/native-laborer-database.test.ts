@@ -56,6 +56,20 @@ describe('NativeLaborerDatabase', () => {
     expect(() => NativeTaskDatabase.open(path).close()).not.toThrow()
   })
 
+  it('opens the aggregate database after the shared wrapper migrates it', () => {
+    const path = databasePath()
+    const shared = NativeTaskDatabase.open(path)
+    shared.close()
+
+    const server = NativeLaborerDatabase.open(path)
+    expect(server.snapshot()).toMatchObject({
+      projects: [],
+      settings: [],
+      tasks: [],
+    })
+    server.close()
+  })
+
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     expect(database.migrationNames()).toHaveLength(8)

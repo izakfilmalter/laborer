@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createTaskUlid, isTaskUlid } from '../src/task-ulid.js'
 
 describe('createTaskUlid', () => {
@@ -20,15 +20,24 @@ describe('createTaskUlid', () => {
     )
   })
 
+  it('rejects non-finite timestamps instead of creating malformed ids', () => {
+    expect(() => createTaskUlid(Number.NaN)).toThrow(RangeError)
+    expect(() => createTaskUlid(Number.POSITIVE_INFINITY)).toThrow(RangeError)
+    expect(() => createTaskUlid(Number.NEGATIVE_INFINITY)).toThrow(RangeError)
+  })
+
   it('orders lexically by creation time', () => {
     expect(createTaskUlid(1000) < createTaskUlid(2000)).toBe(true)
   })
 
-  it('never collides across a burst of same-millisecond ids', () => {
-    const ids = new Set(
-      Array.from({ length: 1000 }, () => createTaskUlid(1234))
-    )
-    expect(ids.size).toBe(1000)
+  it('encodes Web Crypto entropy without probabilistic assertions', () => {
+    const getRandomValues = vi
+      .spyOn(globalThis.crypto, 'getRandomValues')
+      .mockImplementation(() => new Uint8Array(16).fill(31))
+
+    expect(createTaskUlid(0)).toBe('0000000000ZZZZZZZZZZZZZZZZ')
+    expect(getRandomValues).toHaveBeenCalledOnce()
+    getRandomValues.mockRestore()
   })
 })
 

@@ -7,6 +7,9 @@ const RANDOM_LENGTH = 16
 const TASK_ULID_PATTERN = /^[0-7][0-9ABCDEFGHJKMNPQRSTVWXYZ]{25}$/
 
 export const createTaskUlid = (time = Date.now()): string => {
+  if (!Number.isFinite(time)) {
+    throw new RangeError('Task ULID timestamp must be finite')
+  }
   let timestamp = Math.max(0, Math.min(Math.trunc(time), MAX_TIMESTAMP))
   let encodedTime = ''
   for (let index = 0; index < TIME_LENGTH; index += 1) {

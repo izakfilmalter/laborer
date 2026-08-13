@@ -179,5 +179,7 @@ export const subscribeToSharedState = (
             database.close()
           })
       ),
+    // Bound a stalled subscriber. A dropped delta sets snapshotRequired, so
+    // the next wakeup or poll restores the subscriber's authoritative state.
     { bufferSize: 16, strategy: 'dropping' }
   )

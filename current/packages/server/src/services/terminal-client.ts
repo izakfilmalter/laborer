@@ -79,7 +79,7 @@ type TerminalWorkspaceMap = Map<string, string>
  * Shape of a terminal record returned to RPC handlers.
  * Matches the fields needed for the TerminalResponse RPC schema in LaborerRpcs.
  */
-interface TerminalRecord {
+export interface TerminalRecord {
   readonly command: string
   readonly id: string
   readonly status: 'running' | 'stopped'

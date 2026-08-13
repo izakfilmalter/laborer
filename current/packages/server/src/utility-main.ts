@@ -476,8 +476,7 @@ const selectMcpPort = (preferred: number): Promise<number> => {
 const makeMcpHttpLayer = (port: number) => {
   const config = { host: '127.0.0.1', port } as const
   const routes = TaskMcpToolsLayer.pipe(
-    Layer.provideMerge(TaskMcpProtocolLayer),
-    Layer.provide(HttpRouter.layer)
+    Layer.provideMerge(TaskMcpProtocolLayer)
   )
   return Layer.mergeAll(
     HttpRouter.serve(routes, { middleware: mcpOriginGuard }),

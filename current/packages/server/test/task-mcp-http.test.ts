@@ -117,14 +117,11 @@ describe('task MCP HTTP endpoint', () => {
       { id: 'project-1', name: 'First', rootPath: firstProject },
       { id: 'project-2', name: 'Second', rootPath: secondProject },
     ])
-    const protocol = TaskMcpProtocolLayer.pipe(Layer.provide(HttpRouter.layer))
-    const routes = TaskMcpToolsLayer.pipe(Layer.provideMerge(protocol))
+    const routes = TaskMcpToolsLayer.pipe(
+      Layer.provideMerge(TaskMcpProtocolLayer)
+    )
     const serverLayer = Layer.mergeAll(
-      routes.pipe(
-        Layer.provide(
-          HttpRouter.serve(protocol, { middleware: mcpOriginGuard })
-        )
-      ),
+      HttpRouter.serve(routes, { middleware: mcpOriginGuard }),
       serverDiscoveryLayer({ host: '127.0.0.1', port: 0 }, discoveryPath)
     ).pipe(
       Layer.provide(AgentTaskService.layer(databasePath)),
@@ -290,14 +287,11 @@ describe('task MCP HTTP endpoint', () => {
     const databaseLayer = projectDatabaseLayer(databasePath, [
       { id: 'project-1', name: 'Project', rootPath: root },
     ])
-    const protocol = TaskMcpProtocolLayer.pipe(Layer.provide(HttpRouter.layer))
-    const routes = TaskMcpToolsLayer.pipe(Layer.provideMerge(protocol))
+    const routes = TaskMcpToolsLayer.pipe(
+      Layer.provideMerge(TaskMcpProtocolLayer)
+    )
     const serverLayer = Layer.mergeAll(
-      routes.pipe(
-        Layer.provide(
-          HttpRouter.serve(protocol, { middleware: mcpOriginGuard })
-        )
-      )
+      HttpRouter.serve(routes, { middleware: mcpOriginGuard })
     ).pipe(
       Layer.provide(AgentTaskService.layer(databasePath)),
       Layer.provide(

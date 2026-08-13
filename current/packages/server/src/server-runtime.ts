@@ -145,7 +145,7 @@ const makeRoutesLayer = Layer.unwrap(
       HttpRouter.add('GET', '/', HttpServerResponse.empty({ status: 204 })),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
       mcpLayer
-    ).pipe(Layer.provideMerge(HttpRouter.layer))
+    )
   })
 )
 

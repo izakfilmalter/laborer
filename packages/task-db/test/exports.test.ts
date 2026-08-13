@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { describe, expect, it } from 'vitest'
 
 const migrationLedger = [
   [

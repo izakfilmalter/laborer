@@ -25,7 +25,6 @@ import {
   GitBranch,
   MessageSquare,
   Pencil,
-  Plus,
   Slack,
   SquarePen,
   Terminal,
@@ -53,6 +52,11 @@ import {
 } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import {
+  type ComposerCloseReason,
+  ComposerToggleButton,
+  InlineComposer,
+} from '@/components/inline-composer'
 import {
   type BoardTask,
   type BoardTaskStatus,
@@ -103,11 +107,6 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from '@/components/ui/input-group'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
@@ -624,47 +623,23 @@ function AddCardButton({
   readonly open: boolean
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            // Only reference the composer while it exists in the tree.
-            aria-controls={open ? composerId : undefined}
-            aria-expanded={open}
-            aria-label={`Add card to ${columnTitle}`}
-            className={cn(
-              'ml-auto text-muted-foreground',
-              open && 'bg-accent text-foreground'
-            )}
-            id={id}
-            onClick={onToggle}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        <Plus
-          className={cn('size-3.5 transition-transform', open && 'rotate-45')}
-        />
-      </TooltipTrigger>
-      <TooltipContent>{open ? 'Close composer' : 'Add card'}</TooltipContent>
-    </Tooltip>
+    <ComposerToggleButton
+      className="ml-auto"
+      closedLabel="Add card"
+      composerId={composerId}
+      id={id}
+      label={`Add card to ${columnTitle}`}
+      onToggle={onToggle}
+      open={open}
+    />
   )
 }
 
 /**
- * Why the composer closed. Esc is a deliberate cancel, so focus goes back to
- * the control that opened it; a blur means the person is already somewhere
- * else and moving their focus again would yank them back.
- */
-type ComposerCloseReason = 'cancel' | 'blur'
-
-/**
- * The inline card composer for one column: Enter commits, pasting a complete
- * Slack permalink commits immediately, and Esc cancels. It stays open after a
- * commit so several cards can be typed in a row, and it reports what the text
- * will become before it is committed.
+ * The inline card composer for one column — the shared composer, configured
+ * for card titles and Slack links. The card is optimistic: this mints its id
+ * so the synthesized row and the stored row share one identity, and withdraws
+ * it if the create is rejected.
  */
 function AddCardComposer({
   column,
@@ -687,29 +662,14 @@ function AddCardComposer({
   /** Canonical repo root for the lane, mirrored onto the optimistic row. */
   readonly projectRootPath: string
 }) {
-  const [value, setValue] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [confirmation, setConfirmation] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
   const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
   const installCreateOverlay = useAtomSet(installTaskCreateOverlayAtom)
   const clearCreateOverlay = useAtomSet(clearTaskCreateOverlayAtom)
   const panelActions = usePanelActions()
-  const trimmed = value.trim()
-  const intent = composerIntent(trimmed)
 
-  const submit = (text = trimmed) => {
-    const submissionText = text.trim()
-    const submissionIntent = composerIntent(submissionText)
-    if (submissionIntent === 'empty') {
-      return
-    }
-    setError(null)
-
-    // Optimistic: the composer mints the card's id and the card renders from
-    // the synthesized row now. The overlay settles when the authoritative
-    // stream stores the id; a rejected create withdraws the card and puts
-    // the text back so it can be corrected.
+  const commit = (text: string) => {
+    // The card renders from the synthesized row now. The overlay settles when
+    // the authoritative stream stores the id.
     const id = createTaskUlid()
     installCreateOverlay(
       pendingTaskRow({
@@ -717,18 +677,12 @@ function AddCardComposer({
         now: Date.now(),
         rootPath: projectRootPath,
         status: column.id,
-        text: submissionText,
+        text,
       })
     )
-    setValue('')
-    setConfirmation(
-      submissionIntent === 'slack'
-        ? `Slack card added to ${column.title} — analyzing in the background.`
-        : `Card added to ${column.title}.`
-    )
 
-    createTask({
-      payload: { id, projectId, status: column.id, text: submissionText },
+    return createTask({
+      payload: { id, projectId, status: column.id, text },
     })
       .then((created) => {
         openProvisionedAgent(
@@ -745,111 +699,53 @@ function AddCardComposer({
       })
       .catch((cause: unknown) => {
         clearCreateOverlay(id)
-        setConfirmation(null)
-        setError(extractErrorMessage(cause))
-        // Put the rejected text back to be corrected — unless the person has
-        // already started typing the next card.
-        setValue((current) => (current.length === 0 ? submissionText : current))
-        inputRef.current?.focus()
+        // The composer reports it and puts the text back.
+        throw cause
       })
   }
 
-  const hint = (() => {
-    if (error !== null) {
-      return { className: 'text-destructive', text: error }
-    }
-    if (intent === 'slack') {
-      return {
-        className: 'text-muted-foreground',
-        text:
-          column.id === 'in_progress'
-            ? 'Slack link — analyzed in the background, then a workspace opens.'
-            : 'Slack link — analyzed in the background.',
-      }
-    }
-    if (intent === 'unrecognized-link') {
-      return {
-        className: 'text-warning',
-        text: 'Not a Slack message link — this becomes a manual card titled with the URL.',
-      }
-    }
-    if (confirmation !== null) {
-      return { className: 'text-muted-foreground', text: confirmation }
-    }
-    return {
-      className: 'text-muted-foreground',
-      text: 'Enter to add · Esc to close',
-    }
-  })()
-
   return (
-    <div className="flex flex-col gap-1 px-2 pt-1.5" id={composerId}>
-      <InputGroup className="bg-background">
-        <InputGroupAddon>
-          {intent === 'slack' ? (
+    <div className="px-2 pt-1.5">
+      <InlineComposer
+        addon={(trimmed) =>
+          composerIntent(trimmed) === 'slack' ? (
             <Slack aria-hidden="true" className="size-3.5" />
           ) : (
             <SquarePen aria-hidden="true" className="size-3.5" />
-          )}
-        </InputGroupAddon>
-        <InputGroupInput
-          aria-describedby={`${composerId}-hint`}
-          aria-invalid={error !== null}
-          aria-label={`Card title or Slack message link for ${column.title}`}
-          autoFocus
-          className="text-xs"
-          onBlur={() => {
-            // An abandoned empty composer closes itself; typed text stays put.
-            if (trimmed.length === 0) {
-              onClose('blur')
+          )
+        }
+        ariaLabel={`Card title or Slack message link for ${column.title}`}
+        commit={commit}
+        commitsOnPaste={isSlackMessageUrl}
+        composerId={composerId}
+        confirmation={(trimmed) =>
+          composerIntent(trimmed) === 'slack'
+            ? `Slack card added to ${column.title} — analyzing in the background.`
+            : `Card added to ${column.title}.`
+        }
+        hint={(trimmed) => {
+          const intent = composerIntent(trimmed)
+          if (intent === 'slack') {
+            return {
+              className: 'text-muted-foreground',
+              text:
+                column.id === 'in_progress'
+                  ? 'Slack link — analyzed in the background, then a workspace opens.'
+                  : 'Slack link — analyzed in the background.',
             }
-          }}
-          onChange={(event) => {
-            setValue(event.target.value)
-            setError(null)
-            setConfirmation(null)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              onClose('cancel')
-            } else if (event.key === 'Enter') {
-              event.preventDefault()
-              submit()
+          }
+          if (intent === 'unrecognized-link') {
+            return {
+              className: 'text-warning',
+              text: 'Not a Slack message link — this becomes a manual card titled with the URL.',
             }
-          }}
-          onPaste={(event) => {
-            const pastedText = event.clipboardData.getData('text')
-            const input = event.currentTarget
-            const selectionStart = input.selectionStart ?? input.value.length
-            const selectionEnd = input.selectionEnd ?? selectionStart
-            const nextValue = `${input.value.slice(0, selectionStart)}${pastedText}${input.value.slice(selectionEnd)}`
-            const nextText = nextValue.trim()
-
-            if (!isSlackMessageUrl(nextText)) {
-              return
-            }
-
-            // Submit the post-paste value directly. Waiting for React state
-            // would submit the value from the render before the paste.
-            event.preventDefault()
-            setValue(nextValue)
-            setError(null)
-            setConfirmation(null)
-            submit(nextText)
-          }}
-          placeholder="Title, or paste a Slack link"
-          ref={inputRef}
-          value={value}
-        />
-      </InputGroup>
-      <p
-        aria-live="polite"
-        className={cn('min-h-4 px-0.5 text-[11px]', hint.className)}
-        id={`${composerId}-hint`}
-      >
-        {hint.text}
-      </p>
+          }
+          return null
+        }}
+        idleHint={() => 'Enter to add · Esc to close'}
+        onClose={onClose}
+        placeholder="Title, or paste a Slack link"
+      />
     </div>
   )
 }

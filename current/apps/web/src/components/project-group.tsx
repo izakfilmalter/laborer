@@ -19,10 +19,10 @@ import {
   installProjectRemoveOverlayAtom,
 } from '@/atoms/shared-state'
 import {
-  type ComposerCloseReason,
   CreateWorkspaceButton,
   CreateWorkspaceComposer,
 } from '@/components/create-workspace-composer'
+import type { ComposerCloseReason } from '@/components/inline-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import {
@@ -224,7 +224,7 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
       </div>
       {composerOpen && (
         // Outside the collapsible so the composer survives a collapse mid-typing.
-        <div className="ml-2 border-l pl-2">
+        <div className="ml-2 border-l pt-1 pl-2">
           <CreateWorkspaceComposer
             composerId={composerId}
             onClose={closeComposer}

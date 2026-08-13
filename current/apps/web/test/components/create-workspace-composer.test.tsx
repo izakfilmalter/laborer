@@ -263,7 +263,9 @@ describe('create workspace composer', () => {
     expect(toastError).not.toHaveBeenCalled()
   })
 
-  it('cancels on Escape and closes an abandoned empty composer on blur', async () => {
+  // The close semantics themselves belong to the shared composer; what this
+  // checks is that the masked control is wired to them.
+  it('wires the masked control to the shared close semantics', async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
     const input = renderComposer({ onClose })
@@ -275,19 +277,5 @@ describe('create workspace composer', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledWith('blur')
     })
-  })
-
-  it('keeps a composer with typed text open on blur', async () => {
-    const onClose = vi.fn()
-    const user = userEvent.setup()
-    const input = renderComposer({ onClose })
-
-    await user.type(input, 'my-feature')
-    input.blur()
-
-    await waitFor(() => {
-      expect(input.value).toBe('my-feature')
-    })
-    expect(onClose).not.toHaveBeenCalled()
   })
 })

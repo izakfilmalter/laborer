@@ -52,8 +52,12 @@ import {
   Stream,
 } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
-import { withInitialAgentPrompt } from './agent-launch-command.js'
+import {
+  withInitialAgentPrompt,
+  withPrestartedSession,
+} from './agent-launch-command.js'
 import { writeClaudeStatusHooks } from './claude-status-hooks.js'
+import { startOpenCodeSession } from './opencode-session.js'
 import {
   installOpenCodeStatusPlugin,
   writeAgentHookDiscovery,
@@ -120,6 +124,10 @@ class OpenCodePluginInstallError extends Data.TaggedError(
 
 class AgentHookDiscoveryWriteError extends Data.TaggedError(
   'AgentHookDiscoveryWriteError'
+)<{ readonly cause: unknown }> {}
+
+class OpenCodeSessionStartError extends Data.TaggedError(
+  'OpenCodeSessionStartError'
 )<{ readonly cause: unknown }> {}
 
 const AgentHookRequestSchema = Schema.fromJsonString(
@@ -376,14 +384,49 @@ const startAgentHookServer = (
     )
   })
 
+/**
+ * Whether this spawn should create the OpenCode session itself.
+ *
+ * Only OpenCode v2 needs it: v1 submits a `--prompt` on its own, and an
+ * empty prompt has nothing to start.
+ */
+const wantsPrestartedOpenCodeSession = (
+  command: string | undefined,
+  initialPrompt: string | undefined
+): initialPrompt is string =>
+  command === 'opencode2' &&
+  initialPrompt !== undefined &&
+  initialPrompt.trim() !== ''
+
+/**
+ * Launch an agent against work that is already running when a session was
+ * pre-started, and fall back to prefilling the prompt when it was not.
+ *
+ * A pre-started session wins over a prefilled prompt: asking the TUI for the
+ * same prompt again would submit it a second time.
+ */
+const withPromptOrSession = (
+  agentCommand: string,
+  initialPrompt?: string,
+  openCodeSessionId?: string
+) =>
+  openCodeSessionId === undefined
+    ? withInitialAgentPrompt(agentCommand, initialPrompt)
+    : withPrestartedSession(agentCommand, openCodeSessionId)
+
 /** Build the OpenCode command and environment passed to the terminal spawn. */
 const buildOpenCodeSpawnCommand = (
   agentCommand: 'opencode' | 'opencode2',
   terminalId: string,
   terminalPort: number,
-  initialPrompt?: string
+  initialPrompt?: string,
+  openCodeSessionId?: string
 ): { command: string; extraEnv: Record<string, string> } => {
-  const launchCommand = withInitialAgentPrompt(agentCommand, initialPrompt)
+  const launchCommand = withPromptOrSession(
+    agentCommand,
+    initialPrompt,
+    openCodeSessionId
+  )
   return {
     command: launchCommand.command,
     extraEnv: {
@@ -641,7 +684,8 @@ class TerminalClient extends Context.Service<
         agentCommand: string,
         terminalId: string,
         terminalPort: number,
-        initialPrompt?: string
+        initialPrompt?: string,
+        openCodeSessionId?: string
       ): { command: string; extraEnv: Record<string, string> } => {
         const hookUrl = `http://localhost:${terminalPort}/hook/agent-status`
         const extraEnv: Record<string, string> = {
@@ -666,9 +710,38 @@ class TerminalClient extends Context.Service<
           agentCommand as 'opencode' | 'opencode2',
           terminalId,
           terminalPort,
-          initialPrompt
+          initialPrompt,
+          openCodeSessionId
         )
       }
+
+      /**
+       * Create an OpenCode v2 session that already holds the prompt, so the
+       * terminal attaches to running work instead of a prefilled input box.
+       *
+       * Failure is not fatal: the caller falls back to `--prompt`, which
+       * still delivers the text and only costs the operator a keypress.
+       */
+      const prestartOpenCodeSession = Effect.fn(
+        'TerminalClient.prestartOpenCodeSession'
+      )(function* (agentCommand: string, directory: string, prompt: string) {
+        return yield* Effect.tryPromise({
+          try: () => startOpenCodeSession({ agentCommand, directory, prompt }),
+          catch: (cause) => new OpenCodeSessionStartError({ cause }),
+        }).pipe(
+          Effect.tap((sessionId) =>
+            Effect.logInfo(
+              `Pre-started OpenCode session ${sessionId} in ${directory}`
+            )
+          ),
+          Effect.catchTag('OpenCodeSessionStartError', ({ cause }) =>
+            Effect.logWarning(
+              `Could not pre-start an OpenCode session in ${directory}; falling back to a prefilled prompt: ${String(cause)}`
+            ).pipe(Effect.as(undefined))
+          ),
+          Effect.annotateLogs('module', logPrefix)
+        )
+      })
 
       /**
        * Convert a TerminalRpcError from the terminal service into a
@@ -719,6 +792,20 @@ class TerminalClient extends Context.Service<
           // inject it into the hook settings/env before the PTY starts.
           const terminalId = isHookableAgent ? crypto.randomUUID() : undefined
 
+          // OpenCode v2 prefills `--prompt` but does not submit it, so the
+          // session is created and prompted over the API first and the TUI
+          // simply attaches to it.
+          const openCodeSessionId = wantsPrestartedOpenCodeSession(
+            command,
+            initialPrompt
+          )
+            ? yield* prestartOpenCodeSession(
+                'opencode2',
+                workspace.worktreePath,
+                initialPrompt
+              )
+            : undefined
+
           // Build the command, potentially wrapping it with hook settings
           let launchCommand = {
             command: command ?? defaultShell,
@@ -729,10 +816,15 @@ class TerminalClient extends Context.Service<
               command,
               terminalId,
               terminalPort,
-              initialPrompt
+              initialPrompt,
+              openCodeSessionId
             )
           } else if (isPromptableAgent) {
-            launchCommand = withInitialAgentPrompt(command, initialPrompt)
+            launchCommand = withPromptOrSession(
+              command,
+              initialPrompt,
+              openCodeSessionId
+            )
           }
           const { command: agentCmd, extraEnv } = launchCommand
 

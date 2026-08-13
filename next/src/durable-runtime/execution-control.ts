@@ -1,17 +1,17 @@
-import { Effect, Schema } from "effect";
-import type { JsonSchema } from "effect/JsonSchema";
+import { Effect, Schema } from 'effect'
+import type { JsonSchema } from 'effect/JsonSchema'
 import {
   ExecutionControlReceipt,
   type RootDurableRuntimeShape,
   RUNTIME_FOLLOW_UP_MAX_LENGTH,
   RuntimeControlId,
   RuntimeExecutionId,
-} from "./root-runtime.ts";
+} from './root-runtime.ts'
 
 const InspectInput = Schema.Struct({
   controlId: RuntimeControlId,
   executionId: RuntimeExecutionId,
-});
+})
 const FollowUpInput = Schema.Struct({
   content: Schema.String.check(
     Schema.isPattern(/\S/),
@@ -19,33 +19,33 @@ const FollowUpInput = Schema.Struct({
   ),
   controlId: RuntimeControlId,
   executionId: RuntimeExecutionId,
-});
-const CancelInput = InspectInput;
+})
+const CancelInput = InspectInput
 
 const jsonSchemaFor = (schema: Schema.Top): JsonSchema => {
-  const document = Schema.toJsonSchemaDocument(schema);
+  const document = Schema.toJsonSchemaDocument(schema)
   return Object.keys(document.definitions).length === 0
     ? document.schema
-    : { ...document.schema, $defs: document.definitions };
-};
+    : { ...document.schema, $defs: document.definitions }
+}
 
 interface ExecutionControlTool {
   readonly annotations: {
-    readonly destructiveHint: boolean;
-    readonly idempotentHint: true;
-    readonly openWorldHint: false;
-    readonly readOnlyHint: boolean;
-  };
-  readonly description: string;
-  readonly inputSchema: JsonSchema;
+    readonly destructiveHint: boolean
+    readonly idempotentHint: true
+    readonly openWorldHint: false
+    readonly readOnlyHint: boolean
+  }
+  readonly description: string
+  readonly inputSchema: JsonSchema
   readonly invoke: (
     input: unknown
-  ) => Effect.Effect<ExecutionControlReceipt, unknown>;
+  ) => Effect.Effect<ExecutionControlReceipt, unknown>
   readonly name:
-    | "cancel-execution"
-    | "follow-up-execution"
-    | "inspect-execution";
-  readonly outputSchema: JsonSchema;
+    | 'cancel-execution'
+    | 'follow-up-execution'
+    | 'inspect-execution'
+  readonly outputSchema: JsonSchema
 }
 
 /**
@@ -54,11 +54,11 @@ interface ExecutionControlTool {
  * model-authored arguments, and no Action name participates in routing.
  */
 export const makeExecutionControlSurface = (options: {
-  readonly conversationId: string;
-  readonly runtime: RootDurableRuntimeShape;
-  readonly workspaceId: string;
+  readonly conversationId: string
+  readonly runtime: RootDurableRuntimeShape
+  readonly workspaceId: string
 }): readonly ExecutionControlTool[] => {
-  const outputSchema = jsonSchemaFor(ExecutionControlReceipt);
+  const outputSchema = jsonSchemaFor(ExecutionControlReceipt)
   return [
     {
       annotations: {
@@ -67,11 +67,11 @@ export const makeExecutionControlSurface = (options: {
         openWorldHint: false,
         readOnlyHint: false,
       },
-      description: "Cancel one exact owned running Execution.",
+      description: 'Cancel one exact owned running Execution.',
       inputSchema: jsonSchemaFor(CancelInput),
       invoke: (input) =>
         Schema.decodeUnknownEffect(CancelInput, {
-          onExcessProperty: "error",
+          onExcessProperty: 'error',
         })(input).pipe(
           Effect.flatMap((request) =>
             options.runtime.cancelExecution({
@@ -81,7 +81,7 @@ export const makeExecutionControlSurface = (options: {
             })
           )
         ),
-      name: "cancel-execution",
+      name: 'cancel-execution',
       outputSchema,
     },
     {
@@ -92,11 +92,11 @@ export const makeExecutionControlSurface = (options: {
         readOnlyHint: false,
       },
       description:
-        "Send one bounded durable follow-up to an exact owned Execution.",
+        'Send one bounded durable follow-up to an exact owned Execution.',
       inputSchema: jsonSchemaFor(FollowUpInput),
       invoke: (input) =>
         Schema.decodeUnknownEffect(FollowUpInput, {
-          onExcessProperty: "error",
+          onExcessProperty: 'error',
         })(input).pipe(
           Effect.flatMap((request) =>
             options.runtime.followUpExecution({
@@ -106,7 +106,7 @@ export const makeExecutionControlSurface = (options: {
             })
           )
         ),
-      name: "follow-up-execution",
+      name: 'follow-up-execution',
       outputSchema,
     },
     {
@@ -117,11 +117,11 @@ export const makeExecutionControlSurface = (options: {
         readOnlyHint: true,
       },
       description:
-        "Inspect one bounded safe snapshot of an exact owned Execution.",
+        'Inspect one bounded safe snapshot of an exact owned Execution.',
       inputSchema: jsonSchemaFor(InspectInput),
       invoke: (input) =>
         Schema.decodeUnknownEffect(InspectInput, {
-          onExcessProperty: "error",
+          onExcessProperty: 'error',
         })(input).pipe(
           Effect.flatMap((request) =>
             options.runtime.inspectExecution({
@@ -131,8 +131,8 @@ export const makeExecutionControlSurface = (options: {
             })
           )
         ),
-      name: "inspect-execution",
+      name: 'inspect-execution',
       outputSchema,
     },
-  ];
-};
+  ]
+}

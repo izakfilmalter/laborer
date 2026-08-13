@@ -8,118 +8,118 @@ import {
   Record,
   Redacted,
   Schema,
-} from "effect";
-import { SlackConfigValidationError } from "./errors.ts";
+} from 'effect'
+import { SlackConfigValidationError } from './errors.ts'
 
-const APP_TOKEN_PREFIX = ["x", "app", "-"].join("");
-const BOT_TOKEN_PREFIX = ["x", "oxb", "-"].join("");
-const WORKSPACE_REGISTRY_VARIABLE = "LABORER_SLACK_WORKSPACES";
+const APP_TOKEN_PREFIX = ['x', 'app', '-'].join('')
+const BOT_TOKEN_PREFIX = ['x', 'oxb', '-'].join('')
+const WORKSPACE_REGISTRY_VARIABLE = 'LABORER_SLACK_WORKSPACES'
 export const ACP_CANARY_SLACK_APP_TOKEN_VARIABLE =
-  "LABORER_ACP_CANARY_SLACK_APP_TOKEN";
+  'LABORER_ACP_CANARY_SLACK_APP_TOKEN'
 export const ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE =
-  "LABORER_ACP_CANARY_SLACK_BOT_TOKEN";
+  'LABORER_ACP_CANARY_SLACK_BOT_TOKEN'
 export const CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE =
-  "LABORER_CHAT_CANARY_SLACK_APP_TOKEN";
+  'LABORER_CHAT_CANARY_SLACK_APP_TOKEN'
 export const CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE =
-  "LABORER_CHAT_CANARY_SLACK_BOT_TOKEN";
+  'LABORER_CHAT_CANARY_SLACK_BOT_TOKEN'
 export const CHAT_CANARY_SLACK_WORKSPACES_VARIABLE =
-  "LABORER_CHAT_CANARY_SLACK_WORKSPACES";
-const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/;
-const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
+  'LABORER_CHAT_CANARY_SLACK_WORKSPACES'
+const TEAM_ID_PATTERN = /^T[A-Z0-9]+$/
+const BOT_TOKEN_REFERENCE_PATTERN = /^SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/
 const CHAT_CANARY_BOT_TOKEN_REFERENCE_PATTERN =
-  /^LABORER_CHAT_CANARY_SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/;
+  /^LABORER_CHAT_CANARY_SLACK_BOT_TOKEN(?:_[A-Z0-9_]+)?$/
 
 export interface SlackConfigShape {
-  readonly appToken: Redacted.Redacted<string>;
-  readonly botToken: Redacted.Redacted<string>;
+  readonly appToken: Redacted.Redacted<string>
+  readonly botToken: Redacted.Redacted<string>
 }
 
 export class SlackConfig extends Context.Service<
   SlackConfig,
   SlackConfigShape
->()("@laborer/slack/SlackConfig") {}
+>()('@laborer/slack/SlackConfig') {}
 
 const validateToken = (
   variable: string,
   token: Redacted.Redacted<string>,
   prefix: string
 ): Effect.Effect<Redacted.Redacted<string>, SlackConfigValidationError> => {
-  const value = Redacted.value(token);
+  const value = Redacted.value(token)
   if (value.trim().length === 0) {
-    return SlackConfigValidationError.make({ variable, reason: "blank" });
+    return SlackConfigValidationError.make({ variable, reason: 'blank' })
   }
   return value.startsWith(prefix)
     ? Effect.succeed(token)
     : SlackConfigValidationError.make({
         variable,
-        reason: "unexpected-token-kind",
-      });
-};
+        reason: 'unexpected-token-kind',
+      })
+}
 
 const SlackWorkspaceConfigFromJson = Schema.Struct({
   botTokenEnvironment: Schema.String,
   root: Schema.optional(Schema.String),
   teamId: Schema.String,
-});
+})
 
 const ChatCanaryWorkspaceConfigFromJson = Schema.Struct({
   botTokenEnvironment: Schema.String,
   teamId: Schema.String,
-});
+})
 
 export interface ChatCanaryWorkspaceConfig {
-  readonly botToken: Redacted.Redacted<string>;
-  readonly botTokenEnvironment: string;
-  readonly teamId: string;
+  readonly botToken: Redacted.Redacted<string>
+  readonly botTokenEnvironment: string
+  readonly teamId: string
 }
 
 export type ChatCanarySlackConfig =
-  | (SlackConfigShape & { readonly mode: "single-workspace" })
+  | (SlackConfigShape & { readonly mode: 'single-workspace' })
   | {
-      readonly appToken: Redacted.Redacted<string>;
-      readonly installations: readonly ChatCanaryWorkspaceConfig[];
-      readonly mode: "multi-workspace";
-    };
+      readonly appToken: Redacted.Redacted<string>
+      readonly installations: readonly ChatCanaryWorkspaceConfig[]
+      readonly mode: 'multi-workspace'
+    }
 
 export interface SlackInstallationConfig {
-  readonly bindingIndex: number;
-  readonly botToken: Redacted.Redacted<string>;
-  readonly botTokenEnvironment: string;
-  readonly expectedTeamId?: string;
-  readonly namespaceWorkspace: boolean;
-  readonly root?: string;
-  readonly tokenIsValid: boolean;
+  readonly bindingIndex: number
+  readonly botToken: Redacted.Redacted<string>
+  readonly botTokenEnvironment: string
+  readonly expectedTeamId?: string
+  readonly namespaceWorkspace: boolean
+  readonly root?: string
+  readonly tokenIsValid: boolean
   readonly validation:
-    | { readonly _tag: "Valid" }
-    | { readonly _tag: "Invalid"; readonly reason: string };
+    | { readonly _tag: 'Valid' }
+    | { readonly _tag: 'Invalid'; readonly reason: string }
 }
 
 export interface SlackDaemonConfig {
-  readonly appToken: Redacted.Redacted<string>;
-  readonly installations: readonly SlackInstallationConfig[];
-  readonly startupMode: "legacy" | "multi-workspace";
+  readonly appToken: Redacted.Redacted<string>
+  readonly installations: readonly SlackInstallationConfig[]
+  readonly startupMode: 'legacy' | 'multi-workspace'
 }
 
 const configFailure = (
   variable: string,
   reason: string
 ): SlackConfigValidationError =>
-  SlackConfigValidationError.make({ variable, reason });
+  SlackConfigValidationError.make({ variable, reason })
 
 const readToken = (
   environment: NodeJS.ProcessEnv,
   variable: string,
   prefix: string
 ): Effect.Effect<Redacted.Redacted<string>, SlackConfigValidationError> => {
-  const value = environment[variable];
-  return validateToken(variable, Redacted.make(value ?? ""), prefix);
-};
+  const value = environment[variable]
+  return validateToken(variable, Redacted.make(value ?? ''), prefix)
+}
 
 const matchesProductionBotToken = (
   environment: NodeJS.ProcessEnv,
   candidate: Redacted.Redacted<string>
 ): boolean => {
-  const candidateValue = Redacted.value(candidate);
+  const candidateValue = Redacted.value(candidate)
   return pipe(
     environment,
     Record.toEntries,
@@ -127,8 +127,8 @@ const matchesProductionBotToken = (
       ([name, value]) =>
         BOT_TOKEN_REFERENCE_PATTERN.test(name) && value === candidateValue
     )
-  );
-};
+  )
+}
 
 const chatCanaryBindingValidationReason = (
   entry: typeof ChatCanaryWorkspaceConfigFromJson.Type,
@@ -136,58 +136,58 @@ const chatCanaryBindingValidationReason = (
   tokenReferences: ReadonlySet<string>
 ): string | null => {
   if (!TEAM_ID_PATTERN.test(entry.teamId)) {
-    return "invalid-team-id";
+    return 'invalid-team-id'
   }
   if (teamIds.has(entry.teamId)) {
-    return "duplicate-team-id";
+    return 'duplicate-team-id'
   }
   if (
     !CHAT_CANARY_BOT_TOKEN_REFERENCE_PATTERN.test(entry.botTokenEnvironment)
   ) {
-    return "invalid-token-reference";
+    return 'invalid-token-reference'
   }
   return tokenReferences.has(entry.botTokenEnvironment)
-    ? "duplicate-token-reference"
-    : null;
-};
+    ? 'duplicate-token-reference'
+    : null
+}
 
-const loadChatCanaryInstallations = Effect.fn("loadChatCanaryInstallations")(
+const loadChatCanaryInstallations = Effect.fn('loadChatCanaryInstallations')(
   function* (environment: NodeJS.ProcessEnv, source: readonly unknown[]) {
-    const teamIds = new Set<string>();
-    const tokenReferences = new Set<string>();
-    const installations: ChatCanaryWorkspaceConfig[] = [];
+    const teamIds = new Set<string>()
+    const tokenReferences = new Set<string>()
+    const installations: ChatCanaryWorkspaceConfig[] = []
     for (const rawEntry of source) {
       const decoded = yield* Effect.result(
         Schema.decodeUnknownEffect(ChatCanaryWorkspaceConfigFromJson)(rawEntry)
-      );
-      if (decoded._tag === "Failure") {
+      )
+      if (decoded._tag === 'Failure') {
         return yield* configFailure(
           CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
-          "invalid-shape"
-        );
+          'invalid-shape'
+        )
       }
-      const entry = decoded.success;
+      const entry = decoded.success
       const validationReason = chatCanaryBindingValidationReason(
         entry,
         teamIds,
         tokenReferences
-      );
+      )
       if (validationReason !== null) {
         return yield* configFailure(
           CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
           validationReason
-        );
+        )
       }
       const botToken = yield* readToken(
         environment,
         entry.botTokenEnvironment,
         BOT_TOKEN_PREFIX
-      );
+      )
       if (matchesProductionBotToken(environment, botToken)) {
         return yield* configFailure(
           entry.botTokenEnvironment,
-          "matches-production-token"
-        );
+          'matches-production-token'
+        )
       }
       if (
         Redacted.value(botToken) ===
@@ -195,138 +195,135 @@ const loadChatCanaryInstallations = Effect.fn("loadChatCanaryInstallations")(
       ) {
         return yield* configFailure(
           entry.botTokenEnvironment,
-          "matches-other-canary-token"
-        );
+          'matches-other-canary-token'
+        )
       }
-      teamIds.add(entry.teamId);
-      tokenReferences.add(entry.botTokenEnvironment);
-      installations.push({ ...entry, botToken });
+      teamIds.add(entry.teamId)
+      tokenReferences.add(entry.botTokenEnvironment)
+      installations.push({ ...entry, botToken })
     }
-    return installations;
+    return installations
   }
-);
+)
 
 const invalidInstallation = (
   bindingIndex: number,
   reason: string
 ): SlackInstallationConfig => ({
   bindingIndex,
-  botToken: Redacted.make(""),
-  botTokenEnvironment: "",
+  botToken: Redacted.make(''),
+  botTokenEnvironment: '',
   namespaceWorkspace: true,
   tokenIsValid: false,
-  validation: { _tag: "Invalid", reason },
-});
+  validation: { _tag: 'Invalid', reason },
+})
 
 const bindingValidationReason = (
   entry: typeof SlackWorkspaceConfigFromJson.Type,
   teamIds: ReadonlySet<string>,
   tokenReferences: ReadonlySet<string>
 ): string | null => {
-  const teamIdHasUnexpectedFormat = !TEAM_ID_PATTERN.test(entry.teamId);
-  const teamIdIsDuplicated = teamIds.has(entry.teamId);
+  const teamIdHasUnexpectedFormat = !TEAM_ID_PATTERN.test(entry.teamId)
+  const teamIdIsDuplicated = teamIds.has(entry.teamId)
   const tokenReferenceHasUnexpectedFormat = !BOT_TOKEN_REFERENCE_PATTERN.test(
     entry.botTokenEnvironment
-  );
+  )
   const tokenReferenceIsDuplicated = tokenReferences.has(
     entry.botTokenEnvironment
-  );
-  const rootIsBlank = entry.root?.trim().length === 0;
+  )
+  const rootIsBlank = entry.root?.trim().length === 0
 
   if (teamIdHasUnexpectedFormat) {
-    return "invalid-team-id";
+    return 'invalid-team-id'
   }
   if (teamIdIsDuplicated) {
-    return "duplicate-team-id";
+    return 'duplicate-team-id'
   }
   if (tokenReferenceHasUnexpectedFormat) {
-    return "invalid-token-reference";
+    return 'invalid-token-reference'
   }
   if (tokenReferenceIsDuplicated) {
-    return "duplicate-token-reference";
+    return 'duplicate-token-reference'
   }
-  return rootIsBlank ? "blank-root" : null;
-};
+  return rootIsBlank ? 'blank-root' : null
+}
 
-export const loadSlackDaemonConfig = Effect.fn("loadSlackDaemonConfig")(
+export const loadSlackDaemonConfig = Effect.fn('loadSlackDaemonConfig')(
   function* (options: {
-    readonly defaultRoot: string;
-    readonly environment?: NodeJS.ProcessEnv;
+    readonly defaultRoot: string
+    readonly environment?: NodeJS.ProcessEnv
   }) {
-    const environment = options.environment ?? process.env;
+    const environment = options.environment ?? process.env
     const appToken = yield* readToken(
       environment,
-      "SLACK_APP_TOKEN",
+      'SLACK_APP_TOKEN',
       APP_TOKEN_PREFIX
-    );
-    const registrySource = environment[WORKSPACE_REGISTRY_VARIABLE];
+    )
+    const registrySource = environment[WORKSPACE_REGISTRY_VARIABLE]
     if (registrySource === undefined) {
       const botToken = yield* readToken(
         environment,
-        "SLACK_BOT_TOKEN",
+        'SLACK_BOT_TOKEN',
         BOT_TOKEN_PREFIX
-      );
+      )
       return {
         appToken,
         installations: [
           {
             bindingIndex: 0,
             botToken,
-            botTokenEnvironment: "SLACK_BOT_TOKEN",
+            botTokenEnvironment: 'SLACK_BOT_TOKEN',
             namespaceWorkspace: false,
             root: environment.LABORER_ROOT ?? options.defaultRoot,
             tokenIsValid: true,
-            validation: { _tag: "Valid" },
+            validation: { _tag: 'Valid' },
           },
         ],
-        startupMode: "legacy",
-      } satisfies SlackDaemonConfig;
+        startupMode: 'legacy',
+      } satisfies SlackDaemonConfig
     }
 
     if (registrySource.trim().length === 0) {
-      return yield* configFailure(WORKSPACE_REGISTRY_VARIABLE, "blank");
+      return yield* configFailure(WORKSPACE_REGISTRY_VARIABLE, 'blank')
     }
     const source = yield* Effect.try({
       try: () => JSON.parse(registrySource) as unknown,
-      catch: () => configFailure(WORKSPACE_REGISTRY_VARIABLE, "invalid-json"),
-    });
+      catch: () => configFailure(WORKSPACE_REGISTRY_VARIABLE, 'invalid-json'),
+    })
     if (!Array.isArray(source)) {
       return yield* configFailure(
         WORKSPACE_REGISTRY_VARIABLE,
-        "invalid-registry"
-      );
+        'invalid-registry'
+      )
     }
     if (source.length === 0) {
-      return yield* configFailure(
-        WORKSPACE_REGISTRY_VARIABLE,
-        "empty-registry"
-      );
+      return yield* configFailure(WORKSPACE_REGISTRY_VARIABLE, 'empty-registry')
     }
 
-    const teamIds = new Set<string>();
-    const tokenReferences = new Set<string>();
-    const installations: SlackInstallationConfig[] = [];
+    const teamIds = new Set<string>()
+    const tokenReferences = new Set<string>()
+    const installations: SlackInstallationConfig[] = []
     for (const [bindingIndex, rawEntry] of source.entries()) {
       const decoded = yield* Effect.result(
         Schema.decodeUnknownEffect(SlackWorkspaceConfigFromJson)(rawEntry)
-      );
-      if (decoded._tag === "Failure") {
-        installations.push(invalidInstallation(bindingIndex, "invalid-shape"));
-        continue;
+      )
+      if (decoded._tag === 'Failure') {
+        installations.push(invalidInstallation(bindingIndex, 'invalid-shape'))
+        continue
       }
-      const entry = decoded.success;
+      const entry = decoded.success
       const validationReason = bindingValidationReason(
         entry,
         teamIds,
         tokenReferences
-      );
+      )
       if (validationReason !== null) {
-        installations.push(invalidInstallation(bindingIndex, validationReason));
-        continue;
+        installations.push(invalidInstallation(bindingIndex, validationReason))
+        continue
       }
-      teamIds.add(entry.teamId);
-      tokenReferences.add(entry.botTokenEnvironment);
-      const tokenValue = environment[entry.botTokenEnvironment] ?? "";
+      teamIds.add(entry.teamId)
+      tokenReferences.add(entry.botTokenEnvironment)
+      const tokenValue = environment[entry.botTokenEnvironment] ?? ''
       installations.push({
         bindingIndex,
         botToken: Redacted.make(tokenValue),
@@ -337,36 +334,36 @@ export const loadSlackDaemonConfig = Effect.fn("loadSlackDaemonConfig")(
         tokenIsValid:
           tokenValue.trim().length > 0 &&
           tokenValue.startsWith(BOT_TOKEN_PREFIX),
-        validation: { _tag: "Valid" },
-      });
+        validation: { _tag: 'Valid' },
+      })
     }
     return {
       appToken,
       installations,
-      startupMode: "multi-workspace",
-    } satisfies SlackDaemonConfig;
+      startupMode: 'multi-workspace',
+    } satisfies SlackDaemonConfig
   }
-);
+)
 
 export const loadSlackConfig: Effect.Effect<
   SlackConfigShape,
   Config.ConfigError | SlackConfigValidationError
 > = Effect.gen(function* () {
-  const appToken = yield* Config.redacted("SLACK_APP_TOKEN");
-  const botToken = yield* Config.redacted("SLACK_BOT_TOKEN");
+  const appToken = yield* Config.redacted('SLACK_APP_TOKEN')
+  const botToken = yield* Config.redacted('SLACK_BOT_TOKEN')
   return SlackConfig.of({
     appToken: yield* validateToken(
-      "SLACK_APP_TOKEN",
+      'SLACK_APP_TOKEN',
       appToken,
       APP_TOKEN_PREFIX
     ),
     botToken: yield* validateToken(
-      "SLACK_BOT_TOKEN",
+      'SLACK_BOT_TOKEN',
       botToken,
       BOT_TOKEN_PREFIX
     ),
-  });
-});
+  })
+})
 
 const loadCanarySlackConfig = (
   environment: NodeJS.ProcessEnv,
@@ -380,32 +377,32 @@ const loadCanarySlackConfig = (
       environment,
       appTokenVariable,
       APP_TOKEN_PREFIX
-    );
+    )
     const botToken = yield* readToken(
       environment,
       botTokenVariable,
       BOT_TOKEN_PREFIX
-    );
+    )
     if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
-      return yield* configFailure(appTokenVariable, "matches-production-token");
+      return yield* configFailure(appTokenVariable, 'matches-production-token')
     }
     if (matchesProductionBotToken(environment, botToken)) {
-      return yield* configFailure(botTokenVariable, "matches-production-token");
+      return yield* configFailure(botTokenVariable, 'matches-production-token')
     }
     if (Redacted.value(appToken) === environment[otherCanaryAppTokenVariable]) {
       return yield* configFailure(
         appTokenVariable,
-        "matches-other-canary-token"
-      );
+        'matches-other-canary-token'
+      )
     }
     if (Redacted.value(botToken) === environment[otherCanaryBotTokenVariable]) {
       return yield* configFailure(
         botTokenVariable,
-        "matches-other-canary-token"
-      );
+        'matches-other-canary-token'
+      )
     }
-    return SlackConfig.of({ appToken, botToken });
-  });
+    return SlackConfig.of({ appToken, botToken })
+  })
 
 export const loadAcpCanarySlackConfig = (
   environment: NodeJS.ProcessEnv = process.env
@@ -416,13 +413,13 @@ export const loadAcpCanarySlackConfig = (
     ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE,
     CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
     CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE
-  );
+  )
 
 export const loadChatCanarySlackConfig = (
   environment: NodeJS.ProcessEnv = process.env
 ): Effect.Effect<ChatCanarySlackConfig, SlackConfigValidationError> =>
   Effect.gen(function* () {
-    const registrySource = environment[CHAT_CANARY_SLACK_WORKSPACES_VARIABLE];
+    const registrySource = environment[CHAT_CANARY_SLACK_WORKSPACES_VARIABLE]
     if (registrySource === undefined) {
       const config = yield* loadCanarySlackConfig(
         environment,
@@ -430,20 +427,20 @@ export const loadChatCanarySlackConfig = (
         CHAT_CANARY_SLACK_BOT_TOKEN_VARIABLE,
         ACP_CANARY_SLACK_APP_TOKEN_VARIABLE,
         ACP_CANARY_SLACK_BOT_TOKEN_VARIABLE
-      );
-      return { ...config, mode: "single-workspace" } as const;
+      )
+      return { ...config, mode: 'single-workspace' } as const
     }
 
     const appToken = yield* readToken(
       environment,
       CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
       APP_TOKEN_PREFIX
-    );
+    )
     if (Redacted.value(appToken) === environment.SLACK_APP_TOKEN) {
       return yield* configFailure(
         CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
-        "matches-production-token"
-      );
+        'matches-production-token'
+      )
     }
     if (
       Redacted.value(appToken) ===
@@ -451,42 +448,42 @@ export const loadChatCanarySlackConfig = (
     ) {
       return yield* configFailure(
         CHAT_CANARY_SLACK_APP_TOKEN_VARIABLE,
-        "matches-other-canary-token"
-      );
+        'matches-other-canary-token'
+      )
     }
     if (registrySource.trim().length === 0) {
       return yield* configFailure(
         CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
-        "blank"
-      );
+        'blank'
+      )
     }
     const source = yield* Effect.try({
       try: () => JSON.parse(registrySource) as unknown,
       catch: () =>
-        configFailure(CHAT_CANARY_SLACK_WORKSPACES_VARIABLE, "invalid-json"),
-    });
+        configFailure(CHAT_CANARY_SLACK_WORKSPACES_VARIABLE, 'invalid-json'),
+    })
     if (!Array.isArray(source) || source.length < 2) {
       return yield* configFailure(
         CHAT_CANARY_SLACK_WORKSPACES_VARIABLE,
-        "requires-multiple-workspaces"
-      );
+        'requires-multiple-workspaces'
+      )
     }
 
     const installations = yield* loadChatCanaryInstallations(
       environment,
       source
-    );
+    )
 
-    return { appToken, installations, mode: "multi-workspace" } as const;
-  });
+    return { appToken, installations, mode: 'multi-workspace' } as const
+  })
 
 export const slackConfigLayer: Layer.Layer<
   SlackConfig,
   Config.ConfigError | SlackConfigValidationError
-> = Layer.effect(SlackConfig, loadSlackConfig);
+> = Layer.effect(SlackConfig, loadSlackConfig)
 
 export class SlackRuntimeIdentity extends Schema.Class<SlackRuntimeIdentity>(
-  "SlackRuntimeIdentity"
+  'SlackRuntimeIdentity'
 )({
   botId: Schema.String,
   botUserId: Schema.String,

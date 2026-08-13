@@ -9,369 +9,366 @@ import {
   type LucideIcon,
   PlugZap,
   TriangleAlert,
-} from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CompanionStatusView } from "../shared.ts";
-import { Button } from "./components/ui/button.tsx";
+} from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { CompanionStatusView } from '../shared.ts'
+import { Button } from './components/ui/button.tsx'
 
-type StatusTone = "danger" | "neutral" | "success" | "warning";
+type StatusTone = 'danger' | 'neutral' | 'success' | 'warning'
 
 const formatUptime = (seconds: number): string => {
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  const days = Math.floor(seconds / 86_400)
+  const hours = Math.floor((seconds % 86_400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
   if (days > 0) {
-    return `${days}d ${hours}h`;
+    return `${days}d ${hours}h`
   }
   if (hours > 0) {
-    return `${hours}h ${minutes}m`;
+    return `${hours}h ${minutes}m`
   }
   if (minutes > 0) {
-    return `${minutes}m`;
+    return `${minutes}m`
   }
-  return "under a minute";
-};
+  return 'under a minute'
+}
 
 const statusPresentation: Record<
-  CompanionStatusView["state"],
+  CompanionStatusView['state'],
   {
-    readonly action: string | null;
-    readonly description: string;
-    readonly guidance: string | null;
-    readonly icon: LucideIcon;
-    readonly indicator: string;
-    readonly pending: boolean;
-    readonly title: string;
-    readonly tone: StatusTone;
+    readonly action: string | null
+    readonly description: string
+    readonly guidance: string | null
+    readonly icon: LucideIcon
+    readonly indicator: string
+    readonly pending: boolean
+    readonly title: string
+    readonly tone: StatusTone
   }
 > = {
   connecting: {
     action: null,
-    description: "Looking for the local Laborer daemon.",
+    description: 'Looking for the local Laborer daemon.',
     guidance: null,
     icon: LoaderCircle,
-    indicator: "Connecting",
+    indicator: 'Connecting',
     pending: true,
-    title: "Connecting…",
-    tone: "neutral",
+    title: 'Connecting…',
+    tone: 'neutral',
   },
   incompatible: {
-    action: "Check again",
-    description: "The companion and daemon use incompatible protocol versions.",
-    guidance: "Update either Laborer component, then check the connection.",
+    action: 'Check again',
+    description: 'The companion and daemon use incompatible protocol versions.',
+    guidance: 'Update either Laborer component, then check the connection.',
     icon: TriangleAlert,
-    indicator: "Update",
+    indicator: 'Update',
     pending: false,
-    title: "Update required",
-    tone: "danger",
+    title: 'Update required',
+    tone: 'danger',
   },
   reconnecting: {
     action: null,
-    description: "Lost contact with the daemon and retrying automatically.",
+    description: 'Lost contact with the daemon and retrying automatically.',
     guidance: null,
     icon: LoaderCircle,
-    indicator: "Reconnecting",
+    indicator: 'Reconnecting',
     pending: true,
-    title: "Reconnecting…",
-    tone: "warning",
+    title: 'Reconnecting…',
+    tone: 'warning',
   },
-  "service-already-registered": {
+  'service-already-registered': {
     action: null,
     description:
-      "The login service is already registered. Reconnecting to its daemon.",
+      'The login service is already registered. Reconnecting to its daemon.',
     guidance: null,
     icon: LoaderCircle,
-    indicator: "Registered",
+    indicator: 'Registered',
     pending: true,
-    title: "Adopting existing service…",
-    tone: "neutral",
+    title: 'Adopting existing service…',
+    tone: 'neutral',
   },
-  "service-denied": {
-    action: "Try registration again",
-    description: "macOS denied Laborer permission to run its login service.",
+  'service-denied': {
+    action: 'Try registration again',
+    description: 'macOS denied Laborer permission to run its login service.',
     guidance:
-      "Allow Laborer in System Settings › General › Login Items, then retry.",
+      'Allow Laborer in System Settings › General › Login Items, then retry.',
     icon: TriangleAlert,
-    indicator: "Denied",
+    indicator: 'Denied',
     pending: false,
-    title: "Service permission denied",
-    tone: "danger",
+    title: 'Service permission denied',
+    tone: 'danger',
   },
-  "service-registering": {
+  'service-registering': {
     action: null,
-    description: "Registering the independent Laborer daemon with macOS.",
+    description: 'Registering the independent Laborer daemon with macOS.',
     guidance: null,
     icon: LoaderCircle,
-    indicator: "Registering",
+    indicator: 'Registering',
     pending: true,
-    title: "Setting up daemon…",
-    tone: "neutral",
+    title: 'Setting up daemon…',
+    tone: 'neutral',
   },
-  "service-registered": {
+  'service-registered': {
     action: null,
-    description: "The login service was registered. Waiting for its daemon.",
+    description: 'The login service was registered. Waiting for its daemon.',
     guidance: null,
     icon: LoaderCircle,
-    indicator: "Registered",
+    indicator: 'Registered',
     pending: true,
-    title: "Daemon registered…",
-    tone: "neutral",
+    title: 'Daemon registered…',
+    tone: 'neutral',
   },
-  "service-requires-approval": {
-    action: "Check approval",
-    description: "macOS is waiting for approval before it can run Laborer.",
+  'service-requires-approval': {
+    action: 'Check approval',
+    description: 'macOS is waiting for approval before it can run Laborer.',
     guidance:
-      "Allow Laborer in System Settings › General › Login Items, then check again.",
+      'Allow Laborer in System Settings › General › Login Items, then check again.',
     icon: TriangleAlert,
-    indicator: "Approval",
+    indicator: 'Approval',
     pending: false,
-    title: "Approval required",
-    tone: "warning",
+    title: 'Approval required',
+    tone: 'warning',
   },
-  "service-unavailable": {
-    action: "Try again",
-    description: "Laborer cannot use macOS Service Management.",
-    guidance: "Use the packaged macOS 13 or newer application, then retry.",
+  'service-unavailable': {
+    action: 'Try again',
+    description: 'Laborer cannot use macOS Service Management.',
+    guidance: 'Use the packaged macOS 13 or newer application, then retry.',
     icon: PlugZap,
-    indicator: "Unavailable",
+    indicator: 'Unavailable',
     pending: false,
-    title: "Service unavailable",
-    tone: "danger",
+    title: 'Service unavailable',
+    tone: 'danger',
   },
-  "service-version-mismatch": {
-    action: "Check again",
-    description: "The companion and bundled daemon executable do not match.",
+  'service-version-mismatch': {
+    action: 'Check again',
+    description: 'The companion and bundled daemon executable do not match.',
     guidance:
-      "Reinstall one complete Laborer application bundle before retrying.",
+      'Reinstall one complete Laborer application bundle before retrying.',
     icon: TriangleAlert,
-    indicator: "Mismatch",
+    indicator: 'Mismatch',
     pending: false,
-    title: "Installation mismatch",
-    tone: "danger",
+    title: 'Installation mismatch',
+    tone: 'danger',
   },
   running: {
     action: null,
-    description: "Laborer is connected and ready for Slack work.",
+    description: 'Laborer is connected and ready for Slack work.',
     guidance: null,
     icon: CircleCheck,
-    indicator: "Running",
+    indicator: 'Running',
     pending: false,
-    title: "Daemon running",
-    tone: "success",
+    title: 'Daemon running',
+    tone: 'success',
   },
   unavailable: {
-    action: "Try again",
-    description: "Laborer cannot reach the local daemon.",
-    guidance: "Start the daemon separately, then retry.",
+    action: 'Try again',
+    description: 'Laborer cannot reach the local daemon.',
+    guidance: 'Start the daemon separately, then retry.',
     icon: PlugZap,
-    indicator: "Offline",
+    indicator: 'Offline',
     pending: false,
-    title: "Daemon unavailable",
-    tone: "warning",
+    title: 'Daemon unavailable',
+    tone: 'warning',
   },
-  "version-mismatch": {
-    action: "Check again",
+  'version-mismatch': {
+    action: 'Check again',
     description:
-      "The registered daemon executable does not match this companion.",
+      'The registered daemon executable does not match this companion.',
     guidance:
-      "Unregister the old service and reinstall one complete Laborer bundle.",
+      'Unregister the old service and reinstall one complete Laborer bundle.',
     icon: TriangleAlert,
-    indicator: "Mismatch",
+    indicator: 'Mismatch',
     pending: false,
-    title: "Daemon version mismatch",
-    tone: "danger",
+    title: 'Daemon version mismatch',
+    tone: 'danger',
   },
-};
+}
 
 const badgeTone: Record<StatusTone, string> = {
-  danger: "bg-danger/10 text-danger",
-  neutral: "bg-muted text-muted-foreground",
-  success: "bg-success/10 text-success",
-  warning: "bg-warning/10 text-warning",
-};
+  danger: 'bg-danger/10 text-danger',
+  neutral: 'bg-muted text-muted-foreground',
+  success: 'bg-success/10 text-success',
+  warning: 'bg-warning/10 text-warning',
+}
 
 const dotTone: Record<StatusTone, string> = {
-  danger: "bg-danger",
-  neutral: "bg-muted-foreground/50",
-  success: "bg-success",
-  warning: "bg-warning",
-};
+  danger: 'bg-danger',
+  neutral: 'bg-muted-foreground/50',
+  success: 'bg-success',
+  warning: 'bg-warning',
+}
 
-type RunningStatus = Extract<
-  CompanionStatusView,
-  { readonly state: "running" }
->;
+type RunningStatus = Extract<CompanionStatusView, { readonly state: 'running' }>
 
-type WorkspaceBinding = RunningStatus["workspaces"][number];
-type WorkThread = WorkspaceBinding["threads"][number];
-type PendingExecution = WorkThread["executions"][number];
+type WorkspaceBinding = RunningStatus['workspaces'][number]
+type WorkThread = WorkspaceBinding['threads'][number]
+type PendingExecution = WorkThread['executions'][number]
 
 interface BindingCounts {
-  readonly pending: number;
-  readonly ready: number;
-  readonly unavailable: number;
+  readonly pending: number
+  readonly ready: number
+  readonly unavailable: number
 }
 
 const bindingCounts = (
-  workspaces: RunningStatus["workspaces"]
+  workspaces: RunningStatus['workspaces']
 ): BindingCounts => ({
-  pending: workspaces.filter((workspace) => workspace.readiness === "pending")
+  pending: workspaces.filter((workspace) => workspace.readiness === 'pending')
     .length,
-  ready: workspaces.filter((workspace) => workspace.readiness === "ready")
+  ready: workspaces.filter((workspace) => workspace.readiness === 'ready')
     .length,
   unavailable: workspaces.filter(
     (workspace) =>
-      workspace.readiness !== "ready" && workspace.readiness !== "pending"
+      workspace.readiness !== 'ready' && workspace.readiness !== 'pending'
   ).length,
-});
+})
 
 const countThreads = (
-  workspaces: RunningStatus["workspaces"],
-  activity: WorkThread["activity"]
+  workspaces: RunningStatus['workspaces'],
+  activity: WorkThread['activity']
 ): number =>
   workspaces.reduce(
     (count, workspace) =>
       count +
       workspace.threads.filter((thread) => thread.activity === activity).length,
     0
-  );
+  )
 
 const plural = (count: number, noun: string): string =>
-  `${count} ${noun}${count === 1 ? "" : "s"}`;
+  `${count} ${noun}${count === 1 ? '' : 's'}`
 
 const runningPresentation = (
   status: RunningStatus
-): (typeof statusPresentation)["running"] => {
-  const { pending, unavailable } = bindingCounts(status.workspaces);
-  const activeThreads = countThreads(status.workspaces, "in-progress");
-  if (status.receiver === "connecting") {
+): (typeof statusPresentation)['running'] => {
+  const { pending, unavailable } = bindingCounts(status.workspaces)
+  const activeThreads = countThreads(status.workspaces, 'in-progress')
+  if (status.receiver === 'connecting') {
     return {
       ...statusPresentation.running,
       description:
-        "The daemon is available while the Slack receiver finishes connecting.",
+        'The daemon is available while the Slack receiver finishes connecting.',
       icon: LoaderCircle,
-      indicator: "Connecting",
+      indicator: 'Connecting',
       pending: true,
-      title: "Slack receiver connecting…",
-      tone: "warning",
-    };
+      title: 'Slack receiver connecting…',
+      tone: 'warning',
+    }
   }
   if (unavailable > 0) {
     return {
       ...statusPresentation.running,
       description:
-        "The Slack receiver is connected, but one or more workspace bindings need action.",
+        'The Slack receiver is connected, but one or more workspace bindings need action.',
       icon: TriangleAlert,
-      indicator: "Attention",
-      title: "Workspace attention required",
-      tone: "danger",
-    };
+      indicator: 'Attention',
+      title: 'Workspace attention required',
+      tone: 'danger',
+    }
   }
   if (pending > 0) {
     return {
       ...statusPresentation.running,
       description:
-        "The Slack receiver is connected while workspace bindings finish starting.",
+        'The Slack receiver is connected while workspace bindings finish starting.',
       icon: LoaderCircle,
-      indicator: "Starting",
+      indicator: 'Starting',
       pending: true,
-      title: "Workspaces starting…",
-      tone: "warning",
-    };
+      title: 'Workspaces starting…',
+      tone: 'warning',
+    }
   }
   if (activeThreads > 0) {
     return {
       ...statusPresentation.running,
-      description: `Laborer still owes progress on ${plural(activeThreads, "work thread")}.`,
+      description: `Laborer still owes progress on ${plural(activeThreads, 'work thread')}.`,
       icon: LoaderCircle,
-      indicator: "Working",
+      indicator: 'Working',
       pending: true,
-      title: "Work in progress",
-      tone: "success",
-    };
+      title: 'Work in progress',
+      tone: 'success',
+    }
   }
-  return statusPresentation.running;
-};
+  return statusPresentation.running
+}
 
 const bindingGuidance: Record<
-  Exclude<WorkspaceBinding["readiness"], "ready">,
+  Exclude<WorkspaceBinding['readiness'], 'ready'>,
   string
 > = {
-  pending: "Starting now. No action is needed.",
-  "setup-incomplete":
-    "Configure this workspace binding locally, then restart the daemon.",
+  pending: 'Starting now. No action is needed.',
+  'setup-incomplete':
+    'Configure this workspace binding locally, then restart the daemon.',
   unavailable: "Review this workspace's local setup, then restart the daemon.",
-  unknown: "Restart the daemon. If this persists, review the workspace setup.",
-};
+  unknown: 'Restart the daemon. If this persists, review the workspace setup.',
+}
 
 const bindingDetailGuidance: Record<
-  NonNullable<WorkspaceBinding["detail"]>,
+  NonNullable<WorkspaceBinding['detail']>,
   string
 > = {
-  "authentication-unavailable":
+  'authentication-unavailable':
     "Verify this workspace's local Slack credentials, then restart the daemon.",
-  "configuration-invalid":
+  'configuration-invalid':
     "Correct this workspace's local configuration, then restart the daemon.",
-  "health-unavailable":
+  'health-unavailable':
     "Restart the daemon. If this persists, review this workspace's local setup.",
-  "identity-mismatch":
-    "The authenticated Slack workspace does not match this binding. Correct it, then restart.",
-  "ownership-unavailable":
-    "The configured Laborer root is already in use. Stop its other owner, then restart.",
-  "root-unavailable":
-    "Make the configured Laborer root available, then restart the daemon.",
-  "runtime-unavailable":
-    "The local workspace runtime could not start. Review its setup, then restart.",
-  "setup-required":
-    "Configure this workspace binding locally, then restart the daemon.",
-  "startup-stopped":
-    "Workspace startup stopped unexpectedly. Restart the daemon to try again.",
-};
+  'identity-mismatch':
+    'The authenticated Slack workspace does not match this binding. Correct it, then restart.',
+  'ownership-unavailable':
+    'The configured Laborer root is already in use. Stop its other owner, then restart.',
+  'root-unavailable':
+    'Make the configured Laborer root available, then restart the daemon.',
+  'runtime-unavailable':
+    'The local workspace runtime could not start. Review its setup, then restart.',
+  'setup-required':
+    'Configure this workspace binding locally, then restart the daemon.',
+  'startup-stopped':
+    'Workspace startup stopped unexpectedly. Restart the daemon to try again.',
+}
 
-const bindingTone: Record<WorkspaceBinding["readiness"], StatusTone> = {
-  pending: "warning",
-  ready: "success",
-  "setup-incomplete": "danger",
-  unavailable: "danger",
-  unknown: "warning",
-};
+const bindingTone: Record<WorkspaceBinding['readiness'], StatusTone> = {
+  pending: 'warning',
+  ready: 'success',
+  'setup-incomplete': 'danger',
+  unavailable: 'danger',
+  unknown: 'warning',
+}
 
-const bindingTitle: Record<WorkspaceBinding["readiness"], string> = {
-  pending: "Starting",
-  ready: "Ready",
-  "setup-incomplete": "Setup required",
-  unavailable: "Unavailable",
-  unknown: "Status unknown",
-};
+const bindingTitle: Record<WorkspaceBinding['readiness'], string> = {
+  pending: 'Starting',
+  ready: 'Ready',
+  'setup-incomplete': 'Setup required',
+  unavailable: 'Unavailable',
+  unknown: 'Status unknown',
+}
 
 const bindingBody = (workspace: WorkspaceBinding): string => {
-  if (workspace.readiness === "ready") {
-    return "Connected and listening for Slack work.";
+  if (workspace.readiness === 'ready') {
+    return 'Connected and listening for Slack work.'
   }
   return workspace.detail === null
     ? bindingGuidance[workspace.readiness]
-    : bindingDetailGuidance[workspace.detail];
-};
+    : bindingDetailGuidance[workspace.detail]
+}
 
-const bindingRank: Record<WorkspaceBinding["readiness"], number> = {
+const bindingRank: Record<WorkspaceBinding['readiness'], number> = {
   pending: 1,
   ready: 2,
-  "setup-incomplete": 0,
+  'setup-incomplete': 0,
   unavailable: 0,
   unknown: 0,
-};
+}
 
 // In-progress work outranks dormant history within an equally healthy binding.
 const workspaceActivityRank = (workspace: WorkspaceBinding): number => {
-  return workspace.threads.some((thread) => thread.activity === "in-progress")
+  return workspace.threads.some((thread) => thread.activity === 'in-progress')
     ? 0
-    : 1;
-};
+    : 1
+}
 
 // Workspaces that need operator action come first so the actionable bindings
 // stay visible without scrolling the popover.
 const orderedBindings = (
-  workspaces: RunningStatus["workspaces"]
+  workspaces: RunningStatus['workspaces']
 ): readonly WorkspaceBinding[] =>
   workspaces
     .map((workspace, index) => ({ index, workspace }))
@@ -383,143 +380,143 @@ const orderedBindings = (
           workspaceActivityRank(right.workspace) ||
         left.index - right.index
     )
-    .map((entry) => entry.workspace);
+    .map((entry) => entry.workspace)
 
 // Row composition, ordering, title treatment, density, and the recent-section
 // disclosure below are tracer hypotheses meant to be revised after operator use.
 const activityPresentation: Record<
-  WorkThread["activity"],
+  WorkThread['activity'],
   {
-    readonly icon: LucideIcon;
-    readonly iconClassName: string;
-    readonly labelClassName: string;
-    readonly rowClassName: string;
-    readonly title: string;
-    readonly tone: StatusTone;
+    readonly icon: LucideIcon
+    readonly iconClassName: string
+    readonly labelClassName: string
+    readonly rowClassName: string
+    readonly title: string
+    readonly tone: StatusTone
   }
 > = {
   // Ongoing work is healthy, so it reads in the same tone as the summary above
   // rather than borrowing the warning tone that marks transitional bindings.
-  "in-progress": {
+  'in-progress': {
     icon: CircleDot,
-    iconClassName: "animate-pulse text-success motion-reduce:animate-none",
-    labelClassName: "text-foreground",
-    rowClassName: "",
-    title: "In progress",
-    tone: "success",
+    iconClassName: 'animate-pulse text-success motion-reduce:animate-none',
+    labelClassName: 'text-foreground',
+    rowClassName: '',
+    title: 'In progress',
+    tone: 'success',
   },
   dormant: {
     icon: CircleCheck,
-    iconClassName: "text-muted-foreground",
-    labelClassName: "text-muted-foreground",
-    rowClassName: "",
-    title: "Recent",
-    tone: "neutral",
+    iconClassName: 'text-muted-foreground',
+    labelClassName: 'text-muted-foreground',
+    rowClassName: '',
+    title: 'Recent',
+    tone: 'neutral',
   },
-};
+}
 
-const MAX_DISPLAY_DAYS = 99;
-const STATE_AGE_TICK_MS = 30_000;
+const MAX_DISPLAY_DAYS = 99
+const STATE_AGE_TICK_MS = 30_000
 
 // Time in state is what an operator scans, so it stays relative and compact
 // while the accessible name and tooltip keep the exact moment available.
 const stateAge = (
   elapsedMs: number
 ): { readonly compact: string; readonly spoken: string } => {
-  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000))
   if (seconds < 60) {
-    return { compact: "now", spoken: "less than a minute" };
+    return { compact: 'now', spoken: 'less than a minute' }
   }
-  const minutes = Math.floor(seconds / 60);
+  const minutes = Math.floor(seconds / 60)
   if (minutes < 60) {
-    return { compact: `${minutes}m`, spoken: plural(minutes, "minute") };
+    return { compact: `${minutes}m`, spoken: plural(minutes, 'minute') }
   }
-  const hours = Math.floor(minutes / 60);
+  const hours = Math.floor(minutes / 60)
   if (hours < 24) {
-    return { compact: `${hours}h`, spoken: plural(hours, "hour") };
+    return { compact: `${hours}h`, spoken: plural(hours, 'hour') }
   }
-  const days = Math.floor(hours / 24);
+  const days = Math.floor(hours / 24)
   return days > MAX_DISPLAY_DAYS
     ? {
         compact: `${MAX_DISPLAY_DAYS}d+`,
         spoken: `more than ${MAX_DISPLAY_DAYS} days`,
       }
-    : { compact: `${days}d`, spoken: plural(days, "day") };
-};
+    : { compact: `${days}d`, spoken: plural(days, 'day') }
+}
 
 const useNow = (intervalMs: number | null): number => {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (intervalMs === null) {
-      return;
+      return
     }
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
-  }, [intervalMs]);
-  return now;
-};
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(timer)
+  }, [intervalMs])
+  return now
+}
 
 // Lifecycle is the only Execution detail this surface may show, so each state
 // carries its own mark and tone rather than collapsing into one "pending" row
 // that hides what the delegated work is actually doing. The label stays the
 // primary signal; the icon is redundant reinforcement, never the sole cue.
 const executionPresentation: Record<
-  PendingExecution["lifecycle"],
+  PendingExecution['lifecycle'],
   {
-    readonly icon: LucideIcon;
-    readonly iconClassName: string;
-    readonly labelClassName: string;
+    readonly icon: LucideIcon
+    readonly iconClassName: string
+    readonly labelClassName: string
     // Display order only: urgency first, then the longest-waiting work. This is
     // presentation, not policy; work-thread activity stays daemon-owned.
-    readonly rank: number;
-    readonly title: string;
+    readonly rank: number
+    readonly title: string
   }
 > = {
-  "recovery-blocked": {
+  'recovery-blocked': {
     icon: TriangleAlert,
-    iconClassName: "text-danger",
-    labelClassName: "font-medium text-danger",
+    iconClassName: 'text-danger',
+    labelClassName: 'font-medium text-danger',
     rank: 0,
-    title: "Recovery blocked",
+    title: 'Recovery blocked',
   },
   running: {
     icon: CircleDot,
-    iconClassName: "animate-pulse text-success motion-reduce:animate-none",
-    labelClassName: "text-muted-foreground",
+    iconClassName: 'animate-pulse text-success motion-reduce:animate-none',
+    labelClassName: 'text-muted-foreground',
     rank: 1,
-    title: "Running",
+    title: 'Running',
   },
-  "implementation-ready": {
+  'implementation-ready': {
     icon: CircleDotDashed,
-    iconClassName: "text-success",
-    labelClassName: "text-muted-foreground",
+    iconClassName: 'text-success',
+    labelClassName: 'text-muted-foreground',
     rank: 2,
-    title: "Implementation ready",
+    title: 'Implementation ready',
   },
   starting: {
     icon: LoaderCircle,
     iconClassName:
-      "animate-spin text-muted-foreground motion-reduce:animate-none",
-    labelClassName: "text-muted-foreground",
+      'animate-spin text-muted-foreground motion-reduce:animate-none',
+    labelClassName: 'text-muted-foreground',
     rank: 3,
-    title: "Starting",
+    title: 'Starting',
   },
   allocated: {
     icon: CircleDashed,
-    iconClassName: "text-muted-foreground",
-    labelClassName: "text-muted-foreground",
+    iconClassName: 'text-muted-foreground',
+    labelClassName: 'text-muted-foreground',
     rank: 4,
-    title: "Allocated",
+    title: 'Allocated',
   },
   cancelling: {
     icon: CircleSlash,
-    iconClassName: "text-muted-foreground",
-    labelClassName: "text-muted-foreground",
+    iconClassName: 'text-muted-foreground',
+    labelClassName: 'text-muted-foreground',
     rank: 5,
-    title: "Cancelling",
+    title: 'Cancelling',
   },
-};
+}
 
 // Deterministic in both live pushes and reconnect snapshots, so a row never
 // appears to move on its own between renders of the same projection.
@@ -533,25 +530,25 @@ const orderedExecutions = (
       (left.startedAtUnixMs ?? Number.POSITIVE_INFINITY) -
         (right.startedAtUnixMs ?? Number.POSITIVE_INFINITY) ||
       left.id.localeCompare(right.id)
-  );
+  )
 
 const PendingExecutionRow = ({
   execution,
   nowUnixMs,
 }: {
-  readonly execution: PendingExecution;
-  readonly nowUnixMs: number;
+  readonly execution: PendingExecution
+  readonly nowUnixMs: number
 }) => {
-  const presentation = executionPresentation[execution.lifecycle];
-  const Icon = presentation.icon;
+  const presentation = executionPresentation[execution.lifecycle]
+  const Icon = presentation.icon
   const started =
     execution.startedAtUnixMs === null
       ? null
-      : new Date(execution.startedAtUnixMs);
+      : new Date(execution.startedAtUnixMs)
   const age =
     execution.startedAtUnixMs === null
       ? null
-      : stateAge(nowUnixMs - execution.startedAtUnixMs);
+      : stateAge(nowUnixMs - execution.startedAtUnixMs)
   return (
     <li className="flex items-start gap-2 py-1 pr-3">
       <Icon
@@ -590,8 +587,8 @@ const PendingExecutionRow = ({
         </time>
       )}
     </li>
-  );
-};
+  )
+}
 
 // Executions hang off their work thread on a rail aligned to the thread icon so
 // the ownership is readable at a glance and never reparents visually.
@@ -599,10 +596,10 @@ const PendingExecutionList = ({
   nowUnixMs,
   thread,
 }: {
-  readonly nowUnixMs: number;
-  readonly thread: WorkThread;
+  readonly nowUnixMs: number
+  readonly thread: WorkThread
 }) => {
-  const executions = orderedExecutions(thread.executions);
+  const executions = orderedExecutions(thread.executions)
   return (
     <ul
       aria-label={`Pending Executions for ${thread.excerpt}`}
@@ -616,20 +613,20 @@ const PendingExecutionList = ({
         />
       ))}
     </ul>
-  );
-};
+  )
+}
 
 const WorkThreadRow = ({
   nowUnixMs,
   thread,
 }: {
-  readonly nowUnixMs: number;
-  readonly thread: WorkThread;
+  readonly nowUnixMs: number
+  readonly thread: WorkThread
 }) => {
-  const presentation = activityPresentation[thread.activity];
-  const Icon = presentation.icon;
-  const changed = new Date(thread.stateChangedAtUnixMs);
-  const age = stateAge(nowUnixMs - thread.stateChangedAtUnixMs);
+  const presentation = activityPresentation[thread.activity]
+  const Icon = presentation.icon
+  const changed = new Date(thread.stateChangedAtUnixMs)
+  const age = stateAge(nowUnixMs - thread.stateChangedAtUnixMs)
   return (
     <li
       className={`border-border border-t first:border-t-0 ${presentation.rowClassName}`}
@@ -658,11 +655,11 @@ const WorkThreadRow = ({
         <PendingExecutionList nowUnixMs={nowUnixMs} thread={thread} />
       )}
     </li>
-  );
-};
+  )
+}
 
 const sectionHeadingClassName =
-  "flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wide";
+  'flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wide'
 
 const WorkThreadSection = ({
   activity,
@@ -671,32 +668,32 @@ const WorkThreadSection = ({
   open,
   threads,
 }: {
-  readonly activity: WorkThread["activity"];
-  readonly headingId: string;
-  readonly nowUnixMs: number;
-  readonly open: boolean;
-  readonly threads: readonly WorkThread[];
+  readonly activity: WorkThread['activity']
+  readonly headingId: string
+  readonly nowUnixMs: number
+  readonly open: boolean
+  readonly threads: readonly WorkThread[]
 }) => {
   // The disclosure stays operator-controlled once opened: status pushes and the
   // relative-time tick re-render this card, and neither should collapse it.
-  const [expanded, setExpanded] = useState(open);
-  const presentation = activityPresentation[activity];
+  const [expanded, setExpanded] = useState(open)
+  const presentation = activityPresentation[activity]
   const rows = (
     <ul aria-labelledby={headingId}>
       {threads.map((thread) => (
         <WorkThreadRow key={thread.id} nowUnixMs={nowUnixMs} thread={thread} />
       ))}
     </ul>
-  );
+  )
   const count = (
     <span aria-hidden="true" className="font-normal tabular-nums">
       {threads.length}
     </span>
-  );
-  const headingLabel = `${presentation.title}, ${plural(threads.length, "work thread")}`;
+  )
+  const headingLabel = `${presentation.title}, ${plural(threads.length, 'work thread')}`
   // Settled work is the least actionable, so it stays one disclosure away
   // while in-progress rows keep the top of the card.
-  if (activity === "dormant") {
+  if (activity === 'dormant') {
     return (
       <details
         className="group"
@@ -719,16 +716,16 @@ const WorkThreadSection = ({
         </summary>
         {rows}
       </details>
-    );
+    )
   }
   return (
     <section aria-labelledby={headingId}>
       <h4
         aria-label={headingLabel}
         className={`${sectionHeadingClassName} px-3 py-1.5 ${
-          presentation.tone === "danger"
-            ? "bg-danger/10 text-danger"
-            : "bg-muted/40 text-muted-foreground"
+          presentation.tone === 'danger'
+            ? 'bg-danger/10 text-danger'
+            : 'bg-muted/40 text-muted-foreground'
         }`}
         id={headingId}
       >
@@ -737,34 +734,34 @@ const WorkThreadSection = ({
       </h4>
       {rows}
     </section>
-  );
-};
+  )
+}
 
 const WorkThreadSections = ({
   nowUnixMs,
   workspace,
 }: {
-  readonly nowUnixMs: number;
-  readonly workspace: WorkspaceBinding;
+  readonly nowUnixMs: number
+  readonly workspace: WorkspaceBinding
 }) => {
-  const sections = (["in-progress", "dormant"] as const).map((activity) => ({
+  const sections = (['in-progress', 'dormant'] as const).map((activity) => ({
     activity,
     threads: workspace.threads.filter((thread) => thread.activity === activity),
-  }));
+  }))
   if (workspace.threads.length === 0) {
     // A binding that is not ready explains itself above; an empty thread list
     // there would read as a second, misleading state.
-    return workspace.readiness === "ready" ? (
+    return workspace.readiness === 'ready' ? (
       <p className="border-border border-t px-3 py-3 text-muted-foreground text-xs leading-5">
         No active or recent work threads.
       </p>
-    ) : null;
+    ) : null
   }
   // With nothing live to read, recent work is the only story the card can tell,
   // so it opens rather than leaving the operator facing a collapsed strip.
   const hasLiveWork = sections.some(
-    ({ activity, threads }) => activity !== "dormant" && threads.length > 0
-  );
+    ({ activity, threads }) => activity !== 'dormant' && threads.length > 0
+  )
   return (
     <div className="border-border border-t">
       {sections.map(({ activity, threads }) =>
@@ -780,23 +777,23 @@ const WorkThreadSections = ({
         )
       )}
     </div>
-  );
-};
+  )
+}
 
 const WorkspaceBindingCard = ({
   nowUnixMs,
   workspace,
 }: {
-  readonly nowUnixMs: number;
-  readonly workspace: WorkspaceBinding;
+  readonly nowUnixMs: number
+  readonly workspace: WorkspaceBinding
 }) => {
-  const tone = bindingTone[workspace.readiness];
+  const tone = bindingTone[workspace.readiness]
   // A card the operator has to act on carries its urgency at the card edge so
   // it is findable in a scroll of otherwise identical cards.
-  const needsAction = tone === "danger";
+  const needsAction = tone === 'danger'
   return (
     <article
-      className={`overflow-hidden rounded-xl border bg-surface ${needsAction ? "border-danger/40" : "border-border"}`}
+      className={`overflow-hidden rounded-xl border bg-surface ${needsAction ? 'border-danger/40' : 'border-border'}`}
     >
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
@@ -815,7 +812,7 @@ const WorkspaceBindingCard = ({
           >
             <span
               aria-hidden="true"
-              className={`size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${workspace.readiness === "pending" ? "animate-pulse motion-reduce:animate-none" : ""}`}
+              className={`size-1.5 shrink-0 rounded-full ${dotTone[tone]} ${workspace.readiness === 'pending' ? 'animate-pulse motion-reduce:animate-none' : ''}`}
             />
             {bindingTitle[workspace.readiness]}
           </span>
@@ -826,8 +823,8 @@ const WorkspaceBindingCard = ({
       </div>
       <WorkThreadSections nowUnixMs={nowUnixMs} workspace={workspace} />
     </article>
-  );
-};
+  )
+}
 
 const BindingCountChip = ({
   label,
@@ -835,19 +832,19 @@ const BindingCountChip = ({
   tone,
   value,
 }: {
-  readonly label: string;
-  readonly pending: boolean;
-  readonly tone: StatusTone;
-  readonly value: number;
+  readonly label: string
+  readonly pending: boolean
+  readonly tone: StatusTone
+  readonly value: number
 }) => (
   <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 text-[11px] leading-4">
     <span
       aria-hidden="true"
-      className={`size-1.5 shrink-0 rounded-full ${value === 0 ? "bg-muted-foreground/40" : dotTone[tone]} ${pending && value > 0 ? "animate-pulse motion-reduce:animate-none" : ""}`}
+      className={`size-1.5 shrink-0 rounded-full ${value === 0 ? 'bg-muted-foreground/40' : dotTone[tone]} ${pending && value > 0 ? 'animate-pulse motion-reduce:animate-none' : ''}`}
     />
     <span
       aria-hidden="true"
-      className={`font-semibold tabular-nums ${value === 0 ? "text-muted-foreground" : "text-foreground"}`}
+      className={`font-semibold tabular-nums ${value === 0 ? 'text-muted-foreground' : 'text-foreground'}`}
     >
       {value}
     </span>
@@ -856,7 +853,7 @@ const BindingCountChip = ({
     </span>
     <span className="sr-only">{`${value} ${label}`}</span>
   </span>
-);
+)
 
 export const StatusPopover = ({
   quit,
@@ -864,32 +861,32 @@ export const StatusPopover = ({
   reportContentHeight,
   status,
 }: {
-  readonly quit: () => void;
-  readonly reconnect: () => void;
-  readonly reportContentHeight?: (height: number) => void;
-  readonly status: CompanionStatusView;
+  readonly quit: () => void
+  readonly reconnect: () => void
+  readonly reportContentHeight?: (height: number) => void
+  readonly status: CompanionStatusView
 }) => {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const footerRef = useRef<HTMLElement>(null);
-  const headerRef = useRef<HTMLElement>(null);
-  const sectionRef = useRef<HTMLElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null)
+  const footerRef = useRef<HTMLElement>(null)
+  const headerRef = useRef<HTMLElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
   const presentation =
-    status.state === "running"
+    status.state === 'running'
       ? runningPresentation(status)
-      : statusPresentation[status.state];
-  const workspaces = status.state === "running" ? status.workspaces : [];
-  const counts = bindingCounts(workspaces);
+      : statusPresentation[status.state]
+  const workspaces = status.state === 'running' ? status.workspaces : []
+  const counts = bindingCounts(workspaces)
   const hasThreads = workspaces.some(
     (workspace) => workspace.threads.length > 0
-  );
-  const nowUnixMs = useNow(hasThreads ? STATE_AGE_TICK_MS : null);
-  const Icon = presentation.icon;
+  )
+  const nowUnixMs = useNow(hasThreads ? STATE_AGE_TICK_MS : null)
+  const Icon = presentation.icon
 
   useLayoutEffect(() => {
-    const content = contentRef.current;
-    const footer = footerRef.current;
-    const header = headerRef.current;
-    const section = sectionRef.current;
+    const content = contentRef.current
+    const footer = footerRef.current
+    const header = headerRef.current
+    const section = sectionRef.current
     if (
       reportContentHeight === undefined ||
       content === null ||
@@ -897,14 +894,14 @@ export const StatusPopover = ({
       header === null ||
       section === null
     ) {
-      return;
+      return
     }
 
     const report = (): void => {
-      const sectionStyle = window.getComputedStyle(section);
+      const sectionStyle = window.getComputedStyle(section)
       const sectionPadding =
         Number.parseFloat(sectionStyle.paddingTop) +
-        Number.parseFloat(sectionStyle.paddingBottom);
+        Number.parseFloat(sectionStyle.paddingBottom)
       reportContentHeight(
         Math.ceil(
           header.getBoundingClientRect().height +
@@ -912,15 +909,15 @@ export const StatusPopover = ({
             footer.getBoundingClientRect().height +
             sectionPadding
         )
-      );
-    };
-    const observer = new ResizeObserver(report);
-    observer.observe(content);
-    observer.observe(footer);
-    observer.observe(header);
-    report();
-    return () => observer.disconnect();
-  }, [reportContentHeight]);
+      )
+    }
+    const observer = new ResizeObserver(report)
+    observer.observe(content)
+    observer.observe(footer)
+    observer.observe(header)
+    report()
+    return () => observer.disconnect()
+  }, [reportContentHeight])
 
   return (
     <main className="flex h-screen flex-col bg-background text-foreground">
@@ -937,7 +934,7 @@ export const StatusPopover = ({
           className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface py-1 pr-2.5 pl-2 font-medium text-[11px] text-muted-foreground uppercase tracking-wide"
         >
           <span
-            className={`size-1.5 rounded-full transition-colors ${dotTone[presentation.tone]} ${presentation.pending ? "animate-pulse motion-reduce:animate-none" : ""}`}
+            className={`size-1.5 rounded-full transition-colors ${dotTone[presentation.tone]} ${presentation.pending ? 'animate-pulse motion-reduce:animate-none' : ''}`}
           />
           {presentation.indicator}
         </span>
@@ -961,8 +958,8 @@ export const StatusPopover = ({
                 aria-hidden="true"
                 className={
                   presentation.pending
-                    ? "size-5 animate-spin motion-reduce:animate-none"
-                    : "size-5"
+                    ? 'size-5 animate-spin motion-reduce:animate-none'
+                    : 'size-5'
                 }
               />
             </span>
@@ -976,7 +973,7 @@ export const StatusPopover = ({
             </output>
           </div>
 
-          {status.state === "running" ? (
+          {status.state === 'running' ? (
             <>
               <dl className="mt-4 flex overflow-hidden rounded-xl border border-border bg-surface">
                 <div className="min-w-0 flex-1 px-3 py-2">
@@ -1089,5 +1086,5 @@ export const StatusPopover = ({
         </Button>
       </footer>
     </main>
-  );
-};
+  )
+}

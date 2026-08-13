@@ -1,7 +1,7 @@
-import { Schema } from "effect";
+import { Schema } from 'effect'
 
 export class StoreError extends Schema.TaggedErrorClass<StoreError>()(
-  "StoreError",
+  'StoreError',
   {
     operation: Schema.String,
     reason: Schema.String,
@@ -9,16 +9,16 @@ export class StoreError extends Schema.TaggedErrorClass<StoreError>()(
 ) {}
 
 export class HandlerFailure extends Schema.TaggedErrorClass<HandlerFailure>()(
-  "HandlerFailure",
+  'HandlerFailure',
   {
     category: Schema.Literals([
-      "spawn",
-      "protocol",
-      "exit",
-      "signal",
-      "timeout",
+      'spawn',
+      'protocol',
+      'exit',
+      'signal',
+      'timeout',
     ]),
-    noticeStyle: Schema.optional(Schema.Literal("generic")),
+    noticeStyle: Schema.optional(Schema.Literal('generic')),
     safeDetail: Schema.NullOr(Schema.String),
   }
 ) {}

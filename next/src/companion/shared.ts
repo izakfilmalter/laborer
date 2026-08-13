@@ -1,61 +1,61 @@
-import type { OperatorStatusView } from "../operator-status/client.ts";
+import type { OperatorStatusView } from '../operator-status/client.ts'
 
 export type CompanionStatusView =
   | OperatorStatusView
   | {
       readonly state:
-        | "service-denied"
-        | "service-already-registered"
-        | "service-registered"
-        | "service-registering"
-        | "service-requires-approval"
-        | "service-unavailable"
-        | "service-version-mismatch";
-      readonly uptimeSeconds: null;
-      readonly version: null;
-    };
+        | 'service-denied'
+        | 'service-already-registered'
+        | 'service-registered'
+        | 'service-registering'
+        | 'service-requires-approval'
+        | 'service-unavailable'
+        | 'service-version-mismatch'
+      readonly uptimeSeconds: null
+      readonly version: null
+    }
 
-export const COMPANION_STATUS_CHANNEL = "companion:status";
-export const COMPANION_RECONNECT_CHANNEL = "companion:reconnect";
-export const COMPANION_QUIT_CHANNEL = "companion:quit";
-export const COMPANION_CONTENT_HEIGHT_CHANNEL = "companion:content-height";
+export const COMPANION_STATUS_CHANNEL = 'companion:status'
+export const COMPANION_RECONNECT_CHANNEL = 'companion:reconnect'
+export const COMPANION_QUIT_CHANNEL = 'companion:quit'
+export const COMPANION_CONTENT_HEIGHT_CHANNEL = 'companion:content-height'
 
 const exactKeys = (value: object, expected: readonly string[]): boolean => {
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort()
   return (
     keys.length === expected.length &&
     keys.every((key, index) => key === expected[index])
-  );
-};
+  )
+}
 
 const bindingDetails = [
-  "authentication-unavailable",
-  "configuration-invalid",
-  "health-unavailable",
-  "identity-mismatch",
-  "ownership-unavailable",
-  "root-unavailable",
-  "runtime-unavailable",
-  "setup-required",
-  "startup-stopped",
-] as const;
-const bindingIdPattern = /^binding:\d+$/;
-const bindingLabelPattern = /^Workspace binding [1-9]\d*$/;
-const teamIdPattern = /^T[A-Z0-9]+$/;
+  'authentication-unavailable',
+  'configuration-invalid',
+  'health-unavailable',
+  'identity-mismatch',
+  'ownership-unavailable',
+  'root-unavailable',
+  'runtime-unavailable',
+  'setup-required',
+  'startup-stopped',
+] as const
+const bindingIdPattern = /^binding:\d+$/
+const bindingLabelPattern = /^Workspace binding [1-9]\d*$/
+const teamIdPattern = /^T[A-Z0-9]+$/
 const threadIdPattern =
-  /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/;
-const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/;
+  /^workspace:T[A-Z0-9]+:[CG][A-Z0-9]+:\d{1,16}(?:\.\d{1,9})?$/
+const threadLabelPattern = /^(?:[CG][A-Z0-9]+|Slack) · \d{1,16}(?:\.\d{1,9})?$/
 const isOneLineText = (value: string): boolean =>
   Array.from(value).every((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
+    const codePoint = character.codePointAt(0) ?? 0
     return (
       codePoint > 31 &&
       codePoint !== 127 &&
       codePoint !== 0x20_28 &&
       codePoint !== 0x20_29
-    );
-  });
-const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
+    )
+  })
+const actionNamePattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/
 
 const isPendingExecution = (
   value: unknown,
@@ -63,34 +63,34 @@ const isPendingExecution = (
   threadId: unknown
 ): boolean => {
   if (
-    typeof value !== "object" ||
+    typeof value !== 'object' ||
     value === null ||
     !exactKeys(value, [
-      "actionName",
-      "id",
-      "lifecycle",
-      "startedAtUnixMs",
-      "workThreadId",
-      "workspaceId",
+      'actionName',
+      'id',
+      'lifecycle',
+      'startedAtUnixMs',
+      'workThreadId',
+      'workspaceId',
     ])
   ) {
-    return false;
+    return false
   }
-  const execution = value as Record<string, unknown>;
+  const execution = value as Record<string, unknown>
   return (
-    typeof execution.actionName === "string" &&
+    typeof execution.actionName === 'string' &&
     execution.actionName.length <= 96 &&
     actionNamePattern.test(execution.actionName) &&
-    typeof execution.id === "string" &&
+    typeof execution.id === 'string' &&
     execution.id.length > 0 &&
     execution.id.length <= 160 &&
     [
-      "allocated",
-      "starting",
-      "implementation-ready",
-      "running",
-      "cancelling",
-      "recovery-blocked",
+      'allocated',
+      'starting',
+      'implementation-ready',
+      'running',
+      'cancelling',
+      'recovery-blocked',
     ].includes(String(execution.lifecycle)) &&
     (execution.startedAtUnixMs === null ||
       (Number.isSafeInteger(execution.startedAtUnixMs) &&
@@ -98,28 +98,28 @@ const isPendingExecution = (
         Number(execution.startedAtUnixMs) <= 8_640_000_000_000_000)) &&
     execution.workspaceId === teamId &&
     execution.workThreadId === threadId
-  );
-};
+  )
+}
 
 const isWorkThread = (value: unknown, teamId: unknown): boolean => {
   if (
-    typeof value !== "object" ||
+    typeof value !== 'object' ||
     value === null ||
     !exactKeys(value, [
-      "activity",
-      "excerpt",
-      "executions",
-      "id",
-      "label",
-      "stateChangedAtUnixMs",
-      "workspaceId",
+      'activity',
+      'excerpt',
+      'executions',
+      'id',
+      'label',
+      'stateChangedAtUnixMs',
+      'workspaceId',
     ])
   ) {
-    return false;
+    return false
   }
-  const thread = value as Record<string, unknown>;
+  const thread = value as Record<string, unknown>
   return (
-    ["in-progress", "dormant"].includes(String(thread.activity)) &&
+    ['in-progress', 'dormant'].includes(String(thread.activity)) &&
     Array.isArray(thread.executions) &&
     thread.executions.length <= 512 &&
     thread.executions.every((execution) =>
@@ -127,72 +127,72 @@ const isWorkThread = (value: unknown, teamId: unknown): boolean => {
     ) &&
     new Set(
       thread.executions.map((execution) =>
-        typeof execution === "object" && execution !== null && "id" in execution
+        typeof execution === 'object' && execution !== null && 'id' in execution
           ? execution.id
           : null
       )
     ).size === thread.executions.length &&
-    typeof thread.excerpt === "string" &&
+    typeof thread.excerpt === 'string' &&
     thread.excerpt.length > 0 &&
     thread.excerpt.length <= 120 &&
     isOneLineText(thread.excerpt) &&
-    typeof thread.id === "string" &&
+    typeof thread.id === 'string' &&
     thread.id.length > 0 &&
     thread.id.length <= 256 &&
     threadIdPattern.test(thread.id) &&
-    typeof thread.label === "string" &&
+    typeof thread.label === 'string' &&
     thread.label.length > 0 &&
     thread.label.length <= 80 &&
     threadLabelPattern.test(thread.label) &&
     Number.isSafeInteger(thread.stateChangedAtUnixMs) &&
     Number(thread.stateChangedAtUnixMs) >= 0 &&
     Number(thread.stateChangedAtUnixMs) <= 8_640_000_000_000_000 &&
-    typeof teamId === "string" &&
+    typeof teamId === 'string' &&
     thread.workspaceId === teamId
-  );
-};
+  )
+}
 
 const isWorkspaceBinding = (value: unknown): boolean => {
   if (
-    typeof value !== "object" ||
+    typeof value !== 'object' ||
     value === null ||
     !exactKeys(value, [
-      "detail",
-      "id",
-      "label",
-      "readiness",
-      "teamId",
-      "threads",
+      'detail',
+      'id',
+      'label',
+      'readiness',
+      'teamId',
+      'threads',
     ])
   ) {
-    return false;
+    return false
   }
-  const binding = value as Record<string, unknown>;
+  const binding = value as Record<string, unknown>
   if (
     !(
       [
-        "pending",
-        "ready",
-        "setup-incomplete",
-        "unavailable",
-        "unknown",
+        'pending',
+        'ready',
+        'setup-incomplete',
+        'unavailable',
+        'unknown',
       ].includes(String(binding.readiness)) &&
       (binding.detail === null ||
         bindingDetails.some((detail) => detail === binding.detail))
     )
   ) {
-    return false;
+    return false
   }
   if (
-    (binding.readiness === "ready" || binding.readiness === "pending") !==
+    (binding.readiness === 'ready' || binding.readiness === 'pending') !==
     (binding.detail === null)
   ) {
-    return false;
+    return false
   }
   if (
-    typeof binding.id !== "string" ||
+    typeof binding.id !== 'string' ||
     binding.id.length > 64 ||
-    typeof binding.label !== "string" ||
+    typeof binding.label !== 'string' ||
     binding.label.length === 0 ||
     binding.label.length > 64 ||
     !isOneLineText(binding.label) ||
@@ -201,80 +201,80 @@ const isWorkspaceBinding = (value: unknown): boolean => {
     !binding.threads.every((thread) => isWorkThread(thread, binding.teamId)) ||
     new Set(
       binding.threads.map((thread) =>
-        typeof thread === "object" && thread !== null && "id" in thread
+        typeof thread === 'object' && thread !== null && 'id' in thread
           ? thread.id
           : null
       )
     ).size !== binding.threads.length ||
     binding.threads.filter(
       (thread) =>
-        typeof thread === "object" &&
+        typeof thread === 'object' &&
         thread !== null &&
-        "activity" in thread &&
-        thread.activity === "dormant"
+        'activity' in thread &&
+        thread.activity === 'dormant'
     ).length > 4
   ) {
-    return false;
+    return false
   }
   if (binding.teamId === null) {
     return (
       bindingIdPattern.test(binding.id) &&
       bindingLabelPattern.test(binding.label)
-    );
+    )
   }
   return (
-    typeof binding.teamId === "string" &&
+    typeof binding.teamId === 'string' &&
     teamIdPattern.test(binding.teamId) &&
     binding.teamId.length <= 58 &&
     (binding.id === `slack:${binding.teamId}` ||
       bindingIdPattern.test(binding.id))
-  );
-};
+  )
+}
 
 const projectedExecutionIds = (workspaces: unknown[]): unknown[] =>
   workspaces.flatMap((workspace) =>
-    typeof workspace === "object" &&
+    typeof workspace === 'object' &&
     workspace !== null &&
-    "threads" in workspace &&
+    'threads' in workspace &&
     Array.isArray(workspace.threads)
       ? workspace.threads.flatMap((thread) =>
-          typeof thread === "object" &&
+          typeof thread === 'object' &&
           thread !== null &&
-          "executions" in thread &&
+          'executions' in thread &&
           Array.isArray(thread.executions)
             ? (thread.executions as unknown[]).map((execution) =>
-                typeof execution === "object" &&
+                typeof execution === 'object' &&
                 execution !== null &&
-                "id" in execution
+                'id' in execution
                   ? execution.id
                   : null
               )
             : []
         )
       : []
-  );
+  )
 
 export const isOperatorStatusView = (
   value: unknown
 ): value is CompanionStatusView => {
-  if (typeof value !== "object" || value === null) {
-    return false;
+  if (typeof value !== 'object' || value === null) {
+    return false
   }
-  const candidate = value as Record<string, unknown>;
-  if (candidate.state === "running") {
+  const candidate = value as Record<string, unknown>
+  if (candidate.state === 'running') {
     return (
       exactKeys(value, [
-        "receiver",
-        "state",
-        "uptimeSeconds",
-        "version",
-        "workspaces",
+        'receiver',
+        'state',
+        'uptimeSeconds',
+        'version',
+        'workspaces',
       ]) &&
-      ["connected", "connecting"].includes(String(candidate.receiver)) &&
-      typeof candidate.version === "string" &&
+      ['connected', 'connecting'].includes(String(candidate.receiver)) &&
+      typeof candidate.version === 'string' &&
       candidate.version.length > 0 &&
       candidate.version.length <= 64 &&
-      typeof candidate.uptimeSeconds === "number" &&
+      typeof candidate.uptimeSeconds === 'number' &&
       Number.isSafeInteger(candidate.uptimeSeconds) &&
       candidate.uptimeSeconds >= 0 &&
       Array.isArray(candidate.workspaces) &&
@@ -283,9 +283,9 @@ export const isOperatorStatusView = (
       candidate.workspaces.reduce(
         (count, workspace) =>
           count +
-          (typeof workspace === "object" &&
+          (typeof workspace === 'object' &&
           workspace !== null &&
-          "threads" in workspace &&
+          'threads' in workspace &&
           Array.isArray(workspace.threads)
             ? workspace.threads.length
             : 0),
@@ -294,16 +294,16 @@ export const isOperatorStatusView = (
       candidate.workspaces.reduce(
         (count, workspace) =>
           count +
-          (typeof workspace === "object" &&
+          (typeof workspace === 'object' &&
           workspace !== null &&
-          "threads" in workspace &&
+          'threads' in workspace &&
           Array.isArray(workspace.threads)
             ? (workspace.threads as unknown[]).reduce<number>(
                 (threadCount, thread) =>
                   threadCount +
-                  (typeof thread === "object" &&
+                  (typeof thread === 'object' &&
                   thread !== null &&
-                  "executions" in thread &&
+                  'executions' in thread &&
                   Array.isArray(thread.executions)
                     ? thread.executions.length
                     : 0),
@@ -316,41 +316,41 @@ export const isOperatorStatusView = (
         projectedExecutionIds(candidate.workspaces).length &&
       new Set(
         candidate.workspaces.map((workspace) =>
-          typeof workspace === "object" &&
+          typeof workspace === 'object' &&
           workspace !== null &&
-          "id" in workspace
+          'id' in workspace
             ? workspace.id
             : null
         )
       ).size === candidate.workspaces.length
-    );
+    )
   }
   return (
-    exactKeys(value, ["state", "uptimeSeconds", "version"]) &&
+    exactKeys(value, ['state', 'uptimeSeconds', 'version']) &&
     [
-      "connecting",
-      "incompatible",
-      "reconnecting",
-      "service-denied",
-      "service-already-registered",
-      "service-registered",
-      "service-registering",
-      "service-requires-approval",
-      "service-unavailable",
-      "service-version-mismatch",
-      "unavailable",
-      "version-mismatch",
+      'connecting',
+      'incompatible',
+      'reconnecting',
+      'service-denied',
+      'service-already-registered',
+      'service-registered',
+      'service-registering',
+      'service-requires-approval',
+      'service-unavailable',
+      'service-version-mismatch',
+      'unavailable',
+      'version-mismatch',
     ].includes(String(candidate.state)) &&
     candidate.version === null &&
     candidate.uptimeSeconds === null
-  );
-};
+  )
+}
 
 export interface LaborerCompanionBridge {
-  readonly quit: () => Promise<void>;
-  readonly reconnect: () => Promise<void>;
-  readonly setContentHeight: (height: number) => void;
+  readonly quit: () => Promise<void>
+  readonly reconnect: () => Promise<void>
+  readonly setContentHeight: (height: number) => void
   readonly subscribeStatus: (
     listener: (view: CompanionStatusView) => void
-  ) => () => void;
+  ) => () => void
 }

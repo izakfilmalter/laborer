@@ -1,23 +1,23 @@
-import { readdir, readFile } from "node:fs/promises";
-import { assert, describe, it } from "@effect/vitest";
+import { readdir, readFile } from 'node:fs/promises'
+import { assert, describe, it } from '@effect/vitest'
 import {
   ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS,
   assertSupportedOpenCodeInitialization,
   SUPPORTED_ACP_RUNTIME_MATRIX,
-} from "../src/acp-compatibility/runtime-matrix.ts";
+} from '../src/acp-compatibility/runtime-matrix.ts'
 import {
   makeOpenCodeCompatibilityConfig,
   OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY,
-} from "./support/opencode-acp-harness.ts";
+} from './support/opencode-acp-harness.ts'
 
 const READ_ONLY_CONTENTS_PERMISSION_PATTERN =
-  /^permissions:\n {2}contents: read$/m;
-const PERSISTED_CREDENTIALS_PATTERN = /persist-credentials: false/g;
-const CHECKOUT_PATTERN = /uses: actions\/checkout@v4/g;
-const COMPATIBILITY_FAILURE_PATTERN = /OpenCode ACP compatibility check failed/;
-const LOAD_SESSION_PATTERN = /agentCapabilities\.loadSession/;
-const FROZEN_INSTALL_PATTERN = /bun install --frozen-lockfile/;
-const CURRENT_PATH_PATTERN = /- "current\/\*\*"/;
+  /^permissions:\n {2}contents: read$/m
+const PERSISTED_CREDENTIALS_PATTERN = /persist-credentials: false/g
+const CHECKOUT_PATTERN = /uses: actions\/checkout@v4/g
+const COMPATIBILITY_FAILURE_PATTERN = /OpenCode ACP compatibility check failed/
+const LOAD_SESSION_PATTERN = /agentCapabilities\.loadSession/
+const FROZEN_INSTALL_PATTERN = /bun install --frozen-lockfile/
+const CURRENT_PATH_PATTERN = /- "current\/\*\*"/
 
 const supportedInitialization = {
   agentCapabilities: {
@@ -27,117 +27,117 @@ const supportedInitialization = {
     sessionCapabilities: { close: {}, list: {}, resume: {} },
   },
   agentInfo: {
-    name: "OpenCode",
+    name: 'OpenCode',
     version: SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli,
   },
   protocolVersion: 1,
-};
+}
 
 const captureFailure = (operation: () => void): Error => {
   try {
-    operation();
+    operation()
   } catch (cause) {
-    assert.ok(cause instanceof Error);
-    return cause;
+    assert.ok(cause instanceof Error)
+    return cause
   }
-  assert.fail("expected operation to fail");
-};
+  assert.fail('expected operation to fail')
+}
 
-describe("issue #243 ACP runtime matrix", () => {
-  it("keeps package pins synchronized with the supported matrix", async () => {
+describe('issue #243 ACP runtime matrix', () => {
+  it('keeps package pins synchronized with the supported matrix', async () => {
     const [packageSource, nodeVersion] = await Promise.all([
-      readFile(new URL("../package.json", import.meta.url), "utf8"),
-      readFile(new URL("../.node-version", import.meta.url), "utf8"),
-    ]);
+      readFile(new URL('../package.json', import.meta.url), 'utf8'),
+      readFile(new URL('../.node-version', import.meta.url), 'utf8'),
+    ])
     const packageJson = JSON.parse(packageSource) as {
-      dependencies: Record<string, string>;
-      devDependencies: Record<string, string>;
-      engines: { node: string };
-      packageManager: string;
-    };
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
+      engines: { node: string }
+      packageManager: string
+    }
     assert.strictEqual(
-      packageJson.dependencies["@agentclientprotocol/sdk"],
+      packageJson.dependencies['@agentclientprotocol/sdk'],
       SUPPORTED_ACP_RUNTIME_MATRIX.acpSdk
-    );
+    )
     assert.strictEqual(
-      packageJson.dependencies["@opencode-ai/client"],
+      packageJson.dependencies['@opencode-ai/client'],
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeClient
-    );
+    )
     assert.strictEqual(
-      packageJson.devDependencies["@opencode-ai/cli"],
+      packageJson.devDependencies['@opencode-ai/cli'],
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
-    );
+    )
     assert.strictEqual(
       packageJson.dependencies.chat,
       SUPPORTED_ACP_RUNTIME_MATRIX.chat
-    );
+    )
     assert.strictEqual(
-      packageJson.dependencies["@slack/web-api"],
+      packageJson.dependencies['@slack/web-api'],
       SUPPORTED_ACP_RUNTIME_MATRIX.slackWebApi
-    );
+    )
     assert.strictEqual(
-      packageJson.dependencies["@chat-adapter/slack"],
+      packageJson.dependencies['@chat-adapter/slack'],
       SUPPORTED_ACP_RUNTIME_MATRIX.chatSlackAdapter
-    );
+    )
     assert.strictEqual(
       packageJson.engines.node,
       SUPPORTED_ACP_RUNTIME_MATRIX.node
-    );
+    )
     assert.strictEqual(
       packageJson.packageManager,
       `bun@${SUPPORTED_ACP_RUNTIME_MATRIX.bun}`
-    );
-    assert.strictEqual(nodeVersion.trim(), SUPPORTED_ACP_RUNTIME_MATRIX.node);
-  });
+    )
+    assert.strictEqual(nodeVersion.trim(), SUPPORTED_ACP_RUNTIME_MATRIX.node)
+  })
 
-  it("accepts the exact supported OpenCode capability surface", () => {
+  it('accepts the exact supported OpenCode capability surface', () => {
     assert.doesNotThrow(() =>
       assertSupportedOpenCodeInitialization(supportedInitialization)
-    );
-  });
+    )
+  })
 
-  it("leaves next verification to Sandcastle and keeps current CI least-privileged", async () => {
+  it('leaves next verification to Sandcastle and keeps current CI least-privileged', async () => {
     const [currentWorkflow, workflowFiles] = await Promise.all([
       readFile(
-        new URL("../../.github/workflows/current-ci.yml", import.meta.url),
-        "utf8"
+        new URL('../../.github/workflows/current-ci.yml', import.meta.url),
+        'utf8'
       ),
-      readdir(new URL("../../.github/workflows/", import.meta.url)),
-    ]);
-    assert.ok(!workflowFiles.includes("ci.yml"));
-    assert.match(currentWorkflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN);
+      readdir(new URL('../../.github/workflows/', import.meta.url)),
+    ])
+    assert.ok(!workflowFiles.includes('ci.yml'))
+    assert.match(currentWorkflow, READ_ONLY_CONTENTS_PERMISSION_PATTERN)
     assert.strictEqual(
       currentWorkflow.match(PERSISTED_CREDENTIALS_PATTERN)?.length,
       currentWorkflow.match(CHECKOUT_PATTERN)?.length
-    );
-    assert.match(currentWorkflow, CURRENT_PATH_PATTERN);
+    )
+    assert.match(currentWorkflow, CURRENT_PATH_PATTERN)
     assert.deepStrictEqual(OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY, {
-      "*": "deny",
-      compat_record: "ask",
-    });
+      '*': 'deny',
+      compat_record: 'ask',
+    })
     assert.deepStrictEqual(
-      makeOpenCodeCompatibilityConfig("http://127.0.0.1/fixture").permissions,
+      makeOpenCodeCompatibilityConfig('http://127.0.0.1/fixture').permissions,
       [
-        { action: "*", effect: "deny", resource: "*" },
-        { action: "execute", effect: "allow", resource: "*" },
-        { action: "compat_record", effect: "ask", resource: "*" },
+        { action: '*', effect: 'deny', resource: '*' },
+        { action: 'execute', effect: 'allow', resource: '*' },
+        { action: 'compat_record', effect: 'ask', resource: '*' },
       ]
-    );
-  });
+    )
+  })
 
-  it("reports changed and missing capabilities actionably and bounded", () => {
+  it('reports changed and missing capabilities actionably and bounded', () => {
     const cause = captureFailure(() =>
       assertSupportedOpenCodeInitialization({
         ...supportedInitialization,
-        agentCapabilities: "DO_NOT_RENDER_".repeat(10_000),
+        agentCapabilities: 'DO_NOT_RENDER_'.repeat(10_000),
       })
-    );
-    assert.match(cause.message, COMPATIBILITY_FAILURE_PATTERN);
-    assert.match(cause.message, LOAD_SESSION_PATTERN);
+    )
+    assert.match(cause.message, COMPATIBILITY_FAILURE_PATTERN)
+    assert.match(cause.message, LOAD_SESSION_PATTERN)
     assert.ok(
       cause.message.length <= ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS
-    );
-    assert.ok(!cause.message.includes("DO_NOT_RENDER_DO_NOT_RENDER"));
-    assert.match(cause.message, FROZEN_INSTALL_PATTERN);
-  });
-});
+    )
+    assert.ok(!cause.message.includes('DO_NOT_RENDER_DO_NOT_RENDER'))
+    assert.match(cause.message, FROZEN_INSTALL_PATTERN)
+  })
+})

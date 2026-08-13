@@ -1,7 +1,7 @@
-import { Schema } from "effect";
+import { Schema } from 'effect'
 
 export class SlackConfigValidationError extends Schema.TaggedErrorClass<SlackConfigValidationError>()(
-  "SlackConfigValidationError",
+  'SlackConfigValidationError',
   {
     variable: Schema.String,
     reason: Schema.String,
@@ -9,7 +9,7 @@ export class SlackConfigValidationError extends Schema.TaggedErrorClass<SlackCon
 ) {}
 
 export class LaborerConfigError extends Schema.TaggedErrorClass<LaborerConfigError>()(
-  "LaborerConfigError",
+  'LaborerConfigError',
   {
     operation: Schema.String,
     reason: Schema.String,
@@ -17,7 +17,7 @@ export class LaborerConfigError extends Schema.TaggedErrorClass<LaborerConfigErr
 ) {}
 
 export class SlackStartupError extends Schema.TaggedErrorClass<SlackStartupError>()(
-  "SlackStartupError",
+  'SlackStartupError',
   {
     operation: Schema.String,
     reason: Schema.String,

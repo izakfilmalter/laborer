@@ -1,9 +1,9 @@
 // biome-ignore-all lint/suspicious/useAwait: Chat SDK's StateAdapter contract requires Promise-returning methods.
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
-import type { Lock, QueueEntry, StateAdapter } from "chat";
+import { randomUUID } from 'node:crypto'
+import { chmod, lstat, mkdir } from 'node:fs/promises'
+import { dirname, isAbsolute, resolve } from 'node:path'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import type { Lock, QueueEntry, StateAdapter } from 'chat'
 
 const SCHEMA = `
   PRAGMA journal_mode = WAL;
@@ -46,239 +46,237 @@ const SCHEMA = `
     ON chat_cache (expires_at) WHERE expires_at IS NOT NULL;
   CREATE INDEX IF NOT EXISTS chat_locks_expiration
     ON chat_locks (expires_at);
-`;
+`
 
-const EXPIRATION_CLEANUP_BATCH_SIZE = 256;
+const EXPIRATION_CLEANUP_BATCH_SIZE = 256
 
 export interface SQLiteStateAdapterOptions {
-  readonly now?: () => number;
-  readonly path: string;
+  readonly now?: () => number
+  readonly path: string
 }
 
 const readString = (value: unknown, field: string): string => {
-  if (typeof value !== "string") {
-    throw new Error(`Corrupt SQLite chat state: ${field} is not text`);
+  if (typeof value !== 'string') {
+    throw new Error(`Corrupt SQLite chat state: ${field} is not text`)
   }
-  return value;
-};
+  return value
+}
 
 const readRowValue = (row: unknown, field: string): unknown => {
-  if (typeof row !== "object" || row === null || !("value" in row)) {
-    throw new Error(`Corrupt SQLite chat state: missing ${field}`);
+  if (typeof row !== 'object' || row === null || !('value' in row)) {
+    throw new Error(`Corrupt SQLite chat state: missing ${field}`)
   }
-  return row.value;
-};
+  return row.value
+}
 
 const readInteger = (value: unknown, field: string): number => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new Error(`Corrupt SQLite chat state: ${field} is not an integer`);
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new Error(`Corrupt SQLite chat state: ${field} is not an integer`)
   }
-  return value;
-};
+  return value
+}
 
 const serialize = (value: unknown): string => {
-  const result = JSON.stringify(value);
+  const result = JSON.stringify(value)
   if (result === undefined) {
-    throw new Error("Chat state value is not JSON serializable");
+    throw new Error('Chat state value is not JSON serializable')
   }
-  return result;
-};
+  return result
+}
 
 const deserialize = <T>(value: unknown): T => {
-  const encoded = readString(value, "value");
+  const encoded = readString(value, 'value')
   try {
-    return JSON.parse(encoded) as T;
+    return JSON.parse(encoded) as T
   } catch {
-    throw new Error("Corrupt SQLite chat state: value is not valid JSON");
+    throw new Error('Corrupt SQLite chat state: value is not valid JSON')
   }
-};
+}
 
 const validateBound = (value: number, field: string): void => {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${field} must be a non-negative integer`);
+    throw new Error(`${field} must be a non-negative integer`)
   }
-};
+}
 
 const expirationFrom = (now: number, ttlMs: number): number => {
-  const expiresAt = now + ttlMs;
+  const expiresAt = now + ttlMs
   if (!Number.isSafeInteger(expiresAt)) {
-    throw new Error(
-      "Chat state expiration exceeds SQLite's safe integer range"
-    );
+    throw new Error("Chat state expiration exceeds SQLite's safe integer range")
   }
-  return expiresAt;
-};
+  return expiresAt
+}
 
 const isMissing = (error: unknown): boolean =>
-  typeof error === "object" &&
+  typeof error === 'object' &&
   error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+  'code' in error &&
+  error.code === 'ENOENT'
 
 const assertRegularFileOrMissing = async (path: string): Promise<void> => {
   try {
-    const metadata = await lstat(path);
+    const metadata = await lstat(path)
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("SQLite chat state path must be a regular file");
+      throw new Error('SQLite chat state path must be a regular file')
     }
   } catch (error) {
     if (!isMissing(error)) {
-      throw error;
+      throw error
     }
   }
-};
+}
 
 const deserializeQueueEntry = (value: unknown): QueueEntry => {
-  const entry = deserialize<unknown>(value);
-  if (typeof entry !== "object" || entry === null || !("message" in entry)) {
-    throw new Error("Corrupt SQLite chat state: invalid queue entry");
+  const entry = deserialize<unknown>(value)
+  if (typeof entry !== 'object' || entry === null || !('message' in entry)) {
+    throw new Error('Corrupt SQLite chat state: invalid queue entry')
   }
-  const candidate = entry as Partial<QueueEntry>;
-  validateBound(candidate.enqueuedAt ?? Number.NaN, "entry.enqueuedAt");
-  validateBound(candidate.expiresAt ?? Number.NaN, "entry.expiresAt");
-  if (typeof candidate.message !== "object" || candidate.message === null) {
-    throw new Error("Corrupt SQLite chat state: invalid queued message");
+  const candidate = entry as Partial<QueueEntry>
+  validateBound(candidate.enqueuedAt ?? Number.NaN, 'entry.enqueuedAt')
+  validateBound(candidate.expiresAt ?? Number.NaN, 'entry.expiresAt')
+  if (typeof candidate.message !== 'object' || candidate.message === null) {
+    throw new Error('Corrupt SQLite chat state: invalid queued message')
   }
-  return candidate as QueueEntry;
-};
+  return candidate as QueueEntry
+}
 
 /** Durable, single-file Chat SDK state for the local Laborer daemon. */
 export class SQLiteStateAdapter implements StateAdapter {
-  readonly #now: () => number;
-  readonly #path: string;
-  #database: DatabaseSync | undefined;
-  #connectPromise: Promise<void> | undefined;
+  readonly #now: () => number
+  readonly #path: string
+  #database: DatabaseSync | undefined
+  #connectPromise: Promise<void> | undefined
 
   constructor(options: SQLiteStateAdapterOptions) {
     if (options.path.trim().length === 0 || !isAbsolute(options.path)) {
-      throw new Error("SQLite chat state path must be absolute and nonblank");
+      throw new Error('SQLite chat state path must be absolute and nonblank')
     }
-    this.#path = resolve(options.path);
-    this.#now = options.now ?? Date.now;
+    this.#path = resolve(options.path)
+    this.#now = options.now ?? Date.now
   }
 
   async connect(): Promise<void> {
     if (this.#database !== undefined) {
-      return;
+      return
     }
     this.#connectPromise ??= this.#open().catch((error: unknown) => {
-      this.#connectPromise = undefined;
-      throw error;
-    });
-    await this.#connectPromise;
+      this.#connectPromise = undefined
+      throw error
+    })
+    await this.#connectPromise
   }
 
   async #open(): Promise<void> {
-    const parent = dirname(this.#path);
-    await mkdir(parent, { mode: 0o700, recursive: true });
-    const parentMetadata = await lstat(parent);
+    const parent = dirname(this.#path)
+    await mkdir(parent, { mode: 0o700, recursive: true })
+    const parentMetadata = await lstat(parent)
     if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink()) {
-      throw new Error("SQLite chat state parent must be a real directory");
+      throw new Error('SQLite chat state parent must be a real directory')
     }
-    await chmod(parent, 0o700);
-    await assertRegularFileOrMissing(this.#path);
+    await chmod(parent, 0o700)
+    await assertRegularFileOrMissing(this.#path)
     const database = new DatabaseSync(this.#path, {
       defensive: true,
       timeout: 5000,
-    });
+    })
     try {
-      database.exec(SCHEMA);
-      await assertRegularFileOrMissing(this.#path);
-      await chmod(this.#path, 0o600);
-      this.#database = database;
+      database.exec(SCHEMA)
+      await assertRegularFileOrMissing(this.#path)
+      await chmod(this.#path, 0o600)
+      this.#database = database
     } catch (error) {
-      database.close();
-      throw error;
+      database.close()
+      throw error
     }
   }
 
   async disconnect(): Promise<void> {
-    await this.#connectPromise?.catch(() => undefined);
-    const database = this.#database;
-    this.#database = undefined;
-    this.#connectPromise = undefined;
-    database?.close();
+    await this.#connectPromise?.catch(() => undefined)
+    const database = this.#database
+    this.#database = undefined
+    this.#connectPromise = undefined
+    database?.close()
   }
 
   async subscribe(threadId: string): Promise<void> {
     this.#prepare(
-      "INSERT OR IGNORE INTO chat_subscriptions (thread_id) VALUES (?)"
-    ).run(threadId);
+      'INSERT OR IGNORE INTO chat_subscriptions (thread_id) VALUES (?)'
+    ).run(threadId)
   }
 
   async unsubscribe(threadId: string): Promise<void> {
-    this.#prepare("DELETE FROM chat_subscriptions WHERE thread_id = ?").run(
+    this.#prepare('DELETE FROM chat_subscriptions WHERE thread_id = ?').run(
       threadId
-    );
+    )
   }
 
   async isSubscribed(threadId: string): Promise<boolean> {
     return (
       this.#prepare(
-        "SELECT 1 AS present FROM chat_subscriptions WHERE thread_id = ?"
+        'SELECT 1 AS present FROM chat_subscriptions WHERE thread_id = ?'
       ).get(threadId) !== undefined
-    );
+    )
   }
 
   async acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> {
-    validateBound(ttlMs, "ttlMs");
-    const now = this.#now();
-    this.#deleteExpired("chat_locks", now);
-    const token = `sqlite_${randomUUID()}`;
-    const expiresAt = expirationFrom(now, ttlMs);
+    validateBound(ttlMs, 'ttlMs')
+    const now = this.#now()
+    this.#deleteExpired('chat_locks', now)
+    const token = `sqlite_${randomUUID()}`
+    const expiresAt = expirationFrom(now, ttlMs)
     const result = this.#prepare(
       `INSERT INTO chat_locks (thread_id, token, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(thread_id) DO UPDATE SET
          token = excluded.token, expires_at = excluded.expires_at
        WHERE chat_locks.expires_at <= ?`
-    ).run(threadId, token, expiresAt, now);
-    return result.changes === 0 ? null : { expiresAt, threadId, token };
+    ).run(threadId, token, expiresAt, now)
+    return result.changes === 0 ? null : { expiresAt, threadId, token }
   }
 
   async forceReleaseLock(threadId: string): Promise<void> {
-    this.#prepare("DELETE FROM chat_locks WHERE thread_id = ?").run(threadId);
+    this.#prepare('DELETE FROM chat_locks WHERE thread_id = ?').run(threadId)
   }
 
   async releaseLock(lock: Lock): Promise<void> {
     this.#prepare(
-      "DELETE FROM chat_locks WHERE thread_id = ? AND token = ?"
-    ).run(lock.threadId, lock.token);
+      'DELETE FROM chat_locks WHERE thread_id = ? AND token = ?'
+    ).run(lock.threadId, lock.token)
   }
 
   async extendLock(lock: Lock, ttlMs: number): Promise<boolean> {
-    validateBound(ttlMs, "ttlMs");
-    const now = this.#now();
+    validateBound(ttlMs, 'ttlMs')
+    const now = this.#now()
     const result = this.#prepare(
       `UPDATE chat_locks SET expires_at = ?
        WHERE thread_id = ? AND token = ? AND expires_at > ?`
-    ).run(expirationFrom(now, ttlMs), lock.threadId, lock.token, now);
-    return result.changes > 0;
+    ).run(expirationFrom(now, ttlMs), lock.threadId, lock.token, now)
+    return result.changes > 0
   }
 
   async get<T = unknown>(key: string): Promise<T | null> {
-    const database = this.#connectedDatabase();
+    const database = this.#connectedDatabase()
     return this.#transaction(database, () => {
-      const now = this.#now();
+      const now = this.#now()
       const row: unknown = this.#prepare(
         `SELECT value FROM chat_cache
          WHERE cache_key = ? AND (expires_at IS NULL OR expires_at > ?)`
-      ).get(key, now);
+      ).get(key, now)
       if (row === undefined) {
         this.#prepare(
-          "DELETE FROM chat_cache WHERE cache_key = ? AND expires_at <= ?"
-        ).run(key, now);
-        return null;
+          'DELETE FROM chat_cache WHERE cache_key = ? AND expires_at <= ?'
+        ).run(key, now)
+        return null
       }
-      return deserialize<T>(readRowValue(row, "cache value"));
-    });
+      return deserialize<T>(readRowValue(row, 'cache value'))
+    })
   }
 
   async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
     if (ttlMs !== undefined) {
-      validateBound(ttlMs, "ttlMs");
+      validateBound(ttlMs, 'ttlMs')
     }
-    const now = this.#now();
-    this.#deleteExpired("chat_cache", now);
+    const now = this.#now()
+    this.#deleteExpired('chat_cache', now)
     this.#prepare(
       `INSERT INTO chat_cache (cache_key, value, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET
@@ -287,7 +285,7 @@ export class SQLiteStateAdapter implements StateAdapter {
       key,
       serialize(value),
       ttlMs === undefined ? null : expirationFrom(now, ttlMs)
-    );
+    )
   }
 
   async setIfNotExists(
@@ -296,10 +294,10 @@ export class SQLiteStateAdapter implements StateAdapter {
     ttlMs?: number
   ): Promise<boolean> {
     if (ttlMs !== undefined) {
-      validateBound(ttlMs, "ttlMs");
+      validateBound(ttlMs, 'ttlMs')
     }
-    const now = this.#now();
-    this.#deleteExpired("chat_cache", now);
+    const now = this.#now()
+    this.#deleteExpired('chat_cache', now)
     const result = this.#prepare(
       `INSERT INTO chat_cache (cache_key, value, expires_at) VALUES (?, ?, ?)
        ON CONFLICT(cache_key) DO UPDATE SET
@@ -310,16 +308,16 @@ export class SQLiteStateAdapter implements StateAdapter {
       serialize(value),
       ttlMs === undefined ? null : expirationFrom(now, ttlMs),
       now
-    );
-    return result.changes > 0;
+    )
+    return result.changes > 0
   }
 
   async delete(key: string): Promise<void> {
-    const database = this.#connectedDatabase();
+    const database = this.#connectedDatabase()
     this.#transaction(database, () => {
-      this.#prepare("DELETE FROM chat_cache WHERE cache_key = ?").run(key);
-      this.#prepare("DELETE FROM chat_lists WHERE list_key = ?").run(key);
-    });
+      this.#prepare('DELETE FROM chat_cache WHERE cache_key = ?').run(key)
+      this.#prepare('DELETE FROM chat_lists WHERE list_key = ?').run(key)
+    })
   }
 
   async appendToList(
@@ -328,26 +326,24 @@ export class SQLiteStateAdapter implements StateAdapter {
     options?: { maxLength?: number; ttlMs?: number }
   ): Promise<void> {
     if (options?.maxLength !== undefined) {
-      validateBound(options.maxLength, "maxLength");
+      validateBound(options.maxLength, 'maxLength')
     }
     if (options?.ttlMs !== undefined) {
-      validateBound(options.ttlMs, "ttlMs");
+      validateBound(options.ttlMs, 'ttlMs')
     }
-    const database = this.#connectedDatabase();
+    const database = this.#connectedDatabase()
     this.#transaction(database, () => {
-      const now = this.#now();
-      this.#deleteExpired("chat_lists", now);
+      const now = this.#now()
+      this.#deleteExpired('chat_lists', now)
       const expiresAt =
-        options?.ttlMs === undefined
-          ? null
-          : expirationFrom(now, options.ttlMs);
+        options?.ttlMs === undefined ? null : expirationFrom(now, options.ttlMs)
       this.#prepare(
-        "INSERT INTO chat_lists (list_key, value, expires_at) VALUES (?, ?, ?)"
-      ).run(key, serialize(value), expiresAt);
+        'INSERT INTO chat_lists (list_key, value, expires_at) VALUES (?, ?, ?)'
+      ).run(key, serialize(value), expiresAt)
       this.#prepare(
         `UPDATE chat_lists SET expires_at = ?
          WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)`
-      ).run(expiresAt, key, now);
+      ).run(expiresAt, key, now)
       if (options?.maxLength !== undefined) {
         this.#prepare(
           `DELETE FROM chat_lists
@@ -357,23 +353,23 @@ export class SQLiteStateAdapter implements StateAdapter {
              WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)
              ORDER BY sequence DESC LIMIT ?
            )`
-        ).run(key, now, key, now, options.maxLength);
+        ).run(key, now, key, now, options.maxLength)
       }
-    });
+    })
   }
 
   async getList<T = unknown>(key: string): Promise<T[]> {
-    const database = this.#connectedDatabase();
+    const database = this.#connectedDatabase()
     return this.#transaction(database, () => {
-      const now = this.#now();
-      this.#deleteExpired("chat_lists", now);
+      const now = this.#now()
+      this.#deleteExpired('chat_lists', now)
       const rows: unknown[] = this.#prepare(
         `SELECT value FROM chat_lists
          WHERE list_key = ? AND (expires_at IS NULL OR expires_at > ?)
          ORDER BY sequence ASC`
-      ).all(key, now);
-      return rows.map((row) => deserialize<T>(readRowValue(row, "list value")));
-    });
+      ).all(key, now)
+      return rows.map((row) => deserialize<T>(readRowValue(row, 'list value')))
+    })
   }
 
   async enqueue(
@@ -381,17 +377,17 @@ export class SQLiteStateAdapter implements StateAdapter {
     entry: QueueEntry,
     maxSize: number
   ): Promise<number> {
-    validateBound(maxSize, "maxSize");
-    validateBound(entry.enqueuedAt, "entry.enqueuedAt");
-    validateBound(entry.expiresAt, "entry.expiresAt");
-    const database = this.#connectedDatabase();
+    validateBound(maxSize, 'maxSize')
+    validateBound(entry.enqueuedAt, 'entry.enqueuedAt')
+    validateBound(entry.expiresAt, 'entry.expiresAt')
+    const database = this.#connectedDatabase()
     return this.#transaction(database, () => {
-      const now = this.#now();
-      this.#deleteExpired("chat_queues", now);
+      const now = this.#now()
+      this.#deleteExpired('chat_queues', now)
       if (entry.expiresAt > now) {
         this.#prepare(
-          "INSERT INTO chat_queues (thread_id, value, expires_at) VALUES (?, ?, ?)"
-        ).run(threadId, serialize(entry), entry.expiresAt);
+          'INSERT INTO chat_queues (thread_id, value, expires_at) VALUES (?, ?, ?)'
+        ).run(threadId, serialize(entry), entry.expiresAt)
       }
       this.#prepare(
         `DELETE FROM chat_queues
@@ -400,58 +396,58 @@ export class SQLiteStateAdapter implements StateAdapter {
            WHERE thread_id = ? AND expires_at > ?
            ORDER BY sequence DESC LIMIT ?
          )`
-      ).run(threadId, now, threadId, now, maxSize);
+      ).run(threadId, now, threadId, now, maxSize)
       const row: unknown = this.#prepare(
         `SELECT count(*) AS value FROM chat_queues
          WHERE thread_id = ? AND expires_at > ?`
-      ).get(threadId, now);
-      return readInteger(readRowValue(row, "queue depth"), "queue depth");
-    });
+      ).get(threadId, now)
+      return readInteger(readRowValue(row, 'queue depth'), 'queue depth')
+    })
   }
 
   async dequeue(threadId: string): Promise<QueueEntry | null> {
-    const database = this.#connectedDatabase();
+    const database = this.#connectedDatabase()
     return this.#transaction(database, () => {
-      const now = this.#now();
-      this.#deleteExpired("chat_queues", now);
+      const now = this.#now()
+      this.#deleteExpired('chat_queues', now)
       const row: unknown = this.#prepare(
         `DELETE FROM chat_queues WHERE sequence = (
            SELECT sequence FROM chat_queues WHERE thread_id = ?
            AND expires_at > ?
            ORDER BY sequence ASC LIMIT 1
          ) RETURNING value`
-      ).get(threadId, now);
+      ).get(threadId, now)
       return row === undefined
         ? null
-        : deserializeQueueEntry(readRowValue(row, "queue value"));
-    });
+        : deserializeQueueEntry(readRowValue(row, 'queue value'))
+    })
   }
 
   async queueDepth(threadId: string): Promise<number> {
-    const now = this.#now();
-    this.#deleteExpired("chat_queues", now);
+    const now = this.#now()
+    this.#deleteExpired('chat_queues', now)
     const row: unknown = this.#prepare(
       `SELECT count(*) AS value FROM chat_queues
        WHERE thread_id = ? AND expires_at > ?`
-    ).get(threadId, now);
-    return readInteger(readRowValue(row, "queue depth"), "queue depth");
+    ).get(threadId, now)
+    return readInteger(readRowValue(row, 'queue depth'), 'queue depth')
   }
 
   #connectedDatabase(): DatabaseSync {
     if (this.#database === undefined) {
       throw new Error(
-        "SQLiteStateAdapter is not connected. Call connect() first."
-      );
+        'SQLiteStateAdapter is not connected. Call connect() first.'
+      )
     }
-    return this.#database;
+    return this.#database
   }
 
   #prepare(sql: string): StatementSync {
-    return this.#connectedDatabase().prepare(sql);
+    return this.#connectedDatabase().prepare(sql)
   }
 
   #deleteExpired(
-    table: "chat_cache" | "chat_lists" | "chat_locks" | "chat_queues",
+    table: 'chat_cache' | 'chat_lists' | 'chat_locks' | 'chat_queues',
     now: number
   ): void {
     this.#prepare(
@@ -460,22 +456,22 @@ export class SQLiteStateAdapter implements StateAdapter {
          WHERE expires_at IS NOT NULL AND expires_at <= ?
          LIMIT ?
        )`
-    ).run(now, EXPIRATION_CLEANUP_BATCH_SIZE);
+    ).run(now, EXPIRATION_CLEANUP_BATCH_SIZE)
   }
 
   #transaction<A>(database: DatabaseSync, operation: () => A): A {
-    database.exec("BEGIN IMMEDIATE");
+    database.exec('BEGIN IMMEDIATE')
     try {
-      const result = operation();
-      database.exec("COMMIT");
-      return result;
+      const result = operation()
+      database.exec('COMMIT')
+      return result
     } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 }
 
 export const createSQLiteState = (
   options: SQLiteStateAdapterOptions
-): StateAdapter => new SQLiteStateAdapter(options);
+): StateAdapter => new SQLiteStateAdapter(options)

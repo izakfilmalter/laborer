@@ -1,46 +1,46 @@
-import { Deferred, Effect, Schema } from "effect";
-import { canonicalActionInput } from "../action-catalog.ts";
+import { Deferred, Effect, Schema } from 'effect'
+import { canonicalActionInput } from '../action-catalog.ts'
 import type {
   AcceptApplicationEvent,
   ApplicationPublicOutput,
   ApplicationShape,
   ConversationBlocked,
   PublishApplicationOutput,
-} from "../application.ts";
-import type { StoreError } from "../core/errors.ts";
-import { HandlerFailure } from "../core/errors.ts";
+} from '../application.ts'
+import type { StoreError } from '../core/errors.ts'
+import { HandlerFailure } from '../core/errors.ts'
 import {
   ConversationOutput,
   type DurableRuntimeError,
   type RootDurableRuntimeShape,
   RUNTIME_PAYLOAD_MAX_BYTES,
-} from "./root-runtime.ts";
+} from './root-runtime.ts'
 import {
   attachConversationClientLocally,
   ROOT_RUNTIME_PROTOCOL_VERSION,
   runConversationRpcLocally,
-} from "./rpc.ts";
+} from './rpc.ts'
 
 const runtimeFailure = (_error: DurableRuntimeError): HandlerFailure =>
   HandlerFailure.make({
-    category: "protocol",
-    noticeStyle: "generic",
-    safeDetail: "durable Conversation runtime unavailable",
-  });
+    category: 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'durable Conversation runtime unavailable',
+  })
 
 const invalidRuntimeOutput = (): HandlerFailure =>
   HandlerFailure.make({
-    category: "protocol",
-    noticeStyle: "generic",
-    safeDetail: "durable Conversation output invalid",
-  });
+    category: 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'durable Conversation output invalid',
+  })
 
 const unavailableEventAcceptance: AcceptApplicationEvent = () =>
   HandlerFailure.make({
-    category: "protocol",
-    noticeStyle: "generic",
-    safeDetail: "durable external-event acceptance unavailable",
-  });
+    category: 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'durable external-event acceptance unavailable',
+  })
 
 /**
  * Routes participant turns through the root owner while retaining the existing
@@ -48,29 +48,29 @@ const unavailableEventAcceptance: AcceptApplicationEvent = () =>
  * Execution events from the root runtime; Action workers never publish.
  */
 export const applicationThroughRootConversationRuntime = Effect.fn(
-  "applicationThroughRootConversationRuntime"
+  'applicationThroughRootConversationRuntime'
 )(function* (options: {
-  readonly application: ApplicationShape;
-  readonly actionCatalogFingerprint: string;
-  readonly rootIdentity: string;
+  readonly application: ApplicationShape
+  readonly actionCatalogFingerprint: string
+  readonly rootIdentity: string
   readonly publishExternalOutput?: (
     conversationId: string,
     output: ApplicationPublicOutput
-  ) => Effect.Effect<void, HandlerFailure | StoreError>;
-  readonly routeParticipantTurnsThroughDurableRuntime?: boolean;
-  readonly runtime: RootDurableRuntimeShape;
-  readonly workspaceId: string;
+  ) => Effect.Effect<void, HandlerFailure | StoreError>
+  readonly routeParticipantTurnsThroughDurableRuntime?: boolean
+  readonly runtime: RootDurableRuntimeShape
+  readonly workspaceId: string
 }) {
-  const eventAcceptors = new Map<string, AcceptApplicationEvent>();
+  const eventAcceptors = new Map<string, AcceptApplicationEvent>()
   const failures = new Map<
     string,
     ConversationBlocked | HandlerFailure | StoreError
-  >();
-  const publishers = new Map<string, PublishApplicationOutput>();
-  const handledEvents = new Set<string>();
-  const runnerEventAcceptance = yield* Deferred.make<AcceptApplicationEvent>();
+  >()
+  const publishers = new Map<string, PublishApplicationOutput>()
+  const handledEvents = new Set<string>()
+  const runnerEventAcceptance = yield* Deferred.make<AcceptApplicationEvent>()
   const rememberRunnerEventAcceptance = (acceptEvent: AcceptApplicationEvent) =>
-    Deferred.succeed(runnerEventAcceptance, acceptEvent).pipe(Effect.asVoid);
+    Deferred.succeed(runnerEventAcceptance, acceptEvent).pipe(Effect.asVoid)
   yield* attachConversationClientLocally(
     options.runtime,
     {
@@ -83,9 +83,9 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
     {
       handle: (event) =>
         Effect.gen(function* () {
-          if (event._tag === "ExternalInput") {
+          if (event._tag === 'ExternalInput') {
             if (options.routeParticipantTurnsThroughDurableRuntime === false) {
-              const outputs: ApplicationPublicOutput[] = [];
+              const outputs: ApplicationPublicOutput[] = []
               yield* options.application.handle(
                 event,
                 (output) =>
@@ -99,25 +99,25 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
                   ),
                 () =>
                   Effect.succeed({
-                    decision: { _tag: "Accepted", eventId: event.eventId },
-                    scheduling: "AlreadyDurable",
+                    decision: { _tag: 'Accepted', eventId: event.eventId },
+                    scheduling: 'AlreadyDurable',
                   })
-              );
-              return outputs;
+              )
+              return outputs
             }
             // The root owner makes the Action event durable before handing it
             // back to the Conversation application, which remains responsible for ordering
             // the Application invocation and publishing any resulting output.
-            const acceptEvent = yield* Deferred.await(runnerEventAcceptance);
-            yield* acceptEvent(event);
-            return [];
+            const acceptEvent = yield* Deferred.await(runnerEventAcceptance)
+            yield* acceptEvent(event)
+            return []
           }
-          const eventId = event.turnId;
-          handledEvents.add(eventId);
-          const outputs: ApplicationPublicOutput[] = [];
+          const eventId = event.turnId
+          handledEvents.add(eventId)
+          const outputs: ApplicationPublicOutput[] = []
           // Account for the surrounding JSON array. Validate and bound every
           // item before it can cross the Conversation application's public-output callback.
-          let encodedOutputsBytes = 2;
+          let encodedOutputsBytes = 2
           yield* options.application
             .handle(
               event,
@@ -125,23 +125,23 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
                 Effect.gen(function* () {
                   const validatedOutput = yield* Schema.decodeUnknownEffect(
                     ConversationOutput,
-                    { onExcessProperty: "error" }
-                  )(output).pipe(Effect.mapError(invalidRuntimeOutput));
+                    { onExcessProperty: 'error' }
+                  )(output).pipe(Effect.mapError(invalidRuntimeOutput))
                   const encodedOutput = yield* canonicalActionInput(
                     validatedOutput
-                  ).pipe(Effect.mapError(invalidRuntimeOutput));
+                  ).pipe(Effect.mapError(invalidRuntimeOutput))
                   const nextEncodedOutputsBytes =
                     encodedOutputsBytes +
                     (outputs.length === 0 ? 0 : 1) +
-                    Buffer.byteLength(encodedOutput, "utf8");
+                    Buffer.byteLength(encodedOutput, 'utf8')
                   if (nextEncodedOutputsBytes > RUNTIME_PAYLOAD_MAX_BYTES) {
-                    return yield* invalidRuntimeOutput();
+                    return yield* invalidRuntimeOutput()
                   }
-                  encodedOutputsBytes = nextEncodedOutputsBytes;
-                  outputs.push(validatedOutput);
-                  const publish = publishers.get(eventId);
+                  encodedOutputsBytes = nextEncodedOutputsBytes
+                  outputs.push(validatedOutput)
+                  const publish = publishers.get(eventId)
                   if (publish !== undefined) {
-                    yield* publish(validatedOutput);
+                    yield* publish(validatedOutput)
                   }
                 }),
               eventAcceptors.get(eventId) ?? unavailableEventAcceptance
@@ -149,14 +149,14 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             .pipe(
               Effect.tapError((failure) =>
                 Effect.sync(() => {
-                  failures.set(eventId, failure);
+                  failures.set(eventId, failure)
                 })
               )
-            );
-          return outputs;
+            )
+          return outputs
         }),
     }
-  ).pipe(Effect.mapError(runtimeFailure));
+  ).pipe(Effect.mapError(runtimeFailure))
 
   return {
     ...(options.application.decideConversationRecovery === undefined
@@ -166,25 +166,25 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             options.application.decideConversationRecovery,
         }),
     handle: (event, publish, acceptEvent) => {
-      if (event._tag !== "ParticipantInput") {
+      if (event._tag !== 'ParticipantInput') {
         return rememberRunnerEventAcceptance(acceptEvent).pipe(
           Effect.andThen(
             options.application.handle(event, publish, acceptEvent)
           )
-        );
+        )
       }
       if (options.routeParticipantTurnsThroughDurableRuntime === false) {
-        return options.application.handle(event, publish, acceptEvent);
+        return options.application.handle(event, publish, acceptEvent)
       }
       return Effect.acquireUseRelease(
         Effect.gen(function* () {
-          yield* rememberRunnerEventAcceptance(acceptEvent);
+          yield* rememberRunnerEventAcceptance(acceptEvent)
           yield* Effect.sync(() => {
-            eventAcceptors.set(event.turnId, acceptEvent);
-            failures.delete(event.turnId);
-            handledEvents.delete(event.turnId);
-            publishers.set(event.turnId, publish);
-          });
+            eventAcceptors.set(event.turnId, acceptEvent)
+            failures.delete(event.turnId)
+            handledEvents.delete(event.turnId)
+            publishers.set(event.turnId, publish)
+          })
         }),
         () =>
           runConversationRpcLocally(options.runtime, {
@@ -194,10 +194,10 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
             workspaceId: options.workspaceId,
           }).pipe(
             Effect.catch((error) => {
-              const failure = failures.get(event.turnId);
+              const failure = failures.get(event.turnId)
               return failure === undefined
                 ? Effect.fail(runtimeFailure(error))
-                : Effect.fail(failure);
+                : Effect.fail(failure)
             }),
             Effect.flatMap((receipt) =>
               handledEvents.has(event.turnId)
@@ -207,12 +207,12 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
           ),
         () =>
           Effect.sync(() => {
-            eventAcceptors.delete(event.turnId);
-            failures.delete(event.turnId);
-            handledEvents.delete(event.turnId);
-            publishers.delete(event.turnId);
+            eventAcceptors.delete(event.turnId)
+            failures.delete(event.turnId)
+            handledEvents.delete(event.turnId)
+            publishers.delete(event.turnId)
           })
-      );
+      )
     },
     ...(options.application.recover === undefined
       ? {}
@@ -235,5 +235,5 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
       : {
           unresolvedConversations: options.application.unresolvedConversations,
         }),
-  } satisfies ApplicationShape;
-});
+  } satisfies ApplicationShape
+})

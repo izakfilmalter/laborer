@@ -54,6 +54,7 @@ describe('@laborer/task-db exports', () => {
       '@laborer/task-db/path',
       '@laborer/task-db/migrations',
       '@laborer/task-db/schema',
+      '@laborer/task-db/ulid',
     ]
     const script = `await Promise.all(${JSON.stringify(imports)}.map((specifier) => import(specifier)))`
 

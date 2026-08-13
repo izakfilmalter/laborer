@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTaskUlid, isTaskUlid } from '../src/task-ulid'
+import { createTaskUlid, isTaskUlid } from '../src/task-ulid.js'
 
 describe('createTaskUlid', () => {
   it('produces a 26-character Crockford ULID', () => {
@@ -9,16 +9,19 @@ describe('createTaskUlid', () => {
   })
 
   it('encodes the timestamp into the first ten characters', () => {
-    // Matches the server's historical createTaskUlid exactly, so ids stay
-    // lexically ordered by creation time across old and new cards.
     expect(createTaskUlid(2).slice(0, 10)).toBe('0000000002')
     expect(createTaskUlid(0).slice(0, 10)).toBe('0000000000')
   })
 
+  it('clamps timestamps to the ULID 48-bit range', () => {
+    expect(createTaskUlid(-1).slice(0, 10)).toBe('0000000000')
+    expect(createTaskUlid(Number.MAX_SAFE_INTEGER).slice(0, 10)).toBe(
+      '7ZZZZZZZZZ'
+    )
+  })
+
   it('orders lexically by creation time', () => {
-    const earlier = createTaskUlid(1000)
-    const later = createTaskUlid(2000)
-    expect(earlier < later).toBe(true)
+    expect(createTaskUlid(1000) < createTaskUlid(2000)).toBe(true)
   })
 
   it('never collides across a burst of same-millisecond ids', () => {
@@ -30,14 +33,13 @@ describe('createTaskUlid', () => {
 })
 
 describe('isTaskUlid', () => {
-  it('rejects non-ULID identifiers', () => {
+  it('accepts only canonical Crockford ULIDs', () => {
+    expect(isTaskUlid(createTaskUlid())).toBe(true)
     expect(isTaskUlid('')).toBe(false)
     expect(isTaskUlid('not-a-ulid')).toBe(false)
-    // Crockford excludes I, L, O, and U.
     expect(isTaskUlid('IIIIIIIIIIIIIIIIIIIIIIIIII')).toBe(false)
-    // A UUID is not a task id.
     expect(isTaskUlid(crypto.randomUUID())).toBe(false)
-    // Lowercase is not canonical.
     expect(isTaskUlid(createTaskUlid().toLowerCase())).toBe(false)
+    expect(isTaskUlid('80000000000000000000000000')).toBe(false)
   })
 })

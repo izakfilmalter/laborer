@@ -215,18 +215,22 @@ describe('fractionalOrderAt', () => {
       sortOrder: null,
     })
     // Board display order: newest unranked first.
-    const column = [
+    const column: [
+      ReturnType<typeof unranked>,
+      ReturnType<typeof unranked>,
+      ReturnType<typeof unranked>,
+    ] = [
       unranked('newest', 4000),
       unranked('middle', 3000),
       unranked('oldest', 2000),
     ]
 
     // Drag "oldest" between "newest" and "middle" (drop index 1).
-    const reordered = [column[0]!, column[2]!, column[1]!]
+    const reordered = [column[0], column[2], column[1]]
     const minted = fractionalOrderAt(reordered, 1)
-    const moved = { ...reordered[1]!, sortOrder: minted }
+    const moved = { ...reordered[1], sortOrder: minted }
 
-    const resorted = [column[0]!, column[1]!, moved].sort(
+    const resorted = [column[0], column[1], moved].sort(
       (a, b) =>
         effectiveSortOrder(a) - effectiveSortOrder(b) ||
         b.createdAt - a.createdAt
@@ -235,16 +239,19 @@ describe('fractionalOrderAt', () => {
   })
 
   it('keeps a card dropped above all unranked cards at the top', () => {
-    const column = [
+    const column: [
+      { createdAt: number; id: string; sortOrder: null },
+      { createdAt: number; id: string; sortOrder: number },
+    ] = [
       { createdAt: 4000, id: 'newest', sortOrder: null },
       { createdAt: 3000, id: 'ranked', sortOrder: 0 },
     ]
     // Drag "ranked" to the top (drop index 0).
-    const reordered = [column[1]!, column[0]!]
+    const reordered = [column[1], column[0]]
     const minted = fractionalOrderAt(reordered, 0)
-    const moved = { ...column[1]!, sortOrder: minted }
+    const moved = { ...column[1], sortOrder: minted }
 
-    const resorted = [column[0]!, moved].sort(
+    const resorted = [column[0], moved].sort(
       (a, b) =>
         effectiveSortOrder(a) - effectiveSortOrder(b) ||
         b.createdAt - a.createdAt

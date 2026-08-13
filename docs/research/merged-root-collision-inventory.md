@@ -114,12 +114,11 @@ These lists record **every directory entry observed**, including ignored local/b
 
 ## Decisions still required
 
-1. Root package name and bot package rename (if any).
-2. Exact root command/check API and which bot-only security/compatibility/runtime gates it includes.
-3. Whether Node 24.11.1 is repo-wide; keep Electron 40 and 43 independent unless a separate compatibility effort proves unification.
-4. Root versus bot-local env files and corresponding `with-env`, Node `--env-file`, gtr copy, and worktree setup behavior.
-5. AGENTS/README/docs scoping for legacy workspace-wide guidance and historical current docs.
-6. Slack manifest and Docker ignore placement based on actual operator/build context.
-7. Whether current `.vscode/settings.json` is safe as repository-wide configuration.
+1. Exact root command/check API and which bot-only security/compatibility/runtime gates it includes.
+2. Whether Node 24.11.1 is repo-wide; keep Electron 40 and 43 independent unless a separate compatibility effort proves unification.
+3. Root versus bot-local env files and corresponding `with-env`, Node `--env-file`, gtr copy, and worktree setup behavior.
+4. AGENTS/README/docs scoping for legacy workspace-wide guidance and historical current docs.
+5. Slack manifest and Docker ignore placement based on actual operator/build context.
+6. Whether current `.vscode/settings.json` is safe as repository-wide configuration.
 
 Everything else in the three physical root inventories has a mechanical destination or an already-decided deletion.

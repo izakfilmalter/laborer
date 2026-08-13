@@ -26,6 +26,10 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /* Tooltips invert the surface in light mode. */
+  --tooltip: oklch(0.145 0 0);
+  --tooltip-foreground: oklch(1 0 0);
+  --tooltip-border: transparent;
   --chart-1: oklch(0.809 0.105 251.813);
   --chart-2: oklch(0.623 0.214 259.815);
   --chart-3: oklch(0.546 0.245 262.881);
@@ -64,6 +68,13 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  /*
+   * Tooltips read as an elevated surface in dark mode rather than an inverted
+   * one: a lifted panel above --background with a hairline edge.
+   */
+  --tooltip: oklch(0.25 0 0);
+  --tooltip-foreground: oklch(0.95 0 0);
+  --tooltip-border: oklch(1 0 0 / 12%);
   --chart-1: oklch(0.809 0.105 251.813);
   --chart-2: oklch(0.623 0.214 259.815);
   --chart-3: oklch(0.546 0.245 262.881);
@@ -111,6 +122,9 @@
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
+  --color-tooltip-border: var(--tooltip-border);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-tooltip: var(--tooltip);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);
